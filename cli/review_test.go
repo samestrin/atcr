@@ -493,6 +493,30 @@ func TestReviewCmd_SingleModelNeedsDebate(t *testing.T) {
 	require.NotContains(t, out2, "--single-model requires --debate")
 }
 
+// TestReviewCmd_AllRejectsAutoFix verifies `review --all --auto-fix` is a usage
+// error (exit 2): a baseline scan resolves no diff range, so auto-fix has no base
+// branch to open its fix PR against. Rejecting up front avoids running (and paying
+// for) a full repository review and reconcile only to fail at the auto-fix step
+// (Sprint 35.0 task 2.11.A finding).
+func TestReviewCmd_AllRejectsAutoFix(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--all", "--auto-fix")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--all cannot be combined with --auto-fix")
+}
+
+// TestReviewCmd_DirRejectsAutoFix pins the baseline+auto-fix rejection wording
+// for the --dir path: the message must name --dir (the flag the user actually
+// passed), not --all (TD: the rejection was hardcoded to --all even though
+// baseline := Changed("all") || Changed("dir")).
+func TestReviewCmd_DirRejectsAutoFix(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.Mkdir("sub", 0o755))
+	code, out := execCmdCapture(t, "review", "--dir", "sub", "--auto-fix")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--dir cannot be combined with --auto-fix")
+}
+
 // TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
 // with an undefined flag name — a programming error that must fail loudly
 // rather than silently returning false.
@@ -721,4 +745,46 @@ func TestReviewHelpDocumentsPreviewPrecedence(t *testing.T) {
 		assert.Contains(t, help, action, "review help must name the action flag %s that --preview ignores", action)
 	}
 	assert.Contains(t, help, "ignored", "review help must state the action flags are ignored when --preview is set")
+}
+
+// AC 05-01 Scenario 1 / Edge Case 2: `atcr review --fresh` documents BOTH its
+// --verify meaning (preserved verbatim) and its new --all/--dir hash-skip-bypass
+// meaning, on a single line.
+func TestReviewFreshFlag_UsageDocumentsBothMeanings(t *testing.T) {
+	usage := newReviewCmd().Flags().Lookup("fresh").Usage
+	assert.Contains(t, usage, "with --verify: re-verify findings that already carry a verdict",
+		"the preserved --verify clause must remain verbatim")
+	assert.Contains(t, usage, "with --all/--dir:", "a new clause must name the baseline hash-skip bypass")
+	assert.NotContains(t, usage, "\n", "the usage string must stay single-line (cobra flag-table style)")
+}
+
+// AC 05-01 Scenario 2: `--force`'s usage string is unchanged — no baseline-scan
+// wording leaks into it (it is never a skip-bypass alias).
+func TestReviewForceFlag_UsageUnchanged(t *testing.T) {
+	const want = "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)"
+	assert.Equal(t, want, newReviewCmd().Flags().Lookup("force").Usage)
+}
+
+// AC 05-01 Edge Case 1: --fresh is registered exactly once on `atcr review` (a
+// duplicate cmd.Flags().Bool("fresh", ...) would panic at construction), and --fresh
+// and --force are distinct flag instances.
+func TestReviewFreshFlag_SingleRegistrationDistinctFromForce(t *testing.T) {
+	assert.NotPanics(t, func() { _ = newReviewCmd() }, "duplicate --fresh registration would panic")
+	cmd := newReviewCmd()
+	fresh := cmd.Flags().Lookup("fresh")
+	force := cmd.Flags().Lookup("force")
+	require.NotNil(t, fresh)
+	require.NotNil(t, force)
+	assert.NotSame(t, fresh, force, "--fresh and --force must be distinct *pflag.Flag instances")
+}
+
+// AC 05-01 Edge Case 3: `atcr verify --fresh` is a separate flag instance whose usage
+// string is unchanged (the dual-meaning broadening applies only to `atcr review`).
+func TestVerifyFreshFlag_UsageUnchangedAndDistinct(t *testing.T) {
+	verifyFresh := newVerifyCmd().Flags().Lookup("fresh")
+	require.NotNil(t, verifyFresh)
+	assert.Equal(t, "re-verify findings that already carry a verdict", verifyFresh.Usage,
+		"atcr verify --fresh must keep its original single meaning")
+	assert.NotSame(t, verifyFresh, newReviewCmd().Flags().Lookup("fresh"),
+		"review and verify --fresh are separate flag instances")
 }

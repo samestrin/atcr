@@ -150,3 +150,26 @@ func (x *FileIndex) ByFold(relpath string) []string {
 	}
 	return x.folded[strings.ToLower(toSlashKeys(relpath))]
 }
+
+// Paths returns every tracked relpath in the slash-normalized, repo-root-relative
+// form the rest of the index (and ignoreMatcher.match / FileEntry.Path) expect.
+// It exists so the baseline full-repo / directory scan (Sprint 35.0) can iterate
+// the `git ls-files` tracked set without reaching around the unexported map.
+//
+// Iteration order is UNSPECIFIED: the backing map has no stable order, so a
+// caller needing determinism (e.g. byte-budget chunk partitioning) must impose
+// its own canonical sort rather than rely on this slice's order. A nil
+// *FileIndex returns nil (an empty set, len 0) rather than panicking, matching
+// the nil-returning convention of Has/ByBasename/DirBasenames/ByFold; callers
+// must test len()==0, never `== nil`, since a populated-but-empty index returns
+// a non-nil empty slice.
+func (x *FileIndex) Paths() []string {
+	if x == nil {
+		return nil
+	}
+	out := make([]string, 0, len(x.tracked))
+	for rel := range x.tracked {
+		out = append(out, rel)
+	}
+	return out
+}

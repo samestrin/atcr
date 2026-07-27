@@ -34,6 +34,28 @@ type Manifest struct {
 	// byte-identical to the pre-field shape so older readers are unaffected.
 	NoIgnore bool `json:"no_ignore,omitempty"`
 
+	// Baseline is true when the review is a full-repository / directory scan
+	// (`atcr review --all`/`--dir`, Sprint 35.0) rather than a git-range diff. It is
+	// the durable marker the resume path keys on: a baseline review has an empty
+	// Base/Head, so ValidateResumeRange must skip git-range validation and
+	// PrepareResume must rebuild the payload from the tracked repository (the repo
+	// walker) instead of a git range — otherwise a resumed baseline review would fail
+	// ErrRangeChanged or review the wrong (diff) content. omitempty keeps a diff
+	// review's manifest byte-identical to the pre-field shape so older readers are
+	// unaffected.
+	Baseline bool `json:"baseline,omitempty"`
+
+	// Dir records the --dir <path> subtree scope of a baseline directory scan
+	// (Sprint 35.0, Story 2): a slash-normalized, repo-root-relative directory (or
+	// "" for a whole-repository --all scan). Like NoIgnore and Baseline it is
+	// persisted so a resume recovers the scope from on-disk state rather than the
+	// resume request, locking pending agents to the exact subtree the completed
+	// agents reviewed — otherwise a resumed --dir scan would rebuild the whole-repo
+	// payload and review out-of-scope files. omitempty keeps a whole-repo/diff
+	// review's manifest byte-identical to the pre-field shape so older readers are
+	// unaffected.
+	Dir string `json:"dir,omitempty"`
+
 	// Interrupted is true when the fan-out was cut short by an external signal
 	// (SIGINT/SIGTERM cancelling the root context), as opposed to running to
 	// completion or hitting its own timeout (epic 4.1). It is the durable marker

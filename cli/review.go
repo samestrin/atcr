@@ -75,7 +75,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
-	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict; with --all/--dir: bypass the file-hash skip and re-review every in-scope file")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
@@ -85,10 +85,12 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
+	cmd.Flags().String("dir", "", "review every non-ignored, git-tracked file under this repo-root-relative directory as a scoped baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit/--all)")
 	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	addRangeFlags(cmd)
+	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
 	addQualitySignalFlags(cmd)
@@ -324,17 +326,48 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
 
-	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+	// --dir (Sprint 35.0, Story 2) scopes a baseline scan to a subtree. Validate
+	// the path against the repo root here — before any payload work — so a bad path
+	// is a usage error (exit 2); returns the canonical repo-root-relative scope (""
+	// when unset). The mutual-exclusion check (PreRunE) has already run, so a --dir
+	// combined with a range flag or --all never reaches this point.
+	dirScope, err := validateDirFlag(cmd, ".")
 	if err != nil {
-		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
-		// here; route it to the graceful interrupt path (exit 1 + notice) rather
-		// than a confusing "review failed: context canceled" usage error (exit 2).
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return interruptedBeforeFanout(cmd)
+		return err
+	}
+
+	// --all (Sprint 35.0, Story 1) and --dir (Story 2) are both full-repository /
+	// subtree baseline scans: they have no diff range, so branch before
+	// gitrange.Resolve and skip range resolution entirely when either is set. A
+	// zero-valued Resolution stands in so the downstream request builder never
+	// dereferences nil; the baseline dispatch to PrepareReviewFromRepo runs below.
+	// When neither is set the existing range-resolution path runs unchanged.
+	baseline := cmd.Flags().Changed("all") || cmd.Flags().Changed("dir")
+	// --auto-fix needs a base branch to open its fix PR against, which it derives
+	// from the resolved range's DefaultBranch. A baseline scan resolves no range,
+	// so auto-fix would fail only AFTER a full (paid) repo review and reconcile —
+	// reject the combination up front instead (exit 2). Baseline auto-fix can be a
+	// follow-up once a range-less default-branch resolution exists.
+	if baseline && autoFix {
+		if cmd.Flags().Changed("dir") {
+			return usageError(errors.New("--dir cannot be combined with --auto-fix: a scoped baseline scan has no diff range to derive an auto-fix base branch from"))
 		}
-		// A range failure aborts the pipeline before any agent runs — a usage
-		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
-		return usageError(fmt.Errorf("review failed: %w", err))
+		return usageError(errors.New("--all cannot be combined with --auto-fix: a full-repository baseline scan has no diff range to derive an auto-fix base branch from"))
+	}
+	res := &gitrange.Resolution{}
+	if !baseline {
+		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+		if err != nil {
+			// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+			// here; route it to the graceful interrupt path (exit 1 + notice) rather
+			// than a confusing "review failed: context canceled" usage error (exit 2).
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return interruptedBeforeFanout(cmd)
+			}
+			// A range failure aborts the pipeline before any agent runs — a usage
+			// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+			return usageError(fmt.Errorf("review failed: %w", err))
+		}
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
@@ -381,21 +414,43 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		Force:          boolFlag(cmd, "force"),
 		NoCache:        boolFlag(cmd, "no-cache"),
 		NoIgnore:       boolFlag(cmd, "no-ignore"),
+		Dir:            dirScope,
 		SprintPlanPath: sprintPlanPath(cmd),
 		PRNumber:       prNumberFromFlags(cmd),
+		// --fresh bypasses the incremental file-hash skip on a baseline scan (Sprint
+		// 35.0 Story 5). ONLY --fresh does this: --force keeps its unrelated
+		// overwrite-existing-review-directory meaning and is never a skip-bypass alias
+		// (AC 05-03 EC1). Read unconditionally; only the baseline prepare paths consume
+		// it, so it is an inert no-op on a diff-range review (AC 04-04 S2).
+		Fresh: boolFlag(cmd, "fresh"),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
 	// resolution, unknown provider, prompt render — configuration errors per
 	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
-	// plain exit 1 with artifacts preserved on disk.
-	prep, err := fanout.PrepareReview(ctx, cfg, req)
+	// plain exit 1 with artifacts preserved on disk. --all (Sprint 35.0) prepares
+	// from the whole tracked repository instead of a git range; every later phase
+	// (ExecuteReview, RunReconcile) is unchanged.
+	var prep *fanout.PreparedReview
+	if baseline {
+		prep, err = fanout.PrepareReviewFromRepo(ctx, cfg, req)
+	} else {
+		prep, err = fanout.PrepareReview(ctx, cfg, req)
+	}
 	if err != nil {
 		// An interrupt during payload build / scaffolding cancels the context; no
 		// review directory exists yet, so route to the graceful no-results path
 		// instead of a usage error.
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return interruptedBeforeFanout(cmd)
+		}
+		// TD-010: a baseline re-scan whose every in-scope file is unchanged since
+		// the last completed review is a successful no-op (the common CI re-run
+		// path), not the exit-2 usage error an empty repository gets. Exit 0 with
+		// a notice pointing at the --fresh escape hatch; nothing was scaffolded.
+		if errors.Is(err, fanout.ErrAllFilesUnchanged) {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%v; nothing to review (use --fresh to force a full re-scan)\n", err)
+			return nil
 		}
 		return usageError(err)
 	}
@@ -439,6 +494,31 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// an interrupted run is never reported as "succeeded".
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return reportInterrupt(cmd, ctx, result, prep)
+	}
+
+	// Baseline (--all/--dir) incremental re-scan write-back (Sprint 35.0 Story 4/5):
+	// once a baseline review reaches a completed state with at least one agent
+	// succeeding, persist the file-hash index (built at prepare time from the files
+	// actually reviewed) so the NEXT run can skip files whose content has not changed.
+	// Gated on Succeeded > 0 so a run where every agent failed does not record its
+	// files as "reviewed" (which would wrongly skip them forever). Also gated on
+	// UnreviewedChunks == 0: the baseline write-back records EVERY reviewed file
+	// (Sprint 35.0 task 5.3), which is correct only when every dispatched chunk
+	// actually succeeded. If any chunk failed under an otherwise-OK persona
+	// (result.Summary.Partial can be false in that case — see the artifacts.go
+	// partial-coverage caveat), some files went unreviewed; recording them would
+	// silently skip them on the next run. Skip the whole write-back then and let the
+	// next run do a full re-scan (fail-open toward re-review, never toward skip)
+	// [5.5.A MEDIUM]. An index-write failure is logged, never fatal (AC 04-01 ES1).
+	// The interrupt path returned above, so this never fires on a cancelled run.
+	switch {
+	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
+		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
+			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
+		}
+	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
+		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
+			"unreviewed_chunks", result.Summary.UnreviewedChunks)
 	}
 
 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome

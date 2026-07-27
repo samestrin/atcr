@@ -3,9 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/samestrin/atcr/internal/validation"
 )
 
 // addRangeFlags declares the shared review-range flags on cmd and installs a
@@ -31,6 +35,18 @@ func addRangeFlags(cmd *cobra.Command) {
 		}
 		return validateRangeFlags(cmd)
 	}
+}
+
+// addBaselineFlags declares the Sprint 35.0 baseline-scan flag (`--all`) on cmd.
+// It installs NO PreRunE of its own: the mutual-exclusion validation (--all/--dir
+// vs a diff range) is owned by the shared validateRangeFlags installed via
+// addRangeFlags (Sprint 35.0 task 3.8 consolidated it there so the baseline message
+// wins over the range checks — TD-001). Adding a pass-through PreRunE wrapper here
+// would be dead indirection, matching addQualitySignalFlags' convention. The --dir
+// string flag is registered directly on the review command (it is review-only,
+// unlike --all's shared-helper registration).
+func addBaselineFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("all", false, "review every non-ignored, git-tracked file as a full-repository baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit)")
 }
 
 // defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is a
@@ -104,12 +120,120 @@ func addQualitySignalFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
 }
 
-// validateRangeFlags checks the declared relationships between --base,
-// --head, and --merge-commit.
+// validateDirFlag validates the Sprint 35.0 `--dir <path>` scoped-baseline flag
+// against the repository root and returns the canonical scope: a slash-normalized,
+// repo-root-relative, cleaned path (or "." for the whole-repo degenerate case).
+// An unset --dir returns ("", nil) — not a directory scan. Every rejection is a
+// usageError (exit 2) surfaced before any payload work begins (AC 02-01):
+//   - empty value → "--dir must not be empty"
+//   - resolves outside root (../ escape, an absolute path outside, OR a symlink
+//     whose real target escapes) → "resolves outside the repository root"
+//   - does-not-exist / not-a-directory → distinct messages via a single os.Stat
+//
+// root is the repository root the CLI runs against (".", resolved to CWD).
+//
+// SECURITY (AC 02-01, Story 2 Risk Analysis — path traversal/symlink escape): the
+// containment guard resolves symlinks on BOTH the root and the candidate before
+// comparing (filepath.EvalSymlinks), then filepath.Rel — os.Stat follows symlinks,
+// so a purely lexical guard would accept a symlink inside root whose real target
+// escapes (e.g. repo/link -> /etc). Resolving both operands also fixes the macOS
+// false-rejection where root is reached through a symlink (/var -> /private/var)
+// but an absolute --dir is supplied in resolved form. This genuinely mirrors
+// --output-dir's defense: the same symlink-resolution discipline as resolveRedactRoot
+// plus a validation.FilePath system-directory denylist (as outputDirFromFlags runs).
+// A non-existent candidate cannot be symlink-resolved, so the guard falls back to a
+// lexical Rel for that case (which still catches a ../ escape) before os.Stat
+// reports "does not exist".
+func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
+	if !cmd.Flags().Changed("dir") {
+		return "", nil
+	}
+	raw, _ := cmd.Flags().GetString("dir")
+	if strings.TrimSpace(raw) == "" {
+		return "", usageError(errors.New("--dir must not be empty"))
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", usageError(fmt.Errorf("resolving repository root for --dir: %w", err))
+	}
+	cand := raw
+	if !filepath.IsAbs(cand) {
+		cand = filepath.Join(absRoot, cand)
+	}
+	cand = filepath.Clean(cand)
+
+	// Containment: resolve symlinks on both operands (matching resolveRedactRoot's
+	// discipline) so a symlink escape is caught and a symlinked root does not
+	// falsely reject an in-root absolute path. Fall back to a lexical Rel when the
+	// candidate does not resolve (does not exist yet) — that still catches a ../
+	// escape, and os.Stat below surfaces the does-not-exist case with its own message.
+	realRoot := absRoot
+	if rr, rerr := filepath.EvalSymlinks(absRoot); rerr == nil {
+		realRoot = rr
+	}
+	relBase, relTarget := realRoot, cand
+	if rc, rcerr := filepath.EvalSymlinks(cand); rcerr == nil {
+		relTarget = rc
+	} else {
+		relBase = absRoot // candidate unresolved → compare lexically against the unresolved root
+	}
+	rel, err := filepath.Rel(relBase, relTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", usageError(fmt.Errorf("--dir path %q resolves outside the repository root", raw))
+	}
+
+	fi, err := os.Stat(cand)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", usageError(fmt.Errorf("--dir path %q does not exist", raw))
+		}
+		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+	}
+	if !fi.IsDir() {
+		return "", usageError(fmt.Errorf("--dir path %q is not a directory", raw))
+	}
+
+	// Defense-in-depth system-directory denylist, mirroring outputDirFromFlags'
+	// validation.FilePath(abs) guard. relTarget is the symlink-resolved candidate
+	// (guaranteed to exist and to be inside realRoot by the containment check above),
+	// so this only ever trips for a repo pathologically rooted under a system dir.
+	if err := validation.FilePath(relTarget); err != nil {
+		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+	}
+
+	// Canonical scope: repo-root-relative, slash-normalized. At this point the
+	// candidate exists and is a directory, so rel came from the resolved branch and
+	// equals the logical subtree path git ls-files emits (symlinks affect only the
+	// shared prefix). "." for the whole-repo degenerate case.
+	return filepath.ToSlash(rel), nil
+}
+
+// validateRangeFlags checks the declared relationships between --base, --head, and
+// --merge-commit, and owns the shared baseline mutual-exclusion (Sprint 35.0): a
+// review has exactly one scoping mode — a diff range, a full-repo --all scan, or a
+// scoped --dir scan. The baseline checks run FIRST, before the range-relationship
+// checks, so when --all/--dir is present the accurate baseline message wins over
+// the range validator's "--head requires --base" attribution (TD-001) — this is
+// the shared exclusion check AC 02-03 specifies, replacing the separate
+// validateBaselineFlags. Keying on Changed() (not GetBool/GetString) means an
+// explicit --all=false still counts as supplied, the presence idiom Story 1
+// mandates. Changed() on a flag a host command never registered (e.g. --all/--dir
+// on `reconcile`, which shares addRangeFlags) safely returns false, so the baseline
+// checks are inert there.
 func validateRangeFlags(cmd *cobra.Command) error {
 	base := cmd.Flags().Changed("base")
 	head := cmd.Flags().Changed("head")
 	mergeCommit := cmd.Flags().Changed("merge-commit")
+	all := cmd.Flags().Changed("all")
+	dir := cmd.Flags().Changed("dir")
+
+	// Baseline exclusions first (TD-001: accurate message wins over range checks).
+	if dir && (base || head || mergeCommit || all) {
+		return usageError(errors.New("--dir cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range"))
+	}
+	if all && (base || head || mergeCommit) {
+		return usageError(errors.New("--all cannot be combined with --base/--head/--merge-commit: a full-repository scan has no diff range"))
+	}
 
 	if head && !base {
 		return usageError(errors.New("--head requires --base"))

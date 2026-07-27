@@ -38,6 +38,15 @@ var ErrPayloadFullyDropped = errors.New("payload fully dropped by byte budget: e
 // pool.
 var ErrNoReviewableContent = errors.New("no reviewable content in range")
 
+// ErrAllFilesUnchanged reports a baseline (--all/--dir) re-scan whose every
+// in-scope candidate was skipped by the incremental file-hash index — nothing
+// changed since the last completed review (TD-010). It is distinct from
+// ErrNoReviewableContent (a genuinely empty repository/scope): the CLI maps it
+// to a successful exit 0 with a "nothing to review" notice instead of the
+// exit-2 usage error, so the common CI re-run path does not fail as if the
+// repo were empty.
+var ErrAllFilesUnchanged = errors.New("no files changed since last review")
+
 // ReviewConfig bundles the loaded configuration a review needs. Built by
 // LoadReviewConfig so both the CLI and the MCP server discover config the same way.
 type ReviewConfig struct {
@@ -100,6 +109,15 @@ type ReviewRequest struct {
 	// can be reviewed on demand. Defaulting false keeps filtering active for
 	// callers that do not opt out (e.g. the MCP handler).
 	NoIgnore bool
+	// Dir, when non-empty, scopes a baseline (--dir <path>) scan to a subtree: only
+	// git-tracked files whose repo-root-relative path is Dir or nested under it (as a
+	// full path-segment prefix) enter the payload (Sprint 35.0, Story 2). It is a
+	// slash-normalized, repo-root-relative, validated scope (or "." for the whole
+	// repo). Empty means an unscoped whole-repository scan (--all) or a diff review.
+	// The scope filter lives in internal/payload/fullrepo.go; this field only carries
+	// the validated value there. Defaulting empty preserves the whole-repo/diff
+	// behavior for callers that do not set it (e.g. the MCP handler).
+	Dir string
 	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
@@ -117,6 +135,14 @@ type ReviewRequest struct {
 	// record omits the PR but is still written. The engine does not use it for
 	// review logic — it is pure provenance threaded through to the audit hook.
 	PRNumber int
+	// Fresh bypasses the incremental file-hash skip for a baseline (--all/--dir)
+	// scan (the --fresh flag, Sprint 35.0 Story 5): every in-scope tracked file is
+	// reviewed regardless of a matching recorded hash. Only --fresh drives this; the
+	// separate --force flag keeps its overwrite-existing-review meaning and is never a
+	// skip-bypass alias (AC 05-03 EC1). It has no effect on a diff-range review (the
+	// index is neither read nor written there). Defaulting false keeps incremental
+	// skipping active for callers that do not opt out.
+	Fresh bool
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -207,6 +233,66 @@ type PreparedReview struct {
 	// write).
 	cache       reviewCache
 	cacheNoRead bool
+	// baseline carries the incremental file-hash write-back state for a completed
+	// --all/--dir run (Sprint 35.0 Story 4/5), captured at prepare time. nil for
+	// diff-range reviews, which never touch the index. See CommitBaselineIndex.
+	baseline *baselineWriteback
+}
+
+// baselineWriteback is the write-back state captured while a baseline payload is
+// prepared, so the post-run index write records EXACTLY the files that were reviewed
+// — using their review-time hashes (no second walk, no TOCTOU) and excluding the
+// byte-budget-shed files that never reached an agent — and self-trims deleted paths
+// without wiping out-of-scope entries.
+type baselineWriteback struct {
+	indexPath string
+	preIndex  *payload.FileHashIndex // pre-run index; unchanged/skipped files keep their prior entry
+	reviewed  map[string]string      // path -> review-time sha256 of files ACTUALLY in the payload
+	tracked   []string               // full in-scope tracked set, for self-trim on a whole-repo run
+	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
+}
+
+// CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
+// baseline review, stamping every reviewed file with runID (Sprint 35.0 Story 4/5,
+// AC 04-01). No-op for a diff-range review (p.baseline == nil). It records only the
+// files that were actually reviewed (never the byte-budget-shed ones, which would
+// otherwise be skipped-though-unreviewed on the next run), leaves unchanged/skipped
+// files' prior entries intact, and self-trims paths no longer tracked — but ONLY on a
+// whole-repo (--all) run: a scoped (--dir) run does not trim, so it never destroys
+// out-of-scope entries recorded by a prior --all run. Returns any write error for the
+// caller to log; an index-write failure must never fail an otherwise-successful
+// review (AC 04-01 Error Scenario 1).
+func (p *PreparedReview) CommitBaselineIndex(runID string) error {
+	if p == nil || p.baseline == nil {
+		return nil
+	}
+	b := p.baseline
+	for path, hash := range b.reviewed {
+		b.preIndex.Record(path, hash, runID)
+	}
+	// The whole-repo test normalizes through payload.NormalizeScope — the SAME
+	// helper filterByScope/TrackedInScope use — so a non-CLI caller's raw scope
+	// ("./", a trailing slash, backslashes) is interpreted identically here:
+	// without it, an effectively-whole-repo scan would skip the self-trim and
+	// accumulate stale deleted-file entries.
+	if ns := payload.NormalizeScope(b.scope); ns == "" || ns == "." {
+		// A nil tracked set means the TrackedInScope keep-set walk hit a transient
+		// git failure (it degrades to nil). Pass nil through to Trim so its
+		// nil-keep contract — "keep everything; a git hiccup must not wipe the
+		// index" — holds. Building an empty-but-non-nil keep map here would read
+		// as "nothing tracked, trim all" and delete every entry, including the
+		// files just Record()'d above. A non-nil-but-empty tracked set (the walk
+		// succeeded; nothing is tracked in scope) still trims everything.
+		var keep map[string]struct{}
+		if b.tracked != nil {
+			keep = make(map[string]struct{}, len(b.tracked))
+			for _, tp := range b.tracked {
+				keep[tp] = struct{}{}
+			}
+		}
+		b.preIndex.Trim(keep)
+	}
+	return b.preIndex.Save(b.indexPath)
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -276,7 +362,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false)
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
@@ -287,7 +373,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
 // configured mode for the git path, "diff" for the ingestion path); the range
 // provenance comes from req.Range, which the ingestion caller leaves empty.
-func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder) (*PreparedReview, error) {
+func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder, baseline bool) (*PreparedReview, error) {
 	// Derive the id unconditionally: for --output-dir the id is provenance-only
 	// (written to the manifest and PreparedReview.ID but not used for the path),
 	// while for --id and the default derived case the id IS the path component.
@@ -377,6 +463,8 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		DefaultBranch:   req.Range.DefaultBranch,
 		CommitCount:     req.Range.CommitCount,
 		PayloadMode:     payloadMode,
+		Baseline:        baseline, // full-repo/dir scan; resume keys on this to skip range validation
+		Dir:             req.Dir,  // --dir subtree scope; resume rebuilds the same scoped payload (Sprint 35.0)
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
@@ -425,7 +513,10 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 // recorded in summary.json so a git-failure or diff-ingestion skip is auditable.
 func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.RangeBuilder) (payload.ChangedLines, string) {
 	if req.Range.Base == "" || req.Range.Head == "" {
-		return nil, "range-less request (diff ingestion): grounding not applicable"
+		// Both the diff-ingestion path and the --all/--dir baseline scan are range-less;
+		// name both so a baseline review's summary.json provenance is not mislabeled
+		// "diff ingestion" (Sprint 35.0 phase-2 gate LOW).
+		return nil, "range-less request (diff ingestion or baseline scan): grounding not applicable"
 	}
 	// Guard the invariant that rb was constructed from the same req.Range it is
 	// grounding. When rb != nil the changed lines come from rb's OWN base/head
@@ -489,6 +580,189 @@ func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.Ra
 // req.Range is provenance-only here and may be left zero (a range-less diff has no
 // base/head); req.OutputDir/IDOverride/Force are honored identically to
 // PrepareReview, so callers (e.g. a benchmark run) can redirect output.
+// PrepareReviewFromRepo is the baseline (--all / --dir) counterpart of
+// PrepareReviewFromDiff (Sprint 35.0): it builds the payload from every
+// ignore-filtered git-tracked file under req.Repo instead of from a git range or a
+// diff, then scaffolds the review on the exact same finalizePreparedReview path.
+// req.Range is left zero-valued (a baseline scan has no diff range), so grounding
+// disables via computeGroundingData's range-less early return.
+//
+// Phase 2 scope (Sprint 35.0 TD-004, user-confirmed): the whole repository is
+// reviewed as a SINGLE files-mode payload per persona through the UNMODIFIED
+// buildSlots (AC 01-04 DoD), exactly mirroring PrepareReviewFromDiff. The
+// per-(persona×chunk) multi-chunk fan-out (PartitionByBudget's consumer, the
+// buildSlots baseline branch) lands in Phase 5; ApplyByteBudget here sheds to fit
+// the window the same way every other prepare path does.
+func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
+	if err := validateReviewRequest(cfg, req); err != nil {
+		return nil, err
+	}
+	// Load the incremental file-hash skip index (Sprint 35.0 Story 4/5) and pass it,
+	// with the --fresh bypass, into the candidate build. Load never errors/returns nil
+	// (a missing/corrupt index degrades to a full scan), so a first-ever run behaves
+	// as before.
+	idx := payload.Load(payload.FileHashIndexPath(req.Repo), log.FromContext(ctx))
+	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore, req.Dir, idx, req.Fresh)
+	if err != nil {
+		return nil, err
+	}
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+	if scopeWarn != "" {
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+	}
+	filesMode := string(payload.ModeFiles)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true, true)
+	if err != nil {
+		return nil, err
+	}
+	// No git range → no RangeBuilder: computeGroundingData's range-less early return
+	// disables grounding (not applicable to a baseline scan).
+	prep, err := finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	// Capture the incremental-rescan write-back state (Sprint 35.0 Story 4/5): the
+	// files ACTUALLY in the payload (post byte-budget) with their review-time hashes,
+	// plus the full in-scope tracked set for self-trim. idx was only READ by the skip
+	// filter, so it still holds the pre-run state — reused as the base the write-back
+	// records onto, preserving unchanged/skipped files' prior entries.
+	mp := payloads[filesMode]
+	// The reviewed set for the write-back is EXACTLY the files the baseline fan-out
+	// reviewed. The Phase 5 baseline branch in buildSlots partitions mp.Entries into
+	// (persona × chunk) slots via PartitionByBudget, which drops NOTHING — every file
+	// reaches a chunk (an oversized file becomes its own chunk), so every agent reviews
+	// every file. The single-chunk and over-window fall-throughs to the bulk path also
+	// keep the whole payload rather than shedding. So the reviewed set is the full
+	// in-scope tracked payload: record every entry with its review-time hash.
+	//
+	// This SUPERSEDES the Phase 4 per-agent-shed bound (task 4.23): that bound recorded
+	// only the files fitting the smallest per-agent budget because baseline then reused
+	// the single-payload BULK path, which sheds mp.Entries per model window (Epic 19.10
+	// F2). Under Phase 5's partition-based fan-out no file is ever shed per agent, so
+	// bounding the recorded set to a per-agent budget UNDER-records every file the
+	// multi-chunk scan reviewed beyond one chunk's worth — silently defeating the Story
+	// 4/5 incremental skip on exactly the multi-chunk repos it targets. Recording the
+	// full reviewed set is both correct and fail-open. [5.2.A HIGH]
+	//
+	// EXCEPTION — files the GLOBAL byte budget dropped from mp.Text: on the over-window
+	// bulk fall-through (a per-agent chunk budget <= 0, e.g. a large --sprint-plan scope
+	// reservation), the agent reviews mp.Text (the global-budget-KEPT subset), not the
+	// full entry set, so recording a globally-dropped file would skip-it-though-unreviewed
+	// next run. The multi-chunk partition path DOES review the full set, so excluding the
+	// dropped files there only causes a (rare, global-budget-set) re-review next run —
+	// fail-open, never a silent skip. With the default PayloadByteBudget=0 nothing is
+	// dropped, so this records the full set unchanged. [5.14 gate MEDIUM]
+	prep.baseline = captureBaselineWriteback(ctx, req.Repo, req.Dir, idx, mp)
+	return prep, nil
+}
+
+// captureBaselineWriteback builds the incremental-rescan write-back state for a
+// baseline (--all/--dir) review from the assembled files-mode payload: every
+// entry the global byte budget KEPT is recorded with its review-time hash
+// (globally-dropped files are excluded so they can never be
+// skipped-though-unreviewed on the next run — the EXCEPTION case above), plus
+// the full in-scope tracked set for the whole-repo self-trim. idx supplies the
+// pre-run index state the write-back records onto (the fresh path's loaded
+// index, which the skip filter only READ; the resume path loads the on-disk
+// state fresh). Shared by PrepareReviewFromRepo and PrepareResume so the fresh
+// and resumed baseline runs record identical state (TD-011).
+func captureBaselineWriteback(ctx context.Context, repo, scope string, idx *payload.FileHashIndex, mp modePayload) *baselineWriteback {
+	shed := make(map[string]struct{}, len(mp.Truncation.FilesDropped))
+	for _, dp := range mp.Truncation.FilesDropped {
+		shed[dp] = struct{}{}
+	}
+	reviewed := make(map[string]string, len(mp.Entries))
+	for _, e := range mp.Entries {
+		if _, dropped := shed[e.Path]; dropped {
+			continue
+		}
+		reviewed[e.Path] = cache.HashText(e.Body)
+	}
+	return &baselineWriteback{
+		indexPath: payload.FileHashIndexPath(repo),
+		preIndex:  idx,
+		reviewed:  reviewed,
+		tracked:   payload.TrackedInScope(ctx, repo, scope),
+		scope:     scope,
+	}
+}
+
+// buildRepoPayloads assembles the single files-mode whole-repo payload for a
+// baseline (--all / --dir) review. It is shared by PrepareReviewFromRepo (fresh)
+// and PrepareResume (baseline resume) so a resumed baseline agent sees exactly the
+// payload the completed agents saw — the resume "pending agents review what
+// completed agents reviewed" invariant, applied to the tracked-repository scan
+// instead of a git-range diff. scope is the --dir subtree ("" = whole repo); the
+// fresh path passes req.Dir and resume passes the manifest's persisted Dir so both
+// build the identical scoped candidate set. Returns a map keyed to the "files" mode.
+//
+// Errors mirror the diff/range prepare paths: a non-repo / read failure propagates
+// verbatim (AC 01-04 ES2); zero reviewable files is ErrNoReviewableContent (Edge
+// Case 3) before any scaffolding; an all-dropped byte budget is ErrPayloadFullyDropped.
+func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string, idx *payload.FileHashIndex, fresh bool) (map[string]modePayload, error) {
+	// idx + fresh drive the incremental hash-skip (Sprint 35.0 Story 4/5): unchanged
+	// files are dropped pre-chunking unless fresh forces a full re-scan or idx is nil.
+	// The fresh --all/--dir path passes the loaded index (hash-skip active); the
+	// baseline resume path deliberately passes nil (resume.go) to bypass the
+	// hash-skip and rebuild the FULL superset of candidates — fail-open, so a
+	// resumed run re-reviews everything rather than trusting a stale index.
+	entries, stats, err := payload.BuildRepoEntriesWithStats(ctx, repo, log.FromContext(ctx), noIgnore, scope, idx, fresh)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		// Classify WHY the candidate set is empty (TD-008/TD-010) instead of the
+		// one-size-fits-all "no reviewable tracked files":
+		//   - HashSkipped > 0: the repo has tracked files and every candidate was
+		//     skipped by the incremental hash index — nothing changed since the
+		//     last completed review. This is the common CI re-run path: a
+		//     successful no-op (the CLI maps ErrAllFilesUnchanged to exit 0 with a
+		//     notice), NOT a usage error.
+		//   - IgnoreFiltered > 0: candidates existed but .gitignore/.atcrignore
+		//     dropped them all — recoverable, so hint at --no-ignore, mirroring
+		//     the diff/range path's rb.AllIgnored() diagnostic.
+		//   - otherwise: a genuinely empty repository/scope (or every file
+		//     over-cap) — the original generic error.
+		switch {
+		case stats.HashSkipped > 0:
+			return nil, fmt.Errorf("%w: %d file(s) unchanged since last review", ErrAllFilesUnchanged, stats.HashSkipped)
+		case stats.IgnoreFiltered > 0:
+			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope were excluded by .gitignore/.atcrignore; re-run with --no-ignore to review them", ErrNoReviewableContent, stats.IgnoreFiltered)
+		default:
+			return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
+		}
+	}
+	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+	if trunc.AllDropped {
+		return nil, fmt.Errorf("%w (mode files, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
+	}
+	if trunc.Truncated {
+		// TD-012: do NOT claim "reviewing a subset of the repository" — the
+		// baseline fan-out chunks the full pre-budget Entries via
+		// PartitionByBudget, which drops nothing, so every enumerated file is
+		// still reviewed across per-model chunks; the global budget only bounds
+		// the concatenated payload text / per-chunk sizing. (The sole exception
+		// is the over-window bulk fall-through, where an agent reviews the kept
+		// subset — see the write-back EXCEPTION note in PrepareReviewFromRepo.)
+		log.FromContext(ctx).Warn("full-repo scan: byte budget truncated the concatenated payload text; every enumerated file is still reviewed across per-model chunks",
+			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
+	}
+	var totalLen int
+	for _, e := range kept {
+		totalLen += len(e.Body)
+	}
+	var b strings.Builder
+	b.Grow(totalLen) // preallocate: a whole-repo payload can be large (parity with PrepareReviewFromDiff)
+	for _, e := range kept {
+		b.WriteString(e.Body)
+	}
+	// Entries keeps the raw pre-budget files so buildSlots re-sheds them per agent
+	// against each model's window (Epic 19.10 F2), identical to buildPayloads.
+	return map[string]modePayload{
+		string(payload.ModeFiles): {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+	}, nil
+}
+
 func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
@@ -553,7 +827,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	// Diff-ingestion has no git range, so no RangeBuilder: computeGroundingData's
 	// range-less early return handles it (grounding not applicable).
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil, false)
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
@@ -629,6 +903,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 				}))
 			}
 		}
+	} else if anyToolAgent(p.Slots) {
+		// A range-less review (baseline --all/--dir, diff ingestion) has no head
+		// to snapshot, so the tool harness stays unwired and tool-enabled personas
+		// silently degrade to single-shot. Surface that degradation — it was
+		// previously invisible in the log stream (Sprint 35.0 TD-006).
+		log.FromContext(ctx).Warn("tool harness unwired (no range head); tool agents degrade to single-shot")
 	}
 
 	// Reviewer runs get truncation failover (Epic 19.5): a truncated, zero-finding
@@ -911,7 +1191,33 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 	return block[:cut] + block[planEnd:]
 }
 
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
+// capChunks bounds a baseline chunk set to at most max chunks by coalescing the
+// tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
+// chunkDiff applies to diff chunking (chunker.go:130). It never drops a file: the
+// coalesced final chunk may exceed a single model window, but the alternative — an
+// unbounded slot/goroutine/provider-call count for a huge repository — is the exact
+// cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set already
+// within the cap is returned unchanged.
+func capChunks(chunks [][]payload.FileEntry, max int) [][]payload.FileEntry {
+	if max <= 0 || len(chunks) <= max {
+		return chunks
+	}
+	capped := make([][]payload.FileEntry, 0, max)
+	capped = append(capped, chunks[:max-1]...)
+	var tail []payload.FileEntry
+	for _, c := range chunks[max-1:] {
+		tail = append(tail, c...)
+	}
+	capped = append(capped, tail)
+	return capped
+}
+
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
+	// baseline enables the (--all / --dir) multi-chunk fan-out branch inside add
+	// (Sprint 35.0 Phase 5, Decision 2). Variadic-optional so the diff/range callers
+	// and the existing test call sites stay unchanged — the same idiom
+	// mergeChunkResults uses for its optional serialAgents map.
+	baseline := len(baselineOpt) > 0 && baselineOpt[0]
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -980,6 +1286,140 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				planCap = mspb
 			}
 			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+		}
+
+		// DESIGN NOTE (Sprint 35.0, Phase 1 Decision 2 — pinned so Phase 5 task 5.2
+		// does not re-litigate it). The baseline (--all / --dir) fan-out gains a NEW
+		// branch here, a SIBLING to the reviewStrategyChunked branch below — NOT a
+		// modification of it. chunkDiff/diff-marker parsing stays completely
+		// untouched: baseline chunks are []FileEntry groups from
+		// internal/payload/fullrepo.go's PartitionByBudget (task 2.8) and never pass
+		// through chunkDiff (verified 2026-07-24: chunkDiff splits on `diff --git`
+		// markers only, which raw file contents lack). Resolves AC 06-01
+		// (06-01-chunk-persona-fanout-completeness.md) and AC 06-02
+		// (06-02-per-persona-source-merge-collapse.md) without contradiction:
+		//
+		//   Slot construction (AC 06-01 HP1, Story-Specific DoD): one Slot per
+		//     (persona × chunk) pair — for a C-chunk repo and this persona, add C
+		//     slots. So a 3-chunk / 2-persona baseline scan yields exactly 6 slots
+		//     (C × P), never C + P. Each chunk-slot's Primary is renderAgent'd over
+		//     that chunk's payload text, structurally mirroring the reviewStrategy-
+		//     Chunked loop's `for _, ct := range chunks { ... slots = append(...) }`.
+		//
+		//   Unchanged persona name (AC 06-01 DoD, AC 06-02 HP1): every chunk-slot
+		//     keeps this persona's plain configured `name` (Primary.Name), so
+		//     mergeChunkResults' group-by-Agent collapse and the 14.2 consensus
+		//     filter's per-persona counting see the persona as ONE voice with N
+		//     chunk-results, not N distinct voices. The collapse key must never
+		//     drift from the plain name (Phase 5 task 5.3's top risk).
+		//
+		//   Per-chunk fallback chain (AC 06-01 EC1): each of this persona's chunk-
+		//     slots resolves its fallback chain independently via buildChain(name,
+		//     primary) (review.go:934) so a fallback reviews the SAME chunk as the
+		//     primary it substitutes for — never a different chunk. buildChain is
+		//     reused verbatim; it already attaches identical chains for the bulk and
+		//     chunked paths.
+		//
+		//   Serial-lane duration (AC 06-01 EC2): the serialAgents map (review.go:
+		//     650-655) is keyed by this persona's unchanged plain name, so a serial-
+		//     lane persona's N chunk-results merge to a duration equal to the SUM of
+		//     the N per-chunk durations (not the max) via mergeResultGroup's existing
+		//     serial semantics — no baseline-specific duration logic.
+		//
+		//   Fail-fast on unknown agent (AC 06-01 ES1): the baseline branch runs
+		//     inside this same `add` closure, so an agent name absent from
+		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
+		//     with `agent "<name>" not found in registry`, matching diff-mode.
+		//
+		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:99 cap (64) carries
+		//     over unmodified — PartitionByBudget's chunk count is deterministically
+		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
+		//     persona is capped consistently rather than spawning unbounded slots.
+		//     The resulting total slot count is logged pre-dispatch for cost
+		//     visibility (AC 06-01 Performance / Throughput).
+		//
+		//   Collapse reuse — ZERO modification (AC 06-02 HP1/HP2, EC1-EC4, ES1):
+		//     baseline (persona × chunk) Result values flow through the SAME
+		//     unconditional `results = mergeChunkResults(results, serialAgents)` call
+		//     (review.go:656) that diff-mode already runs — no new call site.
+		//     mergeChunkResults / mergeResultGroup (chunker.go:154 / :196) and
+		//     writePool (artifacts.go:106) need NO changes for baseline provenance:
+		//     same-name results collapse to exactly personaCount source dirs (not
+		//     C × P), findings union across chunks, any-chunk-succeeded => Status OK,
+		//     FallbackUsed/FallbackModel union+modal, token/telemetry accumulate, and
+		//     writePool's duplicate-agent-directory guard is never tripped BECAUSE
+		//     collapse already ran (AC 06-02 ES1 is a regression assertion, not new
+		//     code). Single-chunk baseline scans (AC 06-01 HP2) fall through to the
+		//     bulk one-slot-per-persona path exactly like a single-chunk diff.
+		//
+		// Phase 5 task 5.2 implements this branch against AC 06-01's RED tests (5.1).
+		if baseline {
+			// Partition THIS persona's whole-repo file entries into byte-budget-bounded
+			// chunks sized to its own model window (Epic 19.10 F2 per-agent sizing),
+			// building one Slot per (persona × chunk) under the persona's UNCHANGED plain
+			// name so mergeChunkResults collapses the chunk-results into one source. The
+			// per-agent chunk budget is derived identically to the bulk path below:
+			// EffectiveByteBudget capped by the global PayloadByteBudget, less the SCOPE
+			// CONSTRAINT reservation.
+			chunkBudget := agentEff
+			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
+				chunkBudget = global
+			}
+			if s := int64(len(agentScopeConstraint)); s > 0 {
+				chunkBudget -= s
+			}
+			// A non-positive per-agent budget (over-window model, or the scope reservation
+			// consumed the whole window) cannot drive PartitionByBudget's machine-budget
+			// contract — fall through to the bulk path, which keeps the whole payload and
+			// records the honest overflow degradation rather than erroring.
+			if chunkBudget > 0 && len(mp.Entries) > 0 {
+				chunks, err := payload.PartitionByBudget(mp.Entries, chunkBudget)
+				if err != nil {
+					return err
+				}
+				// Bound the slot count at maxChunksPerAgent (chunker.go:99) the same way
+				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
+				// spawns an unbounded slot/goroutine/provider-call count while every file is
+				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
+				chunks = capChunks(chunks, maxChunksPerAgent)
+				if len(chunks) > 1 {
+					// Per-agent sizing record (Epic 19.10 F6/F8): every chunk-Slot of this
+					// persona carries the same window/budget and the persona's full chunk count,
+					// mirroring the chunked path. action "chunk" is the default no-loss
+					// degradation. A pre-dispatch cost-visibility line (AC 06-01 Performance)
+					// is emitted once per persona under warnOversized.
+					if warnOversized {
+						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
+					}
+					chunkSizing := agentSizing{
+						effectiveBudget: payload.EffectiveByteBudget(ac.Model, defaultMaxTokens),
+						resolvedWindow:  payload.ContextWindowTokens(ac.Model),
+						chunkTotal:      len(chunks),
+						action:          "chunk",
+					}
+					for _, ck := range chunks {
+						var pb strings.Builder
+						for _, e := range ck {
+							pb.WriteString(e.Body)
+						}
+						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
+						// event decided upstream, not a per-chunk property (mirrors the chunked path).
+						primary, rerr := renderAgent(cfg, name, ac, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+						if rerr != nil {
+							return rerr
+						}
+						fbs, cerr := buildChain(name, primary)
+						if cerr != nil {
+							return cerr
+						}
+						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+					}
+					return nil
+				}
+				// len(chunks) <= 1 → single-chunk baseline scan: fall through to the bulk
+				// one-slot-per-persona path (AC 06-01 HP2), sizing the whole payload to this
+				// model's window exactly as a single-chunk diff does.
+			}
 		}
 
 		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
