@@ -1077,6 +1077,12 @@ type modePayload struct {
 	Truncation payload.Truncation
 }
 
+// escalationOverrides copies the registry's optional payload_escalation block
+// into payload's mirror type. STUB — not yet wired.
+func escalationOverrides(pe registry.PayloadEscalationConfig) payload.EscalationOverrides {
+	return payload.EscalationOverrides{}
+}
+
 // buildPayloads builds each distinct payload mode the roster uses exactly once.
 // It returns the shared payload.RangeBuilder so the caller can compute grounding
 // data (computeGroundingData) on the same gitRunner, reusing the memoized

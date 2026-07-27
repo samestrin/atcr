@@ -90,6 +90,11 @@ func TestPerFileModes_BudgetDroppedFilesAreNotRecorded(t *testing.T) {
 // registry.PayloadEscalationConfig to payload.EscalationOverrides field for
 // field.
 //
+// It is a SHAPE guard only — it compares the two types by reflection and never
+// executes the copy between them. TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget
+// below is the primary guard on the copy itself; this one supplements it by
+// catching a field added to one struct and not the other.
+//
 // The two types are duplicated on purpose: registry imports nothing under
 // internal/, so it cannot reference payload's type, and payload must not import
 // registry (see internal/payload/sprintplan.go) — the same boundary that keeps
@@ -115,6 +120,99 @@ func TestPayloadEscalationMirrorsPayloadOverrides(t *testing.T) {
 		require.Truef(t, ok, "payload.EscalationOverrides is missing field %s", rf.Name)
 		require.Equalf(t, pf.Type, rf.Type, "field %s type drifted between the two structs", rf.Name)
 	}
+}
+
+func ptrFloat64(f float64) *float64 { return &f }
+
+// TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget exercises the hand
+// copy between registry.PayloadEscalationConfig and payload.EscalationOverrides,
+// which TestPayloadEscalationMirrorsPayloadOverrides cannot see: that test
+// compares the two SHAPES by reflection, so an omitted assignment or a crossed
+// one (MinHunks: pe.MinCyclomatic) leaves it green while every operator-set
+// threshold lands on the wrong knob or is dropped.
+//
+// Each case sets exactly ONE registry field, to a value distinct from every
+// default AND from every other case's value, then asserts that value reaches the
+// matching resolved field and leaves the other five at their defaults. A crossed
+// wire fails the target field's assertion; an omitted one fails because the
+// target stayed at its default. The coverage check below fails when a field is
+// added to the struct without a case here, closing the "seventh field" gap the
+// reflection test also misses.
+func TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget(t *testing.T) {
+	def := payload.DefaultEscalationConfig()
+
+	// want starts from the defaults and mutates only the field under test.
+	with := func(mutate func(*payload.EscalationConfig)) payload.EscalationConfig {
+		c := def
+		mutate(&c)
+		return c
+	}
+
+	cases := []struct {
+		field string
+		in    registry.PayloadEscalationConfig
+		want  payload.EscalationConfig
+	}{
+		{
+			field: "ChurnRatio",
+			in:    registry.PayloadEscalationConfig{ChurnRatio: ptrFloat64(0.25)},
+			want:  with(func(c *payload.EscalationConfig) { c.ChurnRatio = 0.25 }),
+		},
+		{
+			field: "MinHunks",
+			in:    registry.PayloadEscalationConfig{MinHunks: ptrInt(7)},
+			want:  with(func(c *payload.EscalationConfig) { c.MinHunks = 7 }),
+		},
+		{
+			field: "HunkGapLines",
+			in:    registry.PayloadEscalationConfig{HunkGapLines: ptrInt(3)},
+			want:  with(func(c *payload.EscalationConfig) { c.HunkGapLines = 3 }),
+		},
+		{
+			field: "MinCyclomatic",
+			in:    registry.PayloadEscalationConfig{MinCyclomatic: ptrInt(21)},
+			want:  with(func(c *payload.EscalationConfig) { c.MinCyclomatic = 21 }),
+		},
+		{
+			field: "MaxFiles",
+			in:    registry.PayloadEscalationConfig{MaxFiles: ptrInt(9)},
+			want:  with(func(c *payload.EscalationConfig) { c.MaxFiles = 9 }),
+		},
+		{
+			field: "MaxSkeletonLines",
+			in:    registry.PayloadEscalationConfig{MaxSkeletonLines: ptrInt(33)},
+			want:  with(func(c *payload.EscalationConfig) { c.MaxSkeletonLines = 33 }),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			got := payload.ResolveEscalationConfig(escalationOverrides(tc.in))
+			require.Equal(t, tc.want, got,
+				"registry field %s did not land on the resolved field of the same name", tc.field)
+		})
+	}
+
+	// A field added to the registry struct without a case above would otherwise
+	// slip through with its copy line missing.
+	covered := map[string]bool{}
+	for _, tc := range cases {
+		covered[tc.field] = true
+	}
+	reg := reflect.TypeOf(registry.PayloadEscalationConfig{})
+	require.Equal(t, reg.NumField(), len(covered),
+		"every registry.PayloadEscalationConfig field needs its own case")
+	for i := 0; i < reg.NumField(); i++ {
+		require.Truef(t, covered[reg.Field(i).Name],
+			"field %s has no case — add one so its copy line is exercised", reg.Field(i).Name)
+	}
+}
+
+// A zero registry block must resolve to the built-in defaults: the copy passes
+// six nils through and ResolveEscalationConfig fills each one in.
+func TestEscalationOverrides_EmptyBlockResolvesToDefaults(t *testing.T) {
+	require.Equal(t, payload.DefaultEscalationConfig(),
+		payload.ResolveEscalationConfig(escalationOverrides(registry.PayloadEscalationConfig{})))
 }
 
 // escalationRepo builds a repo whose base..head range changes n Go files, so a
