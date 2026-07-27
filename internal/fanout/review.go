@@ -488,6 +488,67 @@ func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.Ra
 // req.Range is provenance-only here and may be left zero (a range-less diff has no
 // base/head); req.OutputDir/IDOverride/Force are honored identically to
 // PrepareReview, so callers (e.g. a benchmark run) can redirect output.
+// PrepareReviewFromRepo is the baseline (--all / --dir) counterpart of
+// PrepareReviewFromDiff (Sprint 35.0): it builds the payload from every
+// ignore-filtered git-tracked file under req.Repo instead of from a git range or a
+// diff, then scaffolds the review on the exact same finalizePreparedReview path.
+// req.Range is left zero-valued (a baseline scan has no diff range), so grounding
+// disables via computeGroundingData's range-less early return.
+//
+// Phase 2 scope (Sprint 35.0 TD-004, user-confirmed): the whole repository is
+// reviewed as a SINGLE files-mode payload per persona through the UNMODIFIED
+// buildSlots (AC 01-04 DoD), exactly mirroring PrepareReviewFromDiff. The
+// per-(persona×chunk) multi-chunk fan-out (partitionByBudget's consumer, the
+// buildSlots baseline branch) lands in Phase 5; ApplyByteBudget here sheds to fit
+// the window the same way every other prepare path does.
+func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
+	if err := validateReviewRequest(cfg, req); err != nil {
+		return nil, err
+	}
+	entries, err := payload.BuildRepoEntries(ctx, req.Repo, log.FromContext(ctx))
+	if err != nil {
+		return nil, err // non-repo / read failure propagates (AC 01-04 ES2)
+	}
+	// Zero reviewable tracked files must refuse before scaffolding, mirroring
+	// PrepareReview/PrepareReviewFromDiff so a no-op run never creates a directory
+	// or repoints .atcr/latest (AC 01-04 Edge Case 3 / Error Scenario 1).
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
+	}
+	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+	if trunc.AllDropped {
+		return nil, fmt.Errorf("%w (mode files, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
+	}
+	if trunc.Truncated {
+		log.FromContext(ctx).Warn("full-repo scan: byte budget truncated the review payload; reviewing a subset of the repository",
+			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
+	}
+	var b strings.Builder
+	for _, e := range kept {
+		b.WriteString(e.Body)
+	}
+	// A baseline payload is full file contents, so it rides the existing "files"
+	// mode: force it for every agent (like the diff path forces "diff") so a roster
+	// whose default mode is blocks/diff still resolves cleanly. Entries keeps the raw
+	// pre-budget files so buildSlots re-sheds them per agent against each model's
+	// window (Epic 19.10 F2), identical to buildPayloads.
+	filesMode := string(payload.ModeFiles)
+	payloads := map[string]modePayload{
+		filesMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+	}
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+	if scopeWarn != "" {
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+	}
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true)
+	if err != nil {
+		return nil, err
+	}
+	// No git range → no RangeBuilder: computeGroundingData's range-less early return
+	// disables grounding (not applicable to a baseline scan).
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil)
+}
+
 func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err

@@ -399,8 +399,15 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// Run the two review phases separately so build-phase failures (persona
 	// resolution, unknown provider, prompt render — configuration errors per
 	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
-	// plain exit 1 with artifacts preserved on disk.
-	prep, err := fanout.PrepareReview(ctx, cfg, req)
+	// plain exit 1 with artifacts preserved on disk. --all (Sprint 35.0) prepares
+	// from the whole tracked repository instead of a git range; every later phase
+	// (ExecuteReview, RunReconcile) is unchanged.
+	var prep *fanout.PreparedReview
+	if baseline {
+		prep, err = fanout.PrepareReviewFromRepo(ctx, cfg, req)
+	} else {
+		prep, err = fanout.PrepareReview(ctx, cfg, req)
+	}
 	if err != nil {
 		// An interrupt during payload build / scaffolding cancels the context; no
 		// review directory exists yet, so route to the graceful no-results path

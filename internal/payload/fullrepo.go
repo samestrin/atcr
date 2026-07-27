@@ -31,6 +31,15 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // Exposes two same-package primitives: enumerateRepoFiles (AC 01-02 tracked-file
 // walk + ignore filter) and partitionByBudget (AC 01-03 byte-budget chunking).
 
+// BuildRepoEntries is the exported baseline payload entry point (Sprint 35.0): it
+// returns the enumerated, ignore-filtered git-tracked files under root as
+// []FileEntry, for internal/fanout's PrepareReviewFromRepo to assemble into a
+// whole-repo review payload. It wraps the same enumerateRepoFiles walker the
+// package tests cover directly.
+func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger) ([]FileEntry, error) {
+	return enumerateRepoFiles(ctx, root, logger)
+}
+
 // enumerateRepoFiles is the baseline (--all / --dir) tracked-file walker (Sprint
 // 35.0, AC 01-02). It enumerates the repository's git-tracked files via
 // stream.BuildFileIndex — the SAME git ls-files primitive diff-mode reconciliation
