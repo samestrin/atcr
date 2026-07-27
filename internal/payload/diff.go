@@ -56,6 +56,7 @@ type rangeState struct {
 	raw        map[string]string      // head path -> plain -M diff chunk
 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+	headSrc    map[string]string      // head path -> full HEAD blob (one `git show` each)
 
 	// diffPathspec holds the trailing `-- …` pathspec args applied to every
 	// whole-range diff so git emits exactly the kept (non-ignored) files' chunks.
@@ -151,9 +152,32 @@ type gitRunner struct {
 	ignore      *ignoreMatcher
 	ignoreReady bool
 
+	// escalation holds the resolved per-file escalation thresholds (Epic 35.1).
+	// A zero value disables the feature entirely, so a runner built without
+	// newGitRunner behaves exactly as it did before escalation existed.
+	escalation EscalationConfig
+
+	// escalationDegraded records that the change set exceeded escalation.MaxFiles
+	// and the whole pass was skipped, so the manifest can disclose it rather than
+	// leaving a reader to wonder why nothing escalated.
+	escalationDegraded bool
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
+}
+
+// newGitRunner builds a runner with escalation defaults applied. Every entry
+// point that renders changed-file payloads goes through it, so the per-file
+// escalation feature is on by default and opt-out via WithEscalation, rather
+// than silently inert wherever a construction site was missed.
+func newGitRunner(ctx context.Context, repo string) *gitRunner {
+	return &gitRunner{
+		ctx:        ctx,
+		dir:        repo,
+		logger:     log.FromContext(ctx),
+		escalation: DefaultEscalationConfig(),
+	}
 }
 
 // matcher returns the runner's repo-root ignore matcher, loading it once from
@@ -621,6 +645,26 @@ func (g *gitRunner) headContent(head, path string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// headContentMemo is headContent memoized per range, so a file whose HEAD blob
+// is read by both the escalation analysis pass and a files-mode render costs one
+// `git show` rather than two. Errors are not cached: an unreadable blob is
+// re-attempted rather than poisoning the range.
+func (g *gitRunner) headContentMemo(base, head, path string) (string, error) {
+	s := g.forRange(base, head)
+	if src, ok := s.headSrc[path]; ok {
+		return src, nil
+	}
+	src, err := g.headContent(head, path)
+	if err != nil {
+		return "", err
+	}
+	if s.headSrc == nil {
+		s.headSrc = make(map[string]string)
+	}
+	s.headSrc[path] = src
+	return src, nil
 }
 
 // hunkHeaderRe captures the head-side start and length from a unified-diff

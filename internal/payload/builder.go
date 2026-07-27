@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/samestrin/atcr/internal/log"
 )
 
 // PayloadMode is the typed enum of reviewer-input modes. Values are lowercase;
@@ -97,7 +95,7 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
 	if err := validatePayloadMode(mode); err != nil {
 		return nil, err
 	}
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	return g.buildEntries(mode, base, head)
 }
 
@@ -119,13 +117,37 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	if err != nil {
 		return nil, err
 	}
+	// Per-file escalation and skeleton injection (Epic 35.1). The pass is gated
+	// on the change-set size: each analyzed file costs one `git show` plus one
+	// AST parse, and that cost is paid once per parallel agent, so a large range
+	// degrades to the configured mode for every file rather than paying it.
+	analyze := g.escalation.Enabled(len(files))
+	if !analyze && len(files) > 0 && g.escalation.MaxFiles > 0 {
+		g.escalationDegraded = true
+		g.logger.Warn("payload: per-file escalation and AST skeletons disabled for this run",
+			"changed_files", len(files), "max_files", g.escalation.MaxFiles)
+	}
+
 	entries := make([]FileEntry, 0, len(files))
 	for _, f := range files {
-		body, err := g.fileBody(mode, base, head, f)
+		fileMode := mode
+		skel := ""
+		if analyze {
+			if fc, ok := g.analyzeFile(base, head, f); ok {
+				fileMode = g.escalation.escalate(mode, fc.signals)
+				// Files mode already carries the whole HEAD file, so a skeleton
+				// of it would be pure duplication.
+				if fileMode != ModeFiles {
+					skel = fc.skeleton
+				}
+			}
+		}
+		body, err := g.fileBody(fileMode, base, head, f)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body})
+		body = injectSkeleton(body, skel)
+		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body, Mode: fileMode})
 	}
 	return entries, nil
 }
@@ -142,7 +164,7 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 // equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files
 // when both use the same filtering mode.
 func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	if err := validateRange(g, base, head); err != nil {
 		return 0, err
 	}

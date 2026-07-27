@@ -1,5 +1,13 @@
 package payload
 
+import (
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/samestrin/atcr/internal/astgroup"
+)
+
 // Skeleton block markers. They deliberately avoid every prefix the rendered-
 // payload splitter recognizes as a new file section (`diff --git`, `=== FILE: `,
 // `[deleted file: `, `[binary file changed: `, `diff --cc`, `diff --combined`)
@@ -10,27 +18,148 @@ const (
 	skeletonEnd   = ">>> END SKELETON <<<"
 )
 
-// renderSkeleton formats a file's extracted declaration headers as a payload
-// block, or returns "" when there is nothing structural to show.
-func renderSkeleton(entries []skeletonEntry) string { return "" }
-
-// injectSkeleton splices skel into body immediately after body's first line.
-func injectSkeleton(body, skel string) string { return body }
-
-// skeletonEntry mirrors astgroup.SkeletonEntry so the rendering helpers stay
-// testable without a wasm host.
+// skeletonEntry is one rendered declaration header. It mirrors
+// astgroup.SkeletonEntry's rendering-relevant fields so the formatting helpers
+// stay testable without standing up a wasm host.
 type skeletonEntry struct {
 	StartLine int
 	Header    string
 }
 
-// fileContext is the per-file measurement and skeleton pass result.
+// renderSkeleton formats a file's extracted declaration headers as a payload
+// block, or returns "" when there is nothing structural to show.
+//
+// Each header is anchored with its HEAD line number. The anchor doubles as a
+// safety property: because every content line begins with "L<digits>: ", no
+// rendered line can start with a payload section marker even if the source
+// declaration somehow did.
+func renderSkeleton(entries []skeletonEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(skeletonStart)
+	b.WriteByte('\n')
+	for _, e := range entries {
+		b.WriteByte('L')
+		b.WriteString(strconv.Itoa(e.StartLine))
+		b.WriteString(": ")
+		b.WriteString(e.Header)
+		b.WriteByte('\n')
+	}
+	b.WriteString(skeletonEnd)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// injectSkeleton splices skel into body immediately after body's first line.
+//
+// After, not before: the rendered-payload splitter decides where a file section
+// begins by testing a line against isRenderedEntryStart, and it reads the path
+// from that section's FIRST line. Keeping the original marker line at index 0
+// leaves both behaviours untouched, so the skeleton is invisible to the
+// round-trip parser and visible to the reviewer.
+func injectSkeleton(body, skel string) string {
+	if skel == "" || body == "" {
+		return body
+	}
+	nl := strings.IndexByte(body, '\n')
+	if nl < 0 {
+		return body + "\n" + skel
+	}
+	return body[:nl+1] + skel + body[nl+1:]
+}
+
+// fileContext is the result of the per-file measurement and skeleton pass.
 type fileContext struct {
 	signals  fileSignals
 	skeleton string
 }
 
-// analyzeFile measures a changed file and extracts its HEAD skeleton.
-func (g *gitRunner) analyzeFile(head string, f changedFile) (fileContext, bool) {
-	return fileContext{}, false
+// analyzeFile measures a changed file's escalation signals and extracts its HEAD
+// skeleton. ok is false when the file cannot contribute signals at all (deleted,
+// or its HEAD blob is unreadable), in which case the caller leaves the file in
+// the run's configured mode.
+//
+// Reading HEAD costs one `git show` per file, memoized per range. This is why
+// the whole pass is gated behind EscalationConfig.Enabled: in diff and blocks
+// mode the builder otherwise spends a constant number of git processes
+// regardless of change-set size.
+func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, bool) {
+	if f.kind == kindDeleted {
+		return fileContext{}, false
+	}
+	hunks, err := g.changedHeadRanges(base, head, f.pathspec()...)
+	if err != nil {
+		return fileContext{}, false
+	}
+	src, err := g.headContentMemo(base, head, f.path)
+	if err != nil {
+		// A file present in the diff but unreadable at HEAD is not fatal: the
+		// review still runs, this file just keeps its configured mode.
+		g.logger.Debug("payload: skipping escalation analysis, HEAD blob unreadable", "path", f.path, "error", err)
+		return fileContext{}, false
+	}
+
+	ctx := fileContext{signals: fileSignals{
+		changedLines: countChangedLines(hunks),
+		headLines:    countLines(src),
+		hunks:        hunks,
+	}}
+
+	// Skeleton extraction and the McCabe signal share one parse. Go only for now:
+	// the header-slicing rule is written against Go's func/gendecl shape.
+	if astgroup.LanguageForExt(strings.ToLower(filepath.Ext(f.path))) != "go" {
+		return ctx, true
+	}
+	root, err := parseHeadTree(src)
+	if err != nil {
+		g.logger.Debug("payload: skipping AST signals, parse failed", "path", f.path, "error", err)
+		return ctx, true
+	}
+	ctx.signals.cyclomatic = astgroup.Cyclomatic(root)
+	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, []byte(src))))
+	return ctx, true
+}
+
+// parseHeadTree parses src with the shared wasm host's Go parser.
+func parseHeadTree(src string) (astgroup.Node, error) {
+	p, err := astgroup.SharedHost().Parser("go")
+	if err != nil {
+		return astgroup.Node{}, err
+	}
+	return p.Parse([]byte(src))
+}
+
+func toSkeletonEntries(in []astgroup.SkeletonEntry) []skeletonEntry {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]skeletonEntry, 0, len(in))
+	for _, e := range in {
+		out = append(out, skeletonEntry{StartLine: e.StartLine, Header: e.Header})
+	}
+	return out
+}
+
+// countChangedLines totals the head-side lines covered by hunks.
+func countChangedLines(hunks []lineRange) int {
+	total := 0
+	for _, h := range hunks {
+		total += h.end - h.start + 1
+	}
+	return total
+}
+
+// countLines counts the lines in src, not counting a trailing newline as an
+// extra empty line.
+func countLines(src string) int {
+	if src == "" {
+		return 0
+	}
+	n := strings.Count(src, "\n")
+	if !strings.HasSuffix(src, "\n") {
+		n++
+	}
+	return n
 }

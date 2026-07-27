@@ -468,9 +468,15 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
-		Roster:          rosterNames(cfg.Project),
-		StartedAt:       req.StartedAt,
-		Partial:         false, // finalized by ExecuteReview once outcomes are known
+		// Per-file escalation (Epic 35.1): what a reviewer actually saw per file,
+		// as opposed to PayloadMode/PerAgentPayload which record what was
+		// configured. Both are omitempty, so a review where nothing escalated
+		// produces a manifest byte-identical to earlier versions'.
+		PerFilePayload:     perFileModes(payloads),
+		EscalationDegraded: rb != nil && rb.EscalationDegraded(),
+		Roster:             rosterNames(cfg.Project),
+		StartedAt:          req.StartedAt,
+		Partial:            false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -1076,6 +1082,18 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	if noIgnore {
 		opts = append(opts, payload.WithoutIgnoreFilter())
 	}
+	// Per-file escalation thresholds (Epic 35.1). registry.PayloadEscalationConfig
+	// and payload.EscalationOverrides are deliberately separate types — payload
+	// must not import registry — so the copy happens here, at the one call site.
+	// registry.TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes.
+	pe := cfg.Registry.PayloadEscalation
+	opts = append(opts, payload.WithEscalation(payload.ResolveEscalationConfig(payload.EscalationOverrides{
+		ChurnRatio:    pe.ChurnRatio,
+		MinHunks:      pe.MinHunks,
+		HunkGapLines:  pe.HunkGapLines,
+		MinCyclomatic: pe.MinCyclomatic,
+		MaxFiles:      pe.MaxFiles,
+	})))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
@@ -1105,6 +1123,33 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
 	rb.ReleaseModeCaches()
 	return out, rb, nil
+}
+
+// perFileModes maps each file the escalation heuristic promoted above its
+// payload's configured mode to the mode it was actually rendered in (Epic 35.1).
+// Files left at the configured mode are omitted, so a review where nothing
+// escalated returns nil and the manifest field is elided entirely.
+//
+// A file appearing in several mode payloads folds to the most-context mode any
+// reviewer saw, so the result does not depend on map iteration order.
+func perFileModes(payloads map[string]modePayload) map[string]string {
+	var out map[string]string
+	for mode, mp := range payloads {
+		for _, e := range mp.Entries {
+			if e.Mode == "" || string(e.Mode) == mode {
+				continue
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			if prev, ok := out[e.Path]; ok {
+				out[e.Path] = string(payload.HigherContextMode(payload.PayloadMode(prev), e.Mode))
+				continue
+			}
+			out[e.Path] = string(e.Mode)
+		}
+	}
+	return out
 }
 
 // neededModes returns the distinct payload modes across the whole roster.
@@ -1776,13 +1821,17 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
-		AgentName:    name,
-		BaseRef:      rng.Base,
-		HeadRef:      rng.Head,
-		PayloadMode:  mode,
-		FileCount:    fileCount,
-		Payload:      scopeConstraint + payloadText,
-		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+		AgentName:   name,
+		BaseRef:     rng.Base,
+		HeadRef:     rng.Head,
+		PayloadMode: mode,
+		FileCount:   fileCount,
+		Payload:     scopeConstraint + payloadText,
+		// Per-file escalation (Epic 35.1) can promote individual files above the
+		// agent's configured mode, so the scope rule is derived from what the
+		// payload actually contains rather than from the mode alone: a payload
+		// holding any full-file body gets the wider files-mode rule.
+		ScopeRule:    payload.ScopeRuleForPayload(payload.PayloadMode(mode), payloadText),
 		ToolsEnabled: ac.Tools,
 	})
 	if err != nil {

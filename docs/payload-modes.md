@@ -16,9 +16,68 @@ The **payload** is what a reviewer agent actually sees. It is a first-class, per
 
 Rule of thumb: **`blocks` for quality on small models, `diff` for cost on large ranges/frontier models, `files` for small-range audits.**
 
+## Automatic per-file escalation
+
+The mode you configure is a **floor, not a ceiling**. A file whose change is structurally confusing is promoted above the configured mode automatically, on its own, while every other file in the same run stays where you put it. This keeps the token trade-off you chose for the bulk of a change while spending more only where a diff genuinely cannot be read correctly.
+
+Two independent signals are scored per file:
+
+| Signal | Fires when | Setting | Default |
+|--------|-----------|---------|---------|
+| Churn ratio | Changed lines ÷ HEAD line count reaches the threshold | `churn_ratio` | `0.5` |
+| Hunk count | The file has at least this many separate hunks | `min_hunks` | `4` |
+| Hunk adjacency | Two hunks sit closer than this many unchanged lines apart | `hunk_gap_lines` | `10` |
+| Cyclomatic complexity | The file's McCabe score (branch nodes + 1) reaches the threshold | `min_cyclomatic` | `15` |
+
+The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below.
+
+Escalation is a ladder:
+
+- **Either** family of signals firing promotes the file `diff` → `blocks`.
+- **Both** firing promotes it to `files`.
+- A file already at `blocks` can only move up to `files`; a run configured for `files` never de-escalates.
+
+Simple changes are unaffected: a one-line edit in a large file trips nothing and stays in `diff`.
+
+### AST skeleton injection
+
+For files reviewed in `diff` or `blocks` mode, atcr prepends a compact structural map of the file **as it exists at `head`** — one line per top-level declaration, with its line number:
+
+```
+>>> SKELETON (HEAD) <<<
+L14: type Handler struct
+L23: func Register(h Handler) error
+L41: func Dispatch(kind string, n int) int
+>>> END SKELETON <<<
+```
+
+This is the cheap fix for the failure it names: reading a multi-commit diff, a model reconstructs the file by mentally applying the patch and frequently lands on a superseded intermediate state. The skeleton removes the guesswork — the final architecture is stated outright, at a cost of a few dozen tokens. `files` mode gets no skeleton, since it already carries the whole file.
+
+Skeletons are currently extracted for **Go** files only. Other languages are reviewed exactly as before.
+
+### Cost cap
+
+Each analyzed file costs one `git show` plus one AST parse, and that cost is paid once per parallel agent. Above `max_files` changed files (default **50**) the entire feature — escalation and skeletons — is skipped, every file renders in the configured mode, a warning is logged, and `manifest.json` records `escalation_degraded: true`. That distinguishes "nothing was complex enough to escalate" from "escalation never ran".
+
+### Configuration
+
+Thresholds are **global**, set in the registry only — there is no project-config mirror and no CLI flag, matching how `verify:` and `debate:` are configured:
+
+```yaml
+# ~/.config/atcr/registry.yaml
+payload_escalation:
+  churn_ratio: 0.5
+  min_hunks: 4
+  hunk_gap_lines: 10
+  min_cyclomatic: 15
+  max_files: 50
+```
+
+Every field is optional and falls back to its default. Setting any threshold to `0` disables that one signal; setting `max_files: 0` turns per-file escalation and skeleton injection off entirely.
+
 ## Per-agent override
 
-The payload mode is resolved per agent: an agent's `payload:` field overrides the project/registry/embedded default. One run can therefore mix modes — the frontier model reads the `diff`, the local 8B gets `blocks` — and `manifest.json` records exactly who saw which mode.
+The payload mode is resolved per agent: an agent's `payload:` field overrides the project/registry/embedded default. One run can therefore mix modes — the frontier model reads the `diff`, the local 8B gets `blocks` — and `manifest.json` records exactly who saw which mode in `per_agent_payload`. Files promoted by [automatic escalation](#automatic-per-file-escalation) are recorded separately in `per_file_payload`, so the manifest distinguishes what was *configured* from what a reviewer *actually saw* per file.
 
 ```yaml
 # ~/.config/atcr/registry.yaml
@@ -65,6 +124,8 @@ Each persona prompt carries a scope rule matched to the payload mode:
 
 - **`diff` and `blocks`** constrain findings to the changed regions. Function-context expansion shows surrounding code for context but does **not** widen the review scope.
 - **`files`** intentionally widens visibility. Reviewers may notice pre-existing issues in unchanged regions; the prompt instructs them to focus on the change but to tag any pre-existing issue with `CATEGORY` `out-of-scope`, so the reconciler **annotates** rather than promotes it. Consumers can then filter out-of-scope findings.
+
+A persona prompt carries exactly one scope rule, but per-file escalation can mix modes inside a single payload. When **any** file in a payload was rendered in `files` mode, that whole payload gets the wider `files` rule — a reviewer holding full file bodies must not be told to stay on the diff. The narrower direction is never taken: escalation only ever widens the rule, never tightens it.
 
 ### Grounding gate
 

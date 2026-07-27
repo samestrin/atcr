@@ -159,6 +159,23 @@ func (c EscalationConfig) complexityFires(s fileSignals) bool {
 	return c.MinCyclomatic > 0 && s.cyclomatic > 0 && s.cyclomatic >= c.MinCyclomatic
 }
 
+// HigherContextMode returns whichever of a and b shows the reviewer more
+// context (diff < blocks < files).
+//
+// A roster whose agents use different payload modes builds one payload per mode,
+// so the same file can escalate to blocks in the diff-mode payload and to files
+// in the blocks-mode payload. Recording "the mode this file was rendered in"
+// then depends on which payload is inspected last — a map-iteration-order
+// dependency. Folding with this function makes the recorded value the
+// most-context mode any reviewer actually saw, which is both deterministic and
+// the honest answer to "what was this file reviewed as".
+func HigherContextMode(a, b PayloadMode) PayloadMode {
+	if modeRank(b) > modeRank(a) {
+		return b
+	}
+	return a
+}
+
 // modeRank orders the modes by how much context they hand the reviewer, so
 // escalation can be expressed as a monotonic maximum.
 func modeRank(m PayloadMode) int {

@@ -3,8 +3,6 @@ package payload
 import (
 	"context"
 	"sync/atomic"
-
-	"github.com/samestrin/atcr/internal/log"
 )
 
 // RangeBuilder computes every whole-range artifact a fan-out review needs — the
@@ -44,11 +42,19 @@ func WithoutIgnoreFilter() RangeOption {
 	return func(g *gitRunner) { g.noIgnore = true }
 }
 
+// WithEscalation sets the per-file escalation thresholds for this builder
+// (Epic 35.1). Callers pass the registry-resolved config; omitting the option
+// leaves the built-in defaults in place. Pass a zero EscalationConfig to turn
+// per-file escalation and skeleton injection off entirely.
+func WithEscalation(c EscalationConfig) RangeOption {
+	return func(g *gitRunner) { g.escalation = c }
+}
+
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
 // gitRunner (seeded with the context logger) across all its builds. Options
 // customize the runner (e.g. WithoutIgnoreFilter).
 func NewRangeBuilder(ctx context.Context, repo, base, head string, opts ...RangeOption) *RangeBuilder {
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	for _, o := range opts {
 		o(g)
 	}
@@ -150,4 +156,16 @@ func (b *RangeBuilder) ReleaseModeCaches() {
 	s.plain = nil
 	s.raw = nil
 	s.lineRanges = nil
+	// headSrc holds a full HEAD blob per analyzed file — the largest per-mode
+	// cache by far. Grounding does not read it, so it is released with the rest.
+	s.headSrc = nil
+}
+
+// EscalationDegraded reports whether the change set exceeded the escalation
+// file cap, so the per-file escalation and skeleton passes were skipped for the
+// whole run. Call it after a BuildEntries; before any build it reports false.
+// The review layer records it in the manifest so a reader can tell "nothing was
+// complex enough to escalate" apart from "escalation never ran".
+func (b *RangeBuilder) EscalationDegraded() bool {
+	return b.g.escalationDegraded
 }

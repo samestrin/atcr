@@ -12,6 +12,12 @@ type FileEntry struct {
 	Path string
 	Size int64
 	Body string
+	// Mode is the payload mode this file was actually rendered in. It equals the
+	// run's configured mode unless the escalation heuristic promoted this file
+	// above it (Epic 35.1). Callers record it in the manifest so downstream tools
+	// read what a reviewer saw per file, not just per agent. Empty on entries
+	// built outside the changed-file path (baseline/full-repo scans).
+	Mode PayloadMode
 }
 
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
