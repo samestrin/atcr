@@ -69,13 +69,22 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
-	// --fresh, --thorough, and --min-severity only apply to the --verify stage;
-	// --verify is already rejected above, so silently accepting them would
-	// discard the flag without any feedback to the user.
-	for _, f := range []string{"fresh", "thorough", "min-severity"} {
+	// --thorough and --min-severity only apply to the --verify stage; --verify is
+	// already rejected above, so silently accepting them would discard the flag
+	// without any feedback to the user.
+	for _, f := range []string{"thorough", "min-severity"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
 		}
+	}
+
+	// --fresh has two fresh-review meanings — scoping the --verify stage and
+	// (since Sprint 35.0) bypassing the baseline file-hash skip (review.go) —
+	// and a resume honors neither: it re-reviews the resumed review's pending
+	// agents rather than re-scanning the repo. Reject with a reason naming both
+	// meanings so a baseline-resume user is not told the flag is verify-only.
+	if cmd.Flags().Changed("fresh") {
+		return usageError(errors.New("--resume does not support --fresh; --fresh applies to the --verify stage and to fresh baseline scans (bypassing the file-hash skip) — neither is honored on a resume"))
 	}
 
 	// --auto-fix, --debate, --single-model, and --exec all parse on the shared
