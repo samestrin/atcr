@@ -286,6 +286,19 @@ func TestFilterByScope_ZeroMatch(t *testing.T) {
 	assert.Empty(t, filterByScope(paths, "cli"))
 }
 
+// TestFilterByScope_DefensiveNormalization is the 3.5.A LOW regression: a scope
+// carrying a trailing slash or backslash separators (not the AC-guaranteed clean
+// slash form) is normalized before matching rather than silently yielding an empty
+// set. Guards the defense-in-depth normalization added in task 3.6.
+func TestFilterByScope_DefensiveNormalization(t *testing.T) {
+	paths := []string{"internal/fanout/a.go", "internal/reconcile/b.go"}
+	want := []string{"internal/fanout/a.go"}
+	assert.Equal(t, want, filterByScope(paths, "internal/fanout/"), "trailing slash must be trimmed")
+	assert.Equal(t, want, filterByScope(paths, `internal\fanout`), "backslashes must normalize to forward slashes")
+	// "./" degenerate forms still mean the whole repo after normalization.
+	assert.Equal(t, paths, filterByScope(paths, "./"))
+}
+
 // TestEnumerateRepoFiles_ScopedNestedOnly covers AC 02-02 Happy Path 1 end-to-end
 // against a real temp git repo: --dir internal/fanout enumerates only the two
 // in-scope files, excluding internal/reconcile and the repo-root main.go.

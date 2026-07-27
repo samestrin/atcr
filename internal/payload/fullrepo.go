@@ -53,6 +53,14 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noI
 // in-memory tracked list — no filepath.Walk, no per-file os.Stat (AC 02-02
 // Performance / the story's second-traversal non-goal).
 func filterByScope(paths []string, scope string) []string {
+	// Defense-in-depth normalization (does not depend on AC 02-01's validated
+	// slash-form/no-trailing-slash guarantee): the tracked paths are always
+	// forward-slash form (stream.toSlashKeys), so normalize scope to match and trim
+	// a stray trailing separator before comparing — otherwise a backslash-cleaned
+	// (Windows filepath.Clean) or trailing-slashed scope would silently match zero
+	// files (3.5.A LOW). ReplaceAll (not filepath.ToSlash, a no-op on Unix) forces
+	// backslash→slash on every platform so the guard is deterministic in tests.
+	scope = strings.TrimRight(strings.ReplaceAll(scope, `\`, "/"), "/")
 	if scope == "" || scope == "." {
 		return paths
 	}
