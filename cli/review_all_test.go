@@ -129,6 +129,37 @@ func TestReviewAll_BaselineReviewIsResumable(t *testing.T) {
 	assert.FileExists(t, filepath.Join(kaiDir, "findings.txt"), "the pending baseline agent must be re-reviewed via the repo payload")
 }
 
+// TD-011 (via CLI): a completed baseline RESUME persists the incremental
+// file-hash index exactly like a fresh --all run, so the next --all/--dir can
+// skip unchanged files instead of doing a full re-scan.
+func TestReviewAll_BaselineResumeWritesHashIndex(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "kai")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	dir := latestReviewDir(t)
+
+	// Simulate the interrupted-run state TD-011 covers: the original run never
+	// persisted the index (the write-back fires on completion), and one agent is
+	// still pending.
+	require.NoError(t, os.Remove(payload.FileHashIndexPath(".")))
+	kaiDir := filepath.Join(dir, "sources", "pool", "raw", "agent", "kai")
+	require.NoError(t, os.RemoveAll(kaiDir))
+
+	require.Equal(t, 0, execCmd(t, "review", "--resume", "latest"))
+
+	idxPath := payload.FileHashIndexPath(".")
+	require.FileExists(t, idxPath, "a completed baseline resume must persist the file-hash index (TD-011)")
+	idx := payload.Load(idxPath, nil)
+	for _, p := range []string{"a.txt", "b.go", "internal/c.go"} {
+		_, _, ok := idx.Get(p)
+		assert.Truef(t, ok, "index must record %s after the resumed run", p)
+	}
+}
+
 // Phase-2 gate LOW: `--resume --all` is rejected up front (exit 2) rather than
 // silently ignoring --all — a resume continues the original review's mode, so
 // baseline-ness comes from the manifest, not this flag.
