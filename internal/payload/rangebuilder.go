@@ -149,7 +149,11 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 // large multi-mode diffs without re-spawning any git process — grounding reads
 // the retained zero-context cache and the retained --name-status list. A later
 // BuildEntries call re-populates the per-mode caches from the retained
-// range-level state if needed, so a RangeBuilder stays reusable after release.
+// range-level state if needed, so a RangeBuilder stays reusable after release —
+// with one exception: headSrc (the full HEAD blobs) is NOT rebuildable from
+// retained state, so a later files-mode or escalating build after release
+// re-spawns one `git show` per changed file. Only call ReleaseModeCaches once
+// every mode's entries are materialized.
 func (b *RangeBuilder) ReleaseModeCaches() {
 	if !b.inUse.CompareAndSwap(0, 1) {
 		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")
