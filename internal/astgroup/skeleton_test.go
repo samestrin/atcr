@@ -262,6 +262,36 @@ func TestMaxFuncCyclomatic_NoFunctionsScoresZero(t *testing.T) {
 	require.Equal(t, 0, MaxFuncCyclomatic(Node{}))
 }
 
+func TestMaxFuncCyclomatic_ParentAbsorbsNestedClosureBranches(t *testing.T) {
+	// Cyclomatic sums branch nodes over a node's whole subtree, so a function
+	// whose only branches live inside nested closures absorbs them — matching
+	// gocyclo. A dispatch-style func declaring many one-branch closures
+	// therefore escalates on its own score.
+	src := `package p
+
+func Dispatch(n int) int {
+	f := func() int {
+		if n > 1 {
+			return 1
+		}
+		return 0
+	}
+	g := func() int {
+		if n > 2 {
+			return 2
+		}
+		return 0
+	}
+	return f() + g()
+}
+`
+	root := parseGoForSkeleton(t, src)
+
+	// Dispatch's own body has zero branches, but the two closures contribute
+	// one if each to its subtree: 2 branches + 1.
+	require.Equal(t, 3, MaxFuncCyclomatic(root), "parent absorbs its closures' complexity")
+}
+
 func TestFileSkeleton_InlineTypeInResultDoesNotTruncateSignature(t *testing.T) {
 	// A depth-0 `{` can belong to an inline struct/interface TYPE rather than the
 	// declaration body. Truncating there emits an actively wrong signature.
