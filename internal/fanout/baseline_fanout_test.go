@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// baselineEntry builds a FileEntry whose Size drives partitionByBudget and whose
+// baselineEntry builds a FileEntry whose Size drives PartitionByBudget and whose
 // Body carries a unique, greppable marker so a test can prove every chunk's
 // content reached a slot (no file silently omitted across the fan-out).
 func baselineEntry(path string, size int) payload.FileEntry {
@@ -188,7 +188,7 @@ func TestBaselineSlots_ChunkCapBounded(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
-	// One file per chunk × (cap + 1) files → partitionByBudget would yield cap+1 chunks.
+	// One file per chunk × (cap + 1) files → PartitionByBudget would yield cap+1 chunks.
 	n := maxChunksPerAgent + 1
 	var entries []payload.FileEntry
 	for i := 0; i < n; i++ {

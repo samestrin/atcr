@@ -565,7 +565,7 @@ func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.Ra
 // Phase 2 scope (Sprint 35.0 TD-004, user-confirmed): the whole repository is
 // reviewed as a SINGLE files-mode payload per persona through the UNMODIFIED
 // buildSlots (AC 01-04 DoD), exactly mirroring PrepareReviewFromDiff. The
-// per-(persona×chunk) multi-chunk fan-out (partitionByBudget's consumer, the
+// per-(persona×chunk) multi-chunk fan-out (PartitionByBudget's consumer, the
 // buildSlots baseline branch) lands in Phase 5; ApplyByteBudget here sheds to fit
 // the window the same way every other prepare path does.
 func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
@@ -618,8 +618,24 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	// multi-chunk scan reviewed beyond one chunk's worth — silently defeating the Story
 	// 4/5 incremental skip on exactly the multi-chunk repos it targets. Recording the
 	// full reviewed set is both correct and fail-open. [5.2.A HIGH]
+	//
+	// EXCEPTION — files the GLOBAL byte budget dropped from mp.Text: on the over-window
+	// bulk fall-through (a per-agent chunk budget <= 0, e.g. a large --sprint-plan scope
+	// reservation), the agent reviews mp.Text (the global-budget-KEPT subset), not the
+	// full entry set, so recording a globally-dropped file would skip-it-though-unreviewed
+	// next run. The multi-chunk partition path DOES review the full set, so excluding the
+	// dropped files there only causes a (rare, global-budget-set) re-review next run —
+	// fail-open, never a silent skip. With the default PayloadByteBudget=0 nothing is
+	// dropped, so this records the full set unchanged. [5.14 gate MEDIUM]
+	shed := make(map[string]struct{}, len(mp.Truncation.FilesDropped))
+	for _, dp := range mp.Truncation.FilesDropped {
+		shed[dp] = struct{}{}
+	}
 	reviewed := make(map[string]string, len(mp.Entries))
 	for _, e := range mp.Entries {
+		if _, dropped := shed[e.Path]; dropped {
+			continue
+		}
 		reviewed[e.Path] = cache.HashText(e.Body)
 	}
 	prep.baseline = &baselineWriteback{
@@ -1204,7 +1220,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// branch here, a SIBLING to the reviewStrategyChunked branch below — NOT a
 		// modification of it. chunkDiff/diff-marker parsing stays completely
 		// untouched: baseline chunks are []FileEntry groups from
-		// internal/payload/fullrepo.go's partitionByBudget (task 2.8) and never pass
+		// internal/payload/fullrepo.go's PartitionByBudget (task 2.8) and never pass
 		// through chunkDiff (verified 2026-07-24: chunkDiff splits on `diff --git`
 		// markers only, which raw file contents lack). Resolves AC 06-01
 		// (06-01-chunk-persona-fanout-completeness.md) and AC 06-02
@@ -1243,7 +1259,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
 		//   maxChunksPerAgent cap (AC 06-01 ES2): the chunker.go:99 cap (64) carries
-		//     over unmodified — partitionByBudget's chunk count is deterministically
+		//     over unmodified — PartitionByBudget's chunk count is deterministically
 		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
 		//     persona is capped consistently rather than spawning unbounded slots.
 		//     The resulting total slot count is logged pre-dispatch for cost
