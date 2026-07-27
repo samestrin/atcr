@@ -334,6 +334,33 @@ func TestValidateDirFlag_Errors(t *testing.T) {
 	}
 }
 
+// TestValidateDirFlag_ErrorsBareConvention pins the usageError text convention
+// (TD: flags.go): validateDirFlag rejections must be bare messages like their
+// siblings validateRangeFlags and outputDirFromFlags — not prefixed with
+// "review failed: ", which is reserved for runtime review/range failures.
+func TestValidateDirFlag_ErrorsBareConvention(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "file.go"), []byte("x"), 0o644))
+	cases := []struct {
+		name, arg string
+	}{
+		{"empty", ""},
+		{"not-exist", "does/not/exist"},
+		{"not-a-directory", "file.go"},
+		{"outside-root-rel", "../other-repo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := dirCmd(t, "--dir", tc.arg)
+			_, err := validateDirFlag(cmd, root)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "review failed:",
+				"flag-validation usage errors use bare messages; the prefix is for runtime failures")
+		})
+	}
+}
+
 // TestValidateDirFlag_OutsideRootAbsolute covers AC 02-01 Error Scenario 3 via an
 // absolute path that resolves outside the repo root (a path-traversal guard).
 func TestValidateDirFlag_OutsideRootAbsolute(t *testing.T) {
