@@ -85,6 +85,12 @@ type rangeState struct {
 	// changedFilesMemo.
 	allIgnored      bool
 	allIgnoredCount int
+
+	// escalationDegraded records that the change set exceeded escalation.MaxFiles
+	// and the whole pass was skipped, so the manifest can disclose it rather than
+	// leaving a reader to wonder why nothing escalated. It lives in rangeState so
+	// forRange's range-change reset clears it with the rest of the range caches.
+	escalationDegraded bool
 }
 
 // pathspecArgs returns the precomputed trailing pathspec args for whole-range

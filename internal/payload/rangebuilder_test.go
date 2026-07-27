@@ -265,6 +265,34 @@ func TestRangeBuilder_ReleaseModeCaches(t *testing.T) {
 		"grounding after ReleaseModeCaches must reuse the retained zero-context cache (no new git process)")
 }
 
+// escalationDegraded is per-range state: forRange's range-change reset must
+// clear it with the rest of the range caches, so a degradation recorded on one
+// range never leaks into the manifest of the next range built on the same
+// runner.
+func TestRangeBuilder_EscalationDegradedResetsWithRange(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head1 := commitAll(t, dir, "v2")
+	write(t, dir, "a.go", goFileV1)
+	head2 := commitAll(t, dir, "v3")
+
+	g := newGitRunner(context.Background(), dir)
+	cfg := DefaultEscalationConfig()
+	cfg.MaxFiles = 1 // two changed files exceed the cap
+	g.escalation = cfg
+	_, err := g.buildEntries(ModeDiff, base, head1)
+	require.NoError(t, err)
+	require.True(t, g.forRange(base, head1).escalationDegraded,
+		"sanity: the over-cap build sets the flag")
+
+	require.False(t, g.forRange(base, head2).escalationDegraded,
+		"the flag is per-range state and must reset when the range changes")
+}
+
 // TestRangeBuilder_ConcurrentUsePanics pins the runtime guard: RangeBuilder is
 // documented as not concurrency-safe (the gitRunner's range-state cache is
 // single-writer), and a future caller that shares one builder across goroutines
