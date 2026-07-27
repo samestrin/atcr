@@ -139,6 +139,41 @@ func TestFileSkeleton_NodeRangeOutsideSourceIsSkipped(t *testing.T) {
 	require.Empty(t, FileSkeleton(root, []byte("package p\n")))
 }
 
+func TestFileSkeleton_CRLFSourceHasNoStrayCarriageReturn(t *testing.T) {
+	// git can hand back CRLF content. A stray \r surviving into a header would
+	// corrupt the rendered payload line the builder emits.
+	src := "package p\r\n\r\nfunc A(x int) error {\r\n\treturn nil\r\n}\r\n"
+	root := parseGoForSkeleton(t, src)
+
+	entries := FileSkeleton(root, []byte(src))
+
+	require.Equal(t, []string{"func A(x int) error"}, headersOf(entries))
+	for _, e := range entries {
+		require.NotContains(t, e.Header, "\r")
+		require.NotContains(t, e.Header, "\n")
+	}
+}
+
+func TestFileSkeleton_BodylessFuncKeepsFullSignature(t *testing.T) {
+	// A declaration with no body brace (assembly-backed func) must fall back to
+	// the whole first line, not be truncated to nothing.
+	src := "package p\n\nfunc add(x, y int) int\n\nvar (\n\tA = 1\n)\n"
+	root := parseGoForSkeleton(t, src)
+
+	require.Equal(t, []string{"func add(x, y int) int", "var ("}, headersOf(FileSkeleton(root, []byte(src))))
+}
+
+func TestFileSkeleton_HeadersAreSingleLine(t *testing.T) {
+	// The payload builder renders one line per entry and relies on that: a
+	// header containing a newline could inject a line that collides with a
+	// payload section marker.
+	root := parseGoForSkeleton(t, skeletonSrc)
+
+	for _, e := range FileSkeleton(root, []byte(skeletonSrc)) {
+		require.NotContains(t, e.Header, "\n", "header %q must be single-line", e.Header)
+	}
+}
+
 func TestCyclomatic_CountsBranchNodesPlusOne(t *testing.T) {
 	root := parseGoForSkeleton(t, skeletonSrc)
 
