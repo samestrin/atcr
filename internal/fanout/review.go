@@ -663,8 +663,10 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string, idx *payload.FileHashIndex, fresh bool) (map[string]modePayload, error) {
 	// idx + fresh drive the incremental hash-skip (Sprint 35.0 Story 4/5): unchanged
 	// files are dropped pre-chunking unless fresh forces a full re-scan or idx is nil.
-	// Both the fresh --all/--dir path and the baseline resume path call through here
-	// with the loaded index so a resumed run reproduces the original candidate set.
+	// The fresh --all/--dir path passes the loaded index (hash-skip active); the
+	// baseline resume path deliberately passes nil (resume.go) to bypass the
+	// hash-skip and rebuild the FULL superset of candidates — fail-open, so a
+	// resumed run re-reviews everything rather than trusting a stale index.
 	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope, idx, fresh)
 	if err != nil {
 		return nil, err
