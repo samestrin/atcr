@@ -460,6 +460,51 @@ func TestReadTrackedFile_OverCapSentinel(t *testing.T) {
 	assert.Equal(t, strings.Repeat("y", 16), e.Body)
 }
 
+// TD-005 (Sprint 35.0 hardening): a baseline scan whose tracked files total
+// more than the in-memory assembly cap fails loudly during enumeration — before
+// any payload work — instead of slurping an unbounded repository into memory.
+// The whole-repo counterpart of DefaultMaxDiffBytes: a per-file over-cap skip
+// does NOT count toward the total (it never entered memory), and many small
+// files trip the total cap even though each is individually under the per-file
+// ceiling.
+func TestEnumerateRepoFiles_TotalBytesCapFailsLoud(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.bin", strings.Repeat("a", 32))
+	write(t, dir, "b.bin", strings.Repeat("b", 32))
+	write(t, dir, "c.bin", strings.Repeat("c", 32))
+	commitAll(t, dir, "seed")
+
+	restore := DefaultMaxRepoBytes
+	DefaultMaxRepoBytes = 64 // three 32-byte files total 96 > 64
+	defer func() { DefaultMaxRepoBytes = restore }()
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.Error(t, err, "a repo past the total in-memory cap must fail loudly, not assemble")
+	assert.Nil(t, entries, "no partial payload work on a capped scan")
+	assert.Contains(t, err.Error(), "64", "the error names the cap")
+}
+
+// TD-005: a per-file over-cap skip (maxTrackedFileReadBytes) is NOT counted
+// toward the total in-memory cap — it never entered memory — so a repo with
+// one huge skipped file and a small readable remainder still scans.
+func TestEnumerateRepoFiles_PerFileSkipDoesNotCountTowardTotal(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "small.go", "package small\n")
+	write(t, dir, "big.bin", strings.Repeat("x", 256))
+	commitAll(t, dir, "seed")
+
+	restoreFile := maxTrackedFileReadBytes
+	maxTrackedFileReadBytes = 32
+	defer func() { maxTrackedFileReadBytes = restoreFile }()
+	restoreTotal := DefaultMaxRepoBytes
+	DefaultMaxRepoBytes = 64 // small.go alone (~14 bytes) fits; big.bin must not count
+	defer func() { DefaultMaxRepoBytes = restoreTotal }()
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err, "a skipped per-file-over-cap file must not trip the total cap")
+	assert.Equal(t, []string{"small.go"}, sortedPaths(entries))
+}
+
 // TD-003 (Sprint 35.0 hardening): a cancelled context interrupts the per-file
 // read loop instead of enumerating the whole repository first. The custom ctx
 // reports Err()=Canceled but never closes Done(), so the git ls-files inside

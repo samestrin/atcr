@@ -39,6 +39,19 @@ var errTrackedFileTooLarge = errors.New("full-repo scan: tracked file exceeds th
 // const) so tests can pin the boundary with small fixtures.
 var maxTrackedFileReadBytes int64 = 32 << 20
 
+// DefaultMaxRepoBytes caps the TOTAL bytes a baseline (--all/--dir) scan reads
+// into memory during enumeration (TD-005) — the whole-repo counterpart of
+// ingest.go's DefaultMaxDiffBytes fail-loud input guard. It mirrors that
+// guard's PATTERN (a hard-coded, pre-processing, fail-loud ceiling), not its
+// literal 10 MiB value: the baseline feature exists to scan repositories larger
+// than one model window by partitioning them across chunks, so the ceiling is
+// a genuine OOM tripwire (512 MiB), not a routine shaping mechanism —
+// PartitionByBudget already handles normal large-repo sizing, and the per-file
+// maxTrackedFileReadBytes caps any single read. Exceeding the total fails the
+// scan with a plain error before any payload work starts. A var (not a const)
+// so tests can pin the boundary with small fixtures.
+var DefaultMaxRepoBytes int64 = 512 << 20
+
 // fullrepo.go hosts the full-repository / directory-scoped ("baseline") payload
 // path for `atcr review --all` and `atcr review --dir <path>` (Sprint 35.0). It
 // is a SIBLING to builder.go's diff-range dispatch, never a new PayloadMode case
