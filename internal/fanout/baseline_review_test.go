@@ -180,6 +180,49 @@ func TestBuildRepoEntries_ReturnsTrackedFiles(t *testing.T) {
 	assert.ElementsMatch(t, []string{"a.go", "b.go"}, paths)
 }
 
+// TD-008: when every in-scope tracked file is ignore-filtered, the baseline
+// path must hint at --no-ignore (mirroring the diff path's AllIgnored behavior)
+// instead of the generic "no reviewable tracked files" message an empty
+// repository produces. The .atcrignore "*" pattern filters every candidate
+// (including .atcrignore itself) while git still tracks the files.
+func TestPrepareReviewFromRepo_AllIgnoreFilteredHintsNoIgnore(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	repo := baselineRepo(t, map[string]string{
+		".atcrignore": "*\n",
+		"a.go":        "package a\n",
+	})
+
+	_, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, out))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoReviewableContent)
+	assert.Contains(t, err.Error(), "--no-ignore",
+		"an all-ignore-filtered scan must point at the recovery flag, matching the diff path")
+	assert.NoDirExists(t, out, "no scaffold when there is nothing to review")
+}
+
+// TD-010 (fanout contract): a baseline re-scan whose every in-scope candidate
+// is skipped by the incremental hash index (nothing changed since the last
+// completed review) is reported as ErrAllFilesUnchanged — distinct from the
+// ErrNoReviewableContent an empty repository gets — so the CLI can exit 0 with
+// a notice instead of erroring as if the repo were empty.
+func TestPrepareReviewFromRepo_AllUnchangedReportsDistinctError(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n"})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	require.NoError(t, prep.CommitBaselineIndex("run-1"), "simulate a completed run's write-back")
+
+	out2 := filepath.Join(t.TempDir(), "r2")
+	_, err = PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, out2))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAllFilesUnchanged)
+	assert.NotErrorIs(t, err, ErrNoReviewableContent)
+	assert.Contains(t, err.Error(), "1 file(s) unchanged since last review")
+	assert.NoDirExists(t, out2, "no scaffold for a no-change re-scan")
+}
+
 // TD-012: the baseline truncation warning must not claim "reviewing a subset of
 // the repository" — the Phase 5 baseline fan-out chunks the full pre-budget
 // entry set via PartitionByBudget (which drops nothing), so the whole

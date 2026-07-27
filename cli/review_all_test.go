@@ -240,6 +240,25 @@ func TestReviewAll_SkipsUnchangedOnSecondRun(t *testing.T) {
 	assert.NotContains(t, body, "package c", "unchanged internal/c.go must be skipped pre-chunking")
 }
 
+// TD-010 (via CLI): re-running `review --all` when NOTHING changed must exit 0
+// with a "nothing to review" notice — the common CI re-run path — instead of
+// the exit-2 usage error ("the repository contains no reviewable tracked
+// files") an empty repository gets.
+func TestReviewAll_NothingChangedExitsZero(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // pass 1: reviews all, writes index
+
+	code, out := execCmdCapture(t, "review", "--all") // pass 2: every file unchanged
+	assert.Equal(t, 0, code, "a no-change re-run is a successful no-op, not a usage error")
+	assert.Contains(t, out, "unchanged since last review")
+	assert.Contains(t, out, "--fresh", "the notice must point at the full-rescan escape hatch")
+}
+
 // AC 04-04 Scenario 1 / Edge Case 2: `--all --fresh` bypasses the skip index and
 // re-reviews every file even when all recorded hashes match, and still writes the
 // index on completion.

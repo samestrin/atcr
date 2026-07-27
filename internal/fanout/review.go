@@ -37,6 +37,15 @@ var ErrPayloadFullyDropped = errors.New("payload fully dropped by byte budget: e
 // pool.
 var ErrNoReviewableContent = errors.New("no reviewable content in range")
 
+// ErrAllFilesUnchanged reports a baseline (--all/--dir) re-scan whose every
+// in-scope candidate was skipped by the incremental file-hash index — nothing
+// changed since the last completed review (TD-010). It is distinct from
+// ErrNoReviewableContent (a genuinely empty repository/scope): the CLI maps it
+// to a successful exit 0 with a "nothing to review" notice instead of the
+// exit-2 usage error, so the common CI re-run path does not fail as if the
+// repo were empty.
+var ErrAllFilesUnchanged = errors.New("no files changed since last review")
+
 // ReviewConfig bundles the loaded configuration a review needs. Built by
 // LoadReviewConfig so both the CLI and the MCP server discover config the same way.
 type ReviewConfig struct {
