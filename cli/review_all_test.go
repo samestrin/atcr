@@ -149,3 +149,102 @@ func TestReviewAll_ReconcileAndReportWorkOnBaselineOutput(t *testing.T) {
 	assert.Equal(t, 0, execCmd(t, "reconcile", latest), "reconcile works on baseline output")
 	assert.Equal(t, 0, execCmd(t, "report", latest), "report works on baseline output")
 }
+
+// baselineFilesPayload returns the whole-repo files-mode payload written for the most
+// recent review (the observable "candidate list" for the skip-filter assertions).
+func baselineFilesPayload(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(latestReviewDir(t), "payload", "files.txt"))
+	require.NoError(t, err)
+	return string(body)
+}
+
+// AC 04-01 (via CLI) / AC 04-04 Edge Case 2: a completed `--all` run writes the
+// file-hash index recording every reviewed tracked file under the run id.
+func TestReviewAll_WritesHashIndexOnCompletion(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+
+	idxPath := payload.FileHashIndexPath(".")
+	require.FileExists(t, idxPath, "a completed baseline run must persist the file-hash index")
+	idx := payload.Load(idxPath, nil)
+	for _, p := range []string{"a.txt", "b.go", "internal/c.go"} {
+		hash, runID, ok := idx.Get(p)
+		require.Truef(t, ok, "index must record %s", p)
+		assert.Truef(t, len(hash) == len("sha256:")+64, "%s hash must be a canonical digest", p)
+		assert.NotEmpty(t, runID, "%s must carry a last-reviewed run id", p)
+	}
+}
+
+// AC 04-02 (via CLI): a second `--all` run reviews ONLY the file whose content
+// changed; the unchanged files are skipped pre-chunking and never enter the payload.
+func TestReviewAll_SkipsUnchangedOnSecondRun(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // pass 1: reviews all, writes index
+
+	// Change only a.txt (the file the mock finding references, so it stays in scope).
+	require.NoError(t, os.WriteFile("a.txt", []byte("one CHANGED\n"), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // pass 2: only a.txt is a candidate
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "one CHANGED", "the changed file must be re-reviewed")
+	assert.NotContains(t, body, "package b", "unchanged b.go must be skipped pre-chunking")
+	assert.NotContains(t, body, "package c", "unchanged internal/c.go must be skipped pre-chunking")
+}
+
+// AC 04-04 Scenario 1 / Edge Case 2: `--all --fresh` bypasses the skip index and
+// re-reviews every file even when all recorded hashes match, and still writes the
+// index on completion.
+func TestReviewAllFresh_BypassesSkipIndex(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // writes an index matching every file
+
+	// Nothing changed; without --fresh pass 2 would skip everything. --fresh forces all.
+	require.Equal(t, 0, execCmd(t, "review", "--all", "--fresh"))
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "one", "--fresh must re-review a.txt despite a matching hash")
+	assert.Contains(t, body, "package b", "--fresh must re-review b.go despite a matching hash")
+	assert.Contains(t, body, "package c", "--fresh must re-review internal/c.go despite a matching hash")
+	assert.FileExists(t, payload.FileHashIndexPath("."), "--fresh still writes the index on completion")
+}
+
+// AC 04-04 Scenario 2: `--fresh` on a diff-range review is a no-op for the hash
+// index — no baseline index is read or written, and the run is unaffected.
+func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// A second commit so --base HEAD^ resolves a real range.
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
+	run("commit", "-aqm", "edit a.txt")
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--head", "HEAD", "--fresh"))
+	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh review must not touch the baseline hash index")
+}

@@ -300,7 +300,15 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		forceMode string
 	)
 	if m.Baseline {
-		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore, m.Dir)
+		// A baseline resume BYPASSES the incremental hash-skip (idx=nil): it rebuilds the
+		// FULL in-scope tracked payload so the pending agents review at least everything
+		// the completed agents saw (Sprint 35.0 Story 4/5). The skip is a fresh-run
+		// optimization only — a genuinely interrupted run never wrote the index (it is
+		// written on completion), and applying the skip here against whatever index is on
+		// disk would risk dropping files the interrupted run reviewed (empty-candidate /
+		// slot-mismatch). Re-reviewing the full set is the safe, fail-open choice and
+		// preserves the 2.14.A "pending agents review what completed agents saw" invariant.
+		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore, m.Dir, nil, false)
 		forceMode = string(payload.ModeFiles)
 	} else {
 		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)

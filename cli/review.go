@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/audit"
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
@@ -414,6 +416,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		Dir:            dirScope,
 		SprintPlanPath: sprintPlanPath(cmd),
 		PRNumber:       prNumberFromFlags(cmd),
+		// --fresh/--force bypasses the incremental file-hash skip on a baseline scan
+		// (Sprint 35.0 Story 5). Read unconditionally; only the baseline prepare paths
+		// consume it, so it is an inert no-op on a diff-range review (AC 04-04 S2).
+		Fresh: boolFlag(cmd, "fresh"),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
@@ -473,6 +479,17 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// an interrupted run is never reported as "succeeded".
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return reportInterrupt(cmd, ctx, result, prep)
+	}
+
+	// Baseline (--all/--dir) incremental re-scan write-back (Sprint 35.0 Story 4/5):
+	// once a baseline review reaches a completed state with at least one agent
+	// succeeding, persist the file-hash index so the NEXT run can skip files whose
+	// content has not changed. Gated on Succeeded > 0 so a run where every agent
+	// failed does not record its files as "reviewed" (which would wrongly skip them
+	// forever). An index-write failure is logged, never fatal to the review (AC 04-01
+	// ES1). The interrupt path returned above, so this never fires on a cancelled run.
+	if baseline && result != nil && result.Summary.Succeeded > 0 {
+		writeBaselineHashIndex(ctx, ".", dirScope, boolFlag(cmd, "no-ignore"), boolFlag(cmd, "fresh"), result.ID)
 	}
 
 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
@@ -732,6 +749,46 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 func interruptedBeforeFanout(cmd *cobra.Command) error {
 	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\n⚠️ Review interrupted before it started; no partial results to save.")
 	return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+}
+
+// writeBaselineHashIndex persists the incremental re-scan file-hash index after a
+// completed baseline (--all/--dir) review (Sprint 35.0 Story 4/5, AC 04-01). It
+// re-enumerates the in-scope tracked files ONCE (no skip) to recover both the full
+// tracked set (for self-trimming) and every file's current content hash, then:
+//   - records each file that was actually reviewed this run under runID — a file was
+//     reviewed iff it was NOT skipped, i.e. fresh forced it or its hash did not match
+//     the PRE-run index (the same index Load returned to the skip filter, since an
+//     interrupted run never writes it);
+//   - leaves unchanged/skipped files' prior entries intact (they keep their earlier
+//     run id, per AC 04-01 Scenario 2);
+//   - trims entries for paths no longer tracked (AC 04-01 Edge Case 1);
+//   - writes atomically. A load/enumerate/write failure is logged at Warn and never
+//     fails the otherwise-successful review (AC 04-01 Error Scenario 1).
+func writeBaselineHashIndex(ctx context.Context, root, scope string, noIgnore, fresh bool, runID string) {
+	logger := log.FromContext(ctx)
+	idxPath := payload.FileHashIndexPath(root)
+	idx := payload.Load(idxPath, logger) // pre-run state (an interrupted run never wrote it)
+
+	// One extra walk WITH bodies and no skip: yields the full in-scope tracked set.
+	full, err := payload.BuildRepoEntries(ctx, root, logger, noIgnore, scope, nil, false)
+	if err != nil {
+		logger.Warn("baseline scan: could not rebuild the file-hash index after review (skipping the write, next run does a full scan)", "err", err)
+		return
+	}
+	keep := make(map[string]struct{}, len(full))
+	for _, e := range full {
+		keep[e.Path] = struct{}{}
+		h := cache.HashText(e.Body)
+		// Reviewed this run iff not skipped: fresh forces every file; otherwise a file
+		// was reviewed unless its content already matched the pre-run index.
+		if fresh || !idx.Unchanged(e.Path, h) {
+			idx.Record(e.Path, h, runID)
+		}
+	}
+	idx.Trim(keep)
+	if err := idx.Save(idxPath); err != nil {
+		logger.Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", err)
+	}
 }
 
 // interruptMessage renders the user-facing notice for a signal-interrupted

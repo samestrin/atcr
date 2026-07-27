@@ -125,6 +125,12 @@ type ReviewRequest struct {
 	// record omits the PR but is still written. The engine does not use it for
 	// review logic — it is pure provenance threaded through to the audit hook.
 	PRNumber int
+	// Fresh bypasses the incremental file-hash skip for a baseline (--all/--dir)
+	// scan (the --fresh/--force flag, Sprint 35.0 Story 5): every in-scope tracked
+	// file is reviewed regardless of a matching recorded hash. It has no effect on a
+	// diff-range review (the index is neither read nor written there). Defaulting
+	// false keeps incremental skipping active for callers that do not opt out.
+	Fresh bool
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -519,7 +525,12 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore, req.Dir)
+	// Load the incremental file-hash skip index (Sprint 35.0 Story 4/5) and pass it,
+	// with the --fresh bypass, into the candidate build. Load never errors/returns nil
+	// (a missing/corrupt index degrades to a full scan), so a first-ever run behaves
+	// as before.
+	idx := payload.Load(payload.FileHashIndexPath(req.Repo), log.FromContext(ctx))
+	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore, req.Dir, idx, req.Fresh)
 	if err != nil {
 		return nil, err
 	}
@@ -549,11 +560,12 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 // Errors mirror the diff/range prepare paths: a non-repo / read failure propagates
 // verbatim (AC 01-04 ES2); zero reviewable files is ErrNoReviewableContent (Edge
 // Case 3) before any scaffolding; an all-dropped byte budget is ErrPayloadFullyDropped.
-func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string) (map[string]modePayload, error) {
-	// idx=nil, fresh=false here: the incremental hash-skip index is threaded in by
-	// the CLI baseline dispatch (Sprint 35.0 Story 4/5, tasks 4.11/4.17); until then
-	// the whole-repo scan behaves as a first-ever run (every tracked file reviewed).
-	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope, nil, false)
+func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string, idx *payload.FileHashIndex, fresh bool) (map[string]modePayload, error) {
+	// idx + fresh drive the incremental hash-skip (Sprint 35.0 Story 4/5): unchanged
+	// files are dropped pre-chunking unless fresh forces a full re-scan or idx is nil.
+	// Both the fresh --all/--dir path and the baseline resume path call through here
+	// with the loaded index so a resumed run reproduces the original candidate set.
+	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope, idx, fresh)
 	if err != nil {
 		return nil, err
 	}
