@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,6 +128,51 @@ func TestPayloadEscalationMirrorsPayloadOverrides(t *testing.T) {
 }
 
 func ptrFloat64(f float64) *float64 { return &f }
+
+// The per-agent byte shed must not eat the escalated file. Escalating to
+// ModeFiles swaps a file's hunks for its whole HEAD content, making it the
+// largest entry — so a plain largest-first shed drops exactly the file the
+// heuristic flagged as hardest to review, on precisely the tight-window agents
+// the escalation feature targets. buildSlots therefore sheds escalated entries
+// LAST (payload.ApplyByteBudgetPreferEscalated). Reverting either call site to
+// the plain pass fails this test.
+func TestBuildSlots_PerAgentShedKeepsEscalatedFile(t *testing.T) {
+	body := func(marker string, n int) string {
+		return "// " + marker + "\n" + strings.Repeat("x", n)
+	}
+	escBody := body("ESCALATED_FILE", 3000)
+	aBody := body("PLAIN_A", 1000)
+	bBody := body("PLAIN_B", 1000)
+
+	entries := []payload.FileEntry{
+		{Path: "esc.go", Size: int64(len(escBody)), Body: escBody, Mode: payload.ModeFiles},
+		{Path: "a.go", Size: int64(len(aBody)), Body: aBody, Mode: payload.ModeBlocks},
+		{Path: "b.go", Size: int64(len(bBody)), Body: bBody, Mode: payload.ModeBlocks},
+	}
+	payloads := map[string]modePayload{"blocks": {
+		Entries:   entries,
+		Text:      escBody + aBody + bBody,
+		FileCount: 3,
+	}}
+
+	cfg := twoAgentConfig("http://unused")
+	// Budget fits the escalated file plus one small file, so exactly one entry
+	// must be shed — the choice of which is the whole point.
+	cfg.Settings.PayloadByteBudget = int64(len(escBody) + len(aBody))
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+
+	for _, s := range slots {
+		require.True(t, s.Primary.Truncation.Truncated,
+			"agent %q: the payload exceeds the budget, so something must be shed", s.Primary.Name)
+		assert.Contains(t, s.Primary.Prompt, "ESCALATED_FILE",
+			"agent %q: the escalated file must survive a shed that can fit it", s.Primary.Name)
+		assert.Equal(t, []string{"a.go"}, s.Primary.Truncation.FilesDropped,
+			"agent %q: an un-escalated file must be shed instead", s.Primary.Name)
+	}
+}
 
 // TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget exercises the hand
 // copy between registry.PayloadEscalationConfig and payload.EscalationOverrides,

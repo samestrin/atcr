@@ -1074,10 +1074,11 @@ type modePayload struct {
 	//
 	// It is NOT the set any individual agent received. buildSlots re-sheds
 	// Entries (the pre-budget list) against each model's own EffectiveByteBudget
-	// at dispatch. That per-agent budget is capped by the same global budget, and
-	// ApplyByteBudget's drop order is monotone in the budget, so each agent's
-	// delivered set is a SUBSET of Kept — a file listed here may have reached no
-	// reviewer at all, while one that reached a reviewer is always present.
+	// at dispatch. That per-agent budget is capped by the same global budget and
+	// both passes use the same escalation-aware drop order, which is monotone in
+	// the budget — so each agent's delivered set is a SUBSET of Kept: a file
+	// listed here may have reached no reviewer at all, while one that reached a
+	// reviewer is always present.
 	Kept       []payload.FileEntry
 	Text       string
 	FileCount  int
@@ -1127,7 +1128,13 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		if err != nil {
 			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
-		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+		// Same escalation-aware order as the per-agent shed in buildSlots. Keeping
+		// the two passes on one policy is what preserves Kept as an upper bound on
+		// every agent's delivered set: the per-agent pass re-sheds the SAME
+		// pre-budget Entries under a budget capped by this one, so a divergent
+		// order here would let an agent be served a file the audit artifact (and
+		// the manifest's per_file_payload, derived from Kept) never lists.
+		kept, trunc := payload.ApplyByteBudgetPreferEscalated(entries, cfg.Settings.PayloadByteBudget, payload.PayloadMode(mode))
 		if trunc.AllDropped {
 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}

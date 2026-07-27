@@ -53,10 +53,10 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	return applyByteBudgetOrdered(entries, budget, nil)
 }
 
-// applyByteBudgetOrdered is the shared budget pass. dropFirst, when non-nil,
-// partitions entries into drop-priority tiers: an entry with a LOWER tier is
-// shed before one with a higher tier, and largest-first orders within a tier. A
-// nil dropFirst is plain largest-first across the whole payload.
+// applyByteBudgetOrdered is the shared budget pass. tier, when non-nil,
+// partitions entries into drop-priority tiers: an entry in a LOWER tier is shed
+// before one in a higher tier, and largest-first (then path) orders within a
+// tier. A nil tier is plain largest-first across the whole payload.
 func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEntry) int) (kept []FileEntry, t Truncation) {
 	t = Truncation{Truncated: false, FilesDropped: []string{}}
 	if budget <= 0 { // 0 = unlimited; negatives are rejected by ValidateBudget
