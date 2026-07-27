@@ -24,6 +24,107 @@ func keptPaths(kept []FileEntry) []string {
 	return out
 }
 
+// modeEntries builds entries as (path, size, mode) triples so the escalation-aware
+// drop order can be exercised against a mixed payload.
+func modeEntries(triples ...any) []FileEntry {
+	var out []FileEntry
+	for i := 0; i < len(triples); i += 3 {
+		out = append(out, FileEntry{
+			Path: triples[i].(string),
+			Size: int64(triples[i+1].(int)),
+			Mode: triples[i+2].(PayloadMode),
+		})
+	}
+	return out
+}
+
+// Escalating a file to a higher-context mode replaces its hunks with far more
+// text, which makes it the LARGEST entry — so plain largest-first sheds exactly
+// the file the escalation heuristic just flagged as hardest to review. The
+// escalation-aware order drops the un-escalated files first instead.
+func TestBudgetPreferEscalated_KeepsEscalatedFileThatLargestFirstWouldShed(t *testing.T) {
+	in := modeEntries(
+		"esc.go", 200, ModeFiles, // escalated above the configured diff mode
+		"a.go", 40, ModeDiff,
+		"b.go", 40, ModeDiff,
+	)
+
+	// Plain largest-first sheds the escalated file: that is the defect.
+	plain, ptr := ApplyByteBudget(in, 240)
+	require.True(t, ptr.Truncated)
+	require.Equal(t, []string{"esc.go"}, ptr.FilesDropped,
+		"precondition: plain largest-first drops the escalated file")
+	require.ElementsMatch(t, []string{"a.go", "b.go"}, keptPaths(plain))
+
+	kept, tr := ApplyByteBudgetPreferEscalated(in, 240, ModeDiff)
+	assert.True(t, tr.Truncated)
+	assert.Contains(t, keptPaths(kept), "esc.go",
+		"the escalated file must survive a shed that can fit it")
+	assert.Equal(t, []string{"b.go"}, tr.FilesDropped,
+		"an un-escalated file is shed instead, largest-first within that group")
+}
+
+// The exemption must not turn a survivable shed into an empty payload: when
+// keeping the escalated file would drop everything else and still not fit, fall
+// back to plain largest-first so the reviewer gets the small files.
+func TestBudgetPreferEscalated_FallsBackWhenExemptionWouldDropEverything(t *testing.T) {
+	in := modeEntries(
+		"esc.go", 200, ModeFiles,
+		"a.go", 50, ModeDiff,
+	)
+
+	kept, tr := ApplyByteBudgetPreferEscalated(in, 100, ModeDiff)
+	assert.True(t, tr.Truncated)
+	assert.False(t, tr.AllDropped,
+		"falling back to largest-first keeps a.go rather than dropping everything")
+	assert.Equal(t, []string{"a.go"}, keptPaths(kept))
+	assert.Equal(t, []string{"esc.go"}, tr.FilesDropped)
+}
+
+// With nothing escalated the two orderings must agree exactly, so the wiring is
+// a no-op on every review where the escalation heuristic did not fire.
+func TestBudgetPreferEscalated_MatchesPlainWhenNothingEscalated(t *testing.T) {
+	in := modeEntries(
+		"a.go", 200, ModeDiff,
+		"b.go", 40, ModeDiff,
+		"c.go", 40, ModeDiff,
+	)
+
+	wantKept, wantTr := ApplyByteBudget(in, 100)
+	gotKept, gotTr := ApplyByteBudgetPreferEscalated(in, 100, ModeDiff)
+
+	assert.Equal(t, keptPaths(wantKept), keptPaths(gotKept))
+	assert.Equal(t, wantTr, gotTr)
+}
+
+// A file rendered BELOW the configured mode (or with no mode at all, as on
+// baseline scans) is not escalated and must not be exempted.
+func TestBudgetPreferEscalated_OnlyHigherContextModesAreExempt(t *testing.T) {
+	in := modeEntries(
+		"big.go", 200, PayloadMode(""), // baseline entry: no mode, not escalated
+		"a.go", 40, ModeBlocks,
+		"b.go", 40, ModeBlocks,
+	)
+
+	kept, tr := ApplyByteBudgetPreferEscalated(in, 100, ModeBlocks)
+	assert.Equal(t, []string{"big.go"}, tr.FilesDropped,
+		"an un-escalated large file is still shed largest-first")
+	assert.ElementsMatch(t, []string{"a.go", "b.go"}, keptPaths(kept))
+}
+
+// Kept entries keep their input order regardless of the drop ordering used, so
+// the rendered payload stays deterministic.
+func TestBudgetPreferEscalated_KeptRetainsInputOrder(t *testing.T) {
+	in := modeEntries(
+		"a.go", 40, ModeDiff,
+		"esc.go", 200, ModeFiles,
+		"b.go", 40, ModeDiff,
+	)
+
+	kept, _ := ApplyByteBudgetPreferEscalated(in, 240, ModeDiff)
+	assert.Equal(t, []string{"a.go", "esc.go"}, keptPaths(kept))
+}
+
 func TestBudget_UnderLimit(t *testing.T) {
 	in := entries("a", 60000, "b", 30000, "c", 20000, "d", 10000)
 	kept, tr := ApplyByteBudget(in, 200000)

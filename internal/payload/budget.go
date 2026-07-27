@@ -110,6 +110,12 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
 }
 
+// ApplyByteBudgetPreferEscalated is ApplyByteBudget with an escalation-aware
+// drop order. STUB — not yet implemented.
+func ApplyByteBudgetPreferEscalated(entries []FileEntry, budget int64, configured PayloadMode) (kept []FileEntry, t Truncation) {
+	return ApplyByteBudget(entries, budget)
+}
+
 // clampSize treats negative sizes as zero for budget accounting so invalid
 // input can neither offset real bytes nor inflate freed space when dropped.
 func clampSize(s int64) int64 {
