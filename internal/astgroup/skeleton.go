@@ -236,9 +236,9 @@ func matchingBrace(text string, open int) int {
 // root: the number of branch-kind nodes plus one. A tree with no branches scores
 // 1, matching the convention that straight-line code has a single path.
 //
-// Applied to a FILE node this sums every branch in the file, which is NOT what
-// the conventional McCabe thresholds (10, 15) describe — those are per-function.
-// Use MaxFuncCyclomatic to compare against such a threshold.
+// Applied to a FILE node this sums every branch in the file rather than scoring
+// any one function, so it is not comparable to a per-function complexity
+// threshold. Use MaxFuncCyclomatic to compare against such a threshold.
 func Cyclomatic(root Node) int {
 	return 1 + countBranches(root)
 }
