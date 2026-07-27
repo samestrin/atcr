@@ -1,5 +1,16 @@
 package payload
 
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/samestrin/atcr/internal/stream"
+)
+
 // fullrepo.go hosts the full-repository / directory-scoped ("baseline") payload
 // path for `atcr review --all` and `atcr review --dir <path>` (Sprint 35.0). It
 // is a SIBLING to builder.go's diff-range dispatch, never a new PayloadMode case
@@ -10,6 +21,78 @@ package payload
 // This file currently contains only Phase 1's design-spike stub; the GREEN
 // implementation lands in Phase 2 (tasks 2.5 / 2.8). The stub compiles so
 // Phase 2's RED tests (AC 01-02 / AC 01-03) have a symbol to reference.
+
+// enumerateRepoFiles is the baseline (--all / --dir) tracked-file walker (Sprint
+// 35.0, AC 01-02). It enumerates the repository's git-tracked files via
+// stream.BuildFileIndex — the SAME git ls-files primitive diff-mode reconciliation
+// uses (Epic 5.4), no second traversal — filters each through the existing
+// ignoreMatcher (.gitignore/.atcrignore parity with diff-mode, ignore.go), and
+// reads the survivors' contents into []FileEntry for the byte-budget partitioner.
+//
+// Contract:
+//   - A nil FileIndex (empty root, not a git repo, or git unavailable —
+//     BuildFileIndex's documented degrade-to-nil) is a clear error, never a
+//     nil-pointer panic (AC 01-02 Edge Case 2 / Error Scenario 1).
+//   - A repo with zero tracked files returns an empty, non-nil slice with no
+//     error, so the caller surfaces "no reviewable content" upstream (Edge Case 1).
+//   - Untracked working-tree files are excluded by construction: the candidate set
+//     is git ls-files only (Edge Case 5), an explicit non-goal of this epic.
+//   - Enumeration order is unspecified (FileIndex.Paths() iterates a map);
+//     deterministic chunk ordering is partitionByBudget's responsibility, not the
+//     walker's.
+//
+// No new subprocess is spawned per file (AC 01-02 Performance): the one git
+// ls-files call is inside BuildFileIndex; contents come from disk reads.
+func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger) ([]FileEntry, error) {
+	idx := stream.BuildFileIndex(ctx, root)
+	if idx == nil {
+		return nil, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
+	}
+	matcher := newIgnoreMatcher(root, logger)
+	paths := idx.Paths()
+	entries := make([]FileEntry, 0, len(paths))
+	for _, rel := range paths {
+		if matcher.match(rel) {
+			continue // .gitignore/.atcrignore parity with diff-mode
+		}
+		entry, err := readTrackedFile(root, rel)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// readTrackedFile reads one tracked file's content into a FileEntry. rel is a
+// slash-normalized, repo-root-relative path straight from git ls-files (trusted,
+// no traversal), joined under root. A tracked symlink captures its LITERAL target
+// string via os.Readlink — the exact content git stores for the symlink object —
+// and is NEVER resolved or followed, so a link pointing outside root cannot cause
+// a read escape (AC 01-02 Edge Case 4 / Security Considerations). Intermediate
+// path components of a git ls-files path are always real directories (git tracks a
+// symlink as its own leaf entry, never traverses through one), so os.ReadFile of a
+// regular file stays rooted at root. Binary/non-UTF8 content is captured verbatim
+// with its raw byte size (Edge Case 3).
+func readTrackedFile(root, rel string) (FileEntry, error) {
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	fi, err := os.Lstat(abs)
+	if err != nil {
+		return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(abs)
+		if err != nil {
+			return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+		}
+		return FileEntry{Path: rel, Size: int64(len(target)), Body: target}, nil
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+	}
+	return FileEntry{Path: rel, Size: int64(len(data)), Body: string(data)}, nil
+}
 
 // partitionByBudget groups an already-enumerated, already-ignore-filtered
 // []FileEntry into N byte-budget-bounded chunks for baseline (--all / --dir)
