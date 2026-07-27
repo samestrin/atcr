@@ -69,9 +69,9 @@ func TestPayloadEscalation_ValidateRejectsChurnRatioAboveOne(t *testing.T) {
 }
 
 func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
-	overGap := 1001
-	overFiles := 5001
-	overSkel := 2001
+	overGap := MaxEscalationHunkGapLines + 1
+	overFiles := MaxEscalationFiles + 1
+	overSkel := MaxEscalationSkeletonLines + 1
 
 	for name, cfg := range map[string]PayloadEscalationConfig{
 		"hunk_gap_lines":     {HunkGapLines: &overGap},
@@ -87,7 +87,7 @@ func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 	}
 
 	// The ceilings themselves are legal — only values above them are absurd.
-	atGap, atFiles, atSkel := 1000, 5000, 2000
+	atGap, atFiles, atSkel := MaxEscalationHunkGapLines, MaxEscalationFiles, MaxEscalationSkeletonLines
 	r := Registry{PayloadEscalation: PayloadEscalationConfig{
 		HunkGapLines: &atGap, MaxFiles: &atFiles, MaxSkeletonLines: &atSkel,
 	}}
