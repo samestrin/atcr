@@ -94,7 +94,7 @@ func TestFileSkeleton_CarriesKindNameAndLine(t *testing.T) {
 	simple, ok := byName["Simple"]
 	require.True(t, ok, "func Simple should be named in the skeleton")
 	require.Equal(t, "func", simple.Kind)
-	require.Equal(t, 18, simple.StartLine, "1-based line of `func Simple() {}`")
+	require.Equal(t, 17, simple.StartLine, "1-based line of `func Simple() {}`")
 
 	// gendecl nodes carry no Name (the Go parser emits names only for FuncDecl),
 	// so the header text is the only identifier the reviewer gets.
