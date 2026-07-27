@@ -292,6 +292,52 @@ func Dispatch(n int) int {
 	require.Equal(t, 3, MaxFuncCyclomatic(root), "parent absorbs its closures' complexity")
 }
 
+func TestBodyBraceIndex_SkipsBlockComment(t *testing.T) {
+	// A `{` inside a block comment must not be mistaken for the body brace, and
+	// must not stop the scan from finding the real one after the comment.
+	text := `func F() int /* {x} */ {`
+
+	require.Equal(t, strings.LastIndex(text, "{"), bodyBraceIndex(text))
+}
+
+func TestBodyBraceIndex_LineCommentParenDoesNotStallSearch(t *testing.T) {
+	// A `(` inside a line comment must not increment the paren depth counter,
+	// or the real body brace after it is never found (depth stays > 0).
+	text := "func F(\n\ta int, // opens a paren ( here\n\tb string,\n) int {"
+
+	require.Equal(t, strings.LastIndex(text, "{"), bodyBraceIndex(text))
+}
+
+func TestBodyBraceIndex_DoubleQuoteEscapedQuoteDoesNotEndStringEarly(t *testing.T) {
+	// `\"` inside a double-quoted string is an escaped quote, not the string's
+	// end — and the `(` inside the string must not affect paren depth either.
+	text := `"a\"(" {`
+
+	require.Equal(t, strings.LastIndex(text, "{"), bodyBraceIndex(text))
+}
+
+func TestBodyBraceIndex_BacktickStringContentIsIgnored(t *testing.T) {
+	text := "`(` {"
+
+	require.Equal(t, strings.LastIndex(text, "{"), bodyBraceIndex(text))
+}
+
+func TestBodyBraceIndex_RuneLiteralContentIsIgnored(t *testing.T) {
+	text := `'(' {`
+
+	require.Equal(t, strings.LastIndex(text, "{"), bodyBraceIndex(text))
+}
+
+func TestFileSkeleton_BlockCommentBeforeBodyDoesNotTruncateHeader(t *testing.T) {
+	// End-to-end version of TestBodyBraceIndex_SkipsBlockComment through the
+	// public FileSkeleton API: the header must include the full signature up
+	// to the real body brace, not truncate mid-comment.
+	src := "package p\n\nfunc F() int /* {x} */ {\n\treturn 1\n}\n"
+	root := parseGoForSkeleton(t, src)
+
+	require.Equal(t, []string{"func F() int /* {x} */"}, headersOf(FileSkeleton(root, src)))
+}
+
 func TestFileSkeleton_InlineTypeInResultDoesNotTruncateSignature(t *testing.T) {
 	// A depth-0 `{` can belong to an inline struct/interface TYPE rather than the
 	// declaration body. Truncating there emits an actively wrong signature.
