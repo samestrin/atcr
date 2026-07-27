@@ -417,6 +417,48 @@ func TestEnumerateRepoFiles_ReadFailureMidWalk(t *testing.T) {
 	assert.Contains(t, err.Error(), "gone.go")
 }
 
+// TD-002 (Sprint 35.0 hardening): an over-cap tracked file is skipped and
+// Warn-flagged instead of slurped whole into memory (OOM vector) — the walk
+// survives and still returns the under-cap files.
+func TestEnumerateRepoFiles_SkipsOverCapFile(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "small.go", "package small\n")
+	write(t, dir, "big.bin", strings.Repeat("x", 64))
+	commitAll(t, dir, "seed")
+
+	restore := maxTrackedFileReadBytes
+	maxTrackedFileReadBytes = 16
+	defer func() { maxTrackedFileReadBytes = restore }()
+
+	logger, buf := debugLogger()
+	entries, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err, "an over-cap file must be skipped, not abort the scan")
+	assert.Equal(t, []string{"small.go"}, sortedPaths(entries), "over-cap file omitted, under-cap kept")
+	assert.Contains(t, buf.String(), "over-cap", "the skip is Warn-flagged, never silent")
+	assert.Contains(t, buf.String(), "big.bin", "the flag names the skipped path")
+}
+
+// TD-002: readTrackedFile rejects an over-cap file with the sentinel so the
+// walker can distinguish "skip me" from a genuine read failure (which aborts).
+// A file AT the cap is still accepted (boundary).
+func TestReadTrackedFile_OverCapSentinel(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "big.bin", strings.Repeat("x", 64))
+	write(t, dir, "atcap.bin", strings.Repeat("y", 16))
+	commitAll(t, dir, "seed")
+
+	restore := maxTrackedFileReadBytes
+	maxTrackedFileReadBytes = 16
+	defer func() { maxTrackedFileReadBytes = restore }()
+
+	_, err := readTrackedFile(dir, "big.bin")
+	require.ErrorIs(t, err, errTrackedFileTooLarge, "over-cap read must return the sentinel")
+
+	e, err := readTrackedFile(dir, "atcap.bin")
+	require.NoError(t, err, "a file at exactly the cap is accepted")
+	assert.Equal(t, strings.Repeat("y", 16), e.Body)
+}
+
 // --- AC 02-02: path-segment scope filter (--dir) -----------------------------
 
 // TestFilterByScope_WholeRepoWhenEmptyOrDot covers AC 02-01 Edge Case 2 / AC 02-02:

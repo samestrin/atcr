@@ -139,6 +139,19 @@ func TestReviewAll_ResumeRejectsAllFlag(t *testing.T) {
 	require.Contains(t, out, "--resume does not support --all")
 }
 
+// TD (resume.go): since Sprint 35.0, --fresh has a second meaning beyond the
+// --verify stage — bypassing the baseline file-hash skip (review.go). The
+// resume rejection must acknowledge both meanings instead of the stale
+// "only applies to --verify" reason.
+func TestReviewAll_ResumeRejectsFreshFlag(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--fresh")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--resume does not support --fresh")
+	require.Contains(t, out, "baseline", "the --fresh rejection must acknowledge its baseline re-scan meaning")
+	require.NotContains(t, out, "only applies to --verify", "stale single-meaning rejection reason")
+}
+
 // AC 01-05 Happy Path 3: `atcr reconcile <id>` and `atcr report <id>` work
 // unmodified against an --all-produced review directory (provenance-agnostic).
 func TestReviewAll_ReconcileAndReportWorkOnBaselineOutput(t *testing.T) {
