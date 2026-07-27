@@ -671,10 +671,12 @@ func (r *Registry) validate() error {
 		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
 	}
 	// payload_escalation.* (Epic 35.1): every threshold is opt-in and every one
-	// treats 0 as "disable this signal", so only negatives are errors. churn_ratio
-	// is additionally bounded above by 1.0 — it is a fraction of a file's lines,
-	// and a value above 1 could never fire, which is a silent misconfiguration
-	// rather than a stricter setting.
+	// treats 0 as "disable this signal". Negatives are errors, the bloat- and
+	// memory-sensitive thresholds are capped by the MaxEscalation* ceilings, and
+	// churn_ratio must be a finite fraction <= 1.0 — it is a fraction of a
+	// file's lines, and a value above 1 (or NaN, which yaml.v3 resolves from
+	// .nan) could never fire, which is a silent misconfiguration rather than a
+	// stricter setting.
 	errs = append(errs, r.validatePayloadEscalation()...)
 
 	for _, name := range sortedKeys(r.Providers) {
