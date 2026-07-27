@@ -379,9 +379,19 @@ func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	before := rb.g.execCount
 	_, err := rb.BuildEntries(ModeDiff)
 	require.NoError(t, err)
 	afterFirst := rb.g.execCount
+
+	// Pin the absolute cost of the first build, not just the delta between the
+	// two builds: 7 = name-status + numstat + the whole-range diff variants this
+	// build populates + exactly ONE `git show` of the HEAD blob (shared by the
+	// analysis pass and any later render via the memo). An unmemoized second
+	// read inside this build would cost 8. If a legitimate pipeline change
+	// alters the count, update the number deliberately.
+	require.Equal(t, 7, afterFirst-before,
+		"the first build must read the HEAD blob exactly once alongside the cached whole-range diffs")
 
 	// Re-render the same range in files mode on the same runner: the HEAD blob is
 	// already memoized, so rendering must not re-spawn `git show` for it.
