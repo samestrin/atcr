@@ -659,6 +659,12 @@ func (r *Registry) validate() error {
 	if r.Debate.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
 	}
+	// payload_escalation.* (Epic 35.1): every threshold is opt-in and every one
+	// treats 0 as "disable this signal", so only negatives are errors. churn_ratio
+	// is additionally bounded above by 1.0 — it is a fraction of a file's lines,
+	// and a value above 1 could never fire, which is a silent misconfiguration
+	// rather than a stricter setting.
+	errs = append(errs, r.validatePayloadEscalation()...)
 
 	for _, name := range sortedKeys(r.Providers) {
 		errs = append(errs, validateProvider(name, r.Providers[name])...)
@@ -677,6 +683,36 @@ func (r *Registry) validate() error {
 // provider must be present and reference a defined provider, the model is
 // required, role (if set) must be "executor", min_severity_for_fix (if set) must
 // be a canonical review severity, and fix_timeout must be within bounds.
+// validatePayloadEscalation checks the optional payload_escalation block. Unset
+// (nil) fields are always valid — they resolve to defaults downstream. A set
+// field must be non-negative, and churn_ratio must additionally be a fraction
+// (<= 1.0).
+func (r *Registry) validatePayloadEscalation() []error {
+	pe := r.PayloadEscalation
+	var errs []error
+	if pe.ChurnRatio != nil {
+		if *pe.ChurnRatio < 0 {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be >= 0 (0 = disabled), got %v", *pe.ChurnRatio))
+		} else if *pe.ChurnRatio > 1 {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be <= 1.0 (it is a fraction of a file's lines), got %v", *pe.ChurnRatio))
+		}
+	}
+	for _, f := range []struct {
+		name string
+		val  *int
+	}{
+		{"min_hunks", pe.MinHunks},
+		{"hunk_gap_lines", pe.HunkGapLines},
+		{"min_cyclomatic", pe.MinCyclomatic},
+		{"max_files", pe.MaxFiles},
+	} {
+		if f.val != nil && *f.val < 0 {
+			errs = append(errs, fmt.Errorf("payload_escalation.%s must be >= 0 (0 = disabled), got %d", f.name, *f.val))
+		}
+	}
+	return errs
+}
+
 func (r *Registry) validateExecutor() []error {
 	e := r.Executor
 	if e == nil {

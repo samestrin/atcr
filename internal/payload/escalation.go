@@ -1,17 +1,46 @@
 package payload
 
+// Built-in per-file escalation thresholds (Epic 35.1). They are the resolved
+// values when a registry sets no payload_escalation block.
+const (
+	// DefaultEscalationChurnRatio fires when at least half a file's HEAD lines
+	// are touched — the "the file was substantially rewritten" signal.
+	DefaultEscalationChurnRatio = 0.5
+	// DefaultEscalationMinHunks fires on scattered edits: four or more separate
+	// hunks in one file is the architectural-thrashing shape a net diff hides.
+	DefaultEscalationMinHunks = 4
+	// DefaultEscalationHunkGapLines fires when two hunks sit closer than this
+	// many unchanged lines apart, i.e. the same region was churned twice.
+	DefaultEscalationHunkGapLines = 10
+	// DefaultEscalationMinCyclomatic is the McCabe floor above which a file's
+	// control flow is too branchy to review from hunks alone.
+	DefaultEscalationMinCyclomatic = 15
+	// DefaultEscalationMaxFiles caps how many changed files a run will scan.
+	// Above it the escalation and skeleton passes are skipped wholesale, because
+	// each scanned file costs one `git show` plus one AST parse.
+	DefaultEscalationMaxFiles = 50
+)
+
 // EscalationConfig is the resolved (defaults-applied) per-file escalation
-// configuration the builder acts on.
+// configuration the builder acts on. A zero value disables every signal, which
+// is how an operator turns the feature off without a code change.
 type EscalationConfig struct {
-	ChurnRatio    float64
-	MinHunks      int
-	HunkGapLines  int
-	MinCyclomatic int
-	MaxFiles      int
+	ChurnRatio    float64 // 0 disables; else fires at >= ratio of HEAD lines changed
+	MinHunks      int     // 0 disables; else fires at >= this many hunks
+	HunkGapLines  int     // 0 disables; else fires when two hunks are < this many lines apart
+	MinCyclomatic int     // 0 disables; else fires at >= this McCabe score
+	MaxFiles      int     // 0 disables the whole feature; else the changed-file ceiling
 }
 
 // EscalationOverrides is the optional, unset-distinguishable form of
-// EscalationConfig.
+// EscalationConfig: nil means "use the default", a set pointer means "use this
+// value" — including an explicit 0 to disable one signal.
+//
+// It mirrors registry.PayloadEscalationConfig field for field. The two are
+// deliberately separate types: internal/payload must not import
+// internal/registry (see sprintplan.go), the same boundary that keeps
+// validPayloadModes duplicated in registry/payload.go. The single field-copy
+// between them lives at the call site and is pinned by a sync test.
 type EscalationOverrides struct {
 	ChurnRatio    *float64
 	MinHunks      *int
@@ -21,14 +50,53 @@ type EscalationOverrides struct {
 }
 
 // DefaultEscalationConfig returns the built-in escalation thresholds.
-func DefaultEscalationConfig() EscalationConfig { return EscalationConfig{} }
+func DefaultEscalationConfig() EscalationConfig {
+	return EscalationConfig{
+		ChurnRatio:    DefaultEscalationChurnRatio,
+		MinHunks:      DefaultEscalationMinHunks,
+		HunkGapLines:  DefaultEscalationHunkGapLines,
+		MinCyclomatic: DefaultEscalationMinCyclomatic,
+		MaxFiles:      DefaultEscalationMaxFiles,
+	}
+}
 
-// ResolveEscalationConfig applies defaults to o.
+// ResolveEscalationConfig turns optional overrides into the resolved config the
+// builder acts on, applying a default per unset field. It is pure and total: a
+// zero-value EscalationOverrides yields DefaultEscalationConfig.
 func ResolveEscalationConfig(o EscalationOverrides) EscalationConfig {
-	return EscalationConfig{}
+	c := DefaultEscalationConfig()
+	if o.ChurnRatio != nil {
+		c.ChurnRatio = *o.ChurnRatio
+	}
+	if o.MinHunks != nil {
+		c.MinHunks = *o.MinHunks
+	}
+	if o.HunkGapLines != nil {
+		c.HunkGapLines = *o.HunkGapLines
+	}
+	if o.MinCyclomatic != nil {
+		c.MinCyclomatic = *o.MinCyclomatic
+	}
+	if o.MaxFiles != nil {
+		c.MaxFiles = *o.MaxFiles
+	}
+	return c
+}
+
+// Enabled reports whether the escalation and skeleton passes should run at all
+// for a change set of n files. A zero MaxFiles disables the feature outright;
+// otherwise a change set larger than the cap degrades to plain diff, because
+// every scanned file costs a `git show` plus an AST parse and that product is
+// paid once per parallel agent.
+func (c EscalationConfig) Enabled(n int) bool {
+	return c.MaxFiles > 0 && n <= c.MaxFiles
 }
 
 // fileSignals are the per-file measurements the escalation heuristic scores.
+// headLines is 0 when HEAD content was unavailable (deleted or unreadable file),
+// and cyclomatic is 0 when complexity was not computed — a non-Go file, or a
+// parse failure. Both zeros mean "unknown", never "zero", so neither can fire a
+// signal on its own.
 type fileSignals struct {
 	changedLines int
 	headLines    int
@@ -37,6 +105,69 @@ type fileSignals struct {
 }
 
 // escalate returns the payload mode a file should actually be rendered in.
+//
+// Two independent signals feed a ladder: either one alone promotes the file to
+// blocks, and both together promote it to files. The result is never below base,
+// so a run configured for files never de-escalates and a blocks-mode file can
+// only move up to files.
 func (c EscalationConfig) escalate(base PayloadMode, s fileSignals) PayloadMode {
+	target := ModeDiff
+	switch {
+	case c.diffNativeFires(s) && c.complexityFires(s):
+		target = ModeFiles
+	case c.diffNativeFires(s), c.complexityFires(s):
+		target = ModeBlocks
+	}
+	if modeRank(target) > modeRank(base) {
+		return target
+	}
 	return base
+}
+
+// diffNativeFires reports whether the parse-free signals — churn ratio, hunk
+// count, hunk adjacency — indicate a structurally confusing diff.
+func (c EscalationConfig) diffNativeFires(s fileSignals) bool {
+	if c.ChurnRatio > 0 && s.headLines > 0 &&
+		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio {
+		return true
+	}
+	if c.MinHunks > 0 && len(s.hunks) >= c.MinHunks {
+		return true
+	}
+	return c.hunksAreAdjacent(s.hunks)
+}
+
+// hunksAreAdjacent reports whether any two consecutive hunks are separated by
+// fewer than HunkGapLines unchanged lines. Hunks arrive in ascending head-line
+// order from the diff, so a single pass over neighbours is sufficient.
+func (c EscalationConfig) hunksAreAdjacent(hunks []lineRange) bool {
+	if c.HunkGapLines <= 0 {
+		return false
+	}
+	for i := 1; i < len(hunks); i++ {
+		gap := hunks[i].start - hunks[i-1].end - 1
+		if gap < c.HunkGapLines {
+			return true
+		}
+	}
+	return false
+}
+
+// complexityFires reports whether the file's McCabe score clears the floor. A
+// cyclomatic of 0 means the score was never computed and is not a signal.
+func (c EscalationConfig) complexityFires(s fileSignals) bool {
+	return c.MinCyclomatic > 0 && s.cyclomatic > 0 && s.cyclomatic >= c.MinCyclomatic
+}
+
+// modeRank orders the modes by how much context they hand the reviewer, so
+// escalation can be expressed as a monotonic maximum.
+func modeRank(m PayloadMode) int {
+	switch m {
+	case ModeBlocks:
+		return 1
+	case ModeFiles:
+		return 2
+	default:
+		return 0
+	}
 }
