@@ -237,6 +237,61 @@ func TestBaselineWriteback_ExcludesGloballyDroppedFiles(t *testing.T) {
 	assert.False(t, droppedRecorded, "a globally byte-budget-dropped file must NOT be recorded as reviewed")
 }
 
+// TD-009 companion (review.go:264): a nil tracked set signals a transient git
+// failure at the write-back's TrackedInScope walk (it degrades to nil). Trim's
+// nil-keep contract is "keep everything — a git hiccup must not wipe the index",
+// so CommitBaselineIndex must pass nil through rather than an empty-but-non-nil
+// keep map, which Trim reads as "nothing tracked, trim all".
+func TestCommitBaselineIndex_NilTrackedKeepsIndex(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "file-hashes.json")
+	idx := payload.Load(indexPath, nil)
+	idx.Record("old.go", "sha256:old", "run-prev")
+
+	prep := &PreparedReview{
+		baseline: &baselineWriteback{
+			indexPath: indexPath,
+			preIndex:  idx,
+			reviewed:  map[string]string{"new.go": "sha256:new"},
+			tracked:   nil, // transient git failure at the TrackedInScope walk
+			scope:     "",
+		},
+	}
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	got := payload.Load(indexPath, nil)
+	_, _, okOld := got.Get("old.go")
+	assert.True(t, okOld, "a nil tracked set (git hiccup) must not wipe the accumulated index")
+	_, rid, okNew := got.Get("new.go")
+	assert.True(t, okNew, "the just-reviewed file is still recorded")
+	assert.Equal(t, "run-1", rid)
+}
+
+// The non-nil-but-empty tracked set is the OPPOSITE case: the walk succeeded and
+// the repo genuinely tracks nothing in scope, so Trim must prune every stale
+// entry — pinning that the nil guard above does not disable legitimate trims.
+func TestCommitBaselineIndex_EmptyTrackedTrimsAll(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "file-hashes.json")
+	idx := payload.Load(indexPath, nil)
+	idx.Record("gone.go", "sha256:old", "run-prev")
+
+	prep := &PreparedReview{
+		baseline: &baselineWriteback{
+			indexPath: indexPath,
+			preIndex:  idx,
+			reviewed:  map[string]string{},
+			tracked:   []string{}, // walk succeeded: nothing tracked in scope
+			scope:     "",
+		},
+	}
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	got := payload.Load(indexPath, nil)
+	_, _, ok := got.Get("gone.go")
+	assert.False(t, ok, "a successful walk with zero tracked files must trim every stale entry")
+}
+
 // baselineRoutingCompleter returns a distinct finding per chunk keyed on the file
 // marker the chunk prompt carries, so an end-to-end run can prove every chunk was
 // actually dispatched (its marker finding present in the raw per-slot results).
