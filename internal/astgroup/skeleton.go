@@ -106,7 +106,12 @@ func declHeader(lines []string, n Node) (string, bool) {
 		if i := bodyBraceIndex(text); i >= 0 {
 			text = text[:i]
 		} else {
-			text = lines[n.StartLine-1]
+			// No depth-0 body brace was found (an unbalanced or unterminated
+			// signature). Fall back to the first line, stripping a trailing `{`
+			// so a false negative degrades to a truncated-but-clean signature
+			// rather than leaking body text — mirroring the gendecl path below.
+			text = strings.TrimRight(lines[n.StartLine-1], " \t\r")
+			text = strings.TrimSuffix(text, "{")
 		}
 	} else {
 		// A type/const/var declaration's header is its first line. A trailing `{`
@@ -225,9 +230,35 @@ func skipRuneLiteral(text string, start int) int {
 
 // opensInlineType reports whether the brace following prefix belongs to an
 // inline struct/interface type rather than a declaration body.
+//
+// The keyword must appear as a WHOLE token, not merely as a trailing substring:
+// a named type like `*astruct` ends in the letters "struct" but is not an inline
+// type, and mistaking its body brace for one makes matchingBrace consume the
+// whole function body. A real inline type's keyword is preceded by start-of-text
+// or a non-identifier byte (space, `*`, `]`, `.`), which is the discriminator.
 func opensInlineType(prefix string) bool {
 	t := strings.TrimRight(prefix, " \t\n")
-	return strings.HasSuffix(t, "struct") || strings.HasSuffix(t, "interface")
+	return endsWithKeyword(t, "struct") || endsWithKeyword(t, "interface")
+}
+
+// endsWithKeyword reports whether t ends with kw as a whole identifier token —
+// kw is a suffix of t and is not immediately preceded by an identifier byte.
+func endsWithKeyword(t, kw string) bool {
+	if !strings.HasSuffix(t, kw) {
+		return false
+	}
+	if len(t) == len(kw) {
+		return true
+	}
+	return !isIdentByte(t[len(t)-len(kw)-1])
+}
+
+// isIdentByte reports whether b can appear inside a Go identifier.
+func isIdentByte(b byte) bool {
+	return b == '_' ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
 }
 
 // matchingBrace returns the index of the `}` closing the `{` at open, or -1 when
