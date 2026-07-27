@@ -691,12 +691,31 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 	// baseline resume path deliberately passes nil (resume.go) to bypass the
 	// hash-skip and rebuild the FULL superset of candidates — fail-open, so a
 	// resumed run re-reviews everything rather than trusting a stale index.
-	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope, idx, fresh)
+	entries, stats, err := payload.BuildRepoEntriesWithStats(ctx, repo, log.FromContext(ctx), noIgnore, scope, idx, fresh)
 	if err != nil {
 		return nil, err
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
+		// Classify WHY the candidate set is empty (TD-008/TD-010) instead of the
+		// one-size-fits-all "no reviewable tracked files":
+		//   - HashSkipped > 0: the repo has tracked files and every candidate was
+		//     skipped by the incremental hash index — nothing changed since the
+		//     last completed review. This is the common CI re-run path: a
+		//     successful no-op (the CLI maps ErrAllFilesUnchanged to exit 0 with a
+		//     notice), NOT a usage error.
+		//   - IgnoreFiltered > 0: candidates existed but .gitignore/.atcrignore
+		//     dropped them all — recoverable, so hint at --no-ignore, mirroring
+		//     the diff/range path's rb.AllIgnored() diagnostic.
+		//   - otherwise: a genuinely empty repository/scope (or every file
+		//     over-cap) — the original generic error.
+		switch {
+		case stats.HashSkipped > 0:
+			return nil, fmt.Errorf("%w: %d file(s) unchanged since last review", ErrAllFilesUnchanged, stats.HashSkipped)
+		case stats.IgnoreFiltered > 0:
+			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope were excluded by .gitignore/.atcrignore; re-run with --no-ignore to review them", ErrNoReviewableContent, stats.IgnoreFiltered)
+		default:
+			return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
+		}
 	}
 	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
 	if trunc.AllDropped {

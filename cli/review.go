@@ -444,6 +444,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return interruptedBeforeFanout(cmd)
 		}
+		// TD-010: a baseline re-scan whose every in-scope file is unchanged since
+		// the last completed review is a successful no-op (the common CI re-run
+		// path), not the exit-2 usage error an empty repository gets. Exit 0 with
+		// a notice pointing at the --fresh escape hatch; nothing was scaffolded.
+		if errors.Is(err, fanout.ErrAllFilesUnchanged) {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%v; nothing to review (use --fresh to force a full re-scan)\n", err)
+			return nil
+		}
 		return usageError(err)
 	}
 

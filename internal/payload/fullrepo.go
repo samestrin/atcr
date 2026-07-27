@@ -65,18 +65,45 @@ var maxTrackedFileReadBytes int64 = 32 << 20
 // a first-ever run. The skip is strictly after ignore-filtering and strictly before
 // the byte-budget partitioner (AC 04-02).
 func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string, idx *FileHashIndex, fresh bool) ([]FileEntry, error) {
-	entries, err := enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
+	entries, _, err := BuildRepoEntriesWithStats(ctx, root, logger, noIgnore, scope, idx, fresh)
+	return entries, err
+}
+
+// RepoScanStats reports how a baseline scan's candidate set was reduced between
+// enumeration and chunking (TD-008/TD-010), so a caller handed ZERO entries can
+// distinguish WHY: every candidate ignore-filtered (recoverable with
+// --no-ignore), every candidate hash-skipped (nothing changed since the last
+// review — a successful no-op), or a genuinely empty repository/scope.
+type RepoScanStats struct {
+	// IgnoreFiltered is the number of in-scope tracked candidates dropped by
+	// .gitignore/.atcrignore (always zero when noIgnore bypassed the filter).
+	IgnoreFiltered int
+	// HashSkipped is the number of ignore-surviving candidates dropped by the
+	// incremental file-hash index as byte-for-byte unchanged since last review
+	// (always zero for a --fresh/nil-index scan, which skips nothing).
+	HashSkipped int
+}
+
+// BuildRepoEntriesWithStats is BuildRepoEntries plus the reduction counters a
+// caller needs to classify an empty result (see RepoScanStats). The two entry
+// points share the single enumerate → hash-skip pipeline so their candidate
+// sets can never diverge.
+func BuildRepoEntriesWithStats(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string, idx *FileHashIndex, fresh bool) ([]FileEntry, RepoScanStats, error) {
+	entries, ignoreFiltered, err := enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
 	if err != nil {
-		return nil, err
+		return nil, RepoScanStats{}, err
 	}
-	return applyHashSkip(entries, idx, fresh), nil
+	kept, hashSkipped := applyHashSkip(entries, idx, fresh)
+	return kept, RepoScanStats{IgnoreFiltered: ignoreFiltered, HashSkipped: hashSkipped}, nil
 }
 
 // applyHashSkip drops candidates whose content hash matches the recorded index entry
 // (Sprint 35.0, AC 04-02) — the pre-chunking incremental re-scan skip. It runs on the
 // already-ignore-filtered []FileEntry enumerateRepoFiles returns, so an ignored file
 // never reaches it (ignore-filtering runs first, AC 04-02 Edge Case 2), and it runs
-// before PartitionByBudget, so a skipped file never lands in any chunk.
+// before PartitionByBudget, so a skipped file never lands in any chunk. It also
+// returns the number of candidates it dropped, so an empty result can be
+// classified as "all unchanged since last review" (TD-010).
 //
 // fresh (the --fresh/--force bypass, AC 04-04/05-02) or a nil idx returns the input
 // unchanged — every candidate is treated as unreviewed. Otherwise each candidate's
@@ -89,23 +116,25 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noI
 // 01-02), so hashing here cannot fail — a file is only ever dropped on a positive
 // hash match, never silently dropped due to a hashing error (AC 04-02 Error Scenario
 // 1 holds vacuously). The lookup is O(1) per candidate (idx is a path-keyed map).
-func applyHashSkip(entries []FileEntry, idx *FileHashIndex, fresh bool) []FileEntry {
+func applyHashSkip(entries []FileEntry, idx *FileHashIndex, fresh bool) ([]FileEntry, int) {
 	// Bypass the whole pass — including the per-file SHA-256 hashing — when there is
 	// nothing to skip against: --fresh/--force, a nil index, or an empty index (the
 	// normal first-run state, since Load always returns a non-nil-but-empty index for
 	// a missing/empty/corrupt file). Hashing every file for guaranteed-miss lookups on
 	// the one run that can never benefit is pure waste (4.5.A LOW).
 	if fresh || idx == nil || len(idx.entries) == 0 {
-		return entries
+		return entries, 0
 	}
 	out := make([]FileEntry, 0, len(entries))
+	skipped := 0
 	for _, e := range entries {
 		if idx.Unchanged(e.Path, cache.HashText(e.Body)) {
+			skipped++
 			continue // byte-for-byte unchanged since last review → skip pre-chunking
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, skipped
 }
 
 // TrackedInScope returns the git-tracked, repo-root-relative, slash-normalized paths
@@ -196,10 +225,15 @@ func filterByScope(paths []string, scope string) []string {
 // --no-ignore flag), matching diff-mode's payload.WithoutIgnoreFilter so baseline
 // honors the flag identically — otherwise the on-disk manifest would record
 // NoIgnore while files were in fact filtered, a provenance lie.
-func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, error) {
+//
+// The second return counts the candidates the ignore filter dropped, so a
+// caller handed an empty slice can distinguish "every candidate
+// ignore-filtered" (recoverable with --no-ignore, TD-008) from a genuinely
+// empty repository/scope.
+func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, int, error) {
 	idx := stream.BuildFileIndex(ctx, root)
 	if idx == nil {
-		return nil, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
+		return nil, 0, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
 	}
 	// A nil matcher's match() is a no-op (returns false), so --no-ignore includes
 	// every tracked file — the same effect as diff-mode's WithoutIgnoreFilter.
@@ -219,18 +253,20 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	// (inlined here so the whole-repo "" / "." test sees the same form it does).
 	if len(paths) == 0 && len(tracked) > 0 {
 		if normalized := NormalizeScope(scope); normalized != "" && normalized != "." {
-			return nil, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
+			return nil, 0, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
 		}
 	}
 	entries := make([]FileEntry, 0, len(paths))
+	ignoreFiltered := 0
 	for _, rel := range paths {
 		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
 		// bounded this loop — honor cancellation mid-walk so a cancelled/timed-out
 		// context interrupts enumeration of a very large repository.
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("full-repo scan: enumeration interrupted: %w", err)
+			return nil, 0, fmt.Errorf("full-repo scan: enumeration interrupted: %w", err)
 		}
 		if matcher.match(rel) {
+			ignoreFiltered++
 			continue // .gitignore/.atcrignore parity with diff-mode
 		}
 		entry, err := readTrackedFile(root, rel)
@@ -243,11 +279,11 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 				}
 				continue
 			}
-			return nil, err
+			return nil, 0, err
 		}
 		entries = append(entries, entry)
 	}
-	return entries, nil
+	return entries, ignoreFiltered, nil
 }
 
 // readTrackedFile reads one tracked file's content into a FileEntry. rel is a
