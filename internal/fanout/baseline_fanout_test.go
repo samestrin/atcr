@@ -237,6 +237,38 @@ func TestBaselineWriteback_ExcludesGloballyDroppedFiles(t *testing.T) {
 	assert.False(t, droppedRecorded, "a globally byte-budget-dropped file must NOT be recorded as reviewed")
 }
 
+// Scope normalization (review.go:263): filterByScope normalizes a scope
+// (backslash→slash, trailing-slash trim) before treating ""/"." as whole-repo,
+// but CommitBaselineIndex's self-trim gate must not disagree with it — a
+// non-CLI caller passing Dir="./" is effectively an --all scan, so the
+// write-back must self-trim deleted paths rather than skip the trim and
+// accumulate stale entries.
+func TestCommitBaselineIndex_NormalizesWholeRepoScope(t *testing.T) {
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "file-hashes.json")
+	idx := payload.Load(indexPath, nil)
+	staleHash := "sha256:" + strings.Repeat("d", 64)
+	keptHash := "sha256:" + strings.Repeat("e", 64)
+	idx.Record("stale.go", staleHash, "run-prev")
+
+	prep := &PreparedReview{
+		baseline: &baselineWriteback{
+			indexPath: indexPath,
+			preIndex:  idx,
+			reviewed:  map[string]string{"kept.go": keptHash},
+			tracked:   []string{"kept.go"},
+			scope:     "./", // normalizes to "." — whole repo
+		},
+	}
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	got := payload.Load(indexPath, nil)
+	_, _, okStale := got.Get("stale.go")
+	assert.False(t, okStale, "a whole-repo scan in normalized form (\"./\") must self-trim deleted paths")
+	_, _, okKept := got.Get("kept.go")
+	assert.True(t, okKept, "the reviewed file stays recorded")
+}
+
 // TD-009 companion (review.go:264): a nil tracked set signals a transient git
 // failure at the write-back's TrackedInScope walk (it degrades to nil). Trim's
 // nil-keep contract is "keep everything — a git hiccup must not wipe the index",
