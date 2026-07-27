@@ -126,10 +126,12 @@ type ReviewRequest struct {
 	// review logic — it is pure provenance threaded through to the audit hook.
 	PRNumber int
 	// Fresh bypasses the incremental file-hash skip for a baseline (--all/--dir)
-	// scan (the --fresh/--force flag, Sprint 35.0 Story 5): every in-scope tracked
-	// file is reviewed regardless of a matching recorded hash. It has no effect on a
-	// diff-range review (the index is neither read nor written there). Defaulting
-	// false keeps incremental skipping active for callers that do not opt out.
+	// scan (the --fresh flag, Sprint 35.0 Story 5): every in-scope tracked file is
+	// reviewed regardless of a matching recorded hash. Only --fresh drives this; the
+	// separate --force flag keeps its overwrite-existing-review meaning and is never a
+	// skip-bypass alias (AC 05-03 EC1). It has no effect on a diff-range review (the
+	// index is neither read nor written there). Defaulting false keeps incremental
+	// skipping active for callers that do not opt out.
 	Fresh bool
 }
 
@@ -221,6 +223,51 @@ type PreparedReview struct {
 	// write).
 	cache       reviewCache
 	cacheNoRead bool
+	// baseline carries the incremental file-hash write-back state for a completed
+	// --all/--dir run (Sprint 35.0 Story 4/5), captured at prepare time. nil for
+	// diff-range reviews, which never touch the index. See CommitBaselineIndex.
+	baseline *baselineWriteback
+}
+
+// baselineWriteback is the write-back state captured while a baseline payload is
+// prepared, so the post-run index write records EXACTLY the files that were reviewed
+// — using their review-time hashes (no second walk, no TOCTOU) and excluding the
+// byte-budget-shed files that never reached an agent — and self-trims deleted paths
+// without wiping out-of-scope entries.
+type baselineWriteback struct {
+	indexPath string
+	preIndex  *payload.FileHashIndex // pre-run index; unchanged/skipped files keep their prior entry
+	reviewed  map[string]string      // path -> review-time sha256 of files ACTUALLY in the payload
+	tracked   []string               // full in-scope tracked set, for self-trim on a whole-repo run
+	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
+}
+
+// CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
+// baseline review, stamping every reviewed file with runID (Sprint 35.0 Story 4/5,
+// AC 04-01). No-op for a diff-range review (p.baseline == nil). It records only the
+// files that were actually reviewed (never the byte-budget-shed ones, which would
+// otherwise be skipped-though-unreviewed on the next run), leaves unchanged/skipped
+// files' prior entries intact, and self-trims paths no longer tracked — but ONLY on a
+// whole-repo (--all) run: a scoped (--dir) run does not trim, so it never destroys
+// out-of-scope entries recorded by a prior --all run. Returns any write error for the
+// caller to log; an index-write failure must never fail an otherwise-successful
+// review (AC 04-01 Error Scenario 1).
+func (p *PreparedReview) CommitBaselineIndex(runID string) error {
+	if p == nil || p.baseline == nil {
+		return nil
+	}
+	b := p.baseline
+	for path, hash := range b.reviewed {
+		b.preIndex.Record(path, hash, runID)
+	}
+	if b.scope == "" || b.scope == "." {
+		keep := make(map[string]struct{}, len(b.tracked))
+		for _, tp := range b.tracked {
+			keep[tp] = struct{}{}
+		}
+		b.preIndex.Trim(keep)
+	}
+	return b.preIndex.Save(b.indexPath)
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -545,7 +592,35 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	// No git range → no RangeBuilder: computeGroundingData's range-less early return
 	// disables grounding (not applicable to a baseline scan).
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true)
+	prep, err := finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	// Capture the incremental-rescan write-back state (Sprint 35.0 Story 4/5): the
+	// files ACTUALLY in the payload (post byte-budget) with their review-time hashes,
+	// plus the full in-scope tracked set for self-trim. idx was only READ by the skip
+	// filter, so it still holds the pre-run state — reused as the base the write-back
+	// records onto, preserving unchanged/skipped files' prior entries.
+	mp := payloads[filesMode]
+	shed := make(map[string]struct{}, len(mp.Truncation.FilesDropped))
+	for _, dp := range mp.Truncation.FilesDropped {
+		shed[dp] = struct{}{}
+	}
+	reviewed := make(map[string]string, len(mp.Entries))
+	for _, e := range mp.Entries {
+		if _, dropped := shed[e.Path]; dropped {
+			continue // byte-budget-shed: never sent to an agent, so not "reviewed"
+		}
+		reviewed[e.Path] = cache.HashText(e.Body)
+	}
+	prep.baseline = &baselineWriteback{
+		indexPath: payload.FileHashIndexPath(req.Repo),
+		preIndex:  idx,
+		reviewed:  reviewed,
+		tracked:   payload.TrackedInScope(ctx, req.Repo, req.Dir),
+		scope:     req.Dir,
+	}
+	return prep, nil
 }
 
 // buildRepoPayloads assembles the single files-mode whole-repo payload for a

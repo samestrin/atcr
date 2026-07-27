@@ -91,6 +91,23 @@ func applyHashSkip(entries []FileEntry, idx *FileHashIndex, fresh bool) []FileEn
 	return out
 }
 
+// TrackedInScope returns the git-tracked, repo-root-relative, slash-normalized paths
+// under root restricted to the --dir scope (Sprint 35.0), WITHOUT reading any file
+// content — just stream.BuildFileIndex's git ls-files enumeration plus the scope
+// filter. It is the cheap keep-set the baseline write-back uses to self-trim the
+// file-hash index (a path no longer tracked is a deleted file whose entry must be
+// pruned, AC 04-01 Edge Case 1) without a second body-reading walk. Ignore rules are
+// intentionally NOT applied: an ignored-but-tracked file's stale index entry is
+// harmless (it is never looked up), and over-keeping it is safer than pruning. A
+// non-git-repo / git-unavailable root returns nil (BuildFileIndex degrades to nil).
+func TrackedInScope(ctx context.Context, root, scope string) []string {
+	idx := stream.BuildFileIndex(ctx, root)
+	if idx == nil {
+		return nil
+	}
+	return filterByScope(idx.Paths(), scope)
+}
+
 // filterByScope narrows a slash-normalized, repo-root-relative tracked-path set to
 // the --dir <path> scope (Sprint 35.0, AC 02-02). An empty scope or "." means the
 // whole repository (--all / --dir . degenerate), so the input is returned

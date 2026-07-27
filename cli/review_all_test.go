@@ -223,6 +223,37 @@ func TestReviewAllFresh_BypassesSkipIndex(t *testing.T) {
 	assert.FileExists(t, payload.FileHashIndexPath("."), "--fresh still writes the index on completion")
 }
 
+// 4.11.A HIGH #2 regression: a scoped `--dir` run must NOT self-trim (wipe) index
+// entries for out-of-scope files recorded by a prior `--all` run.
+func TestReviewDir_PreservesOutOfScopeIndexEntries(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // records a.txt, b.go, internal/c.go
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	for _, p := range []string{"a.txt", "b.go", "internal/c.go"} {
+		_, _, ok := idx.Get(p)
+		require.Truef(t, ok, "--all must record %s", p)
+	}
+
+	// Change internal/c.go so the scoped run has a candidate, then scope to internal/.
+	require.NoError(t, os.WriteFile(filepath.Join("internal", "c.go"), []byte("package c // edited\n"), 0o644))
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal"))
+
+	after := payload.Load(payload.FileHashIndexPath("."), nil)
+	// Out-of-scope entries survive the scoped run.
+	_, _, okA := after.Get("a.txt")
+	_, _, okB := after.Get("b.go")
+	assert.True(t, okA, "--dir must not prune out-of-scope a.txt from the index")
+	assert.True(t, okB, "--dir must not prune out-of-scope b.go from the index")
+	// The in-scope file was re-recorded.
+	_, _, okC := after.Get("internal/c.go")
+	assert.True(t, okC, "--dir must record its in-scope reviewed file")
+}
+
 // AC 04-04 Scenario 2: `--fresh` on a diff-range review is a no-op for the hash
 // index — no baseline index is read or written, and the run is unaffected.
 func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
