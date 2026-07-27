@@ -680,12 +680,6 @@ func (r *Registry) validate() error {
 	return errors.Join(errs...)
 }
 
-// validateExecutor returns every fault found in the optional executor block (Epic
-// 7.0). A nil block (no fix generation) is valid and yields no faults. Like the
-// agent checks it accumulates rather than short-circuits (Epic 4.2 / AC6): the
-// provider must be present and reference a defined provider, the model is
-// required, role (if set) must be "executor", min_severity_for_fix (if set) must
-// be a canonical review severity, and fix_timeout must be within bounds.
 // validatePayloadEscalation checks the optional payload_escalation block. Unset
 // (nil) fields are always valid — they resolve to defaults downstream. A set
 // field must be non-negative, and churn_ratio must additionally be a fraction
@@ -717,6 +711,12 @@ func (r *Registry) validatePayloadEscalation() []error {
 	return errs
 }
 
+// validateExecutor returns every fault found in the optional executor block (Epic
+// 7.0). A nil block (no fix generation) is valid and yields no faults. Like the
+// agent checks it accumulates rather than short-circuits (Epic 4.2 / AC6): the
+// provider must be present and reference a defined provider, the model is
+// required, role (if set) must be "executor", min_severity_for_fix (if set) must
+// be a canonical review severity, and fix_timeout must be within bounds.
 func (r *Registry) validateExecutor() []error {
 	e := r.Executor
 	if e == nil {
