@@ -328,7 +328,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// forceMode is "files" for a baseline review (every agent reviews the whole-repo
 	// payload, mirroring the fresh --all path) and "" for a diff review (each agent
 	// keeps its configured mode). The empty case is the pre-existing behavior.
-	slots, _, err := buildSlots(cfg, payloads, req.Range, forceMode, scopeConstraint, false)
+	slots, _, err := buildSlots(cfg, payloads, req.Range, forceMode, scopeConstraint, false, m.Baseline)
 	if err != nil {
 		return nil, nil, err
 	}

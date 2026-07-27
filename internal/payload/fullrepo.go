@@ -14,7 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
-// ErrNoEffectiveByteBudget is returned by partitionByBudget when the per-chunk
+// ErrNoEffectiveByteBudget is returned by PartitionByBudget when the per-chunk
 // budget is non-positive. The budget is machine-derived from the model window via
 // sizing.EffectiveByteBudget, so 0 unambiguously means the model cannot fit any
 // review payload — an error, NOT ApplyByteBudget's "0 = unlimited" convention. The
@@ -30,7 +30,7 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // byte-budget-bounded chunks — it does not consume a git diff range.
 //
 // Exposes two same-package primitives: enumerateRepoFiles (AC 01-02 tracked-file
-// walk + ignore filter) and partitionByBudget (AC 01-03 byte-budget chunking).
+// walk + ignore filter) and PartitionByBudget (AC 01-03 byte-budget chunking).
 
 // BuildRepoEntries is the exported baseline payload entry point (Sprint 35.0): it
 // returns the enumerated, ignore-filtered git-tracked files under root as
@@ -59,7 +59,7 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noI
 // (Sprint 35.0, AC 04-02) — the pre-chunking incremental re-scan skip. It runs on the
 // already-ignore-filtered []FileEntry enumerateRepoFiles returns, so an ignored file
 // never reaches it (ignore-filtering runs first, AC 04-02 Edge Case 2), and it runs
-// before partitionByBudget, so a skipped file never lands in any chunk.
+// before PartitionByBudget, so a skipped file never lands in any chunk.
 //
 // fresh (the --fresh/--force bypass, AC 04-04/05-02) or a nil idx returns the input
 // unchanged — every candidate is treated as unreviewed. Otherwise each candidate's
@@ -155,7 +155,7 @@ func filterByScope(paths []string, scope string) []string {
 //   - Untracked working-tree files are excluded by construction: the candidate set
 //     is git ls-files only (Edge Case 5), an explicit non-goal of this epic.
 //   - Enumeration order is unspecified (FileIndex.Paths() iterates a map);
-//     deterministic chunk ordering is partitionByBudget's responsibility, not the
+//     deterministic chunk ordering is PartitionByBudget's responsibility, not the
 //     walker's.
 //
 // No new subprocess is spawned per file (AC 01-02 Performance): the one git
@@ -252,7 +252,7 @@ func ensureWithinRoot(root, abs, rel string) error {
 	return nil
 }
 
-// partitionByBudget groups an already-enumerated, already-ignore-filtered
+// PartitionByBudget groups an already-enumerated, already-ignore-filtered
 // []FileEntry into N byte-budget-bounded chunks for baseline (--all / --dir)
 // review, so a large repository is fanned out across several context-limited LLM
 // calls instead of one payload that would overflow the model window.
@@ -262,7 +262,7 @@ func ensureWithinRoot(root, abs, rel string) error {
 // without contradiction against every Happy Path, Edge Case, and Error Scenario:
 //
 //	Signature:
-//	    func partitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error)
+//	    func PartitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error)
 //	  The abbreviated signature in the sprint-plan (no error return) is widened to
 //	  return an error because AC 01-03 Error Scenario 1 requires the zero-budget
 //	  case to "fail fast ... at entry, before any bin-packing work" with a usage
@@ -317,7 +317,7 @@ func ensureWithinRoot(root, abs, rel string) error {
 //
 //	Complexity (AC 01-03 Performance): O(n log n) for the single sort plus O(n) for
 //	  the greedy pack — sort once, assign in sorted order, never re-sort per chunk.
-func partitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error) {
+func PartitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error) {
 	// Empty input → zero chunks (not one empty chunk), so the caller's
 	// "no reviewable content" guard fires upstream (AC 01-03 Edge Case 1).
 	if len(entries) == 0 {

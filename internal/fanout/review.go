@@ -624,7 +624,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	filesMode := string(payload.ModeFiles)
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1153,7 +1153,33 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 	return block[:cut] + block[planEnd:]
 }
 
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
+// capChunks bounds a baseline chunk set to at most max chunks by coalescing the
+// tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
+// chunkDiff applies to diff chunking (chunker.go:130). It never drops a file: the
+// coalesced final chunk may exceed a single model window, but the alternative — an
+// unbounded slot/goroutine/provider-call count for a huge repository — is the exact
+// cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set already
+// within the cap is returned unchanged.
+func capChunks(chunks [][]payload.FileEntry, max int) [][]payload.FileEntry {
+	if max <= 0 || len(chunks) <= max {
+		return chunks
+	}
+	capped := make([][]payload.FileEntry, 0, max)
+	capped = append(capped, chunks[:max-1]...)
+	var tail []payload.FileEntry
+	for _, c := range chunks[max-1:] {
+		tail = append(tail, c...)
+	}
+	capped = append(capped, tail)
+	return capped
+}
+
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
+	// baseline enables the (--all / --dir) multi-chunk fan-out branch inside add
+	// (Sprint 35.0 Phase 5, Decision 2). Variadic-optional so the diff/range callers
+	// and the existing test call sites stay unchanged — the same idiom
+	// mergeChunkResults uses for its optional serialAgents map.
+	baseline := len(baselineOpt) > 0 && baselineOpt[0]
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -1289,6 +1315,74 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//     bulk one-slot-per-persona path exactly like a single-chunk diff.
 		//
 		// Phase 5 task 5.2 implements this branch against AC 06-01's RED tests (5.1).
+		if baseline {
+			// Partition THIS persona's whole-repo file entries into byte-budget-bounded
+			// chunks sized to its own model window (Epic 19.10 F2 per-agent sizing),
+			// building one Slot per (persona × chunk) under the persona's UNCHANGED plain
+			// name so mergeChunkResults collapses the chunk-results into one source. The
+			// per-agent budget is derived identically to the bulk path below and to
+			// smallestAgentBudget (review.go:255): EffectiveByteBudget capped by the global
+			// PayloadByteBudget, less the SCOPE CONSTRAINT reservation.
+			chunkBudget := agentEff
+			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
+				chunkBudget = global
+			}
+			if s := int64(len(agentScopeConstraint)); s > 0 {
+				chunkBudget -= s
+			}
+			// A non-positive per-agent budget (over-window model, or the scope reservation
+			// consumed the whole window) cannot drive PartitionByBudget's machine-budget
+			// contract — fall through to the bulk path, which keeps the whole payload and
+			// records the honest overflow degradation rather than erroring.
+			if chunkBudget > 0 && len(mp.Entries) > 0 {
+				chunks, err := payload.PartitionByBudget(mp.Entries, chunkBudget)
+				if err != nil {
+					return err
+				}
+				// Bound the slot count at maxChunksPerAgent (chunker.go:99) the same way
+				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
+				// spawns an unbounded slot/goroutine/provider-call count while every file is
+				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
+				chunks = capChunks(chunks, maxChunksPerAgent)
+				if len(chunks) > 1 {
+					// Per-agent sizing record (Epic 19.10 F6/F8): every chunk-Slot of this
+					// persona carries the same window/budget and the persona's full chunk count,
+					// mirroring the chunked path. action "chunk" is the default no-loss
+					// degradation. A pre-dispatch cost-visibility line (AC 06-01 Performance)
+					// is emitted once per persona under warnOversized.
+					if warnOversized {
+						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
+					}
+					chunkSizing := agentSizing{
+						effectiveBudget: payload.EffectiveByteBudget(ac.Model, defaultMaxTokens),
+						resolvedWindow:  payload.ContextWindowTokens(ac.Model),
+						chunkTotal:      len(chunks),
+						action:          "chunk",
+					}
+					for _, ck := range chunks {
+						var pb strings.Builder
+						for _, e := range ck {
+							pb.WriteString(e.Body)
+						}
+						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
+						// event decided upstream, not a per-chunk property (mirrors the chunked path).
+						primary, rerr := renderAgent(cfg, name, ac, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+						if rerr != nil {
+							return rerr
+						}
+						fbs, cerr := buildChain(name, primary)
+						if cerr != nil {
+							return cerr
+						}
+						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+					}
+					return nil
+				}
+				// len(chunks) <= 1 → single-chunk baseline scan: fall through to the bulk
+				// one-slot-per-persona path (AC 06-01 HP2), sizing the whole payload to this
+				// model's window exactly as a single-chunk diff does.
+			}
+		}
 
 		// Chunked strategy (Epic 14.3): bin-pack this persona's diff into multiple
 		// context-limited calls, one Slot per chunk. Every chunk-slot keeps the

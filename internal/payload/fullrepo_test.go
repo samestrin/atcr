@@ -187,7 +187,7 @@ func debugLogger() (*slog.Logger, *bytes.Buffer) {
 
 // sortedPaths returns the Path set of a []FileEntry sorted for set comparison
 // against `git ls-files` (enumeration order is intentionally unspecified — chunk
-// determinism is partitionByBudget's job, not the walker's). It reuses the
+// determinism is PartitionByBudget's job, not the walker's). It reuses the
 // package-test entryPaths helper and sorts a copy.
 func sortedPaths(entries []FileEntry) []string {
 	out := entryPaths(entries)
@@ -830,7 +830,7 @@ func max64(a, b int64) int64 {
 // returns exactly one chunk with every entry.
 func TestPartitionByBudget_SmallFitsOneChunk(t *testing.T) {
 	entries := mkEntries(map[string]int64{"a.go": 30, "b.go": 30, "c.go": 20})
-	chunks, err := partitionByBudget(entries, 100)
+	chunks, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
 	require.Len(t, chunks, 1)
 	assert.Len(t, chunks[0], 3)
@@ -849,7 +849,7 @@ func TestPartitionByBudget_LargeSplitsZeroOmissions(t *testing.T) {
 	sort.Strings(want)
 	entries := mkEntries(spec)
 
-	chunks, err := partitionByBudget(entries, 100)
+	chunks, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(chunks), 3, "should split into 3+ chunks")
 
@@ -864,7 +864,7 @@ func TestPartitionByBudget_LargeSplitsZeroOmissions(t *testing.T) {
 // never split, never dropped.
 func TestPartitionByBudget_OversizedFileOwnChunk(t *testing.T) {
 	entries := mkEntries(map[string]int64{"huge.go": 250, "a.go": 30, "b.go": 30})
-	chunks, err := partitionByBudget(entries, 100)
+	chunks, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
 
 	all, counts := allChunkPaths(chunks)
@@ -882,7 +882,7 @@ func TestPartitionByBudget_OversizedFileOwnChunk(t *testing.T) {
 
 // AC 01-03 Edge Case 1: empty input returns zero chunks (not one empty chunk).
 func TestPartitionByBudget_EmptyReturnsZeroChunks(t *testing.T) {
-	chunks, err := partitionByBudget(nil, 100)
+	chunks, err := PartitionByBudget(nil, 100)
 	require.NoError(t, err)
 	assert.Empty(t, chunks)
 }
@@ -893,9 +893,9 @@ func TestPartitionByBudget_Deterministic(t *testing.T) {
 	entries := mkEntries(map[string]int64{
 		"a.go": 40, "b.go": 40, "c.go": 40, "d.go": 40, "e.go": 40, "f.go": 40,
 	})
-	first, err := partitionByBudget(entries, 100)
+	first, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
-	second, err := partitionByBudget(entries, 100)
+	second, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
 	require.Equal(t, len(first), len(second))
 	for i := range first {
@@ -907,12 +907,12 @@ func TestPartitionByBudget_Deterministic(t *testing.T) {
 // entry, before any packing — never loops or emits one-chunk-per-file.
 func TestPartitionByBudget_ZeroBudgetFailsFast(t *testing.T) {
 	entries := mkEntries(map[string]int64{"a.go": 10, "b.go": 10})
-	chunks, err := partitionByBudget(entries, 0)
+	chunks, err := PartitionByBudget(entries, 0)
 	require.Error(t, err)
 	assert.Nil(t, chunks)
 	assert.Contains(t, err.Error(), "no effective byte budget")
 
-	_, errNeg := partitionByBudget(entries, -5)
+	_, errNeg := PartitionByBudget(entries, -5)
 	require.Error(t, errNeg, "negative budget must also fail fast")
 }
 
@@ -923,7 +923,7 @@ func TestPartitionByBudget_ClampsNegativeSize(t *testing.T) {
 		{Path: "neg.go", Size: -100, Body: ""},
 		{Path: "a.go", Size: 30, Body: strings.Repeat("x", 30)},
 	}
-	chunks, err := partitionByBudget(entries, 100)
+	chunks, err := PartitionByBudget(entries, 100)
 	require.NoError(t, err)
 	all, _ := allChunkPaths(chunks)
 	assert.Equal(t, []string{"a.go", "neg.go"}, all, "clamped-size file still included")
