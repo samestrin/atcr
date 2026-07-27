@@ -115,6 +115,21 @@ func TestFileHashIndex_SelfTrimsStalePaths(t *testing.T) {
 	assert.False(t, ok, "stale entry must be pruned on write")
 }
 
+// A nil keep set (e.g. from a git-degraded BuildFileIndex) means "unknown tracked
+// set — keep everything", never "trim all" (4.5.A LOW). An empty-but-non-nil keep is
+// a genuine "nothing tracked" signal and does trim everything.
+func TestFileHashIndex_TrimNilKeepPreservesAll(t *testing.T) {
+	idx := newFileHashIndex()
+	idx.Record("a.go", cache.HashText("a\n"), "run-1")
+	idx.Record("b.go", cache.HashText("b\n"), "run-1")
+
+	idx.Trim(nil)
+	assert.ElementsMatch(t, []string{"a.go", "b.go"}, idx.Paths(), "nil keep must not wipe the index")
+
+	idx.Trim(map[string]struct{}{})
+	assert.Empty(t, idx.Paths(), "an explicit empty keep set does trim everything")
+}
+
 // AC 04-01 Edge Case 2: an interrupted run (index never Saved) leaves the on-disk
 // index unmodified — the index is written last, only on completion.
 func TestFileHashIndex_InterruptedRunLeavesIndexUnmodified(t *testing.T) {

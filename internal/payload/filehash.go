@@ -152,10 +152,16 @@ func (idx *FileHashIndex) Record(path, hash, runID string) {
 
 // Trim prunes entries whose path is not in keep (the current git ls-files tracked
 // set), so the index stays bounded to currently-tracked files and a deleted file's
-// stale entry does not linger (AC 04-01 Edge Case 1). A nil keep set trims
-// everything; callers pass the live tracked set.
+// stale entry does not linger (AC 04-01 Edge Case 1). Callers pass the live tracked
+// set.
+//
+// A NIL keep set means "unknown tracked set — keep everything", NOT "trim all": the
+// tracked set originates from stream.BuildFileIndex, which degrades to nil on a
+// transient git failure, and a single git hiccup must not wipe the whole accumulated
+// skip index (4.5.A LOW). An EMPTY-but-non-nil keep set is a genuine "nothing is
+// tracked" signal and does trim everything.
 func (idx *FileHashIndex) Trim(keep map[string]struct{}) {
-	if idx == nil || idx.entries == nil {
+	if idx == nil || idx.entries == nil || keep == nil {
 		return
 	}
 	for p := range idx.entries {

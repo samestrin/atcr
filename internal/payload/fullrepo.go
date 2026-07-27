@@ -73,7 +73,12 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noI
 // hash match, never silently dropped due to a hashing error (AC 04-02 Error Scenario
 // 1 holds vacuously). The lookup is O(1) per candidate (idx is a path-keyed map).
 func applyHashSkip(entries []FileEntry, idx *FileHashIndex, fresh bool) []FileEntry {
-	if fresh || idx == nil {
+	// Bypass the whole pass — including the per-file SHA-256 hashing — when there is
+	// nothing to skip against: --fresh/--force, a nil index, or an empty index (the
+	// normal first-run state, since Load always returns a non-nil-but-empty index for
+	// a missing/empty/corrupt file). Hashing every file for guaranteed-miss lookups on
+	// the one run that can never benefit is pure waste (4.5.A LOW).
+	if fresh || idx == nil || len(idx.entries) == 0 {
 		return entries
 	}
 	out := make([]FileEntry, 0, len(entries))
