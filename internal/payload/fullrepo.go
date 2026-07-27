@@ -226,6 +226,10 @@ func filterByScope(paths []string, scope string) []string {
 //   - A non-empty --dir scope matching ZERO tracked files (while the repo has
 //     tracked files elsewhere) is a scope-specific error naming the scope
 //     (TD-007), so it is never confused with an empty repository.
+//   - A walk whose in-memory total exceeds DefaultMaxRepoBytes fails loudly
+//     mid-enumeration (TD-005) — the whole-repo counterpart of
+//     DefaultMaxDiffBytes, tripping only on a genuine OOM-scale repository
+//     (PartitionByBudget handles normal large-repo sizing).
 //   - Untracked working-tree files are excluded by construction: the candidate set
 //     is git ls-files only (Edge Case 5), an explicit non-goal of this epic.
 //   - Enumeration order is unspecified (FileIndex.Paths() iterates a map);
@@ -271,6 +275,7 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	}
 	entries := make([]FileEntry, 0, len(paths))
 	ignoreFiltered := 0
+	var totalBytes int64
 	for _, rel := range paths {
 		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
 		// bounded this loop — honor cancellation mid-walk so a cancelled/timed-out
@@ -293,6 +298,16 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 				continue
 			}
 			return nil, 0, err
+		}
+		// TD-005: bound the TOTAL in-memory assembly, not just each file — many
+		// individually-under-cap files (or many per-file-skipped binaries around
+		// them) still sum to an OOM on a huge repository. Fail loudly before any
+		// payload work, mirroring DefaultMaxDiffBytes's input guard. Only files
+		// actually read into memory count: a per-file-over-cap skip (above) never
+		// entered memory, so it must not trip the total.
+		totalBytes += entry.Size
+		if totalBytes > DefaultMaxRepoBytes {
+			return nil, 0, fmt.Errorf("full-repo scan: tracked files total at least %d bytes exceeds the %d-byte in-memory assembly cap; scope the scan with --dir or review a diff range", totalBytes, DefaultMaxRepoBytes)
 		}
 		entries = append(entries, entry)
 	}
