@@ -376,3 +376,17 @@ func TestEscalationIntegration_BinaryFileIsNotAnalyzed(t *testing.T) {
 	require.NotContains(t, bin.Body, skeletonStart)
 	require.Contains(t, bin.Body, "[binary file changed: blob.bin]")
 }
+
+// Skipping the analysis pass because the mode cannot benefit from it is NOT a
+// degradation. Reporting one would tell an operator their change set blew the
+// file cap when it did not.
+func TestEscalationIntegration_FilesModeIsNotADegradation(t *testing.T) {
+	dir, base, head := thrashingRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(ModeFiles)
+	require.NoError(t, err)
+
+	require.False(t, rb.EscalationDegraded(),
+		"files mode skips analysis by design; that is not a cap degradation")
+}

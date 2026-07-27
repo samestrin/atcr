@@ -121,15 +121,18 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	// on the change-set size: each analyzed file costs one `git show` plus one
 	// AST parse, and that cost is paid once per parallel agent, so a large range
 	// degrades to the configured mode for every file rather than paying it.
-	// Files mode is already the top of the escalation ladder and suppresses the
-	// skeleton (the whole file is present), so analyzing would spend a `git show`
-	// and an AST parse per file to reach a conclusion that cannot change anything.
-	analyze := mode != ModeFiles && g.escalation.Enabled(len(files))
-	if !analyze && len(files) > 0 && g.escalation.MaxFiles > 0 {
+	// Degradation is specifically "the change set was too big", NOT any other
+	// reason the pass is skipped. Conflating the two would make every files-mode
+	// run report a degradation it never suffered.
+	if len(files) > 0 && g.escalation.MaxFiles > 0 && !g.escalation.Enabled(len(files)) {
 		g.escalationDegraded = true
 		g.logger.Warn("payload: per-file escalation and AST skeletons disabled for this run",
 			"changed_files", len(files), "max_files", g.escalation.MaxFiles)
 	}
+	// Files mode is already the top of the escalation ladder and suppresses the
+	// skeleton (the whole file is present), so analyzing would spend a `git show`
+	// and an AST parse per file to reach a conclusion that cannot change anything.
+	analyze := mode != ModeFiles && g.escalation.Enabled(len(files))
 
 	entries := make([]FileEntry, 0, len(files))
 	for _, f := range files {

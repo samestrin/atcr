@@ -336,6 +336,29 @@ debate:
 | `max_items` | `5` | Highest-priority (by severity) disputes are debated; the rest are recorded as overflow. `0` = unlimited. A negative value is a load error. |
 | `allow_single_model` | `false` | When `true`, fewer than three distinct models falls back to distinct personas on one model (disclosed as `single_model` in the artifacts and report). |
 
+## Per-file payload escalation (`payload_escalation:`)
+
+The payload builder promotes an individual file above the run's configured payload mode when its change is structurally confusing, and prepends an AST skeleton of the file at `head` — see [payload-modes.md](payload-modes.md#automatic-per-file-escalation) for the full mechanics. Thresholds come from an optional registry-level block:
+
+```yaml
+payload_escalation:
+  churn_ratio: 0.5        # changed lines ÷ HEAD lines that promotes diff → blocks
+  min_hunks: 4            # separate hunks in one file that promotes diff → blocks
+  hunk_gap_lines: 10      # two hunks closer than this many unchanged lines promotes diff → blocks
+  min_cyclomatic: 15      # McCabe score that promotes diff → blocks
+  max_files: 50           # changed-file ceiling; above it the whole feature is skipped
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `churn_ratio` | `0.5` | Fraction of a file's `head` lines that must be touched. Must be between `0` and `1.0`; a value above `1.0` is a load error because it could never fire. |
+| `min_hunks` | `4` | Fires at or above this many hunks in one file. |
+| `hunk_gap_lines` | `10` | Fires when two hunks are separated by fewer than this many unchanged lines. |
+| `min_cyclomatic` | `15` | Fires at or above this McCabe score. Computed for Go files only; other languages never fire this signal. |
+| `max_files` | `50` | Above this many changed files, escalation and skeletons are skipped entirely and `manifest.json` records `escalation_degraded: true`. |
+
+Every key is optional and falls back to its default. Setting a key to `0` disables that one signal; `max_files: 0` turns the whole feature off. A negative value is a load error. Like `verify:` and `debate:`, this block is **registry-only** — there is no project-config mirror and no CLI flag.
+
 See [cross-examination.md](cross-examination.md) for the full mechanics, the judge envelope, and gate semantics.
 
 ## Executor (fix generation, active in 7.0)
