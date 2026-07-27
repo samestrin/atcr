@@ -179,6 +179,38 @@ func TestEscalationIntegration_SimpleChangeStaysInDiffMode(t *testing.T) {
 	require.NotContains(t, entries[0].Body, fileHeaderPrefixForTest(), "it must not have been promoted to files mode")
 }
 
+// The growth a skeleton adds to a NON-escalated simple change is part of the
+// same token-budget contract (AC2): it must stay bounded by the configured
+// line cap. Build the same range with escalation disabled (zero config — no
+// skeleton, no promotion) and with defaults, and assert the byte delta is
+// bounded rather than relying on the mode label alone.
+func TestEscalationIntegration_SimpleChangePayloadGrowthIsBounded(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	disabled, err := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})).BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Len(t, disabled, 1)
+	require.NotContains(t, disabled[0].Body, skeletonStart, "zero config disables skeleton injection")
+
+	cfg := DefaultEscalationConfig()
+	enabled, err := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(cfg)).BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Len(t, enabled, 1)
+	require.Contains(t, enabled[0].Body, skeletonStart, "defaults inject a skeleton — the bound must actually be exercised")
+
+	// The skeleton is at most MaxSkeletonLines header lines plus the marker
+	// lines; a generous per-line width keeps the bound meaningful without
+	// pinning the exact fixture wording.
+	const bytesPerLine = 100
+	growth := len(enabled[0].Body) - len(disabled[0].Body)
+	require.LessOrEqual(t, growth, cfg.MaxSkeletonLines*bytesPerLine,
+		"skeleton growth on a non-escalated file must stay bounded by the configured cap")
+}
+
 // A file whose net diff is dominated by churn escalates, and the recorded Mode
 // reflects what the reviewer actually saw.
 func TestEscalationIntegration_ChurnedFileEscalatesAndRecordsMode(t *testing.T) {
