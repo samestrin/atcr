@@ -75,7 +75,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
-	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict; with --all/--dir: bypass the file-hash skip and re-review every in-scope file")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
