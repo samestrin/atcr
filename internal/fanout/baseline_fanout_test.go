@@ -246,13 +246,17 @@ func TestCommitBaselineIndex_NilTrackedKeepsIndex(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "file-hashes.json")
 	idx := payload.Load(indexPath, nil)
-	idx.Record("old.go", "sha256:old", "run-prev")
+	// Canonical "sha256:<64-hex>" digests — anything else is discarded as a
+	// corrupt entry on Load (filehash.go's isCanonicalDigest validation).
+	oldHash := "sha256:" + strings.Repeat("a", 64)
+	newHash := "sha256:" + strings.Repeat("b", 64)
+	idx.Record("old.go", oldHash, "run-prev")
 
 	prep := &PreparedReview{
 		baseline: &baselineWriteback{
 			indexPath: indexPath,
 			preIndex:  idx,
-			reviewed:  map[string]string{"new.go": "sha256:new"},
+			reviewed:  map[string]string{"new.go": newHash},
 			tracked:   nil, // transient git failure at the TrackedInScope walk
 			scope:     "",
 		},
@@ -274,7 +278,7 @@ func TestCommitBaselineIndex_EmptyTrackedTrimsAll(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "file-hashes.json")
 	idx := payload.Load(indexPath, nil)
-	idx.Record("gone.go", "sha256:old", "run-prev")
+	idx.Record("gone.go", "sha256:"+strings.Repeat("c", 64), "run-prev")
 
 	prep := &PreparedReview{
 		baseline: &baselineWriteback{
