@@ -838,6 +838,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 				}))
 			}
 		}
+	} else if anyToolAgent(p.Slots) {
+		// A range-less review (baseline --all/--dir, diff ingestion) has no head
+		// to snapshot, so the tool harness stays unwired and tool-enabled personas
+		// silently degrade to single-shot. Surface that degradation — it was
+		// previously invisible in the log stream (Sprint 35.0 TD-006).
+		log.FromContext(ctx).Warn("tool harness unwired (no range head); tool agents degrade to single-shot")
 	}
 
 	// Reviewer runs get truncation failover (Epic 19.5): a truncated, zero-finding
