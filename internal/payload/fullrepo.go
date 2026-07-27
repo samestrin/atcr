@@ -36,9 +36,34 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // []FileEntry, for internal/fanout's PrepareReviewFromRepo to assemble into a
 // whole-repo review payload. It wraps the same enumerateRepoFiles walker the
 // package tests cover directly. noIgnore bypasses the ignore filter (the
-// --no-ignore flag), for parity with diff-mode.
-func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool) ([]FileEntry, error) {
-	return enumerateRepoFiles(ctx, root, logger, noIgnore)
+// --no-ignore flag), for parity with diff-mode. scope, when non-empty and not ".",
+// restricts the walk to the tracked files nested under that repo-root-relative
+// directory (the --dir <path> flag, Story 2); "" / "." mean the whole repository.
+func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, error) {
+	return enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
+}
+
+// filterByScope narrows a slash-normalized, repo-root-relative tracked-path set to
+// the --dir <path> scope (Sprint 35.0, AC 02-02). An empty scope or "." means the
+// whole repository (--all / --dir . degenerate), so the input is returned
+// unchanged. Otherwise a path is kept only when it equals the scope or is nested
+// under it as a FULL path segment — the containment test appends a "/" separator
+// (scope+"/") so a sibling directory sharing a lexical prefix is never cross-matched
+// (internal/fan must not pull in internal/fanout). It is a pure O(n) pass over the
+// in-memory tracked list — no filepath.Walk, no per-file os.Stat (AC 02-02
+// Performance / the story's second-traversal non-goal).
+func filterByScope(paths []string, scope string) []string {
+	if scope == "" || scope == "." {
+		return paths
+	}
+	prefix := scope + "/"
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p == scope || strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // enumerateRepoFiles is the baseline (--all / --dir) tracked-file walker (Sprint
@@ -66,7 +91,7 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noI
 // --no-ignore flag), matching diff-mode's payload.WithoutIgnoreFilter so baseline
 // honors the flag identically — otherwise the on-disk manifest would record
 // NoIgnore while files were in fact filtered, a provenance lie.
-func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool) ([]FileEntry, error) {
+func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, error) {
 	idx := stream.BuildFileIndex(ctx, root)
 	if idx == nil {
 		return nil, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
@@ -77,7 +102,10 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	if !noIgnore {
 		matcher = newIgnoreMatcher(root, logger)
 	}
-	paths := idx.Paths()
+	// Scope filter (--dir <path>, AC 02-02) sits between FileIndex construction and
+	// the read/ignore loop: narrow the tracked-path set to the requested subtree
+	// before any file is read or ignore-matched. "" / "." = whole repo.
+	paths := filterByScope(idx.Paths(), scope)
 	entries := make([]FileEntry, 0, len(paths))
 	for _, rel := range paths {
 		if matcher.match(rel) {

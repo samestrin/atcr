@@ -300,7 +300,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		forceMode string
 	)
 	if m.Baseline {
-		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore)
+		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore, m.Dir)
 		forceMode = string(payload.ModeFiles)
 	} else {
 		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)

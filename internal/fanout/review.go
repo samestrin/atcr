@@ -386,6 +386,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		CommitCount:     req.Range.CommitCount,
 		PayloadMode:     payloadMode,
 		Baseline:        baseline, // full-repo/dir scan; resume keys on this to skip range validation
+		Dir:             req.Dir,  // --dir subtree scope; resume rebuilds the same scoped payload (Sprint 35.0)
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
@@ -518,7 +519,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore)
+	payloads, err := buildRepoPayloads(ctx, cfg, req.Repo, req.NoIgnore, req.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -541,13 +542,15 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 // and PrepareResume (baseline resume) so a resumed baseline agent sees exactly the
 // payload the completed agents saw — the resume "pending agents review what
 // completed agents reviewed" invariant, applied to the tracked-repository scan
-// instead of a git-range diff. Returns a map keyed to the "files" mode.
+// instead of a git-range diff. scope is the --dir subtree ("" = whole repo); the
+// fresh path passes req.Dir and resume passes the manifest's persisted Dir so both
+// build the identical scoped candidate set. Returns a map keyed to the "files" mode.
 //
 // Errors mirror the diff/range prepare paths: a non-repo / read failure propagates
 // verbatim (AC 01-04 ES2); zero reviewable files is ErrNoReviewableContent (Edge
 // Case 3) before any scaffolding; an all-dropped byte budget is ErrPayloadFullyDropped.
-func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool) (map[string]modePayload, error) {
-	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore)
+func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string) (map[string]modePayload, error) {
+	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope)
 	if err != nil {
 		return nil, err
 	}

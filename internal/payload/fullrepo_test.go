@@ -54,7 +54,7 @@ func TestEnumerateRepoFiles_AllTrackedNonIgnored(t *testing.T) {
 	write(t, dir, "Makefile", "all:\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, lsFiles(t, dir), sortedPaths(entries), "must match git ls-files exactly")
 
@@ -76,7 +76,7 @@ func TestEnumerateRepoFiles_GitignoreExcluded(t *testing.T) {
 	write(t, dir, ".gitignore", "vendor/\n")
 	commitAll(t, dir, "add ignore") // now tracked AND ignore-matched (the realistic case)
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	_, present := findEntry(entries, "vendor/lib.go")
 	assert.False(t, present, "vendor/lib.go must be ignore-filtered out")
@@ -93,7 +93,7 @@ func TestEnumerateRepoFiles_AtcrignoreExcluded(t *testing.T) {
 	write(t, dir, ".atcrignore", "generated/\n")
 	commitAll(t, dir, "add ignore")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	_, present := findEntry(entries, "generated/schema.go")
 	assert.False(t, present, "generated/schema.go must be .atcrignore-filtered out")
@@ -105,7 +105,7 @@ func TestEnumerateRepoFiles_ZeroTracked(t *testing.T) {
 	dir := initRepo(t)
 	gitCmd(t, dir, "commit", "-q", "--allow-empty", "-m", "empty")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err, "zero tracked files is not an error")
 	assert.Empty(t, entries)
 }
@@ -117,7 +117,7 @@ func TestEnumerateRepoFiles_NonRepoErrors(t *testing.T) {
 	var entries []FileEntry
 	var err error
 	require.NotPanics(t, func() {
-		entries, err = enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+		entries, err = enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	})
 	require.Error(t, err)
 	assert.Nil(t, entries)
@@ -136,12 +136,12 @@ func TestEnumerateRepoFiles_NoIgnoreBypassesFilter(t *testing.T) {
 	commitAll(t, dir, "add ignore")
 
 	// Default (noIgnore=false) filters vendor/lib.go; noIgnore=true keeps it.
-	filtered, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	filtered, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	_, present := findEntry(filtered, "vendor/lib.go")
 	require.False(t, present, "baseline default must filter the ignored file")
 
-	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), true)
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), true, "")
 	require.NoError(t, err)
 	_, present = findEntry(all, "vendor/lib.go")
 	assert.True(t, present, "--no-ignore must include the .gitignore-matched file")
@@ -156,7 +156,7 @@ func TestEnumerateRepoFiles_BinaryFile(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	e, ok := findEntry(entries, "blob.bin")
 	require.True(t, ok, "binary file must be included")
@@ -175,7 +175,7 @@ func TestEnumerateRepoFiles_SymlinkLiteralTarget(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	e, ok := findEntry(entries, "link.txt")
 	require.True(t, ok, "tracked symlink must be included")
@@ -192,7 +192,7 @@ func TestEnumerateRepoFiles_UntrackedExcluded(t *testing.T) {
 	// A scratch file that is neither added nor ignored.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("scratch\n"), 0o644))
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, lsFiles(t, dir), sortedPaths(entries), "result set must equal git ls-files (no untracked files)")
 	_, present := findEntry(entries, "notes.txt")
@@ -219,7 +219,7 @@ func TestEnumerateRepoFiles_RejectsIntermediateSymlinkEscape(t *testing.T) {
 		t.Skipf("symlinks unsupported on this platform: %v", err)
 	}
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.Error(t, err, "a read that escapes root via a symlink must be refused")
 	assert.Contains(t, err.Error(), "outside the repository root")
 	// The sensitive outside content must never appear in the (aborted) result.
@@ -239,10 +239,118 @@ func TestEnumerateRepoFiles_ReadFailureMidWalk(t *testing.T) {
 	// still reports it while the read fails.
 	require.NoError(t, os.Remove(filepath.Join(dir, "gone.go")))
 
-	_, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	_, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading tracked file")
 	assert.Contains(t, err.Error(), "gone.go")
+}
+
+// --- AC 02-02: path-segment scope filter (--dir) -----------------------------
+
+// TestFilterByScope_WholeRepoWhenEmptyOrDot covers AC 02-01 Edge Case 2 / AC 02-02:
+// an empty scope (--all) and "." (--dir . degenerate) both mean the whole repo —
+// the filter returns the input unchanged.
+func TestFilterByScope_WholeRepoWhenEmptyOrDot(t *testing.T) {
+	paths := []string{"a.go", "internal/x.go", "internal/fanout/y.go"}
+	assert.Equal(t, paths, filterByScope(paths, ""))
+	assert.Equal(t, paths, filterByScope(paths, "."))
+}
+
+// TestFilterByScope_NestedOnly covers AC 02-02 Happy Path 1: only files nested
+// under the scope survive.
+func TestFilterByScope_NestedOnly(t *testing.T) {
+	paths := []string{
+		"internal/fanout/review.go",
+		"internal/fanout/review_test.go",
+		"internal/reconcile/reconcile.go",
+		"main.go",
+	}
+	got := filterByScope(paths, "internal/fanout")
+	assert.ElementsMatch(t, []string{"internal/fanout/review.go", "internal/fanout/review_test.go"}, got)
+}
+
+// TestFilterByScope_SiblingPrefixCollision covers AC 02-02 Edge Case 1: a
+// full-path-segment match, NOT a raw strings.HasPrefix — internal/fan must never
+// pull in internal/fanout.
+func TestFilterByScope_SiblingPrefixCollision(t *testing.T) {
+	paths := []string{"internal/fan/a.go", "internal/fanout/b.go"}
+	got := filterByScope(paths, "internal/fan")
+	assert.Equal(t, []string{"internal/fan/a.go"}, got)
+}
+
+// TestFilterByScope_ZeroMatch covers AC 02-02 Edge Cases 2-3: a scope with no
+// matching tracked files yields an empty set (the caller's empty-payload guard
+// then fires).
+func TestFilterByScope_ZeroMatch(t *testing.T) {
+	paths := []string{"main.go", "internal/x.go"}
+	assert.Empty(t, filterByScope(paths, "cli"))
+}
+
+// TestEnumerateRepoFiles_ScopedNestedOnly covers AC 02-02 Happy Path 1 end-to-end
+// against a real temp git repo: --dir internal/fanout enumerates only the two
+// in-scope files, excluding internal/reconcile and the repo-root main.go.
+func TestEnumerateRepoFiles_ScopedNestedOnly(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "internal/fanout/review.go", "package fanout\n")
+	write(t, dir, "internal/fanout/engine.go", "package fanout\n")
+	write(t, dir, "internal/reconcile/reconcile.go", "package reconcile\n")
+	write(t, dir, "main.go", "package main\n")
+	commitAll(t, dir, "seed")
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "internal/fanout")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"internal/fanout/review.go", "internal/fanout/engine.go"}, sortedPaths(entries))
+}
+
+// TestEnumerateRepoFiles_ScopeIgnoreParity covers AC 02-02 Happy Path 2: ignore
+// rules apply identically inside the scope — a .gitignore-matched (force-added)
+// file under the scope is still excluded, via the same ignoreMatcher as --all.
+func TestEnumerateRepoFiles_ScopeIgnoreParity(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "internal/fanout/generated.pb.go\n")
+	write(t, dir, "internal/fanout/review.go", "package fanout\n")
+	write(t, dir, "internal/fanout/generated.pb.go", "package fanout\n")
+	gitCmd(t, dir, "add", "-f", "internal/fanout/generated.pb.go")
+	commitAll(t, dir, "seed")
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "internal/fanout")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"internal/fanout/review.go"}, sortedPaths(entries))
+}
+
+// TestEnumerateRepoFiles_ScopeSiblingPrefix covers AC 02-02 Edge Case 1 end-to-end:
+// --dir internal/fan must not pull in internal/fanout.
+func TestEnumerateRepoFiles_ScopeSiblingPrefix(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "internal/fan/a.go", "package fan\n")
+	write(t, dir, "internal/fanout/b.go", "package fanout\n")
+	commitAll(t, dir, "seed")
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "internal/fan")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"internal/fan/a.go"}, sortedPaths(entries))
+}
+
+// TestEnumerateRepoFiles_ScopeUntrackedExcluded covers AC 02-02 Edge Case 3: an
+// untracked file inside the scope is never selected — the filter only ever draws
+// from git ls-files' tracked set, not the filesystem.
+func TestEnumerateRepoFiles_ScopeUntrackedExcluded(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "internal/fanout/tracked.go", "package fanout\n")
+	commitAll(t, dir, "seed")
+	write(t, dir, "internal/fanout/untracked.go", "package fanout\n") // never committed
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "internal/fanout")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"internal/fanout/tracked.go"}, sortedPaths(entries))
+}
+
+// TestEnumerateRepoFiles_ScopeEmptyIsWholeRepo covers the --all parity path: an
+// empty scope enumerates every tracked file, identical to git ls-files.
+func TestEnumerateRepoFiles_ScopeEmptyIsWholeRepo(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "internal/b.go", "package b\n")
+	commitAll(t, dir, "seed")
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, lsFiles(t, dir), sortedPaths(entries))
 }
 
 // --- AC 01-03: byte-budget chunk partitioning -------------------------------
