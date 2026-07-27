@@ -143,3 +143,106 @@ func TestAddRangeFlags_ChainOrderPrevFirst(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 	assert.True(t, ran, "prev hook must run before addRangeFlags' own validation (prev-first invariant)")
 }
+
+// --- Sprint 35.0 Story 1: `--all` baseline flag (AC 01-01) ------------------
+
+// TestReviewAllFlag_Registered covers AC 01-01 Story-Specific DoD: `--all` is a
+// boolean flag on `atcr review`, defaulting to false (a no-op when unset).
+func TestReviewAllFlag_Registered(t *testing.T) {
+	cmd := newReviewCmd()
+	all := cmd.Flags().Lookup("all")
+	require.NotNil(t, all, "--all must be registered on `atcr review`")
+	assert.Equal(t, "bool", all.Value.Type())
+	assert.Equal(t, "false", all.DefValue)
+}
+
+// TestReviewAllFlag_AloneSucceeds covers AC 01-01 Happy Path 1: `--all` with no
+// range flags passes PreRunE (no usage error).
+func TestReviewAllFlag_AloneSucceeds(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--all"}))
+	require.NotNil(t, cmd.PreRunE)
+	assert.NoError(t, cmd.PreRunE(cmd, nil))
+}
+
+// TestReviewAllFlag_WithUnrelatedFlagsSucceeds covers AC 01-01 Happy Path 2:
+// `--all` combined with flags it does not police (--id, --timeout) still passes —
+// the validator inspects only --base/--head/--merge-commit.
+func TestReviewAllFlag_WithUnrelatedFlagsSucceeds(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--id", "my-baseline", "--timeout", "300"}))
+	require.NotNil(t, cmd.PreRunE)
+	assert.NoError(t, cmd.PreRunE(cmd, nil))
+}
+
+// TestReviewAllFlag_MutualExclusion covers AC 01-01 Error Scenarios 1-2 and Edge
+// Case 1: `--all` combined with any range flag is a usage error (exit 2),
+// regardless of whether --base is present.
+func TestReviewAllFlag_MutualExclusion(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"all+base", []string{"--all", "--base", "HEAD~1"}},
+		{"all+head-no-base", []string{"--all", "--head", "main"}}, // Edge Case 1
+		{"all+merge-commit", []string{"--all", "--merge-commit", "abc123"}},
+		{"all+base+head", []string{"--all", "--base", "x", "--head", "y"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags(tc.args))
+			require.NotNil(t, cmd.PreRunE)
+			err := cmd.PreRunE(cmd, nil)
+			require.Error(t, err, "%v must be rejected", tc.args)
+			assert.Equal(t, exitUsage, exitCode(err), "must exit 2 (usageError)")
+		})
+	}
+}
+
+// TestReviewAllFlag_ChangedFalseOnNormalReview covers AC 01-01 Edge Case 2: a
+// normal diff-range review leaves Changed("all") false, so the existing
+// range-resolution path is unaffected.
+func TestReviewAllFlag_ChangedFalseOnNormalReview(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--base", "x", "--head", "y"}))
+	assert.False(t, cmd.Flags().Changed("all"), "--all must read as unchanged on a normal review")
+}
+
+// TestReviewAllFlag_ExplicitFalseStillChanged covers AC 01-01 Edge Case 4: an
+// explicitly-set `--all=false` registers as Changed (the Changed()-presence idiom
+// the story mandates), pinning it so a later GetBool short-circuit cannot silently
+// change the semantics.
+func TestReviewAllFlag_ExplicitFalseStillChanged(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--all=false"}))
+	assert.True(t, cmd.Flags().Changed("all"), "--all=false must register as Changed")
+	v, _ := cmd.Flags().GetBool("all")
+	assert.False(t, v, "--all=false GetBool must be false")
+}
+
+// TestReviewAllFlag_WithResumeNoPanic covers AC 01-01 Edge Case 3: `--all`
+// alongside `--resume` must not panic in PreRunE; the mutual-exclusion validator
+// polices only range flags, so the combination passes flag validation (--resume's
+// own precedence is enforced later, in runReview's resume dispatch).
+func TestReviewAllFlag_WithResumeNoPanic(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--resume", "latest"}))
+	require.NotNil(t, cmd.PreRunE)
+	assert.NotPanics(t, func() {
+		_ = cmd.PreRunE(cmd, nil)
+	})
+}
+
+// TestReviewAllFlag_PreservesPriorPreRunE pins the chaining invariant (mirroring
+// TestAddSyncCloudFlags_PreservesPriorPreRunE): the `--all` validator must chain
+// prev-first so the range-flag hook still fires — `--head` without `--base`
+// remains a usage error even with the baseline validator installed.
+func TestReviewAllFlag_PreservesPriorPreRunE(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--head", "x"}))
+	require.NotNil(t, cmd.PreRunE)
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err, "range validation must survive addBaselineFlags")
+	assert.Equal(t, exitUsage, exitCode(err))
+}

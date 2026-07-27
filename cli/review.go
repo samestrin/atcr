@@ -89,6 +89,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	addRangeFlags(cmd)
+	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
 	addQualitySignalFlags(cmd)
@@ -324,17 +325,27 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
 
-	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
-	if err != nil {
-		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
-		// here; route it to the graceful interrupt path (exit 1 + notice) rather
-		// than a confusing "review failed: context canceled" usage error (exit 2).
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return interruptedBeforeFanout(cmd)
+	// --all (Sprint 35.0, Story 1) is a full-repository baseline scan: it has no
+	// diff range, so branch before gitrange.Resolve and skip range resolution
+	// entirely when set. A zero-valued Resolution stands in so the downstream
+	// request builder never dereferences nil; the baseline dispatch to
+	// PrepareReviewFromRepo is wired in a later task. When --all is unset the
+	// existing range-resolution path runs unchanged.
+	baseline := cmd.Flags().Changed("all")
+	res := &gitrange.Resolution{}
+	if !baseline {
+		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+		if err != nil {
+			// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+			// here; route it to the graceful interrupt path (exit 1 + notice) rather
+			// than a confusing "review failed: context canceled" usage error (exit 2).
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return interruptedBeforeFanout(cmd)
+			}
+			// A range failure aborts the pipeline before any agent runs — a usage
+			// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+			return usageError(fmt.Errorf("review failed: %w", err))
 		}
-		// A range failure aborts the pipeline before any agent runs — a usage
-		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
-		return usageError(fmt.Errorf("review failed: %w", err))
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
