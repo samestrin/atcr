@@ -48,7 +48,7 @@ func FileSkeleton(root Node, src string) []SkeletonEntry {
 			continue
 		}
 		header, ok := declHeader(lines, ch)
-		if !ok || isImportHeader(header) {
+		if !ok || isImportHeader(header) || isGroupedDeclOpener(header) {
 			continue
 		}
 		entries = append(entries, SkeletonEntry{
@@ -67,6 +67,22 @@ func FileSkeleton(root Node, src string) []SkeletonEntry {
 func isImportHeader(header string) bool {
 	return header == "import" || strings.HasPrefix(header, "import ") ||
 		strings.HasPrefix(header, "import(")
+}
+
+// isGroupedDeclOpener reports whether a gendecl header is a bare grouped
+// var/const/type opener (`var (`, `const (`, `type (`). declHeader slices only
+// the opener line of a parenthesized block, so the specs on the lines below are
+// never rendered — the header collapses to the bare keyword and carries no more
+// structural signal than an `import (` block, yet still consumes a skeleton
+// budget slot. Like imports, these are filtered so real func/type headers are
+// not displaced. A single-line grouped block (`const ( X = 1 )`) keeps its specs
+// on the opener line and so does not match.
+func isGroupedDeclOpener(header string) bool {
+	switch header {
+	case "var (", "const (", "type (":
+		return true
+	}
+	return false
 }
 
 // declHeader slices n's declaration header out of lines: everything from its

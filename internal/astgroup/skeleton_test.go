@@ -69,11 +69,12 @@ func TestFileSkeleton_ExtractsTopLevelHeaders(t *testing.T) {
 	entries := FileSkeleton(root, skeletonSrc)
 
 	// Import declarations are excluded: they carry no structural signal a
-	// reviewer needs and would be pure noise in every skeleton.
+	// reviewer needs and would be pure noise in every skeleton. The bare grouped
+	// `const (` opener is excluded for the same reason (its specs live on the
+	// lines below, which declHeader does not slice).
 	require.Equal(t, []string{
 		"type Mode string",
 		"type Config struct",
-		"const (",
 		"func Simple()",
 		"func Multi( a int, b string, ) (int, error)",
 		"func Generic[T interface{ ~int }](v T) T",
@@ -106,7 +107,9 @@ func TestFileSkeleton_CarriesKindNameAndLine(t *testing.T) {
 			gendecls = append(gendecls, e)
 		}
 	}
-	require.Len(t, gendecls, 3)
+	// type Mode and type Config remain; the bare grouped `const (` opener is
+	// filtered as signal-free noise.
+	require.Len(t, gendecls, 2)
 	for _, g := range gendecls {
 		require.Empty(t, g.Name)
 	}
@@ -158,11 +161,12 @@ func TestFileSkeleton_CRLFSourceHasNoStrayCarriageReturn(t *testing.T) {
 
 func TestFileSkeleton_BodylessFuncKeepsFullSignature(t *testing.T) {
 	// A declaration with no body brace (assembly-backed func) must fall back to
-	// the whole first line, not be truncated to nothing.
+	// the whole first line, not be truncated to nothing. The trailing bare grouped
+	// `var (` opener is filtered as signal-free noise.
 	src := "package p\n\nfunc add(x, y int) int\n\nvar (\n\tA = 1\n)\n"
 	root := parseGoForSkeleton(t, src)
 
-	require.Equal(t, []string{"func add(x, y int) int", "var ("}, headersOf(FileSkeleton(root, src)))
+	require.Equal(t, []string{"func add(x, y int) int"}, headersOf(FileSkeleton(root, src)))
 }
 
 func TestFileSkeleton_HeadersAreSingleLine(t *testing.T) {
