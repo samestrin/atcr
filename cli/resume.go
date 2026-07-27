@@ -140,6 +140,16 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if res == nil {
 			return usageError(errors.New("resume failed: git range returned no result"))
 		}
+	} else {
+		// A baseline review has no diff range, so the range flags a non-baseline
+		// resume consumes and validates (ErrRangeChanged) would be silently
+		// ignored here — the one mode-flag class that otherwise slips the
+		// fail-closed net above. Reject them like --all/--dir (Sprint 35.0 TD).
+		for _, f := range []string{"base", "head", "merge-commit"} {
+			if cmd.Flags().Changed(f) {
+				return usageError(fmt.Errorf("--resume does not support --%s on a baseline review; a resume continues the original review's range and the baseline review has none", f))
+			}
+		}
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
