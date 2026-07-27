@@ -1,6 +1,8 @@
 package payload
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,6 +211,93 @@ func TestFileHashIndex_OnDiskFormatIsIndentedJSON(t *testing.T) {
 	assert.True(t, strings.HasSuffix(string(data), "\n"), "atomicfs.WriteJSON appends a trailing newline")
 	assert.Contains(t, string(data), "\n  ", "two-space indented JSON")
 	assert.Contains(t, string(data), "last_reviewed_run_id")
+}
+
+// warnLogger captures Warn-and-above into buf; the Debug-and-above capture used for
+// the routine cases is debugLogger (fullrepo_test.go).
+func warnLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), &buf
+}
+
+// AC 04-03 Happy Path 1: a missing index file → empty index, no error, and NO
+// Warn/Error line (the routine first-run state; Debug at most).
+func TestFileHashLoad_MissingIsSilentEmpty(t *testing.T) {
+	logger, buf := debugLogger() // captures Debug and above
+	idx := Load(filepath.Join(t.TempDir(), "absent.json"), logger)
+	require.NotNil(t, idx)
+	assert.Empty(t, idx.Paths())
+	assert.NotContains(t, buf.String(), "level=WARN", "a missing index is routine, never Warn")
+	assert.NotContains(t, buf.String(), "level=ERROR")
+}
+
+// AC 04-03 Edge Case 1: an empty (0-byte) file → empty index, Debug log, not Warn.
+func TestFileHashLoad_EmptyFileDebugNotWarn(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "idx.json")
+	require.NoError(t, os.WriteFile(path, nil, 0o644))
+
+	logger, buf := debugLogger()
+	idx := Load(path, logger)
+	assert.Empty(t, idx.Paths())
+	assert.NotContains(t, buf.String(), "level=WARN", "an empty index logs at Debug, not Warn")
+
+	// And with a Warn-level logger the empty case is entirely silent.
+	wl, wbuf := warnLogger()
+	_ = Load(path, wl)
+	assert.Empty(t, wbuf.String())
+}
+
+// AC 04-03 Edge Case 2: corrupt/truncated JSON → empty index, Warn naming the path +
+// error, no propagated error; a later successful run rebuilds it.
+func TestFileHashLoad_CorruptJSONWarnsAndRebuilds(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "idx.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"a.go": {"hash": "sha256:ab`), 0o644)) // truncated
+
+	logger, buf := warnLogger()
+	idx := Load(path, logger)
+	assert.Empty(t, idx.Paths(), "corrupt index degrades to a full scan")
+	assert.Contains(t, buf.String(), "level=WARN")
+	assert.Contains(t, buf.String(), path, "the Warn line must name the offending path")
+
+	// Rebuild: a completed run writes a fresh, valid index over the corrupt one.
+	idx.Record("a.go", cache.HashText("a\n"), "run-2")
+	require.NoError(t, idx.Save(path))
+	reloaded := Load(path, log.Discard())
+	h, r, ok := reloaded.Get("a.go")
+	require.True(t, ok, "the corruption did not persist — next run resumes incremental skipping")
+	assert.Equal(t, cache.HashText("a\n"), h)
+	assert.Equal(t, "run-2", r)
+}
+
+// AC 04-03 Edge Case 3a: valid JSON of the wrong TYPE (an array, not the expected
+// path-keyed object) → treated identically to corruption (Warn, empty, no panic).
+func TestFileHashLoad_WrongShapeArrayTreatedAsCorrupt(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "idx.json")
+	require.NoError(t, os.WriteFile(path, []byte(`["a.go","b.go"]`), 0o644))
+
+	logger, buf := warnLogger()
+	var idx *FileHashIndex
+	require.NotPanics(t, func() { idx = Load(path, logger) })
+	assert.Empty(t, idx.Paths())
+	assert.Contains(t, buf.String(), "level=WARN")
+}
+
+// AC 04-03 Edge Case 3b: valid JSON object but entries missing the required `hash`
+// field → treated identically to corruption (Warn, empty), not silently accepted as
+// zero-valued entries.
+func TestFileHashLoad_MissingRequiredFieldTreatedAsCorrupt(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "idx.json")
+	// Well-formed object, but the entry has no "hash" (and no run id).
+	require.NoError(t, os.WriteFile(path, []byte(`{"a.go": {"last_reviewed_run_id": "run-1"}}`), 0o644))
+
+	logger, buf := warnLogger()
+	idx := Load(path, logger)
+	assert.Empty(t, idx.Paths(), "an entry missing its hash is a wrong-shape index → full scan")
+	assert.Contains(t, buf.String(), "level=WARN", "wrong-shape must be observably distinct (Warn), not silent")
 }
 
 // Nil-receiver safety (used by AC 04-02's skip filter when --fresh disables loading):

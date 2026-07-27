@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
 )
@@ -108,14 +109,27 @@ func Load(path string, logger *slog.Logger) *FileHashIndex {
 
 	var parsed map[string]fileHashEntry
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		// Corrupt / wrong-shape JSON (e.g. an array instead of the expected object) is
+		// Corrupt / wrong-TYPE JSON (e.g. an array instead of the expected object) is
 		// an anomaly the user must be able to discover — Warn naming path + error — but
 		// still non-fatal: empty index, full scan, rebuilt on the next completed run
-		// (AC 04-03 Edge Cases 2-3).
+		// (AC 04-03 Edge Cases 2-3a).
 		if logger != nil {
 			logger.Warn("payload: file-hash index is corrupt, ignoring it and running a full scan (it will be rebuilt)", "path", path, "err", err)
 		}
 		return newFileHashIndex()
+	}
+	// Structural validation (AC 04-03 Edge Case 3b): valid JSON of the right TYPE can
+	// still be the wrong SHAPE — an entry missing its required "sha256:<hex>" hash
+	// (hand-edited, or a foreign object that happens to unmarshal into the map). Treat
+	// it identically to corruption: Warn + empty + rebuild, never a silently-accepted
+	// zero-valued entry that would look "recorded" while matching nothing.
+	for p, e := range parsed {
+		if !strings.HasPrefix(e.Hash, "sha256:") {
+			if logger != nil {
+				logger.Warn("payload: file-hash index has an invalid entry, ignoring the index and running a full scan (it will be rebuilt)", "path", path, "entry", p)
+			}
+			return newFileHashIndex()
+		}
 	}
 	if parsed != nil {
 		idx.entries = parsed
