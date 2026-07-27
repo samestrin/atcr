@@ -1,8 +1,10 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,4 +178,30 @@ func TestBuildRepoEntries_ReturnsTrackedFiles(t *testing.T) {
 	require.Len(t, entries, 2)
 	paths := []string{entries[0].Path, entries[1].Path}
 	assert.ElementsMatch(t, []string{"a.go", "b.go"}, paths)
+}
+
+// TD-012: the baseline truncation warning must not claim "reviewing a subset of
+// the repository" — the Phase 5 baseline fan-out chunks the full pre-budget
+// entry set via PartitionByBudget (which drops nothing), so the whole
+// repository IS reviewed across chunks; the global byte budget only bounds the
+// concatenated payload text / per-chunk sizing.
+func TestPrepareReviewFromRepo_TruncationWarnDoesNotClaimSubset(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = 12 // keeps a.go (10B), sheds b.go → trunc.Truncated
+	out := filepath.Join(t.TempDir(), "ext-review")
+	repo := baselineRepo(t, map[string]string{
+		"a.go": "package a\n",
+		"b.go": "package b\n",
+	})
+
+	var buf bytes.Buffer
+	capture := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), capture)
+
+	_, err := PrepareReviewFromRepo(ctx, cfg, repoReq(repo, out))
+	require.NoError(t, err)
+	got := buf.String()
+	assert.Contains(t, got, "byte budget", "the global-budget truncation stays observable")
+	assert.NotContains(t, got, "reviewing a subset of the repository",
+		"the baseline fan-out reviews every enumerated file across chunks — the warning must not claim a subset review")
 }
