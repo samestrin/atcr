@@ -54,6 +54,61 @@ func TestResolveEscalationConfig_ExplicitZeroDisablesSignal(t *testing.T) {
 	require.Equal(t, EscalationConfig{}, got)
 }
 
+func TestEscalationConfig_EnabledRespectsFileCap(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	require.True(t, c.Enabled(1))
+	require.True(t, c.Enabled(50), "a change set exactly at the cap still runs")
+	require.False(t, c.Enabled(51), "one file past the cap degrades the whole run")
+	require.True(t, c.Enabled(0), "an empty change set is trivially under the cap")
+}
+
+func TestEscalationConfig_EnabledZeroMaxFilesDisablesFeature(t *testing.T) {
+	// MaxFiles == 0 is the operator's kill switch: not "cap of zero files", but
+	// "never run the escalation or skeleton passes at all".
+	c := DefaultEscalationConfig()
+	c.MaxFiles = 0
+
+	require.False(t, c.Enabled(0))
+	require.False(t, c.Enabled(1))
+}
+
+func TestEscalationConfig_EnabledNegativeCapDisablesFeature(t *testing.T) {
+	// Validation rejects a negative cap at load, but Enabled must not depend on
+	// validation having run — a hand-built config must fail closed, not open.
+	c := EscalationConfig{MaxFiles: -1}
+
+	require.False(t, c.Enabled(1))
+}
+
+func TestEscalate_OverlappingHunksFire(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// Overlapping/abutting ranges yield a negative or zero gap. That is the
+	// strongest adjacency evidence there is and must fire, not underflow.
+	got := c.escalate(ModeDiff, fileSignals{
+		changedLines: 4, headLines: 1000,
+		hunks:      []lineRange{{start: 100, end: 110}, {start: 105, end: 115}},
+		cyclomatic: 1,
+	})
+
+	require.Equal(t, ModeBlocks, got)
+}
+
+func TestEscalate_ChurnAboveOneFires(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// A file that shrank reports more changed lines than it now has: the ratio
+	// exceeds 1 and must fire rather than being treated as out of range.
+	got := c.escalate(ModeDiff, fileSignals{
+		changedLines: 300, headLines: 10,
+		hunks:      []lineRange{{start: 1, end: 10}},
+		cyclomatic: 1,
+	})
+
+	require.Equal(t, ModeBlocks, got)
+}
+
 func TestEscalate_SimpleChangeStaysInDiff(t *testing.T) {
 	c := DefaultEscalationConfig()
 
