@@ -89,6 +89,12 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	if f.kind == kindDeleted {
 		return fileContext{}, false
 	}
+	// A binary file has no reviewable text: it renders as a one-line marker in
+	// every mode. Reading its blob to measure churn would pull the whole binary
+	// into memory for a decision that cannot change anything.
+	if bin, err := g.isBinary(base, head, f.pathspec()...); err != nil || bin {
+		return fileContext{}, false
+	}
 	hunks, err := g.changedHeadRanges(base, head, f.pathspec()...)
 	if err != nil {
 		return fileContext{}, false
@@ -106,6 +112,14 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		headLines:    countLines(src),
 		hunks:        hunks,
 	}}
+	// A newly added file's diff already contains every line of the file, so its
+	// churn ratio is definitionally 1.0 and carries no information — left in, it
+	// would escalate every added file while buying the reviewer nothing. Zeroing
+	// headLines suppresses only the churn signal; hunk count, adjacency, and
+	// complexity still apply.
+	if f.kind == kindAdded {
+		ctx.signals.headLines = 0
+	}
 
 	// Skeleton extraction and the McCabe signal share one parse. Go only for now:
 	// the header-slicing rule is written against Go's func/gendecl shape.

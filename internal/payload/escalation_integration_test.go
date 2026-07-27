@@ -2,6 +2,8 @@ package payload
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -295,4 +297,82 @@ func TestHigherContextMode_PicksTheMostContext(t *testing.T) {
 	require.Equal(t, ModeBlocks, HigherContextMode(ModeBlocks, ModeBlocks))
 	// An unknown/empty mode ranks lowest and never wins over a real one.
 	require.Equal(t, ModeBlocks, HigherContextMode(PayloadMode(""), ModeBlocks))
+}
+
+// A newly added file's diff already contains every line, so its churn ratio is
+// definitionally 1.0. Escalating on that would promote every added file while
+// showing the reviewer nothing it did not already have.
+func TestEscalationIntegration_AddedFileDoesNotEscalateOnChurn(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "seed.go", goFileV1)
+	base := commitAll(t, dir, "seed")
+	// A simple added file: every line is "changed", but complexity is trivial.
+	write(t, dir, "added.go", goFileV1)
+	head := commitAll(t, dir, "add a file")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "added.go", entries[0].Path)
+
+	require.Equal(t, ModeDiff, entries[0].Mode,
+		"an added file must not escalate on churn alone — its diff is already the whole file")
+}
+
+// Files mode is the top of the ladder and suppresses the skeleton, so the
+// analysis pass must not run: no extra git process, no AST parse per file.
+func TestEscalationIntegration_FilesModeSkipsAnalysisEntirely(t *testing.T) {
+	dir, base, head := thrashingRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeFiles)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeFiles, entries[0].Mode)
+	require.NotContains(t, entries[0].Body, skeletonStart,
+		"files mode already carries the whole file; a skeleton would be duplication")
+}
+
+// A file that escalates INTO files mode must read its HEAD blob once, not twice
+// (once to measure churn, once to render). The memo is what makes that true.
+func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
+	dir, base, head := thrashingRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	afterFirst := rb.g.execCount
+
+	// Re-render the same range in files mode on the same runner: the HEAD blob is
+	// already memoized, so rendering must not re-spawn `git show` for it.
+	_, err = rb.BuildEntries(ModeFiles)
+	require.NoError(t, err)
+
+	require.Equal(t, afterFirst, rb.g.execCount,
+		"the files-mode render must reuse the memoized HEAD blob rather than re-reading it")
+}
+
+// A binary file must never have its blob pulled in to measure churn: it renders
+// as a one-line marker in every mode, so no measurement can change the outcome.
+func TestEscalationIntegration_BinaryFileIsNotAnalyzed(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0, 1, 2, 0, 3, 4, 0}, 0o644))
+	head := commitAll(t, dir, "add binary")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+
+	var bin *FileEntry
+	for i := range entries {
+		if entries[i].Path == "blob.bin" {
+			bin = &entries[i]
+		}
+	}
+	require.NotNil(t, bin, "binary file must still appear in the payload")
+	require.Equal(t, ModeDiff, bin.Mode, "a binary file must not escalate")
+	require.NotContains(t, bin.Body, skeletonStart)
+	require.Contains(t, bin.Body, "[binary file changed: blob.bin]")
 }

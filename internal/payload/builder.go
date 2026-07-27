@@ -121,7 +121,10 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	// on the change-set size: each analyzed file costs one `git show` plus one
 	// AST parse, and that cost is paid once per parallel agent, so a large range
 	// degrades to the configured mode for every file rather than paying it.
-	analyze := g.escalation.Enabled(len(files))
+	// Files mode is already the top of the escalation ladder and suppresses the
+	// skeleton (the whole file is present), so analyzing would spend a `git show`
+	// and an AST parse per file to reach a conclusion that cannot change anything.
+	analyze := mode != ModeFiles && g.escalation.Enabled(len(files))
 	if !analyze && len(files) > 0 && g.escalation.MaxFiles > 0 {
 		g.escalationDegraded = true
 		g.logger.Warn("payload: per-file escalation and AST skeletons disabled for this run",
@@ -232,7 +235,10 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		} else {
 			fmt.Fprintf(&b, fileHeaderFmt+"\n", f.path)
 		}
-		content, err := g.headContent(head, f.path)
+		// Memoized: when the escalation pass already read this blob to measure
+		// churn, or a file escalated INTO files mode, the render reuses that read
+		// instead of spawning a second `git show` for the same content.
+		content, err := g.headContentMemo(base, head, f.path)
 		if err != nil {
 			return "", fmt.Errorf("reading head content of %s: %w", f.path, err)
 		}
