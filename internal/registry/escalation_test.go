@@ -68,6 +68,24 @@ func TestPayloadEscalation_ValidateRejectsChurnRatioAboveOne(t *testing.T) {
 	require.Contains(t, err.Error(), "payload_escalation.churn_ratio")
 }
 
+func TestPayloadEscalation_ValidateRejectsNonFiniteChurnRatio(t *testing.T) {
+	// yaml.v3 resolves .nan/.inf to NaN/+Inf, and NaN satisfies neither < 0 nor
+	// > 1, so without an explicit non-finite guard these values validate cleanly
+	// and silently disable the churn signal downstream.
+	for _, doc := range []string{".nan", ".NaN", ".inf", "-.inf"} {
+		t.Run(doc, func(t *testing.T) {
+			var r Registry
+			err := yaml.Unmarshal([]byte("payload_escalation:\n  churn_ratio: "+doc+"\n"), &r)
+			require.NoError(t, err)
+			require.NotNil(t, r.PayloadEscalation.ChurnRatio)
+
+			err = r.validate()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "payload_escalation.churn_ratio")
+		})
+	}
+}
+
 func TestPayloadEscalation_ValidateAcceptsZeroAndDefaults(t *testing.T) {
 	zero := 0
 	zeroF := 0.0
