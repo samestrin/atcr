@@ -260,7 +260,12 @@ func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 	for path, hash := range b.reviewed {
 		b.preIndex.Record(path, hash, runID)
 	}
-	if b.scope == "" || b.scope == "." {
+	// The whole-repo test normalizes through payload.NormalizeScope — the SAME
+	// helper filterByScope/TrackedInScope use — so a non-CLI caller's raw scope
+	// ("./", a trailing slash, backslashes) is interpreted identically here:
+	// without it, an effectively-whole-repo scan would skip the self-trim and
+	// accumulate stale deleted-file entries.
+	if ns := payload.NormalizeScope(b.scope); ns == "" || ns == "." {
 		// A nil tracked set means the TrackedInScope keep-set walk hit a transient
 		// git failure (it degrades to nil). Pass nil through to Trim so its
 		// nil-keep contract — "keep everything; a git hiccup must not wipe the

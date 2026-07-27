@@ -125,6 +125,18 @@ func TrackedInScope(ctx context.Context, root, scope string) []string {
 	return filterByScope(idx.Paths(), scope)
 }
 
+// NormalizeScope canonicalizes a --dir scope for comparison: backslashes become
+// forward slashes and any trailing separator is trimmed, so ""/ "." (and forms
+// like "./" or `.\`) all mean the whole repository. ReplaceAll (not
+// filepath.ToSlash, a no-op on Unix) forces backslash→slash on every platform so
+// the result is deterministic in tests. Every whole-repo/scoped interpreter
+// (filterByScope, enumerateRepoFiles' zero-match guard, the baseline write-back's
+// self-trim gate) must normalize through this one helper so they cannot
+// disagree on what a non-CLI caller's raw scope string means.
+func NormalizeScope(scope string) string {
+	return strings.TrimRight(strings.ReplaceAll(scope, `\`, "/"), "/")
+}
+
 // filterByScope narrows a slash-normalized, repo-root-relative tracked-path set to
 // the --dir <path> scope (Sprint 35.0, AC 02-02). An empty scope or "." means the
 // whole repository (--all / --dir . degenerate), so the input is returned
@@ -140,9 +152,9 @@ func filterByScope(paths []string, scope string) []string {
 	// forward-slash form (stream.toSlashKeys), so normalize scope to match and trim
 	// a stray trailing separator before comparing — otherwise a backslash-cleaned
 	// (Windows filepath.Clean) or trailing-slashed scope would silently match zero
-	// files (3.5.A LOW). ReplaceAll (not filepath.ToSlash, a no-op on Unix) forces
-	// backslash→slash on every platform so the guard is deterministic in tests.
-	scope = strings.TrimRight(strings.ReplaceAll(scope, `\`, "/"), "/")
+	// files (3.5.A LOW). Shared via NormalizeScope so every whole-repo interpreter
+	// agrees on the canonical form.
+	scope = NormalizeScope(scope)
 	if scope == "" || scope == "." {
 		return paths
 	}
@@ -206,7 +218,7 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	// entirely empty repository produces. The normalization mirrors filterByScope's
 	// (inlined here so the whole-repo "" / "." test sees the same form it does).
 	if len(paths) == 0 && len(tracked) > 0 {
-		if normalized := strings.TrimRight(strings.ReplaceAll(scope, `\`, "/"), "/"); normalized != "" && normalized != "." {
+		if normalized := NormalizeScope(scope); normalized != "" && normalized != "." {
 			return nil, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
 		}
 	}
