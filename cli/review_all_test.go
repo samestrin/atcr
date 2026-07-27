@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -239,6 +241,106 @@ func gitRun(t *testing.T, args ...string) {
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+// gitLsFiles returns the repo's tracked-file set (the coverage oracle for the
+// "zero files silently omitted" bar), slash-normalized repo-root-relative paths.
+func gitLsFiles(t *testing.T) []string {
+	t.Helper()
+	out, err := exec.Command("git", "ls-files").Output()
+	require.NoError(t, err)
+	var files []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			files = append(files, l)
+		}
+	}
+	return files
+}
+
+// TestReviewAll_FullBaselineChain_MultiChunkMultiPersona is Sprint 35.0's Phase 6
+// capstone fixture (task 6.1). It drives the ENTIRE baseline pipeline end-to-end in a
+// single run — `review --all` (sized to force 2+ chunks, rostered with 2+ personas) ->
+// ExecuteReview -> RunReconcile -> `debt add` (filing a real reconciled baseline
+// finding) -> `report` — asserting exit 0 at every stage and zero tracked files
+// silently omitted across chunks (AC 01-05's coverage bar at combined-chain scale).
+//
+// Fixture shape: initBaselineRepo (a.txt, b.go, internal/c.go) + two 80 KB files.
+// Each 80 KB file exceeds the per-agent effective budget yet the total stays under the
+// 512 KiB global budget, so each lands in its own baseline chunk (3+ chunks total);
+// the roster (bruce, kai) fans every chunk out across 2 personas.
+//
+// Gap this closes: every other --all E2E test in this file exercises only a SEGMENT of
+// the chain — multi-chunk index write-back (TestReviewAll_MultiChunkRecordsAllReviewedFiles,
+// single persona), multi-persona resume (TestReviewAll_BaselineReviewIsResumable, not
+// multi-chunk, no debt add/report), reconcile+report (single persona), standalone flag-mode
+// debt add. None drives the combined chain with 2+ chunks AND 2+ personas through debt add
+// and report together. Co-located untagged (not //go:build integration) so Phase 6.2's
+// `go test ./...` DoD sweep exercises the capstone, matching its sibling --all E2E tests;
+// the mock provider is in-process (httptest, no docker/network), so it belongs in the fast
+// suite exactly like those siblings.
+func TestReviewAll_FullBaselineChain_MultiChunkMultiPersona(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// Two oversized files each exceed the per-agent budget (~71680 bytes) but their
+	// combined size stays under the 512 KiB global budget, so each becomes its own
+	// baseline chunk — the scan fans out across 3+ chunks.
+	big := make([]byte, 80_000)
+	for i := range big {
+		big[i] = 'x'
+	}
+	require.NoError(t, os.WriteFile("big1.txt", big, 0o644))
+	require.NoError(t, os.WriteFile("big2.txt", big, 0o644))
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add big files")
+
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "kai") // 2+ personas
+
+	// Stage 1: review --all -> ExecuteReview.
+	require.Equal(t, 0, execCmd(t, "review", "--all"), "baseline review exits 0")
+	dir := latestReviewDir(t)
+
+	// Zero omissions: every git ls-files tracked file is recorded in the hash index.
+	// The index write-back spans all chunks, so a missing entry means an unreviewed
+	// chunk — the exact multi-chunk coverage regression Phase 5 (task 5.2.A) guarded.
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	for _, p := range gitLsFiles(t) {
+		_, _, ok := idx.Get(p)
+		assert.Truef(t, ok, "tracked file %s must be reviewed and recorded across all chunks (no silent omission)", p)
+	}
+
+	// 2+ personas fanned out: each rostered persona produced a pool source.
+	for _, persona := range []string{"bruce", "kai"} {
+		assert.FileExistsf(t, filepath.Join(dir, "sources", "pool", "raw", "agent", persona, "findings.txt"),
+			"persona %s must produce a baseline source (multi-persona fan-out)", persona)
+	}
+
+	// Stage 2: RunReconcile — collapses the multi-chunk × multi-persona sources into a
+	// single reconciled report (the two personas corroborate the same finding).
+	require.Equal(t, 0, execCmd(t, "reconcile"), "reconcile over baseline output exits 0")
+	findings, err := reconcile.ReadReconciledFindings(dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, findings, "the baseline chain produces at least one reconciled finding")
+
+	// Stage 3: debt add — file the FIRST reconciled baseline finding into a TD store,
+	// proving debt add consumes baseline-sourced findings identically to diff-sourced.
+	readme, items := emptyTDRepo(t)
+	f := findings[0]
+	code := execCmd(t, "debt", "add",
+		"--readme", readme, "--items", items,
+		"--severity", f.Severity, "--file", fmt.Sprintf("%s:%d", f.File, f.Line),
+		"--problem", f.Problem, "--fix", f.Fix, "--category", f.Category,
+		"--est", "15", "--date", "2026-07-27")
+	require.Equal(t, 0, code, "debt add of a reconciled baseline finding exits 0")
+	body, err := os.ReadFile(readme)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), f.File, "the baseline finding is filed into the debt store")
+
+	// Stage 4: report — md and json both render the baseline review unmodified.
+	require.Equal(t, 0, execCmd(t, "report", "--format", "md"), "report md over the baseline chain exits 0")
+	require.Equal(t, 0, execCmd(t, "report", "--format", "json"), "report json over the baseline chain exits 0")
 }
 
 // AC 05-02 Scenario 1: `--dir <subtree> --fresh` forces a full re-scan of the subtree
