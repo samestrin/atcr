@@ -550,7 +550,10 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 // verbatim (AC 01-04 ES2); zero reviewable files is ErrNoReviewableContent (Edge
 // Case 3) before any scaffolding; an all-dropped byte budget is ErrPayloadFullyDropped.
 func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIgnore bool, scope string) (map[string]modePayload, error) {
-	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope)
+	// idx=nil, fresh=false here: the incremental hash-skip index is threaded in by
+	// the CLI baseline dispatch (Sprint 35.0 Story 4/5, tasks 4.11/4.17); until then
+	// the whole-repo scan behaves as a first-ever run (every tracked file reviewed).
+	entries, err := payload.BuildRepoEntries(ctx, repo, log.FromContext(ctx), noIgnore, scope, nil, false)
 	if err != nil {
 		return nil, err
 	}

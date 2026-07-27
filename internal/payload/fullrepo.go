@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -39,8 +40,50 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // --no-ignore flag), for parity with diff-mode. scope, when non-empty and not ".",
 // restricts the walk to the tracked files nested under that repo-root-relative
 // directory (the --dir <path> flag, Story 2); "" / "." mean the whole repository.
-func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, error) {
-	return enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
+//
+// idx and fresh drive the incremental re-scan skip (Sprint 35.0, Story 4/5): after
+// ignore-filtering, applyHashSkip drops any candidate whose content is byte-for-byte
+// unchanged since idx last recorded it, UNLESS fresh forces a full re-scan. Pass a
+// nil idx (or fresh=true) to disable the skip — the whole-repo scan then behaves as
+// a first-ever run. The skip is strictly after ignore-filtering and strictly before
+// the byte-budget partitioner (AC 04-02).
+func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string, idx *FileHashIndex, fresh bool) ([]FileEntry, error) {
+	entries, err := enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
+	if err != nil {
+		return nil, err
+	}
+	return applyHashSkip(entries, idx, fresh), nil
+}
+
+// applyHashSkip drops candidates whose content hash matches the recorded index entry
+// (Sprint 35.0, AC 04-02) — the pre-chunking incremental re-scan skip. It runs on the
+// already-ignore-filtered []FileEntry enumerateRepoFiles returns, so an ignored file
+// never reaches it (ignore-filtering runs first, AC 04-02 Edge Case 2), and it runs
+// before partitionByBudget, so a skipped file never lands in any chunk.
+//
+// fresh (the --fresh/--force bypass, AC 04-04/05-02) or a nil idx returns the input
+// unchanged — every candidate is treated as unreviewed. Otherwise each candidate's
+// content is hashed via cache.HashText (the canonical "sha256:<hex>" digest, the sole
+// internal/cache dependency — never cache.Store) and dropped only on a definite
+// index MATCH.
+//
+// Fail-open by construction: the digest is computed over the FileEntry.Body already
+// read into memory by enumerateRepoFiles (a read failure there aborts earlier per AC
+// 01-02), so hashing here cannot fail — a file is only ever dropped on a positive
+// hash match, never silently dropped due to a hashing error (AC 04-02 Error Scenario
+// 1 holds vacuously). The lookup is O(1) per candidate (idx is a path-keyed map).
+func applyHashSkip(entries []FileEntry, idx *FileHashIndex, fresh bool) []FileEntry {
+	if fresh || idx == nil {
+		return entries
+	}
+	out := make([]FileEntry, 0, len(entries))
+	for _, e := range entries {
+		if idx.Unchanged(e.Path, cache.HashText(e.Body)) {
+			continue // byte-for-byte unchanged since last review → skip pre-chunking
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // filterByScope narrows a slash-normalized, repo-root-relative tracked-path set to

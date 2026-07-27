@@ -10,10 +10,173 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// indexOf builds an in-memory FileHashIndex recording every entry's content hash
+// under runID, for the AC 04-02 skip-filter tests.
+func indexOf(entries []FileEntry, runID string) *FileHashIndex {
+	idx := newFileHashIndex()
+	for _, e := range entries {
+		idx.Record(e.Path, cache.HashText(e.Body), runID)
+	}
+	return idx
+}
+
+// AC 04-02 Scenario 1: all files unchanged → empty pre-chunking candidate list.
+func TestApplyHashSkip_AllUnchangedYieldsEmpty(t *testing.T) {
+	entries := []FileEntry{
+		{Path: "a.go", Size: 3, Body: "aaa"},
+		{Path: "b.go", Size: 3, Body: "bbb"},
+		{Path: "c.go", Size: 3, Body: "ccc"},
+	}
+	idx := indexOf(entries, "run-1")
+	got := applyHashSkip(entries, idx, false)
+	assert.Empty(t, got, "every unchanged file must be dropped before chunking")
+}
+
+// AC 04-02 Scenario 2: only changed files reach chunking — verified by path AND
+// content, not count.
+func TestApplyHashSkip_OnlyChangedSurvive(t *testing.T) {
+	v1 := []FileEntry{
+		{Path: "a.go", Body: "a1"},
+		{Path: "b.go", Body: "b1"},
+		{Path: "c.go", Body: "c1"},
+		{Path: "d.go", Body: "d1"},
+	}
+	idx := indexOf(v1, "run-1")
+	// b and d change; a and c stay byte-identical.
+	v2 := []FileEntry{
+		{Path: "a.go", Body: "a1"},
+		{Path: "b.go", Body: "b2-CHANGED"},
+		{Path: "c.go", Body: "c1"},
+		{Path: "d.go", Body: "d2-CHANGED"},
+	}
+	got := applyHashSkip(v2, idx, false)
+	require.Len(t, got, 2)
+	assert.Equal(t, []string{"b.go", "d.go"}, sortedPaths(got))
+	b, ok := findEntry(got, "b.go")
+	require.True(t, ok)
+	assert.Equal(t, "b2-CHANGED", b.Body, "the changed content, not merely a count, must reach chunking")
+}
+
+// AC 04-02 Edge Case 1: a new file with no index entry is always a candidate.
+func TestApplyHashSkip_NewFileAlwaysIncluded(t *testing.T) {
+	known := []FileEntry{{Path: "a.go", Body: "a1"}}
+	idx := indexOf(known, "run-1")
+	entries := []FileEntry{
+		{Path: "a.go", Body: "a1"},          // unchanged → skipped
+		{Path: "new.go", Body: "brand new"}, // no entry → included
+	}
+	got := applyHashSkip(entries, idx, false)
+	assert.Equal(t, []string{"new.go"}, sortedPaths(got))
+}
+
+// AC 04-02 Edge Case 3: a renamed file with byte-identical content has no entry
+// under its new (path-keyed) name and is treated as unreviewed — included.
+func TestApplyHashSkip_RenamedIdenticalContentIncluded(t *testing.T) {
+	orig := []FileEntry{{Path: "old/name.go", Body: "same bytes"}}
+	idx := indexOf(orig, "run-1")
+	renamed := []FileEntry{{Path: "new/name.go", Body: "same bytes"}}
+	got := applyHashSkip(renamed, idx, false)
+	assert.Equal(t, []string{"new/name.go"}, sortedPaths(got), "path-keyed index treats a rename as unreviewed")
+}
+
+// AC 04-02 Edge Case 4: the skip decision is content-based only — byte-identical
+// content is skipped regardless of any size field drift.
+func TestApplyHashSkip_ContentBasedOnly(t *testing.T) {
+	idx := newFileHashIndex()
+	idx.Record("a.go", cache.HashText("payload"), "run-1")
+	// Same bytes, deliberately wrong Size field: still skipped (hash matches).
+	entries := []FileEntry{{Path: "a.go", Size: 99999, Body: "payload"}}
+	got := applyHashSkip(entries, idx, false)
+	assert.Empty(t, got, "skip is SHA-256 content-based, never size/mtime-based")
+}
+
+// AC 04-04 preview / AC 04-02 nil-safety: fresh=true or a nil index bypasses the
+// skip entirely (every file included).
+func TestApplyHashSkip_FreshOrNilIndexIncludesAll(t *testing.T) {
+	entries := []FileEntry{{Path: "a.go", Body: "a1"}, {Path: "b.go", Body: "b1"}}
+	idx := indexOf(entries, "run-1") // would skip both
+
+	fresh := applyHashSkip(entries, idx, true)
+	assert.Equal(t, []string{"a.go", "b.go"}, sortedPaths(fresh), "--fresh bypasses the skip")
+
+	nilIdx := applyHashSkip(entries, nil, false)
+	assert.Equal(t, []string{"a.go", "b.go"}, sortedPaths(nilIdx), "a nil index treats every file as unreviewed")
+}
+
+// AC 04-02 (INTEGRATION): two --all passes through BuildRepoEntries — write the
+// index after pass 1, reload it, and confirm pass 2 skips unchanged files and
+// surfaces only the one file whose content changed.
+func TestBuildRepoEntries_SkipsUnchangedAcrossPasses(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "b.go", "package b\n")
+	write(t, dir, "internal/c.go", "package c\n")
+	commitAll(t, dir, "init")
+	ctx := context.Background()
+	// Store the index outside the scanned repo so the fixture's `git add -A` cannot
+	// sweep it into the tracked set (in production .atcr/ is gitignored). The skip
+	// logic under test is independent of where the index file lives.
+	idxPath := filepath.Join(t.TempDir(), "file-hashes.json")
+
+	// Pass 1: full scan (empty index), then record + save.
+	pass1, err := BuildRepoEntries(ctx, dir, log.Discard(), false, "", Load(idxPath, log.Discard()), false)
+	require.NoError(t, err)
+	require.Len(t, pass1, 3)
+	idx := Load(idxPath, log.Discard())
+	for _, e := range pass1 {
+		idx.Record(e.Path, cache.HashText(e.Body), "run-1")
+	}
+	require.NoError(t, idx.Save(idxPath))
+
+	// Pass 2, nothing changed → zero candidates.
+	pass2, err := BuildRepoEntries(ctx, dir, log.Discard(), false, "", Load(idxPath, log.Discard()), false)
+	require.NoError(t, err)
+	assert.Empty(t, pass2, "an unchanged repo yields no candidates on the second pass")
+
+	// Change one file → exactly that file is a candidate on pass 3.
+	write(t, dir, "b.go", "package b // edited\n")
+	commitAll(t, dir, "edit b")
+	pass3, err := BuildRepoEntries(ctx, dir, log.Discard(), false, "", Load(idxPath, log.Discard()), false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b.go"}, sortedPaths(pass3))
+}
+
+// AC 04-02 Edge Case 2: ignore-filtering runs BEFORE the hash-skip. An ignored file
+// that would also hash-match is excluded once by the ignore filter and never reaches
+// the skip step — no double-processing, deterministic outcome.
+func TestBuildRepoEntries_IgnoreBeforeHashSkip(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "keep.go", "package keep\n")
+	write(t, dir, "gen/out.go", "package gen\n")
+	commitAll(t, dir, "track") // both tracked before the ignore rule
+	write(t, dir, ".gitignore", "gen/\n")
+	commitAll(t, dir, "ignore gen")
+	ctx := context.Background()
+
+	// Record hashes for BOTH files (as if a prior run without the ignore rule saw them).
+	idx := newFileHashIndex()
+	idx.Record("keep.go", cache.HashText("package keep\n"), "run-1")
+	idx.Record("gen/out.go", cache.HashText("package gen\n"), "run-1")
+
+	got, err := BuildRepoEntries(ctx, dir, log.Discard(), false, "", idx, false)
+	require.NoError(t, err)
+	// keep.go is ignore-surviving AND hash-matched → dropped by the hash-skip.
+	_, keepPresent := findEntry(got, "keep.go")
+	assert.False(t, keepPresent, "hash-matched non-ignored file must be dropped by the skip")
+	// gen/out.go is ignore-excluded → never evaluated by the skip (ordering: ignore first).
+	_, genPresent := findEntry(got, "gen/out.go")
+	assert.False(t, genPresent, "ignored file must be excluded by the ignore filter, not the hash-skip")
+	// The tracked, non-ignored, un-recorded .gitignore itself remains a candidate,
+	// proving the skip only drops recorded hash-matches (not everything).
+	_, giPresent := findEntry(got, ".gitignore")
+	assert.True(t, giPresent, ".gitignore is tracked, non-ignored, and unrecorded → still a candidate")
+}
 
 // debugLogger returns a slog.Logger capturing Debug-and-above output into buf, for
 // the AC 03-03 graceful-degradation log-line assertions.
