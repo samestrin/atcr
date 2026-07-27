@@ -133,7 +133,9 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	// Files mode is already the top of the escalation ladder and suppresses the
 	// skeleton (the whole file is present), so analyzing would spend a `git show`
 	// and an AST parse per file to reach a conclusion that cannot change anything.
-	analyze := mode != ModeFiles && g.escalation.Enabled(len(files))
+	// The same holds when every signal is zeroed: nothing can fire and no
+	// skeleton can render, so the pass would only reproduce the base mode.
+	analyze := mode != ModeFiles && g.escalation.Enabled(len(files)) && g.escalation.anySignalEnabled()
 
 	entries := make([]FileEntry, 0, len(files))
 	for _, f := range files {

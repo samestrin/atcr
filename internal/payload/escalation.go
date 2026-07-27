@@ -106,6 +106,18 @@ func (c EscalationConfig) Enabled(n int) bool {
 	return c.MaxFiles > 0 && n <= c.MaxFiles
 }
 
+// anySignalEnabled reports whether at least one escalation signal or skeleton
+// injection is switched on. Zero is the registry's documented "off" per
+// threshold, so an all-zero config (with MaxFiles left at its default) could
+// only ever reproduce the base mode with an empty skeleton — the analysis
+// pass is skipped outright rather than paid for nothing. This gates only the
+// analyze expression, never Enabled(n): the degradation report must keep
+// meaning strictly "file count exceeded the cap".
+func (c EscalationConfig) anySignalEnabled() bool {
+	return c.ChurnRatio > 0 || c.MinHunks > 0 || c.HunkGapLines > 0 ||
+		c.MinCyclomatic > 0 || c.MaxSkeletonLines > 0
+}
+
 // fileSignals are the per-file measurements the escalation heuristic scores.
 // headLines is 0 when HEAD content was unavailable (deleted or unreadable file),
 // and cyclomatic is 0 when complexity was not computed — a non-Go file, or a
