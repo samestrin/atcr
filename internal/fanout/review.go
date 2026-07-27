@@ -1078,9 +1078,25 @@ type modePayload struct {
 }
 
 // escalationOverrides copies the registry's optional payload_escalation block
-// into payload's mirror type. STUB — not yet wired.
+// into payload's mirror type (Epic 35.1). registry.PayloadEscalationConfig and
+// payload.EscalationOverrides are deliberately separate types — payload must not
+// import registry — so this is the one place the two are bridged.
+//
+// It is a named pure function rather than a struct literal inline in
+// buildPayloads so the copy is directly testable:
+// TestPayloadEscalationMirrorsPayloadOverrides only compares the two shapes by
+// reflection and would stay green with a line omitted or crossed
+// (MinHunks: pe.MinCyclomatic), silently dropping or misrouting an operator's
+// threshold. TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget executes it.
 func escalationOverrides(pe registry.PayloadEscalationConfig) payload.EscalationOverrides {
-	return payload.EscalationOverrides{}
+	return payload.EscalationOverrides{
+		ChurnRatio:       pe.ChurnRatio,
+		MinHunks:         pe.MinHunks,
+		HunkGapLines:     pe.HunkGapLines,
+		MinCyclomatic:    pe.MinCyclomatic,
+		MaxFiles:         pe.MaxFiles,
+		MaxSkeletonLines: pe.MaxSkeletonLines,
+	}
 }
 
 // buildPayloads builds each distinct payload mode the roster uses exactly once.
@@ -1092,19 +1108,11 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	if noIgnore {
 		opts = append(opts, payload.WithoutIgnoreFilter())
 	}
-	// Per-file escalation thresholds (Epic 35.1). registry.PayloadEscalationConfig
-	// and payload.EscalationOverrides are deliberately separate types — payload
-	// must not import registry — so the copy happens here, at the one call site.
-	// registry.TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes.
-	pe := cfg.Registry.PayloadEscalation
-	opts = append(opts, payload.WithEscalation(payload.ResolveEscalationConfig(payload.EscalationOverrides{
-		ChurnRatio:       pe.ChurnRatio,
-		MinHunks:         pe.MinHunks,
-		HunkGapLines:     pe.HunkGapLines,
-		MinCyclomatic:    pe.MinCyclomatic,
-		MaxFiles:         pe.MaxFiles,
-		MaxSkeletonLines: pe.MaxSkeletonLines,
-	})))
+	// Per-file escalation thresholds (Epic 35.1). The registry -> payload copy
+	// lives in escalationOverrides, which is exercised directly by
+	// TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget.
+	opts = append(opts, payload.WithEscalation(
+		payload.ResolveEscalationConfig(escalationOverrides(cfg.Registry.PayloadEscalation))))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
