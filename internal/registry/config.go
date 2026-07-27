@@ -682,8 +682,9 @@ func (r *Registry) validate() error {
 
 // validatePayloadEscalation checks the optional payload_escalation block. Unset
 // (nil) fields are always valid — they resolve to defaults downstream. A set
-// field must be non-negative, and churn_ratio must additionally be a fraction
-// (<= 1.0).
+// field must be non-negative, and churn_ratio must additionally be a finite
+// fraction (<= 1.0) — yaml.v3 resolves .nan/.inf, which would otherwise slip
+// past every comparison.
 func (r *Registry) validatePayloadEscalation() []error {
 	pe := r.PayloadEscalation
 	var errs []error
