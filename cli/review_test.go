@@ -505,6 +505,18 @@ func TestReviewCmd_AllRejectsAutoFix(t *testing.T) {
 	require.Contains(t, out, "--all cannot be combined with --auto-fix")
 }
 
+// TestReviewCmd_DirRejectsAutoFix pins the baseline+auto-fix rejection wording
+// for the --dir path: the message must name --dir (the flag the user actually
+// passed), not --all (TD: the rejection was hardcoded to --all even though
+// baseline := Changed("all") || Changed("dir")).
+func TestReviewCmd_DirRejectsAutoFix(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.Mkdir("sub", 0o755))
+	code, out := execCmdCapture(t, "review", "--dir", "sub", "--auto-fix")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--dir cannot be combined with --auto-fix")
+}
+
 // TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
 // with an undefined flag name — a programming error that must fail loudly
 // rather than silently returning false.
