@@ -1138,9 +1138,8 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// FileCount reflects the global-budget survivor set (post-truncation), not
 		// the pre-budget total — the dropped files are recorded in trunc. Like Kept
 		// it describes the audit artifact, not any one agent's delivered payload.
-		// Entries
-		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
-		// against each model's window (Epic 19.10 F2).
+		// Entries keeps the raw pre-budget files so buildSlots re-sheds them per
+		// agent against each model's window (Epic 19.10 F2).
 		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
