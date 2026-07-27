@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -100,6 +101,16 @@ type Agent struct {
 	Prompt      string
 	PayloadMode string
 	Truncation  payload.Truncation
+
+	// CodeContext is the per-file breakdown of the payload THIS agent was sent,
+	// recovered by renderAgent from the same payload text it renders into the
+	// prompt (Epic 35.0). The chunked strategy gives each chunk-slot a different
+	// subset of the diff, so this is per-agent, not per-review — an audit
+	// consumer asking "which files did this call see" cannot answer it from the
+	// review-wide file list. Nil on a bare/direct-constructed Agent (doctor,
+	// tests) and on any payload shape the parser cannot attribute to files,
+	// which observers treat as "no code context" rather than as an error.
+	CodeContext []hookobs.CodeRef
 	// TimeoutSecs bounds this single agent's call within the global deadline; 0
 	// means "use the global context deadline only".
 	TimeoutSecs int
@@ -711,6 +722,10 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		agentLogger.Warn("tools-enabled agent has no provider set; circuit breaker bypassed", "agent", a.Name)
 	}
 	ctx = circuitbreaker.NewContext(ctx, a.Provider)
+	// Same chokepoint, same reason: attach the agent identity so an audit
+	// observer can attribute an invocation to the persona that made it. Every
+	// path (single-shot, tool loop, verify) runs through here (Epic 35.0).
+	ctx = hookobs.WithCall(ctx, hookobs.Call{AgentName: a.Name, CodeContext: a.CodeContext})
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model, "max_retries", a.MaxRetries, "initial_backoff_ms", a.InitialBackoffMs)
 
 	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch

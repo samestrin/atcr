@@ -24,8 +24,11 @@ import (
 // the range-less `atcr review --all` path.
 func initBaselineRepo(t *testing.T) {
 	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
@@ -315,7 +318,10 @@ func TestReviewAllFresh_BypassesSkipIndex(t *testing.T) {
 // to the isolate() fixture after initBaselineRepo).
 func gitRun(t *testing.T, args ...string) {
 	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
 	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
@@ -329,7 +335,11 @@ func gitRun(t *testing.T, args ...string) {
 // "zero files silently omitted" bar), slash-normalized repo-root-relative paths.
 func gitLsFiles(t *testing.T) []string {
 	t.Helper()
-	out, err := exec.Command("git", "ls-files").Output()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	cmd := exec.Command("git", "ls-files")
+	cmd.Dir = dir
+	out, err := cmd.Output()
 	require.NoError(t, err)
 	var files []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -602,8 +612,11 @@ func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
 	// A second commit so --base HEAD^ resolves a real range.
+	dir, err := os.Getwd()
+	require.NoError(t, err)
 	run := func(args ...string) {
 		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
