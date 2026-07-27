@@ -176,6 +176,36 @@ func TestFileSkeleton_HeadersAreSingleLine(t *testing.T) {
 	}
 }
 
+func TestFileSkeleton_GroupedDeclOpenersAreFiltered(t *testing.T) {
+	// A grouped `var (` / `const (` / `type (` block renders only its opener line,
+	// so declHeader collapses it to the bare keyword `var (` etc. — no names, no
+	// types, zero structural signal. Two var blocks and a const block would emit
+	// three indistinguishable headers that consume skeleton budget and can displace
+	// the func headers the skeleton exists to show. Like `import (`, they are filtered.
+	src := `package p
+
+var (
+	A = 1
+	B = 2
+)
+
+const (
+	X = "x"
+)
+
+var (
+	C = 3
+)
+
+func Keep() {}
+`
+	root := parseGoForSkeleton(t, src)
+
+	headers := headersOf(FileSkeleton(root, src))
+	require.Equal(t, []string{"func Keep()"}, headers,
+		"bare grouped decl openers must be filtered, leaving only real signal")
+}
+
 func TestCyclomatic_CountsBranchNodesPlusOne(t *testing.T) {
 	root := parseGoForSkeleton(t, skeletonSrc)
 
