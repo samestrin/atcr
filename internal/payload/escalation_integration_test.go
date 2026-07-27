@@ -242,9 +242,11 @@ func TestEscalationIntegration_DisabledProducesUnchangedPayload(t *testing.T) {
 	require.NotContains(t, entries[0].Body, skeletonStart)
 }
 
-// Above the file cap the whole pass is skipped and the degradation is
-// observable, so the manifest can disclose it.
-func TestEscalationIntegration_AboveFileCapDegradesAndReports(t *testing.T) {
+// Under the file cap — and with the feature disabled outright — a run is NOT a
+// degradation: EscalationDegraded must stay false so the manifest does not cry
+// wolf. (The above-cap reporting path is pinned by
+// TestEscalationIntegration_ManyFilesTripTheCap below.)
+func TestEscalationIntegration_UnderCapAndDisabledAreNotDegradations(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
 	cfg := DefaultEscalationConfig()
