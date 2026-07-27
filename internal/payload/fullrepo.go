@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,6 +22,22 @@ import (
 // caller (which knows the model name) wraps this into AC 01-03 Error Scenario 1's
 // exact `model %q ...` usage-error message.
 var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte budget for a review payload (context window too small for the configured output reservation)")
+
+// errTrackedFileTooLarge marks a tracked file that exceeds maxTrackedFileReadBytes
+// (TD-002). readTrackedFile wraps it so enumerateRepoFiles can distinguish
+// "skip this one over-cap file" from a genuine read failure (which aborts the walk
+// per AC 01-02).
+var errTrackedFileTooLarge = errors.New("full-repo scan: tracked file exceeds the per-file read ceiling")
+
+// maxTrackedFileReadBytes is the per-file read ceiling for the baseline walker
+// (TD-002). readTrackedFile slurps each tracked file into memory, so a single
+// pathological blob (multi-GB binary, a materialized Git-LFS pointer) could exhaust
+// memory before the byte-budget partitioner ever runs; files past the ceiling are
+// skipped with a Warn rather than OOMing the process. 32 MiB sits far above any
+// legitimate source file (per-chunk budgets are context-window-derived, typically
+// well under 1 MiB) while still bounding the worst-case allocation. A var (not a
+// const) so tests can pin the boundary with small fixtures.
+var maxTrackedFileReadBytes int64 = 32 << 20
 
 // fullrepo.go hosts the full-repository / directory-scoped ("baseline") payload
 // path for `atcr review --all` and `atcr review --dir <path>` (Sprint 35.0). It
@@ -186,6 +203,14 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 		}
 		entry, err := readTrackedFile(root, rel)
 		if err != nil {
+			if errors.Is(err, errTrackedFileTooLarge) {
+				// TD-002: skip + flag an over-cap file instead of slurping it into
+				// memory (OOM vector); the rest of the walk proceeds.
+				if logger != nil {
+					logger.Warn("full-repo scan: skipping over-cap tracked file", "path", rel, "err", err)
+				}
+				continue
+			}
 			return nil, err
 		}
 		entries = append(entries, entry)
@@ -202,7 +227,9 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 // path components of a git ls-files path are always real directories (git tracks a
 // symlink as its own leaf entry, never traverses through one), so os.ReadFile of a
 // regular file stays rooted at root. Binary/non-UTF8 content is captured verbatim
-// with its raw byte size (Edge Case 3).
+// with its raw byte size (Edge Case 3). A regular file larger than
+// maxTrackedFileReadBytes is NOT read: it returns errTrackedFileTooLarge so the
+// caller can skip + flag it instead of exhausting memory (TD-002).
 func readTrackedFile(root, rel string) (FileEntry, error) {
 	abs := filepath.Join(root, filepath.FromSlash(rel))
 	fi, err := os.Lstat(abs)
@@ -223,9 +250,25 @@ func readTrackedFile(root, rel string) (FileEntry, error) {
 	if err := ensureWithinRoot(root, abs, rel); err != nil {
 		return FileEntry{}, err
 	}
-	data, err := os.ReadFile(abs)
+	// Per-file size guard (TD-002): refuse to slurp a file past the read ceiling —
+	// it is skipped + Warn-flagged by the caller rather than OOMing the process.
+	if fi.Size() > maxTrackedFileReadBytes {
+		return FileEntry{}, fmt.Errorf("%w: %q is %d bytes (max %d)", errTrackedFileTooLarge, rel, fi.Size(), maxTrackedFileReadBytes)
+	}
+	f, err := os.Open(abs)
 	if err != nil {
 		return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+	}
+	defer func() { _ = f.Close() }()
+	// Bound the read independently of the pre-read stat so a file that grows
+	// between stat and read still cannot exceed the cap (TOCTOU defense — the same
+	// "+1 over-read, then recheck" pair ingest.go's readCapped uses).
+	data, err := io.ReadAll(io.LimitReader(f, maxTrackedFileReadBytes+1))
+	if err != nil {
+		return FileEntry{}, fmt.Errorf("full-repo scan: reading tracked file %q: %w", rel, err)
+	}
+	if int64(len(data)) > maxTrackedFileReadBytes {
+		return FileEntry{}, fmt.Errorf("%w: %q grew past %d bytes during the read", errTrackedFileTooLarge, rel, maxTrackedFileReadBytes)
 	}
 	return FileEntry{Path: rel, Size: int64(len(data)), Body: string(data)}, nil
 }
