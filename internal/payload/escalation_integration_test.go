@@ -220,8 +220,12 @@ func TestEscalationIntegration_ChurnedFileEscalatesAndRecordsMode(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
-	require.NotEqual(t, ModeDiff, entries[0].Mode,
+	require.Equal(t, ModeBlocks, entries[0].Mode,
 		"a fully-rewritten file must not be reviewed from hunks alone")
+	require.Contains(t, entries[0].Body, "diff --git",
+		"blocks mode renders function-context hunks — the body must match the recorded mode")
+	require.NotContains(t, entries[0].Body, fileHeaderPrefixForTest(),
+		"blocks mode must not render the whole HEAD file")
 }
 
 // With escalation disabled the payload is byte-identical to the pre-epic output:
@@ -493,8 +497,12 @@ func TestEscalationIntegration_DeletionHeavyRewriteEscalates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
-	require.NotEqual(t, ModeDiff, entries[0].Mode,
+	require.Equal(t, ModeBlocks, entries[0].Mode,
 		"a rewrite that mostly DELETES code must escalate; deletions are churn too")
+	require.Contains(t, entries[0].Body, "diff --git",
+		"blocks mode renders function-context hunks — the body must match the recorded mode")
+	require.NotContains(t, entries[0].Body, fileHeaderPrefixForTest(),
+		"blocks mode must not render the whole HEAD file")
 }
 
 // Pure-deletion hunks must be counted for adjacency and hunk-count purposes but
