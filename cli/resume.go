@@ -300,6 +300,24 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return err // every agent (union) failed → exit 1, artifacts preserved
 	}
 
+	// TD-011: a resumed BASELINE run persists the incremental file-hash index on
+	// successful completion, mirroring the fresh runReview write-back gate so the
+	// next --all/--dir skips unchanged files instead of re-scanning everything.
+	// Same safety rules as the fresh path: gated on at least one success (an
+	// all-failed run records nothing) and on zero unreviewed chunks (a partially
+	// covered run skips the write so uncovered files are re-scanned, never
+	// silently skipped). A write failure is logged, never fatal; the interrupt
+	// path returned above, so this never fires on a cancelled run.
+	switch {
+	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
+		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
+			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
+		}
+	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
+		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
+			"unreviewed_chunks", result.Summary.UnreviewedChunks)
+	}
+
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
 	if _, err := resumeReconcile(ctx, cmd, result.Dir); err != nil {

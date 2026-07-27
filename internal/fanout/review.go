@@ -651,6 +651,21 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	// dropped files there only causes a (rare, global-budget-set) re-review next run —
 	// fail-open, never a silent skip. With the default PayloadByteBudget=0 nothing is
 	// dropped, so this records the full set unchanged. [5.14 gate MEDIUM]
+	prep.baseline = captureBaselineWriteback(ctx, req.Repo, req.Dir, idx, mp)
+	return prep, nil
+}
+
+// captureBaselineWriteback builds the incremental-rescan write-back state for a
+// baseline (--all/--dir) review from the assembled files-mode payload: every
+// entry the global byte budget KEPT is recorded with its review-time hash
+// (globally-dropped files are excluded so they can never be
+// skipped-though-unreviewed on the next run — the EXCEPTION case above), plus
+// the full in-scope tracked set for the whole-repo self-trim. idx supplies the
+// pre-run index state the write-back records onto (the fresh path's loaded
+// index, which the skip filter only READ; the resume path loads the on-disk
+// state fresh). Shared by PrepareReviewFromRepo and PrepareResume so the fresh
+// and resumed baseline runs record identical state (TD-011).
+func captureBaselineWriteback(ctx context.Context, repo, scope string, idx *payload.FileHashIndex, mp modePayload) *baselineWriteback {
 	shed := make(map[string]struct{}, len(mp.Truncation.FilesDropped))
 	for _, dp := range mp.Truncation.FilesDropped {
 		shed[dp] = struct{}{}
@@ -662,14 +677,13 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		}
 		reviewed[e.Path] = cache.HashText(e.Body)
 	}
-	prep.baseline = &baselineWriteback{
-		indexPath: payload.FileHashIndexPath(req.Repo),
+	return &baselineWriteback{
+		indexPath: payload.FileHashIndexPath(repo),
 		preIndex:  idx,
 		reviewed:  reviewed,
-		tracked:   payload.TrackedInScope(ctx, req.Repo, req.Dir),
-		scope:     req.Dir,
+		tracked:   payload.TrackedInScope(ctx, repo, scope),
+		scope:     scope,
 	}
-	return prep, nil
 }
 
 // buildRepoPayloads assembles the single files-mode whole-repo payload for a

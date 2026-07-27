@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -368,6 +369,18 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
 		cacheNoRead: req.NoCache,
 	}
+	if m.Baseline {
+		// TD-011: a resumed BASELINE run captures the same write-back state the
+		// fresh PrepareReviewFromRepo path does, so runResume can persist the
+		// file-hash index on completion and the next --all/--dir skips unchanged
+		// files instead of doing a full re-scan. The resume bypassed the
+		// hash-skip above (idx=nil), so the rebuilt payload IS the full reviewed
+		// set; the pre-run index state is loaded fresh from disk to record onto,
+		// preserving entries the original run wrote before it was interrupted.
+		p.baseline = captureBaselineWriteback(ctx, req.Repo, m.Dir,
+			payload.Load(payload.FileHashIndexPath(req.Repo), log.FromContext(ctx)),
+			payloads[string(payload.ModeFiles)])
+	}
 	return p, info, nil
 }
 
@@ -624,6 +637,11 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		} else {
 			s.Failed++
 		}
+		// Thread the per-agent unreviewed-chunk counts through the rebuild exactly
+		// as outcome.go's summarize does for live results — the baseline
+		// write-back gate (record only when every chunk succeeded) reads this on
+		// the resume path too (TD-011).
+		s.UnreviewedChunks += st.UnreviewedChunks
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s
