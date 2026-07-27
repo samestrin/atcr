@@ -425,7 +425,10 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 // recorded in summary.json so a git-failure or diff-ingestion skip is auditable.
 func computeGroundingData(ctx context.Context, req ReviewRequest, rb *payload.RangeBuilder) (payload.ChangedLines, string) {
 	if req.Range.Base == "" || req.Range.Head == "" {
-		return nil, "range-less request (diff ingestion): grounding not applicable"
+		// Both the diff-ingestion path and the --all/--dir baseline scan are range-less;
+		// name both so a baseline review's summary.json provenance is not mislabeled
+		// "diff ingestion" (Sprint 35.0 phase-2 gate LOW).
+		return nil, "range-less request (diff ingestion or baseline scan): grounding not applicable"
 	}
 	// Guard the invariant that rb was constructed from the same req.Range it is
 	// grounding. When rb != nil the changed lines come from rb's OWN base/head

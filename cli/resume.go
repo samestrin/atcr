@@ -88,8 +88,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		"debate":       "run `atcr debate` afterward instead",
 		"single-model": "this flag only applies to --debate — run `atcr debate` afterward instead",
 		"exec":         "this flag only applies to --verify — run `atcr verify --exec` afterward instead",
+		// --all selects a fresh full-repository scan; a resume continues whatever mode
+		// the original review ran (baseline-ness comes from the manifest, not this flag),
+		// so accepting --all here would silently ignore it (Sprint 35.0 phase-2 gate LOW).
+		"all": "--all starts a fresh full-repository review; a resume continues the original review's mode",
 	}
-	for _, f := range []string{"auto-fix", "debate", "single-model", "exec"} {
+	for _, f := range []string{"auto-fix", "debate", "single-model", "exec", "all"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}

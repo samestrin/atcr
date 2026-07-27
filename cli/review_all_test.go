@@ -123,6 +123,16 @@ func TestReviewAll_BaselineReviewIsResumable(t *testing.T) {
 	assert.FileExists(t, filepath.Join(kaiDir, "findings.txt"), "the pending baseline agent must be re-reviewed via the repo payload")
 }
 
+// Phase-2 gate LOW: `--resume --all` is rejected up front (exit 2) rather than
+// silently ignoring --all — a resume continues the original review's mode, so
+// baseline-ness comes from the manifest, not this flag.
+func TestReviewAll_ResumeRejectsAllFlag(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--all")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--resume does not support --all")
+}
+
 // AC 01-05 Happy Path 3: `atcr reconcile <id>` and `atcr report <id>` work
 // unmodified against an --all-produced review directory (provenance-agnostic).
 func TestReviewAll_ReconcileAndReportWorkOnBaselineOutput(t *testing.T) {
