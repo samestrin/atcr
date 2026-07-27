@@ -242,44 +242,6 @@ type baselineWriteback struct {
 	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
 }
 
-// smallestAgentBudget returns the smallest POSITIVE per-agent applied byte budget
-// across the review roster, sized the SAME way buildSlots sizes each agent's payload
-// (payload.EffectiveByteBudget for the agent's model, capped by the global
-// PayloadByteBudget, less the per-agent SCOPE CONSTRAINT reservation). The bool is
-// false when NO agent has a positive budget — every agent's window is too small to
-// size the payload, so each reviews the whole global-budget payload (the caller then
-// records the globally-kept set instead). This exists only to bound the baseline
-// write-back's reviewed set to what agents actually saw under per-agent shedding
-// (Sprint 35.0, 4.23 gate CRITICAL). scopeConstraintLen is passed uncapped, which
-// only over-reserves for large-window models — safe (under-records), never unsafe.
-func smallestAgentBudget(cfg *ReviewConfig, scopeConstraintLen int) (int64, bool) {
-	global := cfg.Settings.PayloadByteBudget
-	var minBudget int64
-	found := false
-	for _, name := range rosterNames(cfg.Project) {
-		ac, ok := cfg.Registry.Agents[name]
-		if !ok {
-			continue
-		}
-		eff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
-		if eff <= 0 {
-			continue // over-window: reviews the whole payload, does not lower the floor
-		}
-		applied := eff
-		if global > 0 && global < applied {
-			applied = global
-		}
-		applied -= int64(scopeConstraintLen)
-		if applied <= 0 {
-			continue // scope reservation leaves nothing: over-window, reviews whole payload
-		}
-		if !found || applied < minBudget {
-			minBudget, found = applied, true
-		}
-	}
-	return minBudget, found
-}
-
 // CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
 // baseline review, stamping every reviewed file with runID (Sprint 35.0 Story 4/5,
 // AC 04-01). No-op for a diff-range review (p.baseline == nil). It records only the
@@ -640,37 +602,24 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	// filter, so it still holds the pre-run state — reused as the base the write-back
 	// records onto, preserving unchanged/skipped files' prior entries.
 	mp := payloads[filesMode]
-	// The reviewed set for the write-back must be EXACTLY the files that reached an
-	// agent's payload — never more, or the next run skips a file that was never
-	// reviewed (silent coverage loss). buildSlots re-sheds mp.Entries PER AGENT against
-	// each model's window (Epic 19.10 F2), so a file surviving the GLOBAL byte budget
-	// can still be shed from a smaller-window agent. Bound the recorded set to the files
-	// that fit the SMALLEST per-agent applied budget: those are guaranteed present in
-	// every agent's payload, hence reviewed. A file reviewed only by a larger-window
-	// agent is conservatively re-reviewed next run rather than recorded-though-unreviewed
-	// (fail-open). For the common homogeneous roster this is exactly the reviewed set.
-	// [4.23 gate CRITICAL]
-	var reviewedEntries []payload.FileEntry
-	if budget, constrained := smallestAgentBudget(cfg, len(scopeConstraint)); constrained {
-		reviewedEntries, _ = payload.ApplyByteBudget(mp.Entries, budget)
-	} else {
-		// No agent has a positive budget: each reviews the whole GLOBAL-budget payload,
-		// so the reviewed set is exactly the globally-kept files (mp.Entries less the
-		// global byte-budget drops).
-		shed := make(map[string]struct{}, len(mp.Truncation.FilesDropped))
-		for _, dp := range mp.Truncation.FilesDropped {
-			shed[dp] = struct{}{}
-		}
-		kept := make([]payload.FileEntry, 0, len(mp.Entries))
-		for _, e := range mp.Entries {
-			if _, dropped := shed[e.Path]; !dropped {
-				kept = append(kept, e)
-			}
-		}
-		reviewedEntries = kept
-	}
-	reviewed := make(map[string]string, len(reviewedEntries))
-	for _, e := range reviewedEntries {
+	// The reviewed set for the write-back is EXACTLY the files the baseline fan-out
+	// reviewed. The Phase 5 baseline branch in buildSlots partitions mp.Entries into
+	// (persona × chunk) slots via PartitionByBudget, which drops NOTHING — every file
+	// reaches a chunk (an oversized file becomes its own chunk), so every agent reviews
+	// every file. The single-chunk and over-window fall-throughs to the bulk path also
+	// keep the whole payload rather than shedding. So the reviewed set is the full
+	// in-scope tracked payload: record every entry with its review-time hash.
+	//
+	// This SUPERSEDES the Phase 4 per-agent-shed bound (task 4.23): that bound recorded
+	// only the files fitting the smallest per-agent budget because baseline then reused
+	// the single-payload BULK path, which sheds mp.Entries per model window (Epic 19.10
+	// F2). Under Phase 5's partition-based fan-out no file is ever shed per agent, so
+	// bounding the recorded set to a per-agent budget UNDER-records every file the
+	// multi-chunk scan reviewed beyond one chunk's worth — silently defeating the Story
+	// 4/5 incremental skip on exactly the multi-chunk repos it targets. Recording the
+	// full reviewed set is both correct and fail-open. [5.2.A HIGH]
+	reviewed := make(map[string]string, len(mp.Entries))
+	for _, e := range mp.Entries {
 		reviewed[e.Path] = cache.HashText(e.Body)
 	}
 	prep.baseline = &baselineWriteback{
@@ -1320,9 +1269,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// chunks sized to its own model window (Epic 19.10 F2 per-agent sizing),
 			// building one Slot per (persona × chunk) under the persona's UNCHANGED plain
 			// name so mergeChunkResults collapses the chunk-results into one source. The
-			// per-agent budget is derived identically to the bulk path below and to
-			// smallestAgentBudget (review.go:255): EffectiveByteBudget capped by the global
-			// PayloadByteBudget, less the SCOPE CONSTRAINT reservation.
+			// per-agent chunk budget is derived identically to the bulk path below:
+			// EffectiveByteBudget capped by the global PayloadByteBudget, less the SCOPE
+			// CONSTRAINT reservation.
 			chunkBudget := agentEff
 			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
 				chunkBudget = global

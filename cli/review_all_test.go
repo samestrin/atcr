@@ -332,12 +332,19 @@ func TestReviewDir_PreservesOutOfScopeIndexEntries(t *testing.T) {
 // reviewed — else the next run would skip a file no agent ever saw. The test model
 // (m-bruce, unknown → 32768-token window → ~71680-byte effective budget) sheds an
 // ~80 KB file per-agent while the 512 KiB global budget keeps it.
-func TestReviewAll_PerAgentShedFileNotRecordedAsReviewed(t *testing.T) {
+// Sprint 35.0 Phase 5 (task 5.3, 5.2.A HIGH): under the baseline (persona × chunk)
+// fan-out, a file larger than a single per-agent budget is NOT shed — it becomes its
+// OWN oversized chunk (PartitionByBudget never drops), so it IS reviewed and therefore
+// MUST be recorded in the incremental index. This supersedes the Phase 4 bulk-path
+// behavior (a per-agent-shed file was correctly not recorded) because Phase 5 no longer
+// sheds per agent; recording the full reviewed set is what makes the Story 4/5 skip work
+// on multi-chunk repos.
+func TestReviewAll_OversizedFileReviewedInOwnChunkIsRecorded(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
 	// A file larger than the per-agent effective budget (~71680 bytes) but well under
-	// the 512 KiB global budget.
+	// the 512 KiB global budget — so it lands in its own oversized baseline chunk.
 	big := make([]byte, 80_000)
 	for i := range big {
 		big[i] = 'x'
@@ -350,11 +357,44 @@ func TestReviewAll_PerAgentShedFileNotRecordedAsReviewed(t *testing.T) {
 
 	require.Equal(t, 0, execCmd(t, "review", "--all"))
 	idx := payload.Load(payload.FileHashIndexPath("."), nil)
-	// a.txt (small, reviewed) is recorded; big.txt (per-agent-shed, never reviewed) is NOT.
+	// Both the small file and the oversized (own-chunk, reviewed) file are recorded.
 	_, _, okA := idx.Get("a.txt")
 	assert.True(t, okA, "a small reviewed file is recorded")
 	_, _, okBig := idx.Get("big.txt")
-	assert.False(t, okBig, "a per-agent-shed (unreviewed) file must NOT be recorded, or it would be skipped-though-unreviewed next run")
+	assert.True(t, okBig, "an oversized file reviewed in its own baseline chunk must be recorded, so the incremental skip covers it next run")
+}
+
+// Sprint 35.0 Phase 5 (task 5.3, 5.2.A HIGH regression): a baseline scan that fans
+// out across MULTIPLE chunks records EVERY reviewed file in the incremental index —
+// not just one chunk's worth. Prior to the 5.2.A fix the write-back bounded the
+// recorded set to a single per-agent budget (drop-to-fit), so on a multi-chunk repo
+// most reviewed files were left unrecorded and re-reviewed every run, defeating the
+// Story 4/5 incremental skip.
+func TestReviewAll_MultiChunkRecordsAllReviewedFiles(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// Three files each larger than the per-agent budget (~71680 bytes) but whose total
+	// (~240 KB) is under the 512 KiB global budget: each becomes its own baseline chunk,
+	// so the scan fans out across 3+ chunks and every file is reviewed.
+	big := make([]byte, 80_000)
+	for i := range big {
+		big[i] = 'x'
+	}
+	for _, name := range []string{"big1.txt", "big2.txt", "big3.txt"} {
+		require.NoError(t, os.WriteFile(name, big, 0o644))
+	}
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add big files")
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	for _, name := range []string{"a.txt", "big1.txt", "big2.txt", "big3.txt"} {
+		_, _, ok := idx.Get(name)
+		assert.True(t, ok, "multi-chunk baseline must record every reviewed file; %s missing", name)
+	}
 }
 
 // AC 04-04 Scenario 2: `--fresh` on a diff-range review is a no-op for the hash
