@@ -110,8 +110,13 @@ func declHeader(lines []string, n Node) (string, bool) {
 // bodyBraceIndex returns the index of the brace that opens a declaration's body,
 // or -1 when there is none.
 //
-// Two kinds of brace are skipped so the signature is not truncated at the wrong
-// place:
+// Kinds of content skipped so the signature is not truncated or stalled at the
+// wrong place:
+//   - line (`//`) and block (`/* */`) comments, so a brace, paren, or bracket
+//     appearing in prose never affects brace matching;
+//   - double-quoted, backtick, and rune literals (escapes honored for
+//     double-quote and rune; backtick raw strings have none), so the same
+//     characters inside literal text are ignored;
 //   - braces nested inside parentheses or brackets, e.g. a struct-typed
 //     parameter or a generic constraint `func F[T interface{ ~int }](v T) T`;
 //   - a brace introducing an inline struct/interface TYPE, which can appear at
@@ -122,6 +127,27 @@ func bodyBraceIndex(text string) int {
 	depth := 0
 	for i := 0; i < len(text); i++ {
 		switch text[i] {
+		case '/':
+			if i+1 < len(text) && text[i+1] == '/' {
+				if j := strings.IndexByte(text[i:], '\n'); j >= 0 {
+					i += j
+				} else {
+					i = len(text)
+				}
+				continue
+			}
+			if i+1 < len(text) && text[i+1] == '*' {
+				if j := strings.Index(text[i+2:], "*/"); j >= 0 {
+					i += 2 + j + 1
+				} else {
+					i = len(text)
+				}
+				continue
+			}
+		case '"', '`':
+			i = skipStringLiteral(text, i)
+		case '\'':
+			i = skipRuneLiteral(text, i)
 		case '(', '[':
 			depth++
 		case ')', ']':
@@ -144,6 +170,41 @@ func bodyBraceIndex(text string) int {
 		}
 	}
 	return -1
+}
+
+// skipStringLiteral returns the index of the quote closing the double-quoted
+// or backtick string opened at text[start], or len(text)-1 when unterminated
+// (so the caller's loop runs to the end without finding a body brace).
+// Backslash escapes are honored only for double-quoted strings; backtick raw
+// strings have none.
+func skipStringLiteral(text string, start int) int {
+	q := text[start]
+	for i := start + 1; i < len(text); i++ {
+		switch text[i] {
+		case '\\':
+			if q == '"' {
+				i++
+			}
+		case q:
+			return i
+		}
+	}
+	return len(text) - 1
+}
+
+// skipRuneLiteral returns the index of the `'` closing the rune literal opened
+// at text[start], or len(text)-1 when unterminated. A backslash escapes the
+// following byte.
+func skipRuneLiteral(text string, start int) int {
+	for i := start + 1; i < len(text); i++ {
+		switch text[i] {
+		case '\\':
+			i++
+		case '\'':
+			return i
+		}
+	}
+	return len(text) - 1
 }
 
 // opensInlineType reports whether the brace following prefix belongs to an
