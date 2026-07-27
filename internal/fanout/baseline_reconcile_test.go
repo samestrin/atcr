@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,9 +145,134 @@ func TestBaselineReconcile_MissingSourcesErrors(t *testing.T) {
 	require.Error(t, err, "a review dir with no sources/ tree must error, same as diff provenance")
 }
 
+// AC 06-03 Edge Case 2 / Performance Requirements: clustering over a realistic-scale
+// baseline source set shows no order-of-magnitude regression versus an equivalent
+// diff-provenance source set.
+//
+// Both sides reconcile the SAME finding set — one finding per marker file, per persona,
+// over the same repo root — so the only difference is how those sources were produced:
+// the baseline side fans out across dozens of chunks and collapses per persona, the diff
+// side reviews a range in a single chunk per persona. Only RunReconcile is timed, so the
+// measurement isolates discovery + clustering, not fan-out. The bound is an order of
+// magnitude over the diff pass with an absolute floor, so sub-millisecond scheduling
+// jitter cannot flake the test while a pathological (superlinear) clustering regression
+// at baseline scale still fails it.
+func TestBaselineReconcile_NoOrderOfMagnitudeClusteringRegressionAtScale(t *testing.T) {
+	const fileCount = 60 // "dozens of files across several chunks"
+	// Floor for the order-of-magnitude bound: the measured passes are ~25ms each, so
+	// 500ms is ~20x headroom on an unloaded machine, while the adaptive 10x term takes
+	// over on a loaded runner (a slow diff pass raises the bound with it).
+	const clusteringTimeFloor = 500 * time.Millisecond
+
+	files := make(map[string]string, fileCount)
+	names := make([]string, 0, fileCount)
+	for i := 0; i < fileCount; i++ {
+		n := fmt.Sprintf("f%02d.go", i)
+		names = append(names, n)
+		files[n] = markerFile(n, 90)
+	}
+	// The marker files land in the SECOND commit so the diff side's range actually
+	// contains them: a range-based review drops findings not grounded in its patch.
+	repo := baselineRepo(t, map[string]string{"seed.md": "seed\n"})
+	base, head := secondCommit(t, repo, files)
+
+	// --- Equivalent diff-provenance source set: one chunk per persona, same findings.
+	diffCfg := twoAgentConfig("http://unused")
+	diffOut := filepath.Join(t.TempDir(), "diff-review")
+	diffReq := reviewReq(repo, repo, base, head)
+	diffReq.OutputDir = diffOut
+	diffPrep, err := PrepareReview(context.Background(), diffCfg, diffReq)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(diffPrep.Slots), "a diff review fans out exactly one slot per persona")
+	_, err = ExecuteReview(context.Background(), fixedFileFindingsCompleter{files: names}, diffPrep)
+	require.NoError(t, err)
+
+	diffStart := time.Now()
+	_, err = reconcile.RunReconcile(context.Background(), diffOut, nil,
+		reconcile.Options{Root: repo, ReconciledAt: time.Unix(1000, 0).UTC()})
+	diffElapsed := time.Since(diffStart)
+	require.NoError(t, err)
+
+	// --- Baseline source set: same findings, produced across dozens of chunks.
+	baseCfg := twoAgentConfig("http://unused")
+	baseCfg.Settings.PayloadByteBudget = 100 // small cap → one file per chunk
+	baseOut := filepath.Join(t.TempDir(), "baseline-review")
+	basePrep, err := PrepareReviewFromRepo(context.Background(), baseCfg, repoReq(repo, baseOut))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(basePrep.Slots), 2*fileCount,
+		"realistic-scale baseline fixture must fan out across dozens of chunks per persona")
+	_, err = ExecuteReview(context.Background(), baselineChunkFindingCompleter{}, basePrep)
+	require.NoError(t, err)
+
+	baseStart := time.Now()
+	_, err = reconcile.RunReconcile(context.Background(), baseOut, nil,
+		reconcile.Options{Root: repo, ReconciledAt: time.Unix(1000, 0).UTC()})
+	baseElapsed := time.Since(baseStart)
+	require.NoError(t, err)
+
+	// The two passes must have done equivalent clustering work — otherwise the timing
+	// comparison would be measuring different workloads, not baseline provenance.
+	diffFindings, err := reconcile.ReadReconciledFindings(diffOut)
+	require.NoError(t, err)
+	baseFindings, err := reconcile.ReadReconciledFindings(baseOut)
+	require.NoError(t, err)
+	require.NotEmpty(t, baseFindings, "realistic-scale baseline fixture must produce findings to cluster")
+	require.Equal(t, len(diffFindings), len(baseFindings),
+		"baseline and diff source sets must reconcile to the same finding count for the timing comparison to be meaningful")
+
+	t.Logf("clustering %d findings: baseline sources %s vs diff sources %s", len(baseFindings), baseElapsed, diffElapsed)
+
+	bound := 10 * diffElapsed
+	if bound < clusteringTimeFloor {
+		bound = clusteringTimeFloor
+	}
+	assert.LessOrEqual(t, baseElapsed, bound,
+		"baseline-scale clustering (%s over %d findings) regressed by more than an order of magnitude "+
+			"versus the equivalent diff-source reconcile (%s) — escalate to a follow-up story rather than raising this bound",
+		baseElapsed, len(baseFindings), diffElapsed)
+}
+
 // emptyCompleter returns no findings for any chunk.
 type emptyCompleter struct{}
 
 func (emptyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
 	return "", nil
+}
+
+// fixedFileFindingsCompleter returns one finding per configured file for EVERY
+// invocation, regardless of the prompt — so a single-chunk diff review yields the same
+// finding set a marker-routed multi-chunk baseline review yields after its per-persona
+// collapse. Line format matches baselineChunkFindingCompleter exactly.
+type fixedFileFindingsCompleter struct{ files []string }
+
+func (c fixedFileFindingsCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	out := make([]string, 0, len(c.files))
+	for _, f := range c.files {
+		out = append(out, fmt.Sprintf("HIGH|%s:1|problem %s|fix %s|security|10|evidence %s", f, f, f, f))
+	}
+	return strings.Join(out, "\n"), nil
+}
+
+// secondCommit commits the given path→content files on top of an existing fixture repo
+// and returns the base..head range it creates, so a range-based (diff-provenance) review
+// sees exactly those files as its patch.
+func secondCommit(t *testing.T, dir string, files map[string]string) (base, head string) {
+	t.Helper()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	base = run("rev-parse", "HEAD")
+	for p, c := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, p), []byte(c), 0o644))
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "second")
+	head = run("rev-parse", "HEAD")
+	return base, head
 }
