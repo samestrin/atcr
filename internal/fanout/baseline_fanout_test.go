@@ -206,6 +206,37 @@ func TestBaselineSlots_ChunkCapBounded(t *testing.T) {
 	}
 }
 
+// Sprint 35.0 Phase 5 (task 5.14 gate MEDIUM): a file the GLOBAL byte budget dropped
+// from mp.Text must NOT be recorded in the baseline hash index — on the over-window
+// bulk fall-through (a small payload_byte_budget + a --sprint-plan SCOPE CONSTRAINT
+// whose UNCAPPED wrapper drives the per-agent chunk budget negative) the agent reviews
+// only the global-kept subset, so recording a dropped file would skip-it-though-
+// unreviewed next run. This scenario IS reachable: capScopeConstraintPlan caps only the
+// plan BODY, not the wrapper/markers, so len(scopeConstraint) can exceed a small budget.
+func TestBaselineWriteback_ExcludesGloballyDroppedFiles(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = 100 // tiny: the global byte budget drops the big file
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("# Plan\n\nreview the auth code carefully\n"), 0o644))
+	repo := baselineRepo(t, map[string]string{
+		"small.go": "package a\n",                             // ~10 bytes → fits the 100-byte budget, kept & reviewed
+		"big.go":   "package b\n" + strings.Repeat("x", 5000), // dropped by the global byte budget
+	})
+	out := filepath.Join(t.TempDir(), "review")
+	req := repoReq(repo, out)
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+	require.NotNil(t, prep.baseline)
+
+	_, keptRecorded := prep.baseline.reviewed["small.go"]
+	assert.True(t, keptRecorded, "the global-kept, reviewed file is recorded")
+	_, droppedRecorded := prep.baseline.reviewed["big.go"]
+	assert.False(t, droppedRecorded, "a globally byte-budget-dropped file must NOT be recorded as reviewed")
+}
+
 // baselineRoutingCompleter returns a distinct finding per chunk keyed on the file
 // marker the chunk prompt carries, so an end-to-end run can prove every chunk was
 // actually dispatched (its marker finding present in the raw per-slot results).
