@@ -1,7 +1,9 @@
 package payload
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// debugLogger returns a slog.Logger capturing Debug-and-above output into buf, for
+// the AC 03-03 graceful-degradation log-line assertions.
+func debugLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})), &buf
+}
 
 // sortedPaths returns the Path set of a []FileEntry sorted for set comparison
 // against `git ls-files` (enumeration order is intentionally unspecified — chunk
@@ -364,6 +373,262 @@ func TestEnumerateRepoFiles_ScopeEmptyIsWholeRepo(t *testing.T) {
 	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, lsFiles(t, dir), sortedPaths(entries))
+}
+
+// --- AC 03-01: .gitignore parity in baseline and directory scans -------------
+
+// TestBaseline_GitignoreParity_AllAndDir covers AC 03-01 Happy Paths 1-3: a
+// .gitignore-matched (force-added, tracked) file is excluded from both --all and a
+// --dir scan targeting its subtree, matched repo-root-relative via the same
+// ignoreMatcher diff-mode uses; non-matched files pass through. Asserts EXACT set
+// equality between expected-kept and actual-kept paths.
+func TestBaseline_GitignoreParity_AllAndDir(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "vendor/\n")
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	gitCmd(t, dir, "add", "-f", "vendor/lib.go") // force-add the ignored file so it is tracked
+	commitAll(t, dir, "seed")
+
+	// --all: vendor/lib.go excluded, main.go and .gitignore kept.
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{".gitignore", "main.go"}, sortedPaths(all), "--all must exclude the .gitignore-matched file")
+
+	// --dir vendor: the only in-scope file is .gitignore-matched, so the scoped set is empty.
+	scoped, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "vendor")
+	require.NoError(t, err)
+	assert.Empty(t, sortedPaths(scoped), "--dir vendor must exclude the .gitignore-matched file identically to --all")
+}
+
+// TestBaseline_GitignoreRootAnchored_UnderDir covers AC 03-01 Edge Case 1: a
+// root-anchored pattern (/build/) matches the repo-root-relative path (build/x.go)
+// under a --dir build scan — proving the matcher is constructed at the repo root
+// and matched repo-root-relative, never relative to the --dir subtree. Binary
+// match/no-match: the in-scope root-anchored match excludes; an unrelated file stays.
+func TestBaseline_GitignoreRootAnchored_UnderDir(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "/build/\n")
+	write(t, dir, "build/output.go", "package build\n")
+	write(t, dir, "build/keep_test.go", "package build\n")
+	gitCmd(t, dir, "add", "-f", "build/output.go", "build/keep_test.go")
+	commitAll(t, dir, "seed")
+
+	scoped, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "build")
+	require.NoError(t, err)
+	assert.Empty(t, sortedPaths(scoped), "a root-anchored /build/ pattern must exclude build/* under --dir build (matched repo-root-relative)")
+}
+
+// TestBaseline_EmptyGitignore_NoOp covers AC 03-01 Edge Case 3: an empty .gitignore
+// excludes nothing (identical to diff-based reviews with an empty .gitignore).
+func TestBaseline_EmptyGitignore_NoOp(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "")
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "internal/b.go", "package b\n")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, lsFiles(t, dir), sortedPaths(all), "an empty .gitignore excludes nothing")
+}
+
+// --- AC 03-02: .atcrignore parity and additive-only negation -----------------
+
+// TestBaseline_AtcrignoreParity_AllAndDir covers AC 03-02 Happy Path 1-2: an
+// .atcrignore-matched tracked file is excluded from --all and from a --dir scan.
+func TestBaseline_AtcrignoreParity_AllAndDir(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".atcrignore", "go.sum\ntools/gen.go\n")
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "go.sum", "checksums\n")
+	write(t, dir, "tools/gen.go", "package tools\n")
+	write(t, dir, "tools/keep.go", "package tools\n")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{".atcrignore", "main.go", "tools/keep.go"}, sortedPaths(all), "--all excludes .atcrignore matches")
+
+	scoped, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "tools")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tools/keep.go"}, sortedPaths(scoped), "--dir tools excludes tools/gen.go identically")
+}
+
+// TestBaseline_CombinedGitAtcrignore_Union covers AC 03-02 Happy Path 3: the
+// combined .gitignore + .atcrignore exclusion set is a union (OR); a file matched
+// by neither remains.
+func TestBaseline_CombinedGitAtcrignore_Union(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "vendor/\n")
+	write(t, dir, ".atcrignore", "go.sum\n")
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	write(t, dir, "go.sum", "checksums\n")
+	gitCmd(t, dir, "add", "-f", "vendor/lib.go")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{".atcrignore", ".gitignore", "main.go"}, sortedPaths(all),
+		"both vendor/lib.go (.gitignore) and go.sum (.atcrignore) excluded; main.go kept")
+}
+
+// TestBaseline_AtcrignoreNegation_Inert covers AC 03-02 Edge Cases 1-2: an
+// .atcrignore "!" negation line never re-includes a file — neither one excluded by
+// .gitignore (EC1) nor one excluded by .atcrignore itself (EC2). loadAtcrignore
+// strips negation lines (additive-only contract).
+func TestBaseline_AtcrignoreNegation_Inert(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "vendor/\n")
+	// !vendor/lib.go tries to re-include a .gitignore exclusion (EC1); secrets.env
+	// + !secrets.env is a self-contradictory .atcrignore negation (EC2).
+	write(t, dir, ".atcrignore", "!vendor/lib.go\nsecrets.env\n!secrets.env\n")
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	write(t, dir, "secrets.env", "TOKEN=x\n")
+	gitCmd(t, dir, "add", "-f", "vendor/lib.go", "secrets.env")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	kept := sortedPaths(all)
+	assert.NotContains(t, kept, "vendor/lib.go", "an .atcrignore !negation cannot re-include a .gitignore exclusion")
+	assert.NotContains(t, kept, "secrets.env", "an .atcrignore !negation is inert against its own exclusion too")
+}
+
+// TestBaseline_AtcrignoreEscapedLiteral covers AC 03-02 Edge Case 3: a
+// backslash-escaped literal `\!important.txt` is kept as a real pattern (not a
+// negation) and matches the literal-`!`-prefixed filename.
+func TestBaseline_AtcrignoreEscapedLiteral(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".atcrignore", "\\!important.txt\n")
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "!important.txt", "secret\n")
+	gitCmd(t, dir, "add", "-f", "!important.txt")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.NotContains(t, sortedPaths(all), "!important.txt", "escaped literal !-pattern must still exclude the file")
+}
+
+// TestBaseline_EmptyAtcrignore_NoOp covers AC 03-02 Edge Case 4: an empty
+// .atcrignore excludes nothing.
+func TestBaseline_EmptyAtcrignore_NoOp(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".atcrignore", "")
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, lsFiles(t, dir), sortedPaths(all), "an empty .atcrignore excludes nothing")
+}
+
+// TestBaseline_GitignoreNegation_CannotReincludeAtcrignore covers AC 03-02 Edge
+// Case 5: because the two sources are separate matchers OR'd together, a
+// .gitignore "!" negation can never un-exclude an .atcrignore-only match.
+func TestBaseline_GitignoreNegation_CannotReincludeAtcrignore(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".atcrignore", "vendor/keep.go\n")
+	write(t, dir, ".gitignore", "vendor/\n!vendor/keep.go\n") // .gitignore's own negation re-includes it for git, but...
+	write(t, dir, "main.go", "package main\n")
+	write(t, dir, "vendor/keep.go", "package vendor\n")
+	gitCmd(t, dir, "add", "-f", "vendor/keep.go")
+	commitAll(t, dir, "seed")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.NotContains(t, sortedPaths(all), "vendor/keep.go",
+		"a .gitignore negation cannot re-include an .atcrignore-only exclusion (separate OR'd matchers)")
+}
+
+// --- AC 03-03: graceful degradation on missing/unreadable ignore files -------
+
+// TestBaseline_Degradation_BothAbsent covers AC 03-03 Happy Path 1: with no
+// .gitignore and no .atcrignore the scan succeeds, every tracked file is kept, and
+// NO Debug "ignore filtering skips it" line is emitted (a missing file is a silent
+// no-op — the observable distinction from the unreadable cases).
+func TestBaseline_Degradation_BothAbsent(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "internal/b.go", "package b\n")
+	commitAll(t, dir, "seed")
+
+	logger, buf := debugLogger()
+	all, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err)
+	assert.Equal(t, lsFiles(t, dir), sortedPaths(all), "no ignore files → unfiltered scan")
+	assert.NotContains(t, buf.String(), "ignore filtering skips it", "absent ignore files are a silent no-op")
+}
+
+// TestBaseline_Degradation_OnePresentOneAbsent covers AC 03-03 Happy Path 2: a
+// present .gitignore filters normally while the absent .atcrignore contributes
+// nothing and causes no error.
+func TestBaseline_Degradation_OnePresentOneAbsent(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, ".gitignore", "vendor/\n")
+	write(t, dir, "keep.go", "package keep\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	gitCmd(t, dir, "add", "-f", "vendor/lib.go")
+	commitAll(t, dir, "seed")
+
+	logger, _ := debugLogger()
+	all, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err)
+	kept := sortedPaths(all)
+	assert.NotContains(t, kept, "vendor/lib.go", "present .gitignore filters normally")
+	assert.Contains(t, kept, "keep.go")
+}
+
+// TestBaseline_Degradation_UnreadableGitignore covers AC 03-03 Edge Case 1: an
+// unreadable/unparseable .gitignore (a directory in place of the file) disables ONLY
+// that source at Debug level and never aborts the scan.
+func TestBaseline_Degradation_UnreadableGitignore(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "seed")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".gitignore"), 0o755)) // a directory, not a file → unreadable
+
+	logger, buf := debugLogger()
+	all, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err, "an unreadable .gitignore must not abort the scan (exit 0 parity)")
+	assert.Contains(t, sortedPaths(all), "a.go", "scan proceeds unfiltered by the broken source")
+	assert.Contains(t, buf.String(), "unreadable .gitignore", "the disabled source is logged at Debug")
+}
+
+// TestBaseline_Degradation_UnreadableAtcrignore covers AC 03-03 Edge Case 2: an
+// unreadable .atcrignore (a directory in place of the file → non-IsNotExist read
+// error) disables only that source at Debug level and never aborts the scan.
+func TestBaseline_Degradation_UnreadableAtcrignore(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "seed")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcrignore"), 0o755))
+
+	logger, buf := debugLogger()
+	all, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err, "an unreadable .atcrignore must not abort the scan")
+	assert.Contains(t, sortedPaths(all), "a.go")
+	assert.Contains(t, buf.String(), "unreadable .atcrignore", "the disabled source is logged at Debug")
+}
+
+// TestBaseline_Degradation_BothUnreadable covers AC 03-03 Edge Case 3 / Error
+// Scenario 1: with both ignore sources unreadable the scan proceeds fully unfiltered
+// and returns no error (exit 0) — fullrepo.go adds no error path of its own.
+func TestBaseline_Degradation_BothUnreadable(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	commitAll(t, dir, "seed")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".gitignore"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcrignore"), 0o755))
+
+	logger, _ := debugLogger()
+	all, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err, "both sources unreadable must degrade to a full unfiltered scan, not an error")
+	assert.ElementsMatch(t, lsFiles(t, dir), sortedPaths(all), "fully unfiltered when both sources fail to load")
 }
 
 // --- AC 01-03: byte-budget chunk partitioning -------------------------------
