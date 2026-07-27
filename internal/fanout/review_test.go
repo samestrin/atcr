@@ -779,3 +779,29 @@ func TestExecuteReview_SnapshotFailureWarnsViaLogger(t *testing.T) {
 	assert.Contains(t, got, "WARN",
 		"snapshot failure must log at Warn level so it rides LOG_LEVEL filtering")
 }
+
+// TestRunEngine_NoHeadToolAgentWarnsUnwired verifies the range-less (baseline
+// --all/--dir, diff-ingestion) path's tool-harness degradation is observable: a
+// tool-enabled slot with an empty Head skips the snapshot block, and that skip
+// must emit a structured Warn so the persona's single-shot degradation is
+// greppable instead of silent (Sprint 35.0 TD-006).
+func TestRunEngine_NoHeadToolAgentWarnsUnwired(t *testing.T) {
+	var buf bytes.Buffer
+	capture := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), capture)
+
+	prep := &PreparedReview{
+		ID:    "x",
+		Dir:   t.TempDir(),
+		Slots: []Slot{{Primary: Agent{Name: "greta", Tools: true}}},
+		// Head deliberately empty: the baseline path (PrepareReviewFromRepo) has
+		// no range head, so the snapshot block cannot run.
+	}
+	runEngine(ctx, newFake(), prep, t.TempDir())
+
+	got := buf.String()
+	assert.Contains(t, got, "tool harness unwired (no range head)",
+		"a tool agent with no range head must log its single-shot degradation, not skip the harness silently")
+	assert.Contains(t, got, "WARN",
+		"the degradation notice must log at Warn level so it rides LOG_LEVEL filtering")
+}
