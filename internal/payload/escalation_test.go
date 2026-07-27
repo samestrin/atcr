@@ -184,6 +184,33 @@ func TestEscalate_DistantHunksDoNotFire(t *testing.T) {
 	require.Equal(t, ModeDiff, got)
 }
 
+func TestEscalate_PureDeletionAnchorCountsTowardAdjacency(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// parseAllHunkRanges emits a pure deletion as an INVERTED range (start >
+	// end) anchored where the lines were removed. Against that shape the gap
+	// formula `next.start - prev.end - 1` yields exactly the unchanged head
+	// lines between the deletion point and the next hunk, so a deletion that
+	// sits close to another edit fires adjacency: lines 10..17 unchanged.
+	close := c.escalate(ModeDiff, fileSignals{
+		changedLines: 4, headLines: 1000,
+		hunks:      []lineRange{{start: 10, end: 9}, {start: 18, end: 19}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeBlocks, close,
+		"a deletion 8 unchanged lines from the next hunk is adjacency evidence")
+
+	// Same inverted anchor, but the next hunk is 10 unchanged lines away —
+	// the same non-firing boundary as two well-formed ranges.
+	distant := c.escalate(ModeDiff, fileSignals{
+		changedLines: 4, headLines: 1000,
+		hunks:      []lineRange{{start: 10, end: 9}, {start: 20, end: 21}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeDiff, distant,
+		"a deletion 10 unchanged lines from the next hunk is not adjacency")
+}
+
 func TestEscalate_CyclomaticAloneFiresToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
