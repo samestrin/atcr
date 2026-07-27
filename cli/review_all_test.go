@@ -223,6 +223,79 @@ func TestReviewAllFresh_BypassesSkipIndex(t *testing.T) {
 	assert.FileExists(t, payload.FileHashIndexPath("."), "--fresh still writes the index on completion")
 }
 
+// gitRun runs a git command in the CWD with a hermetic env (for tests adding files
+// to the isolate() fixture after initBaselineRepo).
+func gitRun(t *testing.T, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+// AC 05-02 Scenario 1: `--dir <subtree> --fresh` forces a full re-scan of the subtree
+// (identical bypass to `--all --fresh`, scoped) — every in-scope file is a candidate
+// even when its recorded hash matches.
+func TestReviewDirFresh_ForcesSubtreeRescan(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal")) // records internal/c.go
+	// No change; without --fresh a second --dir run would be zero-candidate. --fresh forces it.
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal", "--fresh"))
+	assert.Contains(t, baselineFilesPayload(t), "package c",
+		"--dir --fresh must re-review the subtree despite a matching hash")
+}
+
+// AC 05-02 Scenario 2 / Edge Case 2: `--dir --fresh` only refreshes the subtree's
+// index entries; entries for files outside the subtree keep their prior run id.
+func TestReviewDirFresh_LeavesOutOfScopeEntriesUntouched(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // records a.txt/b.go/internal/c.go under run R1
+	_, aRun1, ok := payload.Load(payload.FileHashIndexPath("."), nil).Get("a.txt")
+	require.True(t, ok)
+
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal", "--fresh"))
+	after := payload.Load(payload.FileHashIndexPath("."), nil)
+	_, aRun2, okA := after.Get("a.txt")
+	require.True(t, okA, "out-of-scope a.txt entry must survive")
+	assert.Equal(t, aRun1, aRun2, "--dir --fresh must NOT re-stamp out-of-scope a.txt's run id")
+}
+
+// AC 05-02 Scenario 3 (regression guard): `--dir` WITHOUT `--fresh` retains Story 4's
+// default skip — only the changed in-scope file is reviewed. Two in-scope files keep
+// the candidate set non-empty so the run does not hit the all-skipped no-content case.
+func TestReviewDir_WithoutFreshSkipsUnchanged(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// Add a second in-scope file so a one-file change still leaves a candidate.
+	require.NoError(t, os.WriteFile(filepath.Join("internal", "d.go"), []byte("package d\n"), 0o644))
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add internal/d.go")
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal")) // records c.go + d.go
+	require.NoError(t, os.WriteFile(filepath.Join("internal", "c.go"), []byte("package c // edited\n"), 0o644))
+	require.Equal(t, 0, execCmd(t, "review", "--dir", "internal")) // only c.go changed
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "package c // edited", "changed in-scope file re-reviewed")
+	assert.NotContains(t, body, "package d", "unchanged in-scope file skipped (default incremental behavior)")
+}
+
 // 4.11.A HIGH #2 regression: a scoped `--dir` run must NOT self-trim (wipe) index
 // entries for out-of-scope files recorded by a prior `--all` run.
 func TestReviewDir_PreservesOutOfScopeIndexEntries(t *testing.T) {
