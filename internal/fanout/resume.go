@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -272,8 +273,13 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := ValidateResumeRange(m, req.Range); err != nil {
-		return nil, nil, err
+	// A baseline (--all/--dir) review has no git range, so the range guard is skipped
+	// for it (ValidateResumeRange would always fail against its empty Base/Head).
+	// Diff reviews keep the lock so a resume against a moved working tree fails closed.
+	if !m.Baseline {
+		if err := ValidateResumeRange(m, req.Range); err != nil {
+			return nil, nil, err
+		}
 	}
 	configured := rosterNames(cfg.Project)
 	if err := ValidateResumeRoster(m, configured); err != nil {
@@ -284,7 +290,30 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// thread --no-ignore, and even if it did, the value must come from the original
 	// run so pending agents are filtered exactly as the completed agents were —
 	// locked to on-disk state like the range, roster, and scope (Epic 26.0 TD).
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
+	//
+	// A baseline review rebuilds the whole-repository payload via the repo walker
+	// (the SAME buildRepoPayloads the fresh --all path uses) rather than a git-range
+	// build, so resumed baseline agents review exactly the tracked-file scan the
+	// completed agents saw (Sprint 35.0). rb stays nil → grounding is range-less.
+	var (
+		payloads  map[string]modePayload
+		rb        *payload.RangeBuilder
+		forceMode string
+	)
+	if m.Baseline {
+		// A baseline resume BYPASSES the incremental hash-skip (idx=nil): it rebuilds the
+		// FULL in-scope tracked payload so the pending agents review at least everything
+		// the completed agents saw (Sprint 35.0 Story 4/5). The skip is a fresh-run
+		// optimization only — a genuinely interrupted run never wrote the index (it is
+		// written on completion), and applying the skip here against whatever index is on
+		// disk would risk dropping files the interrupted run reviewed (empty-candidate /
+		// slot-mismatch). Re-reviewing the full set is the safe, fail-open choice and
+		// preserves the 2.14.A "pending agents review what completed agents saw" invariant.
+		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore, m.Dir, nil, false)
+		forceMode = string(payload.ModeFiles)
+	} else {
+		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -297,7 +326,10 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, false)
+	// forceMode is "files" for a baseline review (every agent reviews the whole-repo
+	// payload, mirroring the fresh --all path) and "" for a diff review (each agent
+	// keeps its configured mode). The empty case is the pre-existing behavior.
+	slots, _, err := buildSlots(cfg, payloads, req.Range, forceMode, scopeConstraint, false, m.Baseline)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -336,6 +368,18 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// "fresh results are always written" contract — rather than being re-called.
 		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
 		cacheNoRead: req.NoCache,
+	}
+	if m.Baseline {
+		// TD-011: a resumed BASELINE run captures the same write-back state the
+		// fresh PrepareReviewFromRepo path does, so runResume can persist the
+		// file-hash index on completion and the next --all/--dir skips unchanged
+		// files instead of doing a full re-scan. The resume bypassed the
+		// hash-skip above (idx=nil), so the rebuilt payload IS the full reviewed
+		// set; the pre-run index state is loaded fresh from disk to record onto,
+		// preserving entries the original run wrote before it was interrupted.
+		p.baseline = captureBaselineWriteback(ctx, req.Repo, m.Dir,
+			payload.Load(payload.FileHashIndexPath(req.Repo), log.FromContext(ctx)),
+			payloads[string(payload.ModeFiles)])
 	}
 	return p, info, nil
 }
@@ -593,6 +637,11 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		} else {
 			s.Failed++
 		}
+		// Thread the per-agent unreviewed-chunk counts through the rebuild exactly
+		// as outcome.go's summarize does for live results — the baseline
+		// write-back gate (record only when every chunk succeeded) reads this on
+		// the resume path too (TD-011).
+		s.UnreviewedChunks += st.UnreviewedChunks
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s

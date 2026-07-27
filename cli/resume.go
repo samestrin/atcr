@@ -69,13 +69,22 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
-	// --fresh, --thorough, and --min-severity only apply to the --verify stage;
-	// --verify is already rejected above, so silently accepting them would
-	// discard the flag without any feedback to the user.
-	for _, f := range []string{"fresh", "thorough", "min-severity"} {
+	// --thorough and --min-severity only apply to the --verify stage; --verify is
+	// already rejected above, so silently accepting them would discard the flag
+	// without any feedback to the user.
+	for _, f := range []string{"thorough", "min-severity"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
 		}
+	}
+
+	// --fresh has two fresh-review meanings — scoping the --verify stage and
+	// (since Sprint 35.0) bypassing the baseline file-hash skip (review.go) —
+	// and a resume honors neither: it re-reviews the resumed review's pending
+	// agents rather than re-scanning the repo. Reject with a reason naming both
+	// meanings so a baseline-resume user is not told the flag is verify-only.
+	if cmd.Flags().Changed("fresh") {
+		return usageError(errors.New("--resume does not support --fresh; --fresh applies to the --verify stage and to fresh baseline scans (bypassing the file-hash skip) — neither is honored on a resume"))
 	}
 
 	// --auto-fix, --debate, --single-model, and --exec all parse on the shared
@@ -88,8 +97,16 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		"debate":       "run `atcr debate` afterward instead",
 		"single-model": "this flag only applies to --debate — run `atcr debate` afterward instead",
 		"exec":         "this flag only applies to --verify — run `atcr verify --exec` afterward instead",
+		// --all selects a fresh full-repository scan; a resume continues whatever mode
+		// the original review ran (baseline-ness comes from the manifest, not this flag),
+		// so accepting --all here would silently ignore it (Sprint 35.0 phase-2 gate LOW).
+		"all": "--all starts a fresh full-repository review; a resume continues the original review's mode",
+		// --dir selects a fresh scoped baseline scan; like --all, the scope comes from
+		// the resumed review's manifest, not this flag, so accepting it here would
+		// silently ignore it (Sprint 35.0, Story 2 — same fresh-only rationale as --all).
+		"dir": "--dir starts a fresh scoped baseline review; a resume continues the original review's mode",
 	}
-	for _, f := range []string{"auto-fix", "debate", "single-model", "exec"} {
+	for _, f := range []string{"auto-fix", "debate", "single-model", "exec", "all", "dir"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}
@@ -100,18 +117,39 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return usageError(err)
 	}
 
-	base, _ := cmd.Flags().GetString("base")
-	head, _ := cmd.Flags().GetString("head")
-	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
-	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+	// Read the manifest before resolving a git range: a baseline (--all/--dir) review
+	// has no range, so re-resolving one and validating it against the manifest's empty
+	// Base/Head would always fail ErrRangeChanged (Sprint 35.0). For a baseline review
+	// resume with a zero Range; PrepareResume rebuilds its payload from the repo walker.
+	m, err := fanout.ReadManifest(dir)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return interruptedBeforeFanout(cmd)
-		}
 		return usageError(fmt.Errorf("resume failed: %w", err))
 	}
-	if res == nil {
-		return usageError(errors.New("resume failed: git range returned no result"))
+	res := &gitrange.Resolution{}
+	if !m.Baseline {
+		base, _ := cmd.Flags().GetString("base")
+		head, _ := cmd.Flags().GetString("head")
+		mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return interruptedBeforeFanout(cmd)
+			}
+			return usageError(fmt.Errorf("resume failed: %w", err))
+		}
+		if res == nil {
+			return usageError(errors.New("resume failed: git range returned no result"))
+		}
+	} else {
+		// A baseline review has no diff range, so the range flags a non-baseline
+		// resume consumes and validates (ErrRangeChanged) would be silently
+		// ignored here — the one mode-flag class that otherwise slips the
+		// fail-closed net above. Reject them like --all/--dir (Sprint 35.0 TD).
+		for _, f := range []string{"base", "head", "merge-commit"} {
+			if cmd.Flags().Changed(f) {
+				return usageError(fmt.Errorf("--resume does not support --%s on a baseline review; a resume continues the original review's range and the baseline review has none", f))
+			}
+		}
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
@@ -262,6 +300,24 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			return usageError(err)
 		}
 		return err // every agent (union) failed → exit 1, artifacts preserved
+	}
+
+	// TD-011: a resumed BASELINE run persists the incremental file-hash index on
+	// successful completion, mirroring the fresh runReview write-back gate so the
+	// next --all/--dir skips unchanged files instead of re-scanning everything.
+	// Same safety rules as the fresh path: gated on at least one success (an
+	// all-failed run records nothing) and on zero unreviewed chunks (a partially
+	// covered run skips the write so uncovered files are re-scanned, never
+	// silently skipped). A write failure is logged, never fatal; the interrupt
+	// path returned above, so this never fires on a cancelled run.
+	switch {
+	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
+		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
+			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
+		}
+	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
+		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
+			"unreviewed_chunks", result.Summary.UnreviewedChunks)
 	}
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always

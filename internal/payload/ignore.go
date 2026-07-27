@@ -47,14 +47,18 @@ func newIgnoreMatcher(dir string, logger *slog.Logger) *ignoreMatcher {
 
 // loadGitignore compiles path with full gitignore semantics. A missing file
 // returns nil (source disabled); a parse failure is logged at debug and also
-// disables the source rather than aborting the review.
+// disables the source rather than aborting the review. A nil logger is tolerated
+// (logging is skipped), matching FileHashIndex.Load's nil-logger stance — the
+// exported BuildRepoEntries surface documents no non-nil-logger precondition.
 func loadGitignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
 	if _, err := os.Stat(path); err != nil {
 		return nil // absent (or unstattable) → no-op
 	}
 	gi, err := gitignore.CompileIgnoreFile(path)
 	if err != nil {
-		logger.Debug("payload: unreadable .gitignore, ignore filtering skips it", "path", path, "err", err)
+		if logger != nil {
+			logger.Debug("payload: unreadable .gitignore, ignore filtering skips it", "path", path, "err", err)
+		}
 		return nil
 	}
 	return gi
@@ -63,10 +67,11 @@ func loadGitignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
 // loadAtcrignore reads .atcrignore line-by-line and strips "!" negation lines
 // before compiling, enforcing the additive-only contract (no re-inclusion). A
 // missing file returns nil; an unreadable file is logged at debug and disabled.
+// A nil logger is tolerated (logging is skipped), same as loadGitignore.
 func loadAtcrignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !os.IsNotExist(err) && logger != nil {
 			logger.Debug("payload: unreadable .atcrignore, ignore filtering skips it", "path", path, "err", err)
 		}
 		return nil // absent → no-op

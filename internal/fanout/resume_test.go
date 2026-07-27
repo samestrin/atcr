@@ -14,6 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -492,6 +493,34 @@ func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	done, err := CompletedAgents(dir)
 	require.NoError(t, err)
 	require.Len(t, done, 4)
+}
+
+// TD-011: PrepareResume on a BASELINE review must capture the incremental
+// write-back state (prep.baseline) exactly like the fresh PrepareReviewFromRepo
+// path, so runResume can persist the file-hash index after a resumed baseline
+// run — otherwise every post-resume --all/--dir does a full re-scan.
+func TestPrepareResume_BaselineCapturesWriteback(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
+	require.NoError(t, err)
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	require.NotNil(t, rprep.baseline, "a resumed baseline run must capture the write-back state (TD-011)")
+	assert.Len(t, rprep.baseline.reviewed, 2, "the resumed (hash-skip-bypassed) payload's full set is the reviewed set")
+	assert.Equal(t, payload.FileHashIndexPath(repo), rprep.baseline.indexPath)
+}
+
+// summarizeStatuses must thread UnreviewedChunks from the on-disk union the way
+// outcome.go's summarize threads it from live results — the baseline write-back
+// gate (record only when every chunk succeeded) depends on it for resumed runs.
+func TestSummarizeStatuses_SumsUnreviewedChunks(t *testing.T) {
+	sum := summarizeStatuses([]AgentStatus{
+		{Agent: "a", Status: StatusOK, UnreviewedChunks: 1},
+		{Agent: "b", Status: StatusOK},
+	})
+	assert.Equal(t, 1, sum.UnreviewedChunks, "a failed chunk in the union must surface in the resume summary")
 }
 
 // TestExecuteResume_ReviewStageReflectsResumedRun verifies the manifest's Review

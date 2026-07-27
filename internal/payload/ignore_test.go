@@ -100,3 +100,29 @@ func TestIgnoreMatcher_AtcrignoreOnly(t *testing.T) {
 		t.Error("package-lock.json should be ignored")
 	}
 }
+
+// Nil-logger tolerance (Sprint 35.0 baseline): the exported BuildRepoEntries
+// surface takes a *slog.Logger with no documented non-nil precondition, and
+// FileHashIndex.Load guards every log site — the ignore path must match that
+// stance. A present-but-unreadable .gitignore/.atcrignore hits the Debug sites;
+// with a nil logger that must degrade silently, never panic.
+func TestNewIgnoreMatcher_NilLoggerUnreadableFiles(t *testing.T) {
+	dir := t.TempDir()
+	// A directory in place of each file forces a read/parse failure (non-IsNotExist),
+	// reaching the logger.Debug degradation branch in both loaders.
+	if err := os.MkdirAll(filepath.Join(dir, ".gitignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".atcrignore"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("nil logger must not panic on unreadable ignore files: %v", r)
+		}
+	}()
+	m := newIgnoreMatcher(dir, nil)
+	if m.active() {
+		t.Fatal("unreadable sources must stay disabled")
+	}
+}

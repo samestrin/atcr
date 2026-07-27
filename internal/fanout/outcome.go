@@ -32,6 +32,15 @@ type Summary struct {
 	// persona), so a persona whose chunks partly fell back is counted once (Epic
 	// 19.10 F5).
 	FallbackCount int
+	// UnreviewedChunks is the run-level sum of per-persona UnreviewedChunks (Epic
+	// 14.3): chunk-slots that failed while the persona still reported StatusOK
+	// (any-chunk-succeeded), so a subset of files went unreviewed even though the run
+	// is not Partial (Partial only counts whole-slot failures — see the artifacts.go
+	// partial-coverage caveat). A baseline (--all/--dir) run consults this to decide
+	// whether it is safe to record the reviewed files in the incremental hash index:
+	// a run with any unreviewed chunk must NOT record its files as reviewed, or the
+	// unreviewed ones would be silently skipped on the next run (Sprint 35.0 5.5.A).
+	UnreviewedChunks int
 }
 
 // Outcome aggregates results into a Summary and decides the run-level error.
@@ -70,6 +79,9 @@ func summarize(results []Result) Summary {
 		if r.FallbackUsed {
 			s.FallbackCount++
 		}
+		// Accumulate per-persona partial-coverage so the baseline write-back can tell a
+		// fully-reviewed run from one where some chunks failed under an OK persona.
+		s.UnreviewedChunks += r.UnreviewedChunks
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s

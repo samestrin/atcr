@@ -1,3 +1,23 @@
+## [35.0.0] - 2026-07-27
+
+Adds a non-diff, full-repository baseline review mode: `atcr review --all` and the subtree-scoped `atcr review --dir <path>`, for onboarding a project with no PR history, surfacing latent bugs in untouched legacy code, and seeding an initial `.atcr/debt`/`.planning/technical-debt/README.md` backlog.
+
+### Added
+
+- `atcr review --all` — scans every non-ignored, git-tracked file in the repository as a single baseline pass, reusing the existing traversal, ignore-filtering, fan-out, and reconciliation engines rather than a parallel pipeline. Mutually exclusive with `--base`/`--head`/`--merge-commit`.
+- `atcr review --dir <path>` — scopes the same baseline scan to one subdirectory, with path containment and existence validation (including a symlink-escape guard).
+- A persisted `path → hash → last-reviewed-run-id` file-hash index that skips unchanged files pre-chunking on repeat `--all`/`--dir` runs, degrading gracefully on a missing or corrupt index; `--fresh`/`--force` bypass it, mirroring `--verify`'s existing `--fresh` semantics.
+- Multi-chunk × multi-persona fan-out for baseline scans, collapsing to one source per persona via the existing chunk-merge path, then reconciled by unmodified `atcr reconcile`.
+- Baseline reviews are resumable, and `atcr debt add`/`atcr report` operate identically on baseline output as on diff output.
+- `cli.MainWithHooks`'s graceful-shutdown moment is now exposed to registered hooks via a dedicated signal, so a hook can bound its own cleanup on shutdown distinctly from a per-agent timeout.
+
+### Fixed
+
+- A resumed baseline run now persists its file-hash index write-back, and index write-back correctly excludes globally-shed files and honors the actually-reviewed set rather than a narrower per-agent bound.
+- Baseline enumeration now enforces the total in-memory repo-byte cap (`DefaultMaxRepoBytes`) and a per-file read cap, and honors context cancellation during the read loop.
+- Empty baseline scans are now classified accurately (all-unchanged exits 0; all-ignored surfaces a `--no-ignore` hint), and the truncation warning no longer misreports a fully-chunked baseline scan as a partial subset.
+- `--dir`/`--all` mutual exclusion, `--auto-fix` rejection, and `--fresh` resume-rejection messaging are now consistent and correctly named across flag combinations.
+
 ## [0.2.0] - 2026-07-25
 
 Adds an exported model-invocation observation seam so an external module can build a compliant audit trail of AI interactions. **No breaking changes** — the release is purely additive, and behaviour with no hook registered is byte-for-byte identical to `0.1.0`.
