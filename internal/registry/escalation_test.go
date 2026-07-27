@@ -68,6 +68,32 @@ func TestPayloadEscalation_ValidateRejectsChurnRatioAboveOne(t *testing.T) {
 	require.Contains(t, err.Error(), "payload_escalation.churn_ratio")
 }
 
+func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
+	overGap := 1001
+	overFiles := 5001
+	overSkel := 2001
+
+	for name, cfg := range map[string]PayloadEscalationConfig{
+		"hunk_gap_lines":     {HunkGapLines: &overGap},
+		"max_files":          {MaxFiles: &overFiles},
+		"max_skeleton_lines": {MaxSkeletonLines: &overSkel},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := Registry{PayloadEscalation: cfg}
+			err := r.validate()
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "payload_escalation."+name)
+		})
+	}
+
+	// The ceilings themselves are legal — only values above them are absurd.
+	atGap, atFiles, atSkel := 1000, 5000, 2000
+	r := Registry{PayloadEscalation: PayloadEscalationConfig{
+		HunkGapLines: &atGap, MaxFiles: &atFiles, MaxSkeletonLines: &atSkel,
+	}}
+	require.NoError(t, r.validate())
+}
+
 func TestPayloadEscalation_ValidateRejectsNonFiniteChurnRatio(t *testing.T) {
 	// yaml.v3 resolves .nan/.inf to NaN/+Inf, and NaN satisfies neither < 0 nor
 	// > 1, so without an explicit non-finite guard these values validate cleanly
