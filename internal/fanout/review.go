@@ -1661,7 +1661,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
-			kept, trunc := payload.ApplyByteBudget(mp.Entries, appliedBudget)
+			// PreferEscalated, not the plain pass: escalating a file to a
+			// higher-context mode makes it the largest entry, so plain largest-first
+			// would shed exactly the file the heuristic flagged as hardest to review
+			// — on precisely the tight-window agents escalation targets (Epic 35.1).
+			// It falls back to largest-first when the escalated bytes alone exceed
+			// this agent's budget, so the AllDropped arm below is reached no more
+			// often than before.
+			kept, trunc := payload.ApplyByteBudgetPreferEscalated(mp.Entries, appliedBudget, payload.PayloadMode(mode))
 			// F4 on_overflow dispatch (Epic 19.10 TD-004): the payload overflows THIS
 			// agent's window (a file had to be shed). Route the fail/fallback arms through
 			// applyOverflowPolicy so their typed errors propagate out of add()/buildSlots()

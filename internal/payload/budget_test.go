@@ -60,8 +60,8 @@ func TestBudgetPreferEscalated_KeepsEscalatedFileThatLargestFirstWouldShed(t *te
 	assert.True(t, tr.Truncated)
 	assert.Contains(t, keptPaths(kept), "esc.go",
 		"the escalated file must survive a shed that can fit it")
-	assert.Equal(t, []string{"b.go"}, tr.FilesDropped,
-		"an un-escalated file is shed instead, largest-first within that group")
+	assert.Equal(t, []string{"a.go"}, tr.FilesDropped,
+		"an un-escalated file is shed instead, largest-first (then path order) within that group")
 }
 
 // The exemption must not turn a survivable shed into an empty payload: when
@@ -122,7 +122,8 @@ func TestBudgetPreferEscalated_KeptRetainsInputOrder(t *testing.T) {
 	)
 
 	kept, _ := ApplyByteBudgetPreferEscalated(in, 240, ModeDiff)
-	assert.Equal(t, []string{"a.go", "esc.go"}, keptPaths(kept))
+	assert.Equal(t, []string{"esc.go", "b.go"}, keptPaths(kept),
+		"a.go is shed (un-escalated, alphabetically first at equal size); the rest keep input order")
 }
 
 func TestBudget_UnderLimit(t *testing.T) {
