@@ -349,6 +349,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// reject the combination up front instead (exit 2). Baseline auto-fix can be a
 	// follow-up once a range-less default-branch resolution exists.
 	if baseline && autoFix {
+		if cmd.Flags().Changed("dir") {
+			return usageError(errors.New("--dir cannot be combined with --auto-fix: a scoped baseline scan has no diff range to derive an auto-fix base branch from"))
+		}
 		return usageError(errors.New("--all cannot be combined with --auto-fix: a full-repository baseline scan has no diff range to derive an auto-fix base branch from"))
 	}
 	res := &gitrange.Resolution{}
