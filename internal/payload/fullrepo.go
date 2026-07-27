@@ -28,9 +28,8 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // ignore-filters them (newIgnoreMatcher), and partitions the survivors into
 // byte-budget-bounded chunks — it does not consume a git diff range.
 //
-// This file currently contains only Phase 1's design-spike stub; the GREEN
-// implementation lands in Phase 2 (tasks 2.5 / 2.8). The stub compiles so
-// Phase 2's RED tests (AC 01-02 / AC 01-03) have a symbol to reference.
+// Exposes two same-package primitives: enumerateRepoFiles (AC 01-02 tracked-file
+// walk + ignore filter) and partitionByBudget (AC 01-03 byte-budget chunking).
 
 // enumerateRepoFiles is the baseline (--all / --dir) tracked-file walker (Sprint
 // 35.0, AC 01-02). It enumerates the repository's git-tracked files via
@@ -181,9 +180,11 @@ func ensureWithinRoot(root, abs, rel string) error {
 //	  caller's upstream "no reviewable content" guard fires correctly.
 //
 //	Zero-effective-budget fail-fast (AC 01-03 Edge Case 3 / Error Scenario 1):
-//	  chunkBudget <= 0 returns, at entry and before any packing work, the error
-//	    "full-repo scan: model %q has no effective byte budget for a review
-//	     payload (context window too small for the configured output reservation)"
+//	  chunkBudget <= 0 returns, at entry and before any packing work, the sentinel
+//	  ErrNoEffectiveByteBudget. This function does not know the model name, so the
+//	  CALLER (PrepareReviewFromRepo) wraps the sentinel into AC 01-03 Error Scenario
+//	  1's exact user-facing "full-repo scan: model %q has no effective byte budget
+//	  ..." message (CLI exit 2).
 //	  This DELIBERATELY diverges from ApplyByteBudget's `budget <= 0` == "unlimited"
 //	  convention: here the budget is machine-derived from the model window, so 0
 //	  unambiguously means the model cannot fit any payload — an error, not an
@@ -196,8 +197,6 @@ func ensureWithinRoot(root, abs, rel string) error {
 //
 //	Complexity (AC 01-03 Performance): O(n log n) for the single sort plus O(n) for
 //	  the greedy pack — sort once, assign in sorted order, never re-sort per chunk.
-//
-// Phase 2 task 2.8 implements this body against AC 01-03's RED tests (task 2.7).
 func partitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error) {
 	// Empty input → zero chunks (not one empty chunk), so the caller's
 	// "no reviewable content" guard fires upstream (AC 01-03 Edge Case 1).
@@ -252,8 +251,12 @@ func partitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, e
 		}
 		// Greedy next-fit: close the current chunk only when this entry would
 		// overflow it, then open a new one (sort once, assign in order — O(n log n)
-		// + O(n), no per-chunk re-sort).
-		if len(current) > 0 && used+sz > chunkBudget {
+		// + O(n), no per-chunk re-sort). The overflow test is written as
+		// `sz > chunkBudget-used` (both operands non-negative: sz<=chunkBudget here,
+		// 0<=used<=chunkBudget) rather than `used+sz > chunkBudget`, so a pathological
+		// exabyte-scale budget cannot wrap the sum negative — matching ApplyByteBudget's
+		// saturation discipline (budget.go).
+		if len(current) > 0 && sz > chunkBudget-used {
 			flush()
 		}
 		current = append(current, e)
