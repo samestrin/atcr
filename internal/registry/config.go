@@ -40,6 +40,14 @@ const (
 	// lines). nil = unset (inherit the default); any explicit value must be
 	// within 1..MaxContextLinesCap.
 	MaxContextLinesCap = 1000000
+	// MaxEscalationHunkGapLines, MaxEscalationFiles, and
+	// MaxEscalationSkeletonLines are sanity ceilings on the payload_escalation
+	// thresholds (Epic 35.1). Values above them reinstate precisely the payload
+	// bloat and uncapped in-memory blob retention the defaults exist to prevent,
+	// so they are rejected rather than honored. nil = default; 0 = disabled.
+	MaxEscalationHunkGapLines  = 1000
+	MaxEscalationFiles         = 5000
+	MaxEscalationSkeletonLines = 2000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -700,15 +708,19 @@ func (r *Registry) validatePayloadEscalation() []error {
 	for _, f := range []struct {
 		name string
 		val  *int
+		max  int // 0 = no ceiling
 	}{
-		{"min_hunks", pe.MinHunks},
-		{"hunk_gap_lines", pe.HunkGapLines},
-		{"min_cyclomatic", pe.MinCyclomatic},
-		{"max_files", pe.MaxFiles},
-		{"max_skeleton_lines", pe.MaxSkeletonLines},
+		{"min_hunks", pe.MinHunks, 0},
+		{"hunk_gap_lines", pe.HunkGapLines, MaxEscalationHunkGapLines},
+		{"min_cyclomatic", pe.MinCyclomatic, 0},
+		{"max_files", pe.MaxFiles, MaxEscalationFiles},
+		{"max_skeleton_lines", pe.MaxSkeletonLines, MaxEscalationSkeletonLines},
 	} {
 		if f.val != nil && *f.val < 0 {
 			errs = append(errs, fmt.Errorf("payload_escalation.%s must be >= 0 (0 = disabled), got %d", f.name, *f.val))
+		}
+		if f.val != nil && f.max > 0 && *f.val > f.max {
+			errs = append(errs, fmt.Errorf("payload_escalation.%s must be <= %d (larger values reinstate the payload bloat / memory blow-up the defaults protect against), got %d", f.name, f.max, *f.val))
 		}
 	}
 	return errs
