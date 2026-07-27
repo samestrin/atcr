@@ -25,28 +25,28 @@ const modulePath = "github.com/samestrin/atcr"
 var allowedInternalImports = map[string][]string{
 	"atomicfs":       {},
 	"atomicwrite":    {"atomicfs"},
-	"cache":          {"atomicfs"},                               // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
-	"stream":         {"metrics", "gitexec"},                     // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle); gitexec: hardened `git ls-files` for BuildFileIndex (sprint 32.4)
-	"gitrange":       {"gitexec"},                                // gitexec: hardened git subprocess constructor (sprint 32.4)
-	"gitexec":        {},                                         // shared hardened git subprocess wrapper (GIT_CONFIG_NOSYSTEM/GLOBAL); os/exec-only leaf, imports no internal package (sprint 32.4)
-	"security":       {},                                         // repo-relative protected-path blocklist (pathguard.IsProtectedPath); path/filepath + strings only, imports no internal package (sprint 32.4)
-	"log":            {},                                         // single diagnostic sink; stdlib-only (epic 4.0)
-	"errors":         {},                                         // error-classification taxonomy; stdlib-only (epic 4.0)
-	"registry":       {"stream"},                                 // stream is the canonical zero-dependency severity leaf (epic 3.5)
-	"tools":          {"sandbox", "gitexec"},                     // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec); gitexec: hardened git for the snapshot/worktree helper (sprint 32.4)
-	"sandbox":        {"log"},                                    // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
-	"repro":          {"reconcile", "sandbox"},                   // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
-	"metrics":        {},                                         // in-process metrics collector; stdlib-only leaf (epic 4.4)
-	"version":        {},                                         // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
-	"circuitbreaker": {"metrics"},                                // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
-	"validation":     {},                                         // user-input validators; stdlib-only leaf (epic 4.3)
-	"tdmigrate":      {},                                         // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
-	"debt":           {"tdmigrate", "log"},                       // `atcr debt` query/report layer over the 12.1 shard store; reuses tdmigrate's Item/Shard/loader/migrate, log.NewRedactor for the dashboard secret scrub (epic 18.0)
-	"history":        {"stream"},                                 // Epic 19.0: parses pool findings.txt via stream.ParseSource to persist the append-only finding-history ledger; stream is the zero-dependency findings leaf
-	"localdebt":      {"history"},                                // Epic 20.1: .atcr/debt/ append-only public TD store; imports history for FindingID identity only (not its .planning/-scoped storage), mirrors the scorecard ledger mechanics
-	"audit":          {"stream"},                                 // Epic 19.1: parses pool findings.txt via stream.ParseSource to summarize findings-by-severity into the append-only per-run audit ledger; stream is the zero-dependency findings leaf
-	"payload":        {"gitrange", "atomicfs", "log", "gitexec"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1); gitexec: hardened git diff/show subprocess (sprint 32.4)
-	"llmclient":      {"registry", "errors", "circuitbreaker"},   // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+	"cache":          {"atomicfs"},                                         // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
+	"stream":         {"metrics", "gitexec"},                               // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle); gitexec: hardened `git ls-files` for BuildFileIndex (sprint 32.4)
+	"gitrange":       {"gitexec"},                                          // gitexec: hardened git subprocess constructor (sprint 32.4)
+	"gitexec":        {},                                                   // shared hardened git subprocess wrapper (GIT_CONFIG_NOSYSTEM/GLOBAL); os/exec-only leaf, imports no internal package (sprint 32.4)
+	"security":       {},                                                   // repo-relative protected-path blocklist (pathguard.IsProtectedPath); path/filepath + strings only, imports no internal package (sprint 32.4)
+	"log":            {},                                                   // single diagnostic sink; stdlib-only (epic 4.0)
+	"errors":         {},                                                   // error-classification taxonomy; stdlib-only (epic 4.0)
+	"registry":       {"stream"},                                           // stream is the canonical zero-dependency severity leaf (epic 3.5)
+	"tools":          {"sandbox", "gitexec"},                               // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec); gitexec: hardened git for the snapshot/worktree helper (sprint 32.4)
+	"sandbox":        {"log"},                                              // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
+	"repro":          {"reconcile", "sandbox"},                             // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
+	"metrics":        {},                                                   // in-process metrics collector; stdlib-only leaf (epic 4.4)
+	"version":        {},                                                   // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+	"circuitbreaker": {"metrics"},                                          // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+	"validation":     {},                                                   // user-input validators; stdlib-only leaf (epic 4.3)
+	"tdmigrate":      {},                                                   // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
+	"debt":           {"tdmigrate", "log"},                                 // `atcr debt` query/report layer over the 12.1 shard store; reuses tdmigrate's Item/Shard/loader/migrate, log.NewRedactor for the dashboard secret scrub (epic 18.0)
+	"history":        {"stream"},                                           // Epic 19.0: parses pool findings.txt via stream.ParseSource to persist the append-only finding-history ledger; stream is the zero-dependency findings leaf
+	"localdebt":      {"history"},                                          // Epic 20.1: .atcr/debt/ append-only public TD store; imports history for FindingID identity only (not its .planning/-scoped storage), mirrors the scorecard ledger mechanics
+	"audit":          {"stream"},                                           // Epic 19.1: parses pool findings.txt via stream.ParseSource to summarize findings-by-severity into the append-only per-run audit ledger; stream is the zero-dependency findings leaf
+	"payload":        {"gitrange", "atomicfs", "log", "gitexec", "stream"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1); gitexec: hardened git diff/show subprocess (sprint 32.4); stream: BuildFileIndex git ls-files tracked-file enumeration for the --all/--dir baseline scan walker (fullrepo.go, sprint 35.0)
+	"llmclient":      {"registry", "errors", "circuitbreaker"},             // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
 	"doctor":         {"llmclient", "registry"},
 	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache", "gitexec"}, // gitexec: hardened `git rev-parse` in resolveHeadSHA (sprint 32.4); // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
 	"reconcile":      {"stream", "atomicfs", "astgroup"},                                                                                                        // astgroup: AST-isomorphism grouper wired as the primary clustering signal (epic 13.1)

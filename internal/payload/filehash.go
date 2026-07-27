@@ -48,10 +48,18 @@ type fileHashEntry struct {
 
 // FileHashIndex is a path→(content-hash, last-reviewed-run-id) map persisted under
 // .atcr/index/file-hashes.json. It is consulted before chunking to drop unchanged
-// files (Unchanged) and rewritten after a completed run (Save). All read methods are
+// files (Unchanged) and rewritten after a completed run (Save). All methods are
 // nil-receiver-safe so a nil index (e.g. when --fresh bypasses loading, AC 04-04)
-// behaves as "no entry for every path", matching the ignoreMatcher.match /
-// FileIndex.Has nil-safety convention.
+// behaves as "no entry for every path" on reads and a no-op on mutations, matching
+// the ignoreMatcher.match / FileIndex.Has nil-safety convention.
+//
+// Concurrency contract: the backing map is NOT internally synchronized. Reads
+// (Unchanged/Get/Paths) happen during single-threaded candidate enumeration BEFORE
+// fan-out, and mutations (Record/Trim) happen on a single goroutine AFTER a run has
+// completed, when writing the index back — never from the per-agent review
+// goroutines. Callers must not mutate a FileHashIndex from more than one goroutine
+// (doing so would trip Go's fatal "concurrent map writes"); no lock is taken because
+// the enumerate-then-review-then-record lifecycle never accesses it concurrently.
 type FileHashIndex struct {
 	entries map[string]fileHashEntry
 }
@@ -133,6 +141,9 @@ func (idx *FileHashIndex) Unchanged(path, hash string) bool {
 // current run (per-run stamping, never per-chunk): a file reviewed in any chunk of a
 // completed run is recorded once under that run's id.
 func (idx *FileHashIndex) Record(path, hash, runID string) {
+	if idx == nil {
+		return
+	}
 	if idx.entries == nil {
 		idx.entries = make(map[string]fileHashEntry)
 	}
