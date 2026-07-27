@@ -67,8 +67,11 @@ func TestPerFileModes_MultiModeFoldsToHighestContextDeterministically(t *testing
 	}
 }
 
-// A file the byte budget dropped never reached a reviewer, so it must not
-// appear in per_file_payload — the field documents what a reviewer SAW.
+// A file the GLOBAL byte budget dropped is absent from the payload perFileModes
+// reports on, so it must not appear in per_file_payload. This pins the Kept (not
+// Entries) source — it does NOT pin "what a reviewer saw": buildSlots re-sheds
+// Entries per agent, so the delivered set is neither a superset nor a subset of
+// Kept (see modePayload.Kept in review.go).
 func TestPerFileModes_BudgetDroppedFilesAreNotRecorded(t *testing.T) {
 	payloads := map[string]modePayload{
 		"diff": {
@@ -83,7 +86,7 @@ func TestPerFileModes_BudgetDroppedFilesAreNotRecorded(t *testing.T) {
 	}
 
 	require.Equal(t, map[string]string{"kept.go": "files"}, perFileModes(payloads),
-		"a file dropped by the byte budget was never seen and must not be recorded")
+		"a file dropped by the global byte budget is not in the reported payload and must not be recorded")
 }
 
 // TestPayloadEscalationMirrorsPayloadOverrides pins

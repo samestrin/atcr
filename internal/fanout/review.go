@@ -1068,9 +1068,16 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 // audit artifact and the empty-payload guard.
 type modePayload struct {
 	Entries []payload.FileEntry
-	// Kept is Entries after the byte-budget pass — the files that actually
-	// reached the reviewer. Entries stays the pre-budget list because buildSlots
-	// re-sheds it per agent against each model's window.
+	// Kept is Entries after the GLOBAL byte-budget pass (Settings.PayloadByteBudget)
+	// — the survivor set behind the on-disk audit artifact, which is what Text,
+	// FileCount, and Truncation below are all derived from.
+	//
+	// It is NOT the set any individual agent received. buildSlots re-sheds
+	// Entries (the pre-budget list) against each model's own EffectiveByteBudget
+	// at dispatch, so a per-agent delivered set is neither a superset nor a
+	// subset of Kept: an agent with a wider window can be served a file the
+	// global budget dropped, and an agent with a narrower one can lose a file
+	// Kept retained.
 	Kept       []payload.FileEntry
 	Text       string
 	FileCount  int
@@ -1128,8 +1135,10 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		for _, e := range kept {
 			b.WriteString(e.Body)
 		}
-		// FileCount reflects what the reviewer actually saw (post-truncation), not
-		// the pre-budget total — the dropped files are recorded in trunc. Entries
+		// FileCount reflects the global-budget survivor set (post-truncation), not
+		// the pre-budget total — the dropped files are recorded in trunc. Like Kept
+		// it describes the audit artifact, not any one agent's delivered payload.
+		// Entries
 		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
 		// against each model's window (Epic 19.10 F2).
 		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
@@ -1145,18 +1154,26 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 }
 
 // perFileModes maps each file the escalation heuristic promoted above its
-// payload's configured mode to the mode it was actually rendered in (Epic 35.1).
-// Files left at the configured mode are omitted, so a review where nothing
-// escalated returns nil and the manifest field is elided entirely.
+// payload's configured mode to the mode it was rendered in for the global-budget
+// payload (Epic 35.1). Files left at the configured mode are omitted, so a review
+// where nothing escalated returns nil and the manifest field is elided entirely.
 //
 // A file appearing in several mode payloads folds to the most-context mode any
-// reviewer saw, so the result does not depend on map iteration order.
+// mode payload rendered it in, so the result does not depend on map iteration
+// order.
 func perFileModes(payloads map[string]modePayload) map[string]string {
 	var out map[string]string
 	for mode, mp := range payloads {
-		// Kept, not Entries: Entries is the PRE-byte-budget list, and a file the
-		// budget dropped never reached a reviewer, so claiming a mode for it would
-		// contradict this field's "what a reviewer saw" contract.
+		// Kept, not Entries: Entries is the PRE-byte-budget list, so folding it in
+		// would claim an escalated mode for files the global budget dropped from
+		// the payload outright.
+		//
+		// Kept is an APPROXIMATION of the delivered set, not the delivered set
+		// itself — buildSlots re-sheds Entries per agent against each model's own
+		// window, so this map can name a file some agent dropped and omit one
+		// another agent saw. Narrowing it to what was actually dispatched requires
+		// the per-agent kept sets to come back out of buildSlots; that is tracked
+		// as open technical debt against this function.
 		for _, e := range mp.Kept {
 			if e.Mode == "" || string(e.Mode) == mode {
 				continue
