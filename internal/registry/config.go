@@ -195,6 +195,29 @@ type VerifyConfig struct {
 	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
 }
 
+// PayloadEscalationConfig is the optional registry-level per-file payload
+// escalation block (Epic 35.1). It tunes when the payload builder promotes an
+// individual file above the run's configured payload mode: ChurnRatio,
+// MinHunks, and HunkGapLines are the diff-native signals; MinCyclomatic is the
+// McCabe signal derived from the file's AST; MaxFiles caps how many changed
+// files a run may scan before the whole feature degrades to plain diff.
+//
+// Every field is a pointer so an explicit 0 — the documented way to disable one
+// signal — is distinguishable from unset, mirroring DebateConfig.MaxItems.
+//
+// The resolved counterpart lives in internal/payload (EscalationConfig), which
+// this package deliberately does not import: registry depends on nothing under
+// internal/, the same boundary that keeps validPayloadModes duplicated in
+// payload.go. TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes
+// together so they cannot drift.
+type PayloadEscalationConfig struct {
+	ChurnRatio    *float64 `yaml:"churn_ratio,omitempty"`    // nil = default 0.5; 0 disables
+	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 4; 0 disables
+	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 10; 0 disables
+	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 15; 0 disables
+	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
+}
+
 // ExecutorConfig is the optional top-level fix-generation model (Epic 7.0). It is
 // backward-compatible: an absent executor: block leaves Registry.Executor nil and
 // ATCR behaves exactly as before (no fix generation). The executor is a SINGLE
@@ -516,6 +539,13 @@ type Registry struct {
 	// resolved at the debate stage (see internal/debate.ResolveConfig). A registry
 	// without a debate block still yields the resolved defaults.
 	Debate DebateConfig `yaml:"debate,omitempty"`
+
+	// PayloadEscalation is the optional per-file payload-escalation block (Epic
+	// 35.1). Every threshold is a pointer so an explicit 0 (disable this signal)
+	// stays distinguishable from unset (nil → the built-in default applied by
+	// internal/payload.ResolveEscalationConfig). A registry without the block
+	// still yields the resolved defaults.
+	PayloadEscalation PayloadEscalationConfig `yaml:"payload_escalation,omitempty"`
 
 	// Executor is the optional fix-generation model (Epic 7.0). A pointer so an
 	// absent block (nil) — the backward-compatible default — is distinguishable
