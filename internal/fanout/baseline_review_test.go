@@ -171,7 +171,7 @@ func TestPrepareReviewFromRepo_NonRepoErrorPropagates(t *testing.T) {
 // ignore-filtered tracked files for a repo root (AC 01-04's payload source).
 func TestBuildRepoEntries_ReturnsTrackedFiles(t *testing.T) {
 	repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
-	entries, err := payload.BuildRepoEntries(context.Background(), repo, log.Discard())
+	entries, err := payload.BuildRepoEntries(context.Background(), repo, log.Discard(), false)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	paths := []string{entries[0].Path, entries[1].Path}

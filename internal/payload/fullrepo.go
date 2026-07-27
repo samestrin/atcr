@@ -35,9 +35,10 @@ var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte bud
 // returns the enumerated, ignore-filtered git-tracked files under root as
 // []FileEntry, for internal/fanout's PrepareReviewFromRepo to assemble into a
 // whole-repo review payload. It wraps the same enumerateRepoFiles walker the
-// package tests cover directly.
-func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger) ([]FileEntry, error) {
-	return enumerateRepoFiles(ctx, root, logger)
+// package tests cover directly. noIgnore bypasses the ignore filter (the
+// --no-ignore flag), for parity with diff-mode.
+func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger, noIgnore bool) ([]FileEntry, error) {
+	return enumerateRepoFiles(ctx, root, logger, noIgnore)
 }
 
 // enumerateRepoFiles is the baseline (--all / --dir) tracked-file walker (Sprint
@@ -61,12 +62,21 @@ func BuildRepoEntries(ctx context.Context, root string, logger *slog.Logger) ([]
 //
 // No new subprocess is spawned per file (AC 01-02 Performance): the one git
 // ls-files call is inside BuildFileIndex; contents come from disk reads.
-func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger) ([]FileEntry, error) {
+// noIgnore bypasses the .gitignore/.atcrignore filter for this scan (the
+// --no-ignore flag), matching diff-mode's payload.WithoutIgnoreFilter so baseline
+// honors the flag identically — otherwise the on-disk manifest would record
+// NoIgnore while files were in fact filtered, a provenance lie.
+func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool) ([]FileEntry, error) {
 	idx := stream.BuildFileIndex(ctx, root)
 	if idx == nil {
 		return nil, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
 	}
-	matcher := newIgnoreMatcher(root, logger)
+	// A nil matcher's match() is a no-op (returns false), so --no-ignore includes
+	// every tracked file — the same effect as diff-mode's WithoutIgnoreFilter.
+	var matcher *ignoreMatcher
+	if !noIgnore {
+		matcher = newIgnoreMatcher(root, logger)
+	}
 	paths := idx.Paths()
 	entries := make([]FileEntry, 0, len(paths))
 	for _, rel := range paths {

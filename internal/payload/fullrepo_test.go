@@ -54,7 +54,7 @@ func TestEnumerateRepoFiles_AllTrackedNonIgnored(t *testing.T) {
 	write(t, dir, "Makefile", "all:\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	assert.Equal(t, lsFiles(t, dir), sortedPaths(entries), "must match git ls-files exactly")
 
@@ -72,10 +72,11 @@ func TestEnumerateRepoFiles_GitignoreExcluded(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "keep.go", "package keep\n")
 	write(t, dir, "vendor/lib.go", "package vendor\n")
+	commitAll(t, dir, "track files") // vendor/lib.go is tracked BEFORE the rule
 	write(t, dir, ".gitignore", "vendor/\n")
-	commitAll(t, dir, "init")
+	commitAll(t, dir, "add ignore") // now tracked AND ignore-matched (the realistic case)
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	_, present := findEntry(entries, "vendor/lib.go")
 	assert.False(t, present, "vendor/lib.go must be ignore-filtered out")
@@ -88,10 +89,11 @@ func TestEnumerateRepoFiles_AtcrignoreExcluded(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "keep.go", "package keep\n")
 	write(t, dir, "generated/schema.go", "package generated\n")
+	commitAll(t, dir, "track files") // tracked BEFORE the rule
 	write(t, dir, ".atcrignore", "generated/\n")
-	commitAll(t, dir, "init")
+	commitAll(t, dir, "add ignore")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	_, present := findEntry(entries, "generated/schema.go")
 	assert.False(t, present, "generated/schema.go must be .atcrignore-filtered out")
@@ -103,7 +105,7 @@ func TestEnumerateRepoFiles_ZeroTracked(t *testing.T) {
 	dir := initRepo(t)
 	gitCmd(t, dir, "commit", "-q", "--allow-empty", "-m", "empty")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err, "zero tracked files is not an error")
 	assert.Empty(t, entries)
 }
@@ -115,11 +117,34 @@ func TestEnumerateRepoFiles_NonRepoErrors(t *testing.T) {
 	var entries []FileEntry
 	var err error
 	require.NotPanics(t, func() {
-		entries, err = enumerateRepoFiles(context.Background(), dir, log.Discard())
+		entries, err = enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	})
 	require.Error(t, err)
 	assert.Nil(t, entries)
 	assert.Contains(t, err.Error(), "could not enumerate tracked files")
+}
+
+// Parity with diff-mode's --no-ignore: noIgnore=true bypasses the ignore filter,
+// so a .gitignore-matched tracked file IS included (else the manifest's recorded
+// NoIgnore would be a provenance lie while files were silently filtered).
+func TestEnumerateRepoFiles_NoIgnoreBypassesFilter(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "keep.go", "package keep\n")
+	write(t, dir, "vendor/lib.go", "package vendor\n")
+	commitAll(t, dir, "track files") // tracked BEFORE the rule, so git ls-files still lists it
+	write(t, dir, ".gitignore", "vendor/\n")
+	commitAll(t, dir, "add ignore")
+
+	// Default (noIgnore=false) filters vendor/lib.go; noIgnore=true keeps it.
+	filtered, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
+	require.NoError(t, err)
+	_, present := findEntry(filtered, "vendor/lib.go")
+	require.False(t, present, "baseline default must filter the ignored file")
+
+	all, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), true)
+	require.NoError(t, err)
+	_, present = findEntry(all, "vendor/lib.go")
+	assert.True(t, present, "--no-ignore must include the .gitignore-matched file")
 }
 
 // AC 01-02 Edge Case 3: a tracked binary (non-UTF8) file is included with its raw
@@ -131,7 +156,7 @@ func TestEnumerateRepoFiles_BinaryFile(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	e, ok := findEntry(entries, "blob.bin")
 	require.True(t, ok, "binary file must be included")
@@ -150,7 +175,7 @@ func TestEnumerateRepoFiles_SymlinkLiteralTarget(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	commitAll(t, dir, "init")
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	e, ok := findEntry(entries, "link.txt")
 	require.True(t, ok, "tracked symlink must be included")
@@ -167,7 +192,7 @@ func TestEnumerateRepoFiles_UntrackedExcluded(t *testing.T) {
 	// A scratch file that is neither added nor ignored.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("scratch\n"), 0o644))
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.NoError(t, err)
 	assert.Equal(t, lsFiles(t, dir), sortedPaths(entries), "result set must equal git ls-files (no untracked files)")
 	_, present := findEntry(entries, "notes.txt")
@@ -194,7 +219,7 @@ func TestEnumerateRepoFiles_RejectsIntermediateSymlinkEscape(t *testing.T) {
 		t.Skipf("symlinks unsupported on this platform: %v", err)
 	}
 
-	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	entries, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.Error(t, err, "a read that escapes root via a symlink must be refused")
 	assert.Contains(t, err.Error(), "outside the repository root")
 	// The sensitive outside content must never appear in the (aborted) result.
@@ -214,7 +239,7 @@ func TestEnumerateRepoFiles_ReadFailureMidWalk(t *testing.T) {
 	// still reports it while the read fails.
 	require.NoError(t, os.Remove(filepath.Join(dir, "gone.go")))
 
-	_, err := enumerateRepoFiles(context.Background(), dir, log.Discard())
+	_, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reading tracked file")
 	assert.Contains(t, err.Error(), "gone.go")

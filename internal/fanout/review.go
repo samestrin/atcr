@@ -505,7 +505,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	entries, err := payload.BuildRepoEntries(ctx, req.Repo, log.FromContext(ctx))
+	entries, err := payload.BuildRepoEntries(ctx, req.Repo, log.FromContext(ctx), req.NoIgnore)
 	if err != nil {
 		return nil, err // non-repo / read failure propagates (AC 01-04 ES2)
 	}
@@ -523,7 +523,12 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		log.FromContext(ctx).Warn("full-repo scan: byte budget truncated the review payload; reviewing a subset of the repository",
 			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
 	}
+	var totalLen int
+	for _, e := range kept {
+		totalLen += len(e.Body)
+	}
 	var b strings.Builder
+	b.Grow(totalLen) // preallocate: a whole-repo payload can be large (parity with PrepareReviewFromDiff)
 	for _, e := range kept {
 		b.WriteString(e.Body)
 	}

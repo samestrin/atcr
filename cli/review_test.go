@@ -493,6 +493,18 @@ func TestReviewCmd_SingleModelNeedsDebate(t *testing.T) {
 	require.NotContains(t, out2, "--single-model requires --debate")
 }
 
+// TestReviewCmd_AllRejectsAutoFix verifies `review --all --auto-fix` is a usage
+// error (exit 2): a baseline scan resolves no diff range, so auto-fix has no base
+// branch to open its fix PR against. Rejecting up front avoids running (and paying
+// for) a full repository review and reconcile only to fail at the auto-fix step
+// (Sprint 35.0 task 2.11.A finding).
+func TestReviewCmd_AllRejectsAutoFix(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--all", "--auto-fix")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--all cannot be combined with --auto-fix")
+}
+
 // TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
 // with an undefined flag name — a programming error that must fail loudly
 // rather than silently returning false.

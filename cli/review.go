@@ -329,9 +329,17 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// diff range, so branch before gitrange.Resolve and skip range resolution
 	// entirely when set. A zero-valued Resolution stands in so the downstream
 	// request builder never dereferences nil; the baseline dispatch to
-	// PrepareReviewFromRepo is wired in a later task. When --all is unset the
-	// existing range-resolution path runs unchanged.
+	// PrepareReviewFromRepo runs below. When --all is unset the existing
+	// range-resolution path runs unchanged.
 	baseline := cmd.Flags().Changed("all")
+	// --auto-fix needs a base branch to open its fix PR against, which it derives
+	// from the resolved range's DefaultBranch. A baseline scan resolves no range,
+	// so auto-fix would fail only AFTER a full (paid) repo review and reconcile —
+	// reject the combination up front instead (exit 2). Baseline auto-fix can be a
+	// follow-up once a range-less default-branch resolution exists.
+	if baseline && autoFix {
+		return usageError(errors.New("--all cannot be combined with --auto-fix: a full-repository baseline scan has no diff range to derive an auto-fix base branch from"))
+	}
 	res := &gitrange.Resolution{}
 	if !baseline {
 		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
