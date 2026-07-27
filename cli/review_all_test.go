@@ -327,6 +327,36 @@ func TestReviewDir_PreservesOutOfScopeIndexEntries(t *testing.T) {
 	assert.True(t, okC, "--dir must record its in-scope reviewed file")
 }
 
+// 4.23 gate CRITICAL regression: a file that survives the GLOBAL byte budget but is
+// shed from every agent's per-model window (Epic 19.10 F2) must NOT be recorded as
+// reviewed — else the next run would skip a file no agent ever saw. The test model
+// (m-bruce, unknown → 32768-token window → ~71680-byte effective budget) sheds an
+// ~80 KB file per-agent while the 512 KiB global budget keeps it.
+func TestReviewAll_PerAgentShedFileNotRecordedAsReviewed(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// A file larger than the per-agent effective budget (~71680 bytes) but well under
+	// the 512 KiB global budget.
+	big := make([]byte, 80_000)
+	for i := range big {
+		big[i] = 'x'
+	}
+	require.NoError(t, os.WriteFile("big.txt", big, 0o644))
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add big.txt")
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	// a.txt (small, reviewed) is recorded; big.txt (per-agent-shed, never reviewed) is NOT.
+	_, _, okA := idx.Get("a.txt")
+	assert.True(t, okA, "a small reviewed file is recorded")
+	_, _, okBig := idx.Get("big.txt")
+	assert.False(t, okBig, "a per-agent-shed (unreviewed) file must NOT be recorded, or it would be skipped-though-unreviewed next run")
+}
+
 // AC 04-04 Scenario 2: `--fresh` on a diff-range review is a no-op for the hash
 // index — no baseline index is read or written, and the run is unaffected.
 func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
