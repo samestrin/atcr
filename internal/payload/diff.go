@@ -140,6 +140,11 @@ func buildDiffPathspec(kept []changedFile, exclude []string) []string {
 // column-0 `diff --git` boundaries, and served to every file from the cache.
 // This keeps the per-file helpers' signatures intact (so their direct unit
 // tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
+// The O(1) claim covers the whole-range DIFF caches only: the Epic 35.1
+// escalation pass adds one `git show` per changed file in diff/blocks mode,
+// bounded by EscalationConfig.MaxFiles — see
+// TestBuildEntries_EscalationCostsOneProcessPerFile and
+// TestBuildEntries_AboveCapRestoresConstantProcessCount.
 type gitRunner struct {
 	ctx    context.Context
 	dir    string
