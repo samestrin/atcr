@@ -14,6 +14,7 @@ func TestDefaultEscalationConfig_Thresholds(t *testing.T) {
 	require.Equal(t, 10, c.HunkGapLines)
 	require.Equal(t, 15, c.MinCyclomatic)
 	require.Equal(t, 50, c.MaxFiles)
+	require.Equal(t, 60, c.MaxSkeletonLines)
 }
 
 func TestResolveEscalationConfig_UnsetYieldsDefaults(t *testing.T) {
@@ -26,17 +27,20 @@ func TestResolveEscalationConfig_HonorsEachOverride(t *testing.T) {
 	gap := 3
 	cyclo := 25
 	maxFiles := 200
+	skelLines := 12
 
 	got := ResolveEscalationConfig(EscalationOverrides{
-		ChurnRatio:    &churn,
-		MinHunks:      &hunks,
-		HunkGapLines:  &gap,
-		MinCyclomatic: &cyclo,
-		MaxFiles:      &maxFiles,
+		ChurnRatio:       &churn,
+		MinHunks:         &hunks,
+		HunkGapLines:     &gap,
+		MinCyclomatic:    &cyclo,
+		MaxFiles:         &maxFiles,
+		MaxSkeletonLines: &skelLines,
 	})
 
 	require.Equal(t, EscalationConfig{
-		ChurnRatio: 0.9, MinHunks: 7, HunkGapLines: 3, MinCyclomatic: 25, MaxFiles: 200,
+		ChurnRatio: 0.9, MinHunks: 7, HunkGapLines: 3, MinCyclomatic: 25,
+		MaxFiles: 200, MaxSkeletonLines: 12,
 	}, got)
 }
 
@@ -48,7 +52,8 @@ func TestResolveEscalationConfig_ExplicitZeroDisablesSignal(t *testing.T) {
 	zeroF := 0.0
 
 	got := ResolveEscalationConfig(EscalationOverrides{
-		ChurnRatio: &zeroF, MinHunks: &zeroI, HunkGapLines: &zeroI, MinCyclomatic: &zeroI, MaxFiles: &zeroI,
+		ChurnRatio: &zeroF, MinHunks: &zeroI, HunkGapLines: &zeroI,
+		MinCyclomatic: &zeroI, MaxFiles: &zeroI, MaxSkeletonLines: &zeroI,
 	})
 
 	require.Equal(t, EscalationConfig{}, got)

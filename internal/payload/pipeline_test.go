@@ -13,7 +13,7 @@ import (
 
 // gitProcessCount builds a payload for a range touching nFiles changed files
 // and reports how many git subprocesses the build spawned.
-func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int) int {
+func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int, esc EscalationConfig) int {
 	t.Helper()
 	dir := initRepo(t)
 	for i := 0; i < nFiles; i++ {
@@ -25,23 +25,54 @@ func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int) int {
 	}
 	head := commitAll(t, dir, "v2")
 
-	g := &gitRunner{ctx: context.Background(), dir: dir}
+	g := newGitRunner(context.Background(), dir)
+	g.escalation = esc
 	entries, err := g.buildEntries(mode, base, head)
 	require.NoErrorf(t, err, "mode %s, %d files", mode, nFiles)
 	require.Lenf(t, entries, nFiles, "mode %s: one entry per changed file", mode)
 	return g.execCount
 }
 
-// The git-process count for blocks and diff modes must be constant — fully
-// independent of the number of changed files. Before batching, each file
-// triggered its own numstat + diff fan-out, so the count grew with N.
+// With per-file escalation DISABLED, the git-process count for blocks and diff
+// modes must be constant — fully independent of the number of changed files.
+// Before batching, each file triggered its own numstat + diff fan-out, so the
+// count grew with N.
 func TestBuildEntries_ConstantGitProcessCount(t *testing.T) {
 	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
-		small := gitProcessCount(t, mode, 2)
-		large := gitProcessCount(t, mode, 8)
+		small := gitProcessCount(t, mode, 2, EscalationConfig{})
+		large := gitProcessCount(t, mode, 8, EscalationConfig{})
 		assert.Equalf(t, small, large,
 			"mode %s: git-process count must not grow with changed-file count (2 files: %d, 8 files: %d)",
 			mode, small, large)
+	}
+}
+
+// With escalation ENABLED (the production default), the analysis pass reads each
+// file's HEAD blob, so the count grows by exactly one process per changed file
+// and no more. This is the cost the max_files cap exists to bound, and pinning
+// the exact slope is what stops it from silently becoming worse — the previous
+// version of this guard built a bare &gitRunner{}, whose zero-value config
+// disabled escalation, so it had stopped describing the production path.
+func TestBuildEntries_EscalationCostsOneProcessPerFile(t *testing.T) {
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		small := gitProcessCount(t, mode, 2, DefaultEscalationConfig())
+		large := gitProcessCount(t, mode, 8, DefaultEscalationConfig())
+		assert.Equalf(t, large-small, 6,
+			"mode %s: escalation must cost exactly one git process per extra file (2 files: %d, 8 files: %d)",
+			mode, small, large)
+	}
+}
+
+// Above the file cap the analysis pass is skipped entirely, so the constant
+// process profile is restored — the cap's whole purpose.
+func TestBuildEntries_AboveCapRestoresConstantProcessCount(t *testing.T) {
+	capped := DefaultEscalationConfig()
+	capped.MaxFiles = 1
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		small := gitProcessCount(t, mode, 2, capped)
+		large := gitProcessCount(t, mode, 8, capped)
+		assert.Equalf(t, small, large,
+			"mode %s: above the cap the count must not grow with changed-file count", mode)
 	}
 }
 
@@ -145,8 +176,8 @@ func TestBuildEntries_PathContainingSpaceBSlashKeysCorrectly(t *testing.T) {
 // shows), proving everything else — classification and the changed-range diff —
 // is batched.
 func TestBuildEntries_FilesModeOnlyShowScalesWithN(t *testing.T) {
-	small := gitProcessCount(t, ModeFiles, 2)
-	large := gitProcessCount(t, ModeFiles, 8)
+	small := gitProcessCount(t, ModeFiles, 2, DefaultEscalationConfig())
+	large := gitProcessCount(t, ModeFiles, 8, DefaultEscalationConfig())
 	assert.Equalf(t, 6, large-small,
 		"files mode should grow by exactly one git show per added file (2 files: %d, 8 files: %d)",
 		small, large)

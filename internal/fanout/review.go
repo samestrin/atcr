@@ -1067,7 +1067,11 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 // Text/FileCount/Truncation remain the global-budget union used for the on-disk
 // audit artifact and the empty-payload guard.
 type modePayload struct {
-	Entries    []payload.FileEntry
+	Entries []payload.FileEntry
+	// Kept is Entries after the byte-budget pass — the files that actually
+	// reached the reviewer. Entries stays the pre-budget list because buildSlots
+	// re-sheds it per agent against each model's window.
+	Kept       []payload.FileEntry
 	Text       string
 	FileCount  int
 	Truncation payload.Truncation
@@ -1088,11 +1092,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// registry.TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes.
 	pe := cfg.Registry.PayloadEscalation
 	opts = append(opts, payload.WithEscalation(payload.ResolveEscalationConfig(payload.EscalationOverrides{
-		ChurnRatio:    pe.ChurnRatio,
-		MinHunks:      pe.MinHunks,
-		HunkGapLines:  pe.HunkGapLines,
-		MinCyclomatic: pe.MinCyclomatic,
-		MaxFiles:      pe.MaxFiles,
+		ChurnRatio:       pe.ChurnRatio,
+		MinHunks:         pe.MinHunks,
+		HunkGapLines:     pe.HunkGapLines,
+		MinCyclomatic:    pe.MinCyclomatic,
+		MaxFiles:         pe.MaxFiles,
+		MaxSkeletonLines: pe.MaxSkeletonLines,
 	})))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
@@ -1113,7 +1118,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// the pre-budget total — the dropped files are recorded in trunc. Entries
 		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
 		// against each model's window (Epic 19.10 F2).
-		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
 	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
@@ -1135,7 +1140,10 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 func perFileModes(payloads map[string]modePayload) map[string]string {
 	var out map[string]string
 	for mode, mp := range payloads {
-		for _, e := range mp.Entries {
+		// Kept, not Entries: Entries is the PRE-byte-budget list, and a file the
+		// budget dropped never reached a reviewer, so claiming a mode for it would
+		// contradict this field's "what a reviewer saw" contract.
+		for _, e := range mp.Kept {
 			if e.Mode == "" || string(e.Mode) == mode {
 				continue
 			}

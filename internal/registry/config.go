@@ -216,6 +216,9 @@ type PayloadEscalationConfig struct {
 	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 10; 0 disables
 	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 15; 0 disables
 	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
+	// MaxSkeletonLines caps declaration headers rendered per file; nil = default
+	// 60; 0 disables skeleton injection while leaving escalation active.
+	MaxSkeletonLines *int `yaml:"max_skeleton_lines,omitempty"`
 }
 
 // ExecutorConfig is the optional top-level fix-generation model (Epic 7.0). It is
@@ -705,6 +708,7 @@ func (r *Registry) validatePayloadEscalation() []error {
 		{"hunk_gap_lines", pe.HunkGapLines},
 		{"min_cyclomatic", pe.MinCyclomatic},
 		{"max_files", pe.MaxFiles},
+		{"max_skeleton_lines", pe.MaxSkeletonLines},
 	} {
 		if f.val != nil && *f.val < 0 {
 			errs = append(errs, fmt.Errorf("payload_escalation.%s must be >= 0 (0 = disabled), got %d", f.name, *f.val))

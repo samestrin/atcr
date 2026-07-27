@@ -15,6 +15,12 @@ const (
 	// DefaultEscalationMinCyclomatic is the McCabe floor above which a file's
 	// control flow is too branchy to review from hunks alone.
 	DefaultEscalationMinCyclomatic = 15
+	// DefaultEscalationMaxSkeletonLines caps how many declaration headers a
+	// skeleton renders. A generated file with hundreds of declarations would
+	// otherwise prepend hundreds of lines to a one-line diff, in every mode
+	// payload, for every parallel agent — inverting the token saving the whole
+	// feature exists to protect.
+	DefaultEscalationMaxSkeletonLines = 60
 	// DefaultEscalationMaxFiles caps how many changed files a run will scan.
 	// Above it the escalation and skeleton passes are skipped wholesale, because
 	// each scanned file costs one `git show` plus one AST parse.
@@ -30,6 +36,9 @@ type EscalationConfig struct {
 	HunkGapLines  int     // 0 disables; else fires when two hunks are < this many lines apart
 	MinCyclomatic int     // 0 disables; else fires at >= this McCabe score
 	MaxFiles      int     // 0 disables the whole feature; else the changed-file ceiling
+	// MaxSkeletonLines caps rendered declaration headers per file; 0 disables
+	// skeleton injection entirely.
+	MaxSkeletonLines int
 }
 
 // EscalationOverrides is the optional, unset-distinguishable form of
@@ -42,21 +51,23 @@ type EscalationConfig struct {
 // validPayloadModes duplicated in registry/payload.go. The single field-copy
 // between them lives at the call site and is pinned by a sync test.
 type EscalationOverrides struct {
-	ChurnRatio    *float64
-	MinHunks      *int
-	HunkGapLines  *int
-	MinCyclomatic *int
-	MaxFiles      *int
+	ChurnRatio       *float64
+	MinHunks         *int
+	HunkGapLines     *int
+	MinCyclomatic    *int
+	MaxFiles         *int
+	MaxSkeletonLines *int
 }
 
 // DefaultEscalationConfig returns the built-in escalation thresholds.
 func DefaultEscalationConfig() EscalationConfig {
 	return EscalationConfig{
-		ChurnRatio:    DefaultEscalationChurnRatio,
-		MinHunks:      DefaultEscalationMinHunks,
-		HunkGapLines:  DefaultEscalationHunkGapLines,
-		MinCyclomatic: DefaultEscalationMinCyclomatic,
-		MaxFiles:      DefaultEscalationMaxFiles,
+		ChurnRatio:       DefaultEscalationChurnRatio,
+		MinHunks:         DefaultEscalationMinHunks,
+		HunkGapLines:     DefaultEscalationHunkGapLines,
+		MinCyclomatic:    DefaultEscalationMinCyclomatic,
+		MaxFiles:         DefaultEscalationMaxFiles,
+		MaxSkeletonLines: DefaultEscalationMaxSkeletonLines,
 	}
 }
 
@@ -79,6 +90,9 @@ func ResolveEscalationConfig(o EscalationOverrides) EscalationConfig {
 	}
 	if o.MaxFiles != nil {
 		c.MaxFiles = *o.MaxFiles
+	}
+	if o.MaxSkeletonLines != nil {
+		c.MaxSkeletonLines = *o.MaxSkeletonLines
 	}
 	return c
 }

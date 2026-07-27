@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -33,9 +34,14 @@ type skeletonEntry struct {
 // safety property: because every content line begins with "L<digits>: ", no
 // rendered line can start with a payload section marker even if the source
 // declaration somehow did.
-func renderSkeleton(entries []skeletonEntry) string {
-	if len(entries) == 0 {
+func renderSkeleton(entries []skeletonEntry, maxLines int) string {
+	if len(entries) == 0 || maxLines <= 0 {
 		return ""
+	}
+	elided := 0
+	if len(entries) > maxLines {
+		elided = len(entries) - maxLines
+		entries = entries[:maxLines]
 	}
 	var b strings.Builder
 	b.WriteString(skeletonStart)
@@ -46,6 +52,11 @@ func renderSkeleton(entries []skeletonEntry) string {
 		b.WriteString(": ")
 		b.WriteString(e.Header)
 		b.WriteByte('\n')
+	}
+	if elided > 0 {
+		// Disclosed, never silent: a reviewer must know the map is partial rather
+		// than conclude the file has no further declarations.
+		fmt.Fprintf(&b, "... %d more declaration(s) elided\n", elided)
 	}
 	b.WriteString(skeletonEnd)
 	b.WriteByte('\n')
@@ -95,7 +106,14 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	if bin, err := g.isBinary(base, head, f.pathspec()...); err != nil || bin {
 		return fileContext{}, false
 	}
-	hunks, err := g.changedHeadRanges(base, head, f.pathspec()...)
+	// Every hunk, deletions included: a rewrite that mostly removes code is
+	// exactly the architectural-thrashing case escalation exists to catch, and
+	// the head-side ranges alone cannot see it.
+	hunks, err := g.allHunkRanges(base, head, f.pathspec()...)
+	if err != nil {
+		return fileContext{}, false
+	}
+	churn, _, err := g.churnLines(base, head, f.path)
 	if err != nil {
 		return fileContext{}, false
 	}
@@ -108,7 +126,7 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	}
 
 	ctx := fileContext{signals: fileSignals{
-		changedLines: countChangedLines(hunks),
+		changedLines: churn,
 		headLines:    countLines(src),
 		hunks:        hunks,
 	}}
@@ -131,8 +149,8 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		g.logger.Debug("payload: skipping AST signals, parse failed", "path", f.path, "error", err)
 		return ctx, true
 	}
-	ctx.signals.cyclomatic = astgroup.Cyclomatic(root)
-	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, []byte(src))))
+	ctx.signals.cyclomatic = astgroup.MaxFuncCyclomatic(root)
+	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, []byte(src))), g.escalation.MaxSkeletonLines)
 	return ctx, true
 }
 
@@ -154,15 +172,6 @@ func toSkeletonEntries(in []astgroup.SkeletonEntry) []skeletonEntry {
 		out = append(out, skeletonEntry{StartLine: e.StartLine, Header: e.Header})
 	}
 	return out
-}
-
-// countChangedLines totals the head-side lines covered by hunks.
-func countChangedLines(hunks []lineRange) int {
-	total := 0
-	for _, h := range hunks {
-		total += h.end - h.start + 1
-	}
-	return total
 }
 
 // countLines counts the lines in src, not counting a trailing newline as an

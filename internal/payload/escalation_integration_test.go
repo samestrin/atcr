@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -389,4 +390,91 @@ func TestEscalationIntegration_FilesModeIsNotADegradation(t *testing.T) {
 
 	require.False(t, rb.EscalationDegraded(),
 		"files mode skips analysis by design; that is not a cap degradation")
+}
+
+// A long file of many trivial functions must NOT escalate on a one-line edit.
+// The McCabe threshold is a per-function convention; measuring the whole-file
+// branch sum against it would flag every long file and break AC2.
+func TestEscalationIntegration_LongSimpleFileDoesNotEscalate(t *testing.T) {
+	var v1 strings.Builder
+	v1.WriteString("package p\n")
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&v1, "\nfunc F%d(n int) int {\n\tif n > 0 {\n\t\treturn %d\n\t}\n\treturn 0\n}\n", i, i)
+	}
+	dir := initRepo(t)
+	write(t, dir, "many.go", v1.String())
+	base := commitAll(t, dir, "v1")
+	// Change exactly one line.
+	write(t, dir, "many.go", strings.Replace(v1.String(), "return 7", "return 77", 1))
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeDiff, entries[0].Mode,
+		"a one-line edit to a long file of simple functions must stay in diff mode (AC2)")
+}
+
+// A single genuinely branchy function must still escalate — the per-function
+// measure must not have traded the false positives for false negatives.
+func TestEscalationIntegration_BranchyFunctionEscalates(t *testing.T) {
+	var body strings.Builder
+	body.WriteString("package p\n\nfunc Branchy(n int) int {\n")
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&body, "\tif n == %d {\n\t\treturn %d\n\t}\n", i, i)
+	}
+	body.WriteString("\treturn 0\n}\n")
+	src := body.String()
+
+	dir := initRepo(t)
+	write(t, dir, "branchy.go", src)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "branchy.go", strings.Replace(src, "return 0\n}", "return -1\n}", 1))
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeBlocks, entries[0].Mode,
+		"a function with 20 branches is too branchy to review from hunks alone")
+}
+
+// A deletion-driven rewrite is the epic's core scenario and must escalate. The
+// head-side changed ranges cannot see it — a pure deletion marks no head lines —
+// so churn is counted from --numstat and hunks include deletion-only hunks.
+func TestEscalationIntegration_DeletionHeavyRewriteEscalates(t *testing.T) {
+	var v1 strings.Builder
+	v1.WriteString("package p\n")
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&v1, "\nfunc G%d() int { return %d }\n", i, i)
+	}
+	dir := initRepo(t)
+	write(t, dir, "gutted.go", v1.String())
+	base := commitAll(t, dir, "v1: 60 functions")
+	// Gut the file down to almost nothing: nearly all deletions.
+	write(t, dir, "gutted.go", "package p\n\nfunc G0() int { return 0 }\n")
+	head := commitAll(t, dir, "v2: gutted")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.NotEqual(t, ModeDiff, entries[0].Mode,
+		"a rewrite that mostly DELETES code must escalate; deletions are churn too")
+}
+
+// Pure-deletion hunks must be counted for adjacency and hunk-count purposes but
+// must contribute zero head lines, so the two uses of a hunk list stay correct.
+func TestParseAllHunkRanges_IncludesPureDeletionsAsEmptyRanges(t *testing.T) {
+	chunk := "@@ -10,3 +9,0 @@\n-a\n-b\n-c\n@@ -20,1 +18,2 @@\n-x\n+y\n+z\n"
+
+	got := parseAllHunkRanges(chunk)
+
+	require.Len(t, got, 2, "the pure-deletion hunk must not be dropped")
+	require.Equal(t, lineRange{start: 10, end: 9}, got[0], "a deletion is an empty range at its head anchor")
+	require.Equal(t, lineRange{start: 18, end: 19}, got[1])
+	// parseHeadRanges, used for grounding, still drops the deletion.
+	require.Len(t, parseHeadRanges(chunk), 1)
 }

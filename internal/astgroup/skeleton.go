@@ -81,11 +81,24 @@ func declHeader(lines []string, n Node) (string, bool) {
 	if n.StartLine < 1 || n.EndLine < n.StartLine || n.EndLine > len(lines) {
 		return "", false
 	}
-	text := strings.Join(lines[n.StartLine-1:n.EndLine], "\n")
-	if i := bodyBraceIndex(text); i >= 0 {
-		text = text[:i]
+	var text string
+	if n.Kind == "func" {
+		// A signature may span lines, so scan the whole declaration for the brace
+		// that opens the body, skipping inline struct/interface types that can sit
+		// at depth 0 in a result position.
+		text = strings.Join(lines[n.StartLine-1:n.EndLine], "\n")
+		if i := bodyBraceIndex(text); i >= 0 {
+			text = text[:i]
+		} else {
+			text = lines[n.StartLine-1]
+		}
 	} else {
-		text = lines[n.StartLine-1]
+		// A type/const/var declaration's header is its first line. A trailing `{`
+		// there opens the declaration's own body (`type Config struct {`) and is
+		// dropped; a line that merely CONTAINS braces is a complete declaration
+		// (`type Alias = map[string]struct{}`) and is kept verbatim.
+		text = strings.TrimRight(lines[n.StartLine-1], " \t\r")
+		text = strings.TrimSuffix(text, "{")
 	}
 	header := strings.Join(strings.Fields(text), " ")
 	if header == "" {
@@ -95,9 +108,16 @@ func declHeader(lines []string, n Node) (string, bool) {
 }
 
 // bodyBraceIndex returns the index of the brace that opens a declaration's body,
-// or -1 when there is none. Braces nested inside parentheses or brackets are
-// skipped so that a generic constraint (`func F[T interface{ ~int }](v T) T`) or
-// a struct-typed parameter does not truncate the signature at the wrong place.
+// or -1 when there is none.
+//
+// Two kinds of brace are skipped so the signature is not truncated at the wrong
+// place:
+//   - braces nested inside parentheses or brackets, e.g. a struct-typed
+//     parameter or a generic constraint `func F[T interface{ ~int }](v T) T`;
+//   - a brace introducing an inline struct/interface TYPE, which can appear at
+//     depth 0 in a result position — `func Any() interface{}`,
+//     `func New() chan struct{}`, `type Alias = map[string]struct{}`. Truncating
+//     there would emit an actively wrong signature like "func Any() interface".
 func bodyBraceIndex(text string) int {
 	depth := 0
 	for i := 0; i < len(text); i++ {
@@ -109,6 +129,40 @@ func bodyBraceIndex(text string) int {
 				depth--
 			}
 		case '{':
+			if depth != 0 {
+				continue
+			}
+			if !opensInlineType(text[:i]) {
+				return i
+			}
+			// Skip the inline type's body and keep looking for the real one.
+			end := matchingBrace(text, i)
+			if end < 0 {
+				return -1
+			}
+			i = end
+		}
+	}
+	return -1
+}
+
+// opensInlineType reports whether the brace following prefix belongs to an
+// inline struct/interface type rather than a declaration body.
+func opensInlineType(prefix string) bool {
+	t := strings.TrimRight(prefix, " \t\n")
+	return strings.HasSuffix(t, "struct") || strings.HasSuffix(t, "interface")
+}
+
+// matchingBrace returns the index of the `}` closing the `{` at open, or -1 when
+// the text is unbalanced.
+func matchingBrace(text string, open int) int {
+	depth := 0
+	for i := open; i < len(text); i++ {
+		switch text[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
 			if depth == 0 {
 				return i
 			}
@@ -120,8 +174,40 @@ func bodyBraceIndex(text string) int {
 // Cyclomatic returns the McCabe cyclomatic complexity of the tree rooted at
 // root: the number of branch-kind nodes plus one. A tree with no branches scores
 // 1, matching the convention that straight-line code has a single path.
+//
+// Applied to a FILE node this sums every branch in the file, which is NOT what
+// the conventional McCabe thresholds (10, 15) describe — those are per-function.
+// Use MaxFuncCyclomatic to compare against such a threshold.
 func Cyclomatic(root Node) int {
 	return 1 + countBranches(root)
+}
+
+// MaxFuncCyclomatic returns the highest McCabe score of any single function in
+// the tree, which is the measure conventional thresholds are written against.
+//
+// A file's branch total grows with its length, so thresholding on it would flag
+// every long file regardless of whether any part of it is actually hard to
+// follow. The maximum over functions instead answers "does this file contain a
+// function too branchy to review from hunks alone", which is the question a
+// payload-escalation decision turns on. Files with no function (or an empty
+// tree) score 0, distinguishing "nothing to measure" from a real score of 1.
+func MaxFuncCyclomatic(root Node) int {
+	max := 0
+	var walk func(n Node)
+	walk = func(n Node) {
+		if n.Kind == "func" || n.Kind == "funclit" {
+			if c := Cyclomatic(n); c > max {
+				max = c
+			}
+			// Keep descending: a funclit nested in a func is its own unit, and a
+			// method on a nested type still surfaces here.
+		}
+		for i := range n.Children {
+			walk(n.Children[i])
+		}
+	}
+	walk(root)
+	return max
 }
 
 func countBranches(n Node) int {

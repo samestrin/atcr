@@ -68,6 +68,8 @@ type Manifest struct {
 	// Stages records which review stages ran. Reserved for the agentic stages
 	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
+	Stages []string `json:"stages,omitempty"`
+
 	// PerFilePayload records the payload mode each file was ACTUALLY rendered in
 	// (Epic 35.1), keyed by repo-relative head path. It is written only for files
 	// the escalation heuristic promoted above the run's configured mode, so a
@@ -82,8 +84,6 @@ type Manifest struct {
 	// It distinguishes "nothing was complex enough to escalate" (field absent,
 	// PerFilePayload empty) from "escalation never ran" (field true).
 	EscalationDegraded bool `json:"escalation_degraded,omitempty"`
-
-	Stages []string `json:"stages,omitempty"`
 
 	// Review is the enriched record of the review stage's tool-using agents
 	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered

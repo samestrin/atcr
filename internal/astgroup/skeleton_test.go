@@ -1,6 +1,8 @@
 package astgroup
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -206,4 +208,79 @@ func A(n int) int {
 
 	// for + if + if = 3 branch nodes + 1.
 	require.Equal(t, 4, Cyclomatic(root))
+}
+
+func TestMaxFuncCyclomatic_IsPerFunctionNotWholeFile(t *testing.T) {
+	// Twenty trivial functions: the whole-file branch SUM is 21, but no single
+	// function is complex. A per-function measure must report 1, or every long
+	// file would read as complex regardless of how simple its parts are.
+	var b strings.Builder
+	b.WriteString("package p\n")
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&b, "\nfunc F%d(n int) int {\n\tif n > 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n", i)
+	}
+	src := b.String()
+	root := parseGoForSkeleton(t, src)
+
+	require.Equal(t, 21, Cyclomatic(root), "whole-file sum grows with file length")
+	require.Equal(t, 2, MaxFuncCyclomatic(root), "each function has exactly one branch")
+}
+
+func TestMaxFuncCyclomatic_FindsTheBranchiestFunction(t *testing.T) {
+	src := `package p
+
+func Simple() int { return 1 }
+
+func Branchy(n int) int {
+	if n > 1 {
+		return 1
+	}
+	if n > 2 {
+		return 2
+	}
+	for i := 0; i < n; i++ {
+		if i > 3 {
+			return i
+		}
+	}
+	switch n {
+	case 1:
+	}
+	return 0
+}
+`
+	root := parseGoForSkeleton(t, src)
+
+	// Branchy: if, if, for, if, switch = 5 branches + 1.
+	require.Equal(t, 6, MaxFuncCyclomatic(root))
+}
+
+func TestMaxFuncCyclomatic_NoFunctionsScoresZero(t *testing.T) {
+	root := parseGoForSkeleton(t, "package p\n\ntype T struct{ A int }\n")
+
+	require.Equal(t, 0, MaxFuncCyclomatic(root), "no function means nothing to measure, not a score of 1")
+	require.Equal(t, 0, MaxFuncCyclomatic(Node{}))
+}
+
+func TestFileSkeleton_InlineTypeInResultDoesNotTruncateSignature(t *testing.T) {
+	// A depth-0 `{` can belong to an inline struct/interface TYPE rather than the
+	// declaration body. Truncating there emits an actively wrong signature.
+	src := `package p
+
+func Any() interface{} { return nil }
+
+func New() chan struct{} { return nil }
+
+func M() map[string]struct{ A int } { return nil }
+
+type Alias = map[string]struct{}
+`
+	root := parseGoForSkeleton(t, src)
+
+	require.Equal(t, []string{
+		"func Any() interface{}",
+		"func New() chan struct{}",
+		"func M() map[string]struct{ A int }",
+		"type Alias = map[string]struct{}",
+	}, headersOf(FileSkeleton(root, []byte(src))))
 }

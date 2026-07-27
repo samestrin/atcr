@@ -24,12 +24,12 @@ Two independent signals are scored per file:
 
 | Signal | Fires when | Setting | Default |
 |--------|-----------|---------|---------|
-| Churn ratio | Changed lines ÷ HEAD line count reaches the threshold | `churn_ratio` | `0.5` |
+| Churn ratio | Changed lines (added **and deleted**) ÷ HEAD line count reaches the threshold | `churn_ratio` | `0.5` |
 | Hunk count | The file has at least this many separate hunks | `min_hunks` | `4` |
 | Hunk adjacency | Two hunks sit closer than this many unchanged lines apart | `hunk_gap_lines` | `10` |
-| Cyclomatic complexity | The file's McCabe score (branch nodes + 1) reaches the threshold | `min_cyclomatic` | `15` |
+| Cyclomatic complexity | The file's **most complex single function** reaches this McCabe score (branch nodes + 1) | `min_cyclomatic` | `15` |
 
-The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below.
+The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below. It is measured **per function**, not summed across the file — a long file of simple functions is not complex, and thresholding on a whole-file total would escalate almost every real source file.
 
 Escalation is a ladder:
 
@@ -53,6 +53,8 @@ L41: func Dispatch(kind string, n int) int
 
 This is the cheap fix for the failure it names: reading a multi-commit diff, a model reconstructs the file by mentally applying the patch and frequently lands on a superseded intermediate state. The skeleton removes the guesswork — the final architecture is stated outright, at a cost of a few dozen tokens. `files` mode gets no skeleton, since it already carries the whole file.
 
+A skeleton renders at most `max_skeleton_lines` headers (default 60); beyond that it is truncated with an explicit `... N more declaration(s) elided` line, so a generated file with hundreds of declarations cannot swamp a one-line diff.
+
 Skeletons are currently extracted for **Go** files only. Other languages are reviewed exactly as before.
 
 ### Cost cap
@@ -71,6 +73,7 @@ payload_escalation:
   hunk_gap_lines: 10
   min_cyclomatic: 15
   max_files: 50
+  max_skeleton_lines: 60
 ```
 
 Every field is optional and falls back to its default. Setting any threshold to `0` disables that one signal; setting `max_files: 0` turns per-file escalation and skeleton injection off entirely.

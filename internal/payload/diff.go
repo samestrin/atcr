@@ -57,6 +57,11 @@ type rangeState struct {
 	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
 	lineRanges map[string][]lineRange // head path -> head-side changed ranges
 	headSrc    map[string]string      // head path -> full HEAD blob (one `git show` each)
+	// churn is the head path -> added+deleted line count from the SAME
+	// `--numstat -M` process that fills binary. Deletions are counted here and
+	// nowhere else: the head-side line ranges drop pure-deletion hunks (they mark
+	// no head lines), so a deletion-driven rewrite is invisible to them.
+	churn map[string]int
 
 	// diffPathspec holds the trailing `-- …` pathspec args applied to every
 	// whole-range diff so git emits exactly the kept (non-ignored) files' chunks.
@@ -544,16 +549,44 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 		return nil, fmt.Errorf("git diff --numstat failed: %w", err)
 	}
 	set := make(map[string]bool)
+	churn := make(map[string]int)
 	if out != "" {
 		for _, line := range strings.Split(out, "\n") {
 			fields := strings.SplitN(line, "\t", 3)
-			if len(fields) >= 3 && fields[0] == "-" && fields[1] == "-" {
-				set[numstatNewPath(fields[2])] = true
+			if len(fields) < 3 {
+				continue
 			}
+			path := numstatNewPath(fields[2])
+			if fields[0] == "-" && fields[1] == "-" {
+				set[path] = true
+				continue
+			}
+			// Added + deleted lines. A non-numeric field is skipped rather than
+			// treated as zero, so a malformed line cannot silently suppress a
+			// file's churn signal.
+			added, aerr := strconv.Atoi(fields[0])
+			deleted, derr := strconv.Atoi(fields[1])
+			if aerr != nil || derr != nil {
+				continue
+			}
+			churn[path] = added + deleted
 		}
 	}
 	s.binary = set
+	s.churn = churn
 	return set, nil
+}
+
+// churnLines returns the added+deleted line count for path, served from the
+// memoized whole-range numstat. ok is false when the range had no numstat entry
+// for the path (binary, or not present in this diff).
+func (g *gitRunner) churnLines(base, head, path string) (int, bool, error) {
+	if _, err := g.binarySet(base, head); err != nil {
+		return 0, false, err
+	}
+	s := g.forRange(base, head)
+	n, ok := s.churn[path]
+	return n, ok, nil
 }
 
 // fcChunks / plainChunks / rawChunks memoize the whole-range function-context,
@@ -694,6 +727,48 @@ func parseHeadRanges(chunk string) []lineRange {
 		ranges = append(ranges, lineRange{start: start, end: start + length - 1})
 	}
 	return ranges
+}
+
+// parseAllHunkRanges parses EVERY hunk header in a zero-context chunk,
+// including pure deletions, which parseHeadRanges drops.
+//
+// parseHeadRanges answers "which head lines changed" — a pure deletion marks
+// none, so skipping it is right there. The escalation heuristic instead asks
+// "how scattered is this change", and a deletion is as much evidence of churn as
+// an insertion. A pure deletion is represented as an empty range anchored at the
+// head line it was removed from, so hunk counting and adjacency see it while
+// changed-line counting still totals zero head lines for it.
+func parseAllHunkRanges(chunk string) []lineRange {
+	var ranges []lineRange
+	for _, line := range strings.Split(chunk, "\n") {
+		m := hunkHeaderRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		start, _ := strconv.Atoi(m[1])
+		length := 1
+		if m[2] != "" {
+			length, _ = strconv.Atoi(m[2])
+		}
+		if length == 0 {
+			// git reports the line AFTER which the deletion occurred; the removed
+			// content sat between start and start+1.
+			ranges = append(ranges, lineRange{start: start + 1, end: start})
+			continue
+		}
+		ranges = append(ranges, lineRange{start: start, end: start + length - 1})
+	}
+	return ranges
+}
+
+// allHunkRanges returns every hunk range for path, including pure deletions,
+// from the memoized whole-range zero-context diff.
+func (g *gitRunner) allHunkRanges(base, head string, paths ...string) ([]lineRange, error) {
+	chunks, err := g.zeroCtxChunks(base, head)
+	if err != nil {
+		return nil, err
+	}
+	return parseAllHunkRanges(chunks[headPathOf(paths)]), nil
 }
 
 // zeroCtxChunks memoizes the whole-range zero-context (--unified=0) diff split

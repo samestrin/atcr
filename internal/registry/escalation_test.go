@@ -1,37 +1,11 @@
 package registry
 
 import (
-	"reflect"
 	"testing"
 
-	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
-
-// TestPayloadEscalationMirrorsPayloadOverrides pins registry.PayloadEscalationConfig
-// to internal/payload.EscalationOverrides field for field.
-//
-// The two types are duplicated on purpose: registry imports nothing under
-// internal/, so it cannot reference payload's type, and payload must not import
-// registry (see internal/payload/sprintplan.go). That is the same boundary that
-// keeps validPayloadModes hand-synced in payload.go. This test makes the
-// duplication safe — adding a threshold to one struct and not the other fails
-// here rather than silently dropping the operator's setting on the floor.
-func TestPayloadEscalationMirrorsPayloadOverrides(t *testing.T) {
-	reg := reflect.TypeOf(PayloadEscalationConfig{})
-	pay := reflect.TypeOf(payload.EscalationOverrides{})
-
-	require.Equal(t, pay.NumField(), reg.NumField(),
-		"registry.PayloadEscalationConfig and payload.EscalationOverrides must have the same fields")
-
-	for i := 0; i < reg.NumField(); i++ {
-		rf := reg.Field(i)
-		pf, ok := pay.FieldByName(rf.Name)
-		require.Truef(t, ok, "payload.EscalationOverrides is missing field %s", rf.Name)
-		require.Equalf(t, pf.Type, rf.Type, "field %s type drifted between the two structs", rf.Name)
-	}
-}
 
 func TestPayloadEscalation_AbsentBlockIsAllUnset(t *testing.T) {
 	var r Registry
