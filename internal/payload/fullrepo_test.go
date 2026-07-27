@@ -219,3 +219,138 @@ func TestEnumerateRepoFiles_ReadFailureMidWalk(t *testing.T) {
 	assert.Contains(t, err.Error(), "reading tracked file")
 	assert.Contains(t, err.Error(), "gone.go")
 }
+
+// --- AC 01-03: byte-budget chunk partitioning -------------------------------
+
+// allChunkPaths flattens a [][]FileEntry into a sorted path slice and the count of
+// each path, for zero-omission / no-duplication verification.
+func allChunkPaths(chunks [][]FileEntry) ([]string, map[string]int) {
+	counts := map[string]int{}
+	var all []string
+	for _, c := range chunks {
+		for _, e := range c {
+			counts[e.Path]++
+			all = append(all, e.Path)
+		}
+	}
+	sort.Strings(all)
+	return all, counts
+}
+
+func mkEntries(spec map[string]int64) []FileEntry {
+	out := make([]FileEntry, 0, len(spec))
+	for p, sz := range spec {
+		out = append(out, FileEntry{Path: p, Size: sz, Body: strings.Repeat("x", int(max64(sz, 0)))})
+	}
+	return out
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// AC 01-03 Happy Path 1: a set whose total size is below one chunk's budget
+// returns exactly one chunk with every entry.
+func TestPartitionByBudget_SmallFitsOneChunk(t *testing.T) {
+	entries := mkEntries(map[string]int64{"a.go": 30, "b.go": 30, "c.go": 20})
+	chunks, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	assert.Len(t, chunks[0], 3)
+}
+
+// AC 01-03 Happy Path 2: a set ~3x over budget splits into 3+ chunks and the union
+// of chunk paths equals the input set exactly (each path exactly once).
+func TestPartitionByBudget_LargeSplitsZeroOmissions(t *testing.T) {
+	spec := map[string]int64{}
+	want := []string{}
+	for i := 0; i < 9; i++ {
+		p := "f" + string(rune('0'+i)) + ".go"
+		spec[p] = 40
+		want = append(want, p)
+	}
+	sort.Strings(want)
+	entries := mkEntries(spec)
+
+	chunks, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(chunks), 3, "should split into 3+ chunks")
+
+	all, counts := allChunkPaths(chunks)
+	assert.Equal(t, want, all, "union of chunks must equal the full input set")
+	for p, n := range counts {
+		assert.Equal(t, 1, n, "path %q must appear in exactly one chunk", p)
+	}
+}
+
+// AC 01-03 Happy Path 3: a single file larger than the budget gets its own chunk,
+// never split, never dropped.
+func TestPartitionByBudget_OversizedFileOwnChunk(t *testing.T) {
+	entries := mkEntries(map[string]int64{"huge.go": 250, "a.go": 30, "b.go": 30})
+	chunks, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+
+	all, counts := allChunkPaths(chunks)
+	assert.Equal(t, []string{"a.go", "b.go", "huge.go"}, all, "no file dropped")
+	assert.Equal(t, 1, counts["huge.go"])
+	// huge.go must be alone in its chunk.
+	for _, c := range chunks {
+		for _, e := range c {
+			if e.Path == "huge.go" {
+				assert.Len(t, c, 1, "oversized file must be alone in its chunk")
+			}
+		}
+	}
+}
+
+// AC 01-03 Edge Case 1: empty input returns zero chunks (not one empty chunk).
+func TestPartitionByBudget_EmptyReturnsZeroChunks(t *testing.T) {
+	chunks, err := partitionByBudget(nil, 100)
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+}
+
+// AC 01-03 Edge Case 2: identical input produces identical chunk membership and
+// ordering across repeated runs (no map-iteration-order leakage).
+func TestPartitionByBudget_Deterministic(t *testing.T) {
+	entries := mkEntries(map[string]int64{
+		"a.go": 40, "b.go": 40, "c.go": 40, "d.go": 40, "e.go": 40, "f.go": 40,
+	})
+	first, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+	second, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+	require.Equal(t, len(first), len(second))
+	for i := range first {
+		assert.Equal(t, entryPaths(first[i]), entryPaths(second[i]), "chunk %d must be identical across runs", i)
+	}
+}
+
+// AC 01-03 Edge Case 3 / Error Scenario 1: a non-positive budget fails fast at
+// entry, before any packing — never loops or emits one-chunk-per-file.
+func TestPartitionByBudget_ZeroBudgetFailsFast(t *testing.T) {
+	entries := mkEntries(map[string]int64{"a.go": 10, "b.go": 10})
+	chunks, err := partitionByBudget(entries, 0)
+	require.Error(t, err)
+	assert.Nil(t, chunks)
+	assert.Contains(t, err.Error(), "no effective byte budget")
+
+	_, errNeg := partitionByBudget(entries, -5)
+	require.Error(t, errNeg, "negative budget must also fail fast")
+}
+
+// AC 01-03 Security / Input Validation: a negative/corrupt FileEntry.Size is
+// clamped to zero for budget accounting and the file is still included.
+func TestPartitionByBudget_ClampsNegativeSize(t *testing.T) {
+	entries := []FileEntry{
+		{Path: "neg.go", Size: -100, Body: ""},
+		{Path: "a.go", Size: 30, Body: strings.Repeat("x", 30)},
+	}
+	chunks, err := partitionByBudget(entries, 100)
+	require.NoError(t, err)
+	all, _ := allChunkPaths(chunks)
+	assert.Equal(t, []string{"a.go", "neg.go"}, all, "clamped-size file still included")
+}

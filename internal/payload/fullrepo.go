@@ -7,10 +7,19 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
+
+// ErrNoEffectiveByteBudget is returned by partitionByBudget when the per-chunk
+// budget is non-positive. The budget is machine-derived from the model window via
+// sizing.EffectiveByteBudget, so 0 unambiguously means the model cannot fit any
+// review payload — an error, NOT ApplyByteBudget's "0 = unlimited" convention. The
+// caller (which knows the model name) wraps this into AC 01-03 Error Scenario 1's
+// exact `model %q ...` usage-error message.
+var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte budget for a review payload (context window too small for the configured output reservation)")
 
 // fullrepo.go hosts the full-repository / directory-scoped ("baseline") payload
 // path for `atcr review --all` and `atcr review --dir <path>` (Sprint 35.0). It
@@ -190,5 +199,66 @@ func ensureWithinRoot(root, abs, rel string) error {
 //
 // Phase 2 task 2.8 implements this body against AC 01-03's RED tests (task 2.7).
 func partitionByBudget(entries []FileEntry, chunkBudget int64) ([][]FileEntry, error) {
-	panic("partitionByBudget: not implemented — Phase 1 design-note stub; GREEN lands in Sprint 35.0 task 2.8")
+	// Empty input → zero chunks (not one empty chunk), so the caller's
+	// "no reviewable content" guard fires upstream (AC 01-03 Edge Case 1).
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	// Non-positive budget → fail fast at entry, before any packing work
+	// (AC 01-03 Edge Case 3 / Error Scenario 1). Never loop, never one-per-file.
+	if chunkBudget <= 0 {
+		return nil, ErrNoEffectiveByteBudget
+	}
+
+	// Canonical order: size-descending, path-ascending tie-break — the SAME
+	// determinism convention ApplyByteBudget uses (budget.go) — via an index sort
+	// so the caller's slice is never mutated. clampSize in the key so a
+	// negative/corrupt size cannot skew ordering. The (clampedSize, path) key is
+	// total over unique tracked paths, so repeated runs are byte-for-byte identical
+	// (AC 01-03 Edge Case 2), with zero map-iteration-order leakage.
+	idx := make([]int, len(entries))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		ei, ej := entries[idx[a]], entries[idx[b]]
+		si, sj := clampSize(ei.Size), clampSize(ej.Size)
+		if si != sj {
+			return si > sj
+		}
+		return ei.Path < ej.Path
+	})
+
+	var chunks [][]FileEntry
+	var current []FileEntry
+	var used int64
+	flush := func() {
+		if len(current) > 0 {
+			chunks = append(chunks, current)
+			current = nil
+			used = 0
+		}
+	}
+	for _, i := range idx {
+		e := entries[i]
+		sz := clampSize(e.Size)
+		if sz > chunkBudget {
+			// Oversized singleton: its OWN whole chunk, never split, never dropped
+			// (AC 01-03 Happy Path 3) — mirrors chunkDiff's single-file-never-split
+			// convention, diverging from ApplyByteBudget's drop-to-fit.
+			flush()
+			chunks = append(chunks, []FileEntry{e})
+			continue
+		}
+		// Greedy next-fit: close the current chunk only when this entry would
+		// overflow it, then open a new one (sort once, assign in order — O(n log n)
+		// + O(n), no per-chunk re-sort).
+		if len(current) > 0 && used+sz > chunkBudget {
+			flush()
+		}
+		current = append(current, e)
+		used += sz
+	}
+	flush()
+	return chunks, nil
 }
