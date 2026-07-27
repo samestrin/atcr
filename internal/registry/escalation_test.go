@@ -28,6 +28,7 @@ payload_escalation:
   hunk_gap_lines: 4
   min_cyclomatic: 20
   max_files: 120
+  max_skeleton_lines: 12
 `), &r)
 	require.NoError(t, err)
 
@@ -37,6 +38,7 @@ payload_escalation:
 	require.Equal(t, 4, *r.PayloadEscalation.HunkGapLines)
 	require.Equal(t, 20, *r.PayloadEscalation.MinCyclomatic)
 	require.Equal(t, 120, *r.PayloadEscalation.MaxFiles)
+	require.Equal(t, 12, *r.PayloadEscalation.MaxSkeletonLines)
 }
 
 func TestPayloadEscalation_ValidateRejectsNegatives(t *testing.T) {
@@ -44,11 +46,12 @@ func TestPayloadEscalation_ValidateRejectsNegatives(t *testing.T) {
 	negF := -0.5
 
 	for name, cfg := range map[string]PayloadEscalationConfig{
-		"churn_ratio":    {ChurnRatio: &negF},
-		"min_hunks":      {MinHunks: &neg},
-		"hunk_gap_lines": {HunkGapLines: &neg},
-		"min_cyclomatic": {MinCyclomatic: &neg},
-		"max_files":      {MaxFiles: &neg},
+		"churn_ratio":        {ChurnRatio: &negF},
+		"min_hunks":          {MinHunks: &neg},
+		"hunk_gap_lines":     {HunkGapLines: &neg},
+		"min_cyclomatic":     {MinCyclomatic: &neg},
+		"max_files":          {MaxFiles: &neg},
+		"max_skeleton_lines": {MaxSkeletonLines: &neg},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Registry{PayloadEscalation: cfg}
