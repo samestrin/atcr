@@ -70,8 +70,8 @@ func TestPerFileModes_MultiModeFoldsToHighestContextDeterministically(t *testing
 // A file the GLOBAL byte budget dropped is absent from the payload perFileModes
 // reports on, so it must not appear in per_file_payload. This pins the Kept (not
 // Entries) source — it does NOT pin "what a reviewer saw": buildSlots re-sheds
-// Entries per agent, so the delivered set is neither a superset nor a subset of
-// Kept (see modePayload.Kept in review.go).
+// Entries per agent, so Kept is only an upper bound on any agent's delivered set
+// (see modePayload.Kept in review.go).
 func TestPerFileModes_BudgetDroppedFilesAreNotRecorded(t *testing.T) {
 	payloads := map[string]modePayload{
 		"diff": {

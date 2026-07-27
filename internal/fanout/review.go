@@ -1074,10 +1074,10 @@ type modePayload struct {
 	//
 	// It is NOT the set any individual agent received. buildSlots re-sheds
 	// Entries (the pre-budget list) against each model's own EffectiveByteBudget
-	// at dispatch, so a per-agent delivered set is neither a superset nor a
-	// subset of Kept: an agent with a wider window can be served a file the
-	// global budget dropped, and an agent with a narrower one can lose a file
-	// Kept retained.
+	// at dispatch. That per-agent budget is capped by the same global budget, and
+	// ApplyByteBudget's drop order is monotone in the budget, so each agent's
+	// delivered set is a SUBSET of Kept — a file listed here may have reached no
+	// reviewer at all, while one that reached a reviewer is always present.
 	Kept       []payload.FileEntry
 	Text       string
 	FileCount  int
@@ -1168,12 +1168,13 @@ func perFileModes(payloads map[string]modePayload) map[string]string {
 		// would claim an escalated mode for files the global budget dropped from
 		// the payload outright.
 		//
-		// Kept is an APPROXIMATION of the delivered set, not the delivered set
+		// Kept is an UPPER BOUND on the delivered set, not the delivered set
 		// itself — buildSlots re-sheds Entries per agent against each model's own
-		// window, so this map can name a file some agent dropped and omit one
-		// another agent saw. Narrowing it to what was actually dispatched requires
-		// the per-agent kept sets to come back out of buildSlots; that is tracked
-		// as open technical debt against this function.
+		// (globally capped) window, so this map can name an escalated file that
+		// every agent dropped. It never omits one a reviewer saw. Narrowing it to
+		// what was actually dispatched requires the per-agent kept sets to come
+		// back out of buildSlots; that is tracked as open technical debt against
+		// this function.
 		for _, e := range mp.Kept {
 			if e.Mode == "" || string(e.Mode) == mode {
 				continue
