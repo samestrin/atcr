@@ -352,3 +352,64 @@ func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--head", "HEAD", "--fresh"))
 	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh review must not touch the baseline hash index")
 }
+
+// AC 05-03 Edge Case 1: `--force` combined with `--all` is NEVER read as a --fresh
+// alias — it does not bypass the hash-skip. A changed file is reviewed; unchanged
+// files stay skipped despite --force.
+func TestReviewForce_DoesNotBypassHashSkip(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // records all
+	require.NoError(t, os.WriteFile("a.txt", []byte("one CHANGED\n"), 0o644))
+
+	// --force (no --fresh): overwrite semantics only, never a skip bypass.
+	require.Equal(t, 0, execCmd(t, "review", "--all", "--force"))
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "one CHANGED", "the changed file is reviewed")
+	assert.NotContains(t, body, "package b", "--force must NOT bypass the skip for unchanged b.go")
+	assert.NotContains(t, body, "package c", "--force must NOT bypass the skip for unchanged internal/c.go")
+}
+
+// AC 05-03 Scenario 1: `--all --fresh --force` combines both flags' orthogonal
+// effects (fresh bypasses the skip; force is a no-op on a derived id) and exits 0.
+func TestReviewAllFreshForce_CombineFreely(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // populate the index
+	require.Equal(t, 0, execCmd(t, "review", "--all", "--fresh", "--force"))
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "package b", "--fresh forces a full re-scan even alongside --force")
+	assert.Contains(t, body, "package c")
+}
+
+// AC 05-03 Edge Case 2 / Error Scenario 2: `--resume --force` still raises the
+// pre-existing mutual-exclusion usage error (exit 2), unchanged by this story.
+func TestReviewResumeForce_MutualExclusionUnchanged(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--force")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, out, "--resume and --force are mutually exclusive")
+}
+
+// AC 05-03 Scenario 2 / Edge Case 4: `--fresh --force` on a diff-range review is a
+// no-op for the hash index (no baseline index read or written) and exits 0.
+func TestReviewFreshForce_DiffModeNoOp(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
+	gitRun(t, "commit", "-aqm", "edit a.txt")
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--head", "HEAD", "--fresh", "--force"))
+	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh --force review must not touch the baseline index")
+}
