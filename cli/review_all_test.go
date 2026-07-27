@@ -305,6 +305,10 @@ func TestReviewAll_FullBaselineChain_MultiChunkMultiPersona(t *testing.T) {
 	// Zero omissions: every git ls-files tracked file is recorded in the hash index.
 	// The index write-back spans all chunks, so a missing entry means an unreviewed
 	// chunk — the exact multi-chunk coverage regression Phase 5 (task 5.2.A) guarded.
+	// This index-presence proxy implies "reviewed" because the write-back is gated to
+	// skip entirely on any unreviewed chunk (task 5.6, pinned by
+	// TestReviewAll_PartialChunkFailureSkipsIndexWrite) — a recorded entry cannot exist
+	// for a file whose chunk was not reviewed.
 	idx := payload.Load(payload.FileHashIndexPath("."), nil)
 	for _, p := range gitLsFiles(t) {
 		_, _, ok := idx.Get(p)
@@ -338,9 +342,15 @@ func TestReviewAll_FullBaselineChain_MultiChunkMultiPersona(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(body), f.File, "the baseline finding is filed into the debt store")
 
-	// Stage 4: report — md and json both render the baseline review unmodified.
-	require.Equal(t, 0, execCmd(t, "report", "--format", "md"), "report md over the baseline chain exits 0")
-	require.Equal(t, 0, execCmd(t, "report", "--format", "json"), "report json over the baseline chain exits 0")
+	// Stage 4: report — md and json both render the baseline review at exit 0, and the
+	// reconciled finding's location surfaces in each rendered body (not just an exit code),
+	// proving report reads the baseline-derived findings through the same path as diff mode.
+	mdCode, mdOut := execCmdCapture(t, "report", "--format", "md")
+	require.Equal(t, 0, mdCode, "report md over the baseline chain exits 0")
+	assert.Contains(t, mdOut, f.File, "the md report renders the baseline finding's location")
+	jsonCode, jsonOut := execCmdCapture(t, "report", "--format", "json")
+	require.Equal(t, 0, jsonCode, "report json over the baseline chain exits 0")
+	assert.Contains(t, jsonOut, f.File, "the json report renders the baseline finding's location")
 }
 
 // AC 05-02 Scenario 1: `--dir <subtree> --fresh` forces a full re-scan of the subtree
