@@ -226,6 +226,9 @@ func TestEscalationIntegration_ChurnedFileEscalatesAndRecordsMode(t *testing.T) 
 		"blocks mode renders function-context hunks — the body must match the recorded mode")
 	require.NotContains(t, entries[0].Body, fileHeaderPrefixForTest(),
 		"blocks mode must not render the whole HEAD file")
+	// NOTE: the body-shape coupling between mode and render cannot be tested on
+	// a whole-file rewrite (the -U10 and function-context renders converge to
+	// the same single hunk) — see TestEscalationIntegration_RecordedModeMatchesRenderedBody.
 }
 
 // With escalation disabled the payload is byte-identical to the pre-epic output:
@@ -515,6 +518,66 @@ func TestEscalationIntegration_DeletionHeavyRewriteEscalates(t *testing.T) {
 		"blocks mode renders function-context hunks — the body must match the recorded mode")
 	require.NotContains(t, entries[0].Body, fileHeaderPrefixForTest(),
 		"blocks mode must not render the whole HEAD file")
+	// NOTE: the body-shape coupling between mode and render cannot be tested on
+	// a whole-file rewrite (the -U10 and function-context renders converge to
+	// the same single hunk) — see TestEscalationIntegration_RecordedModeMatchesRenderedBody.
+}
+
+// The recorded Mode must describe the body the reviewer actually received —
+// the coupling the manifest's per_file_payload rests on. A whole-file rewrite
+// cannot test this (its -U10 and function-context renders converge to the
+// same single hunk), so this fixture escalates via the hunk-count signal
+// instead: four one-line edits scattered across one large function. The
+// function-context render then contains the WHOLE function while the plain
+// -U10 render holds only four narrow hunks, so the two modes are
+// distinguishable line-by-line — and rendering `mode` instead of the
+// escalated `fileMode` (the regression the churn/deletion tests cannot see)
+// fails the Contains assertion below.
+func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
+	var v1 strings.Builder
+	v1.WriteString("package p\n\nfunc Big() int {\n\ttotal := 0\n")
+	editLines := map[int]bool{5: true, 30: true, 55: true, 80: true}
+	for i := 0; i < 110; i++ {
+		if i == 67 {
+			v1.WriteString("\ttotal += 999 // MIDPOINT-UNCHANGED-MARKER\n")
+			continue
+		}
+		fmt.Fprintf(&v1, "\ttotal += %d // line-%03d\n", i, i)
+	}
+	v1.WriteString("\treturn total\n}\n")
+
+	dir := initRepo(t)
+	write(t, dir, "big.go", v1.String())
+	base := commitAll(t, dir, "v1")
+
+	v2 := strings.Split(v1.String(), "\n")
+	for i, line := range v2 {
+		if strings.Contains(line, "// line-") {
+			var n int
+			if _, err := fmt.Sscanf(line[strings.LastIndex(line, "line-"):], "line-%d", &n); err == nil && editLines[n] {
+				v2[i] = strings.Replace(line, "total += ", "total += 1000+", 1)
+			}
+		}
+	}
+	write(t, dir, "big.go", strings.Join(v2, "\n"))
+	head := commitAll(t, dir, "v2: four scattered edits")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeBlocks, entries[0].Mode,
+		"four scattered hunks escalate via the hunk-count signal")
+	require.Contains(t, entries[0].Body, "MIDPOINT-UNCHANGED-MARKER",
+		"a blocks render includes the whole enclosing function — if the builder rendered the unescalated mode, this marker (>10 lines from every edit) would be absent")
+
+	// Guard the fixture itself: the plain -U10 render must NOT contain the
+	// marker, or the fixture cannot distinguish the two modes at all.
+	plain, err := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{})).BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Len(t, plain, 1)
+	require.NotContains(t, plain[0].Body, "MIDPOINT-UNCHANGED-MARKER",
+		"fixture invariant: the -U10 render holds only narrow hunks")
 }
 
 // Pure-deletion hunks must be counted for adjacency and hunk-count purposes but
