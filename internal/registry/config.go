@@ -219,11 +219,16 @@ type VerifyConfig struct {
 // payload.go. TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes
 // together so they cannot drift.
 type PayloadEscalationConfig struct {
-	ChurnRatio    *float64 `yaml:"churn_ratio,omitempty"`    // nil = default 0.5; 0 disables
-	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 8; 0 disables
-	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 2; 0 disables
-	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 20; 0 disables
-	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
+	ChurnRatio *float64 `yaml:"churn_ratio,omitempty"` // nil = default 0.5; 0 disables
+	MinHunks   *int     `yaml:"min_hunks,omitempty"`   // nil = default 8; 0 disables
+	// HunkGapLines: nil = default 2; 0 disables. 1 is REJECTED, not honored: the
+	// signal fires on `gap < HunkGapLines`, and under --unified=0 git never emits
+	// two hunks with zero unchanged lines between them (it merges them), so a gap
+	// of 0 is unreachable and 1 would disable adjacency while reading like a
+	// deliberately tight window.
+	HunkGapLines  *int `yaml:"hunk_gap_lines,omitempty"`
+	MinCyclomatic *int `yaml:"min_cyclomatic,omitempty"` // nil = default 20; 0 disables
+	MaxFiles      *int `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
 	// MaxSkeletonLines caps declaration headers rendered per file; nil = default
 	// 60; 0 disables skeleton injection while leaving escalation active.
 	MaxSkeletonLines *int `yaml:"max_skeleton_lines,omitempty"`
@@ -724,6 +729,18 @@ func (r *Registry) validatePayloadEscalation() []error {
 		if f.val != nil && f.max > 0 && *f.val > f.max {
 			errs = append(errs, fmt.Errorf("payload_escalation.%s must be <= %d (larger values reinstate the payload bloat / memory blow-up the defaults protect against), got %d", f.name, f.max, *f.val))
 		}
+	}
+	// hunk_gap_lines: 1 is unreachable, not strict. The adjacency signal fires on
+	// `gap < hunk_gap_lines`, and git does not emit two hunks with zero unchanged
+	// lines between them under --unified=0, so gap < 1 can never hold. Accepting
+	// it would silently disable the signal while reading like the tightest
+	// possible window — the same "could never fire, so it is a silent
+	// misconfiguration rather than a stricter setting" case churn_ratio > 1 is
+	// rejected for above.
+	if pe.HunkGapLines != nil && *pe.HunkGapLines == 1 {
+		errs = append(errs, errors.New("payload_escalation.hunk_gap_lines must be 0 (disable adjacency) or >= 2: "+
+			"the signal fires on gap < hunk_gap_lines, and git never emits two hunks with zero unchanged lines "+
+			"between them under --unified=0, so 1 can never fire"))
 	}
 	return errs
 }
