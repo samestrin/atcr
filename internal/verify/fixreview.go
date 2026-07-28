@@ -67,7 +67,7 @@ func dropSmellType(res *smellResult, typ string) {
 	if res == nil || res.Summary.ByType[typ] == 0 {
 		return
 	}
-	kept := res.Smells[:0]
+	kept := make([]smell, 0, len(res.Smells))
 	for _, s := range res.Smells {
 		if s.Type != typ {
 			kept = append(kept, s)
