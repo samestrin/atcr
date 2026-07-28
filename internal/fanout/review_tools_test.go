@@ -58,6 +58,23 @@ func TestBuildFallbackAgent_InheritsLaneToolSettings(t *testing.T) {
 	assert.EqualValues(t, 8192, fb.ToolBudgetBytes)
 }
 
+// Epic 35.2 baseline coverage attributes a fallback-served slot to its PRIMARY's
+// chunkFiles tag, which is sound only because the fallback reviews the same chunk.
+// That rested on buildFallbackAgent happening to reuse primary.Prompt verbatim, with
+// nothing stating it must. Pin it: a fallback rendered from a different payload would
+// make the primary's tag vouch for files the fallback never saw, and those files would
+// be recorded then silently skipped on the next scan.
+func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
+	cfg := toolCfg()
+	primary := Agent{Prompt: "// FILE:a.go\npackage a\n", PayloadMode: "files", chunkFiles: []string{"a.go"}}
+
+	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	require.NoError(t, err)
+	assert.Equal(t, primary.Prompt, fb.Prompt,
+		"a fallback must review the SAME payload as the primary it substitutes for — baseline coverage attributes it to the primary's tag")
+	assert.Equal(t, primary.PayloadMode, fb.PayloadMode, "same payload implies the same mode")
+}
+
 // Non-tool primary yields non-tool fallback (no spurious tool enablement).
 func TestBuildFallbackAgent_NonToolPrimaryStaysNonTool(t *testing.T) {
 	cfg := toolCfg()

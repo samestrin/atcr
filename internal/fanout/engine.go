@@ -137,6 +137,11 @@ type Agent struct {
 	ReservedOutputTokens int
 	DegradationAction    string
 
+	// chunkFiles is the set of repo-relative file paths THIS agent's baseline
+	// (--all/--dir) chunk carries; nil means the slot vouches for NOTHING. See
+	// uncoveredBaselineFiles for the attribution contract and the nil polarity.
+	chunkFiles []string
+
 	// chunkMaxLines is the per-model chunk line budget (Epic 19.10 F3) this agent's
 	// payload was sized under. Unexported because it is never persisted, only folded
 	// into the diff-cache sizing token (F7) and reused by buildFallbackAgent so a
@@ -490,7 +495,14 @@ func recordRecoveredPanic(res Result, start time.Time) {
 	recordAgentOutcome(res)
 }
 
-// Run executes every slot and returns one Result per slot in input order.
+// Run executes every slot and returns one Result per slot in input order. That
+// index correspondence is LOAD-BEARING beyond diagnostics: uncoveredBaselineFiles
+// (baseline_coverage.go) attributes a failed baseline chunk to the files it carried
+// by pairing results[i] with slots[i], and the incremental hash index's correctness
+// depends on it — reordering or compacting this slice would let unreviewed files be
+// recorded as reviewed. Every assignment path below must keep results[i] aligned
+// with slots[i]; TestEngineRun_ResultsMatchSlotInputOrder pins it.
+//
 // Parallel-lane slots run concurrently via a WaitGroup; serial-lane slots run
 // sequentially in a single goroutine (ctx checked before each invocation),
 // concurrent with the parallel lane. The WaitGroup always drains — even when

@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/cache"
-	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -228,8 +227,7 @@ func TestEngine_NoCacheKeyIsNeverCached(t *testing.T) {
 // requests it serves, so a test can assert a second review made zero live calls.
 func countingProvider(t *testing.T, hits *int64) *httptest.Server {
 	t.Helper()
-	circuitbreaker.DefaultRegistry.Reset()
-	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+	resetBreakers(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(hits, 1)
 		body, _ := io.ReadAll(r.Body)

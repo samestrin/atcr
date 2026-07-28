@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,18 +83,55 @@ func initRepo(t *testing.T) (dir, base, head string) {
 	return dir, base, head
 }
 
+// resetBreakers isolates a test from process-global circuit-breaker state. The
+// breaker keys on the registry provider name ("p"), which every review test shares,
+// and lives in a process-global registry — correct for serve mode, where a provider
+// outage in one review should fail-fast the next, but in the test binary it means a
+// failing-provider test trips "p" for an unrelated later test. Every helper that
+// stands up a provider calls this, so the guard is package-wide rather than
+// per-helper: cli's isolate() does the same for its package, and internal/fanout
+// drives just as much real HTTP through llmclient.
+func resetBreakers(t *testing.T) {
+	t.Helper()
+	circuitbreaker.DefaultRegistry.Reset()
+	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+}
+
+// Every helper that stands up a provider must clear leaked breaker state, or a
+// failing-provider test opens the circuit for "p" and an unrelated later test in
+// this package fails-fast against a server that is answering fine. Order-independent
+// by construction: each subtest trips the breaker itself, then asserts the helper
+// cleared it. Adding a provider helper without the reset fails here.
+func TestProviderHelpers_ClearLeakedBreakerState(t *testing.T) {
+	const probe = "breaker-leak-probe"
+	for name, build := range map[string]func(t *testing.T){
+		"mockProvider":           func(t *testing.T) { mockProvider(t) },
+		"countingProvider":       func(t *testing.T) { var hits int64; countingProvider(t, &hits) },
+		"toolMockProvider":       func(t *testing.T) { toolMockProvider(t) },
+		"budgetTripMockProvider": func(t *testing.T) { budgetTripMockProvider(t) },
+		"mixedMockProvider":      func(t *testing.T) { mixedMockProvider(t) },
+		"retrying503Server":      func(t *testing.T) { var calls atomic.Int32; retrying503Server(t, 0, &calls) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := circuitbreaker.DefaultRegistry.Get(probe)
+			for i := 0; i < circuitbreaker.DefaultThreshold; i++ {
+				b.RecordFailure()
+			}
+			require.False(t, b.Allow(), "the probe breaker must be open before the helper runs")
+
+			build(t)
+
+			assert.True(t, circuitbreaker.DefaultRegistry.Get(probe).Allow(),
+				"%s must reset the process-global breaker registry, or state leaks into later tests", name)
+		})
+	}
+}
+
 // mockProvider returns an httptest server speaking the OpenAI chat-completions
 // shape. It returns 500 for any model in failModels, else a findings payload.
 func mockProvider(t *testing.T, failModels ...string) *httptest.Server {
 	t.Helper()
-	// The circuit breaker keys on the registry provider name ("p"), which every
-	// review test shares, and lives in a process-global registry (correct for
-	// serve mode, where a provider outage in one review should fail-fast the next).
-	// In the test binary that global is shared across tests, so a failing-provider
-	// test would trip "p" for an unrelated later test. Isolate per test: start
-	// clean and reset on cleanup.
-	circuitbreaker.DefaultRegistry.Reset()
-	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+	resetBreakers(t)
 	fail := map[string]bool{}
 	for _, m := range failModels {
 		fail[m] = true

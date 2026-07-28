@@ -1,3 +1,26 @@
+## [35.2.0] - 2026-07-27
+
+Makes the baseline (`--all`/`--dir`) file-hash-index write-back resilient to partial chunk failure. Previously a single failed chunk out of as many as 64 discarded the entire run's index update, so every successfully-reviewed file was re-scanned on the next baseline run. The write-back now records the files covered by the chunks that succeeded and excludes only the genuinely uncovered ones, so the next scan re-reviews just those. The safety direction is unchanged: an uncovered file is always re-reviewed, never silently skipped.
+
+### Changed
+
+- A baseline run with a partially-failed chunk set now persists the hash entries for the files in the succeeded chunks instead of skipping the write-back entirely. The next `--all`/`--dir` re-reviews only the uncovered files.
+- Coverage is unioned across personas: because each persona partitions the repository against its own model window, a file counts as reviewed once any succeeded chunk carried it. This matches what the previous gate already did for a wholly-failed persona, so no file that was recorded before is dropped now.
+- The resume path's write-back gate (TD-011) and the fresh path's are now the same function rather than two byte-for-byte copies, so they can no longer drift.
+- The partial-coverage warning now states an upper bound on what is recorded rather than announcing a write that may not happen.
+
+### Fixed
+
+- A run whose every chunk failed writes no index at all, including no self-trim, so a zero-coverage scan can never leave a partially-written index behind.
+
+### Notes
+
+- A run with zero unreviewed chunks behaves exactly as before: full write-back, self-trim semantics unchanged.
+- Chunk coverage is attributed inside the engine before per-chunk results are merged, because the merge collapses per-chunk outcomes into a bare count. No exported type gained a field, so `status.json`/`summary.json` and MCP consumers are unaffected; `unreviewed_chunks` keeps its exact meaning.
+- Slots that cannot be attributed to a file set (the `review_strategy: chunked` fan-out over a payload carrying diff markers) vouch for no coverage, so such a run falls back to re-review rather than risking a skip.
+
+*Shipped via /execute-epic (epic 35.2)*
+
 ## [35.1.0] - 2026-07-27
 
 Makes the payload mode a floor rather than a ceiling: the payload builder now promotes individual files above the configured mode when their change is structurally confusing, and prepends an AST skeleton of the file at `head` so reviewers reason from the final architecture instead of mentally replaying a multi-commit patch. Targets the "mental patch application" hallucination, where a reviewer reconstructs a superseded intermediate state from a net diff, without paying whole-repository `--payload files` token costs for simple changes.

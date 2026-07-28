@@ -180,6 +180,61 @@ func prFromGitHubRef(ref string) int {
 	return n
 }
 
+// commitBaselineWriteback persists the baseline (--all/--dir) incremental
+// file-hash index after a completed run, so the NEXT run can skip files whose
+// content has not changed (Sprint 35.0 Story 4/5). No-op for a diff-range review.
+//
+// This is the single implementation of the write-back gate, shared by the fresh
+// (runReview) and resumed (runResume) paths so the two cannot drift.
+//
+// Gated on Succeeded > 0 so a run where every agent failed does not record its
+// files as "reviewed" (which would wrongly skip them forever). Partial chunk
+// coverage does NOT discard the write-back (Epic 35.2 / TD-013; pre-35.2 one
+// failed chunk of up to 64 threw away every successfully-reviewed file's hash):
+// CommitBaselineIndex records only the files covered by SUCCEEDED chunks and
+// excludes the failed chunks' files, so the next run re-reviews the uncovered
+// ones — or the whole repository when coverage was zero and nothing was
+// recorded. The uncovered set is attributed inside the engine (runEngine,
+// pre-merge) because Summary collapses per-chunk outcomes into a bare count.
+// Still fail-open: an uncovered file is re-scanned, never silently skipped.
+//
+// The coverage log is driven by prep.BaselineCoverage — what the write-back
+// ACTUALLY recorded — and deliberately NOT by Summary.UnreviewedChunks.
+// mergeResultGroup sets that field only for a persona with a MIX of succeeded and
+// failed chunks (internal/fanout/chunker.go), so a persona that failed WHOLLY
+// contributes 0 and a run can record nothing at all while the summary reads clean.
+// Keying the operator signal off it left exactly that run silent.
+//
+// An index-write failure is logged, never fatal (AC 04-01 ES1). The
+// cancelled-context early return enforces the interrupt precondition: the
+// write-back never fires on a cancelled run.
+func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.PreparedReview, result *fanout.ReviewResult) {
+	if !baseline || prep == nil || result == nil || result.Summary.Succeeded == 0 {
+		return
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return
+	}
+	if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
+		log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
+	}
+	recorded, excluded := prep.BaselineCoverage()
+	switch {
+	case recorded == 0 && excluded > 0:
+		// Nothing was covered: CommitBaselineIndex skipped the write entirely, so the
+		// index is frozen at its prior state and the next scan re-reads the whole
+		// scope. Without this line that outcome is indistinguishable from a clean run.
+		log.FromContext(ctx).Warn("baseline scan: no file was covered by a succeeded chunk, so the file-hash index was left untouched and the next run re-scans the whole scope",
+			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+	case excluded > 0:
+		log.FromContext(ctx).Warn("baseline scan: partial coverage; only the files covered by succeeded chunks were recorded, so the next run re-scans the rest",
+			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+	default:
+		log.FromContext(ctx).Debug("baseline scan: file-hash index updated",
+			"recorded_files", recorded, "excluded_files", excluded)
+	}
+}
+
 // runReview resolves the range, loads config, and runs the full review flow.
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
@@ -496,30 +551,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
-	// Baseline (--all/--dir) incremental re-scan write-back (Sprint 35.0 Story 4/5):
-	// once a baseline review reaches a completed state with at least one agent
-	// succeeding, persist the file-hash index (built at prepare time from the files
-	// actually reviewed) so the NEXT run can skip files whose content has not changed.
-	// Gated on Succeeded > 0 so a run where every agent failed does not record its
-	// files as "reviewed" (which would wrongly skip them forever). Also gated on
-	// UnreviewedChunks == 0: the baseline write-back records EVERY reviewed file
-	// (Sprint 35.0 task 5.3), which is correct only when every dispatched chunk
-	// actually succeeded. If any chunk failed under an otherwise-OK persona
-	// (result.Summary.Partial can be false in that case — see the artifacts.go
-	// partial-coverage caveat), some files went unreviewed; recording them would
-	// silently skip them on the next run. Skip the whole write-back then and let the
-	// next run do a full re-scan (fail-open toward re-review, never toward skip)
-	// [5.5.A MEDIUM]. An index-write failure is logged, never fatal (AC 04-01 ES1).
 	// The interrupt path returned above, so this never fires on a cancelled run.
-	switch {
-	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
-		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
-			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
-		}
-	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
-		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
-			"unreviewed_chunks", result.Summary.UnreviewedChunks)
-	}
+	commitBaselineWriteback(ctx, baseline, prep, result)
 
 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
 	// plus duration, agent outcome, API calls, and findings. Both are emitted before

@@ -304,21 +304,14 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// TD-011: a resumed BASELINE run persists the incremental file-hash index on
 	// successful completion, mirroring the fresh runReview write-back gate so the
-	// next --all/--dir skips unchanged files instead of re-scanning everything.
-	// Same safety rules as the fresh path: gated on at least one success (an
-	// all-failed run records nothing) and on zero unreviewed chunks (a partially
-	// covered run skips the write so uncovered files are re-scanned, never
-	// silently skipped). A write failure is logged, never fatal; the interrupt
-	// path returned above, so this never fires on a cancelled run.
-	switch {
-	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
-		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
-			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
-		}
-	case m.Baseline && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
-		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
-			"unreviewed_chunks", result.Summary.UnreviewedChunks)
-	}
+	// next --all/--dir skips unchanged files instead of re-scanning everything. The
+	// gate is now literally the same function both paths call, so the two can no
+	// longer drift (which is what TD-011 was raised for). One resume-specific note:
+	// the resume attributes coverage only from the slots IT dispatched (the pending
+	// personas), so a file a previously-completed persona reviewed may still be
+	// re-scanned — deliberate fail-open, documented at the runEngine seam.
+	// The interrupt path returned above, so this never fires on a cancelled run.
+	commitBaselineWriteback(ctx, m.Baseline, prep, result)
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).

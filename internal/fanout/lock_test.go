@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -103,8 +102,7 @@ func TestReviewPath_FallbackModelIsLockNotBinding(t *testing.T) {
 // value — and no request path may be catalog-shaped.
 func TestReviewPath_ZeroCatalogEndpointToResolveModel(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
-	circuitbreaker.DefaultRegistry.Reset()
-	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+	resetBreakers(t)
 
 	var (
 		mu     sync.Mutex

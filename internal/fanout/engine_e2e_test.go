@@ -67,6 +67,7 @@ func initToolRepo(t *testing.T) (dir, base, head string) {
 // findings message that cites the evidence read.
 func toolMockProvider(t *testing.T) *httptest.Server {
 	t.Helper()
+	resetBreakers(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
@@ -226,6 +227,7 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 // final-answer request (no tools) — so a small max_turns trips mid-exploration.
 func budgetTripMockProvider(t *testing.T) *httptest.Server {
 	t.Helper()
+	resetBreakers(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
@@ -294,6 +296,7 @@ func TestExecuteReview_BudgetTripRecordedInStatusAndPartialFindings(t *testing.T
 // agent's second turn, or a single-shot completion) yields a final finding.
 func mixedMockProvider(t *testing.T) *httptest.Server {
 	t.Helper()
+	resetBreakers(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {

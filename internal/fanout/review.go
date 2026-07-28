@@ -250,6 +250,36 @@ type baselineWriteback struct {
 	reviewed  map[string]string      // path -> review-time sha256 of files ACTUALLY in the payload
 	tracked   []string               // full in-scope tracked set, for self-trim on a whole-repo run
 	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
+	// uncovered is the subset of reviewed whose chunk FAILED, so those files went
+	// unreviewed and must NOT be recorded (Epic 35.2 / TD-013). Stamped by runEngine
+	// from the raw pre-merge results, after which chunk identity is unrecoverable.
+	// nil (the default) means full coverage — every reviewed file is recorded, which
+	// is the pre-35.2 behavior and the path a resume/direct caller that never runs
+	// the engine keeps.
+	uncovered map[string]struct{}
+	// lastRecorded/lastExcluded are the outcome of the most recent
+	// CommitBaselineIndex call, surfaced to the caller through BaselineCoverage so
+	// the operator-facing log line can state what the write-back ACTUALLY did
+	// instead of inferring it from Summary.UnreviewedChunks (Epic 35.2 TD).
+	lastRecorded int
+	lastExcluded int
+}
+
+// BaselineCoverage reports what the most recent CommitBaselineIndex call did:
+// how many reviewed files it recorded in the incremental index, and how many it
+// excluded because the chunk carrying them failed. Both are 0 before the first
+// commit and for a diff-range review (no baseline state).
+//
+// This is the coverage signal callers must log against — NOT
+// ReviewResult.Summary.UnreviewedChunks, which mergeResultGroup sets only for a
+// persona with a MIX of succeeded and failed chunks (internal/fanout/chunker.go).
+// A WHOLLY failed persona contributes 0 to that count, so a run can record
+// nothing at all while UnreviewedChunks reads 0.
+func (p *PreparedReview) BaselineCoverage() (recorded, excluded int) {
+	if p == nil || p.baseline == nil {
+		return 0, 0
+	}
+	return p.baseline.lastRecorded, p.baseline.lastExcluded
 }
 
 // CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
@@ -262,13 +292,40 @@ type baselineWriteback struct {
 // out-of-scope entries recorded by a prior --all run. Returns any write error for the
 // caller to log; an index-write failure must never fail an otherwise-successful
 // review (AC 04-01 Error Scenario 1).
+//
+// Partial chunk coverage (Epic 35.2 / TD-013): files whose chunk FAILED are excluded
+// via p.baseline.uncovered (stamped by runEngine from the raw pre-merge results), so a
+// run where some chunks failed still persists the SUCCEEDED chunks' files and the next
+// scan re-reviews only the genuinely uncovered ones. Before 35.2 the caller discarded
+// the entire write-back on any unreviewed chunk, re-scanning the whole repository. The
+// write is skipped outright only when coverage is zero.
 func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 	if p == nil || p.baseline == nil {
 		return nil
 	}
 	b := p.baseline
+	recorded, excluded := 0, 0
+	defer func() { b.lastRecorded, b.lastExcluded = recorded, excluded }()
 	for path, hash := range b.reviewed {
+		// Epic 35.2 / TD-013: skip the files whose chunk FAILED. They were dispatched
+		// but never reviewed, so recording them would make the next scan skip them
+		// though unreviewed — the one outcome this index must never produce. b.uncovered
+		// is nil for a fully-covered run (and for a caller that never ran the engine),
+		// which keeps this loop byte-identical to the pre-35.2 record-everything pass.
+		if _, uncovered := b.uncovered[path]; uncovered {
+			excluded++
+			continue
+		}
 		b.preIndex.Record(path, hash, runID)
+		recorded++
+	}
+	// Zero coverage → write NOTHING, not even the self-trim (Epic 35.2 AC3). Every
+	// chunk failed, so there is no reviewed state to persist; saving here would emit a
+	// trimmed-but-empty index that the next scan would read as authoritative. Skipping
+	// the write leaves the prior index untouched and the next run does a full re-scan
+	// — fail-open toward re-review, mirroring the caller's own Succeeded > 0 guard.
+	if recorded == 0 && len(b.reviewed) > 0 {
+		return nil
 	}
 	// The whole-repo test normalizes through payload.NormalizeScope — the SAME
 	// helper filterByScope/TrackedInScope use — so a non-CLI caller's raw scope
@@ -924,6 +981,20 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
+	// Baseline partial-coverage attribution — MUST run before mergeChunkResults below,
+	// which discards chunk identity for good. No-op for a diff-range review.
+	//
+	// RESUME INVARIANT (do not "optimize" this): a resume dispatches only the PENDING
+	// personas, so a completed persona's file is still reported uncovered when a
+	// pending chunk carrying it fails. Relaxing that over-exclusion from the on-disk
+	// agent statuses is UNSOUND — a resume rebuilds the FULL superset payload, so a
+	// completed persona's clean record only proves it covered the original
+	// hash-skipped subset. Pinned by
+	// TestUncoveredBaselineFiles_ResumePartialSlotSetStaysFailOpen.
+	if p.baseline != nil {
+		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
+	}
+
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
 	// back as N results under the same Agent name; collapse them into one result
 	// per persona BEFORE any downstream step so stage classification, the summary
@@ -1346,6 +1417,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		return fbs, nil
 	}
 
+	// wholePayloadPaths memoizes, per payload mode, the coverage tag for a baseline
+	// bulk slot that ships the WHOLE payload. Every such persona gets an identical list
+	// by construction, so they share one slice instead of each retaining a copy:
+	// PreparedReview.Slots outlives the fan-out until CommitBaselineIndex, so an
+	// 8-persona roster over a 20k-file monorepo would otherwise hold eight independent
+	// 20k-element string slices for the entire review. A persona whose per-agent budget
+	// SHED files never shares it — its tag must name only what it actually shipped.
+	// The shared slice is read-only (uncoveredBaselineFiles only ranges over it).
+	wholePayloadPaths := map[string][]string{}
+
 	add := func(name string, serial bool) error {
 		ac, ok := cfg.Registry.Agents[name]
 		if !ok {
@@ -1490,8 +1571,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 					for _, ck := range chunks {
 						var pb strings.Builder
+						chunkFiles := make([]string, 0, len(ck))
 						for _, e := range ck {
 							pb.WriteString(e.Body)
+							chunkFiles = append(chunkFiles, e.Path)
 						}
 						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
 						// event decided upstream, not a per-chunk property (mirrors the chunked path).
@@ -1499,6 +1582,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if rerr != nil {
 							return rerr
 						}
+						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
+						// Tagged HERE — at capChunks output, after tail-coalescing — so the
+						// identity matches the slot actually dispatched. runEngine reads it
+						// pre-merge to attribute a failed chunk to its files, so a partially
+						// failed baseline run records the succeeded chunks' files instead of
+						// discarding the whole write-back. Only the Primary is tagged: the
+						// attribution reads the slot's Primary, and a fallback reviews the SAME
+						// chunk as the primary it substitutes for.
+						primary.chunkFiles = chunkFiles
 						fbs, cerr := buildChain(name, primary)
 						if cerr != nil {
 							return cerr
@@ -1520,7 +1612,22 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// consensus filter still counts the persona once. A run that yields a
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
-		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
+		//
+		// A BASELINE run never enters this branch (Epic 35.2 TD). Its partitioning is
+		// owned by the baseline branch above, which splits by FILE against this agent's
+		// own byte budget and tags each slot with the files it carries. chunkDiff splits
+		// by TEXT instead, on column-0 diff markers — which a files-mode baseline payload
+		// really can carry, since tracked content such as a *.patch fixture holds literal
+		// `diff --git` lines. The resulting slots are not file-attributable: the markers
+		// inside a patch fixture name the patch's OWN targets, not the repo paths being
+		// reviewed, so any tag recovered from the chunk text would vouch for the wrong
+		// files. Untagged slots in turn vouch for nothing, so a single failure collapsed
+		// coverage to zero and the write-back degraded to the pre-35.2 discard-everything
+		// behavior on this configuration. Reaching here as a baseline means the byte
+		// partition already yielded ONE chunk — the payload fits this model's window —
+		// so falling straight through to the bulk path costs no coverage and keeps the
+		// slot exactly attributable.
+		if cfg.Settings.ReviewStrategy == reviewStrategyChunked && !baseline {
 			// A payload with no `diff --git` markers (a whole-file files-mode payload)
 			// has nothing for chunked bin-packing — which targets diff hunks — to split
 			// on, so the strategy is a no-op for it. Warn once so the operator knows.
@@ -1672,6 +1779,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
 			}
 		}
+		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
+		// which is what the no-shed and AllDropped arms genuinely dispatch — and is
+		// narrowed to the kept subset when the per-agent budget sheds files. The
+		// baseline coverage tag below reads it, so the tag can never name a file the
+		// rendered prompt does not contain.
+		bulkEntries := mp.Entries
+		bulkShed := false
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			// PreferEscalated, not the plain pass: escalating a file to a
 			// higher-context mode makes it the largest entry, so plain largest-first
@@ -1722,6 +1836,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					pb.WriteString(e.Body)
 				}
 				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+				// Shed only when a file was actually dropped: a no-op budget pass returns
+				// the same entry set, and that persona can still share the whole-payload tag.
+				bulkEntries, bulkShed = kept, len(kept) != len(mp.Entries)
 				// The per-agent shed dropped files to fit this model's window — a lossy
 				// degradation. Record it as the diagnosability degradation_action (F8).
 				if trunc.Truncated {
@@ -1737,6 +1854,35 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
 		if err != nil {
 			return err
+		}
+		// Epic 35.2 / TD-013: a BASELINE run reaching the bulk path has exactly one slot
+		// for this persona covering the whole payload, so tag it with every entry the
+		// write-back could record. Without the tag the slot would contribute no coverage
+		// (the deliberate fail-open default for untagged slots — see
+		// uncoveredBaselineFiles) and a single-chunk baseline scan whose sibling persona
+		// failed would needlessly re-review everything.
+		//
+		// The tag names bulkEntries — what this slot actually SHIPS — not the pre-shed
+		// mp.Entries. Coverage is a UNION across personas, so an over-tagged succeeded
+		// slot would vouch for files a sibling persona's failed chunk never reviewed,
+		// and those files would be recorded and then silently skipped next scan.
+		//
+		// The over-tag is unreachable today only because chunkBudget (the baseline
+		// partition budget) and appliedBudget (the per-agent shed budget) are two
+		// independently-written copies of the same arithmetic, so reaching this path
+		// implies no shed can occur. Nothing enforces that coupling, so the tag is taken
+		// from the shipped set rather than resting on it.
+		if baseline {
+			if bulkShed {
+				primary.chunkFiles = entryPaths(bulkEntries)
+			} else {
+				shared, ok := wholePayloadPaths[mode]
+				if !ok {
+					shared = entryPaths(mp.Entries)
+					wholePayloadPaths[mode] = shared
+				}
+				primary.chunkFiles = shared
+			}
 		}
 		fbs, err := buildChain(name, primary)
 		if err != nil {
@@ -1856,6 +2002,16 @@ func codeContextFor(mode, payloadText string) []hookobs.CodeRef {
 		refs[i] = hookobs.CodeRef{Path: e.Path, Body: e.Body}
 	}
 	return refs
+}
+
+// entryPaths returns the Path of every entry, in order — the coverage tag shape a
+// baseline slot carries.
+func entryPaths(entries []payload.FileEntry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
+	return paths
 }
 
 // renderAgent builds a fully-rendered review Agent for `name` over an explicit
