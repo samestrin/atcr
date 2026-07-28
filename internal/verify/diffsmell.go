@@ -28,6 +28,11 @@ package verify
 //     HARD `test_skipped` smell. Upstream has no skip detector, so adding a skip
 //     alongside any implementation change scored `clean` — the cheapest way there
 //     is to make a failing test pass.
+//   - A test file renamed to a non-test path raises the new HARD
+//     `test_renamed_away` smell. Upstream records only the b/ side of the
+//     `diff --git` header, so `foo_test.go` -> `foo_disabled.go` scored clean AND
+//     counted the result as an implementation file, suppressing `test_only` for
+//     everything else in the same diff.
 //   - Assertions replaced one-for-one raise a SOFT `weakened_assertion`. Upstream
 //     only fires on a net LOSS, so swapping a strong assertion for a weak one
 //     scored clean.
