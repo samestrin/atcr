@@ -31,7 +31,7 @@ Two independent signals are scored per file:
 
 The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below. It is measured **per function**, not summed across the file — a long file of simple functions is not complex, and thresholding on a whole-file total would escalate almost every real source file. It is also scoped to the functions the diff **touched**: a one-line edit to a trivial helper does not escalate because some unrelated function elsewhere in the file is branchy.
 
-These defaults were tuned against a measured replay of real history rather than chosen by feel. Over the repo's last 40 commits (527 changed files, 400 of them Go) they promote **21.5% of changed Go files** at a cost of **+36% payload bytes** over the configured mode — escalation stays the exception it is meant to be. The measurement harness lives in `internal/payload/escalation_replay_test.go` and is opt-in:
+These defaults were tuned against a measured replay of real history rather than chosen by feel, and they ship with an explicit acceptance target: **15–25% of changed Go files promoted, at ≤ +40% payload bytes** over the configured mode. Over the repo's last 40 commits (400 changed Go files) they measure **21.5% promoted at +34% bytes**, down from 37.0% / +48% before tuning — escalation stays the exception it is meant to be. The measurement harness lives in `internal/payload/escalation_replay_test.go` and is opt-in:
 
 ```bash
 ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \

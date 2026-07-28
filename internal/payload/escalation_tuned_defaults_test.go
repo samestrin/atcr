@@ -88,6 +88,16 @@ func TestTunedDefaults_FourScatteredHunksStayInDiff(t *testing.T) {
 	require.Equal(t, ModeDiff, got, "4 scattered hunks must no longer promote")
 }
 
+// TestTunedDefaults_SevenScatteredHunksStayInDiff pins the exact boundary. The
+// four-hunk and eight-hunk cases alone would still pass if a future edit moved
+// the effective threshold by one, so the fixture immediately below the line is
+// what actually holds min_hunks at 8.
+func TestTunedDefaults_SevenScatteredHunksStayInDiff(t *testing.T) {
+	edited := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true}
+	got := fixtureMode(t, scatteredFile(16, nil), scatteredFile(16, edited))
+	require.Equal(t, ModeDiff, got, "7 scattered hunks is one below the threshold and must not promote")
+}
+
 // TestTunedDefaults_EightScatteredHunksStillPromote is the counterweight: the
 // tuning damps the signal, it does not disable it. Eight separate edit sites in
 // one file is genuinely scattered.
@@ -141,6 +151,21 @@ func Tight(n int) int {
 func TestTunedDefaults_ModeratelyBranchyChangeStaysInDiff(t *testing.T) {
 	got := fixtureMode(t, branchyFunc(16, 0), branchyFunc(16, 5))
 	require.Equal(t, ModeDiff, got, "a changed function at McCabe 17 must no longer promote")
+}
+
+// TestTunedDefaults_JustBelowCyclomaticThresholdStaysInDiff pins the exact
+// complexity boundary, for the same reason the seven-hunk fixture exists: a
+// threshold is only held by the case immediately below it.
+func TestTunedDefaults_JustBelowCyclomaticThresholdStaysInDiff(t *testing.T) {
+	got := fixtureMode(t, branchyFunc(18, 0), branchyFunc(18, 5))
+	require.Equal(t, ModeDiff, got, "a changed function at McCabe 19 is one below the threshold and must not promote")
+}
+
+// TestTunedDefaults_AtCyclomaticThresholdPromotes pins the firing side of the
+// same boundary: McCabe 20 is exactly the floor, and `>=` must include it.
+func TestTunedDefaults_AtCyclomaticThresholdPromotes(t *testing.T) {
+	got := fixtureMode(t, branchyFunc(19, 0), branchyFunc(19, 5))
+	require.Equal(t, ModeBlocks, got, "a changed function at McCabe 20 is at the threshold and must promote")
 }
 
 // TestTunedDefaults_VeryBranchyChangeStillPromotes is the complexity

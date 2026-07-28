@@ -39,6 +39,28 @@ type replayStats struct {
 	promoted int
 	toBlocks int
 	toFiles  int
+
+	// baseBytes/escalatedBytes are the rendered payload sizes for THIS
+	// population, so a Go-only byte delta is never reported against an
+	// all-files byte total.
+	baseBytes      int
+	escalatedBytes int
+}
+
+// addBytes folds one file's rendered sizes in.
+func (r *replayStats) addBytes(base, escalated int) {
+	r.baseBytes += base
+	r.escalatedBytes += escalated
+}
+
+// byteDelta is the percentage increase in payload bytes escalation caused over
+// this population. This is the figure the AC3 band is anchored to: a bare
+// promotion percentage says nothing about what an operator actually pays.
+func (r *replayStats) byteDelta() float64 {
+	if r.baseBytes <= 0 {
+		return 0
+	}
+	return float64(r.escalatedBytes-r.baseBytes) / float64(r.baseBytes) * 100
 }
 
 // record measures one changed file against cfg and folds the outcome in. The
@@ -131,7 +153,7 @@ func TestReplayStats_RatesAndAttribution(t *testing.T) {
 
 	require.InDelta(t, 80.0, r.promotionRate(), 0.001)
 	require.InDelta(t, 40.0, r.signalRate(sigChurn), 0.001, "A and C")
-	require.InDelta(t, 0.0, r.signalRate(sigHunkCount), 0.001, "no file reaches 4 hunks")
+	require.InDelta(t, 0.0, r.signalRate(sigHunkCount), 0.001, "no file reaches the min-hunks threshold")
 	require.InDelta(t, 20.0, r.signalRate(sigAdjacency), 0.001, "E only")
 	require.InDelta(t, 40.0, r.signalRate(sigComplexity), 0.001, "B and C")
 }
@@ -193,14 +215,23 @@ func replayRepoRoot(t *testing.T) (string, bool) {
 	}
 }
 
-// replayCommits lists up to window commit SHAs reachable from ref, newest
-// first. --end-of-options stops an env-supplied ref beginning with '-' from
-// being read as a git option, the same guard verifyRef applies in diff.go.
-func replayCommits(t *testing.T, root, ref string, window int) []string {
+// replayCommits lists up to window single-parent commit SHAs reachable from
+// ref, newest first. --end-of-options stops an env-supplied ref beginning with
+// '-' from being read as a git option, the same guard verifyRef applies in
+// diff.go.
+//
+// --no-merges is load-bearing, not tidiness: the harness measures each commit
+// as parent..commit, and for a merge commit that first-parent range is the
+// WHOLE merged branch — every file in it would be counted a second time, once
+// here and once in the individual commits, skewing both the rate and the byte
+// delta. This repo squash-merges so its history is merge-free, but the harness
+// is documented for general use.
+func replayCommits(t *testing.T, root, ref string, window int) ([]string, error) {
 	t.Helper()
-	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "-n", strconv.Itoa(window), "--end-of-options", ref).Output()
+	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "--no-merges",
+		"-n", strconv.Itoa(window), "--end-of-options", ref).Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var shas []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -208,30 +239,19 @@ func replayCommits(t *testing.T, root, ref string, window int) []string {
 			shas = append(shas, line)
 		}
 	}
-	return shas
+	return shas, nil
 }
 
-// replayReport is one measured window: the all-files and Go-only rates plus the
-// payload-byte delta escalation costs over the configured mode.
+// replayReport is one measured window: the all-files and Go-only populations,
+// each carrying its own rates and payload-byte delta.
 type replayReport struct {
 	all      replayStats
 	goOnly   replayStats
+	walked   int // commits the window walked
 	degraded int // commits whose change set exceeded MaxFiles, so nothing escalated
 	skipped  int // files analyzeFile declined to measure (binary, deleted, unreadable)
-
-	baseBytes      int // payload bytes at the configured mode
-	escalatedBytes int // payload bytes after promotion
-}
-
-// byteDelta is the percentage increase in payload bytes escalation caused. This
-// is the figure the AC3 band is anchored to: a bare promotion percentage says
-// nothing about what an operator actually pays, and the source TD quoted +27%
-// bytes alongside its 59% file rate.
-func (r replayReport) byteDelta() float64 {
-	if r.baseBytes <= 0 {
-		return 0
-	}
-	return float64(r.escalatedBytes-r.baseBytes) / float64(r.baseBytes) * 100
+	unbilled int // files whose payload render failed, so they carry no byte measurement
+	errored  int // commits whose change-set lookup failed outright
 }
 
 // TestEscalationReplay_MeasureRepoHistory is the AC1 measurement harness: it
@@ -249,24 +269,37 @@ func TestEscalationReplay_MeasureRepoHistory(t *testing.T) {
 		t.Skipf("replay measurement is opt-in: set %s=1 (window %s, ref %s)",
 			replayEnableEnv, replayCommitsEnv, replayRefEnv)
 	}
-	root, ok := replayRepoRoot(t)
-	if !ok {
-		t.Skip("replay measurement needs a git work tree")
-	}
-	ref := os.Getenv(replayRefEnv)
-	if ref == "" {
-		ref = "HEAD"
-	}
-	window := replayWindow(t)
-	shas := replayCommits(t, root, ref, window)
-	if len(shas) == 0 {
-		t.Skipf("replay measurement found no commits at %s (shallow clone?)", ref)
-	}
+	root, ref, window, shas := replaySetup(t)
 
 	cfg := DefaultEscalationConfig()
 	rep := replayEvaluate(t, root, cfg, shas)
 
 	logReplayReport(t, ref, window, cfg, rep)
+}
+
+// replaySetup resolves the work tree, ref, window and commit list shared by the
+// measurement and the sweep, skipping (never failing) when history is
+// unavailable. A git error is reported verbatim so a typo'd ref does not read
+// as "shallow clone".
+func replaySetup(t *testing.T) (root, ref string, window int, shas []string) {
+	t.Helper()
+	root, ok := replayRepoRoot(t)
+	if !ok {
+		t.Skip("replay measurement needs a git work tree")
+	}
+	ref = os.Getenv(replayRefEnv)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	window = replayWindow(t)
+	shas, err := replayCommits(t, root, ref, window)
+	if err != nil {
+		t.Skipf("replay measurement could not list commits at %s: %v", ref, err)
+	}
+	if len(shas) == 0 {
+		t.Skipf("replay measurement found no commits at %s (shallow clone?)", ref)
+	}
+	return root, ref, window, shas
 }
 
 // TestEscalationReplay_SweepCandidateThresholds reports what each candidate
@@ -279,43 +312,39 @@ func TestEscalationReplay_SweepCandidateThresholds(t *testing.T) {
 	if os.Getenv(replayEnableEnv) == "" {
 		t.Skipf("threshold sweep is opt-in: set %s=1", replayEnableEnv)
 	}
-	root, ok := replayRepoRoot(t)
-	if !ok {
-		t.Skip("threshold sweep needs a git work tree")
-	}
-	ref := os.Getenv(replayRefEnv)
-	if ref == "" {
-		ref = "HEAD"
-	}
-	shas := replayCommits(t, root, ref, replayWindow(t))
-	if len(shas) == 0 {
-		t.Skipf("threshold sweep found no commits at %s (shallow clone?)", ref)
-	}
+	root, _, _, shas := replaySetup(t)
 
-	base := DefaultEscalationConfig()
+	// Candidates are built from an EXPLICIT pre-tuning baseline, not from
+	// DefaultEscalationConfig(): the shipped defaults are themselves an output of
+	// this sweep, so rooting the candidates on them would silently re-label every
+	// row the next time a default moves.
+	preTuning := DefaultEscalationConfig()
+	preTuning.MinHunks = 4
+	preTuning.HunkGapLines = 10
+	preTuning.MinCyclomatic = 15
+
 	for _, c := range []struct {
 		label string
 		cfg   EscalationConfig
 	}{
-		{"shipped defaults", base},
-		{"hunk_gap 3", withHunkGap(base, 3)},
-		{"hunk_gap 2", withHunkGap(base, 2)},
-		{"hunk_gap 1", withHunkGap(base, 1)},
-		{"hunk_gap 0 (adjacency off)", withHunkGap(base, 0)},
-		{"hunk_gap 3 + min_hunks 6", withMinHunks(withHunkGap(base, 3), 6)},
-		{"hunk_gap 2 + min_hunks 6", withMinHunks(withHunkGap(base, 2), 6)},
-		{"min_hunks 8 only", withMinHunks(base, 8)},
-		{"gap 2 + hunks 8", withMinHunks(withHunkGap(base, 2), 8)},
-		{"gap 2 + hunks 8 + cyclo 20", withCyclo(withMinHunks(withHunkGap(base, 2), 8), 20)},
-		{"gap 2 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(base, 2), 10), 25)},
-		{"gap 0 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(base, 0), 10), 25)},
+		{"pre-tuning (35.1 defaults)", preTuning},
+		{"gap 3", withHunkGap(preTuning, 3)},
+		{"gap 2", withHunkGap(preTuning, 2)},
+		{"gap 0 (adjacency off)", withHunkGap(preTuning, 0)},
+		{"gap 3 + hunks 8", withMinHunks(withHunkGap(preTuning, 3), 8)},
+		{"gap 2 + hunks 8", withMinHunks(withHunkGap(preTuning, 2), 8)},
+		{"gap 3 + hunks 8 + cyclo 20", withCyclo(withMinHunks(withHunkGap(preTuning, 3), 8), 20)},
+		{"gap 2 + hunks 8 + cyclo 20", withCyclo(withMinHunks(withHunkGap(preTuning, 2), 8), 20)},
+		{"gap 2 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(preTuning, 2), 10), 25)},
+		{"gap 0 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(preTuning, 0), 10), 25)},
+		{"SHIPPED defaults", DefaultEscalationConfig()},
 	} {
 		rep := replayEvaluate(t, root, c.cfg, shas)
-		t.Logf("candidate %-28s go_files=%d promoted=%.1f%% churn=%.1f%% hunks=%.1f%% adj=%.1f%% cyclo=%.1f%% bytes=%+.1f%%",
+		t.Logf("candidate %-28s go_files=%d promoted=%.1f%% churn=%.1f%% hunks=%.1f%% adj=%.1f%% cyclo=%.1f%% go_bytes=%+.1f%%",
 			c.label, rep.goOnly.files, rep.goOnly.promotionRate(),
 			rep.goOnly.signalRate(sigChurn), rep.goOnly.signalRate(sigHunkCount),
 			rep.goOnly.signalRate(sigAdjacency), rep.goOnly.signalRate(sigComplexity),
-			rep.byteDelta())
+			rep.goOnly.byteDelta())
 	}
 }
 
@@ -346,13 +375,20 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", parent+"^{commit}").Run(); err != nil {
 			continue // root commit, or the shallow-clone boundary
 		}
+		rep.walked++
 		g := &gitRunner{ctx: ctx, dir: root, escalation: cfg}
 		files, err := g.changedFilesMemo(parent, sha)
-		if err != nil || len(files) == 0 {
+		if err != nil {
+			// Distinguished from an empty change set: a systematically failing
+			// lookup (bad object, corrupt pack) would otherwise shrink the sample
+			// silently, as if those commits were legitimately empty.
+			rep.errored++
+			t.Logf("replay: skipping %s, change-set lookup failed: %v", sha[:8], err)
 			continue
 		}
-		rep.all.commits++
-		rep.goOnly.commits++
+		if len(files) == 0 {
+			continue
+		}
 		// A change set above MaxFiles skips escalation wholesale, so nothing in it
 		// can promote. Counting its files in the denominator would understate the
 		// rate for the commits where the heuristic actually ran.
@@ -360,51 +396,73 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 			rep.degraded++
 			continue
 		}
+		rep.all.commits++
+		rep.goOnly.commits++
 		for _, f := range files {
 			fc, ok := g.analyzeFile(parent, sha, f)
 			if !ok {
 				rep.skipped++
 				continue
 			}
+			isGo := strings.EqualFold(filepath.Ext(f.path), ".go")
 			rep.all.record(cfg, ModeDiff, fc.signals)
-			if strings.EqualFold(filepath.Ext(f.path), ".go") {
+			if isGo {
 				rep.goOnly.record(cfg, ModeDiff, fc.signals)
 			}
-			accumulateBytes(g, cfg, parent, sha, f, fc, &rep)
+			accumulateBytes(g, cfg, parent, sha, f, fc, isGo, &rep)
 		}
 	}
 	return rep
 }
 
 // accumulateBytes measures what the promotion actually costs: the rendered
-// payload body at the configured mode versus at the escalated mode. A render
-// failure is skipped silently on both sides so the ratio never counts one
-// without the other.
-func accumulateBytes(g *gitRunner, cfg EscalationConfig, base, head string, f changedFile, fc fileContext, rep *replayReport) {
+// payload body at the configured mode versus at the escalated mode.
+//
+// It mirrors buildEntriesValidated's render exactly, skeleton included — a
+// non-promoted file still gets a skeleton prepended, and a files-promoted file
+// deliberately loses it because the whole HEAD file is already present. Measuring
+// bare fileBody on both sides would overstate the delta by charging escalation
+// for bytes the configured mode was already paying.
+//
+// A render failure drops the file from BOTH sides (so the ratio never counts one
+// without the other) and is counted, so a shrunken byte population is visible in
+// the report rather than silent.
+func accumulateBytes(g *gitRunner, cfg EscalationConfig, base, head string, f changedFile, fc fileContext, isGo bool, rep *replayReport) {
 	promoted := cfg.escalate(ModeDiff, fc.signals)
+
 	baseBody, err := g.fileBody(ModeDiff, base, head, f)
 	if err != nil {
+		rep.unbilled++
 		return
 	}
-	if promoted == ModeDiff {
-		rep.baseBytes += len(baseBody)
-		rep.escalatedBytes += len(baseBody)
-		return
+	baseBytes := len(injectSkeleton(baseBody, fc.skeleton))
+
+	escalatedBytes := baseBytes
+	if promoted != ModeDiff {
+		promotedBody, err := g.fileBody(promoted, base, head, f)
+		if err != nil {
+			rep.unbilled++
+			return
+		}
+		skel := fc.skeleton
+		if promoted == ModeFiles {
+			skel = ""
+		}
+		escalatedBytes = len(injectSkeleton(promotedBody, skel))
 	}
-	promotedBody, err := g.fileBody(promoted, base, head, f)
-	if err != nil {
-		return
+
+	rep.all.addBytes(baseBytes, escalatedBytes)
+	if isGo {
+		rep.goOnly.addBytes(baseBytes, escalatedBytes)
 	}
-	rep.baseBytes += len(baseBody)
-	rep.escalatedBytes += len(promotedBody)
 }
 
 // logReplayReport prints the measurement. Sample size is reported alongside every
 // rate so an unrepresentative window is visible rather than implied.
 func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig, rep replayReport) {
 	t.Helper()
-	t.Logf("escalation replay: ref=%s window=%d commits_measured=%d degraded=%d files_analyzed=%d files_skipped=%d",
-		ref, window, rep.all.commits, rep.degraded, rep.all.files, rep.skipped)
+	t.Logf("escalation replay: ref=%s window=%d commits_walked=%d commits_measured=%d degraded=%d errored=%d files_analyzed=%d files_skipped=%d files_unbilled=%d",
+		ref, window, rep.walked, rep.all.commits, rep.degraded, rep.errored, rep.all.files, rep.skipped, rep.unbilled)
 	t.Logf("thresholds: churn_ratio=%.2f min_hunks=%d hunk_gap_lines=%d min_cyclomatic=%d max_files=%d",
 		cfg.ChurnRatio, cfg.MinHunks, cfg.HunkGapLines, cfg.MinCyclomatic, cfg.MaxFiles)
 
@@ -421,6 +479,7 @@ func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig,
 			s.label,
 			s.st.signalRate(sigChurn), s.st.signalRate(sigHunkCount),
 			s.st.signalRate(sigAdjacency), s.st.signalRate(sigComplexity))
+		t.Logf("%s payload bytes: base=%d escalated=%d delta=%+.1f%%",
+			s.label, s.st.baseBytes, s.st.escalatedBytes, s.st.byteDelta())
 	}
-	t.Logf("payload bytes: base=%d escalated=%d delta=%+.1f%%", rep.baseBytes, rep.escalatedBytes, rep.byteDelta())
 }

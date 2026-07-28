@@ -356,7 +356,7 @@ payload_escalation:
 |-----|---------|-------|
 | `churn_ratio` | `0.5` | Fraction of a file's `head` lines that must be touched, measured as `max(added, deleted)` so a moved block is not counted twice. Must be between `0` and `1.0`. Values above `1.0` are rejected as misconfiguration — the measured ratio can legitimately exceed 1.0 when a file shrinks, so a threshold above 1.0 would be a confusing way to express "only when the file shrank". |
 | `min_hunks` | `8` | Fires at or above this many hunks in one file. |
-| `hunk_gap_lines` | `2` | Fires when two hunks are separated by fewer than this many unchanged lines. |
+| `hunk_gap_lines` | `2` | Fires when two hunks are separated by fewer than this many unchanged lines. `2` is the narrowest setting that can fire: git never emits two hunks with zero unchanged lines between them (it merges them), so `0` and `1` both mean "off". |
 | `min_cyclomatic` | `20` | Fires at or above this McCabe score, scored over the functions the diff **changed** (not the file-wide maximum). Computed for Go files only; other languages never fire this signal. |
 | `max_files` | `50` | Above this many changed files, escalation and skeletons are skipped entirely and `manifest.json` records `escalation_degraded: true`. |
 | `max_skeleton_lines` | `60` | Declaration headers rendered per file. Beyond it the skeleton is truncated with an explicit `... N more declaration(s) elided` notice, so a generated file with hundreds of declarations cannot swamp a one-line diff. |

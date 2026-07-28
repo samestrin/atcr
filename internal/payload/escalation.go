@@ -1,7 +1,37 @@
 package payload
 
-// Built-in per-file escalation thresholds (Epic 35.1). They are the resolved
-// values when a registry sets no payload_escalation block.
+// Built-in per-file escalation thresholds (Epic 35.1, retuned in Epic 35.4).
+// They are the resolved values when a registry sets no payload_escalation block.
+//
+// # Acceptance target for these numbers
+//
+// These are not chosen by feel — they are tuned against a measured replay of
+// real history, and any future change to them must re-validate against the same
+// target:
+//
+//	Target band: 15-25% of changed Go files promoted above their configured
+//	mode, at <= +40% payload bytes over that mode. The byte ceiling is the
+//	binding constraint; the file-rate band is the readable proxy for it.
+//
+// The band is anchored to the payload-byte budget rather than to a bare
+// percentage because an operator who configures `diff` is buying a token cost,
+// not a file count. A tighter byte anchor is not reachable by tuning: disabling
+// the adjacency signal outright and doubling both remaining thresholds still
+// measures +25% bytes, because the files that promote are the large ones.
+//
+// Measured over `main`'s last 40 commits (400 changed Go files) with
+// TestEscalationReplay_MeasureRepoHistory, 2026-07-28:
+//
+//	before (35.1 defaults 4/10/15): 37.0% promoted, +48.0% bytes
+//	after  (this block, 8/2/20):    21.5% promoted, +34.1% bytes
+//
+// Re-measure with:
+//
+//	ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \
+//	  go test ./internal/payload/ -run TestEscalationReplay -v
+//
+// Damping one signal shifts load onto the others, so re-measure ALL of them
+// (the harness reports per-signal rates) rather than only the one being changed.
 const (
 	// DefaultEscalationChurnRatio fires when at least half a file's HEAD lines
 	// are touched — the "the file was substantially rewritten" signal.
@@ -17,8 +47,15 @@ const (
 	// from 10 to 2 in Epic 35.4: under --unified=0 a single logical change
 	// routinely leaves hunks a few lines apart, so a 10-line window measured the
 	// ordinary shape of a diff rather than genuine same-region churn — it was the
-	// single worst offender at 28.5% of changed Go files. At 2, only hunks that
-	// touch or are separated by one unchanged line count as the same region.
+	// single worst offender at 28.5% of changed Go files, and still fires on 13.0%
+	// at this setting. At 2, only hunks separated by one unchanged line count as
+	// the same region.
+	//
+	// Note the granularity floor this implies: git does not emit two hunks with
+	// ZERO unchanged lines between them under --unified=0 (it merges them into
+	// one), so `gap < 1` is unsatisfiable for well-formed ranges and the settings
+	// 0 and 1 both mean "off". 2 is therefore the narrowest setting that still
+	// fires. This is a property of the `gap < N` formulation, not of this value.
 	DefaultEscalationHunkGapLines = 2
 	// DefaultEscalationMinCyclomatic is the McCabe floor above which a CHANGED
 	// function's control flow is too branchy to review from hunks alone. The score
