@@ -341,10 +341,14 @@ func TestEscalate_DisabledSignalsNeverFire(t *testing.T) {
 	// A fully zeroed config is the operator's off switch: no file escalates.
 	c := EscalationConfig{}
 
+	// Every signal WOULD fire under DefaultEscalationConfig(): churn 500/500,
+	// eight hunks (>= MinHunks 8), adjacent pairs (< 2 unchanged lines apart),
+	// cyclomatic 900. Only the zeroed thresholds suppress them.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 500, headLines: 500,
+		changedLines: 500, headLines: 500, churnApplicable: true,
 		hunks: []lineRange{
 			{start: 1, end: 2}, {start: 4, end: 5}, {start: 7, end: 8}, {start: 10, end: 11},
+			{start: 13, end: 14}, {start: 16, end: 17}, {start: 19, end: 20}, {start: 22, end: 23},
 		},
 		cyclomatic: 900,
 	})
