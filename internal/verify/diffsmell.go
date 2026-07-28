@@ -26,9 +26,22 @@ package verify
 // site where the finding's own path is known.
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
+)
+
+// Bounds on the rejection feedback fed back into the retry prompt. Every smell's
+// Evidence is a verbatim added line from the MODEL's own diff, so without these a
+// crafted fix (up to maxFixBytes) could balloon the retry prompt by orders of
+// magnitude — paid for in tokens on every rejected fix. The type and severity
+// names, which carry the actionable signal, are a closed vocabulary and are never
+// truncated; only the quoted evidence and the item count are bounded.
+const (
+	maxSmellEvidenceRunes = 200
+	maxSmellFeedbackItems = 10
 )
 
 // Verdict values, mirroring upstream's summary.verdict.
@@ -373,6 +386,10 @@ func smellFeedback(res *smellResult) string {
 	}
 	var b strings.Builder
 	for i, s := range res.Smells {
+		if i >= maxSmellFeedbackItems {
+			fmt.Fprintf(&b, "; (+%d more)", len(res.Smells)-i)
+			break
+		}
 		if i > 0 {
 			b.WriteString("; ")
 		}
@@ -386,10 +403,19 @@ func smellFeedback(res *smellResult) string {
 		}
 		if ev := smellFlatten(s.Evidence); ev != "" {
 			b.WriteString(": ")
-			b.WriteString(ev)
+			b.WriteString(truncateRunes(ev, maxSmellEvidenceRunes))
 		}
 	}
 	return smellFlatten(b.String())
+}
+
+// truncateRunes shortens s to at most n runes, appending an ellipsis when it was
+// longer. Rune-based so a multibyte character is never split.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "..."
 }
 
 // smellFlatten collapses CR/LF to spaces so evidence text is safe to interpolate

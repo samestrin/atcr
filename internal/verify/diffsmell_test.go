@@ -244,6 +244,26 @@ func TestSmellFeedback(t *testing.T) {
 	assert.Equal(t, "", smellFeedback(nil))
 }
 
+// The feedback is interpolated into the retry prompt and its evidence is verbatim
+// model output, so both the per-item length and the item count must be bounded —
+// otherwise a crafted fix inflates every retry's token cost.
+func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
+	long := strings.Repeat("x", maxSmellEvidenceRunes*3)
+	fb := smellFeedback(analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +1,2 @@\n+//nolint " + long + "\n"))
+	assert.Contains(t, fb, smellSuppression, "the actionable type name is never truncated")
+	assert.Less(t, len(fb), maxSmellEvidenceRunes*2, "evidence must be truncated")
+	assert.Contains(t, fb, "...")
+
+	var many strings.Builder
+	many.WriteString("diff --git a/x.go b/x.go\n@@ -1 +1,99 @@\n")
+	for i := 0; i < maxSmellFeedbackItems*3; i++ {
+		many.WriteString("+\t// TODO: item\n")
+	}
+	fb = smellFeedback(analyzeDiff(many.String()))
+	assert.Equal(t, maxSmellFeedbackItems, strings.Count(fb, smellStubBody), "listed items must be capped")
+	assert.Contains(t, fb, "(+20 more)", "the dropped remainder must be reported, never silently truncated")
+}
+
 // smellTypes returns the deterministic, sorted, deduplicated type list used for
 // the FixReview annotation.
 func TestSmellTypes(t *testing.T) {
