@@ -45,6 +45,20 @@ type replayStats struct {
 	// bareBytes/baseBytes/escalatedBytes are the rendered payload sizes for THIS
 	// population, so a Go-only byte delta is never reported against an
 	// all-files byte total.
+	//
+	// The three totals are deliberately distinct because two different costs are
+	// worth reading off the same window:
+	//
+	//	bare      — the diff body alone, what an operator with the escalation
+	//	            feature OFF pays (skeleton injection is itself gated by the
+	//	            escalation config, so a disabled feature costs no skeleton)
+	//	base      — bare + the injected AST skeleton, i.e. the escalation-enabled
+	//	            render BEFORE any promotion
+	//	escalated — the render after promotion
+	//
+	// byteDelta() is escalated-over-base (promotion only); featureDelta() is
+	// escalated-over-bare (the whole feature). Reporting only the first would
+	// understate what turning the feature on costs.
 	bareBytes      int
 	baseBytes      int
 	escalatedBytes int
@@ -52,13 +66,21 @@ type replayStats struct {
 
 // addBytes folds one file's rendered sizes in.
 func (r *replayStats) addBytes(bare, base, escalated int) {
+	r.bareBytes += bare
 	r.baseBytes += base
 	r.escalatedBytes += escalated
 }
 
-// featureDelta reports the escalated payload against the bare-diff body.
+// featureDelta is the percentage increase in payload bytes the escalation
+// FEATURE caused over plain diff mode — skeleton injection included, since that
+// is gated by the same config. byteDelta() isolates the promotion step alone;
+// this is the figure an operator deciding whether to enable escalation at all
+// is buying. Same measured sub-population caveat as byteDelta().
 func (r *replayStats) featureDelta() float64 {
-	return 0
+	if r.bareBytes <= 0 {
+		return 0
+	}
+	return float64(r.escalatedBytes-r.bareBytes) / float64(r.bareBytes) * 100
 }
 
 // byteDelta is the percentage increase in payload bytes escalation caused over
@@ -560,7 +582,12 @@ func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig,
 			s.label,
 			s.st.signalRate(sigChurn), s.st.signalRate(sigHunkCount),
 			s.st.signalRate(sigAdjacency), s.st.signalRate(sigComplexity))
-		t.Logf("%s payload bytes: base=%d escalated=%d delta=%+.1f%%",
-			s.label, s.st.baseBytes, s.st.escalatedBytes, s.st.byteDelta())
+		// All three totals print so a reader can reconstruct BOTH costs: the
+		// promotion-only delta (escalated over base) and the whole-feature delta
+		// over plain diff mode (escalated over bare), of which the skeleton is
+		// the difference between bare and base.
+		t.Logf("%s payload bytes: bare=%d base=%d escalated=%d promotion_delta=%+.1f%% feature_delta=%+.1f%%",
+			s.label, s.st.bareBytes, s.st.baseBytes, s.st.escalatedBytes,
+			s.st.byteDelta(), s.st.featureDelta())
 	}
 }

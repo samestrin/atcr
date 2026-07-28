@@ -10,8 +10,18 @@ package payload
 // target:
 //
 //	Target band: 15-25% of changed Go files promoted above their configured
-//	mode, at <= +40% payload bytes over that mode. The byte ceiling is the
-//	binding constraint; the file-rate band is the readable proxy for it.
+//	mode, at <= +40% payload bytes over the escalation-enabled base render
+//	(skeleton included on BOTH sides). The byte ceiling is the binding
+//	constraint; the file-rate band is the readable proxy for it.
+//
+// "over the escalation-enabled base render" is the load-bearing qualifier: the
+// AST skeleton is prepended to every analyzed file once escalation is on, so it
+// is charged to the base side and the +40% ceiling measures the cost of MODE
+// PROMOTION alone — not the cost of turning the feature on. Skeleton injection
+// is itself gated by the escalation config, so an operator running with the
+// feature off pays neither. The replay harness therefore reports both figures
+// (bare / base / escalated totals, promotion_delta and feature_delta); see
+// escalation_replay_test.go's accumulateBytes for the accounting.
 //
 // The band is anchored to the payload-byte budget rather than to a bare
 // percentage because an operator who configures `diff` is buying a token cost,
@@ -30,6 +40,12 @@ package payload
 //
 //	before (35.1 defaults 4/10/15): 37.0% promoted, +48.0% bytes
 //	after  (this block, 8/2/20):    21.5% promoted, +34.1% bytes
+//
+// Those byte figures are promotion-only, per the qualifier above. Over the same
+// window the whole-feature cost against plain diff mode is +60.7% (bare 2373158
+// B, base 2845644 B, escalated 3814837 B), of which the skeleton alone is
+// +19.9%. Both are printed by the harness — quote the one that matches the
+// question being asked.
 //
 // Re-measure over the same window with:
 //
