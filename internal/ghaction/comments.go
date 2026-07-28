@@ -47,6 +47,14 @@ func BuildInlineComments(findings []reconcile.JSONFinding) []CommentRequest {
 // the epic's AC3 contract: "ATCR found: <problem>. Fix: <fix>. Suggested by:
 // <executor>", with the Fix and attribution clauses omitted when their source
 // data is absent.
+//
+// A FixReview clause is appended last (Epic 35.3) when the diff-smell gate
+// accepted the fix only with a NEEDS_REVIEW annotation. A PR comment is where a
+// human actually applies the fix, so withholding the annotation here would hand
+// over a shortcut-taking patch that looks like it passed clean — the signal must
+// not stop at the markdown report. It is defanged like every other untrusted
+// field: the vocabulary is closed today, but the clause must not become the one
+// unescaped path into a posted comment.
 func commentBody(f reconcile.JSONFinding) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "ATCR found: %s.", defang(strings.TrimSpace(f.Problem)))
@@ -55,6 +63,9 @@ func commentBody(f reconcile.JSONFinding) string {
 	}
 	if who := FixAttribution(f.Evidence); who != "" {
 		fmt.Fprintf(&b, " Suggested by: %s.", who)
+	}
+	if review := defang(strings.TrimSpace(f.FixReview)); review != "" {
+		fmt.Fprintf(&b, " %s.", review)
 	}
 	return b.String()
 }
