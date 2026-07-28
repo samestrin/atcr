@@ -501,24 +501,28 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// succeeding, persist the file-hash index (built at prepare time from the files
 	// actually reviewed) so the NEXT run can skip files whose content has not changed.
 	// Gated on Succeeded > 0 so a run where every agent failed does not record its
-	// files as "reviewed" (which would wrongly skip them forever). Also gated on
-	// UnreviewedChunks == 0: the baseline write-back records EVERY reviewed file
-	// (Sprint 35.0 task 5.3), which is correct only when every dispatched chunk
-	// actually succeeded. If any chunk failed under an otherwise-OK persona
-	// (result.Summary.Partial can be false in that case — see the artifacts.go
-	// partial-coverage caveat), some files went unreviewed; recording them would
-	// silently skip them on the next run. Skip the whole write-back then and let the
-	// next run do a full re-scan (fail-open toward re-review, never toward skip)
-	// [5.5.A MEDIUM]. An index-write failure is logged, never fatal (AC 04-01 ES1).
-	// The interrupt path returned above, so this never fires on a cancelled run.
-	switch {
-	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks == 0:
+	// files as "reviewed" (which would wrongly skip them forever).
+	//
+	// Partial chunk coverage no longer discards the write-back (Epic 35.2 / TD-013):
+	// CommitBaselineIndex records only the files covered by SUCCEEDED chunks and
+	// excludes the failed chunks' files, so the next run re-reviews exactly the
+	// uncovered ones instead of the whole repository. Before 35.2 this was additionally
+	// gated on UnreviewedChunks == 0, which threw away every successfully-reviewed
+	// file's hash whenever even one of up to 64 chunks failed. The uncovered set is
+	// attributed inside the engine (runEngine, pre-merge) because Summary collapses
+	// per-chunk outcomes into a bare count; UnreviewedChunks stays the operator-facing
+	// signal that partial coverage happened. Still fail-open: an uncovered file is
+	// re-scanned, never silently skipped. An index-write failure is logged, never fatal
+	// (AC 04-01 ES1). The interrupt path returned above, so this never fires on a
+	// cancelled run.
+	if baseline && result != nil && result.Summary.Succeeded > 0 {
+		if result.Summary.UnreviewedChunks > 0 {
+			log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; recording only the files covered by succeeded chunks so the next run re-scans the uncovered ones",
+				"unreviewed_chunks", result.Summary.UnreviewedChunks)
+		}
 		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
 			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
 		}
-	case baseline && result != nil && result.Summary.Succeeded > 0 && result.Summary.UnreviewedChunks > 0:
-		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; skipping the incremental hash-index write so the next run re-scans the uncovered files",
-			"unreviewed_chunks", result.Summary.UnreviewedChunks)
 	}
 
 	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome

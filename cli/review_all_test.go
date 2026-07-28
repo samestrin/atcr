@@ -749,11 +749,16 @@ func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 		"the failed chunk's file must NOT be recorded, or it would be skipped-though-unreviewed next run")
 
 	// AC1's second half: the next --all re-reviews ONLY the previously-uncovered file.
-	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	// It exits 1 here because fail.txt is now the sole candidate and this provider
+	// still rejects it — every agent fails. That is the fail-open loop working as
+	// intended: the uncovered file keeps being re-reviewed until it succeeds, and it is
+	// never recorded as reviewed in the meantime.
+	require.Equal(t, 1, execCmd(t, "review", "--all"))
 	body := baselineFilesPayload(t)
 	assert.Contains(t, body, "FAILME", "the uncovered file is re-reviewed")
 	assert.NotContains(t, body, "package b", "a covered file is hash-skipped on the next run")
 	assert.NotContains(t, body, "package c", "a covered file is hash-skipped on the next run")
+	assert.NotContains(t, body, "one\n", "a covered file is hash-skipped on the next run")
 }
 
 // Epic 35.2 AC3: when EVERY chunk fails the run has zero coverage and writes no index

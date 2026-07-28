@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,12 +54,23 @@ func countScorecardLines(t *testing.T) int {
 // isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
 // temp dir, so resolveGateThreshold's registry probe (~/.config/atcr) cannot
 // pick up a real registry on the dev machine — tests stay hermetic.
+//
+// It also drops every accumulated circuit breaker. circuitbreaker.DefaultRegistry
+// is PROCESS-global and keyed by provider name, and every test here shares the
+// provider name "p", so provider failures accumulate across tests: once enough
+// tests have driven failing reviews, the breaker for "p" opens and every LATER
+// test's agents fail fast with CircuitOpenError — an exit-1 "all agents failed"
+// that has nothing to do with the test being run. That makes failures depend on
+// suite composition and ordering (a test passes alone, fails in the full run).
+// Reset exists precisely for this; calling it here neutralizes the same class of
+// leaked global state HOME/XDG/CWD already handle.
 func isolate(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(t.TempDir())
+	circuitbreaker.DefaultRegistry.Reset()
 }
 
 // touchFiles creates the given repo-root-relative source files so reconcile's

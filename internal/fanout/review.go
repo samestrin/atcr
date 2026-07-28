@@ -269,13 +269,38 @@ type baselineWriteback struct {
 // out-of-scope entries recorded by a prior --all run. Returns any write error for the
 // caller to log; an index-write failure must never fail an otherwise-successful
 // review (AC 04-01 Error Scenario 1).
+//
+// Partial chunk coverage (Epic 35.2 / TD-013): files whose chunk FAILED are excluded
+// via p.baseline.uncovered (stamped by runEngine from the raw pre-merge results), so a
+// run where some chunks failed still persists the SUCCEEDED chunks' files and the next
+// scan re-reviews only the genuinely uncovered ones. Before 35.2 the caller discarded
+// the entire write-back on any unreviewed chunk, re-scanning the whole repository. The
+// write is skipped outright only when coverage is zero.
 func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 	if p == nil || p.baseline == nil {
 		return nil
 	}
 	b := p.baseline
+	recorded := 0
 	for path, hash := range b.reviewed {
+		// Epic 35.2 / TD-013: skip the files whose chunk FAILED. They were dispatched
+		// but never reviewed, so recording them would make the next scan skip them
+		// though unreviewed — the one outcome this index must never produce. b.uncovered
+		// is nil for a fully-covered run (and for a caller that never ran the engine),
+		// which keeps this loop byte-identical to the pre-35.2 record-everything pass.
+		if _, uncovered := b.uncovered[path]; uncovered {
+			continue
+		}
 		b.preIndex.Record(path, hash, runID)
+		recorded++
+	}
+	// Zero coverage → write NOTHING, not even the self-trim (Epic 35.2 AC3). Every
+	// chunk failed, so there is no reviewed state to persist; saving here would emit a
+	// trimmed-but-empty index that the next scan would read as authoritative. Skipping
+	// the write leaves the prior index untouched and the next run does a full re-scan
+	// — fail-open toward re-review, mirroring the caller's own Succeeded > 0 guard.
+	if recorded == 0 && len(b.reviewed) > 0 {
+		return nil
 	}
 	// The whole-repo test normalizes through payload.NormalizeScope — the SAME
 	// helper filterByScope/TrackedInScope use — so a non-CLI caller's raw scope
