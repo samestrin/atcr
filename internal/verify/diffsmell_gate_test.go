@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -62,10 +63,45 @@ func (s *sequencedExecutor) Complete(_ context.Context, inv llmclient.Invocation
 	i := s.calls
 	s.calls++
 	s.prompts = append(s.prompts, inv.Prompt)
+
+	if s.byFile != nil {
+		path := smellPromptLocation(inv.Prompt)
+		script, ok := s.byFile[path]
+		if !ok || len(script) == 0 {
+			return "", fmt.Errorf("sequencedExecutor: no script for finding %q", path)
+		}
+		if s.perFn == nil {
+			s.perFn = map[string]int{}
+		}
+		j := s.perFn[path]
+		s.perFn[path]++
+		if j >= len(script) {
+			j = len(script) - 1
+		}
+		return script[j], nil
+	}
+
 	if i >= len(s.outs) {
 		i = len(s.outs) - 1
 	}
 	return s.outs[i], nil
+}
+
+// smellPromptLocation recovers the finding's file path from a fix prompt.
+// buildFixPrompt writes it as `Location: <file>:<line>`, which is the only
+// per-finding key available to a scripted executor.
+func smellPromptLocation(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		rest, ok := strings.CutPrefix(line, "Location: ")
+		if !ok {
+			continue
+		}
+		if i := strings.LastIndex(rest, ":"); i >= 0 {
+			return rest[:i]
+		}
+		return rest
+	}
+	return ""
 }
 
 func (s *sequencedExecutor) callCount() int {
