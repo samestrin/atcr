@@ -291,6 +291,35 @@ func TestGenerateFixes_WeakenedAssertionHardEvenForTestFileFinding(t *testing.T)
 	assert.Contains(t, findings[0].FixWarning, smellWeakenedAssertion)
 }
 
+// --- retry cost: snippet reuse + retry counter (TD: executor.go:395) ---
+
+// The snippet cannot change between the first attempt and the smell retry — the
+// review snapshot is immutable for the run — so it must be read ONCE, not
+// re-dispatched per attempt.
+func TestGenerateFixes_SmellRetryReusesSnippet(t *testing.T) {
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
+	disp := okDispatcher()
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, disp, 0)
+
+	require.Equal(t, 2, rec.callCount(), "a HARD smell must trigger exactly one retry")
+	assert.Equal(t, 1, disp.count(), "the retry must reuse the first attempt's snippet, not re-read it")
+}
+
+// The smell-gate retry count rides generateFixes's return so the run summary can
+// surface a systematically rejected executor's doubled model spend.
+func TestGenerateFixes_SmellRetryCount(t *testing.T) {
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
+	n := generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	assert.Equal(t, 1, n, "one HARD verdict = one retry")
+
+	findings = gateFinding("a.go")
+	rec = &sequencedExecutor{outs: []string{gateCleanDiff}}
+	n = generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	assert.Equal(t, 0, n, "a clean first attempt costs no retry")
+}
+
 // --- agent mode must route its retry through the agent path (clarification Q4) ---
 
 func agentGateConfig() *registry.ExecutorConfig {

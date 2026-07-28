@@ -44,11 +44,17 @@ const smellRetryInstruction = "Your previous attempt was rejected: it made the f
 // being masked to clean. weakened_assertion is NOT suppressed: deleting an
 // assertion is the reward hack this gate exists to catch, in test files most of all.
 func evaluateFixSmell(fix, findingFile string) *smellResult {
+	// Defensive: a nil/empty fix is never gateable. Redundant with the
+	// looksLikeUnifiedDiff check below (which also rejects ""), but explicit so a
+	// future caller change degrades to pass-through rather than a nil dereference.
+	if fix == "" {
+		return nil
+	}
 	if len(fix) > maxFixBytes || !looksLikeUnifiedDiff(fix) {
 		return nil
 	}
 	res := analyzeDiff(fix)
-	if isSmellTestPath(findingFile) {
+	if res != nil && isSmellTestPath(findingFile) {
 		dropSmellType(res, smellTestOnly)
 	}
 	return res
