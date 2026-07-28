@@ -667,3 +667,33 @@ func TestAnalyzeDiff_TrailingProseIsNotDiffContent(t *testing.T) {
 	assert.Equal(t, clean.Files.Impl, withProse.Files.Impl)
 	assert.Equal(t, clean.Files.Test, withProse.Files.Test)
 }
+
+// smell.File is MODEL-CONTROLLED: it comes verbatim from `+++ b/<anything>` via
+// smellHeaderPath, which caps nothing. smellFeedback is interpolated into the
+// retry prompt (paid for in tokens on every rejected fix), into
+// logPipelineWarning, and — on the double-HARD halt path — verbatim into
+// f.FixWarning, which lands in findings.json and the rendered report. The const
+// block's claim that bounding evidence and item count suffices only holds if the
+// path is bounded too.
+func TestSmellFeedback_BoundsModelControlledFilePath(t *testing.T) {
+	huge := strings.Repeat("p", 60_000)
+	fb := smellFeedback(analyzeDiff(
+		"diff --git a/" + huge + " b/" + huge + "\n--- a/" + huge + "\n+++ b/" + huge +
+			"\n@@ -1 +1,2 @@\n+\t//nolint:gosec\n"))
+
+	assert.Contains(t, fb, smellSuppression, "the actionable type name is never truncated")
+	assert.Less(t, len(fb), 4*maxSmellEvidenceRunes,
+		"a model-controlled path must not balloon the retry prompt (got %d bytes)", len(fb))
+
+	// The whole feedback string stays bounded even at the item cap, where every
+	// item contributes its own path.
+	var many strings.Builder
+	for i := 0; i < maxSmellFeedbackItems*2; i++ {
+		p := fmt.Sprintf("%s%d.go", huge, i)
+		many.WriteString("diff --git a/" + p + " b/" + p + "\n--- a/" + p + "\n+++ b/" + p +
+			"\n@@ -1 +1,2 @@\n+\t//nolint:gosec\n")
+	}
+	fb = smellFeedback(analyzeDiff(many.String()))
+	assert.Less(t, len(fb), maxSmellFeedbackItems*4*maxSmellEvidenceRunes,
+		"total feedback must stay bounded across items (got %d bytes)", len(fb))
+}
