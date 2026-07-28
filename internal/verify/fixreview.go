@@ -15,6 +15,10 @@ const fixReviewPrefix = "NEEDS_REVIEW"
 // Only the type list is included — never the raw evidence line — because the
 // evidence is verbatim model-generated diff text, whereas the type list is a
 // closed, trusted vocabulary; the location detail already lives in the finding.
+// RED stub (Epic 35.3) — always "no smells" so diffsmell_gate_test.go compiles
+// and FAILS. Replaced by the real gate in GREEN.
+func evaluateFixSmell(string, string) *smellResult { return nil }
+
 func buildFixReview(res *smellResult) string {
 	types := smellTypes(res)
 	if len(types) == 0 {
