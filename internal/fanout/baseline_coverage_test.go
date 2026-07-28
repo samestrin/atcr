@@ -43,6 +43,37 @@ func TestEngineRun_ResultsMatchSlotInputOrder(t *testing.T) {
 	assert.Equal(t, StatusOK, results[3].Status)
 }
 
+// The index-correspondence tests above build slots with DISTINCT agent names, so a
+// refactor that groups/sorts/compacts results by agent name — permuting chunk
+// results WITHIN one persona — would keep them green while mis-attributing which
+// files a failed chunk carried. In a real baseline fan-out every chunk slot of a
+// persona carries the SAME name (that is what mergeChunkResults collapses on), so
+// this pins the correspondence with same-named slots: the chunk whose payload
+// carries c.go fails, and its outcome must land at ITS index.
+func TestEngineRun_SamePersonaChunksKeepSlotIndex(t *testing.T) {
+	t.Parallel()
+	chunkSlot := func(file string) Slot {
+		return Slot{Primary: Agent{
+			Name:       "greta",
+			Invocation: llmclient.Invocation{Model: "greta", Prompt: "// FILE:" + file + "\n"},
+			chunkFiles: []string{file},
+		}}
+	}
+	slots := []Slot{chunkSlot("a.go"), chunkSlot("b.go"), chunkSlot("c.go")}
+	// maxParallel=1 forces parallel-lane queueing so completion order cannot match
+	// input order by accident.
+	results := NewEngine(baselinePartialFailCompleter{failMarker: "c.go"}, WithMaxParallel(1)).Run(context.Background(), slots)
+
+	require.Len(t, results, len(slots), "one result per slot")
+	for i := range slots {
+		require.Equal(t, "greta", results[i].Agent, "every chunk result attributes to the persona name")
+	}
+	assert.Equal(t, StatusOK, results[0].Status)
+	assert.Equal(t, StatusOK, results[1].Status)
+	assert.Equal(t, StatusFailed, results[2].Status,
+		"the failed chunk's outcome must land at ITS chunk's index — same-named slots make name-based attribution vacuous")
+}
+
 // AC1 core: the files carried by a FAILED chunk are the uncovered set; the files in
 // succeeded chunks are not.
 func TestUncoveredBaselineFiles_ExcludesFailedChunkFiles(t *testing.T) {
