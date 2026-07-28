@@ -450,7 +450,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					if len(candidate) > maxFixBytes {
 						logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", detail)
 					} else {
-						log.FromContext(ctx).Debug("pipeline warning detail", "class", "executor_smell_skipped", "detail", detail)
+						logPipelineDetail(log.FromContext(ctx), "executor_smell_skipped", detail)
 					}
 					return nil
 				}

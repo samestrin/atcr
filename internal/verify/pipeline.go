@@ -40,9 +40,17 @@ const thoroughVotes = 3
 // path-at-debug discipline. Newlines in detail are flattened so a crafted value
 // cannot forge an extra log line.
 func logPipelineWarning(logger *slog.Logger, class, detail string) {
-	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("pipeline warning", "class", class)
-	logger.Debug("pipeline warning detail", "class", class, "detail", detail)
+	logPipelineDetail(logger, class, detail)
+}
+
+// logPipelineDetail emits only the Debug half of the pipeline record, for classes
+// that must stay traceable without warning on every occurrence — a per-finding
+// class at Warn level drowns the run output and trains the reader to ignore it.
+// It applies the same newline flattening as logPipelineWarning, so a class cannot
+// forge an extra log line by taking the quieter path.
+func logPipelineDetail(logger *slog.Logger, class, detail string) {
+	logger.Debug("pipeline warning detail", "class", class, "detail", strings.ReplaceAll(detail, "\n", " "))
 }
 
 // Options are the verify-stage run controls, set from CLI flags or MCP args.
