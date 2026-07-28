@@ -106,6 +106,14 @@ func validateGoFixSyntax(fix string) error {
 	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
 		return nil // explicitly another language — not this guard's concern
 	}
+	// A unified diff is not Go source: parsing one yields a guaranteed bogus
+	// "expected declaration, found diff". nonGoFenceLangs already exempts a fix
+	// fenced as ```diff / ```patch, but an UNFENCED diff — the shape --auto-fix
+	// consumes via payload.BuildEntriesFromDiff — reached the parser and was
+	// mis-flagged. Exempt it on content, not just on fence label (Epic 35.3).
+	if looksLikeUnifiedDiff(code) {
+		return nil
+	}
 	// Cap the size of the code actually parsed, not the raw fix. A small fenced
 	// snippet wrapped in a huge prose blob is still a genuine fix and should be
 	// validated; only the extracted code path is expensive.

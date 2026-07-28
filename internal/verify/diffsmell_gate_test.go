@@ -192,11 +192,11 @@ func TestGenerateFixes_NonDiffFixBypassesGate(t *testing.T) {
 // construction; test_only must be suppressed so it is not a guaranteed rejection.
 func TestGenerateFixes_TestOnlySuppressedForTestFileFinding(t *testing.T) {
 	findings := gateFinding("internal/verify/select_test.go")
-	rec := &sequencedExecutor{outs: []string{dsTestOnly}}
+	rec := &sequencedExecutor{outs: []string{dsTestOnlyClean}}
 	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 1, rec.callCount(), "a test-file finding must not trigger a retry")
-	assert.Equal(t, strings.TrimSpace(dsTestOnly), findings[0].Fix, "the fix is accepted")
+	assert.Equal(t, strings.TrimSpace(dsTestOnlyClean), findings[0].Fix, "the fix is accepted")
 	assert.Empty(t, findings[0].FixWarning)
 	assert.Empty(t, findings[0].FixReview, "suppression is not a SOFT smell — no annotation")
 }
@@ -257,6 +257,17 @@ func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
 	assert.NotEmpty(t, findings[0].Fix)
 }
 
+// An UNFENCED unified diff is not Go source. The syntax guard used to parse it
+// and stamp a guaranteed-bogus "expected declaration, found diff" — on exactly
+// the fix shape --auto-fix consumes. It must be exempt on content, not just on a
+// ```diff fence label.
+func TestValidateGoFixSyntax_UnifiedDiffExempt(t *testing.T) {
+	assert.NoError(t, validateGoFixSyntax(gateCleanDiff), "an unfenced unified diff must not be parsed as Go")
+	assert.NoError(t, validateGoFixSyntax("```diff\n"+gateCleanDiff+"```"), "a fenced diff stays exempt")
+	// The guard must still catch genuinely broken Go.
+	assert.Error(t, validateGoFixSyntax("func add(a, b int) int {\n\treturn a + b\n"))
+}
+
 // --- unit-level gate semantics ---
 
 func TestEvaluateFixSmell(t *testing.T) {
@@ -265,12 +276,12 @@ func TestEvaluateFixSmell(t *testing.T) {
 	assert.Nil(t, evaluateFixSmell("", "a.go"))
 
 	// test_only survives for an impl-file finding...
-	res := evaluateFixSmell(dsTestOnly, "a.go")
+	res := evaluateFixSmell(dsTestOnlyClean, "a.go")
 	require.NotNil(t, res)
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
 
 	// ...and is suppressed for a test-file finding, taking the verdict with it.
-	res = evaluateFixSmell(dsTestOnly, "internal/verify/select_test.go")
+	res = evaluateFixSmell(dsTestOnlyClean, "internal/verify/select_test.go")
 	require.NotNil(t, res)
 	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
 	assert.NotContains(t, res.Summary.ByType, smellTestOnly)
@@ -278,9 +289,18 @@ func TestEvaluateFixSmell(t *testing.T) {
 
 	// Suppressing test_only must not mask a co-occurring SOFT smell: the verdict
 	// drops to soft_only, not clean.
-	res = evaluateFixSmell(strings.Replace(dsTestOnly, "+	_ = pick()", "+	_ = pick() //nolint:all", 1),
-		"internal/verify/select_test.go")
+	withNolint := strings.Replace(dsTestOnlyClean, "+	require.NotZero(t, pick())",
+		"+	require.NotZero(t, pick()) //nolint:all", 1)
+	res = evaluateFixSmell(withNolint, "internal/verify/select_test.go")
 	require.NotNil(t, res)
 	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict)
 	assert.Contains(t, res.Summary.ByType, smellSuppression)
+
+	// Suppressing test_only must NOT mask a co-occurring HARD one: a test-file
+	// finding whose fix also drops an assertion stays hard.
+	res = evaluateFixSmell(dsTestOnly, "internal/verify/select_test.go")
+	require.NotNil(t, res)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.NotContains(t, res.Summary.ByType, smellTestOnly)
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion)
 }

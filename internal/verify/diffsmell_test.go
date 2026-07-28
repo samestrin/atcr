@@ -34,6 +34,19 @@ const dsTestOnly = `diff --git a/internal/verify/select_test.go b/internal/verif
  }
 `
 
+// dsTestOnlyClean touches ONLY a test file but loses no assertions, so it trips
+// test_only and nothing else — the fixture needed to exercise the test_only
+// suppression in isolation (dsTestOnly also trips weakened_assertion).
+const dsTestOnlyClean = `diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go
+--- a/internal/verify/select_test.go
++++ b/internal/verify/select_test.go
+@@ -10,3 +10,4 @@
+ func TestPick(t *testing.T) {
+ 	require.Equal(t, 1, pick())
++	require.NotZero(t, pick())
+ }
+`
+
 const dsWeakenedAssertion = `diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go
 --- a/internal/verify/select_test.go
 +++ b/internal/verify/select_test.go
@@ -91,7 +104,11 @@ func TestAnalyzeDiff_Verdicts(t *testing.T) {
 		types   []string
 	}{
 		{"impl only is clean", dsImplOnly, smellVerdictClean, nil},
-		{"test only is hard", dsTestOnly, smellVerdictHard, []string{smellTestOnly}},
+		{"test only is hard", dsTestOnlyClean, smellVerdictHard, []string{smellTestOnly}},
+		// dsTestOnly both touches only tests AND drops an assertion, so it trips both
+		// HARD detectors at once.
+		{"test only plus assertion loss trips both", dsTestOnly, smellVerdictHard,
+			[]string{smellTestOnly, smellWeakenedAssertion}},
 		{"weakened assertion is hard", dsWeakenedAssertion, smellVerdictHard, []string{smellWeakenedAssertion}},
 		{"suppression is soft", dsSuppression, smellVerdictSoftOnly, []string{smellSuppression}},
 		{"stub body is soft", dsStubBody, smellVerdictSoftOnly, []string{smellStubBody}},

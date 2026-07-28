@@ -190,7 +190,7 @@ func testExecProviderVal() registry.Provider {
 
 func TestInvokeExecutor_Success(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0, "")
 	assert.Equal(t, "x", fix)
 	assert.Equal(t, "", warn)
 }
@@ -198,7 +198,7 @@ func TestInvokeExecutor_Success(t *testing.T) {
 func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("boom")}}}
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode failed")
 	assert.Contains(t, warn, "boom")
@@ -214,7 +214,7 @@ func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
 		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
 	}}
 	fix, warn, _ := invokeExecutor(context.Background(), ex, testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "guard the nil deref", fix)
 	assert.Equal(t, "", warn)
 }
@@ -226,7 +226,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 	defer cancel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
 	fix, warn, _ := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "status: timeout")
 	assert.Contains(t, warn, "tripped budgets: timeout")
@@ -234,7 +234,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 
 func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode parse error")
 }
@@ -348,7 +348,7 @@ func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
 	restore := swapFanoutEngine(zeroResultEngine{})
 	defer restore()
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "engine returned no result")
 }
@@ -369,7 +369,7 @@ func TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock(t
 		Problem:  "plaintext password " + malicious,
 		Fix:      "use bcrypt",
 	}
-	p := buildExecutorAgentPromptWithSentinel(f, sentinel)
+	p := buildExecutorAgentPromptWithSentinel(f, sentinel, "")
 
 	openTag := "<" + sentinel + ">"
 	openIdx := strings.Index(p, openTag)
@@ -397,7 +397,7 @@ func TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock(t
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	f := reconcile.JSONFinding{Severity: "HIGH", File: "auth.go", Line: 42, Category: "SECURITY",
 		Problem: "plaintext password", Fix: "use bcrypt", Evidence: "line 42 stores raw input"}
-	p := buildExecutorAgentPrompt(f)
+	p := buildExecutorAgentPrompt(f, "")
 	assert.Contains(t, p, "plaintext password", "the problem must be in the prompt")
 	assert.Contains(t, p, "auth.go:42", "the location must be in the prompt")
 	assert.Contains(t, p, "use bcrypt", "the reviewer's suggested fix must be carried in")
