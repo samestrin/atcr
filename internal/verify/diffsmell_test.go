@@ -96,6 +96,20 @@ const dsEmptyCatch = `diff --git a/src/app.js b/src/app.js
  }
 `
 
+// dsEmptyCatchMultiline is the standard formatter-produced shape: the empty
+// catch body spans two added lines, so a strictly per-line regex can never see
+// the `{ ... }` pair.
+const dsEmptyCatchMultiline = `diff --git a/src/app.js b/src/app.js
+--- a/src/app.js
++++ b/src/app.js
+@@ -10,2 +10,4 @@
+ function pick() {
++  try { risky(); } catch (e) {
++  }
+   return 1;
+ }
+`
+
 func TestAnalyzeDiff_Verdicts(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -113,6 +127,7 @@ func TestAnalyzeDiff_Verdicts(t *testing.T) {
 		{"suppression is soft", dsSuppression, smellVerdictSoftOnly, []string{smellSuppression}},
 		{"stub body is soft", dsStubBody, smellVerdictSoftOnly, []string{smellStubBody}},
 		{"empty catch is soft", dsEmptyCatch, smellVerdictSoftOnly, []string{smellEmptyCatch}},
+		{"multi-line empty catch is soft", dsEmptyCatchMultiline, smellVerdictSoftOnly, []string{smellEmptyCatch}},
 		{"empty diff is clean", "", smellVerdictClean, nil},
 		{"prose is clean", "just change the return value to 1", smellVerdictClean, nil},
 	}
