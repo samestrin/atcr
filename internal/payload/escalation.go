@@ -16,8 +16,9 @@ package payload
 // The band is anchored to the payload-byte budget rather than to a bare
 // percentage because an operator who configures `diff` is buying a token cost,
 // not a file count. A tighter byte anchor is not reachable by tuning: disabling
-// the adjacency signal outright and doubling both remaining thresholds still
-// measures +25% bytes, because the files that promote are the large ones.
+// the adjacency signal outright with min_hunks 10 and min_cyclomatic 25 (the
+// sweep's strictest candidate) still measures +25% bytes, because the files
+// that promote are the large ones.
 //
 // Measured over `main`'s last 40 commits (400 changed Go files) with
 // TestEscalationReplay_MeasureRepoHistory, 2026-07-28:
