@@ -400,3 +400,34 @@ func fieldValue(fm, key string) string {
 	}
 	return strings.TrimSpace(m[1])
 }
+
+// ---------------------------------------------------------------------------
+// Epic 35.5 — baseline review (--all / --dir) reaches the dispatcher.
+// ---------------------------------------------------------------------------
+
+// TestSkill_BaselineReviewRoutes (AC4) — Epic 35.0 shipped full-repository and
+// scoped baseline review, but the dispatcher never learned them: a user with the
+// skill installed could not reach the feature at all. SKILL.md must accept both
+// as inputs and state their mutual exclusivity against the range flags, mirroring
+// validateRangeFlags in cli/flags.go. This is the routing-drift guard for the
+// baseline routes — removing either from SKILL.md fails the build.
+func TestSkill_BaselineReviewRoutes(t *testing.T) {
+	for _, flag := range []string{"--all", "--dir"} {
+		assert.Contains(t, SkillMD, "`"+flag+"`",
+			"SKILL.md must document the %s baseline input", flag)
+	}
+
+	// Mutual exclusivity against every range flag must be stated, or an agent
+	// will happily compose --all with --base and hit a usage error at runtime.
+	for _, rangeFlag := range []string{"--base", "--head", "--merge-commit"} {
+		assert.Contains(t, SkillMD, rangeFlag,
+			"SKILL.md must name %s when stating baseline mutual exclusivity", rangeFlag)
+	}
+	assert.Regexp(t, regexp.MustCompile(`(?i)mutually exclusive|cannot be combined`), SkillMD,
+		"SKILL.md must state that baseline mode is mutually exclusive with the range flags")
+
+	// The file-hash index skip is the one baseline behavior a user must know
+	// about to get a re-review of unchanged files.
+	assert.Contains(t, SkillMD, "`--fresh`",
+		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
+}

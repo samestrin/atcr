@@ -27,16 +27,22 @@ Accept any one of:
 - **Branch name** — `feature-x`. Review it against the detected default branch (let `atcr` auto-resolve: pass no range flags, or `--base <default> --head feature-x`).
 - **PR URL** — `https://github.com/<owner>/<repo>/pull/<n>`. Resolve refs with `gh pr view <n> --json baseRefName,headRefName`, then pass them as `--base`/`--head`.
 - **No input** — review the current branch against the detected default branch (run with no range flags).
+- **Whole repository** — a request to review the *codebase* rather than a change ("review this repo", "onboard this project", "there is no PR history"). Pass `--all`: every non-ignored, git-tracked file is reviewed as a full-repository baseline scan.
+- **A subtree** — a request scoped to one directory ("review `internal/auth`"). Pass `--dir <path>`, repo-root-relative: every non-ignored, git-tracked file under that directory is reviewed as a scoped baseline scan.
 
-If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, or PR URL.`
+If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, PR URL, or a baseline scope (--all / --dir <path>).`
+
+**Baseline mode has no diff range.** `--all` and `--dir` are mutually exclusive with `--base`, `--head`, and `--merge-commit`, and with each other — never compose them. A baseline scan reviews files as they stand, so there is no base to diff against; combining them is a usage error, not a narrowing.
+
+Baseline runs consult a per-file content-hash index and skip any in-scope file whose content is unchanged since it was last reviewed, so a re-run costs only what actually changed. Pass `--fresh` to bypass that index and re-review every in-scope file regardless.
 
 ## Orchestration Steps
 
 Run these in order. Each step is a single `atcr` CLI invocation; never reach into the engine directly.
 
-1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.`
+1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.` **Skip this step entirely in baseline mode** (`--all` / `--dir`): there is no range to resolve, so go straight to step 2.
 
-2. **Start the review (background)** — `atcr review [--base X --head Y]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it.
+2. **Start the review (background)** — `atcr review [--base X --head Y | --all | --dir <path>] [--fresh]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it. A baseline scan covers the whole repository or subtree rather than a diff, so expect it to take proportionally longer than a range review.
 
 3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); both are configurable. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
 
