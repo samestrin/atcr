@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -784,4 +787,37 @@ func TestReviewAll_EveryChunkFailsWritesNoIndex(t *testing.T) {
 	require.Equal(t, 1, execCmd(t, "review", "--all"))
 	assert.NoFileExists(t, payload.FileHashIndexPath("."),
 		"a baseline run that covered nothing must not persist an index")
+}
+
+// commitBaselineWriteback must never fire on an interrupted run: a cancelled
+// context short-circuits the write-back so a partially-reviewed repo is not
+// recorded as reviewed. The live-context call proves the prep would have
+// written the index had the guard not fired.
+func TestCommitBaselineWriteback_CancelledContextWritesNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	commitBaselineWriteback(cancelled, true, prep, result)
+	assert.NoFileExists(t, payload.FileHashIndexPath("."),
+		"a cancelled run must not record files as reviewed")
+
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.FileExists(t, payload.FileHashIndexPath("."),
+		"the same write-back on a live context persists the index")
 }
