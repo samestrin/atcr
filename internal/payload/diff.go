@@ -708,6 +708,20 @@ func (g *gitRunner) headContentMemo(base, head, path string) (string, error) {
 	return src, nil
 }
 
+// headContentReuseMemo returns the HEAD blob, reusing the per-range memo when the
+// blob is ALREADY cached (by the escalation analysis pass or a prior build on this
+// runner) but NOT populating it on a miss. The files-mode render uses this: an
+// escalated file's blob is already memoized so the render reuses it, while a pure
+// files-mode run — where the render is the sole reader — reads unmemoized rather
+// than retaining every full HEAD blob for the life of the range at a 0% hit rate
+// (Epic 35.1 TD). Errors are surfaced, never cached.
+func (g *gitRunner) headContentReuseMemo(base, head, path string) (string, error) {
+	if src, ok := g.forRange(base, head).headSrc[path]; ok {
+		return src, nil
+	}
+	return g.headContent(head, path)
+}
+
 // hunkHeaderRe captures the head-side start and length from a unified-diff
 // hunk header: `@@ -a,b +c,d @@`.
 var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)

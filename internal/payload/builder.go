@@ -245,10 +245,14 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		} else {
 			fmt.Fprintf(&b, fileHeaderFmt+"\n", f.path)
 		}
-		// Memoized: when the escalation pass already read this blob to measure
-		// churn, or a file escalated INTO files mode, the render reuses that read
-		// instead of spawning a second `git show` for the same content.
-		content, err := g.headContentMemo(base, head, f.path)
+		// Reuse the memo when the analysis pass (or a prior build on this runner)
+		// already cached this blob — a file escalates INTO files mode only after
+		// analyzeFile read it, so that read is reused instead of a second `git
+		// show`. On a miss the render is the sole reader, so it reads WITHOUT
+		// caching: populating headSrc here would retain every full HEAD blob (on
+		// top of the identical FileEntry.Body) for the life of the range at a 0%
+		// hit rate — the pure files-mode waste this avoids (Epic 35.1 TD).
+		content, err := g.headContentReuseMemo(base, head, f.path)
 		if err != nil {
 			return "", fmt.Errorf("reading head content of %s: %w", f.path, err)
 		}
