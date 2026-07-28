@@ -235,3 +235,37 @@ func sectionOf(doc, heading string) string {
 	}
 	return rest
 }
+
+// TestSkillExport_WarnsAboutLeftoverFiles — export overwrites but never prunes,
+// so an install predating the debt-resolve flatten keeps its nested
+// debt-resolve/SKILL.md. That leftover declares its own skill name and a harness
+// would load it as a second skill — exactly the defect the flatten removed. The
+// export must name what it left behind rather than leave the user with a silently
+// broken tree.
+func TestSkillExport_WarnsAboutLeftoverFiles(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+	legacy := filepath.Join(dest, "debt-resolve")
+	require.NoError(t, os.MkdirAll(legacy, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(legacy, "SKILL.md"),
+		[]byte("---\nname: atcr-debt-resolve\n---\n"), 0o644))
+
+	out, err := execSkillExport(t, "--dir", dest, "--force")
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "debt-resolve/SKILL.md",
+		"the export must name the leftover file it did not write")
+	assert.Contains(t, out, "warning:", "leftovers must be reported as a warning")
+
+	_, statErr := os.Stat(filepath.Join(legacy, "SKILL.md"))
+	assert.NoError(t, statErr, "export must warn about leftovers, never delete them")
+}
+
+// TestSkillExport_CleanDestinationWarnsAboutNothing — the warning must not fire on
+// the ordinary path, or it becomes noise every user learns to ignore.
+func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+
+	out, err := execSkillExport(t, "--dir", dest)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "warning:", "a clean export must emit no leftover warning")
+}

@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -171,26 +172,61 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	warnStaleSkillFiles(cmd.ErrOrStderr(), dest, written)
 
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "Exported %d skill file(s) to %s\n", written, dest); err != nil {
+	if _, err := fmt.Fprintf(out, "Exported %d skill file(s) to %s\n", len(written), dest); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "Point your agent at %s, or restart it if it indexes skills at startup.\n", dest)
 	return err
 }
 
+// warnStaleSkillFiles reports anything in dest that this export did not write.
+// Export overwrites rather than prunes — deleting files a user put in their own
+// skills directory is not this command's call — but silence would be worse than
+// the mess: an install predating Epic 35.5's flatten leaves behind a nested
+// debt-resolve/SKILL.md declaring its own skill name, which is precisely the
+// defect the flatten removed and which a harness would happily load alongside the
+// real one. Naming the leftovers lets the user delete them deliberately.
+func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool) {
+	var stale []string
+	err := filepath.WalkDir(dest, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, relErr := filepath.Rel(dest, path)
+		if relErr != nil {
+			return relErr
+		}
+		if rel = filepath.ToSlash(rel); !written[rel] {
+			stale = append(stale, rel)
+		}
+		return nil
+	})
+	if err != nil || len(stale) == 0 {
+		return
+	}
+	sort.Strings(stale)
+	_, _ = fmt.Fprintf(errOut,
+		"warning: %s holds %d file(s) this export did not write, left in place: %s\n",
+		dest, len(stale), strings.Join(stale, ", "))
+	_, _ = fmt.Fprintln(errOut,
+		"         If they are from an older atcr skill install, delete them — a leftover nested SKILL.md is loaded as a second skill.")
+}
+
 // writeSkillTree writes the embedded skill directory's contents to dest and
-// returns the number of files written. The contents are copied, not the directory
-// itself, because a harness skill directory is named for the skill (dest is
-// already `.../atcr`). Files land 0644 inside a 0755 directory: this is
-// instruction text an agent reads, never a secret and never executable.
-func writeSkillTree(dest string) (int, error) {
+// returns the set of destination-relative paths it wrote. The contents are
+// copied, not the directory itself, because a harness skill directory is named
+// for the skill (dest is already `.../atcr`). Files land 0644 inside a 0755
+// directory: this is instruction text an agent reads, never a secret and never
+// executable.
+func writeSkillTree(dest string) (map[string]bool, error) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return 0, fmt.Errorf("creating destination %s: %w", dest, err)
+		return nil, fmt.Errorf("creating destination %s: %w", dest, err)
 	}
 
-	written := 0
+	written := map[string]bool{}
 	err := fs.WalkDir(skills.Tree, skills.SkillDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -215,14 +251,14 @@ func writeSkillTree(dest string) (int, error) {
 		if err := os.WriteFile(target, data, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", target, err)
 		}
-		written++
+		written[filepath.ToSlash(rel)] = true
 		return nil
 	})
 	if err != nil {
 		return written, err
 	}
-	if written == 0 {
-		return 0, fmt.Errorf("no skill files embedded under %s — this is a build defect", skills.SkillDir)
+	if len(written) == 0 {
+		return nil, fmt.Errorf("no skill files embedded under %s — this is a build defect", skills.SkillDir)
 	}
 	return written, nil
 }
