@@ -56,9 +56,10 @@ func uncoveredBaselineFiles(slots []Slot, results []Result, reviewed map[string]
 	// Every dispatched slot succeeded → the whole payload was covered regardless of
 	// how it was partitioned, so no attribution is needed and nothing is excluded.
 	// Requires an outcome for EVERY slot: with fewer results than slots some slot has
-	// no outcome at all, so "all succeeded" is not established and the per-slot
+	// no outcome at all, and with MORE some result has no corresponding slot, so in
+	// either direction "all succeeded" is not established and the per-slot
 	// attribution below (which leaves unmatched slots uncovered) must run instead.
-	allOK := len(results) >= len(slots)
+	allOK := len(results) == len(slots)
 	for _, r := range results {
 		if r.Status != StatusOK {
 			allOK = false
