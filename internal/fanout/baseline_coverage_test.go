@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -308,6 +309,59 @@ func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 	require.Len(t, slots, 1, "a small payload is one chunk → the bulk path")
 	assert.ElementsMatch(t, []string{"a.go", "b.go"}, slots[0].Primary.chunkFiles,
 		"the bulk baseline slot is tagged with the whole payload it covers")
+}
+
+// A baseline persona whose per-agent byte budget yields a SINGLE chunk falls out of
+// the baseline branch and into the review_strategy=chunked branch, which re-splits
+// the payload by LINE budget. Those slots used to carry no chunkFiles tag at all, and
+// an untagged slot deliberately vouches for nothing — so any partial failure produced
+// recorded == 0 and no index write, making all of Epic 35.2 inert on that config. A
+// byte budget that fits one chunk can still blow the line budget, so this is a normal
+// configuration, not a corner case.
+func TestBaselineSlots_ChunkedStrategyTagsEverySlot(t *testing.T) {
+	t.Parallel()
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = reviewStrategyChunked
+	// A small line budget: the whole payload fits ONE byte-budget chunk (so the
+	// baseline branch falls through) but exceeds this, so chunkDiff splits it.
+	ac := cfg.Registry.Agents["greta"]
+	ml := 4
+	ac.MaxContextLines = &ml
+	cfg.Registry.Agents["greta"] = ac
+
+	// Bodies carrying real `diff --git` lines — the shape tracked content such as a
+	// *.patch fixture has — so chunkDiff finds column-0 file markers to split on.
+	entries := []payload.FileEntry{
+		patchEntry("a.patch", 3),
+		patchEntry("b.patch", 3),
+		patchEntry("c.patch", 3),
+	}
+
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "the line budget must actually split the payload, or this proves nothing")
+
+	for i, s := range slots {
+		assert.NotEmpty(t, s.Primary.chunkFiles,
+			"chunked-strategy baseline slot %d must be tagged, or it vouches for nothing and coverage collapses to zero", i)
+		for _, p := range s.Primary.chunkFiles {
+			assert.Contains(t, s.Primary.Prompt, p,
+				"slot %d's tagged file %q must actually be in its rendered payload", i, p)
+		}
+	}
+}
+
+// patchEntry builds a baseline file entry whose BODY is a small unified diff, so a
+// chunker splitting on column-0 `diff --git` markers sees n splittable files.
+func patchEntry(path string, n int) payload.FileEntry {
+	var b strings.Builder
+	b.WriteString("=== FILE: " + path + "\n")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "diff --git a/%s-%d b/%s-%d\n--- a/%s-%d\n+++ b/%s-%d\n@@ -1 +1 @@\n-old\n+new\n", path, i, path, i, path, i, path, i)
+	}
+	body := b.String()
+	return payload.FileEntry{Path: path, Size: int64(len(body)), Body: body}
 }
 
 // A diff-range review never partitions by file, so its slots stay untagged and the
