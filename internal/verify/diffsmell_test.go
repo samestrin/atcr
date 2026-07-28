@@ -525,3 +525,28 @@ func TestAnalyzeDiff_RenameNegativeControls(t *testing.T) {
 		})
 	}
 }
+
+// A `+++ `-prefixed line INSIDE a hunk body is added content whose text happens
+// to start with `++ ` — not a new-file header. Reading it as a header creates a
+// phantom IMPL file (which suppresses test_only, since that requires
+// implCount == 0) and rebinds the parser, charging the following removed lines to
+// the phantom. One stray added line must not defeat the two HARD detectors.
+const dsPlusPlusContentLine = `diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go
+--- a/internal/verify/select_test.go
++++ b/internal/verify/select_test.go
+@@ -10,4 +10,2 @@
+ func TestPick(t *testing.T) {
++++ this text is CONTENT, not a header
+-	require.Equal(t, 1, pick())
+-	require.NoError(t, err)
+ }
+`
+
+func TestAnalyzeDiff_PlusPlusContentIsNotAHeader(t *testing.T) {
+	res := analyzeDiff(dsPlusPlusContentLine)
+	assert.Empty(t, res.Files.Impl, "a `+++ ` content line must not create a phantom impl file")
+	assert.Equal(t, []string{"internal/verify/select_test.go"}, res.Files.Test)
+	assert.Contains(t, res.Summary.ByType, smellTestOnly, "got %v", res.Summary.ByType)
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion, "got %v", res.Summary.ByType)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+}
