@@ -136,7 +136,7 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	// change-set size.
 	if mode != ModeFiles && len(files) > 0 && g.escalation.MaxFiles > 0 && !g.escalation.Enabled(len(files)) {
 		g.forRange(base, head).escalationDegraded = true
-		g.logger.Warn("payload: per-file escalation and AST skeletons disabled for this run",
+		g.log().Warn("payload: per-file escalation and AST skeletons disabled for this run",
 			"changed_files", len(files), "max_files", g.escalation.MaxFiles)
 	}
 	// Files mode is already the top of the escalation ladder and suppresses the

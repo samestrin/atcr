@@ -175,7 +175,7 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	if err != nil {
 		// A file present in the diff but unreadable at HEAD is not fatal: the
 		// review still runs, this file just keeps its configured mode.
-		g.logger.Debug("payload: skipping escalation analysis, HEAD blob unreadable", "path", f.path, "error", err)
+		g.log().Debug("payload: skipping escalation analysis, HEAD blob unreadable", "path", f.path, "error", err)
 		return fileContext{}, false
 	}
 
@@ -200,7 +200,7 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	}
 	root, err := parseHeadTree(src)
 	if err != nil {
-		g.logger.Debug("payload: skipping AST signals, parse failed", "path", f.path, "error", err)
+		g.log().Debug("payload: skipping AST signals, parse failed", "path", f.path, "error", err)
 		return ctx, true
 	}
 	// Scope complexity to the functions the change actually TOUCHED, not the
