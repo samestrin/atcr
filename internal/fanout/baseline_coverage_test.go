@@ -311,27 +311,26 @@ func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 		"the bulk baseline slot is tagged with the whole payload it covers")
 }
 
-// A baseline persona whose per-agent byte budget yields a SINGLE chunk falls out of
-// the baseline branch and into the review_strategy=chunked branch, which re-splits
-// the payload by LINE budget. Those slots used to carry no chunkFiles tag at all, and
-// an untagged slot deliberately vouches for nothing — so any partial failure produced
-// recorded == 0 and no index write, making all of Epic 35.2 inert on that config. A
-// byte budget that fits one chunk can still blow the line budget, so this is a normal
-// configuration, not a corner case.
-func TestBaselineSlots_ChunkedStrategyTagsEverySlot(t *testing.T) {
+// A baseline persona whose per-agent byte budget yields a SINGLE chunk used to fall
+// out of the baseline branch and into the review_strategy=chunked branch, which
+// re-splits the payload by LINE budget on column-0 diff markers. Those slots carried
+// no chunkFiles tag, and an untagged slot deliberately vouches for nothing — so any
+// partial failure produced recorded == 0 and no index write, making all of Epic 35.2
+// inert on that config. The baseline branch now owns baseline partitioning outright,
+// so every baseline slot stays file-attributable whatever the strategy setting.
+func TestBaselineSlots_ChunkedStrategyStillTagsEverySlot(t *testing.T) {
 	t.Parallel()
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.ReviewStrategy = reviewStrategyChunked
-	// A small line budget: the whole payload fits ONE byte-budget chunk (so the
-	// baseline branch falls through) but exceeds this, so chunkDiff splits it.
+	// A line budget small enough that chunkDiff WOULD have split this payload.
 	ac := cfg.Registry.Agents["greta"]
 	ml := 4
 	ac.MaxContextLines = &ml
 	cfg.Registry.Agents["greta"] = ac
 
 	// Bodies carrying real `diff --git` lines — the shape tracked content such as a
-	// *.patch fixture has — so chunkDiff finds column-0 file markers to split on.
+	// *.patch fixture has, and the reason chunkDiff finds markers to split on here.
 	entries := []payload.FileEntry{
 		patchEntry("a.patch", 3),
 		patchEntry("b.patch", 3),
@@ -340,16 +339,17 @@ func TestBaselineSlots_ChunkedStrategyTagsEverySlot(t *testing.T) {
 
 	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
-	require.Greater(t, len(slots), 1, "the line budget must actually split the payload, or this proves nothing")
 
 	for i, s := range slots {
-		assert.NotEmpty(t, s.Primary.chunkFiles,
-			"chunked-strategy baseline slot %d must be tagged, or it vouches for nothing and coverage collapses to zero", i)
-		for _, p := range s.Primary.chunkFiles {
-			assert.Contains(t, s.Primary.Prompt, p,
-				"slot %d's tagged file %q must actually be in its rendered payload", i, p)
-		}
+		require.NotEmpty(t, s.Primary.chunkFiles,
+			"baseline slot %d must be file-attributable under review_strategy=chunked too", i)
 	}
+	var tagged []string
+	for _, s := range slots {
+		tagged = append(tagged, s.Primary.chunkFiles...)
+	}
+	assert.ElementsMatch(t, []string{"a.patch", "b.patch", "c.patch"}, tagged,
+		"the tags name the REVIEWED repo paths — never the inner targets of a patch fixture's own diff markers")
 }
 
 // patchEntry builds a baseline file entry whose BODY is a small unified diff, so a
@@ -679,42 +679,57 @@ func TestResumeBaseline_HonorsUncoveredSetSemantics(t *testing.T) {
 	assert.NotContains(t, rprep.baseline.uncovered, "a.go", "the succeeded chunk's file stays covered")
 }
 
-// Independent-review HIGH regression (Epic 35.2): a baseline scan under
-// review_strategy=chunked whose PartitionByBudget yields a single chunk falls through
-// to the chunkDiff branch, which DOES split a files-mode payload when the tracked
-// content carries column-0 diff markers (atcr's own repo has *.patch fixtures). Those
-// slots cannot be file-attributed, so a failure among them must leave the whole
-// payload uncovered — recording it would silently skip unreviewed files next scan.
-func TestBaselineChunkedStrategy_PartialFailureRecordsNothing(t *testing.T) {
+// Independent-review HIGH regression (Epic 35.2), now closed: a baseline scan under
+// review_strategy=chunked whose PartitionByBudget yields a single chunk used to fall
+// through to the chunkDiff branch, which DOES split a files-mode payload when the
+// tracked content carries column-0 diff markers (atcr's own repo has *.patch
+// fixtures). Those slots could not be file-attributed, so ANY failure among them left
+// the whole payload uncovered and the write-back recorded nothing at all — Epic 35.2
+// silently inert on that configuration.
+//
+// The chunked branch is now skipped for baseline runs: the baseline branch owns the
+// partitioning, so the slots stay attributable and a partial failure records the
+// covered files instead of discarding everything. The invariant that must NOT change
+// is the fail-open direction — a file no succeeded slot vouched for is never recorded.
+func TestBaselineChunkedStrategy_PartialFailureStillRecordsCoveredFiles(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.ReviewStrategy = reviewStrategyChunked
-	// A small max_context_lines makes chunkDiff actually split (the model-derived
-	// default budget would hold this payload in one chunk).
+	// A small max_context_lines is what used to make chunkDiff split this payload.
 	small := 50
 	greta := cfg.Registry.Agents["greta"]
 	greta.MaxContextLines = &small
 	cfg.Registry.Agents["greta"] = greta
-	// Tracked content carrying real diff markers, so chunkDiff can split the
-	// files-mode payload even though PartitionByBudget produced a single chunk.
+	// No global byte budget: each file exceeds the per-agent effective budget for the
+	// unknown test model (~71680 bytes), so the BASELINE branch gives each its own
+	// chunk — the split that keeps them file-attributable. Tracked content carrying
+	// real diff markers is the shape that used to leak into chunkDiff instead.
 	repo := baselineRepo(t, map[string]string{
-		"one.patch": "diff --git a/x b/x\n// FILE:one\n" + strings.Repeat("+line\n", 400),
-		"two.patch": "diff --git a/y b/y\n// FILE:two\n" + strings.Repeat("+line\n", 400),
+		"one.patch": "diff --git a/x b/x\n// FILE:one\n" + strings.Repeat("+line\n", 20_000),
+		"two.patch": "diff --git a/y b/y\n// FILE:two\n" + strings.Repeat("+line\n", 20_000),
 	})
 	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
 	require.NoError(t, err)
 	require.NotNil(t, prep.baseline)
-	require.Greater(t, len(prep.Slots), 1, "chunkDiff must split this payload for the test to exercise the path")
+	require.Greater(t, len(prep.Slots), 1, "the baseline branch must fan out for this test to exercise a partial failure")
 	for i, s := range prep.Slots {
-		require.Nil(t, s.Primary.chunkFiles, "chunked-strategy slot %d is not file-attributable", i)
+		require.NotEmpty(t, s.Primary.chunkFiles,
+			"baseline slot %d must stay file-attributable under review_strategy=chunked", i)
+		assert.NotContains(t, s.Primary.chunkFiles, "x",
+			"a tag must never name a patch fixture's inner diff target — that path was not reviewed")
+		assert.NotContains(t, s.Primary.chunkFiles, "y",
+			"a tag must never name a patch fixture's inner diff target — that path was not reviewed")
 	}
 
-	// Fail one of the untagged chunks; the others succeed.
+	// Fail the chunk carrying two.patch; the other succeeds.
 	runEngine(context.Background(), baselinePartialFailCompleter{failMarker: "two"}, prep, t.TempDir())
 
 	require.NoError(t, prep.CommitBaselineIndex("run-1"))
-	assert.NoFileExists(t, payload.FileHashIndexPath(repo),
-		"an unattributable partial failure must record NOTHING — never stamp a file no agent reviewed")
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	_, _, okOne := idx.Get("one.patch")
+	_, _, okTwo := idx.Get("two.patch")
+	assert.True(t, okOne, "the succeeded chunk's file is recorded instead of being discarded wholesale")
+	assert.False(t, okTwo, "the failed chunk's file must NOT be recorded — fail open toward re-review")
 }
 
 // The index-correspondence contract must also hold on the two result-assignment

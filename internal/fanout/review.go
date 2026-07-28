@@ -1611,7 +1611,22 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// consensus filter still counts the persona once. A run that yields a
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
-		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
+		//
+		// A BASELINE run never enters this branch (Epic 35.2 TD). Its partitioning is
+		// owned by the baseline branch above, which splits by FILE against this agent's
+		// own byte budget and tags each slot with the files it carries. chunkDiff splits
+		// by TEXT instead, on column-0 diff markers — which a files-mode baseline payload
+		// really can carry, since tracked content such as a *.patch fixture holds literal
+		// `diff --git` lines. The resulting slots are not file-attributable: the markers
+		// inside a patch fixture name the patch's OWN targets, not the repo paths being
+		// reviewed, so any tag recovered from the chunk text would vouch for the wrong
+		// files. Untagged slots in turn vouch for nothing, so a single failure collapsed
+		// coverage to zero and the write-back degraded to the pre-35.2 discard-everything
+		// behavior on this configuration. Reaching here as a baseline means the byte
+		// partition already yielded ONE chunk — the payload fits this model's window —
+		// so falling straight through to the bulk path costs no coverage and keeps the
+		// slot exactly attributable.
+		if cfg.Settings.ReviewStrategy == reviewStrategyChunked && !baseline {
 			// A payload with no `diff --git` markers (a whole-file files-mode payload)
 			// has nothing for chunked bin-packing — which targets diff hunks — to split
 			// on, so the strategy is a no-op for it. Warn once so the operator knows.
