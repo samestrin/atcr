@@ -113,6 +113,47 @@ func TestRenderMarkdown_FixReviewEscapedAndOmitted(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out, "Fix review:"), "only the annotated finding renders a review line")
 }
 
+// The truncation limb of escTrunc must apply to FixReview exactly as it does to
+// FixWarning: an over-length annotation is cut at maxTextLen runes with the
+// ellipsis marker, never rendered verbatim (it embeds model-generated evidence).
+func TestRenderMarkdown_FixReviewTruncated(t *testing.T) {
+	long := "NEEDS_REVIEW: " + strings.Repeat("x", maxTextLen+100)
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}, FixReview: long},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.NotContains(t, out, long, "an over-length FixReview must be truncated, not rendered verbatim")
+	assert.Contains(t, out, "...", "the truncation marker must appear")
+}
+
+// fix_review is omitempty like fix_warning: a finding without an annotation
+// emits no key, and a set annotation round-trips through Render(FormatJSON).
+func TestRender_FixReviewJSONOmitemptyAndRoundTrip(t *testing.T) {
+	t.Run("omitted-when-empty", func(t *testing.T) {
+		var b strings.Builder
+		require.NoError(t, Render(&b, sample(), FormatJSON))
+		assert.NotContains(t, b.String(), "fix_review", "an empty FixReview must not emit a fix_review key")
+	})
+
+	t.Run("round-trips-when-set", func(t *testing.T) {
+		findings := []reconcile.JSONFinding{
+			{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+				Reviewers: []string{"rev"},
+				FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+		}
+		var b strings.Builder
+		require.NoError(t, Render(&b, findings, FormatJSON))
+		assert.Contains(t, b.String(), "fix_review", "a set FixReview must emit the fix_review key")
+		var got []reconcile.JSONFinding
+		require.NoError(t, json.Unmarshal([]byte(b.String()), &got))
+		require.Len(t, got, 1)
+		assert.Equal(t, findings[0].FixReview, got[0].FixReview, "FixReview must round-trip through Unmarshal")
+	})
+}
+
 func TestRender_GoldenFiles(t *testing.T) {
 	for _, tc := range goldenCases {
 		t.Run(tc.name, func(t *testing.T) {
