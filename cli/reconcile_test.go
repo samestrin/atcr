@@ -73,6 +73,26 @@ func isolate(t *testing.T) {
 	circuitbreaker.DefaultRegistry.Reset()
 }
 
+// TestIsolateCleanupResetsBreakers_Trip opens the circuit for a provider after
+// calling isolate. The paired Observe test below then proves isolate's cleanup
+// reset the process-global registry: without a t.Cleanup reset the breaker
+// stays open and leaks forward into tests that never called isolate.
+func TestIsolateCleanupResetsBreakers_Trip(t *testing.T) {
+	isolate(t)
+	b := circuitbreaker.DefaultRegistry.Get("p-cleanup-check")
+	for i := 0; i < circuitbreaker.DefaultThreshold; i++ {
+		b.RecordFailure()
+	}
+	require.False(t, b.Allow(), "breaker should be open after threshold failures")
+}
+
+func TestIsolateCleanupResetsBreakers_Observe(t *testing.T) {
+	// Deliberately does NOT call isolate — it observes whether breaker state
+	// leaked forward from the Trip test above (tests run in source order).
+	require.True(t, circuitbreaker.DefaultRegistry.Get("p-cleanup-check").Allow(),
+		"breaker state leaked forward from a test that called isolate")
+}
+
 // touchFiles creates the given repo-root-relative source files so reconcile's
 // path-validation stage does not flag them as hallucinated in tests that intend
 // to exercise local-debt persistence.

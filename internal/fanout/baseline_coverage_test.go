@@ -209,6 +209,29 @@ func TestUncoveredBaselineFiles_ShortResultsSliceIsSafe(t *testing.T) {
 	})
 }
 
+// Defensive (companion to ShortResultsSliceIsSafe): a results slice LONGER than the
+// slot slice must not declare full coverage either — the extra results have no
+// corresponding slot, so "an outcome for EVERY slot" is not established and the
+// per-slot attribution must run instead, leaving files no succeeded tagged chunk
+// carried uncovered.
+func TestUncoveredBaselineFiles_ExtraResultsSliceIsSafe(t *testing.T) {
+	t.Parallel()
+	slots := []Slot{
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}},
+	}
+	results := []Result{
+		{Agent: "greta", Status: StatusOK},
+		{Agent: "greta", Status: StatusOK}, // no slot corresponds to this result
+	}
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
+
+	assert.NotPanics(t, func() {
+		got := uncoveredBaselineFiles(slots, results, reviewed)
+		assert.Equal(t, map[string]struct{}{"b.go": {}}, got,
+			"extra results must not shortcut to full coverage — b.go has no coverage evidence")
+	})
+}
+
 // buildSlots' baseline branch must tag every (persona × chunk) slot with exactly the
 // files that chunk carries, so the tag and the rendered prompt cannot drift apart.
 func TestBaselineSlots_TagChunkFilesPerSlot(t *testing.T) {
