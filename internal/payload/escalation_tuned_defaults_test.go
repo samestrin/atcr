@@ -53,9 +53,9 @@ func scatteredFile(count int, edited map[int]bool) string {
 func branchyFunc(branches, seed int) string {
 	var b strings.Builder
 	b.WriteString("package p\n\nfunc Branchy(n int) int {\n")
-	b.WriteString(fmt.Sprintf("\tr := %d\n", seed))
+	fmt.Fprintf(&b, "\tr := %d\n", seed)
 	for i := 0; i < branches; i++ {
-		b.WriteString(fmt.Sprintf("\tif n == %d {\n\t\tr++\n\t}\n", i))
+		fmt.Fprintf(&b, "\tif n == %d {\n\t\tr++\n\t}\n", i)
 	}
 	b.WriteString("\treturn r\n}\n")
 	return b.String()

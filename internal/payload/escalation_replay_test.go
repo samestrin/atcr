@@ -194,10 +194,11 @@ func replayRepoRoot(t *testing.T) (string, bool) {
 }
 
 // replayCommits lists up to window commit SHAs reachable from ref, newest
-// first.
+// first. --end-of-options stops an env-supplied ref beginning with '-' from
+// being read as a git option, the same guard verifyRef applies in diff.go.
 func replayCommits(t *testing.T, root, ref string, window int) []string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "-n", strconv.Itoa(window), ref).Output()
+	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "-n", strconv.Itoa(window), "--end-of-options", ref).Output()
 	if err != nil {
 		return nil
 	}
@@ -342,7 +343,7 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 
 	for _, sha := range shas {
 		parent := sha + "^"
-		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", parent+"^{commit}").Run(); err != nil {
+		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", parent+"^{commit}").Run(); err != nil {
 			continue // root commit, or the shallow-clone boundary
 		}
 		g := &gitRunner{ctx: ctx, dir: root, escalation: cfg}
