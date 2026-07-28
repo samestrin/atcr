@@ -64,6 +64,9 @@ const (
 	// smellTestDeleted is an atcr addition, not an upstream type: upstream has no
 	// deletion detector at all. See the deletion branch in analyzeDiff.
 	smellTestDeleted = "test_deleted"
+	// smellTestSkipped is an atcr addition, not an upstream type: upstream has no
+	// skip detector. See the skip branch in analyzeDiff.
+	smellTestSkipped = "test_skipped"
 	smellSuppression = "suppression"
 	smellEmptyCatch  = "empty_catch"
 	smellStubBody    = "stub_body"

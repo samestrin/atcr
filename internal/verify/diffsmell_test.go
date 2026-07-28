@@ -396,3 +396,85 @@ func TestSmellTypes(t *testing.T) {
 	assert.Empty(t, smellTypes(analyzeDiff(dsImplOnly)))
 	assert.Empty(t, smellTypes(nil))
 }
+
+// Skipping a test is the most direct way to make a failing test pass, and it is
+// unambiguous — nothing legitimate about a fix requires disabling the test that
+// proves it. It must be HARD, and it must fire even when the diff also carries a
+// real implementation change (which keeps test_only from firing).
+const dsTestSkipGo = `diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go
+--- a/internal/verify/select_test.go
++++ b/internal/verify/select_test.go
+@@ -10,3 +10,4 @@
+ func TestPick(t *testing.T) {
++	t.Skip("unrelated flake")
+ 	require.Equal(t, 1, pick())
+ }
+diff --git a/internal/verify/select.go b/internal/verify/select.go
+--- a/internal/verify/select.go
++++ b/internal/verify/select.go
+@@ -10,3 +10,3 @@
+ func pick() int {
+-	return 0
++	return 1
+ }
+`
+
+const dsTestSkipPy = `diff --git a/api/test_thing.py b/api/test_thing.py
+--- a/api/test_thing.py
++++ b/api/test_thing.py
+@@ -1,3 +1,4 @@
++@pytest.mark.skip(reason="broken")
+ def test_thing():
+     assert thing() == 1
+diff --git a/api/thing.py b/api/thing.py
+--- a/api/thing.py
++++ b/api/thing.py
+@@ -1,2 +1,2 @@
+ def thing():
+-    return 0
++    return 1
+`
+
+func TestAnalyzeDiff_TestSkipIsHard(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		diff string
+	}{
+		{"go t.Skip", dsTestSkipGo},
+		{"pytest mark skip", dsTestSkipPy},
+		{"go t.Skipf", strings.Replace(dsTestSkipGo, `t.Skip("unrelated flake")`, `t.Skipf("flaky on %s", runtime.GOOS)`, 1)},
+		{"jest it.skip", "diff --git a/src/app.test.ts b/src/app.test.ts\n--- a/src/app.test.ts\n+++ b/src/app.test.ts\n@@ -1 +1,2 @@\n+it.skip('works', () => {})\n" + dsImplOnly},
+		{"jest describe.skip", "diff --git a/src/app.test.ts b/src/app.test.ts\n--- a/src/app.test.ts\n+++ b/src/app.test.ts\n@@ -1 +1,2 @@\n+describe.skip('suite', () => {})\n" + dsImplOnly},
+		{"jasmine xit", "diff --git a/src/app.spec.js b/src/app.spec.js\n--- a/src/app.spec.js\n+++ b/src/app.spec.js\n@@ -1 +1,2 @@\n+xit('works', () => {})\n" + dsImplOnly},
+		{"jasmine xdescribe", "diff --git a/src/app.spec.js b/src/app.spec.js\n--- a/src/app.spec.js\n+++ b/src/app.spec.js\n@@ -1 +1,2 @@\n+xdescribe('suite', () => {})\n" + dsImplOnly},
+		{"junit4 Ignore", "diff --git a/src/main/UserTest.java b/src/main/UserTest.java\n--- a/src/main/UserTest.java\n+++ b/src/main/UserTest.java\n@@ -1 +1,2 @@\n+    @Ignore(\"broken\")\n" + dsImplOnly},
+		{"junit5 Disabled", "diff --git a/src/main/UserTest.java b/src/main/UserTest.java\n--- a/src/main/UserTest.java\n+++ b/src/main/UserTest.java\n@@ -1 +1,2 @@\n+    @Disabled\n" + dsImplOnly},
+		{"rust ignore", "diff --git a/tests/it.rs b/tests/it.rs\n--- a/tests/it.rs\n+++ b/tests/it.rs\n@@ -1 +1,2 @@\n+#[ignore]\n" + dsImplOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := analyzeDiff(tc.diff)
+			assert.Contains(t, res.Summary.ByType, smellTestSkipped, "skip must be detected in %v", res.Summary.ByType)
+			assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+		})
+	}
+}
+
+// The skip detector must not fire on non-test files, on REMOVED skip lines
+// (re-enabling a test is the opposite of a reward hack), or on identifiers that
+// merely contain a skip token.
+func TestAnalyzeDiff_TestSkipNegativeControls(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		diff string
+	}{
+		{"skip token in impl file", "diff --git a/internal/verify/select.go b/internal/verify/select.go\n--- a/internal/verify/select.go\n+++ b/internal/verify/select.go\n@@ -1 +1,2 @@\n+\tt.Skip(\"n/a\")\n"},
+		{"removing a skip re-enables the test", "diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1,2 +1,1 @@\n-\tt.Skip(\"was flaky\")\n" + dsImplOnly},
+		{"identifier containing xit", "diff --git a/src/app.spec.js b/src/app.spec.js\n--- a/src/app.spec.js\n+++ b/src/app.spec.js\n@@ -1 +1,2 @@\n+  prefixit('works', () => { expect(1).toBe(1) })\n" + dsImplOnly},
+		{"identifier containing skip", "diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1 +1,2 @@\n+\trequire.Equal(t, 1, unit.skipped())\n" + dsImplOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := analyzeDiff(tc.diff)
+			assert.NotContains(t, res.Summary.ByType, smellTestSkipped, "must not flag: %v", res.Summary.ByType)
+		})
+	}
+}
