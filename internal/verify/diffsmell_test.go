@@ -86,6 +86,40 @@ const dsStubBody = `diff --git a/internal/verify/select.go b/internal/verify/sel
  }
 `
 
+// dsCryptoPanic is idiomatic Go error handling, not a stub: the panic argument
+// is a real message, not a not-implemented literal.
+const dsCryptoPanic = `diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+--- a/internal/verify/executor.go
++++ b/internal/verify/executor.go
+@@ -10,2 +10,3 @@
+ func pick() int {
++	panic("crypto/rand: " + err.Error())
+ 	return 1
+ }
+`
+
+// dsTrailingTODO defers follow-up work in a trailing comment on a real
+// statement — only a TODO/FIXME that IS the whole statement is a stub.
+const dsTrailingTODO = `diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+--- a/internal/verify/executor.go
++++ b/internal/verify/executor.go
+@@ -10,2 +10,3 @@
+ func pick() int {
++	panic(err) // TODO: return instead
+ 	return 1
+ }
+`
+
+const dsNotImplPanic = `diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+--- a/internal/verify/executor.go
++++ b/internal/verify/executor.go
+@@ -10,2 +10,3 @@
+ func pick() int {
++	panic("not implemented")
+ 	return 1
+ }
+`
+
 const dsEmptyCatch = `diff --git a/src/app.js b/src/app.js
 --- a/src/app.js
 +++ b/src/app.js
@@ -126,6 +160,9 @@ func TestAnalyzeDiff_Verdicts(t *testing.T) {
 		{"weakened assertion is hard", dsWeakenedAssertion, smellVerdictHard, []string{smellWeakenedAssertion}},
 		{"suppression is soft", dsSuppression, smellVerdictSoftOnly, []string{smellSuppression}},
 		{"stub body is soft", dsStubBody, smellVerdictSoftOnly, []string{smellStubBody}},
+		{"crypto panic is clean", dsCryptoPanic, smellVerdictClean, nil},
+		{"trailing TODO comment is clean", dsTrailingTODO, smellVerdictClean, nil},
+		{"not-implemented panic is soft", dsNotImplPanic, smellVerdictSoftOnly, []string{smellStubBody}},
 		{"empty catch is soft", dsEmptyCatch, smellVerdictSoftOnly, []string{smellEmptyCatch}},
 		{"multi-line empty catch is soft", dsEmptyCatchMultiline, smellVerdictSoftOnly, []string{smellEmptyCatch}},
 		{"empty diff is clean", "", smellVerdictClean, nil},
