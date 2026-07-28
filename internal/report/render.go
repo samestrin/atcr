@@ -157,6 +157,7 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		return err
 	}
 	hasDisagreement, hasVerification, hasEvidence := false, false, false
+	hasFixWarning, hasFixReview := false, false
 	for _, f := range findings {
 		if f.Disagreement != "" {
 			hasDisagreement = true
@@ -166,6 +167,12 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 		}
 		if f.EvidenceExec != nil {
 			hasEvidence = true
+		}
+		if f.FixWarning != "" {
+			hasFixWarning = true
+		}
+		if f.FixReview != "" {
+			hasFixReview = true
 		}
 	}
 	header := []string{"severity", "file:line", "problem", "fix", "category", "est_minutes", "evidence", "reviewers", "confidence"}
@@ -178,13 +185,22 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 	if hasEvidence {
 		header = append(header, "evidence_exec.command", "evidence_exec.exit_code", "evidence_exec.output_excerpt")
 	}
+	// fix_warning / fix_review follow the same has-any discipline (Epic 35.3): the
+	// payload is documented as a superset of the JSON form, so an agent consuming
+	// --axi must see the same warning and NEEDS_REVIEW signals --format json carries.
+	if hasFixWarning {
+		header = append(header, "fix_warning")
+	}
+	if hasFixReview {
+		header = append(header, "fix_review")
+	}
 	quotedHeader := make([]string, len(header))
 	for i, h := range header {
 		quotedHeader[i] = toonQuote(h)
 	}
 	fmt.Fprintf(&b, "findings[%d%c]{%s}:\n", len(findings), axiDelim, strings.Join(quotedHeader, string(axiDelim)))
 	for _, f := range findings {
-		row := axiRow(f, hasDisagreement, hasVerification, hasEvidence)
+		row := axiRow(f, hasDisagreement, hasVerification, hasEvidence, hasFixWarning, hasFixReview)
 		// Defensive invariant (AC 01-02 Error Scenario 1): a row must carry exactly
 		// as many columns as the header declares. A mismatch is an internal encoder
 		// bug, never user input — fail deterministically rather than emit a
@@ -215,7 +231,7 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 // but a quoted empty string ("") where it is absent, so one column carries both
 // shapes across rows. A consumer decoding the payload must tolerate the mixed
 // present/absent form rather than assume a strict per-column type.
-func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence bool) []string {
+func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEvidence, hasFixWarning, hasFixReview bool) []string {
 	row := []string{
 		axiText(f.Severity),
 		axiText(fmt.Sprintf("%s:%d", f.File, f.Line)),
@@ -247,6 +263,12 @@ func axiRow(f reconcile.JSONFinding, hasDisagreement, hasVerification, hasEviden
 		} else {
 			row = append(row, axiText(""), axiText(""), axiText(""))
 		}
+	}
+	if hasFixWarning {
+		row = append(row, axiText(f.FixWarning))
+	}
+	if hasFixReview {
+		row = append(row, axiText(f.FixReview))
 	}
 	return row
 }
