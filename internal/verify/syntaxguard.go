@@ -107,6 +107,9 @@ func validateGoFixSyntax(fix string) error {
 		return nil // explicitly another language — not this guard's concern
 	}
 	if len(code) > maxFixBytes {
+		// Cap the size of the code actually parsed, not the raw fix. A small fenced
+		// snippet wrapped in a huge prose blob is still a genuine fix and should be
+		// validated; only the extracted code path is expensive.
 		return nil // pathological size: not a genuine fix — skip the triple AST parse
 	}
 	// A unified diff is not Go source: parsing one yields a guaranteed bogus
@@ -124,12 +127,6 @@ func validateGoFixSyntax(fix string) error {
 	// guard cannot (a false exemption means a real parse error goes unreported).
 	if startsWithDiffHeader(code) {
 		return nil
-	}
-	// Cap the size of the code actually parsed, not the raw fix. A small fenced
-	// snippet wrapped in a huge prose blob is still a genuine fix and should be
-	// validated; only the extracted code path is expensive.
-	if len(code) > maxFixBytes {
-		return nil // pathological size: not a genuine fix — skip the triple AST parse
 	}
 	code = strings.TrimSpace(code)
 	if code == "" {
