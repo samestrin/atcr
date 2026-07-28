@@ -597,3 +597,33 @@ func TestAnalyzeDiff_HeaderlessDeletionBindsToOldPath(t *testing.T) {
 	assert.Equal(t, res.Summary.Verdict, withHeaders.Summary.Verdict)
 	assert.Contains(t, withHeaders.Summary.ByType, smellTestDeleted)
 }
+
+// A malformed `+++ ` header carrying only whitespace is NOT a deletion — only an
+// explicit /dev/null is. Treating an empty path as a deletion produces the worst
+// kind of false positive: a HARD test_deleted on a diff that deletes nothing, so
+// a good fix is rejected, retried, then withheld with a FixWarning accusing the
+// model of deleting a test file it never touched.
+func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tail string
+	}{
+		{"whitespace only", "+++    \n"},
+		{"tab only", "+++ \t\n"},
+		{"bare marker", "+++ \n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The hunk's declared counts are exhausted by its two body lines, so the
+			// malformed header lands OUTSIDE the hunk and reaches the header branch —
+			// where the empty-path-means-deleted test lives.
+			res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n" +
+				"@@ -1,1 +1,1 @@\n-\trequire.Equal(t, 1, 2)\n+\trequire.Equal(t, 1, 3)\n" + tc.tail)
+			assert.NotContains(t, res.Summary.ByType, smellTestDeleted,
+				"nothing was deleted; got %v", res.Summary.ByType)
+		})
+	}
+
+	// Control: an explicit /dev/null IS still a deletion.
+	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
+	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
+}
