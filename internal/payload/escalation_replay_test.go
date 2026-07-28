@@ -58,6 +58,13 @@ func (r *replayStats) addBytes(base, escalated int) {
 // byteDelta is the percentage increase in payload bytes escalation caused over
 // this population. This is the figure the AC3 band is anchored to: a bare
 // promotion percentage says nothing about what an operator actually pays.
+//
+// The population is the MEASURED sub-population, not the whole payload: commits
+// whose change set exceeded MaxFiles (an operator pays 0% escalation on those)
+// and files analyzeFile declined (which still render, and cost base bytes, in
+// production) are excluded from both sides. Both exclusions bias the figure
+// upward, so the number is conservative — but it is the delta over the files
+// the heuristic actually ran on, not the operator's whole-payload figure.
 func (r *replayStats) byteDelta() float64 {
 	if r.baseBytes <= 0 {
 		return 0
