@@ -270,6 +270,11 @@ type replayReport struct {
 	skipped  int // files analyzeFile declined to measure (binary, deleted, unreadable)
 	unbilled int // files whose payload render failed, so they carry no byte measurement
 	errored  int // commits whose change-set lookup failed outright
+	// unresolved counts commits dropped at the parent rev-parse: root commits
+	// and the shallow-clone boundary are legitimate, but a systematically
+	// failing resolution (e.g. non-SHA lines injected by a global gitconfig)
+	// would otherwise empty the measurement window silently.
+	unresolved int
 }
 
 // TestEscalationReplay_MeasureRepoHistory is the AC1 measurement harness: it
@@ -293,6 +298,9 @@ func TestEscalationReplay_MeasureRepoHistory(t *testing.T) {
 	rep := replayEvaluate(t, root, cfg, shas)
 
 	logReplayReport(t, ref, window, cfg, rep)
+
+	require.Greater(t, rep.all.files, 0,
+		"an opted-in measurement over a non-empty window must analyze at least one file — a zero here means every commit fell out of the window (check the unresolved/errored counts above), and a 0.0% report would pass silently")
 }
 
 // replaySetup resolves the work tree, ref, window and commit list shared by the
@@ -397,6 +405,7 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 	for _, sha := range shas {
 		parent := sha + "^"
 		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", parent+"^{commit}").Run(); err != nil {
+			rep.unresolved++
 			continue // root commit, or the shallow-clone boundary
 		}
 		rep.walked++
@@ -485,8 +494,8 @@ func accumulateBytes(g *gitRunner, cfg EscalationConfig, base, head string, f ch
 // rate so an unrepresentative window is visible rather than implied.
 func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig, rep replayReport) {
 	t.Helper()
-	t.Logf("escalation replay: ref=%s window=%d commits_walked=%d commits_measured=%d degraded=%d errored=%d files_analyzed=%d files_skipped=%d files_unbilled=%d",
-		ref, window, rep.walked, rep.all.commits, rep.degraded, rep.errored, rep.all.files, rep.skipped, rep.unbilled)
+	t.Logf("escalation replay: ref=%s window=%d commits_walked=%d commits_measured=%d degraded=%d errored=%d unresolved=%d files_analyzed=%d files_skipped=%d files_unbilled=%d",
+		ref, window, rep.walked, rep.all.commits, rep.degraded, rep.errored, rep.unresolved, rep.all.files, rep.skipped, rep.unbilled)
 	t.Logf("thresholds: churn_ratio=%.2f min_hunks=%d hunk_gap_lines=%d min_cyclomatic=%d max_files=%d",
 		cfg.ChurnRatio, cfg.MinHunks, cfg.HunkGapLines, cfg.MinCyclomatic, cfg.MaxFiles)
 
