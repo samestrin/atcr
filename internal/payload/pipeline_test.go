@@ -63,6 +63,30 @@ func TestBuildEntries_EscalationCostsOneProcessPerFile(t *testing.T) {
 	}
 }
 
+// In files mode the escalation analysis pass is skipped, so the files-mode
+// render is the ONLY reader of each HEAD blob. Memoizing it retains the full
+// HEAD content for the life of the range — on top of the identical
+// FileEntry.Body — for a guaranteed 0% hit rate. The per-range headSrc cache
+// must therefore stay empty after a files-mode build (Epic 35.1 TD).
+func TestBuildEntries_FilesModeDoesNotRetainHeadBlobs(t *testing.T) {
+	dir := initRepo(t)
+	for i := 0; i < 3; i++ {
+		write(t, dir, fmt.Sprintf("f%d.go", i), goFileV1)
+	}
+	base := commitAll(t, dir, "v1")
+	for i := 0; i < 3; i++ {
+		write(t, dir, fmt.Sprintf("f%d.go", i), goFileV2)
+	}
+	head := commitAll(t, dir, "v2")
+
+	g := newGitRunner(context.Background(), dir)
+	entries, err := g.buildEntries(ModeFiles, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.Empty(t, g.forRange(base, head).headSrc,
+		"files mode must not retain HEAD blobs in the per-range memo")
+}
+
 // Above the file cap the analysis pass is skipped entirely, so the constant
 // process profile is restored — the cap's whole purpose.
 func TestBuildEntries_AboveCapRestoresConstantProcessCount(t *testing.T) {
