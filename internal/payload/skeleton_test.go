@@ -22,6 +22,30 @@ func TestRenderSkeleton_FormatsHeadersWithLineAnchors(t *testing.T) {
 	}, "\n"), got)
 }
 
+func TestRenderSkeleton_TruncatesOversizedHeader(t *testing.T) {
+	// A generated single-line declaration yields a header of arbitrary length.
+	// The MaxSkeletonLines cap bounds the entry COUNT, not the bytes, so without a
+	// per-header byte cap one such entry prepends its whole length to the payload.
+	huge := "var _bindata = []byte(\"" + strings.Repeat("A", 100*1024) + "\")"
+
+	got := renderSkeleton([]skeletonEntry{{StartLine: 1, Header: huge}}, 60)
+
+	require.Less(t, len(got), 1024, "a 100 KB header must not pass through into the block")
+	require.Contains(t, got, "(truncated)", "the clip must be disclosed")
+}
+
+func TestRenderSkeleton_BlockStaysUnderCeiling(t *testing.T) {
+	entries := make([]skeletonEntry, 1000)
+	for i := range entries {
+		entries[i] = skeletonEntry{StartLine: i + 1, Header: strings.Repeat("x", 150)}
+	}
+
+	got := renderSkeleton(entries, 1000)
+
+	require.LessOrEqual(t, len(got), maxSkeletonBlockBytes+256, "block must stay near the ceiling")
+	require.Contains(t, got, "elided", "the omitted remainder must be disclosed")
+}
+
 func TestRenderSkeleton_EmptyYieldsNothing(t *testing.T) {
 	require.Empty(t, renderSkeleton(nil, 60))
 	require.Empty(t, renderSkeleton([]skeletonEntry{}, 60))

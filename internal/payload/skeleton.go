@@ -17,6 +17,23 @@ import (
 const (
 	skeletonStart = ">>> SKELETON (HEAD) <<<"
 	skeletonEnd   = ">>> END SKELETON <<<"
+
+	// maxSkeletonHeaderBytes caps a single rendered declaration header. A
+	// generated single-line declaration — a go-bindata `var _bindata =
+	// []byte("…")`, an embedded asset table, minified generated Go — yields a
+	// header of arbitrary length that astgroup.declHeader slices whole. Without
+	// this cap the MaxSkeletonLines entry limit bounds the line COUNT but not the
+	// bytes, so a handful of such entries could prepend megabytes to a one-line
+	// diff, in every mode payload. Truncation is disclosed inline, never silent.
+	maxSkeletonHeaderBytes = 512
+	// maxSkeletonBlockBytes bounds the whole rendered skeleton block. It is the
+	// backstop the per-header cap cannot provide once an operator raises
+	// MaxSkeletonLines far above the default: even capped headers, enough of them,
+	// still add up. Rendering stops when the block reaches this size and the
+	// remainder is disclosed with the elision notice.
+	maxSkeletonBlockBytes = 8 * 1024
+	// skeletonHeaderTruncSuffix marks a header clipped by maxSkeletonHeaderBytes.
+	skeletonHeaderTruncSuffix = "…(truncated)"
 )
 
 // skeletonEntry is one rendered declaration header. It mirrors
@@ -61,6 +78,12 @@ func renderSkeleton(entries []skeletonEntry, maxLines int) string {
 	b.WriteString(skeletonEnd)
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// truncateHeader bounds a single declaration header to maxSkeletonHeaderBytes,
+// appending skeletonHeaderTruncSuffix when it clips.
+func truncateHeader(h string) string {
+	return h // STUB (RED): real byte-bounded truncation lands in GREEN
 }
 
 // injectSkeleton splices skel into body immediately after body's first line.
