@@ -215,12 +215,12 @@ func TestEscalate_PureDeletionAnchorCountsTowardAdjacency(t *testing.T) {
 	// formula `next.start - prev.end - 1` yields exactly the unchanged head
 	// lines between the deletion point and the next hunk, so a deletion that
 	// sits close to another edit fires adjacency: line 10 unchanged.
-	close := c.escalate(ModeDiff, fileSignals{
+	adjacent := c.escalate(ModeDiff, fileSignals{
 		changedLines: 4, headLines: 1000,
 		hunks:      []lineRange{{start: 10, end: 9}, {start: 11, end: 12}},
 		cyclomatic: 2,
 	})
-	require.Equal(t, ModeBlocks, close,
+	require.Equal(t, ModeBlocks, adjacent,
 		"a deletion 1 unchanged line from the next hunk is adjacency evidence")
 
 	// Same inverted anchor, but the next hunk is 2 unchanged lines away —
