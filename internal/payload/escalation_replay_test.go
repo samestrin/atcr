@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -328,9 +329,14 @@ func replayRepoRoot(t *testing.T) (string, bool) {
 // here and once in the individual commits, skewing both the rate and the byte
 // delta. This repo squash-merges so its history is merge-free, but the harness
 // is documented for general use.
-func replayCommits(t *testing.T, root, ref string, window int) ([]string, error) {
+//
+// The subprocess is constructed through gitexec, not os/exec: an unhardened
+// child reads the developer's system and global gitconfig, so a local
+// log.showSignature or log.date entry would inject non-SHA lines into this
+// listing and silently reshape the measurement window.
+func replayCommits(ctx context.Context, t *testing.T, root, ref string, window int) ([]string, error) {
 	t.Helper()
-	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "--no-merges",
+	out, err := gitexec.CommandContextFn(ctx, "-C", root, "log", "--format=%H", "--no-merges",
 		"-n", strconv.Itoa(window), "--end-of-options", ref).Output()
 	if err != nil {
 		// ExitError.Error() is only the process state ("exit status 128"); the
@@ -410,7 +416,7 @@ func replaySetup(t *testing.T) (root, ref string, window int, shas []string) {
 		ref = "HEAD"
 	}
 	window = replayWindow(t)
-	shas, err := replayCommits(t, root, ref, window)
+	shas, err := replayCommits(t.Context(), t, root, ref, window)
 	if err != nil {
 		t.Skipf("replay measurement could not list commits at %s: %v", ref, err)
 	}
@@ -491,12 +497,15 @@ func withCyclo(c EscalationConfig, n int) EscalationConfig {
 // commit's own diff (parent..commit) and folds the outcomes into a report.
 func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []string) replayReport {
 	t.Helper()
-	ctx := context.Background()
+	// The test's own context, not context.Background(): it bounds the git
+	// children this harness spawns, so a -timeout cancellation reaches them
+	// instead of leaving subprocesses running past the failure.
+	ctx := t.Context()
 	var rep replayReport
 
 	for _, sha := range shas {
 		parent := sha + "^"
-		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", parent+"^{commit}").Run(); err != nil {
+		if err := gitexec.CommandContextFn(ctx, "-C", root, "rev-parse", "--verify", "--quiet", "--end-of-options", parent+"^{commit}").Run(); err != nil {
 			rep.unresolved++
 			continue // root commit, or the shallow-clone boundary
 		}
