@@ -137,6 +137,22 @@ type Agent struct {
 	ReservedOutputTokens int
 	DegradationAction    string
 
+	// chunkFiles is the set of repo-relative file paths THIS agent's baseline
+	// (--all/--dir) chunk carries, tagged by buildSlots' baseline branch at
+	// PartitionByBudget output — after capChunks tail-coalescing, so the identity
+	// matches the slot that is actually dispatched (Epic 35.2 / TD-013). It is the
+	// only record of which files a chunk covered: mergeResultGroup collapses
+	// per-chunk success/failure into a bare UnreviewedChunks count, so without this
+	// tag a partially-failed baseline run cannot tell which files went unreviewed.
+	//
+	// nil is a meaningful sentinel — "this slot covers the whole payload" — set on
+	// every non-baseline slot and on the baseline bulk fall-through (single chunk, or
+	// a non-positive per-agent chunk budget). Unexported because it never leaves the
+	// package: runEngine consumes it via slot/result index correspondence before
+	// mergeChunkResults runs, so no exported Slot/Result field is needed and no
+	// MCP/status consumer sees a shape change.
+	chunkFiles []string
+
 	// chunkMaxLines is the per-model chunk line budget (Epic 19.10 F3) this agent's
 	// payload was sized under. Unexported because it is never persisted, only folded
 	// into the diff-cache sizing token (F7) and reused by buildFallbackAgent so a
