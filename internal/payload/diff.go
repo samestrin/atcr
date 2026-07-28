@@ -569,15 +569,20 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 				set[path] = true
 				continue
 			}
-			// Added + deleted lines. A non-numeric field is skipped rather than
-			// treated as zero, so a malformed line cannot silently suppress a
-			// file's churn signal.
+			// The churn signal is max(added, deleted), NOT their sum: numstat
+			// reports a MODIFIED line as one addition AND one deletion, so summing
+			// double-counts it and the ratio churn/head_lines stops being a fraction
+			// of HEAD lines (a 30%-modified file would read as 0.6). Taking the max
+			// keeps it a true fraction — the meaning both DefaultEscalationChurnRatio
+			// and the registry's <= 1.0 bound assume (Epic 35.1). A non-numeric field
+			// is skipped rather than treated as zero, so a malformed line cannot
+			// silently suppress a file's churn signal.
 			added, aerr := strconv.Atoi(fields[0])
 			deleted, derr := strconv.Atoi(fields[1])
 			if aerr != nil || derr != nil {
 				continue
 			}
-			churn[path] = added + deleted
+			churn[path] = max(added, deleted)
 		}
 	}
 	s.binary = set
@@ -585,8 +590,9 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 	return set, nil
 }
 
-// churnLines returns the added+deleted line count for path, served from the
-// memoized whole-range numstat. ok is false when the range had no numstat entry
+// churnLines returns the churn measure max(added, deleted) for path, served from
+// the memoized whole-range numstat — a fraction-of-HEAD-lines measure that counts
+// a modified line once, not twice. ok is false when the range had no numstat entry
 // for the path (binary, or not present in this diff).
 func (g *gitRunner) churnLines(base, head, path string) (int, bool, error) {
 	if _, err := g.binarySet(base, head); err != nil {
