@@ -632,8 +632,9 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 	var v1 strings.Builder
 	v1.WriteString("package p\n\nfunc Big() int {\n\ttotal := 0\n")
 	// Eight edit sites, all at least 11 lines clear of the midpoint marker at
-	// index 67 (so a -U10 render cannot reach it) and at least 3 unchanged lines
-	// apart (so the hunk-count signal fires, not adjacency).
+	// index 67 (so a -U10 render cannot reach it) and 9 unchanged lines apart —
+	// comfortably above the 2-line adjacency threshold, so the promotion is
+	// attributable to the hunk COUNT alone.
 	editLines := map[int]bool{5: true, 15: true, 25: true, 35: true, 45: true, 85: true, 95: true, 105: true}
 	for i := 0; i < 110; i++ {
 		if i == 67 {
