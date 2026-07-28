@@ -2,6 +2,8 @@ package payload
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,6 +254,14 @@ func replayCommits(t *testing.T, root, ref string, window int) ([]string, error)
 	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "--no-merges",
 		"-n", strconv.Itoa(window), "--end-of-options", ref).Output()
 	if err != nil {
+		// ExitError.Error() is only the process state ("exit status 128"); the
+		// actionable message is git's own stderr ("fatal: bad revision ..."),
+		// which Output() captures into ExitError.Stderr. Surface it so a typo'd
+		// ref reads as a typo'd ref.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
 		return nil, err
 	}
 	var shas []string
