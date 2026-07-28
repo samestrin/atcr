@@ -153,9 +153,17 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	}
 	// A binary file has no reviewable text: it renders as a one-line marker in
 	// every mode. Reading its blob to measure churn would pull the whole binary
-	// into memory for a decision that cannot change anything.
-	if bin, err := g.isBinary(base, head, f.pathspec()...); err != nil || bin {
-		g.log().Debug("payload: skipping escalation analysis", "path", f.path, "binary", bin, "error", err)
+	// into memory for a decision that cannot change anything. The git failure and
+	// the by-design binary skip are logged separately so an operator can tell
+	// "git failed" from "binary, skipped as intended" — conflating them hides
+	// which one actually happened.
+	bin, err := g.isBinary(base, head, f.pathspec()...)
+	if err != nil {
+		g.log().Debug("payload: skipping escalation analysis, binary check failed", "path", f.path, "error", err)
+		return fileContext{}, false
+	}
+	if bin {
+		g.log().Debug("payload: skipping escalation analysis, binary file", "path", f.path)
 		return fileContext{}, false
 	}
 	// Every hunk, deletions included: a rewrite that mostly removes code is
