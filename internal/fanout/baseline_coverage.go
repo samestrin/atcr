@@ -77,11 +77,12 @@ func uncoveredBaselineFiles(slots []Slot, results []Result, reviewed map[string]
 		if i >= len(results) {
 			break
 		}
-		// An untagged slot cannot vouch for any file even when it succeeded — see the
-		// sentinel-polarity note above.
 		if results[i].Status != StatusOK {
 			continue
 		}
+		// An untagged (nil chunkFiles) slot iterates zero times here, so it
+		// contributes NO coverage even when it succeeded — see the
+		// sentinel-polarity note above.
 		for _, p := range s.Primary.chunkFiles {
 			covered[p] = struct{}{}
 		}
