@@ -153,6 +153,23 @@ func TestGenerateFixes_AgentMode_FallsBackWhenDispatcherNil(t *testing.T) {
 	assert.Contains(t, buf.String(), "executor_agent_mode_fallback", "the fallback class must be logged")
 }
 
+// A HARD-rejected fix in degraded agent mode must log
+// executor_agent_mode_fallback exactly ONCE per finding: the diff-smell retry
+// re-enters generate(), and a per-attempt log makes the line useless as a
+// per-finding count (and doubles the snippet read).
+func TestGenerateFixes_AgentModeFallbackLoggedOncePerFinding(t *testing.T) {
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, dsTestOnly}}
+	generateFixes(ctx, findings, agentGateConfig(), agentGateRegistry(), rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 2, rec.callCount(), "a HARD smell triggers one retry")
+	assert.Equal(t, 1, strings.Count(buf.String(), "executor_agent_mode_fallback"),
+		"the fallback must be logged once per finding, not once per attempt")
+}
+
 // AC6 (companion): agent_mode=true but no ChatCompleter wired (nil) → snippet
 // fallback. Mirrors the nil-dispatcher case for the other half of the harness.
 func TestGenerateFixes_AgentMode_FallsBackWhenCCNil(t *testing.T) {
