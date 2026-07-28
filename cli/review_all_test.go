@@ -714,12 +714,13 @@ func failOnMarkerProvider(t *testing.T, marker string) *httptest.Server {
 	return srv
 }
 
-// Sprint 35.0 Phase 5 (task 5.6, 5.5.A MEDIUM): when a baseline scan fans out into
+// Epic 35.2 AC1 (supersedes Sprint 35.0 task 5.6): when a baseline scan fans out into
 // multiple chunks and one chunk FAILS (the persona still reports StatusOK via
-// any-chunk-succeeded), the incremental hash-index write-back is SKIPPED entirely —
-// recording the reviewed set would stamp the unreviewed (failed-chunk) files too, so
-// they'd be silently skipped next run. Fail-open: no index write → next run re-scans.
-func TestReviewAll_PartialChunkFailureSkipsIndexWrite(t *testing.T) {
+// any-chunk-succeeded), the write-back is no longer discarded wholesale. The files in
+// the SUCCEEDED chunks are recorded and the failed chunk's files are excluded, so the
+// next `--all` re-reviews only the genuinely uncovered files instead of the whole
+// repository. Still fail-open: an uncovered file is re-scanned, never silently skipped.
+func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
@@ -734,9 +735,39 @@ func TestReviewAll_PartialChunkFailureSkipsIndexWrite(t *testing.T) {
 	srv := failOnMarkerProvider(t, "FAILME")
 	liveReviewConfig(t, srv.URL, "bruce")
 
-	// The run still exits 0 (the persona succeeded on at least one chunk).
+	// The run exits 0 (the persona succeeded on at least one chunk).
 	require.Equal(t, 0, execCmd(t, "review", "--all"))
-	// But because a chunk went unreviewed, the write-back was skipped: no index on disk.
+
+	// The index IS written now, recording the covered files but not the failed chunk's.
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	for _, name := range []string{"a.txt", "b.go", filepath.Join("internal", "c.go")} {
+		_, _, ok := idx.Get(filepath.ToSlash(name))
+		assert.True(t, ok, "a file in the SUCCEEDED chunk must be recorded; %s missing", name)
+	}
+	_, _, okFail := idx.Get("fail.txt")
+	assert.False(t, okFail,
+		"the failed chunk's file must NOT be recorded, or it would be skipped-though-unreviewed next run")
+
+	// AC1's second half: the next --all re-reviews ONLY the previously-uncovered file.
+	require.Equal(t, 0, execCmd(t, "review", "--all"))
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "FAILME", "the uncovered file is re-reviewed")
+	assert.NotContains(t, body, "package b", "a covered file is hash-skipped on the next run")
+	assert.NotContains(t, body, "package c", "a covered file is hash-skipped on the next run")
+}
+
+// Epic 35.2 AC3: when EVERY chunk fails the run has zero coverage and writes no index
+// at all — fail-open toward re-review, never toward skip.
+func TestReviewAll_EveryChunkFailsWritesNoIndex(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// The provider fails every request, so no chunk succeeds.
+	srv := failOnMarkerProvider(t, "")
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// Every agent failed → exit 1, artifacts preserved.
+	require.Equal(t, 1, execCmd(t, "review", "--all"))
 	assert.NoFileExists(t, payload.FileHashIndexPath("."),
-		"a baseline run with an unreviewed chunk must NOT persist the hash index, or the unreviewed files would be skipped-though-unreviewed next run")
+		"a baseline run that covered nothing must not persist an index")
 }

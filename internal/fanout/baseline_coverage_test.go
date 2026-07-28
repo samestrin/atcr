@@ -3,6 +3,9 @@ package fanout
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -271,4 +274,129 @@ func TestUncoveredBaselineFiles_FallbackServedSlotCountsAsCovered(t *testing.T) 
 
 	got := uncoveredBaselineFiles(slots, results, reviewed)
 	assert.Empty(t, got, "a fallback reviewed the same chunk, so its files are covered")
+}
+
+// AC1 at the write-back layer: the files in SUCCEEDED chunks are persisted and the
+// uncovered ones are left out, so the next scan re-reviews only what went unreviewed
+// instead of the whole repository.
+func TestCommitBaselineIndex_ExcludesUncoveredFiles(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{
+		"a.go": "package a\n",
+		"b.go": "package b\n",
+		"c.go": "package c\n",
+	})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	require.NotNil(t, prep.baseline)
+	// c.go's chunk failed; a.go and b.go were covered by succeeded chunks.
+	prep.baseline.uncovered = map[string]struct{}{"c.go": {}}
+
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	_, _, okA := idx.Get("a.go")
+	_, _, okB := idx.Get("b.go")
+	_, _, okC := idx.Get("c.go")
+	assert.True(t, okA, "a covered file is recorded")
+	assert.True(t, okB, "a covered file is recorded")
+	assert.False(t, okC, "an uncovered file must NOT be recorded, or the next scan would skip it though unreviewed")
+}
+
+// AC1 end-to-end at the engine layer: after a partial write-back the next baseline
+// prepare re-reviews EXACTLY the uncovered file — not the whole repository, and not
+// nothing.
+func TestCommitBaselineIndex_NextScanReReviewsOnlyUncovered(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{
+		"a.go": "package a\n",
+		"b.go": "package b\n",
+		"c.go": "package c\n",
+	})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	prep.baseline.uncovered = map[string]struct{}{"c.go": {}}
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	next, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r2")))
+	require.NoError(t, err, "the uncovered file is still reviewable, so the re-scan is not ErrAllFilesUnchanged")
+	mp := next.baseline.reviewed
+	assert.Equal(t, []string{"c.go"}, sortedKeys(mp),
+		"only the previously-uncovered file is re-reviewed; the covered ones are hash-skipped")
+}
+
+// AC3: a run whose every chunk failed has zero coverage and must write NOTHING —
+// fail-open toward re-review, never toward skip. Not even the self-trim may run, or
+// the next scan would inherit a half-written index.
+func TestCommitBaselineIndex_ZeroCoverageWritesNothing(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	prep.baseline.uncovered = map[string]struct{}{"a.go": {}, "b.go": {}}
+
+	require.NoError(t, prep.CommitBaselineIndex("run-1"), "zero coverage is not an error")
+	assert.NoFileExists(t, payload.FileHashIndexPath(repo),
+		"a run that covered nothing must not persist an index at all")
+}
+
+// AC2: with nothing uncovered the write-back behaves exactly as before 35.2 — every
+// reviewed file recorded, and the whole-repo self-trim still drops paths that are no
+// longer tracked.
+func TestCommitBaselineIndex_NoUncoveredRecordsEverythingAndStillTrims(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	require.Nil(t, prep.baseline.uncovered, "full coverage is the nil default")
+	// A stale entry for a path that is no longer tracked must be self-trimmed.
+	prep.baseline.preIndex.Record("gone.go", "deadbeef", "old-run")
+
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	assert.ElementsMatch(t, []string{"a.go", "b.go"}, idx.Paths(),
+		"every reviewed file recorded and the untracked path trimmed, unchanged from pre-35.2")
+}
+
+// sortedKeys returns m's keys in ascending order for stable assertions.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Epic 35.2 AC4: the resume path honors the SAME uncovered-set semantics as the fresh
+// path. Both drive the identical runEngine seam, so a resumed baseline run whose chunk
+// fails stamps the uncovered set rather than discarding the whole write-back.
+func TestResumeBaseline_HonorsUncoveredSetSemantics(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	// No global byte budget: each file exceeds the per-agent effective budget for the
+	// unknown test model (~71680 bytes), so PartitionByBudget gives each its own chunk.
+	repo := baselineRepo(t, map[string]string{
+		"a.go": "// FILE:a.go\n" + strings.Repeat("a", 80_000),
+		"b.go": "// FILE:b.go\n" + strings.Repeat("b", 80_000),
+	})
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
+	require.NoError(t, err)
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	require.NotNil(t, rprep.baseline, "a resumed baseline run captures the write-back state (TD-011)")
+	require.Greater(t, len(rprep.Slots), 1, "the baseline resume must fan out across chunks for this test to mean anything")
+
+	// Fail only the chunk carrying b.go; a.go's chunk succeeds.
+	runEngine(context.Background(), baselinePartialFailCompleter{failMarker: "b.go"}, rprep, t.TempDir())
+
+	require.NotNil(t, rprep.baseline.uncovered, "the resume path must stamp the uncovered set (AC4)")
+	assert.Contains(t, rprep.baseline.uncovered, "b.go", "the failed chunk's file is uncovered")
+	assert.NotContains(t, rprep.baseline.uncovered, "a.go", "the succeeded chunk's file stays covered")
 }
