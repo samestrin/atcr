@@ -375,6 +375,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// AFTER JSONFindings() from the sources' per-slot status.json — the library
 		// Merged carries no fallback provenance — so it is downstream-only here too.
 		"FallbackReviewers": true,
+		// FixReview is stamped by the diff-smell gate in the verify fix phase
+		// (Epic 35.3, internal/verify/executor.go generateFixes) — same lifecycle as
+		// FixWarning above — so it is downstream-only here too.
+		"FixReview": true,
 	}
 	m := Merged{
 		Finding: Finding{

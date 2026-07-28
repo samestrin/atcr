@@ -134,9 +134,22 @@ type JSONFinding struct {
 	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
 	// producers MUST leave it empty (it is set only by the verify fix phase).
 	FixWarning string `json:"fix_warning,omitempty"`
-	// RED stub (Epic 35.3): omitempty deliberately missing so the field compiles
-	// but the serialization test fails. Corrected in GREEN.
-	FixReview string `json:"fix_review"`
+	// FixReview records a NEEDS_REVIEW annotation on a fix that was ACCEPTED but
+	// carries a SOFT over-simplification smell — a lint/type suppression, an empty
+	// catch, or a stub body — detected by the diff-smell gate before the fix was
+	// written (Epic 35.3, internal/verify/diffsmell.go). It is deliberately NOT
+	// FixWarning: a warning means the fix is absent or unusable, whereas a
+	// FixReview finding carries a real, usable Fix that merely took a shortcut a
+	// human should look at. The two are mutually exclusive in practice but the
+	// invariant that matters is the FixWarning one — a good Fix never carries a
+	// FixWarning. HARD smells (test_only, weakened_assertion) never reach this
+	// field; they withhold the fix and stamp FixWarning instead.
+	//
+	// omitempty keeps every finding without a review annotation byte-identical to
+	// pre-35.3 findings.json; like FixWarning it is ATCR-internal provenance (not a
+	// field on the extracted library Finding) and reconcile-time producers MUST
+	// leave it empty — it is set only by the verify fix phase.
+	FixReview string `json:"fix_review,omitempty"`
 	// EvidenceExec carries the execution-reproduction block (Epic 11.0): the
 	// command a repro/skeptic agent ran in the sandbox, its exit code, and a
 	// truncated output excerpt. It is set ONLY by the repro write-back (a
@@ -222,9 +235,9 @@ func (r Result) JSONFindings() []JSONFinding {
 			// because gate.go IsFailing and debate cross-examination mutate the same
 			// block referenced by the merged finding.
 			Verification: m.Verification,
-			// FixWarning intentionally not copied: it is set by the verify fix phase
-			// (executor.go generateFixes) after reconcile, so the reconcile path owns
-			// only the pre-fix merged state.
+			// FixWarning and FixReview intentionally not copied: both are set by the
+			// verify fix phase (executor.go generateFixes) after reconcile, so the
+			// reconcile path owns only the pre-fix merged state.
 			// EvidenceExec intentionally not copied: the extracted library Finding does
 			// not carry this Epic 11.0 field, and derivation-time producers never hold
 			// it. It is preserved only on the cached path-stamped records produced by

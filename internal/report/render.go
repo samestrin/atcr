@@ -544,6 +544,12 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 		if f.FixWarning != "" {
 			fmt.Fprintf(&b, "  - ⚠️ Fix warning: %s\n", escTrunc(f.FixWarning))
 		}
+		// Fix-review annotation (Epic 35.3 fix_review): a fix the diff-smell gate
+		// accepted despite a SOFT over-simplification smell. Unlike a fix warning the
+		// fix above IS usable, so this renders in ADDITION to it, never instead of it.
+		if f.FixReview != "" {
+			fmt.Fprintf(&b, "  - 🔍 Fix review: %s\n", escTrunc(f.FixReview))
+		}
 		if f.Evidence != "" {
 			fmt.Fprintf(&b, "  - Evidence: %s\n", escTrunc(f.Evidence))
 		}
