@@ -417,6 +417,11 @@ func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
 	assert.Equal(t, 1, rec.callCount(), "a pathologically large fix must not be scanned or retried")
 	assert.NotEmpty(t, findings[0].Fix)
 	assert.Contains(t, buf.String(), "executor_smell_skipped", "an unscanned fix must be announced — never a SILENT bypass")
+	// Unscanned means unscanned in BOTH directions: the gate produced no rejection
+	// and no NEEDS_REVIEW annotation. `huge` embeds dsTestOnly, which WOULD score
+	// HARD if it were scanned, so these pin the skip rather than restating it.
+	assert.Empty(t, findings[0].FixWarning, "a skipped scan must not manufacture a rejection")
+	assert.Empty(t, findings[0].FixReview, "a skipped scan must not manufacture an annotation")
 
 	// An under-cap fix must NOT emit the skip record: the log distinguishes
 	// "scanned and clean" from "never scanned", so both directions are pinned.
