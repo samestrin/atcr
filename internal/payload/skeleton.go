@@ -34,6 +34,15 @@ const (
 	maxSkeletonBlockBytes = 8 * 1024
 	// skeletonHeaderTruncSuffix marks a header clipped by maxSkeletonHeaderBytes.
 	skeletonHeaderTruncSuffix = "…(truncated)"
+
+	// maxAnalyzeFileBytes is the per-file HEAD-blob ceiling above which the
+	// escalation analysis pass is skipped entirely. A multi-megabyte file — a
+	// generated .pb.go, a go-bindata asset table, minified generated Go — is not
+	// worth an AST parse plus a full-file skeleton, and (before this cap) analyzeFile
+	// retained its whole blob for the life of the range. A 50-file change set of
+	// such files would hold them all in memory at once: the OOM this bounds. An
+	// oversized file keeps its configured mode and contributes no signals.
+	maxAnalyzeFileBytes = 1 << 20 // 1 MiB
 )
 
 // skeletonEntry is one rendered declaration header. It mirrors
@@ -191,6 +200,15 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		// A file present in the diff but unreadable at HEAD is not fatal: the
 		// review still runs, this file just keeps its configured mode.
 		g.log().Debug("payload: skipping escalation analysis, HEAD blob unreadable", "path", f.path, "error", err)
+		return fileContext{}, false
+	}
+	if len(src) > maxAnalyzeFileBytes {
+		// Too large to parse or skeletonize, and too large to retain. Evict the blob
+		// the memo just cached so it is not held for the life of the range (the OOM
+		// case), and keep the file in its configured mode with no signals.
+		g.log().Debug("payload: skipping escalation analysis, file exceeds byte ceiling",
+			"path", f.path, "bytes", len(src), "ceiling", maxAnalyzeFileBytes)
+		delete(g.forRange(base, head).headSrc, f.path)
 		return fileContext{}, false
 	}
 
