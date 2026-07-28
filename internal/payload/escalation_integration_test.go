@@ -12,7 +12,13 @@ import (
 )
 
 // thrashV1 is the first architecture: a simple sequential dispatcher.
+//
+// Untouched is byte-identical across all three revisions, so it never appears in
+// the net base..head diff — only a HEAD-derived skeleton can name it. That is the
+// property TestSkeletonInjection_DescribesHeadNotIntermediateCommits turns on.
 const thrashV1 = `package p
+
+func Untouched(s string) error { return nil }
 
 func Dispatch(kind string, n int) int {
 	if kind == "a" {
@@ -29,6 +35,8 @@ func Dispatch(kind string, n int) int {
 // reconstructs the file from a mid-branch commit would describe THIS shape.
 const thrashV2 = `package p
 
+func Untouched(s string) error { return nil }
+
 var table = map[string]int{"a": 1, "b": 2}
 
 func Dispatch(kind string, n int) int {
@@ -42,6 +50,8 @@ func Dispatch(kind string, n int) int {
 // thrashV3 is the final, resolved HEAD architecture: the table is gone again and
 // a typed handler replaced it. Only a skeleton of HEAD shows Handler/Register.
 const thrashV3 = `package p
+
+func Untouched(s string) error { return nil }
 
 type Handler struct {
 	Kind  string
@@ -105,11 +115,20 @@ func TestSkeletonInjection_DescribesHeadNotIntermediateCommits(t *testing.T) {
 	require.Contains(t, skel, "func Register(h Handler) error")
 	require.Contains(t, skel, "func Dispatch(kind string, n int) int")
 
-	// The intermediate commit's table-driven form is gone at HEAD and must not
-	// appear — this is the "mental patch application" hallucination the epic
-	// exists to prevent.
-	require.NotContains(t, skel, "var table",
-		"skeleton leaked a declaration that exists only in an intermediate commit")
+	// The load-bearing assertion: Untouched is byte-identical across v1/v2/v3, so
+	// it appears in NO added/removed line of the net base..head diff. A skeleton
+	// derived from the diff's `+` lines could therefore never name it; only a
+	// skeleton built from the HEAD blob can. This is the ONLY assertion here that
+	// fails if the skeleton is diff-derived rather than HEAD-derived — the other
+	// declarations all appear as `+` lines because the thrashing rewrote them.
+	require.Contains(t, skel, "func Untouched(s string) error",
+		"the skeleton must name a HEAD declaration the net diff never touched")
+	for _, line := range strings.Split(entries[0].Body, "\n") {
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			require.NotContains(t, line, "Untouched",
+				"Untouched is unchanged across all commits, so it must not appear in any +/- diff line")
+		}
+	}
 }
 
 // The skeleton must reflect HEAD even though the net diff still contains the
