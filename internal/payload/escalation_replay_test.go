@@ -378,6 +378,22 @@ type replayReport struct {
 	// skipReasons breaks `skipped` out by cause, keyed on the reason text
 	// analyzeFile logs.
 	skipReasons map[string]int
+	// filesPerCommit is one entry per MEASURED commit's change-set size, kept so
+	// the report can state its own granularity (see medianFilesPerCommit).
+	filesPerCommit []int
+}
+
+// medianFilesPerCommit is the middle change-set size over the measured window,
+// or 0 for an empty one. It is the readable proxy for what a "commit" in this
+// window actually is: the harness measures parent..commit, so a commit that was
+// itself a squashed PR is one PR-sized change set, not the incremental commits
+// a reviewer saw. A median in the low single digits reads as genuine per-commit
+// granularity; a large one means the rate is effectively per-PR.
+//
+// Median rather than mean: a single 300-file dependency bump would drag a mean
+// far past anything the window actually looks like.
+func (r *replayReport) medianFilesPerCommit() int {
+	return 0
 }
 
 // skipReasonPrefix is the constant analyzeFile prefixes every decline with.
@@ -474,6 +490,30 @@ func TestReplayReport_SkipBreakdownIsPerReason(t *testing.T) {
 	require.Equal(t,
 		"binary file=2, HEAD blob unreadable=1, deleted (not logged)=2",
 		rep.skipBreakdown())
+}
+
+// TestReplayReport_MedianFilesPerCommitStatesGranularity pins the granularity
+// disclosure. The harness measures each commit as parent..commit, so on a
+// squash-merged history one "commit" is a whole PR — the reported rate is then
+// per-PR, not per-commit, and a reader comparing it against their own
+// per-commit intuition would draw the wrong conclusion. The median change-set
+// size is the signal that tells the two apart.
+func TestReplayReport_MedianFilesPerCommitStatesGranularity(t *testing.T) {
+	var rep replayReport
+	require.Equal(t, 0, rep.medianFilesPerCommit(), "an empty window must report 0, not panic")
+
+	// Odd count: the middle element, not the mean — one 300-file dependency
+	// bump must not drag the figure past what the window looks like.
+	rep.filesPerCommit = []int{3, 1, 300, 2, 4}
+	require.Equal(t, 3, rep.medianFilesPerCommit())
+
+	// Even count: mean of the two middle elements.
+	rep.filesPerCommit = []int{10, 2, 4, 8}
+	require.Equal(t, 6, rep.medianFilesPerCommit())
+
+	// The input order must survive — the report logs nothing else from it, but a
+	// sort in place would silently reorder a caller's slice.
+	require.Equal(t, []int{10, 2, 4, 8}, rep.filesPerCommit)
 }
 
 // TestEscalationReplay_MeasureRepoHistory is the AC1 measurement harness: it
