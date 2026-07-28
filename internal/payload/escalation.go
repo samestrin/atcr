@@ -39,16 +39,18 @@ const (
 	// DefaultEscalationMinHunks fires on scattered edits: this many or more
 	// separate hunks in one file is the architectural-thrashing shape a net diff
 	// hides. Tuned from 4 to 8 in Epic 35.4: at 4, an ordinary rename or signature
-	// change rippling through a file promoted it, and the signal alone fired on
-	// 23% of changed Go files.
+	// change rippling through a file promoted it, and the signal fired on 23% of
+	// changed Go files (counted independently — signals overlap, so the
+	// per-signal rates sum above the promotion rate).
 	DefaultEscalationMinHunks = 8
 	// DefaultEscalationHunkGapLines fires when two hunks sit closer than this
 	// many unchanged lines apart, i.e. the same region was churned twice. Tuned
 	// from 10 to 2 in Epic 35.4: under --unified=0 a single logical change
 	// routinely leaves hunks a few lines apart, so a 10-line window measured the
 	// ordinary shape of a diff rather than genuine same-region churn — it was the
-	// single worst offender at 28.5% of changed Go files, and still fires on 13.0%
-	// at this setting. At 2, only hunks separated by one unchanged line count as
+	// single worst offender at 28.5% of changed Go files (counted independently —
+	// signals overlap, so the per-signal rates sum above the promotion rate), and
+	// still fires on 13.0% at this setting. At 2, only hunks separated by one unchanged line count as
 	// the same region.
 	//
 	// Note the granularity floor this implies: git does not emit two hunks with
