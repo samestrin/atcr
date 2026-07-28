@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -873,4 +875,48 @@ func TestCommitBaselineWriteback_AllAgentsFailedWritesNothing(t *testing.T) {
 	commitBaselineWriteback(context.Background(), true, prep, result)
 	assert.FileExists(t, payload.FileHashIndexPath("."),
 		"with one succeeded agent and no uncovered attribution the write-back records normally")
+}
+
+// The operator-facing coverage line must be driven by what the write-back ACTUALLY
+// recorded (prep.BaselineCoverage), not by Summary.UnreviewedChunks. That field is
+// set only for a persona with a MIX of succeeded and failed chunks, so a run where a
+// persona failed WHOLLY reports 0 and — before this — produced no log line at all,
+// leaving an operator with a green review and a silently stalled index.
+func TestCommitBaselineWriteback_LogsCoverageOutcomeNotUnreviewedChunks(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "json", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	// A green summary with ZERO unreviewed chunks — exactly the shape a wholly
+	// failed persona leaves behind, and the shape that used to log nothing.
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+	require.Zero(t, result.Summary.UnreviewedChunks)
+
+	commitBaselineWriteback(ctx, true, prep, result)
+
+	recorded, excluded := prep.BaselineCoverage()
+	require.Positive(t, recorded, "the write-back recorded files, so there is an outcome to report")
+	out := buf.String()
+	assert.Contains(t, out, "recorded_files",
+		"the coverage outcome must be logged even when UnreviewedChunks is 0")
+	assert.Contains(t, out, fmt.Sprintf(`"recorded_files":%d`, recorded),
+		"the logged count must be the write-back's actual count")
+	assert.Contains(t, out, fmt.Sprintf(`"excluded_files":%d`, excluded))
 }
