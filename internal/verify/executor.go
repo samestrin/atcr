@@ -287,6 +287,13 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		go func(f *reconcile.JSONFinding) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// generateFixes owns FixReview end-to-end, mirroring FixWarning: every
+			// early return below (second HARD reject, truncation, empty completion,
+			// self-decline, transport failure) leaves the finding without a new fix,
+			// so a FixReview from a PRIOR run must be cleared up front — otherwise a
+			// withheld patch could render beside a stale acceptance annotation. The
+			// success path re-derives it unconditionally at the end of the goroutine.
+			f.FixReview = ""
 			// Two fix-generation paths share one set of post-processing rules below
 			// (empty-check, diff-smell gate, attribution, syntax guard): out carries the
 			// raw fix text; warn carries a non-empty failure reason that short-circuits
