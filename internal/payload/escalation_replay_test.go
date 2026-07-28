@@ -145,17 +145,27 @@ func TestReplayStats_RatesAndAttribution(t *testing.T) {
 		changedLines: 10, headLines: 100, churnApplicable: true,
 		hunks: []lineRange{{start: 10, end: 12}, {start: 14, end: 20}},
 	})
+	// F: hunk count only. Eight hunks ten lines apart — reaches MinHunks=8 with
+	// no adjacency (gap 8 >= 2), churn not applicable, trivial complexity.
+	r.record(cfg, ModeDiff, fileSignals{
+		headLines: 100,
+		hunks: []lineRange{
+			{start: 10, end: 11}, {start: 20, end: 21}, {start: 30, end: 31},
+			{start: 40, end: 41}, {start: 50, end: 51}, {start: 60, end: 61},
+			{start: 70, end: 71}, {start: 80, end: 81},
+		},
+	})
 
-	require.Equal(t, 5, r.files)
-	require.Equal(t, 4, r.promoted, "A, B, C and E promote; D does not")
-	require.Equal(t, 3, r.toBlocks, "A, B and E reach blocks")
+	require.Equal(t, 6, r.files)
+	require.Equal(t, 5, r.promoted, "A, B, C, E and F promote; D does not")
+	require.Equal(t, 4, r.toBlocks, "A, B, E and F reach blocks")
 	require.Equal(t, 1, r.toFiles, "only C fires both sides of the ladder")
 
-	require.InDelta(t, 80.0, r.promotionRate(), 0.001)
-	require.InDelta(t, 40.0, r.signalRate(sigChurn), 0.001, "A and C")
-	require.InDelta(t, 0.0, r.signalRate(sigHunkCount), 0.001, "no file reaches the min-hunks threshold")
-	require.InDelta(t, 20.0, r.signalRate(sigAdjacency), 0.001, "E only")
-	require.InDelta(t, 40.0, r.signalRate(sigComplexity), 0.001, "B and C")
+	require.InDelta(t, 83.333, r.promotionRate(), 0.001)
+	require.InDelta(t, 33.333, r.signalRate(sigChurn), 0.001, "A and C")
+	require.InDelta(t, 16.667, r.signalRate(sigHunkCount), 0.001, "F only — regression guard on the hunks= sweep column")
+	require.InDelta(t, 16.667, r.signalRate(sigAdjacency), 0.001, "E only")
+	require.InDelta(t, 33.333, r.signalRate(sigComplexity), 0.001, "B and C")
 
 	// Byte accounting: 200 extra bytes over a 1500-byte base = +13.33%.
 	r.addBytes(1000, 1200)
