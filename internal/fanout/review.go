@@ -304,7 +304,8 @@ func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 		return nil
 	}
 	b := p.baseline
-	recorded := 0
+	recorded, excluded := 0, 0
+	defer func() { b.lastRecorded, b.lastExcluded = recorded, excluded }()
 	for path, hash := range b.reviewed {
 		// Epic 35.2 / TD-013: skip the files whose chunk FAILED. They were dispatched
 		// but never reviewed, so recording them would make the next scan skip them
@@ -312,6 +313,7 @@ func (p *PreparedReview) CommitBaselineIndex(runID string) error {
 		// is nil for a fully-covered run (and for a caller that never ran the engine),
 		// which keeps this loop byte-identical to the pre-35.2 record-everything pass.
 		if _, uncovered := b.uncovered[path]; uncovered {
+			excluded++
 			continue
 		}
 		b.preIndex.Record(path, hash, runID)
