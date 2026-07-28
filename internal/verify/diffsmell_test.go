@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -339,7 +340,8 @@ func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
 	}
 	fb = smellFeedback(analyzeDiff(many.String()))
 	assert.Equal(t, maxSmellFeedbackItems, strings.Count(fb, smellStubBody), "listed items must be capped")
-	assert.Contains(t, fb, "(+20 more)", "the dropped remainder must be reported, never silently truncated")
+	want := fmt.Sprintf("(+%d more)", maxSmellFeedbackItems*3-maxSmellFeedbackItems)
+	assert.Contains(t, fb, want, "the dropped remainder must be reported, never silently truncated")
 }
 
 // A line that is merely relocated or reindented within the same file is not a
