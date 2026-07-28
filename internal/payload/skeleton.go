@@ -1,7 +1,6 @@
 package payload
 
 import (
-	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -85,7 +84,9 @@ func renderSkeleton(entries []skeletonEntry, maxLines int) string {
 	if elided > 0 {
 		// Disclosed, never silent: a reviewer must know the map is partial rather
 		// than conclude the file has no further declarations.
-		fmt.Fprintf(&b, "... %d more declaration(s) elided\n", elided)
+		b.WriteString("... ")
+		b.WriteString(strconv.Itoa(elided))
+		b.WriteString(" more declaration(s) elided\n")
 	}
 	b.WriteString(skeletonEnd)
 	b.WriteByte('\n')
