@@ -65,3 +65,36 @@ func ScopeRule(mode PayloadMode) string {
 		return scopeChangedOnly
 	}
 }
+
+// ScopeRuleForPayload returns the scope instruction for the payload text an
+// agent will actually receive, accounting for per-file escalation (Epic 35.1).
+//
+// A persona prompt carries exactly one {{.ScopeRule}}, but escalation means one
+// payload can mix modes. If ANY file in this payload was rendered as a full
+// file, its unchanged regions are in front of the reviewer, so the payload gets
+// the wider files-mode rule. Telling a reviewer to stay on the diff while
+// handing it whole files is the failure mode worth avoiding; the reverse (the
+// wider rule over a mostly-diff payload) merely permits findings the grounding
+// gate already filters.
+//
+// The decision is made from the text rather than from []FileEntry because the
+// chunked review path splits a payload into text chunks before rendering, and a
+// chunk that contains no escalated file should keep the narrow rule. Detection
+// keys on a files-mode header at the start of a line: inside a unified diff
+// every content line carries a +/-/space prefix, so a header can never appear at
+// column 0 unless a file really was rendered in files mode.
+func ScopeRuleForPayload(mode PayloadMode, text string) string {
+	if containsFilesHeader(text) {
+		return scopeFiles
+	}
+	return ScopeRule(mode)
+}
+
+// containsFilesHeader reports whether text has a files-mode header at the start
+// of any line.
+func containsFilesHeader(text string) bool {
+	if strings.HasPrefix(text, filesHeaderPrefix) {
+		return true
+	}
+	return strings.Contains(text, "\n"+filesHeaderPrefix)
+}

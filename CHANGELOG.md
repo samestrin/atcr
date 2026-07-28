@@ -1,3 +1,23 @@
+## [35.1.0] - 2026-07-27
+
+Makes the payload mode a floor rather than a ceiling: the payload builder now promotes individual files above the configured mode when their change is structurally confusing, and prepends an AST skeleton of the file at `head` so reviewers reason from the final architecture instead of mentally replaying a multi-commit patch. Targets the "mental patch application" hallucination, where a reviewer reconstructs a superseded intermediate state from a net diff, without paying whole-repository `--payload files` token costs for simple changes.
+
+### Added
+
+- Per-file payload escalation. Two independent signal families are scored per changed file: diff-native (churn ratio over added+deleted lines, hunk count, hunk adjacency) and per-function McCabe cyclomatic complexity. Either family promotes a file `diff` → `blocks`; both together promote it to `files`. A file already at `blocks` can only move up to `files`, and a run configured for `files` never de-escalates.
+- AST skeleton injection for files reviewed in `diff` or `blocks` mode — one line per top-level declaration of the resolved `head` file, with line anchors, spliced after the file's entry-start line so the rendered-payload round-trip is unaffected. Extracted for Go files, built on the existing `internal/astgroup` node tree via line-range slicing rather than new parser node kinds, so wasm parser Merkle hashes (and the reconciler's finding grouping) are untouched.
+- `payload_escalation:` registry block tuning every threshold (`churn_ratio`, `min_hunks`, `hunk_gap_lines`, `min_cyclomatic`, `max_files`, `max_skeleton_lines`). Registry-only, matching the `verify:`/`debate:` precedent — no project-config mirror, no CLI flag. Each key is optional; `0` disables that signal, and `max_files: 0` turns the feature off entirely.
+- `manifest.json` now records `per_file_payload` (the mode each file was actually rendered in, for files that escalated) and `escalation_degraded` (the change set exceeded the file cap, so the pass was skipped). Both are `omitempty`, so a review where nothing escalated writes a manifest byte-identical to earlier versions'.
+- A payload holding any full-file body now carries the wider `files`-mode scope rule, so a reviewer handed whole files is never told to stay on the diff.
+
+### Changed
+
+- Escalation and skeleton extraction are skipped wholesale above `max_files` (default 50) changed files, restoring the constant git-process profile; each analyzed file otherwise costs one `git show`, memoized per range and shared with the files-mode render.
+- Grounding after a `blocks`-mode payload build no longer spawns its own `--unified=0` subprocess — the escalation pass already populated that cache.
+- `docs/payload-modes.md` and `docs/registry.md` document the escalation ladder, the skeleton format and its cap, the cost cap, and the new configuration block.
+
+*Shipped via /execute-epic (epic 35.1)*
+
 ## [35.0.0] - 2026-07-27
 
 Adds a non-diff, full-repository baseline review mode: `atcr review --all` and the subtree-scoped `atcr review --dir <path>`, for onboarding a project with no PR history, surfacing latent bugs in untouched legacy code, and seeding an initial `.atcr/debt`/`.planning/technical-debt/README.md` backlog.

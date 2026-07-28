@@ -312,6 +312,14 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		payloads, err = buildRepoPayloads(ctx, cfg, req.Repo, m.NoIgnore, m.Dir, nil, false)
 		forceMode = string(payload.ModeFiles)
 	} else {
+		// Escalation config is DELIBERATELY not locked to the manifest the way
+		// NoIgnore/Baseline/Dir are: buildPayloads re-resolves cfg.Registry.
+		// PayloadEscalation fresh via payload.WithEscalation on every run AND resume,
+		// and cfg itself is a fresh LoadReviewConfig at resume time. This matches the
+		// MaxParallel/TimeoutSecs precedent (re-read live), not the roster/range
+		// recovery pattern — editing payload_escalation between an interrupted run and
+		// its resume is intended to take effect, so nothing is persisted or fed back
+		// from the manifest here (2026-07-27 TD apply-answers, Q1).
 		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
 	}
 	if err != nil {

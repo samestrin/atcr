@@ -468,9 +468,15 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
-		Roster:          rosterNames(cfg.Project),
-		StartedAt:       req.StartedAt,
-		Partial:         false, // finalized by ExecuteReview once outcomes are known
+		// Per-file escalation (Epic 35.1): what a reviewer actually saw per file,
+		// as opposed to PayloadMode/PerAgentPayload which record what was
+		// configured. Both are omitempty, so a review where nothing escalated
+		// produces a manifest byte-identical to earlier versions'.
+		PerFilePayload:     perFileModes(payloads),
+		EscalationDegraded: rb != nil && rb.EscalationDegraded(),
+		Roster:             rosterNames(cfg.Project),
+		StartedAt:          req.StartedAt,
+		Partial:            false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
@@ -1061,10 +1067,44 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 // Text/FileCount/Truncation remain the global-budget union used for the on-disk
 // audit artifact and the empty-payload guard.
 type modePayload struct {
-	Entries    []payload.FileEntry
+	Entries []payload.FileEntry
+	// Kept is Entries after the GLOBAL byte-budget pass (Settings.PayloadByteBudget)
+	// — the survivor set behind the on-disk audit artifact, which is what Text,
+	// FileCount, and Truncation below are all derived from.
+	//
+	// It is NOT the set any individual agent received. buildSlots re-sheds
+	// Entries (the pre-budget list) against each model's own EffectiveByteBudget
+	// at dispatch. That per-agent budget is capped by the same global budget and
+	// both passes use the same escalation-aware drop order, which is monotone in
+	// the budget — so each agent's delivered set is a SUBSET of Kept: a file
+	// listed here may have reached no reviewer at all, while one that reached a
+	// reviewer is always present.
+	Kept       []payload.FileEntry
 	Text       string
 	FileCount  int
 	Truncation payload.Truncation
+}
+
+// escalationOverrides copies the registry's optional payload_escalation block
+// into payload's mirror type (Epic 35.1). registry.PayloadEscalationConfig and
+// payload.EscalationOverrides are deliberately separate types — payload must not
+// import registry — so this is the one place the two are bridged.
+//
+// It is a named pure function rather than a struct literal inline in
+// buildPayloads so the copy is directly testable:
+// TestPayloadEscalationMirrorsPayloadOverrides only compares the two shapes by
+// reflection and would stay green with a line omitted or crossed
+// (MinHunks: pe.MinCyclomatic), silently dropping or misrouting an operator's
+// threshold. TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget executes it.
+func escalationOverrides(pe registry.PayloadEscalationConfig) payload.EscalationOverrides {
+	return payload.EscalationOverrides{
+		ChurnRatio:       pe.ChurnRatio,
+		MinHunks:         pe.MinHunks,
+		HunkGapLines:     pe.HunkGapLines,
+		MinCyclomatic:    pe.MinCyclomatic,
+		MaxFiles:         pe.MaxFiles,
+		MaxSkeletonLines: pe.MaxSkeletonLines,
+	}
 }
 
 // buildPayloads builds each distinct payload mode the roster uses exactly once.
@@ -1076,6 +1116,11 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	if noIgnore {
 		opts = append(opts, payload.WithoutIgnoreFilter())
 	}
+	// Per-file escalation thresholds (Epic 35.1). The registry -> payload copy
+	// lives in escalationOverrides, which is exercised directly by
+	// TestEscalationOverrides_CopiesEveryFieldToItsOwnTarget.
+	opts = append(opts, payload.WithEscalation(
+		payload.ResolveEscalationConfig(escalationOverrides(cfg.Registry.PayloadEscalation))))
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
@@ -1083,7 +1128,13 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		if err != nil {
 			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
-		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+		// Same escalation-aware order as the per-agent shed in buildSlots. Keeping
+		// the two passes on one policy is what preserves Kept as an upper bound on
+		// every agent's delivered set: the per-agent pass re-sheds the SAME
+		// pre-budget Entries under a budget capped by this one, so a divergent
+		// order here would let an agent be served a file the audit artifact (and
+		// the manifest's per_file_payload, derived from Kept) never lists.
+		kept, trunc := payload.ApplyByteBudgetPreferEscalated(entries, cfg.Settings.PayloadByteBudget, payload.PayloadMode(mode))
 		if trunc.AllDropped {
 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}
@@ -1091,11 +1142,12 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		for _, e := range kept {
 			b.WriteString(e.Body)
 		}
-		// FileCount reflects what the reviewer actually saw (post-truncation), not
-		// the pre-budget total — the dropped files are recorded in trunc. Entries
-		// keeps the raw pre-budget files so buildSlots re-sheds them per agent
-		// against each model's window (Epic 19.10 F2).
-		out[mode] = modePayload{Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc}
+		// FileCount reflects the global-budget survivor set (post-truncation), not
+		// the pre-budget total — the dropped files are recorded in trunc. Like Kept
+		// it describes the audit artifact, not any one agent's delivered payload.
+		// Entries keeps the raw pre-budget files so buildSlots re-sheds them per
+		// agent against each model's window (Epic 19.10 F2).
+		out[mode] = modePayload{Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc}
 	}
 	// Every payload mode's entries are now materialized into out, so the
 	// per-mode diff chunk caches (fc/plain/raw) and the line-range cache on the
@@ -1105,6 +1157,45 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
 	rb.ReleaseModeCaches()
 	return out, rb, nil
+}
+
+// perFileModes maps each file the escalation heuristic promoted above its
+// payload's configured mode to the mode it was rendered in for the global-budget
+// payload (Epic 35.1). Files left at the configured mode are omitted, so a review
+// where nothing escalated returns nil and the manifest field is elided entirely.
+//
+// A file appearing in several mode payloads folds to the most-context mode any
+// mode payload rendered it in, so the result does not depend on map iteration
+// order.
+func perFileModes(payloads map[string]modePayload) map[string]string {
+	var out map[string]string
+	for mode, mp := range payloads {
+		// Kept, not Entries: Entries is the PRE-byte-budget list, so folding it in
+		// would claim an escalated mode for files the global budget dropped from
+		// the payload outright.
+		//
+		// Kept is an UPPER BOUND on the delivered set, not the delivered set
+		// itself — buildSlots re-sheds Entries per agent against each model's own
+		// (globally capped) window, so this map can name an escalated file that
+		// every agent dropped. It never omits one a reviewer saw. Narrowing it to
+		// what was actually dispatched requires the per-agent kept sets to come
+		// back out of buildSlots; that is tracked as open technical debt against
+		// this function.
+		for _, e := range mp.Kept {
+			if e.Mode == "" || string(e.Mode) == mode {
+				continue
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			if prev, ok := out[e.Path]; ok {
+				out[e.Path] = string(payload.HigherContextMode(payload.PayloadMode(prev), e.Mode))
+				continue
+			}
+			out[e.Path] = string(e.Mode)
+		}
+	}
+	return out
 }
 
 // neededModes returns the distinct payload modes across the whole roster.
@@ -1430,13 +1521,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
 		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
-			// A non-diff payload (files/blocks mode) carries no `diff --git` markers,
-			// so chunkDiff returns a single chunk and the chunked strategy is a silent
-			// no-op. Warn once so the operator knows the strategy had no effect for
-			// this payload mode rather than assuming the diff was bin-packed. Gated by
-			// warnOversized so the resume rebuild path stays quiet (already notified).
-			if warnOversized && !warnedChunkedNoop && countDiffFiles(mp.Text) == 0 && mp.FileCount > 1 {
-				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
+			// A payload with no `diff --git` markers (a whole-file files-mode payload)
+			// has nothing for chunked bin-packing — which targets diff hunks — to split
+			// on, so the strategy is a no-op for it. Warn once so the operator knows.
+			// Keyed off the ABSENCE of git-diff markers, NOT countDiffFiles(mp.Text):
+			// the chunker now also recognizes `=== FILE:` markers (to segment escalated
+			// entries in MIXED diff payloads), so countDiffFiles no longer returns 0 for
+			// a files-mode payload — the git-diff-marker check stays the reliable "is
+			// this a diff to bin-pack" signal, and unlike the payloads-map key (which is
+			// the AGENT's configured mode) it reflects the payload's actual content.
+			// Gated by warnOversized so the resume rebuild path stays quiet.
+			if warnOversized && !warnedChunkedNoop && !hasGitDiffMarker(mp.Text) && mp.FileCount > 1 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to bin-pack)\n", mode)
 				warnedChunkedNoop = true
 			}
 			// Per-chunk line budget: an explicit operator-set max_context_lines wins
@@ -1577,7 +1673,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
-			kept, trunc := payload.ApplyByteBudget(mp.Entries, appliedBudget)
+			// PreferEscalated, not the plain pass: escalating a file to a
+			// higher-context mode makes it the largest entry, so plain largest-first
+			// would shed exactly the file the heuristic flagged as hardest to review
+			// — on precisely the tight-window agents escalation targets (Epic 35.1).
+			// It falls back to largest-first when the escalated bytes alone exceed
+			// this agent's budget, so the AllDropped arm below is reached no more
+			// often than before.
+			kept, trunc := payload.ApplyByteBudgetPreferEscalated(mp.Entries, appliedBudget, payload.PayloadMode(mode))
 			// F4 on_overflow dispatch (Epic 19.10 TD-004): the payload overflows THIS
 			// agent's window (a file had to be shed). Route the fail/fallback arms through
 			// applyOverflowPolicy so their typed errors propagate out of add()/buildSlots()
@@ -1776,13 +1879,17 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
-		AgentName:    name,
-		BaseRef:      rng.Base,
-		HeadRef:      rng.Head,
-		PayloadMode:  mode,
-		FileCount:    fileCount,
-		Payload:      scopeConstraint + payloadText,
-		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+		AgentName:   name,
+		BaseRef:     rng.Base,
+		HeadRef:     rng.Head,
+		PayloadMode: mode,
+		FileCount:   fileCount,
+		Payload:     scopeConstraint + payloadText,
+		// Per-file escalation (Epic 35.1) can promote individual files above the
+		// agent's configured mode, so the scope rule is derived from what the
+		// payload actually contains rather than from the mode alone: a payload
+		// holding any full-file body gets the wider files-mode rule.
+		ScopeRule:    payload.ScopeRuleForPayload(payload.PayloadMode(mode), payloadText),
 		ToolsEnabled: ac.Tools,
 	})
 	if err != nil {

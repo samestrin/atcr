@@ -56,6 +56,27 @@ func TestSplitDiffFiles(t *testing.T) {
 	})
 }
 
+func TestSplitDiffFiles_EscalatedAndNonDiffEntriesAreOwnSegments(t *testing.T) {
+	// A chunked payload can mix diff-mode files with entries escalated to files
+	// mode (`=== FILE: p ===` + raw HEAD content) and with deleted/binary markers,
+	// none of which carry a `diff --git` header. Without recognizing those column-0
+	// markers, splitDiffFiles glues the following body onto the preceding diff
+	// segment and countDiffFiles under-reports the file total (Epic 35.1, mixed case).
+	filesEntry := "=== FILE: pkg/big.go ===\npackage pkg\n\nfunc Big() {}\n"
+	deletedEntry := "[deleted file: pkg/gone.go]\n"
+	binaryEntry := "[binary file changed: assets/logo.png]\n"
+	diff := fileSeg("a.go", 2) + filesEntry + deletedEntry + binaryEntry
+
+	segs := splitDiffFiles(diff)
+	require.Len(t, segs, 4)
+	assert.True(t, strings.HasPrefix(segs[0], "diff --git a/a.go"))
+	assert.True(t, strings.HasPrefix(segs[1], "=== FILE: pkg/big.go ==="))
+	assert.True(t, strings.HasPrefix(segs[2], "[deleted file: pkg/gone.go]"))
+	assert.True(t, strings.HasPrefix(segs[3], "[binary file changed: assets/logo.png]"))
+	assert.Equal(t, diff, strings.Join(segs, ""), "split is lossless")
+	assert.Equal(t, 4, countDiffFiles(diff), "escalated/non-diff entries each count as a file")
+}
+
 // TestChunkDiff_WindowDerivedMaxLines proves F3/AC3: feeding chunkDiff a maxLines
 // derived from a 32k model's window opens MORE chunks than one derived from a 128k
 // model's window for the identical diff, and both plans reassemble the whole diff

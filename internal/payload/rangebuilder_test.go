@@ -134,16 +134,17 @@ func TestRangeBuilder_ZeroContextDiffRunsOnce(t *testing.T) {
 		"grounding changed-lines parse must reuse the memoized --unified=0 chunks (no extra git process)")
 }
 
-// Under the DEFAULT roster mode (blocks), the payload build populates the
-// function-context and plain-context caches (fcChunks/plainChunks) but never the
-// zero-context cache (zeroCtxChunks), because only files mode consumes it (via
-// rangeChunks). So grounding after a blocks-mode build still spawns one
-// --unified=0 subprocess — the reuse elides validateRange + --name-status but NOT
-// the zero-context diff. This test documents that residual process so the
-// "adds no git subprocess" docstring claim is not read to cover blocks mode. It
-// is the blocks-mode counterpart of TestRangeBuilder_GroundingReusesPayloadGitProcesses
-// (files mode, +0): same builder, different payload mode, +1.
-func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiff(t *testing.T) {
+// Since Epic 35.1 the per-file escalation pass reads each file's changed line
+// ranges (changedHeadRanges -> rangeChunks -> zeroCtxChunks), so a blocks-mode
+// payload build now populates the zero-context cache as a side effect. Grounding
+// after it therefore spawns NO extra --unified=0 subprocess, where it previously
+// spawned exactly one.
+//
+// Before escalation this test asserted +1 and documented the residual process.
+// The count moved DOWN, not up: escalation shares a diff grounding already
+// needed. When escalation is disabled the old +1 behaviour returns, which the
+// sibling test below pins.
+func TestRangeBuilder_BlocksModeGroundingReusesZeroContext(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "a.go", goFileV1)
 	write(t, dir, "b.go", goFileV1)
@@ -153,7 +154,8 @@ func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiff(t *testing.T) {
 	head := commitAll(t, dir, "v2")
 
 	rb := NewRangeBuilder(context.Background(), dir, base, head)
-	// Blocks mode builds via fcChunks/plainChunks and never touches zeroCtx.
+	// Blocks mode builds via fcChunks/plainChunks; the escalation pass also
+	// populates zeroCtx while measuring each file's hunks.
 	_, err := rb.BuildEntries(ModeBlocks)
 	require.NoError(t, err)
 	afterPayload := rb.g.execCount
@@ -162,8 +164,60 @@ func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiff(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cl, 2, "both changed files present in grounding data")
 
+	assert.Equal(t, afterPayload, rb.g.execCount,
+		"grounding after a blocks-mode payload build must reuse the zero-context cache the escalation pass already populated")
+}
+
+// With escalation disabled, blocks mode never touches the zero-context cache, so
+// grounding spawns exactly one --unified=0 subprocess. This is the pre-Epic-35.1
+// behaviour, pinned so that disabling escalation is known to restore the old
+// process profile rather than merely the old payload text.
+func TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(EscalationConfig{}))
+	_, err := rb.BuildEntries(ModeBlocks)
+	require.NoError(t, err)
+	afterPayload := rb.g.execCount
+
+	_, err = rb.BuildChangedLines()
+	require.NoError(t, err)
+
 	assert.Equal(t, afterPayload+1, rb.g.execCount,
-		"grounding after a blocks-mode payload build must spawn exactly one --unified=0 subprocess (the zero-context cache is populated only by files mode)")
+		"without escalation, grounding after blocks mode spawns exactly one --unified=0 subprocess")
+}
+
+// Diff mode reaches the same analyzeFile -> allHunkRanges -> zeroCtxChunks path
+// as blocks mode, so grounding after a diff-mode payload build must likewise
+// reuse the zero-context cache and spawn NO extra --unified=0 subprocess.
+func TestRangeBuilder_DiffModeGroundingReusesZeroContext(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	// Diff mode builds via plainChunks; the escalation pass also populates
+	// zeroCtx while measuring each file's hunks.
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	afterPayload := rb.g.execCount
+
+	cl, err := rb.BuildChangedLines()
+	require.NoError(t, err)
+	require.Len(t, cl, 2, "both changed files present in grounding data")
+
+	assert.Equal(t, afterPayload, rb.g.execCount,
+		"grounding after a diff-mode payload build must reuse the zero-context cache the escalation pass already populated")
 }
 
 // Once every payload mode's entries are materialized, the per-mode diff chunk
@@ -209,6 +263,34 @@ func TestRangeBuilder_ReleaseModeCaches(t *testing.T) {
 	require.Len(t, cl, 2, "both changed files present in grounding data after release")
 	assert.Equal(t, before, rb.g.execCount,
 		"grounding after ReleaseModeCaches must reuse the retained zero-context cache (no new git process)")
+}
+
+// escalationDegraded is per-range state: forRange's range-change reset must
+// clear it with the rest of the range caches, so a degradation recorded on one
+// range never leaks into the manifest of the next range built on the same
+// runner.
+func TestRangeBuilder_EscalationDegradedResetsWithRange(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head1 := commitAll(t, dir, "v2")
+	write(t, dir, "a.go", goFileV1)
+	head2 := commitAll(t, dir, "v3")
+
+	g := newGitRunner(context.Background(), dir)
+	cfg := DefaultEscalationConfig()
+	cfg.MaxFiles = 1 // two changed files exceed the cap
+	g.escalation = cfg
+	_, err := g.buildEntries(ModeDiff, base, head1)
+	require.NoError(t, err)
+	require.True(t, g.forRange(base, head1).escalationDegraded,
+		"sanity: the over-cap build sets the flag")
+
+	require.False(t, g.forRange(base, head2).escalationDegraded,
+		"the flag is per-range state and must reset when the range changes")
 }
 
 // TestRangeBuilder_ConcurrentUsePanics pins the runtime guard: RangeBuilder is

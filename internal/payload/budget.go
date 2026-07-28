@@ -12,6 +12,12 @@ type FileEntry struct {
 	Path string
 	Size int64
 	Body string
+	// Mode is the payload mode this file was actually rendered in. It equals the
+	// run's configured mode unless the escalation heuristic promoted this file
+	// above it (Epic 35.1). Callers record it in the manifest so downstream tools
+	// read what a reviewer saw per file, not just per agent. Empty on entries
+	// built outside the changed-file path (baseline/full-repo scans).
+	Mode PayloadMode
 }
 
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
@@ -44,6 +50,14 @@ func ValidateBudget(budget int64) error {
 // retain their original order; the dropped list is returned sorted by path so
 // the same input always produces the same Truncation.
 func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Truncation) {
+	return applyByteBudgetOrdered(entries, budget, nil)
+}
+
+// applyByteBudgetOrdered is the shared budget pass. tier, when non-nil,
+// partitions entries into drop-priority tiers: an entry in a LOWER tier is shed
+// before one in a higher tier, and largest-first (then path) orders within a
+// tier. A nil tier is plain largest-first across the whole payload.
+func applyByteBudgetOrdered(entries []FileEntry, budget int64, tier func(FileEntry) int) (kept []FileEntry, t Truncation) {
 	t = Truncation{Truncated: false, FilesDropped: []string{}}
 	if budget <= 0 { // 0 = unlimited; negatives are rejected by ValidateBudget
 		return copyEntries(entries), t
@@ -65,15 +79,21 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 		return copyEntries(entries), t
 	}
 
-	// Drop order: largest first, path-alphabetical tie-break. Index into the
-	// original slice so duplicate paths are accounted for independently — keying
-	// on Path would over-drop and miscount when two entries share a path.
+	// Drop order: lowest tier first (when tiered), then largest first, then
+	// path-alphabetical tie-break. Index into the original slice so duplicate
+	// paths are accounted for independently — keying on Path would over-drop and
+	// miscount when two entries share a path.
 	idx := make([]int, len(entries))
 	for i := range idx {
 		idx[i] = i
 	}
 	sort.SliceStable(idx, func(a, b int) bool {
 		ei, ej := entries[idx[a]], entries[idx[b]]
+		if tier != nil {
+			if ti, tj := tier(ei), tier(ej); ti != tj {
+				return ti < tj
+			}
+		}
 		if ei.Size != ej.Size {
 			return ei.Size > ej.Size
 		}
@@ -102,6 +122,39 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	sort.Strings(droppedPaths)
 
 	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
+}
+
+// ApplyByteBudgetPreferEscalated is ApplyByteBudget with an escalation-aware
+// drop order: files the escalation heuristic promoted above the run's configured
+// mode are shed LAST, after every un-escalated file (Epic 35.1).
+//
+// Plain largest-first is self-defeating here. Escalating a file to a
+// higher-context mode replaces its hunks with much more text, which makes that
+// entry by far the largest in the payload — so largest-first puts the file the
+// heuristic just identified as hardest to review at the TOP of the drop list,
+// and a tight per-agent window sheds exactly the file the feature exists to give
+// the reviewer more of.
+//
+// The exemption is bounded: if preferring the escalated files would drop
+// everything (the escalated bytes alone exceed the budget), this falls back to
+// plain largest-first, which keeps the smaller un-escalated files rather than
+// handing the caller an empty payload. Trading one escalated file for the whole
+// rest of the review is never the better deal.
+//
+// configured is the run's payload mode. Only entries rendered in a
+// HIGHER-context mode count as escalated, so entries carrying no mode at all
+// (baseline/full-repo scans) are never exempted.
+func ApplyByteBudgetPreferEscalated(entries []FileEntry, budget int64, configured PayloadMode) (kept []FileEntry, t Truncation) {
+	kept, t = applyByteBudgetOrdered(entries, budget, func(e FileEntry) int {
+		if modeRank(e.Mode) > modeRank(configured) {
+			return 1 // escalated: dropped only after every un-escalated file
+		}
+		return 0
+	})
+	if t.AllDropped {
+		return ApplyByteBudget(entries, budget)
+	}
+	return kept, t
 }
 
 // clampSize treats negative sizes as zero for budget accounting so invalid

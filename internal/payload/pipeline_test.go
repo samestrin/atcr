@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +14,7 @@ import (
 
 // gitProcessCount builds a payload for a range touching nFiles changed files
 // and reports how many git subprocesses the build spawned.
-func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int) int {
+func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int, esc EscalationConfig) int {
 	t.Helper()
 	dir := initRepo(t)
 	for i := 0; i < nFiles; i++ {
@@ -25,23 +26,137 @@ func gitProcessCount(t *testing.T, mode PayloadMode, nFiles int) int {
 	}
 	head := commitAll(t, dir, "v2")
 
-	g := &gitRunner{ctx: context.Background(), dir: dir}
+	g := newGitRunner(context.Background(), dir)
+	g.escalation = esc
 	entries, err := g.buildEntries(mode, base, head)
 	require.NoErrorf(t, err, "mode %s, %d files", mode, nFiles)
 	require.Lenf(t, entries, nFiles, "mode %s: one entry per changed file", mode)
 	return g.execCount
 }
 
-// The git-process count for blocks and diff modes must be constant — fully
-// independent of the number of changed files. Before batching, each file
-// triggered its own numstat + diff fan-out, so the count grew with N.
+// With per-file escalation DISABLED, the git-process count for blocks and diff
+// modes must be constant — fully independent of the number of changed files.
+// Before batching, each file triggered its own numstat + diff fan-out, so the
+// count grew with N.
 func TestBuildEntries_ConstantGitProcessCount(t *testing.T) {
 	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
-		small := gitProcessCount(t, mode, 2)
-		large := gitProcessCount(t, mode, 8)
+		small := gitProcessCount(t, mode, 2, EscalationConfig{})
+		large := gitProcessCount(t, mode, 8, EscalationConfig{})
 		assert.Equalf(t, small, large,
 			"mode %s: git-process count must not grow with changed-file count (2 files: %d, 8 files: %d)",
 			mode, small, large)
+	}
+}
+
+// With escalation ENABLED (the production default), the analysis pass reads each
+// file's HEAD blob, so the count grows by exactly one process per changed file
+// and no more. This is the cost the max_files cap exists to bound, and pinning
+// the exact slope is what stops it from silently becoming worse — the previous
+// version of this guard built a bare &gitRunner{}, whose zero-value config
+// disabled escalation, so it had stopped describing the production path.
+func TestBuildEntries_EscalationCostsOneProcessPerFile(t *testing.T) {
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		small := gitProcessCount(t, mode, 2, DefaultEscalationConfig())
+		large := gitProcessCount(t, mode, 8, DefaultEscalationConfig())
+		assert.Equalf(t, large-small, 6,
+			"mode %s: escalation must cost exactly one git process per extra file (2 files: %d, 8 files: %d)",
+			mode, small, large)
+	}
+}
+
+// In files mode the escalation analysis pass is skipped, so the files-mode
+// render is the ONLY reader of each HEAD blob. Memoizing it retains the full
+// HEAD content for the life of the range — on top of the identical
+// FileEntry.Body — for a guaranteed 0% hit rate. The per-range headSrc cache
+// must therefore stay empty after a files-mode build (Epic 35.1 TD).
+func TestBuildEntries_FilesModeDoesNotRetainHeadBlobs(t *testing.T) {
+	dir := initRepo(t)
+	for i := 0; i < 3; i++ {
+		write(t, dir, fmt.Sprintf("f%d.go", i), goFileV1)
+	}
+	base := commitAll(t, dir, "v1")
+	for i := 0; i < 3; i++ {
+		write(t, dir, fmt.Sprintf("f%d.go", i), goFileV2)
+	}
+	head := commitAll(t, dir, "v2")
+
+	g := newGitRunner(context.Background(), dir)
+	entries, err := g.buildEntries(ModeFiles, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	assert.Empty(t, g.forRange(base, head).headSrc,
+		"files mode must not retain HEAD blobs in the per-range memo")
+}
+
+// The escalation cost tests assert only git-process counts; none checks that an
+// escalated entry actually carries the higher Mode AND the injected skeleton, so a
+// bug that promotes the mode but omits the skeleton (or vice versa) would pass them.
+// This asserts both on the returned FileEntry (Epic 35.1 TD, reviewer dax).
+func TestBuildEntries_EscalatedEntryCarriesModeAndSkeleton(t *testing.T) {
+	dir := initRepo(t)
+	// Eight trivial one-line functions; modify four scattered ones. That fires the
+	// hunk-count / adjacency diff-native signals (escalate to blocks) while every
+	// function stays cyclomatically trivial, so the complexity signal does NOT fire
+	// and the file lands in blocks — not files, which would suppress the skeleton.
+	var v1, v2 strings.Builder
+	v1.WriteString("package p\n\n")
+	v2.WriteString("package p\n\n")
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&v1, "func F%d() int { return %d }\n", i, i)
+		if i%2 == 0 {
+			fmt.Fprintf(&v2, "func F%d() int { return %d }\n", i, i+100)
+		} else {
+			fmt.Fprintf(&v2, "func F%d() int { return %d }\n", i, i)
+		}
+	}
+	write(t, dir, "f.go", v1.String())
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "f.go", v2.String())
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeBlocks, entries[0].Mode,
+		"scattered trivial edits must escalate diff mode to blocks")
+	require.Contains(t, entries[0].Body, skeletonStart,
+		"an escalated (non-files) entry must carry the injected HEAD skeleton")
+	require.Contains(t, entries[0].Body, "func F0() int",
+		"the injected skeleton must name the file's HEAD declarations")
+}
+
+// Above the file cap the analysis pass is skipped entirely, so the constant
+// process profile is restored — the cap's whole purpose.
+func TestBuildEntries_AboveCapRestoresConstantProcessCount(t *testing.T) {
+	capped := DefaultEscalationConfig()
+	capped.MaxFiles = 1
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		small := gitProcessCount(t, mode, 2, capped)
+		large := gitProcessCount(t, mode, 8, capped)
+		assert.Equalf(t, small, large,
+			"mode %s: above the cap the count must not grow with changed-file count", mode)
+	}
+}
+
+// An operator who disables every signal individually — 0 is the documented
+// "off" for churn_ratio, min_hunks, hunk_gap_lines, min_cyclomatic, and
+// max_skeleton_lines — but leaves max_files at its default must pay NO
+// analysis cost: with nothing that can fire and no skeleton to render, the
+// analyze pass could only produce the base mode and an empty skeleton.
+func TestBuildEntries_ZeroedSignalsSkipAnalysis(t *testing.T) {
+	zeroed := DefaultEscalationConfig()
+	zeroed.ChurnRatio = 0
+	zeroed.MinHunks = 0
+	zeroed.HunkGapLines = 0
+	zeroed.MinCyclomatic = 0
+	zeroed.MaxSkeletonLines = 0
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		disabled := gitProcessCount(t, mode, 4, EscalationConfig{})
+		signalsOff := gitProcessCount(t, mode, 4, zeroed)
+		assert.Equalf(t, disabled, signalsOff,
+			"mode %s: with every signal zeroed the analyze pass must not run (disabled baseline: %d, zeroed signals: %d)",
+			mode, disabled, signalsOff)
 	}
 }
 
@@ -145,8 +260,8 @@ func TestBuildEntries_PathContainingSpaceBSlashKeysCorrectly(t *testing.T) {
 // shows), proving everything else — classification and the changed-range diff —
 // is batched.
 func TestBuildEntries_FilesModeOnlyShowScalesWithN(t *testing.T) {
-	small := gitProcessCount(t, ModeFiles, 2)
-	large := gitProcessCount(t, ModeFiles, 8)
+	small := gitProcessCount(t, ModeFiles, 2, DefaultEscalationConfig())
+	large := gitProcessCount(t, ModeFiles, 8, DefaultEscalationConfig())
 	assert.Equalf(t, 6, large-small,
 		"files mode should grow by exactly one git show per added file (2 files: %d, 8 files: %d)",
 		small, large)
