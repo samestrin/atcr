@@ -833,3 +833,44 @@ func TestCommitBaselineWriteback_CancelledContextWritesNothing(t *testing.T) {
 	assert.FileExists(t, payload.FileHashIndexPath("."),
 		"the same write-back on a live context persists the index")
 }
+
+// The Succeeded == 0 clause is the documented AC3 fail-safe: a run where every
+// agent failed must not record its files as reviewed. CommitBaselineIndex's own
+// zero-coverage guard cannot stand in for it — that guard fires only when the
+// engine attributed an uncovered set, and a caller that never ran the engine
+// (a library/MCP caller, or the resume path at cli/resume.go) leaves uncovered
+// nil, so every reviewed file would be recorded. Deleting the clause makes the
+// first assertion below fail.
+func TestCommitBaselineWriteback_AllAgentsFailedWritesNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	// Nil uncovered set — the shape both a direct library caller and the resume
+	// path present, since neither runs the engine's per-chunk attribution. Every
+	// reviewed file would be recorded here if the caller-side guard were removed.
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 0
+
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.NoFileExists(t, payload.FileHashIndexPath("."),
+		"an all-agents-failed run must not record its files as reviewed")
+
+	// Same prep, same nil uncovered set, one succeeded agent: the index IS written.
+	// This pins that the guard — not an unrelated no-op — suppressed the write above.
+	result.Summary.Succeeded = 1
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.FileExists(t, payload.FileHashIndexPath("."),
+		"with one succeeded agent and no uncovered attribution the write-back records normally")
+}
