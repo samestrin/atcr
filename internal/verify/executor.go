@@ -390,8 +390,9 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// (the common case) pass through untouched at zero cost.
 			smellRes := evaluateFixSmell(fix, f.File)
 			if smellRes != nil && smellRes.Summary.Verdict == smellVerdictHard {
-				logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (retrying once)", f.File, f.Line, smellFeedback(smellRes)))
-				retryFix, retryOK := postCheck(generate(smellFeedback(smellRes)))
+				feedback := smellFeedback(smellRes)
+				logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (retrying once)", f.File, f.Line, feedback))
+				retryFix, retryOK := postCheck(generate(feedback))
 				if !retryOK {
 					return // postCheck already classified and stamped the retry's failure
 				}
