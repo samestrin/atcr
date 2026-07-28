@@ -101,7 +101,8 @@ func ResolveEscalationConfig(o EscalationOverrides) EscalationConfig {
 // for a change set of n files. A zero MaxFiles disables the feature outright;
 // otherwise a change set larger than the cap degrades to plain diff, because
 // every scanned file costs a `git show` plus an AST parse and that product is
-// paid once per parallel agent.
+// paid once per distinct payload mode built for the roster (at most twice, since
+// files mode skips analysis), not once per parallel agent.
 func (c EscalationConfig) Enabled(n int) bool {
 	return c.MaxFiles > 0 && n <= c.MaxFiles
 }

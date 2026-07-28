@@ -119,8 +119,12 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	}
 	// Per-file escalation and skeleton injection (Epic 35.1). The pass is gated
 	// on the change-set size: each analyzed file costs one `git show` plus one
-	// AST parse, and that cost is paid once per parallel agent, so a large range
-	// degrades to the configured mode for every file rather than paying it.
+	// AST parse, and that cost is paid once per DISTINCT payload mode built for
+	// the roster (at most twice — files mode skips analysis) on one shared
+	// RangeBuilder before fan-out, not once per parallel agent: headContentMemo
+	// memoizes the `git show` per range and buildSlots reuses the resulting
+	// entries for every agent. A large range still degrades to the configured
+	// mode for every file rather than paying it.
 	// Degradation is specifically "the change set was too big to analyze", NOT
 	// any other reason the pass is skipped. Files mode skips analysis by design
 	// and loses nothing by it, so it never reports a degradation regardless of

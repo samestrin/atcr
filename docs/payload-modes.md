@@ -59,7 +59,7 @@ Skeletons are currently extracted for **Go** files only. Other languages are rev
 
 ### Cost cap
 
-Each analyzed file costs one `git show` plus one AST parse, and that cost is paid once per parallel agent. Above `max_files` changed files (default **50**) the entire feature — escalation and skeletons — is skipped, every file renders in the configured mode, a warning is logged, and `manifest.json` records `escalation_degraded: true`. That distinguishes "nothing was complex enough to escalate" from "escalation never ran".
+Each analyzed file costs one `git show` plus one AST parse, and that cost is paid once per distinct payload mode built for the roster — at most twice, since files mode skips analysis — on one shared range builder before fan-out, not once per parallel agent (`headContentMemo` memoizes the `git show` per range and the resulting entries are reused for every agent). Above `max_files` changed files (default **50**) the entire feature — escalation and skeletons — is skipped, every file renders in the configured mode, a warning is logged, and `manifest.json` records `escalation_degraded: true`. That distinguishes "nothing was complex enough to escalate" from "escalation never ran".
 
 ### Configuration
 
