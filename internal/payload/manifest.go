@@ -79,10 +79,14 @@ type Manifest struct {
 	// reviewer saw.
 	PerFilePayload map[string]string `json:"per_file_payload,omitempty"`
 
-	// EscalationDegraded is true when the change set exceeded the escalation file
-	// cap and the per-file escalation and skeleton passes were skipped wholesale.
-	// It distinguishes "nothing was complex enough to escalate" (field absent,
-	// PerFilePayload empty) from "escalation never ran" (field true).
+	// EscalationDegraded is true ONLY when a git-range review's change set exceeded
+	// the escalation file cap, so the per-file escalation and skeleton passes were
+	// skipped wholesale. Its ABSENCE (false/omitted) carries no information: it
+	// reads identically whether nothing was complex enough to escalate, the feature
+	// was disabled with max_files: 0 (builder.go guards degradation on MaxFiles > 0),
+	// there was no RangeBuilder (the --all/--dir baseline and --diff-file paths force
+	// it false), or a files-only roster never ran the pass at all. Do NOT read a
+	// false/absent value as "escalation ran and found nothing to promote".
 	EscalationDegraded bool `json:"escalation_degraded,omitempty"`
 
 	// Review is the enriched record of the review stage's tool-using agents
