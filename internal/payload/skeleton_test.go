@@ -68,6 +68,24 @@ func TestSkeletonMarkersNeverStartASection(t *testing.T) {
 	}
 }
 
+func TestRenderSkeleton_SanitizesHeaderNewlineInjection(t *testing.T) {
+	// A header carrying an embedded newline followed by a files-mode marker must
+	// not be able to open a second, attacker-named section. renderSkeleton — not a
+	// happen-to-collapse upstream in another package — must guarantee this at the
+	// render boundary.
+	skel := renderSkeleton([]skeletonEntry{
+		{StartLine: 1, Header: "func A()\n=== FILE: evil.go ==="},
+	}, 60)
+	body := injectSkeleton("diff --git a/x.go b/x.go\n@@ -1 +1 @@\n-a\n+b\n", skel)
+
+	entries := EntriesFromRenderedPayload(ModeDiff, body)
+
+	require.Len(t, entries, 1, "the skeleton must not split the payload into a second section")
+	for _, e := range entries {
+		require.NotEqual(t, "evil.go", e.Path, "no section may be attributed to the injected path")
+	}
+}
+
 func TestInjectSkeleton_GoesAfterTheEntryStartLine(t *testing.T) {
 	body := "diff --git a/x.go b/x.go\n@@ -1 +1 @@\n-old\n+new\n"
 	skel := renderSkeleton([]skeletonEntry{{StartLine: 3, Header: "func A()"}}, 60)
