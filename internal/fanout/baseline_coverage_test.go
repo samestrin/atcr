@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -89,7 +91,7 @@ func TestUncoveredBaselineFiles_ExcludesFailedChunkFiles(t *testing.T) {
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"c.go": {}}, got,
 		"only the failed chunk's files are uncovered; the succeeded chunk's files stay recordable")
 }
@@ -115,7 +117,7 @@ func TestUncoveredBaselineFiles_UnionAcrossPersonas(t *testing.T) {
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Empty(t, got,
 		"UNION: every file was carried by some succeeded chunk, so nothing is uncovered")
 }
@@ -136,7 +138,7 @@ func TestUncoveredBaselineFiles_AllSlotsSucceededMeansFullCoverage(t *testing.T)
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Empty(t, got, "no failures anywhere → the whole payload was covered")
 }
 
@@ -159,7 +161,7 @@ func TestUncoveredBaselineFiles_UntaggedSlotContributesNoCoverage(t *testing.T) 
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}}, got,
 		"an untagged success must never vouch for files a sibling chunk failed to review")
 }
@@ -178,7 +180,7 @@ func TestUncoveredBaselineFiles_TaggedBulkSlotCoversItsPayload(t *testing.T) {
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Empty(t, got, "the succeeded bulk slot covered the whole payload it was tagged with")
 }
 
@@ -188,8 +190,56 @@ func TestUncoveredBaselineFiles_NoResultsReportsEverythingUncovered(t *testing.T
 	t.Parallel()
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(nil, nil, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), nil, nil, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}}, got)
+}
+
+// Both defensive degradations forfeit the whole incremental optimization — every
+// later scan re-reads the repository — so neither may be silent. Without a log line
+// an operator sees only that --all keeps doing full scans, with nothing naming the
+// broken Engine.Run index-correspondence contract as the cause.
+func TestUncoveredBaselineFiles_LogsWhenCoverageEvidenceIsIncomplete(t *testing.T) {
+	t.Parallel()
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
+	slots := []Slot{
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}},
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"b.go"}}},
+	}
+
+	capture := func(t *testing.T) (context.Context, *bytes.Buffer) {
+		t.Helper()
+		var buf bytes.Buffer
+		logger, err := log.New("debug", "json", &buf)
+		require.NoError(t, err)
+		return log.NewContext(context.Background(), logger), &buf
+	}
+
+	t.Run("fewer results than slots", func(t *testing.T) {
+		ctx, buf := capture(t)
+		got := uncoveredBaselineFiles(ctx, slots, []Result{{Agent: "greta", Status: StatusOK}}, reviewed)
+		assert.Equal(t, map[string]struct{}{"b.go": {}}, got,
+			"the unmatched slot's file stays uncovered — fail open toward re-review")
+		assert.Contains(t, buf.String(), "index-correspondence contract is broken",
+			"the lost coverage must be explained, not silently dropped")
+		assert.Contains(t, buf.String(), `"results":1`)
+		assert.Contains(t, buf.String(), `"slots":2`)
+	})
+
+	t.Run("no results for a dispatched slot set", func(t *testing.T) {
+		ctx, buf := capture(t)
+		got := uncoveredBaselineFiles(ctx, slots, nil, reviewed)
+		assert.Len(t, got, 2, "no evidence → everything uncovered")
+		assert.Contains(t, buf.String(), "returned no results for a dispatched slot set")
+	})
+
+	// Nothing was dispatched, so there is no contract violation to report — a silent
+	// nil result here is correct, and warning would be noise on a legitimate path.
+	t.Run("no slots dispatched stays quiet", func(t *testing.T) {
+		ctx, buf := capture(t)
+		uncoveredBaselineFiles(ctx, nil, nil, reviewed)
+		assert.NotContains(t, buf.String(), "baseline coverage:",
+			"an empty slot set is not a contract violation")
+	})
 }
 
 // AC3 at the attribution layer: when every chunk fails (by failure OR timeout) every
@@ -206,7 +256,7 @@ func TestUncoveredBaselineFiles_EveryChunkFailed(t *testing.T) {
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}}, got)
 }
 
@@ -219,7 +269,7 @@ func TestUncoveredBaselineFiles_IgnoresPathsOutsideReviewedSet(t *testing.T) {
 	results := []Result{{Agent: "greta", Status: StatusFailed}}
 	reviewed := map[string]string{"a.go": "h1"} // dropped.go was shed globally
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}}, got)
 }
 
@@ -236,7 +286,7 @@ func TestUncoveredBaselineFiles_ShortResultsSliceIsSafe(t *testing.T) {
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
 	assert.NotPanics(t, func() {
-		got := uncoveredBaselineFiles(slots, results, reviewed)
+		got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 		assert.Equal(t, map[string]struct{}{"b.go": {}}, got)
 	})
 }
@@ -258,7 +308,7 @@ func TestUncoveredBaselineFiles_ExtraResultsSliceIsSafe(t *testing.T) {
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
 	assert.NotPanics(t, func() {
-		got := uncoveredBaselineFiles(slots, results, reviewed)
+		got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 		assert.Equal(t, map[string]struct{}{"b.go": {}}, got,
 			"extra results must not shortcut to full coverage — b.go has no coverage evidence")
 	})
@@ -460,7 +510,7 @@ func TestUncoveredBaselineFiles_ResumePartialSlotSetStaysFailOpen(t *testing.T) 
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"c.go": {}}, got,
 		"a resume attributes coverage ONLY from the slots it dispatched — fail-open toward re-review")
 }
@@ -488,7 +538,7 @@ func TestUncoveredBaselineFiles_FallbackServedSlotCountsAsCovered(t *testing.T) 
 	require.Equal(t, "greta", results[0].Agent,
 		"attribution follows the slot, not the substitute — coverage reads the primary's tag")
 
-	got := uncoveredBaselineFiles(slots, results, map[string]string{"a.go": "h1"})
+	got := uncoveredBaselineFiles(context.Background(), slots, results, map[string]string{"a.go": "h1"})
 	assert.Empty(t, got, "a fallback reviewed the same chunk, so its files are covered")
 }
 
@@ -689,7 +739,7 @@ func TestBaselineCoverage_WhollyFailedPersonaIsVisibleWhenSummaryIsNot(t *testin
 		"the bug's root: a wholly failed persona contributes 0 unreviewed chunks")
 
 	prep.baseline.reviewed = map[string]string{"a.go": "h-a", "b.go": "h-b"}
-	prep.baseline.uncovered = uncoveredBaselineFiles(slots, results, prep.baseline.reviewed)
+	prep.baseline.uncovered = uncoveredBaselineFiles(context.Background(), slots, results, prep.baseline.reviewed)
 	require.NoError(t, prep.CommitBaselineIndex("run-1"))
 
 	recorded, excluded := prep.BaselineCoverage()

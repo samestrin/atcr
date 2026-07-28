@@ -1,5 +1,11 @@
 package fanout
 
+import (
+	"context"
+
+	"github.com/samestrin/atcr/internal/log"
+)
+
 // uncoveredBaselineFiles reports which of a baseline (--all/--dir) run's reviewed
 // files were left UNREVIEWED because the chunk carrying them failed (Epic 35.2 /
 // TD-013). The result is the set CommitBaselineIndex must exclude from the
@@ -42,7 +48,13 @@ package fanout
 // The result is always a subset of reviewed: a path a chunk carried but the global byte
 // budget dropped is absent from reviewed and never surfaces here, because there is
 // nothing to exclude. Returns nil when nothing is uncovered.
-func uncoveredBaselineFiles(slots []Slot, results []Result, reviewed map[string]string) map[string]struct{} {
+//
+// ctx carries the run logger. Both defensive degradations below — no results at all,
+// and fewer results than slots — cost the whole incremental optimization, turning
+// every subsequent scan into a full re-scan. They must not be silent: without a log
+// line an operator sees only that --all keeps re-reading the repository, with nothing
+// naming the broken Engine.Run index-correspondence contract as the cause.
+func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result, reviewed map[string]string) map[string]struct{} {
 	if len(reviewed) == 0 {
 		return nil
 	}
@@ -51,7 +63,18 @@ func uncoveredBaselineFiles(slots []Slot, results []Result, reviewed map[string]
 		// than nil ("fully covered") — the caller then writes nothing at all.
 		// Unreachable in practice (a baseline run always dispatches slots, and an
 		// all-complete resume returns before the fan-out), but the safe direction.
+		if len(slots) > 0 {
+			log.FromContext(ctx).Warn("baseline coverage: the fan-out returned no results for a dispatched slot set; treating every reviewed file as uncovered, so the next scan re-reads the whole scope",
+				"slots", len(slots), "reviewed_files", len(reviewed))
+		}
 		return allUncovered(reviewed)
+	}
+	if len(results) < len(slots) {
+		// Engine.Run's one-result-per-slot contract is broken. The unmatched slots stay
+		// uncovered (fail-open toward re-review), which silently forfeits coverage for
+		// every file they carried.
+		log.FromContext(ctx).Warn("baseline coverage: fewer results than dispatched slots — the Engine.Run index-correspondence contract is broken; the unmatched slots' files stay uncovered and will be re-scanned",
+			"slots", len(slots), "results", len(results))
 	}
 	// Every dispatched slot succeeded → the whole payload was covered regardless of
 	// how it was partitioned, so no attribution is needed and nothing is excluded.

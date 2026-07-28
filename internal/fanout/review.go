@@ -1001,7 +1001,7 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// uncovered set on that evidence would record files no agent ever saw. Per-chunk
 	// identity is not persisted, so the conservative read is the only sound one.
 	if p.baseline != nil {
-		p.baseline.uncovered = uncoveredBaselineFiles(p.Slots, results, p.baseline.reviewed)
+		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
 
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
