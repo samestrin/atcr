@@ -125,8 +125,11 @@ var (
 	// An added empty / swallowing exception handler.
 	smellEmptyCatchRe = regexp.MustCompile(`(except\b[^:]*:\s*pass\b|catch\s*(\([^)]*\))?\s*\{\s*\}|rescue\b[^;]*;\s*end\b)`)
 
-	// An added stub / not-implemented / deferred body.
-	smellStubBodyRe = regexp.MustCompile(`(?i)(panic\s*\(|raise\s+NotImplementedError|throw\s+new\s+Error\s*\(\s*["']not[ _]?implemented|\bTODO\b|\bFIXME\b)`)
+	// An added stub / not-implemented / deferred body. panic only counts when its
+	// argument is a not-implemented literal — idiomatic error panics are routine.
+	// TODO/FIXME only counts when it IS the whole added statement (a standalone
+	// comment), not a trailing remark on real code.
+	smellStubBodyRe = regexp.MustCompile(`(?i)(panic\s*\(\s*["'](?:not |unimplemented|todo)|raise\s+NotImplementedError|throw\s+new\s+Error\s*\(\s*["']not[ _]?implemented|^\s*(?://|#|--|/\*)\s*(?:TODO|FIXME)\b)`)
 
 	// A line that asserts something (used to detect weakened test assertions).
 	smellAssertionRe = regexp.MustCompile(`(?i)(\bassert\b|expect\s*\(|\.should\b|\.to(Be|Equal|Throw|Contain|Match|HaveBeen)|t\.(Error|Fatal|Errorf|Fatalf)|require\.\w|XCTAssert|EXPECT_|ASSERT_)`)
