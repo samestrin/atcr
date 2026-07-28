@@ -17,13 +17,40 @@ const reviewStrategyChunked = "chunked"
 // (`diff --git a/<old> b/<new>` and the `--no-prefix` variant) and
 // combined/merge-diff headers (`diff --cc <path>` / `diff --combined <path>`)
 // so merge-commit payloads are split instead of silently degrading to a single
-// bulk chunk. It splits on these markers directly rather than importing
-// internal/payload (a package-private split), keeping this a self-contained
-// utility and avoiding cross-package coupling (epic Technical Constraints).
+// bulk chunk. It also recognizes the non-diff payload markers a MIXED payload can
+// carry — an entry escalated from diff mode to files mode (`=== FILE: p ===` plus
+// raw HEAD content), a deleted-file marker, and a binary-file marker — none of
+// which carry a `diff --git` header; without them an escalated entry would be
+// glued onto the preceding diff segment and countDiffFiles would under-report the
+// file total (Epic 35.1). These literals mirror internal/payload's rendered-entry
+// markers, kept local so the chunker splits on them directly rather than importing
+// internal/payload (a package-private split), avoiding cross-package coupling.
+// (The "chunked strategy is a no-op for a pure files-mode payload" signal is keyed
+// off the declared payload MODE at the call site, not off this predicate.)
 func isDiffFileMarker(ln string) bool {
 	return strings.HasPrefix(ln, "diff --git ") ||
 		strings.HasPrefix(ln, "diff --cc ") ||
-		strings.HasPrefix(ln, "diff --combined ")
+		strings.HasPrefix(ln, "diff --combined ") ||
+		strings.HasPrefix(ln, "=== FILE: ") ||
+		strings.HasPrefix(ln, "[deleted file: ") ||
+		strings.HasPrefix(ln, "[binary file changed: ")
+}
+
+// hasGitDiffMarker reports whether diff contains at least one column-0 git-diff
+// file header (`diff --git` / `--cc` / `--combined`). Unlike isDiffFileMarker it
+// deliberately does NOT count the escalated `=== FILE:` / deleted / binary markers:
+// it answers "is there a unified diff here to bin-pack", the signal the chunked
+// no-op warning keys on, so a whole-file files-mode payload (which carries only the
+// escalated markers) still reads as "nothing to split".
+func hasGitDiffMarker(diff string) bool {
+	for _, ln := range strings.SplitAfter(diff, "\n") {
+		if strings.HasPrefix(ln, "diff --git ") ||
+			strings.HasPrefix(ln, "diff --cc ") ||
+			strings.HasPrefix(ln, "diff --combined ") {
+			return true
+		}
+	}
+	return false
 }
 
 // countLines returns the diff line count of s. It counts newline characters and

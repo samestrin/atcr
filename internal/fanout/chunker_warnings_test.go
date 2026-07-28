@@ -91,11 +91,12 @@ func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {
 	require.NotContains(t, out, "exceeds max_context_lines", "the oversized-file warning must be suppressed on the resume rebuild path")
 }
 
-// A chunked run over a NON-diff, multi-file payload (files mode: sentinel-
-// delimited content with no `diff --git` markers) must not (a) mislabel the whole
-// payload as "a single file's diff" when it exceeds max_context_lines, nor
-// (b) silently pretend the chunked strategy applied — chunkDiff cannot split a
-// payload without diff markers, so it is a no-op that the operator should see.
+// A chunked run over a NON-diff, multi-file payload (files mode: whole-file
+// sentinel-delimited content with no `diff --git` markers) must not (a) mislabel
+// the payload as "a single file's diff" when it exceeds max_context_lines, nor
+// (b) silently pretend the chunked strategy did the diff bin-packing the operator
+// configured — with no `diff --git` markers there is nothing to bin-pack, so it is
+// a no-op the operator should see.
 func TestBuildSlots_ChunkedFilesModeNoMisleadingWarning(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
@@ -105,7 +106,9 @@ func TestBuildSlots_ChunkedFilesModeNoMisleadingWarning(t *testing.T) {
 	g.MaxContextLines = &mcl
 	cfg.Registry.Agents["greta"] = g
 
-	// Three "files", no diff --git markers, ~15 lines total (>> mcl=5).
+	// Three whole-file entries in files-mode format (`=== FILE:` sentinels), no
+	// `diff --git` markers, ~15 lines total (>> mcl=5). Keyed under greta's
+	// configured mode so buildSlots resolves the payload for the agent.
 	var b strings.Builder
 	for _, f := range []string{"a.go", "b.go", "c.go"} {
 		b.WriteString("=== FILE: " + f + " ===\n")

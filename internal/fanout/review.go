@@ -1521,13 +1521,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// single chunk (small diff, or one file) falls through to the bulk path so
 		// there is nothing to merge.
 		if cfg.Settings.ReviewStrategy == reviewStrategyChunked {
-			// A non-diff payload (files/blocks mode) carries no `diff --git` markers,
-			// so chunkDiff returns a single chunk and the chunked strategy is a silent
-			// no-op. Warn once so the operator knows the strategy had no effect for
-			// this payload mode rather than assuming the diff was bin-packed. Gated by
-			// warnOversized so the resume rebuild path stays quiet (already notified).
-			if warnOversized && !warnedChunkedNoop && countDiffFiles(mp.Text) == 0 && mp.FileCount > 1 {
-				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to split on); the whole payload is sent as one chunk\n", mode)
+			// A payload with no `diff --git` markers (a whole-file files-mode payload)
+			// has nothing for chunked bin-packing — which targets diff hunks — to split
+			// on, so the strategy is a no-op for it. Warn once so the operator knows.
+			// Keyed off the ABSENCE of git-diff markers, NOT countDiffFiles(mp.Text):
+			// the chunker now also recognizes `=== FILE:` markers (to segment escalated
+			// entries in MIXED diff payloads), so countDiffFiles no longer returns 0 for
+			// a files-mode payload — the git-diff-marker check stays the reliable "is
+			// this a diff to bin-pack" signal, and unlike the payloads-map key (which is
+			// the AGENT's configured mode) it reflects the payload's actual content.
+			// Gated by warnOversized so the resume rebuild path stays quiet.
+			if warnOversized && !warnedChunkedNoop && !hasGitDiffMarker(mp.Text) && mp.FileCount > 1 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: review_strategy=chunked has no effect for payload mode %q (no diff --git markers to bin-pack)\n", mode)
 				warnedChunkedNoop = true
 			}
 			// Per-chunk line budget: an explicit operator-set max_context_lines wins
