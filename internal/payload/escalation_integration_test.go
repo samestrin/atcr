@@ -380,6 +380,34 @@ func TestEscalationIntegration_AddedFileDoesNotEscalateOnChurn(t *testing.T) {
 		"an added file must not escalate on churn alone — its diff is already the whole file")
 }
 
+// A multi-megabyte file must be skipped by the analysis pass: no AST parse, no
+// skeleton, and — critically — its HEAD blob must not be retained, or a 50-file
+// change set of large generated files would hold them all in memory at once.
+func TestEscalationIntegration_OversizedFileSkipsAnalysis(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "gen.go", "package p\n\nfunc Small() int { return 1 }\n")
+	base := commitAll(t, dir, "v1")
+
+	var huge strings.Builder
+	huge.WriteString("package p\n\nfunc Small() int { return 2 }\n")
+	for i := 0; huge.Len() < (1<<20)+4096; i++ {
+		fmt.Fprintf(&huge, "var Gen%d = %d\n", i, i)
+	}
+	write(t, dir, "gen.go", huge.String())
+	head := commitAll(t, dir, "v2 (oversized)")
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(DefaultEscalationConfig()))
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeDiff, entries[0].Mode, "an oversized file must not escalate")
+	require.NotContains(t, entries[0].Body, skeletonStart, "an oversized file must get no skeleton")
+
+	_, retained := rb.g.forRange(base, head).headSrc["gen.go"]
+	require.False(t, retained, "an oversized file's HEAD blob must not be retained")
+}
+
 // Files mode is the top of the ladder and suppresses the skeleton, so the
 // analysis pass must not run: no extra git process, no AST parse per file.
 func TestEscalationIntegration_FilesModeSkipsAnalysisEntirely(t *testing.T) {
