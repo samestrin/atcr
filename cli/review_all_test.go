@@ -750,9 +750,11 @@ func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 
 	// The index IS written now, recording the covered files but not the failed chunk's.
 	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	runIDs := map[string]string{}
 	for _, name := range []string{"a.txt", "b.go", filepath.Join("internal", "c.go")} {
-		_, _, ok := idx.Get(filepath.ToSlash(name))
+		_, runID, ok := idx.Get(filepath.ToSlash(name))
 		assert.True(t, ok, "a file in the SUCCEEDED chunk must be recorded; %s missing", name)
+		runIDs[filepath.ToSlash(name)] = runID
 	}
 	_, _, okFail := idx.Get("fail.txt")
 	assert.False(t, okFail,
@@ -769,6 +771,18 @@ func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 	assert.NotContains(t, body, "package b", "a covered file is hash-skipped on the next run")
 	assert.NotContains(t, body, "package c", "a covered file is hash-skipped on the next run")
 	assert.NotContains(t, body, "one\n", "a covered file is hash-skipped on the next run")
+
+	// The all-failed second run must not touch the index: fail.txt is still absent
+	// and the covered files keep their original run ids (the fail-open loop
+	// invariant — a run that covered nothing records nothing).
+	idx = payload.Load(payload.FileHashIndexPath("."), nil)
+	_, _, okFail = idx.Get("fail.txt")
+	assert.False(t, okFail, "the all-failed run must not record the uncovered file")
+	for name, runID := range runIDs {
+		_, gotRunID, ok := idx.Get(name)
+		assert.True(t, ok, "the all-failed run must not trim the covered file %s", name)
+		assert.Equal(t, runID, gotRunID, "the all-failed run must not rewrite %s's run id", name)
+	}
 }
 
 // Epic 35.2 AC3: when EVERY chunk fails the run has zero coverage and writes no index
