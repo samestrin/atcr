@@ -248,11 +248,19 @@ func TestAnalyzeDiff_HunkStartOverflowIsFailSoft(t *testing.T) {
 	assert.Equal(t, 999999999, res.Smells[0].Line)
 }
 
-// Deleting a whole test file is the archetypal reward hack: it must be HARD.
+// Deleting a whole test file is the archetypal reward hack: it must be HARD,
+// and it must be HARD *because* test_deleted fired — a verdict assertion alone
+// would also pass if the deletion detector were removed entirely (an ordinary
+// modification of the same file scores hard + test_only too).
 func TestAnalyzeDiff_TestFileDeletionIsHard(t *testing.T) {
 	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\ndeleted file mode 100644\n--- a/x_test.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
-	assert.Contains(t, res.Summary.ByType, smellTestOnly)
+	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
+
+	// Negative control: MODIFYING the same test file must not produce
+	// test_deleted — only an outright deletion may.
+	res = analyzeDiff(dsTestOnly)
+	assert.NotContains(t, res.Summary.ByType, smellTestDeleted, "a modified test file is not a deletion")
 }
 
 // A CRLF diff (or one wrapped in a markdown fence) must still be recognized and
