@@ -140,6 +140,26 @@ func TestEscalate_ChurnRatioFiresToBlocks(t *testing.T) {
 	require.Equal(t, ModeBlocks, got)
 }
 
+func TestEscalate_ChurnRatioBoundary(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// Exactly at the threshold: >= includes the boundary, so 50/100 fires.
+	at := c.escalate(ModeDiff, fileSignals{
+		changedLines: 50, headLines: 100, churnApplicable: true,
+		hunks:      []lineRange{{start: 1, end: 50}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeBlocks, at, "ratio exactly 0.5 must fire (>= boundary)")
+
+	// One line below: 49/100 is under the threshold and stays in diff mode.
+	below := c.escalate(ModeDiff, fileSignals{
+		changedLines: 49, headLines: 100, churnApplicable: true,
+		hunks:      []lineRange{{start: 1, end: 49}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeDiff, below, "ratio just below 0.5 must not fire")
+}
+
 func TestEscalate_HunkCountFiresToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
