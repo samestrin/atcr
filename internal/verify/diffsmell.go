@@ -409,13 +409,22 @@ func smellHeaderPath(s string) string {
 	return s
 }
 
-// smellBPathFromGitHeader extracts the new path from "diff --git a/x b/y".
+// smellBPathFromGitHeader extracts the new path from "diff --git a/x b/y". The
+// b/ side is located by its separator rather than by whitespace splitting, so a
+// path containing a space is not truncated; surrounding quotes (git's quoting of
+// special-character paths) are stripped.
 func smellBPathFromGitHeader(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) < 4 {
+	rest := strings.TrimPrefix(line, "diff --git ")
+	var b string
+	if i := strings.LastIndex(rest, ` "b/`); i >= 0 {
+		b = rest[i+2:]
+	} else if i := strings.LastIndex(rest, " b/"); i >= 0 {
+		b = rest[i+1:]
+	} else {
 		return ""
 	}
-	return smellHeaderPath(fields[len(fields)-1])
+	b = strings.Trim(b, `"`)
+	return smellHeaderPath(b)
 }
 
 // smellMaxHunkDigits bounds the hunk-start parse. Upstream accumulates digits
