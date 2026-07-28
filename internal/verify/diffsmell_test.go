@@ -627,3 +627,16 @@ func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
 	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
 	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
 }
+
+// A REMOVED line whose content begins with `-- ` (a SQL, Lua, Haskell or Ada
+// comment) is content, not an old-file header. Swallowing it drops the removed
+// line from the file's tally AND clobbers lastOldPath with garbage.
+func TestAnalyzeDiff_RemovedDashDashLineIsContent(t *testing.T) {
+	res := analyzeDiff("diff --git a/tests/schema.sql b/tests/schema.sql\n" +
+		"--- a/tests/schema.sql\n+++ b/tests/schema.sql\n@@ -1,2 +1,1 @@\n" +
+		"-- assert row count\n-SELECT assert_count(1);\n+SELECT 1;\n" + dsImplOnly)
+	require.Len(t, res.Files.Test, 1, "test=%v impl=%v", res.Files.Test, res.Files.Impl)
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
+		"the removed `-- assert` line must be counted, got %v", res.Summary.ByType)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+}
