@@ -195,9 +195,15 @@ func prFromGitHubRef(ref string) int {
 // excludes the failed chunks' files, so the next run re-reviews the uncovered
 // ones — or the whole repository when coverage was zero and nothing was
 // recorded. The uncovered set is attributed inside the engine (runEngine,
-// pre-merge) because Summary collapses per-chunk outcomes into a bare count;
-// UnreviewedChunks remains the operator-facing signal that coverage was partial.
+// pre-merge) because Summary collapses per-chunk outcomes into a bare count.
 // Still fail-open: an uncovered file is re-scanned, never silently skipped.
+//
+// The coverage log is driven by prep.BaselineCoverage — what the write-back
+// ACTUALLY recorded — and deliberately NOT by Summary.UnreviewedChunks.
+// mergeResultGroup sets that field only for a persona with a MIX of succeeded and
+// failed chunks (internal/fanout/chunker.go), so a persona that failed WHOLLY
+// contributes 0 and a run can record nothing at all while the summary reads clean.
+// Keying the operator signal off it left exactly that run silent.
 //
 // An index-write failure is logged, never fatal (AC 04-01 ES1). The
 // cancelled-context early return enforces the interrupt precondition: the
@@ -209,17 +215,23 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return
 	}
-	if result.Summary.UnreviewedChunks > 0 {
-		// Deliberately phrased as an upper bound, not an announcement of what was
-		// written: the write-back records AT MOST the files covered by succeeded
-		// chunks, and when nothing was covered it writes nothing at all. Stating the
-		// exact recorded/excluded counts would need CommitBaselineIndex to report
-		// them back (tracked as TD rather than widening its exported signature here).
-		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; at most the files covered by succeeded chunks are recorded, so the next run re-scans the rest",
-			"unreviewed_chunks", result.Summary.UnreviewedChunks)
-	}
 	if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
 		log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
+	}
+	recorded, excluded := prep.BaselineCoverage()
+	switch {
+	case recorded == 0 && excluded > 0:
+		// Nothing was covered: CommitBaselineIndex skipped the write entirely, so the
+		// index is frozen at its prior state and the next scan re-reads the whole
+		// scope. Without this line that outcome is indistinguishable from a clean run.
+		log.FromContext(ctx).Warn("baseline scan: no file was covered by a succeeded chunk, so the file-hash index was left untouched and the next run re-scans the whole scope",
+			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+	case excluded > 0:
+		log.FromContext(ctx).Warn("baseline scan: partial coverage; only the files covered by succeeded chunks were recorded, so the next run re-scans the rest",
+			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks)
+	default:
+		log.FromContext(ctx).Debug("baseline scan: file-hash index updated",
+			"recorded_files", recorded, "excluded_files", excluded)
 	}
 }
 
