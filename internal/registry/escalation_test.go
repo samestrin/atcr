@@ -72,6 +72,26 @@ func TestPayloadEscalation_ValidateRejectsChurnRatioAboveOne(t *testing.T) {
 	require.Contains(t, err.Error(), "payload_escalation.churn_ratio")
 }
 
+// TestPayloadEscalation_ValidateRejectsUnreachableHunkGap pins the same rule
+// churn_ratio > 1 already carries: a threshold that can never fire is a silent
+// misconfiguration, not a stricter setting. Under --unified=0 git never emits
+// two hunks with zero unchanged lines between them, so `gap < 1` is
+// unsatisfiable and hunk_gap_lines: 1 disables adjacency exactly as 0 does —
+// while reading like a deliberately tight window. Rejecting it forces the
+// operator to say which one they meant.
+func TestPayloadEscalation_ValidateRejectsUnreachableHunkGap(t *testing.T) {
+	var r Registry
+	err := yaml.Unmarshal([]byte("payload_escalation:\n  hunk_gap_lines: 1\n"), &r)
+	require.NoError(t, err)
+	require.NotNil(t, r.PayloadEscalation.HunkGapLines)
+
+	err = r.validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payload_escalation.hunk_gap_lines")
+	require.Contains(t, err.Error(), "0", "the message must point at 0 (disable) as one of the two meaningful choices")
+	require.Contains(t, err.Error(), ">= 2", "the message must point at >= 2 as the other")
+}
+
 func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 	overGap := MaxEscalationHunkGapLines + 1
 	overFiles := MaxEscalationFiles + 1
