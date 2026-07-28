@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -254,6 +256,70 @@ func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
 		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode parse error")
+}
+
+// promptRecordingChat wraps fakeChatCompleter and captures the content of every
+// message handed to Chat, so a test can assert what actually reached the model
+// rather than only what the prompt builder returns in isolation.
+type promptRecordingChat struct {
+	*fakeChatCompleter
+	mu   sync.Mutex
+	sent []string
+}
+
+func (p *promptRecordingChat) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tds []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	p.mu.Lock()
+	for _, m := range msgs {
+		if m.Content != nil {
+			p.sent = append(p.sent, *m.Content)
+		}
+	}
+	p.mu.Unlock()
+	return p.fakeChatCompleter.Chat(ctx, inv, msgs, tds)
+}
+
+// prompts joins every recorded message so assertions do not depend on which
+// role the engine assigns the agent prompt to.
+func (p *promptRecordingChat) prompts() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return strings.Join(p.sent, "\n")
+}
+
+func recordingChat(content string) *promptRecordingChat {
+	return &promptRecordingChat{fakeChatCompleter: finalChat(content)}
+}
+
+// Epic 35.3: on a HARD diff-smell rejection the retry re-enters invokeExecutor
+// with a non-empty smellFeedback string. Nothing previously asserted that the
+// feedback survives the trip through buildExecutorAgentPrompt → buildExecutorAgent
+// → the engine and actually reaches the model, so a regression that dropped the
+// argument would have retried with the identical prompt — silently turning the
+// self-correction retry into a coin flip.
+func TestInvokeExecutor_SmellFeedbackReachesTheModel(t *testing.T) {
+	const feedback = "weakened_assertion: removed require.False(t, meetsSeverityFloor(...))"
+
+	cc := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], cc, okDispatcher(), 0, feedback)
+	require.Equal(t, "raise the floor in severity.go", fix)
+	require.Equal(t, "", warn)
+
+	sent := cc.prompts()
+	assert.Contains(t, sent, smellRetryInstruction,
+		"the trusted retry instruction must reach the model on a smell retry")
+	assert.Contains(t, sent, feedback,
+		"the rejected-attempt evidence must reach the model so the retry can avoid the same shortcut")
+
+	// Negative control: without feedback neither half may appear, so the
+	// assertions above pin the injection rather than fixed prompt boilerplate.
+	clean := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
+	_, _, _ = invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], clean, okDispatcher(), 0, "")
+	cleanSent := clean.prompts()
+	assert.NotContains(t, cleanSent, smellRetryInstruction,
+		"a first attempt must not carry the retry instruction")
+	assert.NotContains(t, cleanSent, feedback)
 }
 
 // --- parseExecutorResponse unit tests ---
