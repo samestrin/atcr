@@ -698,7 +698,8 @@ func TestReviewFreshForce_DiffModeNoOp(t *testing.T) {
 	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh --force review must not touch the baseline index")
 }
 
-// failAllProvider rejects every request, so no chunk can succeed.
+// failAllProvider rejects every request, so no chunk can succeed. (An empty
+// marker matches every body: strings.Contains(body, "") is vacuously true.)
 func failAllProvider(t *testing.T) *httptest.Server {
 	t.Helper()
 	return failOnMarkerProvider(t, "")
@@ -706,14 +707,12 @@ func failAllProvider(t *testing.T) *httptest.Server {
 
 // failOnMarkerProvider returns 500 for any request whose body contains marker and a
 // finding otherwise — so exactly one baseline chunk (the one carrying marker) fails
-// while the rest succeed. An EMPTY marker fails every request (failAllProvider names
-// that intent), spelled out explicitly below rather than relying on
-// strings.Contains(body, "") being vacuously true.
+// while the rest succeed.
 func failOnMarkerProvider(t *testing.T, marker string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if marker == "" || strings.Contains(string(body), marker) {
+		if strings.Contains(string(body), marker) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
