@@ -91,6 +91,11 @@ func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
 // entries to ApplyByteBudget, derive the changed-file count from len(entries),
 // and record per-file truncation in status.json. The flat Build* entry points
 // all join these entries, so both forms are byte-identical by construction.
+//
+// Escalation caveat: this and the flat Build* wrappers construct their runner via
+// newGitRunner, which always seeds DefaultEscalationConfig() with no override point
+// (see newGitRunner). Use NewRangeBuilder + WithEscalation for a configurable
+// escalation pass; these package-level functions are for the test/simple path.
 func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string) ([]FileEntry, error) {
 	if err := validatePayloadMode(mode); err != nil {
 		return nil, err

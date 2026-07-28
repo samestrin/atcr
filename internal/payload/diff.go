@@ -184,6 +184,15 @@ type gitRunner struct {
 // point that renders changed-file payloads goes through it, so the per-file
 // escalation feature is on by default and opt-out via WithEscalation, rather
 // than silently inert wherever a construction site was missed.
+//
+// Consequence (2026-07-27 TD, Q4): the exported flat builders — Build, BuildDiff,
+// BuildBlocks, BuildFiles, BuildEntries — construct their runner here with no
+// WithEscalation option, so they always run at DefaultEscalationConfig() with NO
+// override point; no payload_escalation setting (not even max_files: 0) can reach
+// them. That is intentional and safe today: the only production payload path goes
+// through NewRangeBuilder + WithEscalation (buildPayloads), and the flat builders
+// are used by tests only. A caller needing configurable escalation must use
+// NewRangeBuilder rather than these package-level functions.
 func newGitRunner(ctx context.Context, repo string) *gitRunner {
 	return &gitRunner{
 		ctx:        ctx,
