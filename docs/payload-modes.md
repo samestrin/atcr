@@ -24,12 +24,21 @@ Two independent signals are scored per file:
 
 | Signal | Fires when | Setting | Default |
 |--------|-----------|---------|---------|
-| Churn ratio | Changed lines (added **and deleted**) ÷ HEAD line count reaches the threshold | `churn_ratio` | `0.5` |
-| Hunk count | The file has at least this many separate hunks | `min_hunks` | `4` |
-| Hunk adjacency | Two hunks sit closer than this many unchanged lines apart | `hunk_gap_lines` | `10` |
-| Cyclomatic complexity | The file's **most complex single function** reaches this McCabe score (branch nodes + 1) | `min_cyclomatic` | `15` |
+| Churn ratio | Changed lines (`max(added, deleted)`, **not** their sum — a moved block is not double-counted) ÷ HEAD line count reaches the threshold | `churn_ratio` | `0.5` |
+| Hunk count | The file has at least this many separate hunks | `min_hunks` | `8` |
+| Hunk adjacency | Two hunks sit closer than this many unchanged lines apart | `hunk_gap_lines` | `2` |
+| Cyclomatic complexity | The most complex **function the diff changed** reaches this McCabe score (branch nodes + 1) | `min_cyclomatic` | `20` |
 
-The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below. It is measured **per function**, not summed across the file — a long file of simple functions is not complex, and thresholding on a whole-file total would escalate almost every real source file.
+The first three are **diff-native** — they need no parsing and target the case this feature exists for: a branch that implements something, then rewrites it in a later commit, leaving a net diff whose shape matches neither version. The fourth is the standard **McCabe** measure, read from the same AST parse that produces the skeleton below. It is measured **per function**, not summed across the file — a long file of simple functions is not complex, and thresholding on a whole-file total would escalate almost every real source file. It is also scoped to the functions the diff **touched**: a one-line edit to a trivial helper does not escalate because some unrelated function elsewhere in the file is branchy.
+
+These defaults were tuned against a measured replay of real history rather than chosen by feel. Over the repo's last 40 commits (527 changed files, 400 of them Go) they promote **21.5% of changed Go files** at a cost of **+36% payload bytes** over the configured mode — escalation stays the exception it is meant to be. The measurement harness lives in `internal/payload/escalation_replay_test.go` and is opt-in:
+
+```bash
+ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \
+  go test ./internal/payload/ -run TestEscalationReplay -v
+```
+
+It reports the overall and per-signal promotion rates plus the payload-byte delta, and a companion sweep reports what candidate threshold sets would have measured over the same window. Re-run it before changing any threshold above: damping one signal shifts load onto the others, which is only visible by re-measuring all of them.
 
 Escalation is a ladder:
 
@@ -69,9 +78,9 @@ Thresholds are **global**, set in the registry only — there is no project-conf
 # ~/.config/atcr/registry.yaml
 payload_escalation:
   churn_ratio: 0.5
-  min_hunks: 4
-  hunk_gap_lines: 10
-  min_cyclomatic: 15
+  min_hunks: 8
+  hunk_gap_lines: 2
+  min_cyclomatic: 20
   max_files: 50
   max_skeleton_lines: 60
 ```

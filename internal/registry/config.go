@@ -220,9 +220,9 @@ type VerifyConfig struct {
 // together so they cannot drift.
 type PayloadEscalationConfig struct {
 	ChurnRatio    *float64 `yaml:"churn_ratio,omitempty"`    // nil = default 0.5; 0 disables
-	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 4; 0 disables
-	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 10; 0 disables
-	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 15; 0 disables
+	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 8; 0 disables
+	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 2; 0 disables
+	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 20; 0 disables
 	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
 	// MaxSkeletonLines caps declaration headers rendered per file; nil = default
 	// 60; 0 disables skeleton injection while leaving escalation active.

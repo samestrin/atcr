@@ -344,20 +344,20 @@ The payload builder promotes an individual file above the run's configured paylo
 
 ```yaml
 payload_escalation:
-  churn_ratio: 0.5        # changed lines ÷ HEAD lines that promotes diff → blocks
-  min_hunks: 4            # separate hunks in one file that promotes diff → blocks
-  hunk_gap_lines: 10      # two hunks closer than this many unchanged lines promotes diff → blocks
-  min_cyclomatic: 15      # McCabe score that promotes diff → blocks
+  churn_ratio: 0.5        # max(added, deleted) ÷ HEAD lines that promotes diff → blocks
+  min_hunks: 8            # separate hunks in one file that promotes diff → blocks
+  hunk_gap_lines: 2       # two hunks closer than this many unchanged lines promotes diff → blocks
+  min_cyclomatic: 20      # McCabe score of a CHANGED function that promotes diff → blocks
   max_files: 50           # changed-file ceiling; above it the whole feature is skipped
   max_skeleton_lines: 60  # declaration headers per skeleton; excess is elided with a notice
 ```
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `churn_ratio` | `0.5` | Fraction of a file's `head` lines that must be touched. Must be between `0` and `1.0`. Values above `1.0` are rejected as misconfiguration — the measured ratio can legitimately exceed 1.0 when a file shrinks, so a threshold above 1.0 would be a confusing way to express "only when the file shrank". |
-| `min_hunks` | `4` | Fires at or above this many hunks in one file. |
-| `hunk_gap_lines` | `10` | Fires when two hunks are separated by fewer than this many unchanged lines. |
-| `min_cyclomatic` | `15` | Fires at or above this McCabe score. Computed for Go files only; other languages never fire this signal. |
+| `churn_ratio` | `0.5` | Fraction of a file's `head` lines that must be touched, measured as `max(added, deleted)` so a moved block is not counted twice. Must be between `0` and `1.0`. Values above `1.0` are rejected as misconfiguration — the measured ratio can legitimately exceed 1.0 when a file shrinks, so a threshold above 1.0 would be a confusing way to express "only when the file shrank". |
+| `min_hunks` | `8` | Fires at or above this many hunks in one file. |
+| `hunk_gap_lines` | `2` | Fires when two hunks are separated by fewer than this many unchanged lines. |
+| `min_cyclomatic` | `20` | Fires at or above this McCabe score, scored over the functions the diff **changed** (not the file-wide maximum). Computed for Go files only; other languages never fire this signal. |
 | `max_files` | `50` | Above this many changed files, escalation and skeletons are skipped entirely and `manifest.json` records `escalation_degraded: true`. |
 | `max_skeleton_lines` | `60` | Declaration headers rendered per file. Beyond it the skeleton is truncated with an explicit `... N more declaration(s) elided` notice, so a generated file with hundreds of declarations cannot swamp a one-line diff. |
 
