@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +86,44 @@ func TestBuildEntries_FilesModeDoesNotRetainHeadBlobs(t *testing.T) {
 	require.Len(t, entries, 3)
 	assert.Empty(t, g.forRange(base, head).headSrc,
 		"files mode must not retain HEAD blobs in the per-range memo")
+}
+
+// The escalation cost tests assert only git-process counts; none checks that an
+// escalated entry actually carries the higher Mode AND the injected skeleton, so a
+// bug that promotes the mode but omits the skeleton (or vice versa) would pass them.
+// This asserts both on the returned FileEntry (Epic 35.1 TD, reviewer dax).
+func TestBuildEntries_EscalatedEntryCarriesModeAndSkeleton(t *testing.T) {
+	dir := initRepo(t)
+	// Eight trivial one-line functions; modify four scattered ones. That fires the
+	// hunk-count / adjacency diff-native signals (escalate to blocks) while every
+	// function stays cyclomatically trivial, so the complexity signal does NOT fire
+	// and the file lands in blocks — not files, which would suppress the skeleton.
+	var v1, v2 strings.Builder
+	v1.WriteString("package p\n\n")
+	v2.WriteString("package p\n\n")
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&v1, "func F%d() int { return %d }\n", i, i)
+		if i%2 == 0 {
+			fmt.Fprintf(&v2, "func F%d() int { return %d }\n", i, i+100)
+		} else {
+			fmt.Fprintf(&v2, "func F%d() int { return %d }\n", i, i)
+		}
+	}
+	write(t, dir, "f.go", v1.String())
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "f.go", v2.String())
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.Equal(t, ModeBlocks, entries[0].Mode,
+		"scattered trivial edits must escalate diff mode to blocks")
+	require.Contains(t, entries[0].Body, skeletonStart,
+		"an escalated (non-files) entry must carry the injected HEAD skeleton")
+	require.Contains(t, entries[0].Body, "func F0() int",
+		"the injected skeleton must name the file's HEAD declarations")
 }
 
 // Above the file cap the analysis pass is skipped entirely, so the constant
