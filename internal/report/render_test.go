@@ -558,6 +558,37 @@ func TestRenderAXI_UnicodePreserved(t *testing.T) {
 	assert.Contains(t, out, "naïve façade", "unicode finding text preserved")
 }
 
+// TestRenderAXI_FixWarningAndFixReviewColumns pins the additive fix_warning and
+// fix_review AXI columns (Epic 35.3): an agent consuming --axi must see the same
+// warning / NEEDS_REVIEW signals --format json carries — the payload is documented
+// as a superset of the JSON form. Both columns follow the has-any discipline used
+// for disagreement: declared only when at least one finding carries the value.
+func TestRenderAXI_FixWarningAndFixReviewColumns(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers:  []string{"rev"},
+			FixWarning: "invalid_syntax: 2:1: expected '}'",
+			FixReview:  "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "q", Confidence: "HIGH",
+			Reviewers: []string{"rev"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header, _, _ := strings.Cut(out, "\n")
+	assert.Contains(t, header, "fix_warning")
+	assert.Contains(t, header, "fix_review")
+	assert.Contains(t, out, "invalid_syntax")
+	assert.Contains(t, out, "NEEDS_REVIEW")
+
+	// Absent signals declare no columns — the clean fixture's header must not grow.
+	var clean strings.Builder
+	require.NoError(t, Render(&clean, sample(), FormatAXI))
+	cleanHeader, _, _ := strings.Cut(clean.String(), "\n")
+	assert.NotContains(t, cleanHeader, "fix_warning")
+	assert.NotContains(t, cleanHeader, "fix_review")
+}
+
 // TestRenderAXI_CapsOversizeCell pins the AXI payload byte-safety bound (TD from
 // sprint 31.0): a single reviewer-controlled free-text field (LLM-generated,
 // potentially adversarial) must not render as one unbounded physical line that the
