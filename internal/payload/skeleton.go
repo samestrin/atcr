@@ -74,7 +74,12 @@ func renderSkeleton(entries []skeletonEntry, maxLines int) string {
 		b.WriteByte('L')
 		b.WriteString(strconv.Itoa(e.StartLine))
 		b.WriteString(": ")
-		b.WriteString(truncateHeader(e.Header))
+		// Collapse whitespace at the render boundary, not just upstream: a header
+		// carrying an embedded newline + a payload marker would otherwise emit a
+		// column-0 marker that splits the payload into a spoofed section. Folding
+		// runs of whitespace to single spaces removes every newline, so a rendered
+		// line can never begin with a marker regardless of the header's origin.
+		b.WriteString(truncateHeader(strings.Join(strings.Fields(e.Header), " ")))
 		b.WriteByte('\n')
 		rendered++
 	}
