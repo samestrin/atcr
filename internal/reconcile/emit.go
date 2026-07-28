@@ -134,6 +134,9 @@ type JSONFinding struct {
 	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
 	// producers MUST leave it empty (it is set only by the verify fix phase).
 	FixWarning string `json:"fix_warning,omitempty"`
+	// RED stub (Epic 35.3): omitempty deliberately missing so the field compiles
+	// but the serialization test fails. Corrected in GREEN.
+	FixReview string `json:"fix_review"`
 	// EvidenceExec carries the execution-reproduction block (Epic 11.0): the
 	// command a repro/skeptic agent ran in the sandbox, its exit code, and a
 	// truncated output excerpt. It is set ONLY by the repro write-back (a

@@ -79,6 +79,40 @@ var goldenCases = []struct {
 // inline TestRender_* tests below still cover behavioral edge cases (truncation,
 // injection, unicode, zero findings); this test locks the exact canonical output
 // so any formatting drift is caught. Regenerate with `-update`.
+// A fix accepted despite SOFT diff-smells carries FixReview (Epic 35.3). It must
+// render alongside the fix rather than replacing it — unlike FixWarning, the fix
+// here IS usable; it just took a shortcut a human should look at.
+func TestRenderMarkdown_ShowsFixReview(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "the patch",
+			Confidence: "HIGH", Reviewers: []string{"rev"},
+			FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Fix review:", "the fix-review label must surface in the markdown report")
+	assert.Contains(t, out, "over-simplification smell(s): suppression")
+	assert.Contains(t, out, "Fix: the patch", "the accepted fix must still render")
+}
+
+// FixReview is untrusted-adjacent (it embeds evidence text lifted from a
+// model-generated diff), so it must be escaped and truncated exactly like
+// FixWarning, and a finding without one must render no review line at all.
+func TestRenderMarkdown_FixReviewEscapedAndOmitted(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}, FixReview: "NEEDS_REVIEW: <script>alert(1)</script>"},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.NotContains(t, out, "<script>", "fix-review text must be HTML-escaped")
+	assert.Equal(t, 1, strings.Count(out, "Fix review:"), "only the annotated finding renders a review line")
+}
+
 func TestRender_GoldenFiles(t *testing.T) {
 	for _, tc := range goldenCases {
 		t.Run(tc.name, func(t *testing.T) {
