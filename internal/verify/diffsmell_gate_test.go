@@ -199,6 +199,7 @@ func TestGenerateFixes_HardSmellRetryFailureModes(t *testing.T) {
 // escalation rides the existing FixWarning contract.
 func TestGenerateFixes_SecondHardSmellWithholdsFix(t *testing.T) {
 	findings := gateFinding("a.go")
+	findings[0].FixReview = "NEEDS_REVIEW: stale from a prior run"
 	rec := &sequencedExecutor{outs: []string{dsTestOnly, dsTestOnly}}
 	ctx, buf := ceilingCtx()
 	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
@@ -207,8 +208,22 @@ func TestGenerateFixes_SecondHardSmellWithholdsFix(t *testing.T) {
 	assert.Empty(t, findings[0].Fix, "a twice-rejected fix must never be written")
 	assert.Contains(t, findings[0].FixWarning, smellTestOnly, "the warning must name the smell that halted it")
 	assert.NotContains(t, findings[0].Evidence, "fix by opus", "a withheld fix must not be attributed")
-	assert.Empty(t, findings[0].FixReview, "a rejected fix is not a NEEDS_REVIEW acceptance")
+	assert.Empty(t, findings[0].FixReview, "a rejected fix is not a NEEDS_REVIEW acceptance — a stale one must be cleared")
 	assert.Equal(t, 2, strings.Count(buf.String(), `msg="pipeline warning" class=executor_smell_reject`), "both rejection sites (retrying, halted) must log the class")
+}
+
+// An empty retry completion is a failure path too: it must not leave a stale
+// FixReview beside the freshly stamped FixWarning.
+func TestGenerateFixes_EmptyRetryClearsStaleFixReview(t *testing.T) {
+	findings := gateFinding("a.go")
+	findings[0].FixReview = "NEEDS_REVIEW: stale from a prior run"
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, "   "}}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 2, rec.callCount())
+	assert.Empty(t, findings[0].Fix)
+	assert.Contains(t, findings[0].FixWarning, "empty completion")
+	assert.Empty(t, findings[0].FixReview, "a failed retry must clear a stale review annotation")
 }
 
 // A prior tier's successful fix must not be clobbered by a later tier's rejection
