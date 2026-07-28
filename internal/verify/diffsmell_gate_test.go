@@ -532,6 +532,55 @@ func TestValidateGoFixSyntax_UnifiedDiffExempt(t *testing.T) {
 	assert.Error(t, validateGoFixSyntax("func add(a, b int) int {\n\treturn a + b\n"))
 }
 
+// The most common LLM answer shape is a prose lead-in then an unfenced diff.
+// Anchoring the exemption on the literal first non-blank line rejected it, fed it
+// to go/parser, and stamped invalid_syntax on a perfectly good fix — while the
+// gate's looksLikeUnifiedDiff happily called the same string a diff. The two
+// halves of Epic 35.3 must agree, and a good Fix must never carry a FixWarning.
+const guardProseThenDiff = `Here is the fix:
+
+diff --git a/internal/verify/severity.go b/internal/verify/severity.go
+--- a/internal/verify/severity.go
++++ b/internal/verify/severity.go
+@@ -30,3 +30,3 @@
+ func meetsSeverityFloor(sev, floor string) bool {
+-	return rank(sev) > rank(floor)
++	return rank(sev) >= rank(floor)
+ }
+`
+
+// A Go source file that embeds a diff fixture in a raw string literal is the
+// false-exemption shape the strict first-line anchor existed to block — this
+// package's own test files look exactly like this. Loosening for prose must not
+// loosen for Go: the lead-in scan stops dead at a Go keyword.
+const guardGoFileWithDiffFixture = "package p\n\n" +
+	"const fixture = `diff --git a/x.go b/x.go\n" +
+	"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new\n`\n\n" +
+	"func broken() int {\n\treturn 1\n"
+
+func TestValidateGoFixSyntax_ProsePrefixedDiffExempt(t *testing.T) {
+	assert.NoError(t, validateGoFixSyntax(guardProseThenDiff),
+		"a prose lead-in before an unfenced diff must stay exempt")
+	assert.True(t, looksLikeUnifiedDiff(guardProseThenDiff),
+		"precondition: the gate already treats this shape as a diff")
+
+	// The loosening must not swallow the case it was tightened against.
+	assert.Error(t, validateGoFixSyntax(guardGoFileWithDiffFixture),
+		"broken Go embedding a diff fixture must still be flagged")
+}
+
+// End-to-end companion: the prose-prefixed diff must reach Finding.Fix with no
+// FixWarning at all — the invariant internal/reconcile/emit.go documents (a good
+// Fix never carries a FixWarning).
+func TestGenerateFixes_ProsePrefixedDiffCarriesNoWarning(t *testing.T) {
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{guardProseThenDiff}}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	assert.NotEmpty(t, findings[0].Fix, "the fix must be delivered")
+	assert.Empty(t, findings[0].FixWarning, "a usable fix must never carry a syntax warning")
+}
+
 // --- unit-level gate semantics ---
 
 func TestEvaluateFixSmell(t *testing.T) {
