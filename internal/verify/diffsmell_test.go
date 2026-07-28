@@ -697,3 +697,69 @@ func TestSmellFeedback_BoundsModelControlledFilePath(t *testing.T) {
 	assert.Less(t, len(fb), maxSmellFeedbackItems*4*maxSmellEvidenceRunes,
 		"total feedback must stay bounded across items (got %d bytes)", len(fb))
 }
+
+// dsRealGitDiff is a VERBATIM capture of `git diff` — not a hand-written
+// fixture. Every other fixture in this file shares one shape: `diff --git`
+// present, no index line, hand-written hunk counts that do not match the body,
+// nothing after the last hunk. Real executor output carries index lines, file
+// modes, a `--- /dev/null` new-file header, ACCURATE hunk counts, and trailing
+// context text on the `@@` line. All three parser defects found in this file
+// lived in shapes the hand-written fixtures never took, which is why 861 lines of
+// tests caught none of them.
+const dsRealGitDiff = `diff --git a/helper.go b/helper.go
+new file mode 100644
+index 0000000..8731fab
+--- /dev/null
++++ b/helper.go
+@@ -0,0 +1,3 @@
++package p
++
++func helper() {}
+diff --git a/select.go b/select.go
+index 68df499..d0bb993 100644
+--- a/select.go
++++ b/select.go
+@@ -1,5 +1,5 @@
+ package p
+ 
+ func pick() int {
+-	return 0
++	return 1
+ }
+diff --git a/select_test.go b/select_test.go
+index 293485d..11315e7 100644
+--- a/select_test.go
++++ b/select_test.go
+@@ -3,7 +3,5 @@ package p
+ import "testing"
+ 
+ func TestPick(t *testing.T) {
+-	if pick() != 1 {
+-		t.Fatalf("bad")
+-	}
++	_ = pick()
+ }
+`
+
+// A real capture must parse as accurately as the hand-written fixtures: the
+// index/mode/`--- /dev/null` lines must be ignored rather than bound as files,
+// the trailing text on the `@@` header must not break the count parse, and the
+// assertion loss in the test file must still be caught.
+func TestAnalyzeDiff_RealCapturedGitDiff(t *testing.T) {
+	res := analyzeDiff(dsRealGitDiff)
+
+	assert.ElementsMatch(t, []string{"helper.go", "select.go"}, res.Files.Impl,
+		"index/mode/dev-null lines must not become files; got %v", res.Files.Impl)
+	assert.Equal(t, []string{"select_test.go"}, res.Files.Test)
+	assert.NotContains(t, res.Summary.ByType, smellTestDeleted,
+		"a `--- /dev/null` NEW-file header is a creation, not a deletion; got %v", res.Summary.ByType)
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
+		"the removed t.Fatalf assertion must still be caught; got %v", res.Summary.ByType)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+
+	// `git diff` hunk counts are ACCURATE, so the body ends exactly where the
+	// header says — appending prose must change nothing.
+	withProse := analyzeDiff(dsRealGitDiff + "\nNotes:\n- assert the new value\n- expect no regression\n")
+	assert.Equal(t, res.Summary.ByType, withProse.Summary.ByType)
+	assert.Equal(t, res.Files.Impl, withProse.Files.Impl)
+}
