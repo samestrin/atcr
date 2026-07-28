@@ -106,7 +106,7 @@ func TestEscalate_ChurnAboveOneFires(t *testing.T) {
 	// A file that shrank reports more changed lines than it now has: the ratio
 	// exceeds 1 and must fire rather than being treated as out of range.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 300, headLines: 10,
+		changedLines: 300, headLines: 10, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 10}},
 		cyclomatic: 1,
 	})
@@ -132,7 +132,7 @@ func TestEscalate_ChurnRatioFiresToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 60, headLines: 100,
+		changedLines: 60, headLines: 100, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 60}},
 		cyclomatic: 2,
 	})
@@ -227,7 +227,7 @@ func TestEscalate_BothSignalsFireToFiles(t *testing.T) {
 	c := DefaultEscalationConfig()
 
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 80, headLines: 100,
+		changedLines: 80, headLines: 100, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 80}},
 		cyclomatic: 30,
 	})
@@ -240,14 +240,14 @@ func TestEscalate_BlocksOnlyEscalatesToFiles(t *testing.T) {
 
 	// A single signal would target blocks, which the file already is: no change.
 	require.Equal(t, ModeBlocks, c.escalate(ModeBlocks, fileSignals{
-		changedLines: 60, headLines: 100,
+		changedLines: 60, headLines: 100, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 60}},
 		cyclomatic: 2,
 	}))
 
 	// Both signals target files, which is above blocks: escalate.
 	require.Equal(t, ModeFiles, c.escalate(ModeBlocks, fileSignals{
-		changedLines: 60, headLines: 100,
+		changedLines: 60, headLines: 100, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 60}},
 		cyclomatic: 30,
 	}))
@@ -278,13 +278,36 @@ func TestEscalate_ZeroHeadLinesDoesNotDivideByZero(t *testing.T) {
 	})
 }
 
+func TestEscalate_ChurnNotApplicableSuppressesChurnSignal(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// A firing churn ratio (80/100) must NOT escalate on churn when the measure is
+	// not applicable — an added file, or a file with no numstat entry. This is the
+	// case the old code encoded by zeroing headLines; churnApplicable makes it
+	// explicit without corrupting the line count.
+	got := c.escalate(ModeDiff, fileSignals{
+		changedLines: 80, headLines: 100, churnApplicable: false,
+		hunks:      []lineRange{{start: 1, end: 80}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeDiff, got, "churn must not fire when the measure is not applicable")
+
+	// The identical signals WITH churn applicable do escalate on churn.
+	got = c.escalate(ModeDiff, fileSignals{
+		changedLines: 80, headLines: 100, churnApplicable: true,
+		hunks:      []lineRange{{start: 1, end: 80}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeBlocks, got, "the same churn ratio fires when applicable")
+}
+
 func TestEscalate_UnknownCyclomaticIsNotASignal(t *testing.T) {
 	c := DefaultEscalationConfig()
 
 	// cyclomatic == 0 means "not computed" (non-Go file, or parse failure), not
 	// "zero complexity". It must never contribute to the both-signals verdict.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 80, headLines: 100,
+		changedLines: 80, headLines: 100, churnApplicable: true,
 		hunks:      []lineRange{{start: 1, end: 80}},
 		cyclomatic: 0,
 	})

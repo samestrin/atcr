@@ -121,16 +121,21 @@ func (c EscalationConfig) anySignalEnabled() bool {
 }
 
 // fileSignals are the per-file measurements the escalation heuristic scores.
-// headLines is 0 when HEAD content was unavailable (deleted or unreadable file),
-// and cyclomatic is 0 when complexity was not computed — a non-Go file, a parse
-// failure, or no changed function to score. cyclomatic is the max McCabe score
-// over the functions the diff TOUCHED, not the file-wide maximum. Both zeros mean
-// "unknown", never "zero", so neither can fire a signal on its own.
+// cyclomatic is 0 when complexity was not computed — a non-Go file, a parse
+// failure, or no changed function to score — and is the max McCabe score over the
+// functions the diff TOUCHED, not the file-wide maximum; a 0 there means "unknown",
+// never "zero", so it cannot fire a signal on its own. churnApplicable states
+// whether the churn ratio is a meaningful signal for this file: it is false for an
+// added file (whose diff is definitionally 100% churn and so carries no
+// information) and for a file with no numstat entry (churn unmeasurable), so a
+// not-applicable file no longer has to be encoded by zeroing the unrelated
+// headLines field.
 type fileSignals struct {
-	changedLines int
-	headLines    int
-	hunks        []lineRange
-	cyclomatic   int
+	changedLines    int
+	headLines       int
+	hunks           []lineRange
+	cyclomatic      int
+	churnApplicable bool
 }
 
 // escalate returns the payload mode a file should actually be rendered in.
@@ -156,7 +161,7 @@ func (c EscalationConfig) escalate(base PayloadMode, s fileSignals) PayloadMode 
 // diffNativeFires reports whether the parse-free signals — churn ratio, hunk
 // count, hunk adjacency — indicate a structurally confusing diff.
 func (c EscalationConfig) diffNativeFires(s fileSignals) bool {
-	if c.ChurnRatio > 0 && s.headLines > 0 &&
+	if c.ChurnRatio > 0 && s.churnApplicable && s.headLines > 0 &&
 		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio {
 		return true
 	}

@@ -584,8 +584,9 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 			// of HEAD lines (a 30%-modified file would read as 0.6). Taking the max
 			// keeps it a true fraction — the meaning both DefaultEscalationChurnRatio
 			// and the registry's <= 1.0 bound assume (Epic 35.1). A non-numeric field
-			// is skipped rather than treated as zero, so a malformed line cannot
-			// silently suppress a file's churn signal.
+			// skips the line, leaving the path with no churn entry: churnLines then
+			// reports ok=false and analyzeFile marks the churn measure not-applicable
+			// rather than scoring it as a spurious 0% churn.
 			added, aerr := strconv.Atoi(fields[0])
 			deleted, derr := strconv.Atoi(fields[1])
 			if aerr != nil || derr != nil {

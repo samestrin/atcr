@@ -174,10 +174,17 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		g.log().Debug("payload: skipping escalation analysis, hunk range parse failed", "path", f.path, "error", err)
 		return fileContext{}, false
 	}
-	churn, _, err := g.churnLines(base, head, f.path)
+	churn, churnOK, err := g.churnLines(base, head, f.path)
 	if err != nil {
 		g.log().Debug("payload: skipping escalation analysis, churn lookup failed", "path", f.path, "error", err)
 		return fileContext{}, false
+	}
+	if !churnOK {
+		// No numstat entry for this path (a 100%-similarity rename, or a line the
+		// numstat parser's Atoi guard skipped): the churn measure is UNKNOWN, not
+		// zero. Recorded as not-applicable below so it is never scored as a spurious
+		// 0% churn — the other signals (hunks, adjacency, complexity) still apply.
+		g.log().Debug("payload: churn measure unavailable, treated as not applicable", "path", f.path)
 	}
 	src, err := g.headContentMemo(base, head, f.path)
 	if err != nil {
@@ -188,17 +195,18 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 	}
 
 	ctx := fileContext{signals: fileSignals{
-		changedLines: churn,
-		headLines:    countLines(src),
-		hunks:        hunks,
+		changedLines:    churn,
+		headLines:       countLines(src),
+		hunks:           hunks,
+		churnApplicable: churnOK,
 	}}
 	// A newly added file's diff already contains every line of the file, so its
 	// churn ratio is definitionally 1.0 and carries no information — left in, it
-	// would escalate every added file while buying the reviewer nothing. Zeroing
-	// headLines suppresses only the churn signal; hunk count, adjacency, and
-	// complexity still apply.
+	// would escalate every added file while buying the reviewer nothing. Marking
+	// churn not-applicable suppresses only the churn signal; hunk count, adjacency,
+	// and complexity still apply.
 	if f.kind == kindAdded {
-		ctx.signals.headLines = 0
+		ctx.signals.churnApplicable = false
 	}
 
 	// Skeleton extraction and the McCabe signal share one parse. Go only for now:
