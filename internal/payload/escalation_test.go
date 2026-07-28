@@ -163,10 +163,11 @@ func TestEscalate_ChurnRatioBoundary(t *testing.T) {
 func TestEscalate_HunkCountFiresToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
-	// Eight well-separated hunks in a large file: low churn, no adjacency, but
-	// the hunk count alone is the architectural-thrashing signal.
+	// Eight well-separated hunks in a large file: churn not applicable
+	// (churnApplicable false), no adjacency — the hunk count alone is the
+	// architectural-thrashing signal.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 16, headLines: 1000,
+		headLines: 1000,
 		hunks: []lineRange{
 			{start: 10, end: 11}, {start: 200, end: 201},
 			{start: 400, end: 401}, {start: 600, end: 601},
