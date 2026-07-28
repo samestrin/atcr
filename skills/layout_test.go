@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,9 +27,9 @@ func skillsDir(t *testing.T) string {
 // TestLayout_OneSkillMDPerSkillDirectory (AC1) — every SKILL.md under the install
 // root sits directly inside a skill directory whose name equals its `name:`
 // frontmatter, and no skill directory holds a nested second SKILL.md. The nested
-// skill/debt-resolve/SKILL.md this epic flattened declared `name: atcr-debt-resolve`
-// from a directory named `debt-resolve/`, matching neither its own frontmatter nor
-// the parent's naming; this test is what keeps that from coming back.
+// debt-resolve SKILL.md this epic flattened declared `name: atcr-debt-resolve` from
+// a directory named `debt-resolve/`, matching neither its own frontmatter nor the
+// parent's naming; this test is what keeps that from coming back.
 func TestLayout_OneSkillMDPerSkillDirectory(t *testing.T) {
 	root := skillsDir(t)
 
@@ -66,13 +67,16 @@ func TestLayout_OneSkillMDPerSkillDirectory(t *testing.T) {
 }
 
 // TestLayout_NoStaleSkillPathReferences (AC8) — no tracked source, doc, or test
-// file still points at the pre-rename singular `skill/` directory. CHANGELOG.md is
-// exempt: historical entries record what the paths were at the time and are not
-// rewritten.
+// file still points at the pre-rename singular install root (the "skill" directory
+// without its trailing "s"). CHANGELOG.md is exempt: historical entries record what
+// the paths were at the time and are not rewritten.
+//
+// This file scans ITSELF like any other: the pattern is assembled from parts and
+// every comment and failure message here avoids spelling the stale path literally,
+// so the scanner has no blind spot where a real stale reference could hide.
 func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 	root := repoRoot(t)
 
-	// Assembled from parts so this file's own regexp source is not itself a hit.
 	stale := regexp.MustCompile(`(^|[^a-zA-Z0-9_./-])` + "skill" + `/`)
 
 	scanned := map[string]bool{".go": true, ".md": true, ".yml": true, ".yaml": true, ".json": true, ".sh": true}
@@ -103,7 +107,7 @@ func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 			return relErr
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == "CHANGELOG.md" || rel == filepath.ToSlash(filepath.Join(installRoot, "layout_test.go")) {
+		if rel == "CHANGELOG.md" {
 			return nil
 		}
 		raw, readErr := os.ReadFile(path)
@@ -112,28 +116,15 @@ func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 		}
 		for i, line := range strings.Split(string(raw), "\n") {
 			if stale.MatchString(line) {
-				offenders = append(offenders, rel+":"+itoa(i+1)+": "+strings.TrimSpace(line))
+				offenders = append(offenders, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 		}
 		return nil
 	}), "walk %s", root)
 
 	assert.Empty(t, offenders,
-		"stale singular `skill/` path references remain (the install root is now %s/atcr/):\n%s",
-		installRoot, strings.Join(offenders, "\n"))
-}
-
-// itoa avoids pulling strconv in for a single call site in a failure message.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
+		"stale references to the pre-rename install root remain (it is now %s/%s/):\n%s",
+		installRoot, SkillDir, strings.Join(offenders, "\n"))
 }
 
 // frontmatterField extracts a single-line `key: value` field from a markdown
