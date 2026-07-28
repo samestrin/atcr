@@ -660,12 +660,14 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 	write(t, dir, "big.go", strings.Join(v2, "\n"))
 	head := commitAll(t, dir, "v2: eight scattered edits")
 
-	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	entries, err := NewRangeBuilder(context.Background(), dir, base, head,
+		WithEscalation(EscalationConfig{MinHunks: 4, MaxFiles: DefaultEscalationMaxFiles})).
+		BuildEntries(ModeDiff)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
 	require.Equal(t, ModeBlocks, entries[0].Mode,
-		"eight scattered hunks escalate via the hunk-count signal")
+		"eight scattered hunks escalate via the hunk-count signal (locally-declared MinHunks 4 — the mode/body coupling is asserted independent of the tuned default)")
 	require.Contains(t, entries[0].Body, "MIDPOINT-UNCHANGED-MARKER",
 		"a blocks render includes the whole enclosing function — if the builder rendered the unescalated mode, this marker (>10 lines from every edit) would be absent")
 
