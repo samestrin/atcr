@@ -35,18 +35,56 @@ type replayStats struct {
 	toFiles  int
 }
 
-// record measures one changed file against cfg and folds the outcome in.
-func (r *replayStats) record(_ EscalationConfig, _ PayloadMode, _ fileSignals) {
+// record measures one changed file against cfg and folds the outcome in. The
+// promotion decision goes through the production escalate(), so the harness
+// measures the shipped heuristic rather than a parallel reimplementation of it.
+func (r *replayStats) record(cfg EscalationConfig, base PayloadMode, s fileSignals) {
 	r.files++
+	if cfg.churnFires(s) {
+		r.fired[sigChurn]++
+	}
+	if cfg.hunkCountFires(s) {
+		r.fired[sigHunkCount]++
+	}
+	if cfg.hunksAreAdjacent(s.hunks) {
+		r.fired[sigAdjacency]++
+	}
+	if cfg.complexityFires(s) {
+		r.fired[sigComplexity]++
+	}
+	switch got := cfg.escalate(base, s); got {
+	case base:
+		return
+	case ModeFiles:
+		r.promoted++
+		r.toFiles++
+	default:
+		r.promoted++
+		r.toBlocks++
+	}
 }
 
 // promotionRate is the percentage of analyzed files promoted above their
 // configured mode.
-func (r *replayStats) promotionRate() float64 { return 0 }
+func (r *replayStats) promotionRate() float64 { return percentOf(r.promoted, r.files) }
 
 // signalRate is the percentage of analyzed files for which sig fired, counted
 // independently of whether another signal fired on the same file.
-func (r *replayStats) signalRate(_ replaySignal) float64 { return 0 }
+func (r *replayStats) signalRate(sig replaySignal) float64 {
+	if sig < 0 || sig >= sigCount {
+		return 0
+	}
+	return percentOf(r.fired[sig], r.files)
+}
+
+// percentOf is n/total as a percentage, defined as 0 for an empty denominator
+// so a window that analyzed nothing reports 0% rather than NaN.
+func percentOf(n, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(n) / float64(total) * 100
+}
 
 // TestReplayStats_RatesAndAttribution pins the harness arithmetic against a
 // hand-computed fixture: five files with known signals, so every rate the

@@ -160,15 +160,30 @@ func (c EscalationConfig) escalate(base PayloadMode, s fileSignals) PayloadMode 
 
 // diffNativeFires reports whether the parse-free signals — churn ratio, hunk
 // count, hunk adjacency — indicate a structurally confusing diff.
+//
+// The three clauses are separate predicates rather than inline conditions so
+// the escalation-rate measurement can attribute a promotion to the signal that
+// actually caused it: this disjunction short-circuits, so a file firing both
+// churn and adjacency would otherwise only ever be counted against churn, and
+// "which signal is the worst offender" would be unanswerable (Epic 35.4).
 func (c EscalationConfig) diffNativeFires(s fileSignals) bool {
-	if c.ChurnRatio > 0 && s.churnApplicable && s.headLines > 0 &&
-		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio {
-		return true
-	}
-	if c.MinHunks > 0 && len(s.hunks) >= c.MinHunks {
-		return true
-	}
-	return c.hunksAreAdjacent(s.hunks)
+	return c.churnFires(s) || c.hunkCountFires(s) || c.hunksAreAdjacent(s.hunks)
+}
+
+// churnFires reports whether the file was substantially rewritten: changed
+// lines as a fraction of HEAD lines at or above ChurnRatio. changedLines is
+// max(added, deleted), not their sum (diff.go), so a pure move does not read as
+// double churn. A file whose churn measure is not applicable — an added file,
+// or one with no numstat entry — never fires it.
+func (c EscalationConfig) churnFires(s fileSignals) bool {
+	return c.ChurnRatio > 0 && s.churnApplicable && s.headLines > 0 &&
+		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio
+}
+
+// hunkCountFires reports whether the file's edits are scattered across at least
+// MinHunks separate hunks.
+func (c EscalationConfig) hunkCountFires(s fileSignals) bool {
+	return c.MinHunks > 0 && len(s.hunks) >= c.MinHunks
 }
 
 // hunksAreAdjacent reports whether any two consecutive hunks are separated by
