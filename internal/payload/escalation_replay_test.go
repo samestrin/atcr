@@ -393,7 +393,16 @@ type replayReport struct {
 // Median rather than mean: a single 300-file dependency bump would drag a mean
 // far past anything the window actually looks like.
 func (r *replayReport) medianFilesPerCommit() int {
-	return 0
+	if len(r.filesPerCommit) == 0 {
+		return 0
+	}
+	sorted := append([]int(nil), r.filesPerCommit...) // copy: never reorder the caller's slice
+	sort.Ints(sorted)
+	mid := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
 // skipReasonPrefix is the constant analyzeFile prefixes every decline with.
@@ -674,6 +683,7 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 		}
 		rep.all.commits++
 		rep.goOnly.commits++
+		rep.filesPerCommit = append(rep.filesPerCommit, len(files))
 		for _, f := range files {
 			fc, ok := g.analyzeFile(parent, sha, f)
 			if !ok {
@@ -740,6 +750,11 @@ func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig,
 	t.Logf("escalation replay: ref=%s window=%d commits_walked=%d commits_measured=%d degraded=%d errored=%d unresolved=%d files_analyzed=%d files_skipped=%d files_unbilled=%d",
 		ref, window, rep.walked, rep.all.commits, rep.degraded, rep.errored, rep.unresolved, rep.all.files, rep.skipped, rep.unbilled)
 	t.Logf("skips by reason: %s", rep.skipBreakdown())
+	t.Logf("granularity: each commit measured against its FIRST PARENT, median files/commit=%d — "+
+		"a commit that was itself a squashed PR is measured as one PR-sized change set, not as the "+
+		"incremental commits a reviewer would have seen, so on a squash-merged history these rates "+
+		"are per-PR rather than per-commit",
+		rep.medianFilesPerCommit())
 	t.Logf("thresholds: churn_ratio=%.2f min_hunks=%d hunk_gap_lines=%d min_cyclomatic=%d max_files=%d",
 		cfg.ChurnRatio, cfg.MinHunks, cfg.HunkGapLines, cfg.MinCyclomatic, cfg.MaxFiles)
 
