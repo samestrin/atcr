@@ -309,6 +309,41 @@ func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 	require.Len(t, slots, 1, "a small payload is one chunk → the bulk path")
 	assert.ElementsMatch(t, []string{"a.go", "b.go"}, slots[0].Primary.chunkFiles,
 		"the bulk baseline slot is tagged with the whole payload it covers")
+	// The invariant that makes the tag trustworthy, and the one an over-tag breaks:
+	// every tagged file must actually be IN the rendered payload. Coverage is a union
+	// across personas, so a succeeded slot tagged with a file it never shipped would
+	// vouch for a file a sibling persona's failed chunk left unreviewed.
+	for _, p := range slots[0].Primary.chunkFiles {
+		assert.Contains(t, slots[0].Primary.Prompt, "// FILE:"+p,
+			"tagged file %q must be in the slot's rendered payload", p)
+	}
+}
+
+// The per-agent byte shed must narrow the coverage tag with it. Reaching the bulk
+// path currently implies no shed can occur — chunkBudget and appliedBudget are two
+// independently-written copies of the same arithmetic — so this pins the tag to the
+// SHIPPED entry set rather than resting on that coincidence. If the two budgets ever
+// diverge, an over-tagged slot would record files it never reviewed.
+func TestBaselineSlots_BulkTagNeverNamesAnUnshippedFile(t *testing.T) {
+	t.Parallel()
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	entries := []payload.FileEntry{
+		baselineEntry("a.go", 60),
+		baselineEntry("b.go", 60),
+		baselineEntry("c.go", 60),
+	}
+
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	require.NoError(t, err)
+
+	for i, s := range slots {
+		require.NotEmpty(t, s.Primary.chunkFiles, "baseline slot %d must be tagged", i)
+		for _, p := range s.Primary.chunkFiles {
+			assert.Contains(t, s.Primary.Prompt, "// FILE:"+p,
+				"slot %d vouches for %q, so %q must be in what it ships", i, p, p)
+		}
+	}
 }
 
 // A baseline persona whose per-agent byte budget yields a SINGLE chunk used to fall

@@ -1778,6 +1778,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
 			}
 		}
+		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
+		// which is what the no-shed and AllDropped arms genuinely dispatch — and is
+		// narrowed to the kept subset when the per-agent budget sheds files. The
+		// baseline coverage tag below reads it, so the tag can never name a file the
+		// rendered prompt does not contain.
+		bulkEntries := mp.Entries
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			// PreferEscalated, not the plain pass: escalating a file to a
 			// higher-context mode makes it the largest entry, so plain largest-first
@@ -1828,6 +1834,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					pb.WriteString(e.Body)
 				}
 				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
+				bulkEntries = kept
 				// The per-agent shed dropped files to fit this model's window — a lossy
 				// degradation. Record it as the diagnosability degradation_action (F8).
 				if trunc.Truncated {
@@ -1851,14 +1858,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// uncoveredBaselineFiles) and a single-chunk baseline scan whose sibling persona
 		// failed would needlessly re-review everything.
 		//
-		// The tag deliberately names mp.Entries, not the per-agent `kept` subset: on this
-		// path the agent may shed files to fit its own window, yet pre-35.2 recorded the
-		// full reviewed set on success, and AC2 requires that behavior stay unchanged.
-		// Narrowing the tag to `kept` here would be a stricter policy than this epic is
-		// scoped to decide.
+		// The tag names bulkEntries — what this slot actually SHIPS — not the pre-shed
+		// mp.Entries. Coverage is a UNION across personas, so an over-tagged succeeded
+		// slot would vouch for files a sibling persona's failed chunk never reviewed,
+		// and those files would be recorded and then silently skipped next scan.
+		//
+		// The over-tag is unreachable today only because chunkBudget (the baseline
+		// partition budget) and appliedBudget (the per-agent shed budget) are two
+		// independently-written copies of the same arithmetic, so reaching this path
+		// implies no shed can occur. Nothing enforces that coupling, so the tag is taken
+		// from the shipped set rather than resting on it.
 		if baseline {
-			bulkFiles := make([]string, 0, len(mp.Entries))
-			for _, e := range mp.Entries {
+			bulkFiles := make([]string, 0, len(bulkEntries))
+			for _, e := range bulkEntries {
 				bulkFiles = append(bulkFiles, e.Path)
 			}
 			primary.chunkFiles = bulkFiles
