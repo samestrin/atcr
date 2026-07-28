@@ -229,6 +229,33 @@ func TestDiffSlots_LeaveChunkFilesUntagged(t *testing.T) {
 	}
 }
 
+// RESUME INVARIANT (Epic 35.2, adversarial): the resume path dispatches only the
+// PENDING personas, so attribution sees a partial slot set. A file an already-completed
+// persona reviewed is still reported uncovered when the pending chunk carrying it
+// fails. That is deliberate fail-open behavior — the file is re-reviewed next scan,
+// never silently skipped. This test pins it so a future "relax the uncovered set using
+// the on-disk full-coverage statuses" optimization fails here: it would be unsound,
+// because a resume rebuilds the FULL superset payload while a completed persona only
+// ever saw the original hash-skipped subset.
+func TestUncoveredBaselineFiles_ResumePartialSlotSetStaysFailOpen(t *testing.T) {
+	t.Parallel()
+	// greta completed in the original run and is absent from the resumed slot set;
+	// only kai is pending, and its chunk carrying c.go fails.
+	slots := []Slot{
+		{Primary: Agent{Name: "kai", chunkFiles: []string{"a.go", "b.go"}}},
+		{Primary: Agent{Name: "kai", chunkFiles: []string{"c.go"}}},
+	}
+	results := []Result{
+		{Agent: "kai", Status: StatusOK},
+		{Agent: "kai", Status: StatusFailed},
+	}
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
+
+	got := uncoveredBaselineFiles(slots, results, reviewed)
+	assert.Equal(t, map[string]struct{}{"c.go": {}}, got,
+		"a resume attributes coverage ONLY from the slots it dispatched — fail-open toward re-review")
+}
+
 // The fallback chain reviews the SAME chunk as the primary it substitutes for, so
 // attribution reads the slot's Primary tag and a fallback-served success still counts
 // that chunk's files as covered.

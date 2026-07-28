@@ -938,6 +938,18 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// the succeeded chunks' files and leave only the uncovered ones for the next
 	// scan. nil for a diff-range review (p.baseline == nil), which never touches the
 	// index.
+	//
+	// RESUME INVARIANT (do not "optimize" this): on the resume path p.Slots holds
+	// only the PENDING personas, so a file an already-completed persona reviewed is
+	// still reported uncovered when a pending chunk carrying it fails. That
+	// over-exclusion is deliberate and fail-open (the file is re-reviewed next scan,
+	// never silently skipped) — it is the plan's stated mitigation for ambiguous
+	// chunk attribution. Relaxing it from the on-disk union of agent statuses would
+	// be UNSOUND: a resume rebuilds the FULL superset payload (idx=nil bypasses the
+	// hash-skip), so a completed persona's "OK with zero unreviewed chunks" record
+	// only proves it covered the ORIGINAL, hash-skipped subset — clearing the
+	// uncovered set on that evidence would record files no agent ever saw. Per-chunk
+	// identity is not persisted, so the conservative read is the only sound one.
 	if p.baseline != nil {
 		p.baseline.uncovered = uncoveredBaselineFiles(p.Slots, results, p.baseline.reviewed)
 	}
