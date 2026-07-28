@@ -157,6 +157,11 @@ var (
 	smellAssertionRe = regexp.MustCompile(`(?i)(\bassert\b|expect\s*\(|\.should\b|\.to(Be|Equal|Throw|Contain|Match|HaveBeen)|t\.(Error|Fatal|Errorf|Fatalf)|require\.\w|XCTAssert|EXPECT_|ASSERT_)`)
 
 	smellHunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)
+
+	// The declared line counts of a hunk: `@@ -<start>[,<oldCount>] +<start>[,<newCount>] @@`.
+	// An omitted count means 1. analyzeDiff uses them to know where the hunk BODY
+	// ends, so trailing prose is not parsed as diff content.
+	smellHunkCountsRe = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
 )
 
 // isSmellTestPath reports whether a repo-relative path is a test file. It is
@@ -267,7 +272,48 @@ func analyzeDiff(diff string) *smellResult {
 		return fc
 	}
 
+	// Hunk-body state. Header prefixes (`+++ `, `--- `, `diff --git `) are
+	// AMBIGUOUS with content: inside a hunk an added line reading `+++ foo` and a
+	// removed line reading `-- foo` carry those very prefixes. Outside a hunk the
+	// converse holds — a bare `-` or `+` line is not diff content at all, it is
+	// trailing prose (a markdown notes list, which fix-generating models append
+	// constantly). Tracking the hunk's declared line counts resolves both.
+	inHunk := false
+	oldRemaining, newRemaining := 0, 0
+
 	for _, line := range strings.Split(diff, "\n") {
+		if inHunk {
+			// A line that cannot be a hunk body line ends the hunk early — the
+			// declared counts are only as trustworthy as the diff's author, and a
+			// hand-written or model-emitted hunk header routinely miscounts. Fall
+			// through to the header switch so the line is still dispatched.
+			if smellIsHunkBodyLine(line) {
+				switch {
+				case strings.HasPrefix(line, `\`):
+					// "\ No newline at end of file" — metadata, consumes no declared line
+				case strings.HasPrefix(line, "+"):
+					if cur != nil {
+						cur.added = append(cur.added, smellAddedLine{text: line[1:]})
+					}
+					newRemaining--
+				case strings.HasPrefix(line, "-"):
+					if cur != nil {
+						cur.removed = append(cur.removed, line[1:])
+					}
+					oldRemaining--
+				default:
+					// context line (leading space, or an empty line) — counts on both sides
+					oldRemaining--
+					newRemaining--
+				}
+				if oldRemaining <= 0 && newRemaining <= 0 {
+					inHunk = false
+				}
+				continue
+			}
+			inHunk = false
+		}
+
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			// "diff --git a/old b/new" — tentative file (overridden by +++).
@@ -307,20 +353,18 @@ func analyzeDiff(diff string) *smellResult {
 		case strings.HasPrefix(line, "--- "):
 			lastOldPath = smellHeaderPath(line[4:])
 		case strings.HasPrefix(line, "@@"):
-			// hunk header — line numbers are deliberately not tracked (no
-			// production consumer ever read them)
-		case strings.HasPrefix(line, "+"):
-			if cur != nil {
-				cur.added = append(cur.added, smellAddedLine{text: line[1:]})
+			// hunk header — start line numbers are deliberately not tracked (no
+			// production consumer ever read them), but the declared LINE COUNTS are:
+			// they bound the body, so anything after it is trailer text, not content.
+			if m := smellHunkCountsRe.FindStringSubmatch(line); m != nil {
+				oldRemaining = smellHunkCount(m[1])
+				newRemaining = smellHunkCount(m[2])
+				inHunk = oldRemaining > 0 || newRemaining > 0
 			}
-		case strings.HasPrefix(line, "-"):
-			if cur != nil {
-				cur.removed = append(cur.removed, line[1:])
-			}
-		case strings.HasPrefix(line, `\`):
-			// "\ No newline at end of file" — ignore
 		default:
-			// context line (leading space) or stray line
+			// Outside a hunk body: a file-mode / index / rename / similarity line, a
+			// markdown fence, or trailing prose. A bare `+`/`-` line here is NOT diff
+			// content — every content line lives inside a hunk.
 		}
 	}
 
@@ -500,6 +544,35 @@ func smellBPathFromGitHeader(line string) string {
 	}
 	b = strings.Trim(b, `"`)
 	return smellHeaderPath(b)
+}
+
+// smellIsHunkBodyLine reports whether line has the shape of a unified-diff hunk
+// body line: a one-character prefix of ' ', '+', '-' or '\', or an empty line
+// (some emitters write a bare "" for an empty context line). Anything else ends
+// the hunk, which keeps a miscounted `@@` header from swallowing the next file's
+// header or a trailing prose block.
+func smellIsHunkBodyLine(line string) bool {
+	if line == "" || line == "\r" {
+		return true
+	}
+	switch line[0] {
+	case ' ', '+', '-', '\\':
+		return true
+	}
+	return false
+}
+
+// smellHunkCount parses a hunk header's optional line-count capture. An omitted
+// count means exactly one line, per the unified-diff format.
+func smellHunkCount(s string) int {
+	if s == "" {
+		return 1
+	}
+	n := 0
+	for _, r := range s {
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 // smellAPathFromGitHeader extracts the OLD path from "diff --git a/x b/y" — the
