@@ -12,14 +12,44 @@ The skill is [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) — a `/atcr <com
 
 ## Installation
 
-The skill installs by copying `skills/atcr/` into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole directory — `SKILL.md` plus every on-demand secondary `.md` file beside it — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Every reference is a flat sibling, so one recursive copy is enough:
+The skill ships **inside the `atcr` binary**. Export it — no source checkout, no manual copy:
 
 ```sh
-mkdir -p .claude/skills/atcr
-cp -R skills/atcr/. .claude/skills/atcr/
+atcr skill export                 # -> .claude/skills/atcr/ (project-local, default)
+atcr skill export --user          # -> ~/.claude/skills/atcr/
 ```
 
-Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skills/atcr/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
+That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Install the whole directory: `SKILL.md` alone leaves the host-review, adjudication, findings-format, conventions, and debt-resolve references unresolvable at runtime.
+
+### Choosing a harness
+
+`--harness` selects the install convention; the default is `claude`.
+
+| `--harness` | Project-level | User-level |
+|-------------|---------------|------------|
+| `claude` *(default)* | `.claude/skills/atcr/` | `~/.claude/skills/atcr/` |
+| `codex` | `.codex/skills/atcr/` | `~/.codex/skills/atcr/` |
+| `kimi` | `.kimi/skills/atcr/` | `~/.kimi/skills/atcr/` |
+| `opencode` | `.opencode/skills/atcr/` | `~/.config/opencode/skills/atcr/` |
+| `antigravity` | `.agents/skills/atcr/` | `~/.gemini/config/skills/atcr/` |
+| `agents` | `.agents/skills/atcr/` | `~/.agents/skills/atcr/` |
+
+**You rarely need more than one export.** Two cross-reading conventions do most of the work:
+
+- **`.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode.** Kimi merges brand directories with `kimi > claude > codex` priority; opencode scans `.claude/skills/*/SKILL.md` directly. The default `claude` export therefore already serves three of the five harnesses.
+- **`.agents/skills/` is the vendor-neutral path,** read natively by Kimi CLI, opencode, and Antigravity CLI. Use `--harness agents` for one tool-agnostic install.
+
+`.claude` ∪ `.agents` ∪ `.codex` covers every harness in the table, so at most two exports are ever needed.
+
+For a harness not listed — or any other location — pass `--dir`. It overrides `--harness`/`--user` entirely and is the skill directory itself, not a parent:
+
+```sh
+atcr skill export --dir ~/.someagent/skills/atcr
+```
+
+An unrecognized `--harness` exits non-zero and lists the values it knows rather than guessing a path. Export refuses to overwrite an existing non-empty destination; pass `--force` when you mean to replace it.
+
+Standard skill resolution applies: a project-local copy wins over a globally installed one. The copy in this repo (`skills/atcr/`) is the canonical source the binary embeds — exporting produces byte-identical files.
 
 ## Usage
 

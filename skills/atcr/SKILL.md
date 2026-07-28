@@ -84,6 +84,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and autonomously fixes its items through the RED→GREEN→ADVERSARIAL→REFACTOR cycle — load the sibling `debt-resolve.md` on demand for that route |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
+| `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the skill directory to your harness's skills location |
 | `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
 | `atcr version` | Print the atcr version |
 

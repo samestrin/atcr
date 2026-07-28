@@ -14,10 +14,10 @@ import (
 	"github.com/samestrin/atcr/skills"
 )
 
-// runSkillExport executes `atcr skill export` with args, returning combined
+// execSkillExport executes `atcr skill export` with args, returning combined
 // stdout+stderr and the error. It drives the real command tree so flag parsing,
 // usage-error classification, and RunE all participate.
-func runSkillExport(t *testing.T, args ...string) (string, error) {
+func execSkillExport(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	root := NewRootCmd()
@@ -36,7 +36,7 @@ func runSkillExport(t *testing.T, args ...string) (string, error) {
 func TestSkillExport_RoundTripsByteIdentical(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
-	_, err := runSkillExport(t, "--dir", dest)
+	_, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err, "export into an empty directory must succeed")
 
 	srcDir := filepath.Join(repoRootDir(t), "skills", skills.SkillDir)
@@ -80,7 +80,7 @@ func TestSkillExport_UnknownHarnessIsAUsageError(t *testing.T) {
 	dest := t.TempDir()
 	t.Chdir(dest)
 
-	out, err := runSkillExport(t, "--harness", "nonesuch")
+	out, err := execSkillExport(t, "--harness", "nonesuch")
 	require.Error(t, err, "an unknown harness must fail")
 	assert.Equal(t, 2, exitCode(err), "an unknown harness is a usage error (exit 2)")
 
@@ -152,7 +152,7 @@ func TestSkillExport_RefusesNonEmptyDestinationWithoutForce(t *testing.T) {
 	existing := filepath.Join(dest, "SKILL.md")
 	require.NoError(t, os.WriteFile(existing, []byte("do not clobber me"), 0o644))
 
-	out, err := runSkillExport(t, "--dir", dest)
+	out, err := execSkillExport(t, "--dir", dest)
 	require.Error(t, err, "a non-empty destination must be refused without --force")
 	assert.Contains(t, out+err.Error(), dest, "the refusal must name the path it would have written")
 
@@ -160,7 +160,7 @@ func TestSkillExport_RefusesNonEmptyDestinationWithoutForce(t *testing.T) {
 	require.NoError(t, readErr)
 	assert.Equal(t, "do not clobber me", string(kept), "the refused export must not have written anything")
 
-	_, err = runSkillExport(t, "--dir", dest, "--force")
+	_, err = execSkillExport(t, "--dir", dest, "--force")
 	require.NoError(t, err, "--force must permit the overwrite")
 	overwritten, readErr := os.ReadFile(existing)
 	require.NoError(t, readErr)
@@ -174,7 +174,7 @@ func TestSkillExport_EmptyExistingDestinationIsAllowed(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 
-	_, err := runSkillExport(t, "--dir", dest)
+	_, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err, "an existing but empty destination must not require --force")
 
 	_, statErr := os.Stat(filepath.Join(dest, "SKILL.md"))
@@ -187,7 +187,7 @@ func TestSkillExport_EmptyExistingDestinationIsAllowed(t *testing.T) {
 func TestSkillExport_ReportsDestinationAndFileCount(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
-	out, err := runSkillExport(t, "--dir", dest)
+	out, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err)
 	assert.Contains(t, out, dest, "success output must name the destination")
 }

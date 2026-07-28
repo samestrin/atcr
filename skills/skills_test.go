@@ -134,7 +134,7 @@ var dispatcherCommands = []string{
 	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
-	"models", "debt", "history", "audit-report", "version",
+	"models", "debt", "history", "audit-report", "skill", "version",
 }
 
 // TestSkill_DispatcherRoutingTable (AC 01-01) — every live Cobra command is
