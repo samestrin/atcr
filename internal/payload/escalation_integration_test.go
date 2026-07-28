@@ -378,6 +378,36 @@ func TestEscalationIntegration_FilesModeSkipsAnalysisEntirely(t *testing.T) {
 
 // A file that escalates INTO files mode must read its HEAD blob once, not twice
 // (once to measure churn, once to render). The memo is what makes that true.
+func TestChurnLines_UsesMaxNotSumSoModifiedLinesCountOnce(t *testing.T) {
+	// numstat reports a MODIFIED line as one addition + one deletion, so summing
+	// them double-counts churn: 30 modified lines in a ~101-line file would read
+	// as 60/101 ≈ 0.59 and fire the 0.5 churn ratio, though only ~30% of HEAD
+	// lines are actually touched. The churn measure must be max(added, deleted)
+	// so it is a true fraction of HEAD lines (Epic 35.1 TD).
+	dir := initRepo(t)
+	var v1, v2 strings.Builder
+	v1.WriteString("package p\n")
+	v2.WriteString("package p\n")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&v1, "var V%d = %d\n", i, i)
+		if i < 30 {
+			fmt.Fprintf(&v2, "var V%d = %d\n", i, i+1000) // modified line
+		} else {
+			fmt.Fprintf(&v2, "var V%d = %d\n", i, i) // unchanged
+		}
+	}
+	write(t, dir, "f.go", v1.String())
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "f.go", v2.String())
+	head := commitAll(t, dir, "v2")
+
+	g := newGitRunner(context.Background(), dir)
+	n, ok, err := g.churnLines(base, head, "f.go")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 30, n, "churn must be max(added, deleted), not their sum (60)")
+}
+
 func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
