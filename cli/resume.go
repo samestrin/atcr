@@ -304,27 +304,14 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// TD-011: a resumed BASELINE run persists the incremental file-hash index on
 	// successful completion, mirroring the fresh runReview write-back gate so the
-	// next --all/--dir skips unchanged files instead of re-scanning everything.
-	// Same safety rules as the fresh path: gated on at least one success (an
-	// all-failed run records nothing), with partial chunk coverage handled by
-	// exclusion rather than by discarding the whole write-back (Epic 35.2 AC4 —
-	// this gate is deliberately byte-identical to runReview's). CommitBaselineIndex
-	// records only the files covered by SUCCEEDED chunks, using the uncovered set
-	// runEngine stamps pre-merge; both paths share that seam, so a resumed run
-	// records the same state a fresh one would. Note the resume attributes coverage
-	// only from the slots IT dispatched (the pending personas), so a file a
-	// previously-completed persona reviewed may still be re-scanned — deliberate
-	// fail-open, documented at the runEngine seam. A write failure is logged, never
-	// fatal; the interrupt path returned above, so this never fires on a cancelled run.
-	if m.Baseline && result.Summary.Succeeded > 0 {
-		if result.Summary.UnreviewedChunks > 0 {
-			log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; recording only the files covered by succeeded chunks so the next run re-scans the uncovered ones",
-				"unreviewed_chunks", result.Summary.UnreviewedChunks)
-		}
-		if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {
-			log.FromContext(ctx).Warn("baseline scan: could not persist the file-hash index (review is unaffected; next run does a full scan)", "err", ierr)
-		}
-	}
+	// next --all/--dir skips unchanged files instead of re-scanning everything. The
+	// gate is now literally the same function both paths call, so the two can no
+	// longer drift (which is what TD-011 was raised for). One resume-specific note:
+	// the resume attributes coverage only from the slots IT dispatched (the pending
+	// personas), so a file a previously-completed persona reviewed may still be
+	// re-scanned — deliberate fail-open, documented at the runEngine seam.
+	// The interrupt path returned above, so this never fires on a cancelled run.
+	commitBaselineWriteback(ctx, m.Baseline, prep, result)
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
