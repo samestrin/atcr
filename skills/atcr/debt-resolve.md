@@ -1,22 +1,20 @@
----
-name: atcr-debt-resolve
-description: The /atcr debt resolve route — autonomously resolve items in the public, .atcr/-scoped local technical-debt store via a RED→GREEN→ADVERSARIAL→REFACTOR cycle adapted from the private /resolve-td skill, with zero .planning/ dependency. Loaded on demand from the atcr dispatcher's `atcr debt` row. Use when a standalone atcr user asks to fix, resolve, or work through the technical debt atcr reconcile has accumulated.
----
-
 # atcr debt resolve
 
-The on-demand resolution route for standalone/public atcr. It reads the local,
-`.atcr/`-scoped technical-debt store that `atcr reconcile` accumulates across review
-runs and autonomously fixes items through a per-item **RED → GREEN → ADVERSARIAL →
-REFACTOR** cycle, followed by one cumulative adversarial pass over the whole run. It
-is the public counterpart of the private `/resolve-td` skill, adapted to a
-repo-agnostic context with no `.planning/` directory, no sprint state, and no private
-technical-debt README.
+**This file is an on-demand reference, not a skill.** It is reached from the `atcr debt`
+row of the dispatcher's routing table in `SKILL.md` — read it once a request has already
+been routed to `atcr debt resolve`. It carries no frontmatter and is never invoked
+directly.
+
+It describes how to resolve items in the local, `.atcr/`-scoped technical-debt store
+that `atcr reconcile` accumulates across review runs: a per-item
+**RED → GREEN → ADVERSARIAL → REFACTOR** cycle, followed by one cumulative adversarial
+pass over the whole run. The whole flow is repo-agnostic — no `.planning/` directory,
+no sprint state, no private technical-debt README.
 
 ## Prerequisites
 
-Shared prerequisites and path-safety rules live in `CONVENTIONS.md` — read it first.
-In short: the `atcr` binary must be on `PATH`, the working directory must be inside a
+Shared prerequisites and path-safety rules live in the sibling `CONVENTIONS.md` — read
+it first. In short: the `atcr` binary must be on `PATH`, the working directory must be inside a
 git work tree, and every file operation stays rooted under `.atcr/` and never touches
 `.planning/`. This route reads and writes the store **only** through the
 `atcr debt resolve` CLI subcommand; never read or parse `.atcr/debt/*.jsonl` shards
@@ -47,8 +45,7 @@ report "no items to resolve" and halt cleanly; do **not** enter any resolution s
 
 ## Item Selection
 
-The selection rule is deterministic and mechanically applied by the CLI, mirroring
-`/resolve-td`'s `llm_support_td_filter` default:
+The selection rule is deterministic and mechanically applied by the CLI:
 
 - **Scope:** open items only (an item is open until a resolution record folds it out).
 - **Sort:** `severity` descending (`CRITICAL` > `HIGH` > `MEDIUM` > `LOW`), then `ts`
@@ -86,8 +83,7 @@ guess a location.
 
 ## Resolution Cycle (per item)
 
-Adapted from `/resolve-td`'s proven per-item loop. Run all four stages in order for
-each selected item.
+Run all four stages in order for each selected item.
 
 **0. Pre-fix evaluation.** Before touching code, confirm the finding still applies:
 does the problem still exist in the live codebase (still-exists), is the fix clear
@@ -102,14 +98,13 @@ is real and observed.
 **2. GREEN.** Apply the **minimal** fix that makes RED pass. Nothing speculative;
 touch only what the finding requires.
 
-**3. ADVERSARIAL.** Run an over-simplification / reward-hack gate over the diff,
-equivalent to `/resolve-td`'s non-overridable `llm_support_diff_smell` hard verdict.
-Flag as `NEEDS_REVIEW` any test-only change, weakened or deleted assertion, `lint`/type
+**3. ADVERSARIAL.** Run an over-simplification / reward-hack gate over the diff and
+treat its verdict as non-overridable. Flag as `NEEDS_REVIEW` any test-only change, weakened or deleted assertion, `lint`/type
 suppression (e.g. `//nolint`, `// eslint-disable`, `# type: ignore`), or stubbed/empty
 body that fakes a pass. This verdict is **non-overridable**: an item flagged
 `NEEDS_REVIEW` is **never** marked resolved — surface it to the user for a decision and
-move to the next item. If `llm_support_diff_smell` (or an equivalent gate) is
-unavailable, do not skip the check — perform it by inspection against the same rubric.
+move to the next item. If no automated gate is available, do not skip the check —
+perform it by inspection against the same rubric.
 
 **4. REFACTOR.** With the fix verified and the adversarial gate clear, clean up:
 improve names, remove dead scaffolding, tidy the test. Re-run tests to confirm still
@@ -121,8 +116,7 @@ Only after all four stages pass for an item, record the outcome:
 ## Cumulative Adversarial Pass
 
 After the per-item loop finishes for the run, review the **entire** set of changes
-together (mirroring `/resolve-td`'s final cumulative stage). This catches cross-item
-integration issues a single-item review misses — conflicting fixes, a regression one
+together. This catches cross-item integration issues a single-item review misses — conflicting fixes, a regression one
 fix introduced into another's area, or a pattern of over-simplification across items.
 Any `CRITICAL`/`HIGH` issue found here is fixed before the run is considered done;
 `MEDIUM`/`LOW` issues are reported to the user.

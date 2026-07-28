@@ -370,12 +370,15 @@ func TestSkill_DebtResolveCLIInvocationOnly(t *testing.T) {
 }
 
 // TestSkill_DebtRowDocumentsResolve (AC 03-01) — SKILL.md's `atcr debt` row (or a
-// dedicated pointer) surfaces the resolve route and points at debt-resolve/SKILL.md.
+// dedicated pointer) surfaces the resolve route and points at debt-resolve.md.
+// Epic 35.5 flattened that pointer from the nested debt-resolve/SKILL.md to a plain
+// sibling reference; TestReference_DebtRowPointsAtFlattenedFile additionally pins
+// that the pointer lives inside the `atcr debt` row rather than a second row.
 func TestSkill_DebtRowDocumentsResolve(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`(?i)resolve`), SkillMD,
 		"SKILL.md must document the atcr debt resolve route")
-	assert.Contains(t, SkillMD, "`debt-resolve/SKILL.md`",
-		"SKILL.md must point at the on-demand debt-resolve/SKILL.md secondary file")
+	assert.Contains(t, SkillMD, "`debt-resolve.md`",
+		"SKILL.md must point at the on-demand debt-resolve.md secondary file")
 }
 
 // frontmatter returns the YAML frontmatter block between the first two --- lines.

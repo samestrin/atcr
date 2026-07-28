@@ -75,7 +75,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
-| `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and the debt-resolve route autonomously fixes its items — see `debt-resolve/SKILL.md` |
+| `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and autonomously fixes its items through the RED→GREEN→ADVERSARIAL→REFACTOR cycle — load the sibling `debt-resolve.md` on demand for that route |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
 | `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
