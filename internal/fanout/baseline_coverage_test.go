@@ -319,6 +319,28 @@ func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 	}
 }
 
+// Every persona reaching the baseline BULK path with the whole payload gets the
+// identical path list by construction, so they must share ONE slice rather than each
+// retaining its own copy: p.Slots outlives the fan-out until CommitBaselineIndex, so
+// an 8-persona roster over a 20k-file monorepo otherwise holds eight independent
+// 20k-element string slices for the whole review.
+func TestBaselineSlots_BulkTagSliceIsSharedAcrossPersonas(t *testing.T) {
+	t.Parallel()
+	cfg := twoAgentConfig("http://unused")
+	entries := []payload.FileEntry{baselineEntry("a.go", 40), baselineEntry("b.go", 40)}
+
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	require.NoError(t, err)
+	require.Len(t, slots, 2, "two personas, one bulk slot each")
+	require.NotEmpty(t, slots[0].Primary.chunkFiles)
+	require.NotEmpty(t, slots[1].Primary.chunkFiles)
+
+	assert.Equal(t, slots[0].Primary.chunkFiles, slots[1].Primary.chunkFiles,
+		"both personas ship the whole payload, so both tags name the same files")
+	assert.True(t, &slots[0].Primary.chunkFiles[0] == &slots[1].Primary.chunkFiles[0],
+		"the identical list must be ONE shared slice, not a per-persona copy retained for the run")
+}
+
 // The per-agent byte shed must narrow the coverage tag with it. Reaching the bulk
 // path currently implies no shed can occur — chunkBudget and appliedBudget are two
 // independently-written copies of the same arithmetic — so this pins the tag to the

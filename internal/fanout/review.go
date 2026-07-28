@@ -1426,6 +1426,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		return fbs, nil
 	}
 
+	// wholePayloadPaths memoizes, per payload mode, the coverage tag for a baseline
+	// bulk slot that ships the WHOLE payload. Every such persona gets an identical list
+	// by construction, so they share one slice instead of each retaining a copy:
+	// PreparedReview.Slots outlives the fan-out until CommitBaselineIndex, so an
+	// 8-persona roster over a 20k-file monorepo would otherwise hold eight independent
+	// 20k-element string slices for the entire review. A persona whose per-agent budget
+	// SHED files never shares it — its tag must name only what it actually shipped.
+	// The shared slice is read-only (uncoveredBaselineFiles only ranges over it).
+	wholePayloadPaths := map[string][]string{}
+
 	add := func(name string, serial bool) error {
 		ac, ok := cfg.Registry.Agents[name]
 		if !ok {
@@ -1784,6 +1794,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// baseline coverage tag below reads it, so the tag can never name a file the
 		// rendered prompt does not contain.
 		bulkEntries := mp.Entries
+		bulkShed := false
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			// PreferEscalated, not the plain pass: escalating a file to a
 			// higher-context mode makes it the largest entry, so plain largest-first
@@ -1834,7 +1845,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					pb.WriteString(e.Body)
 				}
 				bulkText, bulkFileCount, bulkTrunc = pb.String(), len(kept), trunc
-				bulkEntries = kept
+				// Shed only when a file was actually dropped: a no-op budget pass returns
+				// the same entry set, and that persona can still share the whole-payload tag.
+				bulkEntries, bulkShed = kept, len(kept) != len(mp.Entries)
 				// The per-agent shed dropped files to fit this model's window — a lossy
 				// degradation. Record it as the diagnosability degradation_action (F8).
 				if trunc.Truncated {
@@ -1869,11 +1882,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// implies no shed can occur. Nothing enforces that coupling, so the tag is taken
 		// from the shipped set rather than resting on it.
 		if baseline {
-			bulkFiles := make([]string, 0, len(bulkEntries))
-			for _, e := range bulkEntries {
-				bulkFiles = append(bulkFiles, e.Path)
+			if bulkShed {
+				primary.chunkFiles = entryPaths(bulkEntries)
+			} else {
+				shared, ok := wholePayloadPaths[mode]
+				if !ok {
+					shared = entryPaths(mp.Entries)
+					wholePayloadPaths[mode] = shared
+				}
+				primary.chunkFiles = shared
 			}
-			primary.chunkFiles = bulkFiles
 		}
 		fbs, err := buildChain(name, primary)
 		if err != nil {
@@ -1993,6 +2011,16 @@ func codeContextFor(mode, payloadText string) []hookobs.CodeRef {
 		refs[i] = hookobs.CodeRef{Path: e.Path, Body: e.Body}
 	}
 	return refs
+}
+
+// entryPaths returns the Path of every entry, in order — the coverage tag shape a
+// baseline slot carries.
+func entryPaths(entries []payload.FileEntry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
+	return paths
 }
 
 // renderAgent builds a fully-rendered review Agent for `name` over an explicit
