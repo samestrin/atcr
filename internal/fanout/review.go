@@ -1804,6 +1804,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		if err != nil {
 			return err
 		}
+		// Epic 35.2 / TD-013: a BASELINE run reaching the bulk path has exactly one slot
+		// for this persona covering the whole payload, so tag it with every entry the
+		// write-back could record. Without the tag the slot would contribute no coverage
+		// (the deliberate fail-open default for untagged slots — see
+		// uncoveredBaselineFiles) and a single-chunk baseline scan whose sibling persona
+		// failed would needlessly re-review everything.
+		//
+		// The tag deliberately names mp.Entries, not the per-agent `kept` subset: on this
+		// path the agent may shed files to fit its own window, yet pre-35.2 recorded the
+		// full reviewed set on success, and AC2 requires that behavior stay unchanged.
+		// Narrowing the tag to `kept` here would be a stricter policy than this epic is
+		// scoped to decide.
+		if baseline {
+			bulkFiles := make([]string, 0, len(mp.Entries))
+			for _, e := range mp.Entries {
+				bulkFiles = append(bulkFiles, e.Path)
+			}
+			primary.chunkFiles = bulkFiles
+		}
 		fbs, err := buildChain(name, primary)
 		if err != nil {
 			return err

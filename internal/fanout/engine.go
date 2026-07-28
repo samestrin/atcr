@@ -145,12 +145,18 @@ type Agent struct {
 	// per-chunk success/failure into a bare UnreviewedChunks count, so without this
 	// tag a partially-failed baseline run cannot tell which files went unreviewed.
 	//
-	// nil is a meaningful sentinel — "this slot covers the whole payload" — set on
-	// every non-baseline slot and on the baseline bulk fall-through (single chunk, or
-	// a non-positive per-agent chunk budget). Unexported because it never leaves the
-	// package: runEngine consumes it via slot/result index correspondence before
-	// mergeChunkResults runs, so no exported Slot/Result field is needed and no
-	// MCP/status consumer sees a shape change.
+	// nil means "this slot vouches for NOTHING" — never "covers everything". That
+	// polarity is deliberate: buildSlots has slot paths that cannot attribute files
+	// (the review_strategy=chunked branch splits payload TEXT, and a files-mode
+	// baseline payload can reach it), and an untagged slot must degrade to re-review,
+	// never to a silent skip. Full coverage is established in uncoveredBaselineFiles
+	// by "every dispatched slot succeeded", not by any per-slot sentinel. The baseline
+	// bulk fall-through is therefore tagged EXPLICITLY with the whole payload rather
+	// than left nil.
+	//
+	// Unexported because it never leaves the package: runEngine consumes it via
+	// slot/result index correspondence before mergeChunkResults runs, so no exported
+	// Slot/Result field is needed and no MCP/status consumer sees a shape change.
 	chunkFiles []string
 
 	// chunkMaxLines is the per-model chunk line budget (Epic 19.10 F3) this agent's
@@ -506,7 +512,14 @@ func recordRecoveredPanic(res Result, start time.Time) {
 	recordAgentOutcome(res)
 }
 
-// Run executes every slot and returns one Result per slot in input order.
+// Run executes every slot and returns one Result per slot in input order. That
+// index correspondence is LOAD-BEARING beyond diagnostics: uncoveredBaselineFiles
+// (baseline_coverage.go) attributes a failed baseline chunk to the files it carried
+// by pairing results[i] with slots[i], and the incremental hash index's correctness
+// depends on it — reordering or compacting this slice would let unreviewed files be
+// recorded as reviewed. Every assignment path below must keep results[i] aligned
+// with slots[i]; TestEngineRun_ResultsMatchSlotInputOrder pins it.
+//
 // Parallel-lane slots run concurrently via a WaitGroup; serial-lane slots run
 // sequentially in a single goroutine (ctx checked before each invocation),
 // concurrent with the parallel lane. The WaitGroup always drains — even when

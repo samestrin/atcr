@@ -88,14 +88,56 @@ func TestUncoveredBaselineFiles_UnionAcrossPersonas(t *testing.T) {
 		"UNION: every file was carried by some succeeded chunk, so nothing is uncovered")
 }
 
-// The bulk fall-through (single chunk, or a non-positive per-agent chunk budget)
-// produces one slot covering the WHOLE payload; nil chunkFiles is that sentinel. A
-// succeeded whole-payload slot covers everything, so nothing is excluded — this is
-// what keeps the pre-35.2 single-chunk behavior byte-identical.
-func TestUncoveredBaselineFiles_WholePayloadSlotCoversEverything(t *testing.T) {
+// AC2: when every dispatched slot succeeded the whole payload was reviewed by
+// definition, whatever shape the fan-out took, so nothing is excluded and the
+// write-back stays byte-identical to pre-35.2. Full coverage is established by this
+// all-succeeded rule rather than by trusting any individual slot's tag.
+func TestUncoveredBaselineFiles_AllSlotsSucceededMeansFullCoverage(t *testing.T) {
 	t.Parallel()
 	slots := []Slot{
-		{Primary: Agent{Name: "greta"}}, // nil chunkFiles → whole payload
+		{Primary: Agent{Name: "greta"}}, // untagged (e.g. a chunked-strategy slot)
+		{Primary: Agent{Name: "kai", chunkFiles: []string{"a.go"}}},
+	}
+	results := []Result{
+		{Agent: "greta", Status: StatusOK},
+		{Agent: "kai", Status: StatusOK},
+	}
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
+
+	got := uncoveredBaselineFiles(slots, results, reviewed)
+	assert.Empty(t, got, "no failures anywhere → the whole payload was covered")
+}
+
+// SENTINEL POLARITY (independent-review HIGH): an UNTAGGED slot contributes NO
+// coverage even when it succeeded. buildSlots has slot-creating paths that cannot
+// attribute files (the review_strategy=chunked branch splits payload TEXT, and a
+// files-mode baseline payload can reach it because isDiffFileMarker also matches
+// `=== FILE:` and tracked *.patch fixtures carry real `diff --git` lines). If an
+// untagged success vouched for the whole payload, a sibling chunk's failed files
+// would be recorded and then silently skipped next scan.
+func TestUncoveredBaselineFiles_UntaggedSlotContributesNoCoverage(t *testing.T) {
+	t.Parallel()
+	slots := []Slot{
+		{Primary: Agent{Name: "greta"}}, // untagged, succeeds
+		{Primary: Agent{Name: "greta"}}, // untagged, fails
+	}
+	results := []Result{
+		{Agent: "greta", Status: StatusOK},
+		{Agent: "greta", Status: StatusFailed},
+	}
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
+
+	got := uncoveredBaselineFiles(slots, results, reviewed)
+	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}}, got,
+		"an untagged success must never vouch for files a sibling chunk failed to review")
+}
+
+// A tagged whole-payload (bulk fall-through) slot keeps its precision: succeeding
+// covers every file it names even when a sibling persona's chunk failed.
+func TestUncoveredBaselineFiles_TaggedBulkSlotCoversItsPayload(t *testing.T) {
+	t.Parallel()
+	slots := []Slot{
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go", "b.go"}}},
 		{Primary: Agent{Name: "kai", chunkFiles: []string{"a.go"}}},
 	}
 	results := []Result{
@@ -105,18 +147,16 @@ func TestUncoveredBaselineFiles_WholePayloadSlotCoversEverything(t *testing.T) {
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
 	got := uncoveredBaselineFiles(slots, results, reviewed)
-	assert.Empty(t, got, "a succeeded whole-payload slot covers every reviewed file")
+	assert.Empty(t, got, "the succeeded bulk slot covered the whole payload it was tagged with")
 }
 
-// A FAILED whole-payload slot covers nothing — the nil sentinel must not be read as
-// "covers everything" regardless of outcome.
-func TestUncoveredBaselineFiles_FailedWholePayloadSlotCoversNothing(t *testing.T) {
+// No coverage evidence at all (no slot ran) is the fail-open answer: everything
+// uncovered, so the caller writes nothing rather than recording a full pass.
+func TestUncoveredBaselineFiles_NoResultsReportsEverythingUncovered(t *testing.T) {
 	t.Parallel()
-	slots := []Slot{{Primary: Agent{Name: "greta"}}}
-	results := []Result{{Agent: "greta", Status: StatusFailed}}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	got := uncoveredBaselineFiles(nil, nil, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}}, got)
 }
 
@@ -199,20 +239,21 @@ func TestBaselineSlots_TagChunkFilesPerSlot(t *testing.T) {
 		"the chunk tags partition the payload exactly once — no file dropped, none double-counted")
 }
 
-// A single-chunk baseline scan falls through to the bulk one-slot-per-persona path,
-// which leaves chunkFiles nil (the whole-payload sentinel). AC2 depends on this: a
-// run with nothing to exclude must behave exactly as before 35.2.
-func TestBaselineSlots_SingleChunkLeavesChunkFilesUntagged(t *testing.T) {
+// A single-chunk baseline scan falls through to the bulk one-slot-per-persona path.
+// That slot genuinely covers the whole payload, so it is tagged explicitly with every
+// entry rather than relying on an untagged default — untagged now means "contributes
+// no coverage", which would make a single-chunk scan needlessly re-review everything.
+func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 	t.Parallel()
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
-	entries := []payload.FileEntry{baselineEntry("a.go", 40)}
+	entries := []payload.FileEntry{baselineEntry("a.go", 40), baselineEntry("b.go", 40)}
 
 	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
-	require.Len(t, slots, 1)
-	assert.Nil(t, slots[0].Primary.chunkFiles,
-		"a single-chunk baseline slot covers the whole payload — nil is that sentinel")
+	require.Len(t, slots, 1, "a small payload is one chunk → the bulk path")
+	assert.ElementsMatch(t, []string{"a.go", "b.go"}, slots[0].Primary.chunkFiles,
+		"the bulk baseline slot is tagged with the whole payload it covers")
 }
 
 // A diff-range review never partitions by file, so its slots stay untagged and the
@@ -399,4 +440,80 @@ func TestResumeBaseline_HonorsUncoveredSetSemantics(t *testing.T) {
 	require.NotNil(t, rprep.baseline.uncovered, "the resume path must stamp the uncovered set (AC4)")
 	assert.Contains(t, rprep.baseline.uncovered, "b.go", "the failed chunk's file is uncovered")
 	assert.NotContains(t, rprep.baseline.uncovered, "a.go", "the succeeded chunk's file stays covered")
+}
+
+// Independent-review HIGH regression (Epic 35.2): a baseline scan under
+// review_strategy=chunked whose PartitionByBudget yields a single chunk falls through
+// to the chunkDiff branch, which DOES split a files-mode payload when the tracked
+// content carries column-0 diff markers (atcr's own repo has *.patch fixtures). Those
+// slots cannot be file-attributed, so a failure among them must leave the whole
+// payload uncovered — recording it would silently skip unreviewed files next scan.
+func TestBaselineChunkedStrategy_PartialFailureRecordsNothing(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = reviewStrategyChunked
+	// A small max_context_lines makes chunkDiff actually split (the model-derived
+	// default budget would hold this payload in one chunk).
+	small := 50
+	greta := cfg.Registry.Agents["greta"]
+	greta.MaxContextLines = &small
+	cfg.Registry.Agents["greta"] = greta
+	// Tracked content carrying real diff markers, so chunkDiff can split the
+	// files-mode payload even though PartitionByBudget produced a single chunk.
+	repo := baselineRepo(t, map[string]string{
+		"one.patch": "diff --git a/x b/x\n// FILE:one\n" + strings.Repeat("+line\n", 400),
+		"two.patch": "diff --git a/y b/y\n// FILE:two\n" + strings.Repeat("+line\n", 400),
+	})
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
+	require.NoError(t, err)
+	require.NotNil(t, prep.baseline)
+	require.Greater(t, len(prep.Slots), 1, "chunkDiff must split this payload for the test to exercise the path")
+	for i, s := range prep.Slots {
+		require.Nil(t, s.Primary.chunkFiles, "chunked-strategy slot %d is not file-attributable", i)
+	}
+
+	// Fail one of the untagged chunks; the others succeed.
+	runEngine(context.Background(), baselinePartialFailCompleter{failMarker: "two"}, prep, t.TempDir())
+
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+	assert.NoFileExists(t, payload.FileHashIndexPath(repo),
+		"an unattributable partial failure must record NOTHING — never stamp a file no agent reviewed")
+}
+
+// The index-correspondence contract must also hold on the two result-assignment
+// paths TestEngineRun_ResultsMatchSlotInputOrder does not reach: the deferred
+// panic-recovery handlers in BOTH lanes, and the semaphore-acquire cancellation
+// branch. The baseline attribution reads results[i] for every slot regardless of how
+// that result was produced, so a misaligned panic/cancel result would mis-attribute
+// coverage.
+func TestEngineRun_PanicAndCancelResultsKeepSlotIndex(t *testing.T) {
+	t.Parallel()
+	pc := &panicCompleter{f: newFake(), panicFor: map[string]bool{"p1": true, "s3": true}}
+	slots := []Slot{
+		agentSlot("p0"),
+		agentSlot("p1"), // parallel lane, panics
+		func() Slot { s := agentSlot("s2"); s.Serial = true; return s }(),
+		func() Slot { s := agentSlot("s3"); s.Serial = true; return s }(), // serial lane, panics
+	}
+	results := NewEngine(pc, WithMaxParallel(1)).Run(context.Background(), slots)
+
+	require.Len(t, results, len(slots))
+	for i, s := range slots {
+		assert.Equal(t, s.Primary.Name, results[i].Agent,
+			"a recovered panic must still land at its own slot index (results[%d])", i)
+	}
+	assert.Equal(t, StatusFailed, results[1].Status, "the panicking parallel slot failed in place")
+	assert.Equal(t, StatusFailed, results[3].Status, "the panicking serial slot failed in place")
+
+	// Cancelled before any semaphore token is available: every slot must still
+	// occupy its own index, and none may read as StatusOK (which would wrongly
+	// vouch for its chunk's files).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelled := NewEngine(newFake(), WithMaxParallel(1)).Run(ctx, slots)
+	require.Len(t, cancelled, len(slots))
+	for i := range slots {
+		assert.NotEqual(t, StatusOK, cancelled[i].Status,
+			"a cancelled slot must never read as covered (results[%d])", i)
+	}
 }

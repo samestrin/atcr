@@ -211,7 +211,12 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 		return
 	}
 	if result.Summary.UnreviewedChunks > 0 {
-		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; recording only the files covered by succeeded chunks so the next run re-scans the uncovered ones",
+		// Deliberately phrased as an upper bound, not an announcement of what was
+		// written: the write-back records AT MOST the files covered by succeeded
+		// chunks, and when nothing was covered it writes nothing at all. Stating the
+		// exact recorded/excluded counts would need CommitBaselineIndex to report
+		// them back (tracked as TD rather than widening its exported signature here).
+		log.FromContext(ctx).Warn("baseline scan: some chunks were not reviewed; at most the files covered by succeeded chunks are recorded, so the next run re-scans the rest",
 			"unreviewed_chunks", result.Summary.UnreviewedChunks)
 	}
 	if ierr := prep.CommitBaselineIndex(result.ID); ierr != nil {

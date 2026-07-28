@@ -698,11 +698,20 @@ func TestReviewFreshForce_DiffModeNoOp(t *testing.T) {
 // failOnMarkerProvider returns 500 for any request whose body contains marker and a
 // finding otherwise — so exactly one baseline chunk (the one carrying marker) fails
 // while the rest succeed.
+// failAllProvider rejects every request, so no chunk can succeed.
+func failAllProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	return failOnMarkerProvider(t, "")
+}
+
+// An EMPTY marker fails every request (failAllProvider names that intent), spelled
+// out explicitly below rather than relying on strings.Contains(body, "") being
+// vacuously true.
 func failOnMarkerProvider(t *testing.T, marker string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(body), marker) {
+		if marker == "" || strings.Contains(string(body), marker) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -768,7 +777,7 @@ func TestReviewAll_EveryChunkFailsWritesNoIndex(t *testing.T) {
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
 	// The provider fails every request, so no chunk succeeds.
-	srv := failOnMarkerProvider(t, "")
+	srv := failAllProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce")
 
 	// Every agent failed → exit 1, artifacts preserved.
