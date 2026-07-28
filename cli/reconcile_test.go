@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,15 +51,38 @@ func countScorecardLines(t *testing.T) int {
 	return total
 }
 
-// isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
-// temp dir, so resolveGateThreshold's registry probe (~/.config/atcr) cannot
-// pick up a real registry on the dev machine — tests stay hermetic.
+// isolate chdirs into a fresh temp working dir, points HOME/XDG at another temp
+// dir, and resets process-global state (the circuitbreaker.DefaultRegistry) both
+// before and after the test, so tests stay hermetic against the dev machine and
+// against each other.
 func isolate(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Chdir(t.TempDir())
+	circuitbreaker.DefaultRegistry.Reset()
+	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+}
+
+// TestIsolateCleanupResetsBreakers_Trip opens the circuit for a provider after
+// calling isolate. The paired Observe test below then proves isolate's cleanup
+// reset the process-global registry: without a t.Cleanup reset the breaker
+// stays open and leaks forward into tests that never called isolate.
+func TestIsolateCleanupResetsBreakers_Trip(t *testing.T) {
+	isolate(t)
+	b := circuitbreaker.DefaultRegistry.Get("p-cleanup-check")
+	for i := 0; i < circuitbreaker.DefaultThreshold; i++ {
+		b.RecordFailure()
+	}
+	require.False(t, b.Allow(), "breaker should be open after threshold failures")
+}
+
+func TestIsolateCleanupResetsBreakers_Observe(t *testing.T) {
+	// Deliberately does NOT call isolate — it observes whether breaker state
+	// leaked forward from the Trip test above (tests run in source order).
+	require.True(t, circuitbreaker.DefaultRegistry.Get("p-cleanup-check").Allow(),
+		"breaker state leaked forward from a test that called isolate")
 }
 
 // touchFiles creates the given repo-root-relative source files so reconcile's

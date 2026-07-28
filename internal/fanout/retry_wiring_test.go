@@ -55,6 +55,7 @@ func TestBuildOneAgent_PropagatesRetryFields(t *testing.T) {
 // completion. It counts calls so a test can assert the retry budget consumed.
 func retrying503Server(t *testing.T, failUntil int, calls *atomic.Int32) *httptest.Server {
 	t.Helper()
+	resetBreakers(t)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) <= int32(failUntil) {
 			w.WriteHeader(http.StatusServiceUnavailable)

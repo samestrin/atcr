@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -695,6 +700,13 @@ func TestReviewFreshForce_DiffModeNoOp(t *testing.T) {
 	assert.NoFileExists(t, payload.FileHashIndexPath("."), "a diff-range --fresh --force review must not touch the baseline index")
 }
 
+// failAllProvider rejects every request, so no chunk can succeed. (An empty
+// marker matches every body: strings.Contains(body, "") is vacuously true.)
+func failAllProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	return failOnMarkerProvider(t, "")
+}
+
 // failOnMarkerProvider returns 500 for any request whose body contains marker and a
 // finding otherwise — so exactly one baseline chunk (the one carrying marker) fails
 // while the rest succeed.
@@ -714,12 +726,13 @@ func failOnMarkerProvider(t *testing.T, marker string) *httptest.Server {
 	return srv
 }
 
-// Sprint 35.0 Phase 5 (task 5.6, 5.5.A MEDIUM): when a baseline scan fans out into
+// Epic 35.2 AC1 (supersedes Sprint 35.0 task 5.6): when a baseline scan fans out into
 // multiple chunks and one chunk FAILS (the persona still reports StatusOK via
-// any-chunk-succeeded), the incremental hash-index write-back is SKIPPED entirely —
-// recording the reviewed set would stamp the unreviewed (failed-chunk) files too, so
-// they'd be silently skipped next run. Fail-open: no index write → next run re-scans.
-func TestReviewAll_PartialChunkFailureSkipsIndexWrite(t *testing.T) {
+// any-chunk-succeeded), the write-back is no longer discarded wholesale. The files in
+// the SUCCEEDED chunks are recorded and the failed chunk's files are excluded, so the
+// next `--all` re-reviews only the genuinely uncovered files instead of the whole
+// repository. Still fail-open: an uncovered file is re-scanned, never silently skipped.
+func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
@@ -734,9 +747,275 @@ func TestReviewAll_PartialChunkFailureSkipsIndexWrite(t *testing.T) {
 	srv := failOnMarkerProvider(t, "FAILME")
 	liveReviewConfig(t, srv.URL, "bruce")
 
-	// The run still exits 0 (the persona succeeded on at least one chunk).
+	// The run exits 0 (the persona succeeded on at least one chunk).
 	require.Equal(t, 0, execCmd(t, "review", "--all"))
-	// But because a chunk went unreviewed, the write-back was skipped: no index on disk.
+
+	// The index IS written now, recording the covered files but not the failed chunk's.
+	idx := payload.Load(payload.FileHashIndexPath("."), nil)
+	runIDs := map[string]string{}
+	for _, name := range []string{"a.txt", "b.go", filepath.Join("internal", "c.go")} {
+		_, runID, ok := idx.Get(filepath.ToSlash(name))
+		assert.True(t, ok, "a file in the SUCCEEDED chunk must be recorded; %s missing", name)
+		runIDs[filepath.ToSlash(name)] = runID
+	}
+	_, _, okFail := idx.Get("fail.txt")
+	assert.False(t, okFail,
+		"the failed chunk's file must NOT be recorded, or it would be skipped-though-unreviewed next run")
+
+	// AC1's second half: the next --all re-reviews ONLY the previously-uncovered file.
+	// It exits 1 here because fail.txt is now the sole candidate and this provider
+	// still rejects it — every agent fails. That is the fail-open loop working as
+	// intended: the uncovered file keeps being re-reviewed until it succeeds, and it is
+	// never recorded as reviewed in the meantime.
+	require.Equal(t, 1, execCmd(t, "review", "--all"))
+	body := baselineFilesPayload(t)
+	assert.Contains(t, body, "FAILME", "the uncovered file is re-reviewed")
+	assert.NotContains(t, body, "package b", "a covered file is hash-skipped on the next run")
+	assert.NotContains(t, body, "package c", "a covered file is hash-skipped on the next run")
+	assert.NotContains(t, body, "one\n", "a covered file is hash-skipped on the next run")
+
+	// The all-failed second run must not touch the index: fail.txt is still absent
+	// and the covered files keep their original run ids (the fail-open loop
+	// invariant — a run that covered nothing records nothing).
+	idx = payload.Load(payload.FileHashIndexPath("."), nil)
+	_, _, okFail = idx.Get("fail.txt")
+	assert.False(t, okFail, "the all-failed run must not record the uncovered file")
+	for name, runID := range runIDs {
+		_, gotRunID, ok := idx.Get(name)
+		assert.True(t, ok, "the all-failed run must not trim the covered file %s", name)
+		assert.Equal(t, runID, gotRunID, "the all-failed run must not rewrite %s's run id", name)
+	}
+}
+
+// Epic 35.2 AC3: when EVERY chunk fails the run has zero coverage and writes no index
+// at all — fail-open toward re-review, never toward skip.
+func TestReviewAll_EveryChunkFailsWritesNoIndex(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	// The provider fails every request, so no chunk succeeds.
+	srv := failAllProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// Every agent failed → exit 1, artifacts preserved.
+	require.Equal(t, 1, execCmd(t, "review", "--all"))
 	assert.NoFileExists(t, payload.FileHashIndexPath("."),
-		"a baseline run with an unreviewed chunk must NOT persist the hash index, or the unreviewed files would be skipped-though-unreviewed next run")
+		"a baseline run that covered nothing must not persist an index")
+}
+
+// commitBaselineWriteback must never fire on an interrupted run: a cancelled
+// context short-circuits the write-back so a partially-reviewed repo is not
+// recorded as reviewed. The live-context call proves the prep would have
+// written the index had the guard not fired.
+func TestCommitBaselineWriteback_CancelledContextWritesNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	commitBaselineWriteback(cancelled, true, prep, result)
+	assert.NoFileExists(t, payload.FileHashIndexPath("."),
+		"a cancelled run must not record files as reviewed")
+
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.FileExists(t, payload.FileHashIndexPath("."),
+		"the same write-back on a live context persists the index")
+}
+
+// The Succeeded == 0 clause is the documented AC3 fail-safe: a run where every
+// agent failed must not record its files as reviewed. CommitBaselineIndex's own
+// zero-coverage guard cannot stand in for it — that guard fires only when the
+// engine attributed an uncovered set, and a caller that never ran the engine
+// (a library/MCP caller, or the resume path at cli/resume.go) leaves uncovered
+// nil, so every reviewed file would be recorded. Deleting the clause makes the
+// first assertion below fail.
+func TestCommitBaselineWriteback_AllAgentsFailedWritesNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	// Nil uncovered set — the shape both a direct library caller and the resume
+	// path present, since neither runs the engine's per-chunk attribution. Every
+	// reviewed file would be recorded here if the caller-side guard were removed.
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 0
+
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.NoFileExists(t, payload.FileHashIndexPath("."),
+		"an all-agents-failed run must not record its files as reviewed")
+
+	// Same prep, same nil uncovered set, one succeeded agent: the index IS written.
+	// This pins that the guard — not an unrelated no-op — suppressed the write above.
+	result.Summary.Succeeded = 1
+	commitBaselineWriteback(context.Background(), true, prep, result)
+	assert.FileExists(t, payload.FileHashIndexPath("."),
+		"with one succeeded agent and no uncovered attribution the write-back records normally")
+}
+
+// The operator-facing coverage line must be driven by what the write-back ACTUALLY
+// recorded (prep.BaselineCoverage), not by Summary.UnreviewedChunks. That field is
+// set only for a persona with a MIX of succeeded and failed chunks, so a run where a
+// persona failed WHOLLY reports 0 and — before this — produced no log line at all,
+// leaving an operator with a green review and a silently stalled index.
+func TestCommitBaselineWriteback_LogsCoverageOutcomeNotUnreviewedChunks(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "json", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	// A green summary with ZERO unreviewed chunks — exactly the shape a wholly
+	// failed persona leaves behind, and the shape that used to log nothing.
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+	require.Zero(t, result.Summary.UnreviewedChunks)
+
+	commitBaselineWriteback(ctx, true, prep, result)
+
+	recorded, excluded := prep.BaselineCoverage()
+	require.Positive(t, recorded, "the write-back recorded files, so there is an outcome to report")
+	out := buf.String()
+	assert.Contains(t, out, "recorded_files",
+		"the coverage outcome must be logged even when UnreviewedChunks is 0")
+	assert.Contains(t, out, fmt.Sprintf(`"recorded_files":%d`, recorded),
+		"the logged count must be the write-back's actual count")
+	assert.Contains(t, out, fmt.Sprintf(`"excluded_files":%d`, excluded))
+}
+
+// AC 04-01 ES1: an index-write failure is LOGGED, never fatal. Planting a regular
+// file where .atcr/index/ must be makes Save fail for real, so the warn branch is
+// exercised rather than assumed — and the same repo still exits 0 through the full
+// `review --all` path. If the error were propagated instead of logged, the exit
+// assertion below would read 1.
+func TestCommitBaselineWriteback_IndexWriteFailureIsLoggedNotFatal(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// A FILE where the index's parent directory belongs: every Save under it fails
+	// with ENOTDIR.
+	indexDir := filepath.Dir(payload.FileHashIndexPath("."))
+	require.NoError(t, os.MkdirAll(filepath.Dir(indexDir), 0o755))
+	require.NoError(t, os.WriteFile(indexDir, []byte("not a directory\n"), 0o644))
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "json", &buf)
+	require.NoError(t, err)
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+
+	commitBaselineWriteback(log.NewContext(context.Background(), logger), true, prep, result)
+
+	assert.Contains(t, buf.String(), "could not persist the file-hash index",
+		"a failing index write must surface as a warning")
+
+	// Non-fatal end to end: the same unwritable index does not fail the review.
+	assert.Equal(t, 0, execCmd(t, "review", "--all"),
+		"an index-write failure must never fail an otherwise-successful review")
+}
+
+// The guard clauses in commitBaselineWriteback are reachable only from a direct
+// call — both production call sites pass non-nil arguments — so without this table
+// they are entirely unexercised. Each row must leave the index untouched. (The nil
+// rows are belt-and-braces: fanout's nil-receiver guards would also absorb them, so
+// removing the cli-side check does not fail this table. The Succeeded == 0 and
+// cancelled rows are load-bearing here and fail if their clause is deleted.)
+func TestCommitBaselineWriteback_GuardsWriteNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	okResult := func() *fanout.ReviewResult {
+		r := &fanout.ReviewResult{ID: prep.ID}
+		r.Summary.Succeeded = 1
+		return r
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, tc := range []struct {
+		name     string
+		ctx      context.Context
+		baseline bool
+		prep     *fanout.PreparedReview
+		result   *fanout.ReviewResult
+	}{
+		{"not a baseline review", context.Background(), false, prep, okResult()},
+		{"nil prep", context.Background(), true, nil, okResult()},
+		{"nil result", context.Background(), true, prep, nil},
+		{"every agent failed", context.Background(), true, prep, &fanout.ReviewResult{ID: prep.ID}},
+		{"cancelled run", cancelled, true, prep, okResult()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commitBaselineWriteback(tc.ctx, tc.baseline, tc.prep, tc.result)
+			assert.NoFileExists(t, payload.FileHashIndexPath("."),
+				"the %s guard must leave the index untouched", tc.name)
+		})
+	}
+
+	// Control: with every guard satisfied the same prep DOES write, so the rows
+	// above are proven to be the guards' doing and not an inert fixture.
+	commitBaselineWriteback(context.Background(), true, prep, okResult())
+	assert.FileExists(t, payload.FileHashIndexPath("."))
 }
