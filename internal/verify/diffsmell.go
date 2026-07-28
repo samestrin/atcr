@@ -127,8 +127,8 @@ var (
 
 	// An added stub / not-implemented / deferred body. panic only counts when its
 	// argument is a not-implemented literal — idiomatic error panics are routine.
-	// TODO/FIXME only counts when it IS the whole added statement (a standalone
-	// comment), not a trailing remark on real code.
+	// A bare TODO or FIXME only counts when it IS the whole added statement (a
+	// standalone comment), not a trailing remark on real code.
 	smellStubBodyRe = regexp.MustCompile(`(?i)(panic\s*\(\s*["'](?:not |unimplemented|todo)|raise\s+NotImplementedError|throw\s+new\s+Error\s*\(\s*["']not[ _]?implemented|^\s*(?://|#|--|/\*)\s*(?:TODO|FIXME)\b)`)
 
 	// A line that asserts something (used to detect weakened test assertions).
