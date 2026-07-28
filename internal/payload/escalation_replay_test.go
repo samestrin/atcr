@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -381,15 +383,71 @@ type replayReport struct {
 // skipReasonPrefix is the constant analyzeFile prefixes every decline with.
 const skipReasonPrefix = "payload: skipping escalation analysis, "
 
-// recordSkip folds one analyzeFile decline into the per-reason tally.
+// recordSkip folds one analyzeFile decline into the per-reason tally. Messages
+// without the prefix (e.g. the churn-unavailable notice, which does NOT decline
+// the file) are ignored, so the tally counts declines and nothing else.
 func (r *replayReport) recordSkip(msg string) {
-	_ = msg
+	reason, ok := strings.CutPrefix(msg, skipReasonPrefix)
+	if !ok {
+		return
+	}
+	if r.skipReasons == nil {
+		r.skipReasons = make(map[string]int)
+	}
+	r.skipReasons[reason]++
 }
 
-// skipBreakdown renders the per-reason tally.
+// skipBreakdown renders the per-reason tally, most frequent first (ties broken
+// alphabetically so the line is stable across runs).
+//
+// analyzeFile declines a deleted file without logging — there is nothing to
+// measure and nothing went wrong — so the logged reasons can sum to less than
+// `skipped`. The shortfall is attributed explicitly rather than dropped, which
+// would otherwise make the breakdown look like it had lost track of files.
 func (r *replayReport) skipBreakdown() string {
-	return ""
+	reasons := make([]string, 0, len(r.skipReasons))
+	logged := 0
+	for reason, n := range r.skipReasons {
+		reasons = append(reasons, reason)
+		logged += n
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if r.skipReasons[reasons[i]] != r.skipReasons[reasons[j]] {
+			return r.skipReasons[reasons[i]] > r.skipReasons[reasons[j]]
+		}
+		return reasons[i] < reasons[j]
+	})
+
+	parts := make([]string, 0, len(reasons)+1)
+	for _, reason := range reasons {
+		parts = append(parts, fmt.Sprintf("%s=%d", reason, r.skipReasons[reason]))
+	}
+	if gap := r.skipped - logged; gap > 0 {
+		parts = append(parts, fmt.Sprintf("deleted (not logged)=%d", gap))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
+
+// skipReasonHandler routes the gitRunner's per-file debug lines into a
+// replayReport tally instead of printing them. The harness analyzes hundreds of
+// files, so echoing every decline would bury the report — but the reasons are
+// exactly what makes an unexpectedly high skip count diagnosable, so they are
+// counted rather than discarded.
+type skipReasonHandler struct{ rep *replayReport }
+
+func (h skipReasonHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h skipReasonHandler) Handle(_ context.Context, rec slog.Record) error {
+	h.rep.recordSkip(rec.Message)
+	return nil
+}
+
+func (h skipReasonHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h skipReasonHandler) WithGroup(string) slog.Handler { return h }
 
 // TestReplayReport_SkipBreakdownIsPerReason pins the skip disclosure. A single
 // aggregate `skipped` counter cannot be diagnosed: binary files are an expected,
@@ -553,7 +611,8 @@ func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []stri
 			continue // root commit, or the shallow-clone boundary
 		}
 		rep.walked++
-		g := &gitRunner{ctx: ctx, dir: root, escalation: cfg}
+		g := &gitRunner{ctx: ctx, dir: root, escalation: cfg,
+			logger: slog.New(skipReasonHandler{rep: &rep})}
 		files, err := g.changedFilesMemo(parent, sha)
 		if err != nil {
 			// Distinguished from an empty change set: a systematically failing
@@ -640,6 +699,7 @@ func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig,
 	t.Helper()
 	t.Logf("escalation replay: ref=%s window=%d commits_walked=%d commits_measured=%d degraded=%d errored=%d unresolved=%d files_analyzed=%d files_skipped=%d files_unbilled=%d",
 		ref, window, rep.walked, rep.all.commits, rep.degraded, rep.errored, rep.unresolved, rep.all.files, rep.skipped, rep.unbilled)
+	t.Logf("skips by reason: %s", rep.skipBreakdown())
 	t.Logf("thresholds: churn_ratio=%.2f min_hunks=%d hunk_gap_lines=%d min_cyclomatic=%d max_files=%d",
 		cfg.ChurnRatio, cfg.MinHunks, cfg.HunkGapLines, cfg.MinCyclomatic, cfg.MaxFiles)
 
