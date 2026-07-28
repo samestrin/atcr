@@ -232,20 +232,52 @@ func looksLikeUnifiedDiff(text string) bool {
 	return false
 }
 
-// startsWithDiffHeader reports whether the FIRST non-blank line of text is a
-// unified-diff header. It is the strict counterpart to looksLikeUnifiedDiff:
-// where that one scans the whole input (correct for the gate, which loses nothing
-// on a false positive), this one demands the diff lead the content, so a Go file
-// that merely embeds a diff fixture in a raw string cannot claim the exemption.
+// maxDiffProseLeadIn is how many plainly-prose lines may precede the diff before
+// the exemption is refused. The real shape is one sentence ("Here is the fix:");
+// a small bound keeps the scan from degenerating into "a diff header appears
+// somewhere", which is what would re-admit the embedded-fixture false exemption.
+const maxDiffProseLeadIn = 3
+
+// goLeadInKeywords are the line-leading tokens that end the prose scan outright.
+// A line starting with one of these means the content is Go source, not a prose
+// lead-in — and Go source must never claim the diff exemption no matter what it
+// embeds further down.
+var goLeadInKeywords = []string{"package ", "import ", "func ", "type ", "const ", "var "}
+
+// startsWithDiffHeader reports whether text LEADS with a unified diff, allowing at
+// most maxDiffProseLeadIn plainly-prose lines ahead of it. It is the strict
+// counterpart to looksLikeUnifiedDiff: where that one scans the whole input
+// (correct for the gate, which loses nothing on a false positive), this one demands
+// the diff lead the content, so a Go file that merely embeds a diff fixture in a
+// raw string cannot claim the exemption.
+//
+// The prose allowance exists because the most common model answer is a sentence,
+// a blank line, then an unfenced diff; anchoring on the literal first non-blank
+// line rejected that shape and stamped invalid_syntax on a good fix. The allowance
+// is deliberately narrow in BOTH directions — a line-count bound and a hard stop on
+// any Go keyword — because a false exemption here silences the guard on genuinely
+// broken Go, which is the more expensive error.
 func startsWithDiffHeader(text string) bool {
+	prose := 0
 	for _, line := range strings.Split(text, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		return strings.HasPrefix(line, "diff --git ") ||
+		if strings.HasPrefix(line, "diff --git ") ||
 			strings.HasPrefix(line, "--- ") ||
 			strings.HasPrefix(line, "+++ ") ||
-			smellHunkRe.MatchString(line)
+			smellHunkRe.MatchString(line) {
+			return true
+		}
+		for _, kw := range goLeadInKeywords {
+			if strings.HasPrefix(line, kw) {
+				return false
+			}
+		}
+		prose++
+		if prose > maxDiffProseLeadIn {
+			return false
+		}
 	}
 	return false
 }
