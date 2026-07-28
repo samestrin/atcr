@@ -448,6 +448,28 @@ func TestCommitBaselineIndex_ZeroCoverageWritesNothing(t *testing.T) {
 		"a run that covered nothing must not persist an index at all")
 }
 
+// The zero-coverage guard's second sub-condition (&& len(b.reviewed) > 0) exists so
+// an EMPTY-reviewed baseline run still performs the self-trim and save — only a run
+// that reviewed files but covered NONE may skip the write. Pin the empty-reviewed
+// arm: with nothing reviewed and a stale pre-index entry, CommitBaselineIndex must
+// still trim the stale entry AND persist the (now empty) index.
+func TestCommitBaselineIndex_EmptyReviewedStillTrimsAndSaves(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n"})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+	prep.baseline.reviewed = map[string]string{} // nothing reviewed this run
+	prep.baseline.preIndex.Record("gone.go", "deadbeef", "old-run")
+
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	assert.FileExists(t, payload.FileHashIndexPath(repo),
+		"an empty-reviewed run must still SAVE — skipping the write is the zero-coverage arm, not this one")
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	assert.Empty(t, idx.Paths(), "the stale entry is trimmed, not preserved")
+}
+
 // AC2: with nothing uncovered the write-back behaves exactly as before 35.2 — every
 // reviewed file recorded, and the whole-repo self-trim still drops paths that are no
 // longer tracked.
