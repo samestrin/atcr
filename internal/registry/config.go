@@ -48,6 +48,15 @@ const (
 	MaxEscalationHunkGapLines  = 1000
 	MaxEscalationFiles         = 5000
 	MaxEscalationSkeletonLines = 2000
+	// MaxEscalationMinHunks and MaxEscalationMinCyclomatic are sanity ceilings on
+	// the two FLOOR thresholds (Epic 35.4). They guard the opposite failure from
+	// the ceilings above: min_hunks and min_cyclomatic gate promotion on "at
+	// least this much", so an absurdly large value is not a stricter setting, it
+	// is a threshold no real file can reach — the signal is silently dead. Both
+	// are set far above any legitimate tuning range (the shipped defaults are 8
+	// and 20), so they reject typos and overflow without constraining anyone.
+	MaxEscalationMinHunks      = 1000
+	MaxEscalationMinCyclomatic = 1000
 )
 
 // envVarName matches valid POSIX environment variable names.

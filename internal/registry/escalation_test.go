@@ -97,10 +97,18 @@ func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 	overFiles := MaxEscalationFiles + 1
 	overSkel := MaxEscalationSkeletonLines + 1
 
+	overHunks := MaxEscalationMinHunks + 1
+	overCyclo := MaxEscalationMinCyclomatic + 1
+
 	for name, cfg := range map[string]PayloadEscalationConfig{
 		"hunk_gap_lines":     {HunkGapLines: &overGap},
 		"max_files":          {MaxFiles: &overFiles},
 		"max_skeleton_lines": {MaxSkeletonLines: &overSkel},
+		// min_hunks and min_cyclomatic are FLOORS, so an absurdly large value is
+		// not "stricter" — it is a threshold no real file can reach, which
+		// silently disables the signal. Same class as churn_ratio > 1.
+		"min_hunks":      {MinHunks: &overHunks},
+		"min_cyclomatic": {MinCyclomatic: &overCyclo},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Registry{PayloadEscalation: cfg}
@@ -112,8 +120,10 @@ func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 
 	// The ceilings themselves are legal — only values above them are absurd.
 	atGap, atFiles, atSkel := MaxEscalationHunkGapLines, MaxEscalationFiles, MaxEscalationSkeletonLines
+	atHunks, atCyclo := MaxEscalationMinHunks, MaxEscalationMinCyclomatic
 	r := Registry{PayloadEscalation: PayloadEscalationConfig{
 		HunkGapLines: &atGap, MaxFiles: &atFiles, MaxSkeletonLines: &atSkel,
+		MinHunks: &atHunks, MinCyclomatic: &atCyclo,
 	}}
 	require.NoError(t, r.validate())
 }
