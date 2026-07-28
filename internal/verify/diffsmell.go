@@ -342,7 +342,16 @@ func analyzeDiff(diff string) *smellResult {
 			// block. Keep cur bound to the file the deletion is about — from the
 			// preceding `diff --git` header, or failing that the `--- a/<path>` one —
 			// and record the deletion.
-			if p := smellHeaderPath(line[4:]); p == "/dev/null" || p == "" {
+			p := smellHeaderPath(line[4:])
+			switch {
+			case p == "":
+				// A `+++ ` header carrying only whitespace or a tab is MALFORMED, not a
+				// deletion — only an explicit /dev/null is. Marking the currently bound
+				// file deleted here produced the worst kind of false positive: a HARD
+				// test_deleted on a diff that deletes nothing, so a good fix was
+				// rejected, retried once, then withheld with a FixWarning accusing the
+				// model of deleting a test file it never touched. Ignore the line.
+			case p == "/dev/null":
 				// Bind to the `--- a/<path>` line this deletion is paired with whenever
 				// it names a DIFFERENT file than the one currently bound — not merely
 				// when nothing is bound. looksLikeUnifiedDiff accepts a HEADERLESS diff
@@ -359,7 +368,7 @@ func analyzeDiff(diff string) *smellResult {
 				if cur != nil {
 					cur.deleted = true
 				}
-			} else {
+			default:
 				cur = ensure(p)
 			}
 		case strings.HasPrefix(line, "--- "):
