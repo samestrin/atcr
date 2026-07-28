@@ -274,6 +274,15 @@ func TestAnalyzeDiff_GitHeaderFallbackPath(t *testing.T) {
 	assert.Equal(t, "foo/bar.go", res.Smells[0].File)
 }
 
+// A path containing a space must survive the `diff --git` header parse: the b/
+// side is located by its separator, not by whitespace splitting, so the header
+// and the +++ line agree on ONE file entry instead of two.
+func TestAnalyzeDiff_GitHeaderSpacePath(t *testing.T) {
+	res := analyzeDiff("diff --git a/my test_helper.go b/my test_helper.go\n--- a/my test_helper.go\n+++ b/my test_helper.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
+	assert.Len(t, res.Files.Impl, 1, "space path must yield exactly one file entry, got %v", res.Files.Impl)
+	assert.Equal(t, "my test_helper.go", res.Files.Impl[0])
+}
+
 // looksLikeUnifiedDiff is the gate's pre-filter: free-form fix prose must not be
 // mistaken for a diff (clarification Q1 — non-diff fixes pass through as clean).
 func TestLooksLikeUnifiedDiff(t *testing.T) {
