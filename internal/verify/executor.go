@@ -426,13 +426,24 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// FixReview so a human sees which shortcut was taken. evaluateFixSmell returns
 			// nil for anything that is not a scannable unified diff, so free-form fixes
 			// (the common case) pass through untouched at zero cost.
-			if len(fix) > maxFixBytes {
-				// Never a SILENT bypass: a fix too large to scan is written unscanned, so
-				// say so — otherwise "scanned and clean" and "never scanned" look identical
-				// in the run output, and a reward hack padded past the cap is invisible.
-				logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", fmt.Sprintf("%s:%d: fix is %d bytes, over the %d-byte scan cap; diff-smell gate skipped", f.File, f.Line, len(fix), maxFixBytes))
+			// scanFix is the ONE scan entry point, used for the first attempt and the
+			// retry alike. Hoisting it is the point: the oversize announcement used to
+			// guard only the first attempt, so an oversized RETRY fed straight into
+			// evaluateFixSmell (which returns nil above maxFixBytes) and was accepted as
+			// clean with no warning, no log record and no FixReview — failing open on
+			// the MORE suspicious of the two attempts, and exactly the escape a model
+			// just told "your previous attempt was rejected" would find.
+			scanFix := func(candidate string) *smellResult {
+				if len(candidate) > maxFixBytes {
+					// Never a SILENT bypass: a fix too large to scan is written unscanned, so
+					// say so — otherwise "scanned and clean" and "never scanned" look identical
+					// in the run output, and a reward hack padded past the cap is invisible.
+					logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", fmt.Sprintf("%s:%d: fix is %d bytes, over the %d-byte scan cap; diff-smell gate skipped", f.File, f.Line, len(candidate), maxFixBytes))
+					return nil
+				}
+				return evaluateFixSmell(candidate, f.File)
 			}
-			smellRes := evaluateFixSmell(fix, f.File)
+			smellRes := scanFix(fix)
 			if smellRes != nil && smellRes.Summary.Verdict == smellVerdictHard {
 				feedback := smellFeedback(smellRes)
 				logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (retrying once)", f.File, f.Line, feedback))
@@ -441,7 +452,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				if !retryOK {
 					return // postCheck already classified and stamped the retry's failure
 				}
-				retryRes := evaluateFixSmell(retryFix, f.File)
+				retryRes := scanFix(retryFix)
 				if retryRes != nil && retryRes.Summary.Verdict == smellVerdictHard {
 					reason := "diff-smell gate rejected two consecutive fixes: " + smellFeedback(retryRes)
 					logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (halted)", f.File, f.Line, reason))
