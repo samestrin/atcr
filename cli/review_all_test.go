@@ -920,3 +920,102 @@ func TestCommitBaselineWriteback_LogsCoverageOutcomeNotUnreviewedChunks(t *testi
 		"the logged count must be the write-back's actual count")
 	assert.Contains(t, out, fmt.Sprintf(`"excluded_files":%d`, excluded))
 }
+
+// AC 04-01 ES1: an index-write failure is LOGGED, never fatal. Planting a regular
+// file where .atcr/index/ must be makes Save fail for real, so the warn branch is
+// exercised rather than assumed — and the same repo still exits 0 through the full
+// `review --all` path. If the error were propagated instead of logged, the exit
+// assertion below would read 1.
+func TestCommitBaselineWriteback_IndexWriteFailureIsLoggedNotFatal(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// A FILE where the index's parent directory belongs: every Save under it fails
+	// with ENOTDIR.
+	indexDir := filepath.Dir(payload.FileHashIndexPath("."))
+	require.NoError(t, os.MkdirAll(filepath.Dir(indexDir), 0o755))
+	require.NoError(t, os.WriteFile(indexDir, []byte("not a directory\n"), 0o644))
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "json", &buf)
+	require.NoError(t, err)
+	result := &fanout.ReviewResult{ID: prep.ID}
+	result.Summary.Succeeded = 1
+
+	commitBaselineWriteback(log.NewContext(context.Background(), logger), true, prep, result)
+
+	assert.Contains(t, buf.String(), "could not persist the file-hash index",
+		"a failing index write must surface as a warning")
+
+	// Non-fatal end to end: the same unwritable index does not fail the review.
+	assert.Equal(t, 0, execCmd(t, "review", "--all"),
+		"an index-write failure must never fail an otherwise-successful review")
+}
+
+// The guard clauses in commitBaselineWriteback are reachable only from a direct
+// call — both production call sites pass non-nil arguments — so without this table
+// they are entirely unexercised. Each row must leave the index untouched. (The nil
+// rows are belt-and-braces: fanout's nil-receiver guards would also absorb them, so
+// removing the cli-side check does not fail this table. The Succeeded == 0 and
+// cancelled rows are load-bearing here and fail if their clause is deleted.)
+func TestCommitBaselineWriteback_GuardsWriteNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	require.NoError(t, err)
+	req := fanout.ReviewRequest{
+		Repo: ".", Root: ".",
+		Branch: "main", Date: "2026-07-27", TimeSuffix: "000000", StartedAt: time.Now(),
+	}
+	prep, err := fanout.PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	okResult := func() *fanout.ReviewResult {
+		r := &fanout.ReviewResult{ID: prep.ID}
+		r.Summary.Succeeded = 1
+		return r
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, tc := range []struct {
+		name     string
+		ctx      context.Context
+		baseline bool
+		prep     *fanout.PreparedReview
+		result   *fanout.ReviewResult
+	}{
+		{"not a baseline review", context.Background(), false, prep, okResult()},
+		{"nil prep", context.Background(), true, nil, okResult()},
+		{"nil result", context.Background(), true, prep, nil},
+		{"every agent failed", context.Background(), true, prep, &fanout.ReviewResult{ID: prep.ID}},
+		{"cancelled run", cancelled, true, prep, okResult()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commitBaselineWriteback(tc.ctx, tc.baseline, tc.prep, tc.result)
+			assert.NoFileExists(t, payload.FileHashIndexPath("."),
+				"the %s guard must leave the index untouched", tc.name)
+		})
+	}
+
+	// Control: with every guard satisfied the same prep DOES write, so the rows
+	// above are proven to be the guards' doing and not an inert fixture.
+	commitBaselineWriteback(context.Background(), true, prep, okResult())
+	assert.FileExists(t, payload.FileHashIndexPath("."))
+}
