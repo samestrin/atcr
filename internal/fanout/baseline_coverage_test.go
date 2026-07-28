@@ -356,18 +356,28 @@ func TestUncoveredBaselineFiles_ResumePartialSlotSetStaysFailOpen(t *testing.T) 
 
 // The fallback chain reviews the SAME chunk as the primary it substitutes for, so
 // attribution reads the slot's Primary tag and a fallback-served success still counts
-// that chunk's files as covered.
+// that chunk's files as covered. This drives the REAL engine — a primary that fails
+// and a fallback that succeeds — and feeds the actual returned results into
+// uncoveredBaselineFiles, so a fallback-served result emitted under the fallback's
+// name or appended as an extra result fails here instead of silently breaking
+// coverage attribution.
 func TestUncoveredBaselineFiles_FallbackServedSlotCountsAsCovered(t *testing.T) {
 	t.Parallel()
+	f := newFake()
+	f.failFor["m-greta"] = errors.New("boom")
 	slots := []Slot{{
-		Primary:   Agent{Name: "greta", chunkFiles: []string{"a.go"}},
+		Primary:   Agent{Name: "greta", Invocation: llmclient.Invocation{Model: "m-greta"}, chunkFiles: []string{"a.go"}},
 		Fallbacks: []Agent{{Name: "kai", Invocation: llmclient.Invocation{Model: "m-kai"}}},
 	}}
-	// invokeSlot attributes a fallback-served result to the primary's slot.
-	results := []Result{{Agent: "greta", Status: StatusOK, FallbackUsed: true, FallbackFrom: "greta"}}
-	reviewed := map[string]string{"a.go": "h1"}
 
-	got := uncoveredBaselineFiles(slots, results, reviewed)
+	results := NewEngine(f).Run(context.Background(), slots)
+	require.Len(t, results, 1, "a fallback-served slot yields exactly one result, never an extra")
+	require.Equal(t, StatusOK, results[0].Status, "the fallback served the slot")
+	require.True(t, results[0].FallbackUsed, "the success came from the fallback chain")
+	require.Equal(t, "greta", results[0].Agent,
+		"attribution follows the slot, not the substitute — coverage reads the primary's tag")
+
+	got := uncoveredBaselineFiles(slots, results, map[string]string{"a.go": "h1"})
 	assert.Empty(t, got, "a fallback reviewed the same chunk, so its files are covered")
 }
 
