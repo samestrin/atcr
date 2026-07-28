@@ -117,7 +117,7 @@ var (
 	smellRbTestRe  = regexp.MustCompile(`(^|/)[^/]*_(spec|test)\.rb$`)
 	smellJVMTestRe = regexp.MustCompile(`(Test|Tests|Spec)\.(java|kt|kts|scala)$`)
 	smellCSTestRe  = regexp.MustCompile(`(Test|Tests)\.cs$`)
-	smellTestSegs  = map[string]bool{"test": true, "tests": true, "__tests__": true}
+	smellTestSegs  = map[string]bool{"test": true, "tests": true, "__tests__": true, "testdata": true}
 
 	// An added line that suppresses a linter / type checker.
 	smellSuppressionRe = regexp.MustCompile(`(@ts-ignore|@ts-expect-error|eslint-disable|#\s*type:\s*ignore|#\s*noqa|#\s*pylint:\s*disable|#\s*pragma:\s*no\s*cover|#\s*nosec|//\s*nolint|@SuppressWarnings|#\s*rubocop:disable|@phpstan-ignore)`)
@@ -138,11 +138,15 @@ var (
 )
 
 // isSmellTestPath reports whether a repo-relative path is a test file. It is
-// precise — "latest_test_results.go" or "contest.go" are NOT tests.
+// precise — "latest_test_results.go" or "contest.go" are NOT tests. Directory
+// segments are matched case-insensitively so "Test", "Tests" and ".NET"-style
+// "MyProj.Tests" layouts count; the ".tests" suffix is anchored on a dot so
+// "latest" still does not.
 func isSmellTestPath(p string) bool {
 	p = strings.TrimPrefix(p, "./")
 	for _, seg := range strings.Split(p, "/") {
-		if smellTestSegs[seg] {
+		lower := strings.ToLower(seg)
+		if smellTestSegs[lower] || strings.HasSuffix(lower, ".tests") {
 			return true
 		}
 	}
