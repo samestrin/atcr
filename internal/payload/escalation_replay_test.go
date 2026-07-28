@@ -335,11 +335,17 @@ func TestEscalationReplay_SweepCandidateThresholds(t *testing.T) {
 	// Candidates are built from an EXPLICIT pre-tuning baseline, not from
 	// DefaultEscalationConfig(): the shipped defaults are themselves an output of
 	// this sweep, so rooting the candidates on them would silently re-label every
-	// row the next time a default moves.
-	preTuning := DefaultEscalationConfig()
-	preTuning.MinHunks = 4
-	preTuning.HunkGapLines = 10
-	preTuning.MinCyclomatic = 15
+	// row the next time a default moves. Every field is literal for the same
+	// reason — inheriting ChurnRatio, MaxFiles or MaxSkeletonLines from the
+	// shipped defaults would re-label the "pre-tuning" row just as surely.
+	preTuning := EscalationConfig{
+		ChurnRatio:       0.5,
+		MinHunks:         4,
+		HunkGapLines:     10,
+		MinCyclomatic:    15,
+		MaxFiles:         50,
+		MaxSkeletonLines: 60,
+	}
 
 	for _, c := range []struct {
 		label string
