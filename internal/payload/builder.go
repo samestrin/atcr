@@ -307,8 +307,10 @@ func renderWithSentinels(content string, ranges []lineRange) string {
 		}
 		// Neutralize content lines that would spoof a sentinel: a head file
 		// containing a literal sentinel line could otherwise mislead consumers
-		// about which regions changed.
-		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) {
+		// about which regions changed, or — with the skeleton markers — inject a
+		// fabricated declaration map the reviewing model trusts as authoritative.
+		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) ||
+			strings.HasPrefix(line, skeletonStart) || strings.HasPrefix(line, skeletonEnd) {
 			b.WriteString("> ")
 		}
 		b.WriteString(line)
