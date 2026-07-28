@@ -218,7 +218,8 @@ func renderAXI(w io.Writer, findings []reconcile.JSONFinding) error {
 
 // axiRow encodes one finding into a TOON row: the base 9 columns mirroring the
 // atcr-findings/v1 reconciled column order, plus the additive disagreement,
-// verification.* and evidence_exec.* columns when the payload declares them.
+// verification.*, evidence_exec.*, fix_warning and fix_review columns when the
+// payload declares them.
 // FILE:LINE is one combined column (as in v1); est_minutes, exit_code and
 // challenge_survived are emitted as bare numbers/booleans; every free-text field
 // is routed through toonQuote. A finding missing a declared signal contributes
