@@ -574,3 +574,25 @@ func TestGenerateFixes_MultiFindingGateIsPerFinding(t *testing.T) {
 		assert.Equal(t, 1, rec.callsFor("b.go"), "b.go: accepted first time, no retry")
 	}
 }
+
+// The "never a SILENT bypass" oversize check guards only the FIRST attempt. The
+// retry feeds straight into evaluateFixSmell, which returns nil for anything over
+// maxFixBytes — so an oversized RETRY is accepted as clean with no warning, no log
+// record and no FixReview. That is exactly the escape a model just told "your
+// previous attempt was rejected" would find, and it fails open on the MORE
+// suspicious of the two attempts.
+func TestGenerateFixes_OversizedRetryIsAnnouncedNotSilentlyAccepted(t *testing.T) {
+	// A reward hack (test_only + weakened_assertion) padded past the scan cap.
+	huge := dsTestOnly + strings.Repeat("+// padding\n", (maxFixBytes/12)+1)
+	require.Greater(t, len(huge), maxFixBytes)
+
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, huge}}
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	require.Equal(t, 2, rec.callCount(), "one attempt plus exactly one retry")
+	assert.Contains(t, buf.String(), "executor_smell_skipped",
+		"an UNSCANNED retry must be announced on the same terms as an unscanned first attempt")
+}
