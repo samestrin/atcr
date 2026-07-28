@@ -45,6 +45,15 @@ type sequencedExecutor struct {
 	outs    []string
 	calls   int
 	prompts []string
+
+	// byFile scripts responses PER FINDING, keyed on the finding's file path. With
+	// more than one finding generateFixes runs its workers concurrently, so `outs`
+	// — handed out by a shared call counter — maps responses to findings by
+	// goroutine scheduling order, which is nondeterministic. Any multi-finding test
+	// written against `outs` is flaky by construction. When byFile is set it takes
+	// precedence and `outs` is ignored.
+	byFile map[string][]string
+	perFn  map[string]int
 }
 
 func (s *sequencedExecutor) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
@@ -69,6 +78,13 @@ func (s *sequencedExecutor) promptAt(i int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.prompts[i]
+}
+
+// callsFor reports how many times the finding at path was served from byFile.
+func (s *sequencedExecutor) callsFor(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.perFn[path]
 }
 
 // flakySequencedExecutor is a sequencedExecutor that can also script an error
@@ -478,4 +494,47 @@ func TestEvaluateFixSmell(t *testing.T) {
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
 	assert.NotContains(t, res.Summary.ByType, smellTestOnly)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion)
+}
+
+// --- multi-finding gate behaviour (per-finding scripting) ---
+
+// gateFindings builds one fix-eligible finding per path, so a test can drive
+// generateFixes' worker pool with more than one finding — the shape every gate
+// test above avoids, and the one the gate itself changed by adding a SECOND
+// executor call inside each worker goroutine.
+func gateFindings(files ...string) []reconcile.JSONFinding {
+	out := make([]reconcile.JSONFinding, 0, len(files))
+	for _, f := range files {
+		out = append(out, reconcile.JSONFinding{
+			Severity: "HIGH", File: f, Line: 1, Problem: "p",
+			Confidence: ConfidenceVerified, Evidence: "ev",
+		})
+	}
+	return out
+}
+
+// With N > 1 findings the workers run concurrently, so a shared call counter maps
+// responses to findings by scheduling order — nondeterministic by construction.
+// Scripting per finding (byFile) makes the mapping total and stable, which is what
+// lets this test assert each finding's OWN Fix/FixWarning.
+func TestGenerateFixes_MultiFindingGateIsPerFinding(t *testing.T) {
+	for i := 0; i < 25; i++ {
+		findings := gateFindings("a.go", "b.go")
+		rec := &sequencedExecutor{byFile: map[string][]string{
+			// a.go returns the reward hack twice: rejected, retried, halted.
+			"a.go": {acAssertionDeleted, acAssertionDeleted},
+			// b.go returns an honest fix first time: accepted, no retry.
+			"b.go": {gateCleanDiff},
+		}}
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+		assert.Empty(t, findings[0].Fix, "a.go: a twice-rejected patch must never reach Fix")
+		assert.Contains(t, findings[0].FixWarning, smellWeakenedAssertion, "a.go: the halt must name its smell")
+
+		assert.Equal(t, strings.TrimSpace(gateCleanDiff), findings[1].Fix, "b.go: the honest fix must be accepted")
+		assert.Empty(t, findings[1].FixWarning, "b.go: an accepted fix must not inherit a.go's rejection")
+
+		assert.Equal(t, 2, rec.callsFor("a.go"), "a.go: one attempt plus exactly one retry")
+		assert.Equal(t, 1, rec.callsFor("b.go"), "b.go: accepted first time, no retry")
+	}
 }
