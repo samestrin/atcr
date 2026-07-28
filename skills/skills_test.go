@@ -412,9 +412,25 @@ func fieldValue(fm, key string) string {
 // validateRangeFlags in cli/flags.go. This is the routing-drift guard for the
 // baseline routes — removing either from SKILL.md fails the build.
 func TestSkill_BaselineReviewRoutes(t *testing.T) {
+	// Scoped to the Input Format section. A repo-wide substring search would stay
+	// green on the single mutual-exclusivity sentence alone, so deleting both
+	// route bullets would not fail the test — exactly the regression AC4 names.
+	inputs := skillSection(t, "## Input Format", "## Orchestration Steps")
 	for _, flag := range []string{"--all", "--dir"} {
-		assert.Contains(t, SkillMD, "`"+flag+"`",
-			"SKILL.md must document the %s baseline input", flag)
+		assert.Contains(t, inputs, "`"+flag+"`",
+			"the Input Format section must document the %s baseline input", flag)
+	}
+	for _, bullet := range []string{"**Whole repository**", "**A subtree**"} {
+		assert.Contains(t, inputs, bullet,
+			"the Input Format section must carry the %s baseline route bullet", bullet)
+	}
+
+	// The routes must also be reachable from the orchestration the agent runs,
+	// not merely listed as accepted input.
+	steps := skillSection(t, "## Orchestration Steps", "## Commands")
+	for _, flag := range []string{"--all", "--dir", "--fresh"} {
+		assert.Contains(t, steps, flag,
+			"the Orchestration Steps must show %s on the atcr review invocation", flag)
 	}
 
 	// Mutual exclusivity against every range flag must be stated, or an agent
@@ -430,4 +446,18 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 	// about to get a re-review of unchanged files.
 	assert.Contains(t, SkillMD, "`--fresh`",
 		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
+}
+
+// skillSection returns the body of SKILL.md between the start heading and the
+// next heading, so a section-scoped assertion cannot be satisfied by a match
+// elsewhere in the file. Both headings must be present.
+func skillSection(t *testing.T, start, end string) string {
+	t.Helper()
+	from := strings.Index(SkillMD, "\n"+start+"\n")
+	require.GreaterOrEqual(t, from, 0, "SKILL.md must contain the %q heading", start)
+	from += len(start) + 2
+
+	to := strings.Index(SkillMD[from:], "\n"+end+"\n")
+	require.GreaterOrEqual(t, to, 0, "SKILL.md must contain the %q heading after %q", end, start)
+	return SkillMD[from : from+to]
 }

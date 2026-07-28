@@ -101,6 +101,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
+| `atcr skill` | Install the embedded Agent Skill; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes it to your agent harness's skills directory |
 | `atcr version` | Print the atcr version |
 
 Key flags:

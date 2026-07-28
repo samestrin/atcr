@@ -77,7 +77,25 @@ func TestLayout_OneSkillMDPerSkillDirectory(t *testing.T) {
 func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 	root := repoRoot(t)
 
-	stale := regexp.MustCompile(`(^|[^a-zA-Z0-9_./-])` + "skill" + `/`)
+	// Three forms the pre-rename tree actually used all have to be covered, or the
+	// guard passes on exactly the references it exists to catch:
+	//
+	//  1. a directory reference, bare or path-prefixed. Markdown relative links
+	//     were the bulk of these and every one led with a dot or a slash, so the
+	//     leading-character class must ADMIT `.` and `/` rather than exclude them.
+	//  2. the Go import path, which has no trailing slash at all: the module path
+	//     followed by the old package name and then a quote or whitespace.
+	//  3. the quoted path-segment form used by filepath.Join, where the old
+	//     directory name is a string argument followed by a skill filename.
+	//
+	// Every pattern is assembled from parts, and this file names the old directory
+	// nowhere as a literal, so the guard scans itself without self-matching.
+	old := "skill"
+	stale := regexp.MustCompile(strings.Join([]string{
+		`(^|[^a-zA-Z0-9_-])` + old + `/`,
+		`atcr/` + old + `["'\s]`,
+		`"` + old + `"\s*,\s*"[A-Za-z0-9._-]+\.md"`,
+	}, "|"))
 
 	scanned := map[string]bool{".go": true, ".md": true, ".yml": true, ".yaml": true, ".json": true, ".sh": true}
 	skipDirs := map[string]bool{"node_modules": true, "bin": true, "vendor": true, "testdata": true}

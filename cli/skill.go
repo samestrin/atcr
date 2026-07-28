@@ -69,7 +69,14 @@ func knownHarnesses() []string {
 // reachable.
 func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 	if dir != "" {
-		return dir, nil
+		// A quoted or config-supplied --dir '~/...' would otherwise create a
+		// directory literally named `~` under the cwd. The flag's own help text
+		// uses a ~/ example, so it must expand like the table paths do.
+		expanded, err := expandHome(dir)
+		if err != nil {
+			return "", fmt.Errorf("resolving home directory in --dir %q: %w", dir, err)
+		}
+		return expanded, nil
 	}
 
 	h, ok := skillHarnesses[harness]
@@ -93,12 +100,23 @@ func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 }
 
 // dirIsNonEmpty reports whether path exists and holds at least one entry. A
-// missing path is empty, not an error: creating it is the ordinary case.
+// missing path is empty, not an error: creating it is the ordinary case. A path
+// that exists but is not a directory is a usage error, reported as such rather
+// than surfacing a raw ENOTDIR from the subsequent read.
 func dirIsNonEmpty(path string) (bool, error) {
-	entries, err := os.ReadDir(path)
+	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, usageError(fmt.Errorf(
+			"destination %s exists and is not a directory; pass --dir <path> to name a directory instead", path))
+	}
+
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return false, err
 	}
@@ -161,6 +179,9 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 
 	nonEmpty, err := dirIsNonEmpty(dest)
 	if err != nil {
+		if exitCode(err) == exitUsage {
+			return err // already a usage error with an actionable message
+		}
 		return fmt.Errorf("inspecting destination %s: %w", dest, err)
 	}
 	if nonEmpty && !force {
@@ -248,6 +269,14 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 		if err != nil {
 			return fmt.Errorf("reading embedded %s: %w", path, err)
 		}
+		// Remove any existing entry before writing. os.WriteFile follows a
+		// symlink and would write the skill content THROUGH it, clobbering a file
+		// outside the destination entirely — a real hazard for anyone who
+		// symlinked an installed skill file back to a source checkout. Replacing
+		// the entry keeps every write inside dest.
+		if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("replacing %s: %w", target, err)
+		}
 		if err := os.WriteFile(target, data, 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", target, err)
 		}
@@ -255,6 +284,19 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 		return nil
 	})
 	if err != nil {
+		// A mid-walk failure leaves the destination holding a mix of new and old
+		// files. Name what did land so the user knows the tree is half-updated
+		// rather than untouched.
+		if len(written) > 0 {
+			done := make([]string, 0, len(written))
+			for name := range written {
+				done = append(done, name)
+			}
+			sort.Strings(done)
+			return written, fmt.Errorf(
+				"%w (destination %s is now partially updated — these file(s) were already replaced: %s; re-run with --force once the cause is fixed)",
+				err, dest, strings.Join(done, ", "))
+		}
 		return written, err
 	}
 	if len(written) == 0 {

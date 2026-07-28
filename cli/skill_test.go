@@ -269,3 +269,69 @@ func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "warning:", "a clean export must emit no leftover warning")
 }
+
+// TestSkillExport_ReplacesSymlinkRatherThanWritingThroughIt — os.WriteFile follows
+// a symlink, which would push skill content through the link and clobber a file
+// OUTSIDE the destination while still exiting 0. A user who symlinked an installed
+// skill file back to a source checkout would hit this without doing anything
+// adversarial, so every write must land inside the destination.
+func TestSkillExport_ReplacesSymlinkRatherThanWritingThroughIt(t *testing.T) {
+	tmp := t.TempDir()
+	dest := filepath.Join(tmp, "atcr")
+	require.NoError(t, os.MkdirAll(dest, 0o755))
+
+	victim := filepath.Join(tmp, "victim.md")
+	require.NoError(t, os.WriteFile(victim, []byte("untouched"), 0o644))
+	require.NoError(t, os.Symlink(victim, filepath.Join(dest, "SKILL.md")))
+
+	_, err := execSkillExport(t, "--dir", dest, "--force")
+	require.NoError(t, err)
+
+	survived, readErr := os.ReadFile(victim)
+	require.NoError(t, readErr)
+	assert.Equal(t, "untouched", string(survived),
+		"export must not write through a symlink to a file outside the destination")
+
+	inside, readErr := os.ReadFile(filepath.Join(dest, "SKILL.md"))
+	require.NoError(t, readErr)
+	assert.Equal(t, skills.SkillMD, string(inside), "the symlink must have been replaced by a real file")
+}
+
+// TestSkillExport_DestinationIsAFileIsAUsageError — a destination that exists as a
+// regular file is a mistake in the invocation, so it must exit 2 with a message
+// naming the problem, not leak a raw ENOTDIR at exit 1.
+func TestSkillExport_DestinationIsAFileIsAUsageError(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+	require.NoError(t, os.WriteFile(dest, []byte("i am a file"), 0o644))
+
+	out, err := execSkillExport(t, "--dir", dest)
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "a non-directory destination is a usage error")
+	assert.Contains(t, out+err.Error(), "not a directory", "the message must name the actual problem")
+}
+
+// TestSkillExport_DirExpandsLeadingTilde — --dir is documented with a ~/ example,
+// so a quoted or config-supplied ~/... must resolve against the home directory
+// rather than creating a directory literally named "~" under the cwd.
+func TestSkillExport_DirExpandsLeadingTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	got, err := resolveSkillDest("claude", false, "~/.someagent/skills/atcr")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".someagent", "skills", "atcr"), got,
+		"a leading ~/ in --dir must expand, not become a literal directory name")
+}
+
+// TestSkillExport_DefaultHarnessWritesToProjectPath — every other export test
+// passes --dir, which skips harness resolution entirely; this exercises the
+// default, most common invocation end to end, from resolved path to file on disk.
+func TestSkillExport_DefaultHarnessWritesToProjectPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, err := execSkillExport(t)
+	require.NoError(t, err, "the default invocation must succeed")
+
+	_, statErr := os.Stat(filepath.Join(".claude", "skills", "atcr", "SKILL.md"))
+	assert.NoError(t, statErr, "the default harness must write to its documented project path")
+}
