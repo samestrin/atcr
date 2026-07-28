@@ -490,6 +490,103 @@ func TestCommitBaselineIndex_NoUncoveredRecordsEverythingAndStillTrims(t *testin
 		"every reviewed file recorded and the untracked path trimmed, unchanged from pre-35.2")
 }
 
+// BaselineCoverage must report the write-back's ACTUAL outcome, so the CLI can log
+// what was recorded instead of inferring coverage from Summary.UnreviewedChunks.
+// Partial, full, and zero coverage are all distinguishable from the counts alone.
+func TestBaselineCoverage_ReportsRecordedAndExcluded(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+
+	t.Run("partial coverage", func(t *testing.T) {
+		repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n", "c.go": "package c\n"})
+		prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+		require.NoError(t, err)
+		prep.baseline.uncovered = map[string]struct{}{"c.go": {}}
+
+		require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+		recorded, excluded := prep.BaselineCoverage()
+		assert.Equal(t, 2, recorded, "the two covered files were recorded")
+		assert.Equal(t, 1, excluded, "the failed chunk's file was excluded")
+	})
+
+	t.Run("full coverage", func(t *testing.T) {
+		repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+		prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+		require.NoError(t, err)
+		require.Nil(t, prep.baseline.uncovered, "full coverage is the nil default")
+
+		require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+		recorded, excluded := prep.BaselineCoverage()
+		assert.Equal(t, 2, recorded)
+		assert.Zero(t, excluded, "nothing was excluded on a fully covered run")
+	})
+
+	// The case the operator can currently not see at all: nothing was recorded and
+	// the index was left untouched, yet Summary.UnreviewedChunks may read 0.
+	t.Run("zero coverage", func(t *testing.T) {
+		repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+		prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+		require.NoError(t, err)
+		prep.baseline.uncovered = map[string]struct{}{"a.go": {}, "b.go": {}}
+
+		require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+		recorded, excluded := prep.BaselineCoverage()
+		assert.Zero(t, recorded, "nothing was covered, so nothing was recorded")
+		assert.Equal(t, 2, excluded, "every reviewed file was excluded — the signal a zero-coverage run must expose")
+	})
+
+	// No baseline state at all (diff-range review): the accessor is a safe zero.
+	t.Run("no baseline state", func(t *testing.T) {
+		var prep *PreparedReview
+		recorded, excluded := prep.BaselineCoverage()
+		assert.Zero(t, recorded)
+		assert.Zero(t, excluded)
+	})
+}
+
+// The scenario Summary.UnreviewedChunks structurally cannot report: one persona whose
+// chunks ALL fail alongside a persona that succeeds. mergeResultGroup sets
+// UnreviewedChunks only when okCount > 0 && okCount < len(g), so the wholly-failed
+// persona contributes 0 — the run looks fully covered from the summary alone. The
+// coverage counts must expose the exclusion that the summary hides.
+func TestBaselineCoverage_WhollyFailedPersonaIsVisibleWhenSummaryIsNot(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
+	require.NoError(t, err)
+
+	// One slot per persona over disjoint chunks; greta's every request fails, kai's
+	// succeeds. Driven through the REAL engine so the result/slot correspondence the
+	// attribution depends on is exercised rather than hand-built.
+	f := newFake()
+	f.failFor["m-greta"] = errors.New("boom")
+	slots := []Slot{
+		{Primary: Agent{Name: "greta", Invocation: llmclient.Invocation{Model: "m-greta"}, chunkFiles: []string{"a.go"}}},
+		{Primary: Agent{Name: "kai", Invocation: llmclient.Invocation{Model: "m-kai"}, chunkFiles: []string{"b.go"}}},
+	}
+	results := NewEngine(f).Run(context.Background(), slots)
+	require.Len(t, results, 2)
+
+	// The summary signal the CLI currently keys its warning off: greta failed
+	// WHOLLY, so mergeResultGroup records no unreviewed chunks for it.
+	merged := mergeResultGroup(results[:1], nil)
+	require.NotEqual(t, StatusOK, merged.Status, "a wholly failed persona is not OK")
+	require.Zero(t, merged.UnreviewedChunks,
+		"the bug's root: a wholly failed persona contributes 0 unreviewed chunks")
+
+	prep.baseline.reviewed = map[string]string{"a.go": "h-a", "b.go": "h-b"}
+	prep.baseline.uncovered = uncoveredBaselineFiles(slots, results, prep.baseline.reviewed)
+	require.NoError(t, prep.CommitBaselineIndex("run-1"))
+
+	recorded, excluded := prep.BaselineCoverage()
+	assert.Equal(t, 1, recorded, "only the succeeded persona's file was recorded")
+	assert.Equal(t, 1, excluded,
+		"the wholly-failed persona's file was excluded — invisible in UnreviewedChunks, visible here")
+}
+
 // sortedKeys returns m's keys in ascending order for stable assertions.
 func sortedKeys(m map[string]string) []string {
 	out := make([]string, 0, len(m))

@@ -257,6 +257,29 @@ type baselineWriteback struct {
 	// is the pre-35.2 behavior and the path a resume/direct caller that never runs
 	// the engine keeps.
 	uncovered map[string]struct{}
+	// lastRecorded/lastExcluded are the outcome of the most recent
+	// CommitBaselineIndex call, surfaced to the caller through BaselineCoverage so
+	// the operator-facing log line can state what the write-back ACTUALLY did
+	// instead of inferring it from Summary.UnreviewedChunks (Epic 35.2 TD).
+	lastRecorded int
+	lastExcluded int
+}
+
+// BaselineCoverage reports what the most recent CommitBaselineIndex call did:
+// how many reviewed files it recorded in the incremental index, and how many it
+// excluded because the chunk carrying them failed. Both are 0 before the first
+// commit and for a diff-range review (no baseline state).
+//
+// This is the coverage signal callers must log against — NOT
+// ReviewResult.Summary.UnreviewedChunks, which mergeResultGroup sets only for a
+// persona with a MIX of succeeded and failed chunks (internal/fanout/chunker.go).
+// A WHOLLY failed persona contributes 0 to that count, so a run can record
+// nothing at all while UnreviewedChunks reads 0.
+func (p *PreparedReview) BaselineCoverage() (recorded, excluded int) {
+	if p == nil || p.baseline == nil {
+		return 0, 0
+	}
+	return p.baseline.lastRecorded, p.baseline.lastExcluded
 }
 
 // CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
