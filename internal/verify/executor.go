@@ -291,6 +291,28 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// silently downgraded to the single-shot snippet path (Epic 35.3).
 			// smellRetry is empty on the first attempt.
 			agentPath := ex.AgentMode && cc != nil && disp != nil
+			if ex.AgentMode && !agentPath {
+				// Agent mode requested but the harness is unavailable (no skeptics
+				// ran and no snapshot was built). Degrade to the snippet path rather
+				// than dropping the fix (AC6). Logged ONCE per finding, here, rather
+				// than inside generate — the diff-smell retry re-enters generate, and
+				// a per-attempt log makes this line useless as a per-finding count.
+				missing := []string{}
+				if cc == nil {
+					missing = append(missing, "chat")
+				}
+				if disp == nil {
+					missing = append(missing, "dispatcher")
+				}
+				logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: %s unavailable, using snippet path", f.File, f.Line, strings.Join(missing, "/")))
+			}
+			// The snippet is read once per finding and reused across the first
+			// attempt and the diff-smell retry — the range cannot change between
+			// the two, so a second dispatcher read is wasted sandbox work.
+			snippet := ""
+			if !agentPath {
+				snippet = readFixSnippet(ctx, disp, f.File, f.Line)
+			}
 			generate := func(smellRetry string) (out, warn string, truncated bool) {
 				if agentPath {
 					// Agent mode (Epic 7.4): drive the read-only tool loop, reusing the
@@ -298,20 +320,6 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					// (provider error, tripped budget, parse failure) comes back as warn.
 					return invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry)
 				}
-				if ex.AgentMode {
-					// Agent mode requested but the harness is unavailable (no skeptics
-					// ran and no snapshot was built). Degrade to the snippet path rather
-					// than dropping the fix (AC6).
-					missing := []string{}
-					if cc == nil {
-						missing = append(missing, "chat")
-					}
-					if disp == nil {
-						missing = append(missing, "dispatcher")
-					}
-					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: %s unavailable, using snippet path", f.File, f.Line, strings.Join(missing, "/")))
-				}
-				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 				prompt := buildFixPrompt(*f, snippet, ex, smellRetry)
 				o, tr, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 				if err != nil && !tr {
