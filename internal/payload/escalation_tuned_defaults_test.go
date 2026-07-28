@@ -20,8 +20,10 @@ import (
 // same git-fixture pattern escalation_integration_test.go uses.
 //
 // Each fixture is built so exactly one signal is in play: churn stays far below
-// the ratio, complexity fixtures have a single hunk, and hunk-count fixtures use
-// trivial one-line functions.
+// the ratio, complexity fixtures have a single hunk, and hunk-count fixtures
+// edit every OTHER trivial function so neighbouring hunks sit 7 unchanged lines
+// apart — well clear of the adjacency threshold, so a hunk_gap re-tune cannot
+// flip a min_hunks assertion.
 
 // trivialFunc renders a 4-line function block (declaration, body, brace, blank)
 // returning n plus a constant. Editing only the constant produces exactly one
@@ -83,7 +85,7 @@ func fixtureMode(t *testing.T, before, after string) PayloadMode {
 // signal exists to catch, and at the old threshold of 4 it promoted every such
 // file out of the mode the operator configured.
 func TestTunedDefaults_FourScatteredHunksStayInDiff(t *testing.T) {
-	edited := map[int]bool{0: true, 1: true, 2: true, 3: true}
+	edited := map[int]bool{0: true, 2: true, 4: true, 6: true}
 	got := fixtureMode(t, scatteredFile(16, nil), scatteredFile(16, edited))
 	require.Equal(t, ModeDiff, got, "4 scattered hunks must no longer promote")
 }
@@ -93,7 +95,7 @@ func TestTunedDefaults_FourScatteredHunksStayInDiff(t *testing.T) {
 // the effective threshold by one, so the fixture immediately below the line is
 // what actually holds min_hunks at 8.
 func TestTunedDefaults_SevenScatteredHunksStayInDiff(t *testing.T) {
-	edited := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true}
+	edited := map[int]bool{0: true, 2: true, 4: true, 6: true, 8: true, 10: true, 12: true}
 	got := fixtureMode(t, scatteredFile(16, nil), scatteredFile(16, edited))
 	require.Equal(t, ModeDiff, got, "7 scattered hunks is one below the threshold and must not promote")
 }
@@ -102,7 +104,7 @@ func TestTunedDefaults_SevenScatteredHunksStayInDiff(t *testing.T) {
 // tuning damps the signal, it does not disable it. Eight separate edit sites in
 // one file is genuinely scattered.
 func TestTunedDefaults_EightScatteredHunksStillPromote(t *testing.T) {
-	edited := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true, 7: true}
+	edited := map[int]bool{0: true, 2: true, 4: true, 6: true, 8: true, 10: true, 12: true, 14: true}
 	got := fixtureMode(t, scatteredFile(16, nil), scatteredFile(16, edited))
 	require.Equal(t, ModeBlocks, got, "8 scattered hunks must still promote")
 }
