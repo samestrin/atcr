@@ -336,6 +336,45 @@ func Branchy(n int) int {
 	require.Equal(t, 6, MaxFuncCyclomatic(root))
 }
 
+func TestMaxFuncCyclomaticInRanges_OnlyCountsOverlappingFunctions(t *testing.T) {
+	// A file with one trivial function and one very branchy one. Scoping the
+	// complexity to the CHANGED region must report only the score of the function
+	// the change overlaps: a one-line edit in the trivial helper must NOT surface
+	// the branchy function's score (Epic 35.1 TD — the file-wide max fired on
+	// unchanged complex code elsewhere in the file).
+	src := `package p
+
+func Trivial() int { return 1 }
+
+func Branchy(n int) int {
+	if n > 1 {
+		return 1
+	}
+	if n > 2 {
+		return 2
+	}
+	for i := 0; i < n; i++ {
+		if i > 3 {
+			return i
+		}
+	}
+	return 0
+}
+`
+	root := parseGoForSkeleton(t, src)
+	full := MaxFuncCyclomatic(root) // == Branchy's score, the file-wide max
+	require.Greater(t, full, 1, "Branchy must be the branchier function")
+
+	// Trivial() is on line 3; a change overlapping only it scores 1.
+	require.Equal(t, 1, MaxFuncCyclomaticInRanges(root, [][2]int{{3, 3}}),
+		"a change overlapping only the trivial function must not report Branchy's score")
+	// A change overlapping Branchy (its first `if` is on line 6) reports its score.
+	require.Equal(t, full, MaxFuncCyclomaticInRanges(root, [][2]int{{6, 7}}),
+		"a change overlapping the branchy function reports its full score")
+	// No changed ranges → nothing overlaps → 0.
+	require.Equal(t, 0, MaxFuncCyclomaticInRanges(root, nil))
+}
+
 func TestMaxFuncCyclomatic_NoFunctionsScoresZero(t *testing.T) {
 	root := parseGoForSkeleton(t, "package p\n\ntype T struct{ A int }\n")
 

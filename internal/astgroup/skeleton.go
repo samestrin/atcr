@@ -323,6 +323,19 @@ func MaxFuncCyclomatic(root Node) int {
 	return max
 }
 
+// MaxFuncCyclomaticInRanges is MaxFuncCyclomatic restricted to functions whose
+// line span overlaps one of ranges (each a 1-based inclusive [start, end], a
+// changed hunk). It answers "is any function TOUCHED by the change too branchy to
+// review from hunks alone" — the question a per-file escalation decision turns on.
+// The file-wide maximum would instead fire on an unchanged complex function
+// elsewhere in the file. Functions overlapping no range are ignored; empty ranges
+// score 0.
+func MaxFuncCyclomaticInRanges(root Node, ranges [][2]int) int {
+	// STUB (RED): ignores ranges and returns the file-wide maximum — the wrong,
+	// pre-fix behavior. Replaced in GREEN.
+	return MaxFuncCyclomatic(root)
+}
+
 func countBranches(n Node) int {
 	total := 0
 	if branchKinds[n.Kind] {
