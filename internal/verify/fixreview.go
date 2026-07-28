@@ -43,6 +43,10 @@ const smellRetryInstruction = "Your previous attempt was rejected: it made the f
 // verdict, so a co-occurring SOFT smell still surfaces as soft_only rather than
 // being masked to clean. weakened_assertion is NOT suppressed: deleting an
 // assertion is the reward hack this gate exists to catch, in test files most of all.
+// smellScanSkipReason reports why the diff-smell gate cannot scan fix, or "" when
+// it can. TODO(RED): stub — always reports "scannable".
+func smellScanSkipReason(_ string) string { return "" }
+
 func evaluateFixSmell(fix, findingFile string) *smellResult {
 	// Defensive: a nil/empty fix is never gateable. Redundant with the
 	// looksLikeUnifiedDiff check below (which also rejects ""), but explicit so a

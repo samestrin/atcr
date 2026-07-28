@@ -484,6 +484,43 @@ func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
 	assert.NotContains(t, buf.String(), "executor_smell_skipped", "a scanned fix must not be reported as skipped")
 }
 
+// The gate has TWO nil-return shapes and both are bypasses, so both must leave a
+// trace. Oversize was announced from the start; !looksLikeUnifiedDiff was silent,
+// so a genuine diff that failed the heuristic (a context diff, a mangled header)
+// slipped past with nothing in the log to say the scan never ran — exactly the
+// asymmetry the oversize announcement exists to prevent.
+func TestGenerateFixes_NonDiffFixLogsGateSkip(t *testing.T) {
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{"change meetsSeverityFloor to use >= instead of >"}}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+	assert.NotEmpty(t, findings[0].Fix, "a free-form fix is still accepted, only unscanned")
+	assert.Contains(t, buf.String(), "executor_smell_skipped",
+		"a fix the gate cannot scan must leave a trace, diff-shaped or not")
+	assert.Empty(t, findings[0].FixWarning, "an unscanned fix must not manufacture a rejection")
+	assert.Empty(t, findings[0].FixReview, "an unscanned fix must not manufacture an annotation")
+}
+
+// smellScanSkipReason is the single source of truth for "the gate cannot scan
+// this". Pinning it directly is what keeps the threshold from drifting back
+// apart between evaluateFixSmell and the executor's scanFix.
+func TestSmellScanSkipReason(t *testing.T) {
+	assert.Equal(t, "", smellScanSkipReason(gateCleanDiff), "a scannable diff has no skip reason")
+
+	huge := gateCleanDiff + strings.Repeat("+// padding\n", (maxFixBytes/12)+1)
+	require.Greater(t, len(huge), maxFixBytes)
+	assert.Contains(t, smellScanSkipReason(huge), "scan cap", "an oversized fix reports the cap")
+
+	assert.Contains(t, smellScanSkipReason("just change the return value"), "unified diff",
+		"a non-diff fix reports the shape mismatch")
+
+	// Oversize wins over shape so the reason names the more suspicious cause.
+	assert.Contains(t, smellScanSkipReason(strings.Repeat("x", maxFixBytes+1)), "scan cap")
+}
+
 // An UNFENCED unified diff is not Go source. The syntax guard used to parse it
 // and stamp a guaranteed-bogus "expected declaration, found diff" — on exactly
 // the fix shape --auto-fix consumes. It must be exempt on content, not just on a
