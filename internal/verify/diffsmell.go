@@ -364,8 +364,14 @@ func analyzeDiff(diff string) *smellResult {
 			}
 		}
 
-		// SOFT: per-added-line fingerprints.
+		// SOFT: per-added-line fingerprints. A line whose text also appears
+		// verbatim (modulo surrounding whitespace) among the file's REMOVED lines
+		// was relocated or reindented, not introduced — stamping it as a new
+		// shortcut false-positives on every move (TD: diffsmell.go:120).
 		for i, a := range fc.added {
+			if smellRelocated(fc.removed, a.text) {
+				continue
+			}
 			if smellSuppressionRe.MatchString(a.text) {
 				add(smell{Type: smellSuppression, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
 			}
@@ -395,6 +401,23 @@ func analyzeDiff(diff string) *smellResult {
 		res.Summary.Verdict = smellVerdictClean
 	}
 	return res
+}
+
+// smellRelocated reports whether an added line also appears verbatim — modulo
+// leading/trailing whitespace — among the same file's removed lines. A line that
+// was merely moved or reindented is not a NEW shortcut, so the per-line SOFT
+// fingerprints (suppression, empty_catch, stub_body) must not fire on it.
+func smellRelocated(removed []string, added string) bool {
+	t := strings.TrimSpace(added)
+	if t == "" {
+		return false
+	}
+	for _, r := range removed {
+		if strings.TrimSpace(r) == t {
+			return true
+		}
+	}
+	return false
 }
 
 // smellHeaderPath strips the "a/" or "b/" prefix and any trailing tab metadata
