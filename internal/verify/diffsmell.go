@@ -1,11 +1,26 @@
 package verify
 
 // diffsmell.go is a PORT of llm-tools' `diff-smell` analyzer
-// (github.com/samestrin/llm-tools, internal/support/commands/diff_smell.go,
-// v1.5.0) — copied and adapted rather than imported, because the upstream
-// function lives under that module's own internal/ and is therefore not
-// importable across modules. Like the original it depends only on stdlib
-// regexp/strings, so the port adds no dependency to go.mod (Epic 35.3).
+// (github.com/samestrin/llm-tools, internal/support/commands/diff_smell.go) —
+// copied and adapted rather than imported, because the upstream function lives
+// under that module's own internal/ and is therefore not importable across
+// modules. Like the original it depends only on stdlib regexp/strings, so the
+// port adds no dependency to go.mod (Epic 35.3).
+//
+// Ported from upstream commit e885c953eddb45c648467a9f6f43bf3ebc586560 — the
+// sole commit that introduced and last touched diff_smell.go. The SHA, not a
+// release tag, is the drift anchor: it names the state of llm-tools'
+// internal/support/commands package this file was copied from, and the v1.5.0
+// tag this header used to cite PREDATES the file, so it never identified a
+// version of it.
+//
+// Drift is tracked ONE-WAY, by deliberate choice: testdata/diffsmell/ holds a
+// corpus of .diff files with the verdicts atcr's OWN analyzeDiff must produce
+// (TestAnalyzeDiff_Corpus). It is NOT automatically verified against upstream —
+// a two-way check would have to vendor the upstream analyzer or shell out to an
+// installed llm-support binary, reintroducing exactly the cross-module coupling
+// this port exists to avoid. When upstream changes, replay the corpus by hand
+// and record any new divergence in the list below.
 //
 // It scans a unified diff for the mechanical fingerprints of an
 // over-simplified ("reward-hacked") patch: a fix that makes a test pass by
