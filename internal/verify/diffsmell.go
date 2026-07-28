@@ -72,9 +72,12 @@ const (
 	// smellTestSkipped is an atcr addition, not an upstream type: upstream has no
 	// skip detector. See the skip branch in analyzeDiff.
 	smellTestSkipped = "test_skipped"
-	smellSuppression = "suppression"
-	smellEmptyCatch  = "empty_catch"
-	smellStubBody    = "stub_body"
+	// smellTestRenamedAway is an atcr addition, not an upstream type: renaming a
+	// test file to a non-test path disables it as effectively as deleting it.
+	smellTestRenamedAway = "test_renamed_away"
+	smellSuppression     = "suppression"
+	smellEmptyCatch      = "empty_catch"
+	smellStubBody        = "stub_body"
 )
 
 // Severity values, mirroring upstream's smell.severity. HARD smells reject a

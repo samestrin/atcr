@@ -478,3 +478,50 @@ func TestAnalyzeDiff_TestSkipNegativeControls(t *testing.T) {
 		})
 	}
 }
+
+// Renaming a test file to a non-test path disables it as effectively as deleting
+// it — and it is WORSE than a deletion for this analyzer, because the renamed
+// file is recorded as an IMPL file, which additionally suppresses test_only for
+// everything else in the same diff. Only the `diff --git` header carries the old
+// path, so it must be parsed.
+const dsTestRenamedAway = `diff --git a/internal/verify/select_test.go b/internal/verify/select_disabled.go
+similarity index 100%
+rename from internal/verify/select_test.go
+rename to internal/verify/select_disabled.go
+`
+
+func TestAnalyzeDiff_TestRenamedAwayIsHard(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		diff string
+	}{
+		{"rename to non-test path", dsTestRenamedAway},
+		{"rename by suffixing the extension", "diff --git a/x_test.go b/x_test.go.disabled\nsimilarity index 100%\nrename from x_test.go\nrename to x_test.go.disabled\n"},
+		{"rename alongside a real impl change", dsTestRenamedAway + dsImplOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := analyzeDiff(tc.diff)
+			assert.Contains(t, res.Summary.ByType, smellTestRenamedAway, "got %v", res.Summary.ByType)
+			assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+		})
+	}
+}
+
+// Only a test -> NON-test rename disables anything. Reorganising tests, renaming
+// implementation files, and PROMOTING a file into a test must all stay clean.
+func TestAnalyzeDiff_RenameNegativeControls(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		diff string
+	}{
+		{"test to test", "diff --git a/x_test.go b/y_test.go\nsimilarity index 100%\nrename from x_test.go\nrename to y_test.go\n"},
+		{"impl to impl", "diff --git a/x.go b/y.go\nsimilarity index 100%\nrename from x.go\nrename to y.go\n"},
+		{"impl promoted to test", "diff --git a/x.go b/x_test.go\nsimilarity index 100%\nrename from x.go\nrename to x_test.go\n"},
+		{"ordinary edit, no rename", dsImplOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := analyzeDiff(tc.diff)
+			assert.NotContains(t, res.Summary.ByType, smellTestRenamedAway, "got %v", res.Summary.ByType)
+		})
+	}
+}
