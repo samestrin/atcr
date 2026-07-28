@@ -375,6 +375,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// AFTER JSONFindings() from the sources' per-slot status.json — the library
 		// Merged carries no fallback provenance — so it is downstream-only here too.
 		"FallbackReviewers": true,
+		// FixReview is stamped by the diff-smell gate in the verify fix phase
+		// (Epic 35.3, internal/verify/executor.go generateFixes) — same lifecycle as
+		// FixWarning above — so it is downstream-only here too.
+		"FixReview": true,
 	}
 	m := Merged{
 		Finding: Finding{
@@ -396,6 +400,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		}
 		assert.False(t, v.Field(i).IsZero(), "JSONFindings() did not copy field %s from Merged — field-addition drift", name)
 	}
+	// Explicit contract, not just the allowlist-loop consequence above: reconcile
+	// must NEVER emit a FixReview — only the verify fix phase's diff-smell gate
+	// stamps it (Epic 35.3). If a future edit copies it from a source, this fails.
+	assert.Equal(t, "", got[0].FixReview, "JSONFindings() must leave FixReview empty; only the verify fix phase stamps it")
 }
 
 // TestJSONFindings_PreservesVerification verifies that a Merged finding with a

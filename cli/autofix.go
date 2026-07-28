@@ -371,6 +371,11 @@ type autoFixRun struct {
 	Title   string
 	Body    string
 	Message string
+	// ReviewFlags carries the NEEDS_REVIEW annotations of the selected fixes
+	// (the diff-smell gate's SOFT-verdict FixReview, Epic 35.3) so they are
+	// surfaced in the PR body's Review Warnings section alongside the
+	// apply-derived risk flags.
+	ReviewFlags []autofix.ReviewFlag
 }
 
 // remoteLeftoverNotice appends a cleanup hint to errors returned after
@@ -518,11 +523,13 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	}
 
 	// Append a non-blocking "Review Warnings" section when the apply flagged any
-	// executable-bit change or build-script touch (epic 32.4 Task 6). With zero
-	// flags the body is byte-identical to run.Body, so an ordinary --auto-fix PR is
-	// unchanged; the warning only makes elevated-risk patches visible in the review
-	// that already gates every --auto-fix change (this flow never auto-merges).
-	body := withReviewWarnings(run.Body, flags)
+	// executable-bit change or build-script touch (epic 32.4 Task 6) — or when the
+	// diff-smell gate accepted a selected fix despite a SOFT smell (Epic 35.3:
+	// run.ReviewFlags). With zero flags the body is byte-identical to run.Body, so
+	// an ordinary --auto-fix PR is unchanged; the warning only makes elevated-risk
+	// patches visible in the review that already gates every --auto-fix change
+	// (this flow never auto-merges).
+	body := withReviewWarnings(run.Body, append(flags, run.ReviewFlags...))
 
 	prReq := ghaction.PullRequestRequest{Head: run.Branch, Base: run.Base, Title: run.Title, Body: body}
 	num, found, err := gh.FindOpenPullRequest(ctx, be.owner, be.repo, run.Branch)
@@ -632,7 +639,7 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 	if err != nil {
 		return fmt.Errorf("auto-fix: reading reconciled findings: %w", err)
 	}
-	entries, skipped, err := selectAutoFixEntries(findings, threshold)
+	entries, reviewFlags, skipped, err := selectAutoFixEntries(findings, threshold)
 	if err != nil {
 		return fmt.Errorf("auto-fix: selecting fixes: %w", err)
 	}
@@ -669,14 +676,15 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 	branch := fmt.Sprintf("atcr/auto-fix/%s", time.Now().UTC().Format("20060102-150405"))
 	client := newAutoFixGitHubFn(be.apiURL, be.token)
 	return runAutoFix(ctx, out, client, autoFixRun{
-		Backend: be,
-		Entries: entries,
-		BaseSHA: baseSHA,
-		Base:    baseBranch,
-		Branch:  branch,
-		Title:   "atcr: automated fixes",
-		Body:    "Automated fixes applied by `atcr --auto-fix` after local validation passed.",
-		Message: "fix: apply atcr auto-fix (validated locally)",
+		Backend:     be,
+		Entries:     entries,
+		BaseSHA:     baseSHA,
+		Base:        baseBranch,
+		Branch:      branch,
+		Title:       "atcr: automated fixes",
+		Body:        "Automated fixes applied by `atcr --auto-fix` after local validation passed.",
+		Message:     "fix: apply atcr auto-fix (validated locally)",
+		ReviewFlags: reviewFlags,
 	})
 }
 
@@ -688,8 +696,14 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 // suggestion must not abort the whole auto-fix run. The returned skipped count is
 // the number of duplicate-path fixes dropped after the first entry for that path,
 // surfaced in orchestrateAutoFix so the operator knows a second fix was deferred.
-func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([]payload.FileEntry, int, error) {
+//
+// The returned reviewFlags carry the diff-smell gate's NEEDS_REVIEW annotation
+// (FixReview, Epic 35.3) of every SELECTED fix, one per newly added path, so the
+// PR body can surface which applied fixes the gate flagged as shortcuts — the
+// auto-fix path is where a reviewer is least likely to read the markdown report.
+func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([]payload.FileEntry, []autofix.ReviewFlag, int, error) {
 	var entries []payload.FileEntry
+	var reviewFlags []autofix.ReviewFlag
 	skipped := 0
 	// One entry per target path per run: two findings whose fixes touch the same
 	// file would otherwise produce two entries for one path, and ApplyPatch would
@@ -716,9 +730,12 @@ func selectAutoFixEntries(findings []reconcile.JSONFinding, threshold string) ([
 			}
 			seen[e.Path] = true
 			entries = append(entries, e)
+			if f.FixReview != "" {
+				reviewFlags = append(reviewFlags, autofix.ReviewFlag{Path: e.Path, Reason: f.FixReview})
+			}
 		}
 	}
-	return entries, skipped, nil
+	return entries, reviewFlags, skipped, nil
 }
 
 // countFixBelowThreshold reports how many findings carry a non-empty Fix but sit

@@ -63,6 +63,44 @@ func TestCommentBodyDefangsInjection(t *testing.T) {
 	assert.NotContains(t, body, "<!--", "HTML comment open sequence must be neutralized")
 }
 
+// A PR review comment is the CI-facing surface where a human acts on the fix. If
+// the diff-smell gate accepted the fix only with a NEEDS_REVIEW annotation
+// (Epic 35.3), the comment must say so — otherwise the reader applies a
+// shortcut-taking patch believing it passed clean, and the gate's whole signal
+// stops at the markdown report.
+func TestCommentBodyCarriesFixReview(t *testing.T) {
+	f := reconcile.JSONFinding{
+		File:      "foo.go",
+		Line:      1,
+		Problem:   "unchecked error",
+		Fix:       "check the error",
+		FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression",
+	}
+	body := commentBody(f)
+	assert.Contains(t, body, "NEEDS_REVIEW", "the gate's annotation must reach the PR comment")
+	assert.Contains(t, body, "suppression", "the named smell must reach the PR comment")
+
+	// Omitted when absent — a clean fix must not gain a scary clause.
+	clean := commentBody(reconcile.JSONFinding{
+		File: "foo.go", Line: 1, Problem: "unchecked error", Fix: "check the error",
+	})
+	assert.NotContains(t, clean, "NEEDS_REVIEW", "a clean fix must carry no review clause")
+}
+
+// FixReview is assembled from a closed vocabulary, but it rides the same untrusted
+// path as Problem/Fix, so it must be defanged identically rather than trusted.
+func TestCommentBodyDefangsFixReview(t *testing.T) {
+	f := reconcile.JSONFinding{
+		File: "foo.go", Line: 1, Problem: "p", Fix: "x",
+		FixReview: "NEEDS_REVIEW: see [here](https://evil.test/phish) @alice #99 <!-- hide -->",
+	}
+	body := commentBody(f)
+	assert.NotContains(t, body, "https://evil.test", "link target in FixReview must be stripped")
+	assert.Contains(t, body, `\@alice`, "@ in FixReview must be backslash-escaped")
+	assert.Contains(t, body, `\#99`, "# in FixReview must be backslash-escaped")
+	assert.NotContains(t, body, "<!--", "HTML comment open sequence must be neutralized")
+}
+
 // TestCommentBodyDefangsMarkdownLinks pins that markdown link and image syntax in
 // untrusted model output cannot survive into the posted comment as a clickable
 // link or an embedded (tracking/spoofing) image. The URL target must be stripped

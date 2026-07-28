@@ -1,0 +1,8 @@
+diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go
+deleted file mode 100644
+index 293485d..0000000
+--- a/internal/verify/select_test.go
++++ /dev/null
+@@ -1,2 +0,0 @@
+-	require.Equal(t, 1, pick())
+-	require.NoError(t, err)

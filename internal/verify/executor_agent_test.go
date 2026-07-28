@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -153,6 +155,23 @@ func TestGenerateFixes_AgentMode_FallsBackWhenDispatcherNil(t *testing.T) {
 	assert.Contains(t, buf.String(), "executor_agent_mode_fallback", "the fallback class must be logged")
 }
 
+// A HARD-rejected fix in degraded agent mode must log
+// executor_agent_mode_fallback exactly ONCE per finding: the diff-smell retry
+// re-enters generate(), and a per-attempt log makes the line useless as a
+// per-finding count (and doubles the snippet read).
+func TestGenerateFixes_AgentModeFallbackLoggedOncePerFinding(t *testing.T) {
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, dsTestOnly}}
+	generateFixes(ctx, findings, agentGateConfig(), agentGateRegistry(), rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 2, rec.callCount(), "a HARD smell triggers one retry")
+	assert.Equal(t, 1, strings.Count(buf.String(), "executor_agent_mode_fallback"),
+		"the fallback must be logged once per finding, not once per attempt")
+}
+
 // AC6 (companion): agent_mode=true but no ChatCompleter wired (nil) → snippet
 // fallback. Mirrors the nil-dispatcher case for the other half of the harness.
 func TestGenerateFixes_AgentMode_FallsBackWhenCCNil(t *testing.T) {
@@ -190,7 +209,7 @@ func testExecProviderVal() registry.Provider {
 
 func TestInvokeExecutor_Success(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0, "")
 	assert.Equal(t, "x", fix)
 	assert.Equal(t, "", warn)
 }
@@ -198,7 +217,7 @@ func TestInvokeExecutor_Success(t *testing.T) {
 func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("boom")}}}
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode failed")
 	assert.Contains(t, warn, "boom")
@@ -214,7 +233,7 @@ func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
 		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
 	}}
 	fix, warn, _ := invokeExecutor(context.Background(), ex, testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "guard the nil deref", fix)
 	assert.Equal(t, "", warn)
 }
@@ -226,7 +245,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 	defer cancel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
 	fix, warn, _ := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0)
+		eligibleFinding()[0], cc, okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "status: timeout")
 	assert.Contains(t, warn, "tripped budgets: timeout")
@@ -234,9 +253,73 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 
 func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode parse error")
+}
+
+// promptRecordingChat wraps fakeChatCompleter and captures the content of every
+// message handed to Chat, so a test can assert what actually reached the model
+// rather than only what the prompt builder returns in isolation.
+type promptRecordingChat struct {
+	*fakeChatCompleter
+	mu   sync.Mutex
+	sent []string
+}
+
+func (p *promptRecordingChat) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, tds []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	p.mu.Lock()
+	for _, m := range msgs {
+		if m.Content != nil {
+			p.sent = append(p.sent, *m.Content)
+		}
+	}
+	p.mu.Unlock()
+	return p.fakeChatCompleter.Chat(ctx, inv, msgs, tds)
+}
+
+// prompts joins every recorded message so assertions do not depend on which
+// role the engine assigns the agent prompt to.
+func (p *promptRecordingChat) prompts() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return strings.Join(p.sent, "\n")
+}
+
+func recordingChat(content string) *promptRecordingChat {
+	return &promptRecordingChat{fakeChatCompleter: finalChat(content)}
+}
+
+// Epic 35.3: on a HARD diff-smell rejection the retry re-enters invokeExecutor
+// with a non-empty smellFeedback string. Nothing previously asserted that the
+// feedback survives the trip through buildExecutorAgentPrompt → buildExecutorAgent
+// → the engine and actually reaches the model, so a regression that dropped the
+// argument would have retried with the identical prompt — silently turning the
+// self-correction retry into a coin flip.
+func TestInvokeExecutor_SmellFeedbackReachesTheModel(t *testing.T) {
+	const feedback = "weakened_assertion: removed require.False(t, meetsSeverityFloor(...))"
+
+	cc := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
+	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], cc, okDispatcher(), 0, feedback)
+	require.Equal(t, "raise the floor in severity.go", fix)
+	require.Equal(t, "", warn)
+
+	sent := cc.prompts()
+	assert.Contains(t, sent, smellRetryInstruction,
+		"the trusted retry instruction must reach the model on a smell retry")
+	assert.Contains(t, sent, feedback,
+		"the rejected-attempt evidence must reach the model so the retry can avoid the same shortcut")
+
+	// Negative control: without feedback neither half may appear, so the
+	// assertions above pin the injection rather than fixed prompt boilerplate.
+	clean := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
+	_, _, _ = invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], clean, okDispatcher(), 0, "")
+	cleanSent := clean.prompts()
+	assert.NotContains(t, cleanSent, smellRetryInstruction,
+		"a first attempt must not carry the retry instruction")
+	assert.NotContains(t, cleanSent, feedback)
 }
 
 // --- parseExecutorResponse unit tests ---
@@ -348,7 +431,7 @@ func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
 	restore := swapFanoutEngine(zeroResultEngine{})
 	defer restore()
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0)
+		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0, "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "engine returned no result")
 }
@@ -369,7 +452,7 @@ func TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock(t
 		Problem:  "plaintext password " + malicious,
 		Fix:      "use bcrypt",
 	}
-	p := buildExecutorAgentPromptWithSentinel(f, sentinel)
+	p := buildExecutorAgentPromptWithSentinel(f, sentinel, "")
 
 	openTag := "<" + sentinel + ">"
 	openIdx := strings.Index(p, openTag)
@@ -397,7 +480,7 @@ func TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock(t
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	f := reconcile.JSONFinding{Severity: "HIGH", File: "auth.go", Line: 42, Category: "SECURITY",
 		Problem: "plaintext password", Fix: "use bcrypt", Evidence: "line 42 stores raw input"}
-	p := buildExecutorAgentPrompt(f)
+	p := buildExecutorAgentPrompt(f, "")
 	assert.Contains(t, p, "plaintext password", "the problem must be in the prompt")
 	assert.Contains(t, p, "auth.go:42", "the location must be in the prompt")
 	assert.Contains(t, p, "use bcrypt", "the reviewer's suggested fix must be carried in")

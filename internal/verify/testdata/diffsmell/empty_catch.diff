@@ -1,0 +1,10 @@
+diff --git a/src/app.js b/src/app.js
+index 68df499..d0bb993 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -1,2 +1,4 @@
+ function pick() {
++  try { risky(); } catch (e) {
++  }
+   return 1;
+ }

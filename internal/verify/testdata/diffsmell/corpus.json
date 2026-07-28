@@ -1,0 +1,74 @@
+[
+  {
+    "file": "impl_only.diff",
+    "verdict": "clean",
+    "types": [],
+    "note": "an ordinary implementation change is the baseline: no smell of any kind"
+  },
+  {
+    "file": "test_only.diff",
+    "verdict": "hard",
+    "types": ["test_only"],
+    "note": "changing only test files with no implementation change"
+  },
+  {
+    "file": "weakened_assertion.diff",
+    "verdict": "hard",
+    "types": ["weakened_assertion"],
+    "note": "assertions removed without replacement; the impl file keeps test_only from firing, so the two detectors are pinned independently"
+  },
+  {
+    "file": "test_deleted.diff",
+    "verdict": "hard",
+    "types": ["test_deleted", "test_only", "weakened_assertion"],
+    "note": "atcr divergence: upstream has no deletion detector at all"
+  },
+  {
+    "file": "test_skipped.diff",
+    "verdict": "hard",
+    "types": ["test_skipped"],
+    "note": "atcr divergence: upstream has no skip detector, so a t.Skip added alongside a real impl change scored clean"
+  },
+  {
+    "file": "test_renamed_away.diff",
+    "verdict": "hard",
+    "types": ["test_renamed_away"],
+    "note": "atcr divergence: upstream reads only the b/ side, so foo_test.go -> foo_disabled.go scored clean"
+  },
+  {
+    "file": "suppression.diff",
+    "verdict": "soft_only",
+    "types": ["suppression"],
+    "note": "a linter suppression is accepted with a NEEDS_REVIEW annotation, not rejected"
+  },
+  {
+    "file": "empty_catch.diff",
+    "verdict": "soft_only",
+    "types": ["empty_catch"],
+    "note": "formatter-split empty catch body: the pair of added lines is what reveals it"
+  },
+  {
+    "file": "stub_body.diff",
+    "verdict": "soft_only",
+    "types": ["stub_body"],
+    "note": "a standalone TODO comment is a stub; a trailing TODO on real code is not"
+  },
+  {
+    "file": "headerless_deletion.diff",
+    "verdict": "hard",
+    "types": ["test_deleted", "weakened_assertion"],
+    "note": "parser shape: no `diff --git` lines, so the deletion must bind to its paired `--- a/<path>` rather than the previously-bound file"
+  },
+  {
+    "file": "trailing_prose.diff",
+    "verdict": "clean",
+    "types": [],
+    "note": "parser shape: a markdown notes list after the last hunk is trailer text, not removed content"
+  },
+  {
+    "file": "plusplus_content.diff",
+    "verdict": "hard",
+    "types": ["test_only", "weakened_assertion"],
+    "note": "parser shape: an added line whose text begins `++ ` is content, not a new-file header, and must not create a phantom impl file"
+  }
+]

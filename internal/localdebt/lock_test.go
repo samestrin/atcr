@@ -67,15 +67,14 @@ func TestWithLockTimeoutErrorRedactsPath(t *testing.T) {
 // the stale dir aside; only the rename winner removes it) must keep fn strictly
 // serialized. Run with -race to amplify detection of any overlap.
 func TestWithLockReclaimsStaleLockWithoutOverlap(t *testing.T) {
-	t.Skip("KNOWN FAILING — deferred to Epic 43.0 (.planning/epics/active/43.0_localdebt-store-compaction.md, " +
-		"Task T2: lock-based concurrency synchronization). The reviewer-prescribed atomic-rename reclaim " +
-		"(os.Rename stale dir aside; only the rename winner removes it) is provably insufficient: a " +
-		"stale-decision read BEFORE a fresh acquire still executes its rename against the freshly-acquired " +
-		"live lock, moving it aside and opening a free window, so fn() still runs concurrently (this test " +
-		"observed maxConcurrent>1 + a data race even with the atomic rename in place). Correct mutual " +
-		"exclusion under concurrent stale reclaim needs an OS-level primitive that auto-releases on crash " +
-		"(syscall.Flock) — the advisory-lock rework Epic 43.0 already owns. Un-skip when 43.0 lands the " +
-		"flock primitive.")
+	t.Skip("KNOWN FAILING — deferred to the technical-debt entry for internal/localdebt/lock.go:47 " +
+		"in .planning/technical-debt/README.md (flock-based advisory lock rework). The reviewer-prescribed " +
+		"atomic-rename reclaim (os.Rename stale dir aside; only the rename winner removes it) is provably " +
+		"insufficient: a stale-decision read BEFORE a fresh acquire still executes its rename against the " +
+		"freshly-acquired live lock, moving it aside and opening a free window, so fn() still runs " +
+		"concurrently (this test observed maxConcurrent>1 + a data race even with the atomic rename in " +
+		"place). Correct mutual exclusion under concurrent stale reclaim needs an OS-level primitive that " +
+		"auto-releases on crash (syscall.Flock). Un-skip once that primitive lands.")
 
 	// Shrink timings (preserving lockWait >= lockStale) so the stress loop is fast.
 	oldWait, oldStale := lockWait, lockStale

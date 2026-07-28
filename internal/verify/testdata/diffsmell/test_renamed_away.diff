@@ -1,0 +1,4 @@
+diff --git a/internal/verify/select_test.go b/internal/verify/select_disabled.go
+similarity index 100%
+rename from internal/verify/select_test.go
+rename to internal/verify/select_disabled.go

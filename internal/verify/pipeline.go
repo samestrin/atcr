@@ -40,9 +40,17 @@ const thoroughVotes = 3
 // path-at-debug discipline. Newlines in detail are flattened so a crafted value
 // cannot forge an extra log line.
 func logPipelineWarning(logger *slog.Logger, class, detail string) {
-	detail = strings.ReplaceAll(detail, "\n", " ")
 	logger.Warn("pipeline warning", "class", class)
-	logger.Debug("pipeline warning detail", "class", class, "detail", detail)
+	logPipelineDetail(logger, class, detail)
+}
+
+// logPipelineDetail emits only the Debug half of the pipeline record, for classes
+// that must stay traceable without warning on every occurrence — a per-finding
+// class at Warn level drowns the run output and trains the reader to ignore it.
+// It applies the same newline flattening as logPipelineWarning, so a class cannot
+// forge an extra log line by taking the quieter path.
+func logPipelineDetail(logger *slog.Logger, class, detail string) {
+	logger.Debug("pipeline warning detail", "class", class, "detail", strings.ReplaceAll(detail, "\n", " "))
 }
 
 // Options are the verify-stage run controls, set from CLI flags or MCP args.
@@ -83,10 +91,14 @@ type Options struct {
 // number of findings selected for live skeptic review this run — jobs with at least
 // one eligible skeptic AND a live dispatcher at plan time (skipped/below-floor/
 // no-eligible-skeptic findings are excluded); DurationMs is the wall-clock cost.
+// SmellRetries is the number of diff-smell-gate retries the executor phase
+// attempted — each doubles a finding's model spend, so a systematically rejected
+// executor is visible rather than silent (TD: executor.go:395).
 type Result struct {
 	VerdictCounts     VerdictCounts
 	FindingsProcessed int
 	DurationMs        int
+	SmellRetries      int
 }
 
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
@@ -304,12 +316,13 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// snapshot pre-check uses: when no finding qualifies for a fix, neither the
 	// snapshot harness nor the executor client is built (the scan here sees the final
 	// post-verification confidence, so a finding promoted to VERIFIED still qualifies).
+	smellRetries := 0
 	if reg.Executor != nil && anyFixEligible(findings, reg.Executor) {
 		// The fix executor generates patches that get applied to the repo, which
 		// is a materially different action from a skeptic reading and judging;
 		// a compliance record must be able to tell them apart.
 		fixCtx := hookobs.WithCall(ctx, hookobs.Call{Stage: "autofix"})
-		generateFixes(fixCtx, findings, reg.Executor, reg, newExecutorClient(fixCtx), cc, disp, opts.SharedTimeoutSecs)
+		smellRetries = generateFixes(fixCtx, findings, reg.Executor, reg, newExecutorClient(fixCtx), cc, disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk
@@ -459,6 +472,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		VerdictCounts:     counts,
 		FindingsProcessed: processed,
 		DurationMs:        int(time.Since(start).Milliseconds()),
+		SmellRetries:      smellRetries,
 	}, nil
 }
 
