@@ -373,6 +373,49 @@ type replayReport struct {
 	// failing resolution (e.g. non-SHA lines injected by a global gitconfig)
 	// would otherwise empty the measurement window silently.
 	unresolved int
+	// skipReasons breaks `skipped` out by cause, keyed on the reason text
+	// analyzeFile logs.
+	skipReasons map[string]int
+}
+
+// skipReasonPrefix is the constant analyzeFile prefixes every decline with.
+const skipReasonPrefix = "payload: skipping escalation analysis, "
+
+// recordSkip folds one analyzeFile decline into the per-reason tally.
+func (r *replayReport) recordSkip(msg string) {
+	_ = msg
+}
+
+// skipBreakdown renders the per-reason tally.
+func (r *replayReport) skipBreakdown() string {
+	return ""
+}
+
+// TestReplayReport_SkipBreakdownIsPerReason pins the skip disclosure. A single
+// aggregate `skipped` counter cannot be diagnosed: binary files are an expected,
+// uninteresting skip, while "HEAD blob unreadable" repeated 200 times means the
+// measurement lost a fifth of its population to a broken object store. The
+// breakdown makes an unexpectedly high count actionable.
+func TestReplayReport_SkipBreakdownIsPerReason(t *testing.T) {
+	var rep replayReport
+
+	require.Equal(t, "none", rep.skipBreakdown(), "an empty tally must read as none, not as an empty string")
+
+	rep.skipped = 5
+	rep.recordSkip(skipReasonPrefix + "binary file")
+	rep.recordSkip(skipReasonPrefix + "binary file")
+	rep.recordSkip(skipReasonPrefix + "HEAD blob unreadable")
+
+	// Not a decline — analyzeFile continues with churn marked not-applicable, so
+	// it must not inflate the tally.
+	rep.recordSkip("payload: churn measure unavailable, treated as not applicable")
+
+	// Highest count first, then alphabetical. kindDeleted is the one decline
+	// analyzeFile does NOT log, so the shortfall against rep.skipped is
+	// attributed rather than silently dropped.
+	require.Equal(t,
+		"binary file=2, HEAD blob unreadable=1, deleted (not logged)=2",
+		rep.skipBreakdown())
 }
 
 // TestEscalationReplay_MeasureRepoHistory is the AC1 measurement harness: it
