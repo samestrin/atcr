@@ -1,14 +1,17 @@
 package verify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -358,10 +361,22 @@ func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
 	require.Greater(t, len(huge), maxFixBytes)
 	findings := gateFinding("a.go")
 	rec := &sequencedExecutor{outs: []string{huge}}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 1, rec.callCount(), "a pathologically large fix must not be scanned or retried")
 	assert.NotEmpty(t, findings[0].Fix)
+	assert.Contains(t, buf.String(), "executor_smell_skipped", "an unscanned fix must be announced — never a SILENT bypass")
+
+	// An under-cap fix must NOT emit the skip record: the log distinguishes
+	// "scanned and clean" from "never scanned", so both directions are pinned.
+	buf.Reset()
+	small := gateFinding("a.go")
+	rec2 := &sequencedExecutor{outs: []string{gateCleanDiff}}
+	generateFixes(ctx, small, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec2, nil, okDispatcher(), 0)
+	assert.NotContains(t, buf.String(), "executor_smell_skipped", "a scanned fix must not be reported as skipped")
 }
 
 // An UNFENCED unified diff is not Go source. The syntax guard used to parse it
