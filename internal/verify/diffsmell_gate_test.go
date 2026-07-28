@@ -125,13 +125,15 @@ const gateCleanDiff = `diff --git a/a.go b/a.go
 func TestGenerateFixes_HardSmellRetriesAndAcceptsCleanRetry(t *testing.T) {
 	findings := gateFinding("a.go")
 	rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 2, rec.callCount(), "a HARD smell must trigger exactly one retry")
 	assert.Equal(t, strings.TrimSpace(gateCleanDiff), findings[0].Fix, "the clean retry fix is accepted")
 	assert.Empty(t, findings[0].FixWarning, "an accepted retry leaves no warning")
 	assert.Empty(t, findings[0].FixReview, "a clean retry needs no review annotation")
 	assert.Contains(t, findings[0].Evidence, "fix by opus")
+	assert.Contains(t, buf.String(), "class=executor_smell_reject", "the rejection must be visible in the run log — it is the only production signal that the gate fired")
 }
 
 // The retry prompt must carry the diff-smell evidence so the executor knows what
@@ -198,13 +200,15 @@ func TestGenerateFixes_HardSmellRetryFailureModes(t *testing.T) {
 func TestGenerateFixes_SecondHardSmellWithholdsFix(t *testing.T) {
 	findings := gateFinding("a.go")
 	rec := &sequencedExecutor{outs: []string{dsTestOnly, dsTestOnly}}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	ctx, buf := ceilingCtx()
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 2, rec.callCount(), "the gate must not retry more than once")
 	assert.Empty(t, findings[0].Fix, "a twice-rejected fix must never be written")
 	assert.Contains(t, findings[0].FixWarning, smellTestOnly, "the warning must name the smell that halted it")
 	assert.NotContains(t, findings[0].Evidence, "fix by opus", "a withheld fix must not be attributed")
 	assert.Empty(t, findings[0].FixReview, "a rejected fix is not a NEEDS_REVIEW acceptance")
+	assert.Equal(t, 2, strings.Count(buf.String(), `msg="pipeline warning" class=executor_smell_reject`), "both rejection sites (retrying, halted) must log the class")
 }
 
 // A prior tier's successful fix must not be clobbered by a later tier's rejection
