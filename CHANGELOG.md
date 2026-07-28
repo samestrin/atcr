@@ -1,3 +1,30 @@
+## [35.4.0] - 2026-07-28
+
+Retunes the per-file payload-escalation defaults against a measured replay of real history. Escalation shipped in 35.1 with thresholds chosen by reasoning rather than measurement, and they promoted 37% of changed Go files above their configured mode at a cost of +48% payload bytes — an operator who configured `diff` was effectively not getting `diff`. The new defaults measure 21.5% promoted at +34% bytes, and the acceptance target they were tuned to now ships in the code so the next change to them has a baseline to re-validate against.
+
+### Changed
+
+- **Default escalation thresholds** (`internal/payload/escalation.go`): `min_hunks` 4 → **8**, `hunk_gap_lines` 10 → **2**, `min_cyclomatic` 15 → **20**. `churn_ratio`, `max_files`, and `max_skeleton_lines` are unchanged. Every one remains overridable via the registry's `payload_escalation:` block, so an operator who prefers the old behavior can restore it without a code change.
+- Hunk adjacency was the largest single offender (28.5% of changed Go files, now 13.0%): under `--unified=0` a single logical change routinely leaves hunks a few lines apart, so a 10-line window measured the ordinary shape of a diff rather than genuine same-region churn.
+- `min_cyclomatic` rose because the score is now scoped to the functions the diff CHANGED (35.1), where ordinary validation code clears 15 without being unreadable from hunks.
+
+### Added
+
+- Escalation-rate replay harness (`internal/payload/escalation_replay_test.go`). Replays a configurable window of real commits through the shipped heuristic and reports per-signal rates, the overall promotion rate, and the payload-byte delta; a companion sweep reports what candidate threshold sets would have measured over the same window. Opt-in and report-only — it asserts no band, because a live-history assertion would drift as commits land and would break on a shallow clone:
+
+      ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \
+        go test ./internal/payload/ -run TestEscalationReplay -v
+
+- Deterministic fixture gate for the tuned defaults (`internal/payload/escalation_tuned_defaults_test.go`), including at-threshold and one-below-threshold cases for each signal.
+- The acceptance target — 15–25% of changed Go files promoted at ≤ +40% payload bytes, with the measured before/after and the re-measurement command — is documented in the `DefaultEscalation*` comment block and in `docs/payload-modes.md`.
+
+### Fixed
+
+- `docs/payload-modes.md` described the churn signal as summing added **and** deleted lines; it has measured `max(added, deleted)` since the 35.1 double-counting fix. The cyclomatic row likewise described the file's most complex function rather than the most complex **changed** function.
+- `internal/registry/config.go`'s field comments cited the pre-35.4 default values.
+
+*Shipped via /execute-epic (epic 35.4)*
+
 ## [35.3.0] - 2026-07-28
 
 Adds an adversarial diff-smell gate to the fix-generation phase, so a model-generated patch is checked for reward-hacking before it is ever written to a finding. The failure mode this blocks is the one an executor discovers on its own: the cheapest way to make a failing test pass is to delete the test, and the cheapest way to clear a lint is to suppress it. The gate is always on and has no configuration knob, matching the local Go syntax guard alongside it.
