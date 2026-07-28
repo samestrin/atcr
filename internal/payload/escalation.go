@@ -58,9 +58,9 @@ const (
 	// routinely leaves hunks a few lines apart, so a 10-line window measured the
 	// ordinary shape of a diff rather than genuine same-region churn — it was the
 	// single worst offender at 28.5% of changed Go files (counted independently —
-	// signals overlap, so the per-signal rates sum above the promotion rate), and
-	// still fires on 13.0% at this setting. At 2, only hunks separated by one unchanged line count as
-	// the same region.
+	// signals overlap, so the per-signal rates sum above the promotion rate),
+	// and still fires on 13.0% at this setting. At 2, only hunks separated by
+	// one unchanged line count as the same region.
 	//
 	// Note the granularity floor this implies: git does not emit two hunks with
 	// ZERO unchanged lines between them under --unified=0 (it merges them into
