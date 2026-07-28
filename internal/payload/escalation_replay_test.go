@@ -1,6 +1,12 @@
 package payload
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -137,4 +143,283 @@ func TestReplayStats_EmptyWindowIsNotADivideByZero(t *testing.T) {
 	var r replayStats
 	require.Equal(t, 0.0, r.promotionRate())
 	require.Equal(t, 0.0, r.signalRate(sigChurn))
+}
+
+// Replay-harness knobs. The window defaults to 40 commits because that is the
+// exact window the original ~59% measurement was taken over (Epic 35.4 source
+// TD), so a re-measurement is directly comparable to it.
+const (
+	defaultReplayCommits = 40
+	replayCommitsEnv     = "ATCR_REPLAY_COMMITS"
+	replayRefEnv         = "ATCR_REPLAY_REF"
+	replayEnableEnv      = "ATCR_REPLAY"
+)
+
+// replayWindow reads the configurable commit window. A malformed or
+// non-positive value falls back to the default rather than failing: this is a
+// measurement knob, not an assertion input.
+func replayWindow(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv(replayCommitsEnv)
+	if raw == "" {
+		return defaultReplayCommits
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		t.Logf("replay: ignoring malformed %s=%q, using default %d", replayCommitsEnv, raw, defaultReplayCommits)
+		return defaultReplayCommits
+	}
+	return n
+}
+
+// replayRepoRoot walks up from the test's working directory to the enclosing
+// git work tree. Returns ok=false (rather than failing) when there is none, so
+// the harness degrades to a skip in an exported tarball or a vendored copy.
+func replayRepoRoot(t *testing.T) (string, bool) {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+// replayCommits lists up to window commit SHAs reachable from ref, newest
+// first.
+func replayCommits(t *testing.T, root, ref string, window int) []string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", root, "log", "--format=%H", "-n", strconv.Itoa(window), ref).Output()
+	if err != nil {
+		return nil
+	}
+	var shas []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			shas = append(shas, line)
+		}
+	}
+	return shas
+}
+
+// replayReport is one measured window: the all-files and Go-only rates plus the
+// payload-byte delta escalation costs over the configured mode.
+type replayReport struct {
+	all      replayStats
+	goOnly   replayStats
+	degraded int // commits whose change set exceeded MaxFiles, so nothing escalated
+	skipped  int // files analyzeFile declined to measure (binary, deleted, unreadable)
+
+	baseBytes      int // payload bytes at the configured mode
+	escalatedBytes int // payload bytes after promotion
+}
+
+// byteDelta is the percentage increase in payload bytes escalation caused. This
+// is the figure the AC3 band is anchored to: a bare promotion percentage says
+// nothing about what an operator actually pays, and the source TD quoted +27%
+// bytes alongside its 59% file rate.
+func (r replayReport) byteDelta() float64 {
+	if r.baseBytes <= 0 {
+		return 0
+	}
+	return float64(r.escalatedBytes-r.baseBytes) / float64(r.baseBytes) * 100
+}
+
+// TestEscalationReplay_MeasureRepoHistory is the AC1 measurement harness: it
+// replays a window of real commits through the SHIPPED escalation heuristic and
+// reports the per-signal and overall promotion rates plus the payload-byte cost.
+//
+// It is deliberately REPORT-ONLY and asserts no threshold band. A band assertion
+// against live repo history would drift as new commits land and would break on a
+// shallow clone — the AC4 hard gate lives in the deterministic synthetic-fixture
+// test instead. It is also opt-in (ATCR_REPLAY=1) because it costs one `git show`
+// plus one AST parse per changed file across the whole window, which is far too
+// slow for the default unit-test path.
+func TestEscalationReplay_MeasureRepoHistory(t *testing.T) {
+	if os.Getenv(replayEnableEnv) == "" {
+		t.Skipf("replay measurement is opt-in: set %s=1 (window %s, ref %s)",
+			replayEnableEnv, replayCommitsEnv, replayRefEnv)
+	}
+	root, ok := replayRepoRoot(t)
+	if !ok {
+		t.Skip("replay measurement needs a git work tree")
+	}
+	ref := os.Getenv(replayRefEnv)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	window := replayWindow(t)
+	shas := replayCommits(t, root, ref, window)
+	if len(shas) == 0 {
+		t.Skipf("replay measurement found no commits at %s (shallow clone?)", ref)
+	}
+
+	cfg := DefaultEscalationConfig()
+	rep := replayEvaluate(t, root, cfg, shas)
+
+	logReplayReport(t, ref, window, cfg, rep)
+}
+
+// TestEscalationReplay_SweepCandidateThresholds reports what each candidate
+// threshold set would have measured over the same window. Tuning a default
+// without this is guesswork: the plan's own risk register notes that damping one
+// signal shifts load onto another, which is only visible by re-measuring every
+// signal per candidate. Report-only and opt-in, for the same reasons as the
+// measurement above.
+func TestEscalationReplay_SweepCandidateThresholds(t *testing.T) {
+	if os.Getenv(replayEnableEnv) == "" {
+		t.Skipf("threshold sweep is opt-in: set %s=1", replayEnableEnv)
+	}
+	root, ok := replayRepoRoot(t)
+	if !ok {
+		t.Skip("threshold sweep needs a git work tree")
+	}
+	ref := os.Getenv(replayRefEnv)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	shas := replayCommits(t, root, ref, replayWindow(t))
+	if len(shas) == 0 {
+		t.Skipf("threshold sweep found no commits at %s (shallow clone?)", ref)
+	}
+
+	base := DefaultEscalationConfig()
+	for _, c := range []struct {
+		label string
+		cfg   EscalationConfig
+	}{
+		{"shipped defaults", base},
+		{"hunk_gap 3", withHunkGap(base, 3)},
+		{"hunk_gap 2", withHunkGap(base, 2)},
+		{"hunk_gap 1", withHunkGap(base, 1)},
+		{"hunk_gap 0 (adjacency off)", withHunkGap(base, 0)},
+		{"hunk_gap 3 + min_hunks 6", withMinHunks(withHunkGap(base, 3), 6)},
+		{"hunk_gap 2 + min_hunks 6", withMinHunks(withHunkGap(base, 2), 6)},
+		{"min_hunks 8 only", withMinHunks(base, 8)},
+		{"gap 2 + hunks 8", withMinHunks(withHunkGap(base, 2), 8)},
+		{"gap 2 + hunks 8 + cyclo 20", withCyclo(withMinHunks(withHunkGap(base, 2), 8), 20)},
+		{"gap 2 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(base, 2), 10), 25)},
+		{"gap 0 + hunks 10 + cyclo 25", withCyclo(withMinHunks(withHunkGap(base, 0), 10), 25)},
+	} {
+		rep := replayEvaluate(t, root, c.cfg, shas)
+		t.Logf("candidate %-28s go_files=%d promoted=%.1f%% churn=%.1f%% hunks=%.1f%% adj=%.1f%% cyclo=%.1f%% bytes=%+.1f%%",
+			c.label, rep.goOnly.files, rep.goOnly.promotionRate(),
+			rep.goOnly.signalRate(sigChurn), rep.goOnly.signalRate(sigHunkCount),
+			rep.goOnly.signalRate(sigAdjacency), rep.goOnly.signalRate(sigComplexity),
+			rep.byteDelta())
+	}
+}
+
+func withHunkGap(c EscalationConfig, n int) EscalationConfig {
+	c.HunkGapLines = n
+	return c
+}
+
+func withMinHunks(c EscalationConfig, n int) EscalationConfig {
+	c.MinHunks = n
+	return c
+}
+
+func withCyclo(c EscalationConfig, n int) EscalationConfig {
+	c.MinCyclomatic = n
+	return c
+}
+
+// replayEvaluate runs the escalation heuristic over every changed file in each
+// commit's own diff (parent..commit) and folds the outcomes into a report.
+func replayEvaluate(t *testing.T, root string, cfg EscalationConfig, shas []string) replayReport {
+	t.Helper()
+	ctx := context.Background()
+	var rep replayReport
+
+	for _, sha := range shas {
+		parent := sha + "^"
+		if err := exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", parent+"^{commit}").Run(); err != nil {
+			continue // root commit, or the shallow-clone boundary
+		}
+		g := &gitRunner{ctx: ctx, dir: root, escalation: cfg}
+		files, err := g.changedFilesMemo(parent, sha)
+		if err != nil || len(files) == 0 {
+			continue
+		}
+		rep.all.commits++
+		rep.goOnly.commits++
+		// A change set above MaxFiles skips escalation wholesale, so nothing in it
+		// can promote. Counting its files in the denominator would understate the
+		// rate for the commits where the heuristic actually ran.
+		if !cfg.Enabled(len(files)) {
+			rep.degraded++
+			continue
+		}
+		for _, f := range files {
+			fc, ok := g.analyzeFile(parent, sha, f)
+			if !ok {
+				rep.skipped++
+				continue
+			}
+			rep.all.record(cfg, ModeDiff, fc.signals)
+			if strings.EqualFold(filepath.Ext(f.path), ".go") {
+				rep.goOnly.record(cfg, ModeDiff, fc.signals)
+			}
+			accumulateBytes(g, cfg, parent, sha, f, fc, &rep)
+		}
+	}
+	return rep
+}
+
+// accumulateBytes measures what the promotion actually costs: the rendered
+// payload body at the configured mode versus at the escalated mode. A render
+// failure is skipped silently on both sides so the ratio never counts one
+// without the other.
+func accumulateBytes(g *gitRunner, cfg EscalationConfig, base, head string, f changedFile, fc fileContext, rep *replayReport) {
+	promoted := cfg.escalate(ModeDiff, fc.signals)
+	baseBody, err := g.fileBody(ModeDiff, base, head, f)
+	if err != nil {
+		return
+	}
+	if promoted == ModeDiff {
+		rep.baseBytes += len(baseBody)
+		rep.escalatedBytes += len(baseBody)
+		return
+	}
+	promotedBody, err := g.fileBody(promoted, base, head, f)
+	if err != nil {
+		return
+	}
+	rep.baseBytes += len(baseBody)
+	rep.escalatedBytes += len(promotedBody)
+}
+
+// logReplayReport prints the measurement. Sample size is reported alongside every
+// rate so an unrepresentative window is visible rather than implied.
+func logReplayReport(t *testing.T, ref string, window int, cfg EscalationConfig, rep replayReport) {
+	t.Helper()
+	t.Logf("escalation replay: ref=%s window=%d commits_measured=%d degraded=%d files_analyzed=%d files_skipped=%d",
+		ref, window, rep.all.commits, rep.degraded, rep.all.files, rep.skipped)
+	t.Logf("thresholds: churn_ratio=%.2f min_hunks=%d hunk_gap_lines=%d min_cyclomatic=%d max_files=%d",
+		cfg.ChurnRatio, cfg.MinHunks, cfg.HunkGapLines, cfg.MinCyclomatic, cfg.MaxFiles)
+
+	for _, s := range []struct {
+		label string
+		st    replayStats
+	}{
+		{"all changed files", rep.all},
+		{"changed .go files", rep.goOnly},
+	} {
+		t.Logf("%s: n=%d promoted=%.1f%% (blocks=%d files=%d)",
+			s.label, s.st.files, s.st.promotionRate(), s.st.toBlocks, s.st.toFiles)
+		t.Logf("%s per-signal: churn=%.1f%% hunk_count=%.1f%% adjacency=%.1f%% complexity=%.1f%%",
+			s.label,
+			s.st.signalRate(sigChurn), s.st.signalRate(sigHunkCount),
+			s.st.signalRate(sigAdjacency), s.st.signalRate(sigComplexity))
+	}
+	t.Logf("payload bytes: base=%d escalated=%d delta=%+.1f%%", rep.baseBytes, rep.escalatedBytes, rep.byteDelta())
 }
