@@ -185,29 +185,28 @@ func prFromGitHubRef(ref string) int {
 // content has not changed (Sprint 35.0 Story 4/5). No-op for a diff-range review.
 //
 // This is the single implementation of the write-back gate, shared by the fresh
-// (runReview) and resumed (runResume) paths. Those two carried byte-for-byte
-// duplicates of it and had already drifted once — the reason TD-011 was raised —
-// so the parity Epic 35.2 AC4 asks for is enforced structurally here rather than
-// by keeping two copies in step by hand.
+// (runReview) and resumed (runResume) paths so the two cannot drift.
 //
 // Gated on Succeeded > 0 so a run where every agent failed does not record its
 // files as "reviewed" (which would wrongly skip them forever). Partial chunk
-// coverage does NOT discard the write-back (Epic 35.2 / TD-013):
+// coverage does NOT discard the write-back (Epic 35.2 / TD-013; pre-35.2 one
+// failed chunk of up to 64 threw away every successfully-reviewed file's hash):
 // CommitBaselineIndex records only the files covered by SUCCEEDED chunks and
-// excludes the failed chunks' files, so the next run re-reviews exactly the
-// uncovered ones instead of the whole repository. Before 35.2 this was
-// additionally gated on UnreviewedChunks == 0, which threw away every
-// successfully-reviewed file's hash whenever even one of up to 64 chunks failed.
-// The uncovered set is attributed inside the engine (runEngine, pre-merge)
-// because Summary collapses per-chunk outcomes into a bare count;
+// excludes the failed chunks' files, so the next run re-reviews the uncovered
+// ones — or the whole repository when coverage was zero and nothing was
+// recorded. The uncovered set is attributed inside the engine (runEngine,
+// pre-merge) because Summary collapses per-chunk outcomes into a bare count;
 // UnreviewedChunks remains the operator-facing signal that coverage was partial.
 // Still fail-open: an uncovered file is re-scanned, never silently skipped.
 //
-// An index-write failure is logged, never fatal (AC 04-01 ES1). Callers must
-// invoke this only after handling the interrupt path, so it never fires on a
-// cancelled run.
+// An index-write failure is logged, never fatal (AC 04-01 ES1). The
+// cancelled-context early return enforces the interrupt precondition: the
+// write-back never fires on a cancelled run.
 func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.PreparedReview, result *fanout.ReviewResult) {
 	if !baseline || prep == nil || result == nil || result.Summary.Succeeded == 0 {
+		return
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return
 	}
 	if result.Summary.UnreviewedChunks > 0 {
