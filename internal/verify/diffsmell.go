@@ -343,8 +343,18 @@ func analyzeDiff(diff string) *smellResult {
 			// preceding `diff --git` header, or failing that the `--- a/<path>` one —
 			// and record the deletion.
 			if p := smellHeaderPath(line[4:]); p == "/dev/null" || p == "" {
-				if cur == nil {
-					cur = ensure(lastOldPath)
+				// Bind to the `--- a/<path>` line this deletion is paired with whenever
+				// it names a DIFFERENT file than the one currently bound — not merely
+				// when nothing is bound. looksLikeUnifiedDiff accepts a HEADERLESS diff
+				// (old/new header pairs, no `diff --git` lines), and in that shape cur
+				// still points at the PREVIOUS file when the deletion arrives: the
+				// `cur == nil` guard stamped `deleted` on that innocent file and the
+				// deleted test never entered `files` at all, scoring clean where the
+				// identical diff with `diff --git` headers scored hard.
+				if lastOldPath != "" && (cur == nil || cur.path != lastOldPath) {
+					if fc := ensure(lastOldPath); fc != nil {
+						cur = fc
+					}
 				}
 				if cur != nil {
 					cur.deleted = true
