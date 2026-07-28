@@ -331,9 +331,34 @@ func MaxFuncCyclomatic(root Node) int {
 // elsewhere in the file. Functions overlapping no range are ignored; empty ranges
 // score 0.
 func MaxFuncCyclomaticInRanges(root Node, ranges [][2]int) int {
-	// STUB (RED): ignores ranges and returns the file-wide maximum — the wrong,
-	// pre-fix behavior. Replaced in GREEN.
-	return MaxFuncCyclomatic(root)
+	if len(ranges) == 0 {
+		return 0
+	}
+	maxScore := 0
+	var walk func(n Node)
+	walk = func(n Node) {
+		if (n.Kind == "func" || n.Kind == "funclit") && nodeOverlapsRanges(n, ranges) {
+			if c := Cyclomatic(n); c > maxScore {
+				maxScore = c
+			}
+		}
+		for i := range n.Children {
+			walk(n.Children[i])
+		}
+	}
+	walk(root)
+	return maxScore
+}
+
+// nodeOverlapsRanges reports whether n's [StartLine, EndLine] span intersects any
+// range in ranges (each a 1-based inclusive [start, end]).
+func nodeOverlapsRanges(n Node, ranges [][2]int) bool {
+	for _, r := range ranges {
+		if n.StartLine <= r[1] && r[0] <= n.EndLine {
+			return true
+		}
+	}
+	return false
 }
 
 func countBranches(n Node) int {

@@ -152,9 +152,25 @@ func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, 
 		g.logger.Debug("payload: skipping AST signals, parse failed", "path", f.path, "error", err)
 		return ctx, true
 	}
-	ctx.signals.cyclomatic = astgroup.MaxFuncCyclomatic(root)
+	// Scope complexity to the functions the change actually TOUCHED, not the
+	// file-wide maximum: a one-line edit in a trivial helper must not escalate
+	// because some unrelated function elsewhere in the file is branchy (Epic 35.1).
+	ctx.signals.cyclomatic = astgroup.MaxFuncCyclomaticInRanges(root, hunkRangePairs(hunks))
 	ctx.skeleton = renderSkeleton(toSkeletonEntries(astgroup.FileSkeleton(root, src)), g.escalation.MaxSkeletonLines)
 	return ctx, true
+}
+
+// hunkRangePairs converts the head-side hunk line ranges into the 1-based
+// inclusive [start, end] pairs astgroup.MaxFuncCyclomaticInRanges expects.
+func hunkRangePairs(hunks []lineRange) [][2]int {
+	if len(hunks) == 0 {
+		return nil
+	}
+	out := make([][2]int, len(hunks))
+	for i, h := range hunks {
+		out[i] = [2]int{h.start, h.end}
+	}
+	return out
 }
 
 // parseHeadTree parses src with the shared wasm host's Go parser.

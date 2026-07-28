@@ -12,8 +12,9 @@ const (
 	// DefaultEscalationHunkGapLines fires when two hunks sit closer than this
 	// many unchanged lines apart, i.e. the same region was churned twice.
 	DefaultEscalationHunkGapLines = 10
-	// DefaultEscalationMinCyclomatic is the McCabe floor above which a file's
-	// control flow is too branchy to review from hunks alone.
+	// DefaultEscalationMinCyclomatic is the McCabe floor above which a CHANGED
+	// function's control flow is too branchy to review from hunks alone. The score
+	// is scoped to the functions the diff touched, not the file-wide maximum.
 	DefaultEscalationMinCyclomatic = 15
 	// DefaultEscalationMaxSkeletonLines caps how many declaration headers a
 	// skeleton renders. A generated file with hundreds of declarations would
@@ -121,9 +122,10 @@ func (c EscalationConfig) anySignalEnabled() bool {
 
 // fileSignals are the per-file measurements the escalation heuristic scores.
 // headLines is 0 when HEAD content was unavailable (deleted or unreadable file),
-// and cyclomatic is 0 when complexity was not computed — a non-Go file, or a
-// parse failure. Both zeros mean "unknown", never "zero", so neither can fire a
-// signal on its own.
+// and cyclomatic is 0 when complexity was not computed — a non-Go file, a parse
+// failure, or no changed function to score. cyclomatic is the max McCabe score
+// over the functions the diff TOUCHED, not the file-wide maximum. Both zeros mean
+// "unknown", never "zero", so neither can fire a signal on its own.
 type fileSignals struct {
 	changedLines int
 	headLines    int
@@ -180,8 +182,11 @@ func (c EscalationConfig) hunksAreAdjacent(hunks []lineRange) bool {
 	return false
 }
 
-// complexityFires reports whether the file's McCabe score clears the floor. A
-// cyclomatic of 0 means the score was never computed and is not a signal.
+// complexityFires reports whether the changed region's McCabe score clears the
+// floor — cyclomatic is scoped to the functions the diff touched (analyzeFile),
+// so an unchanged branchy function elsewhere in the file cannot fire it. A
+// cyclomatic of 0 means the score was never computed (or no changed function
+// cleared it) and is not a signal.
 func (c EscalationConfig) complexityFires(s fileSignals) bool {
 	return c.MinCyclomatic > 0 && s.cyclomatic > 0 && s.cyclomatic >= c.MinCyclomatic
 }
