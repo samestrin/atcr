@@ -1,7 +1,10 @@
 package verify
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -762,4 +765,65 @@ func TestAnalyzeDiff_RealCapturedGitDiff(t *testing.T) {
 	withProse := analyzeDiff(dsRealGitDiff + "\nNotes:\n- assert the new value\n- expect no regression\n")
 	assert.Equal(t, res.Summary.ByType, withProse.Summary.ByType)
 	assert.Equal(t, res.Files.Impl, withProse.Files.Impl)
+}
+
+// --- one-way drift corpus (TD: diffsmell.go:3) ---
+
+// corpusCase is one entry in testdata/diffsmell/corpus.json: a diff file plus the
+// verdict and smell types atcr's OWN analyzeDiff must produce for it.
+type corpusCase struct {
+	File    string   `json:"file"`
+	Verdict string   `json:"verdict"`
+	Types   []string `json:"types"`
+	Note    string   `json:"note"`
+}
+
+// The corpus is the drift-detection artifact for this port. It is ONE-WAY by
+// deliberate choice (see the header comment): it pins atcr's own analyzeDiff and
+// is NOT automatically verified against llm-tools. A two-way corpus would have to
+// vendor the upstream analyzer or shell out to an installed llm-support binary,
+// reintroducing exactly the cross-module coupling this port exists to avoid.
+//
+// Its value is that the fixtures live as real .diff files rather than Go string
+// literals, so an upstream change can be replayed against them by hand, and every
+// detector plus every parser shape this file has been bitten by stays pinned in
+// one reviewable place.
+func TestAnalyzeDiff_Corpus(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "diffsmell", "corpus.json"))
+	require.NoError(t, err, "the drift corpus must exist")
+
+	var cases []corpusCase
+	require.NoError(t, json.Unmarshal(raw, &cases))
+	require.NotEmpty(t, cases, "an empty corpus pins nothing")
+
+	seenTypes := map[string]bool{}
+	for _, tc := range cases {
+		t.Run(tc.File, func(t *testing.T) {
+			diff, err := os.ReadFile(filepath.Join("testdata", "diffsmell", tc.File))
+			require.NoError(t, err, "corpus.json names a diff that does not exist")
+
+			res := analyzeDiff(string(diff))
+			require.NotNil(t, res)
+			assert.Equal(t, tc.Verdict, res.Summary.Verdict, "%s: %s", tc.File, tc.Note)
+
+			var got []string
+			for k := range res.Summary.ByType {
+				got = append(got, k)
+			}
+			assert.ElementsMatch(t, tc.Types, got, "%s: %s", tc.File, tc.Note)
+		})
+		for _, ty := range tc.Types {
+			seenTypes[ty] = true
+		}
+	}
+
+	// Every smell type this port can emit must appear somewhere in the corpus,
+	// so adding a detector without a corpus entry fails here rather than silently
+	// leaving the new behaviour unpinned.
+	for _, ty := range []string{
+		smellTestOnly, smellWeakenedAssertion, smellTestDeleted, smellTestSkipped,
+		smellTestRenamedAway, smellSuppression, smellEmptyCatch, smellStubBody,
+	} {
+		assert.True(t, seenTypes[ty], "smell type %q has no corpus entry", ty)
+	}
 }
