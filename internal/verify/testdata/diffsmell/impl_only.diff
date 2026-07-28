@@ -1,0 +1,11 @@
+diff --git a/internal/verify/select.go b/internal/verify/select.go
+index 68df499..d0bb993 100644
+--- a/internal/verify/select.go
++++ b/internal/verify/select.go
+@@ -1,5 +1,5 @@
+ package p
+ 
+ func pick() int {
+-	return 0
++	return 1
+ }

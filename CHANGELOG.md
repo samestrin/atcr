@@ -1,3 +1,25 @@
+## [35.3.0] - 2026-07-28
+
+Adds an adversarial diff-smell gate to the fix-generation phase, so a model-generated patch is checked for reward-hacking before it is ever written to a finding. The failure mode this blocks is the one an executor discovers on its own: the cheapest way to make a failing test pass is to delete the test, and the cheapest way to clear a lint is to suppress it. The gate is always on and has no configuration knob, matching the local Go syntax guard alongside it.
+
+### Added
+
+- Diff-smell gate on every generated fix (`internal/verify`). HARD smells — `test_only`, `test_deleted`, `weakened_assertion` — withhold the patch and trigger exactly one self-correction retry with the rejection evidence in the prompt; a second HARD verdict halts the finding through the existing skip-and-log contract. SOFT smells — `suppression`, `empty_catch`, `stub_body`, and one-for-one assertion replacement — accept the patch but flag it for review.
+- `fix_review` field on findings, carrying the `NEEDS_REVIEW` annotation for an accepted-but-smelly fix. Rendered by `atcr report` as a `🔍 Fix review:` line alongside the fix. Omitted entirely when empty, so output for a clean fix is byte-identical to previous releases.
+- Ported diff-smell analyzer (`internal/verify/diffsmell.go`), adapted from `llm-tools` v1.5.0. No new module dependency — stdlib only.
+
+### Changed
+
+- The gate covers both fix-generation paths. A rejected agent-mode fix retries through the agent path rather than downgrading to the single-shot snippet path.
+- Only diff-shaped fixes are scanned; free-form fix content passes through untouched, matching how `--auto-fix` already skips a fix it cannot parse as a diff.
+- `test_only` is suppressed when the finding itself cites a test file, where a test-only fix is expected by construction. `test_deleted` and `weakened_assertion` are never suppressed.
+
+### Fixed
+
+- The local Go syntax guard no longer reports a bogus `invalid_syntax` on an unfenced unified diff — the exact fix shape `--auto-fix` consumes. The exemption requires the diff to lead the content, so a Go fix that merely embeds a diff fixture in a string literal is still parsed and still reports real syntax errors.
+
+*Shipped via /execute-epic (epic 35.3)*
+
 ## [35.2.0] - 2026-07-27
 
 Makes the baseline (`--all`/`--dir`) file-hash-index write-back resilient to partial chunk failure. Previously a single failed chunk out of as many as 64 discarded the entire run's index update, so every successfully-reviewed file was re-scanned on the next baseline run. The write-back now records the files covered by the chunks that succeeded and excludes only the genuinely uncovered ones, so the next scan re-reviews just those. The safety direction is unchanged: an uncovered file is always re-reviewed, never silently skipped.

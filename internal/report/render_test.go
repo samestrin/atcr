@@ -79,6 +79,81 @@ var goldenCases = []struct {
 // inline TestRender_* tests below still cover behavioral edge cases (truncation,
 // injection, unicode, zero findings); this test locks the exact canonical output
 // so any formatting drift is caught. Regenerate with `-update`.
+// A fix accepted despite SOFT diff-smells carries FixReview (Epic 35.3). It must
+// render alongside the fix rather than replacing it — unlike FixWarning, the fix
+// here IS usable; it just took a shortcut a human should look at.
+func TestRenderMarkdown_ShowsFixReview(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "the patch",
+			Confidence: "HIGH", Reviewers: []string{"rev"},
+			FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Fix review:", "the fix-review label must surface in the markdown report")
+	assert.Contains(t, out, "over-simplification smell(s): suppression")
+	assert.Contains(t, out, "Fix: the patch", "the accepted fix must still render")
+}
+
+// FixReview is untrusted-adjacent (it embeds evidence text lifted from a
+// model-generated diff), so it must be escaped and truncated exactly like
+// FixWarning, and a finding without one must render no review line at all.
+func TestRenderMarkdown_FixReviewEscapedAndOmitted(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}, FixReview: "NEEDS_REVIEW: <script>alert(1)</script>"},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.NotContains(t, out, "<script>", "fix-review text must be HTML-escaped")
+	assert.Equal(t, 1, strings.Count(out, "Fix review:"), "only the annotated finding renders a review line")
+}
+
+// The truncation limb of escTrunc must apply to FixReview exactly as it does to
+// FixWarning: an over-length annotation is cut at maxTextLen runes with the
+// ellipsis marker, never rendered verbatim (it embeds model-generated evidence).
+func TestRenderMarkdown_FixReviewTruncated(t *testing.T) {
+	long := "NEEDS_REVIEW: " + strings.Repeat("x", maxTextLen+100)
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers: []string{"rev"}, FixReview: long},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.NotContains(t, out, long, "an over-length FixReview must be truncated, not rendered verbatim")
+	assert.Contains(t, out, "...", "the truncation marker must appear")
+}
+
+// fix_review is omitempty like fix_warning: a finding without an annotation
+// emits no key, and a set annotation round-trips through Render(FormatJSON).
+func TestRender_FixReviewJSONOmitemptyAndRoundTrip(t *testing.T) {
+	t.Run("omitted-when-empty", func(t *testing.T) {
+		var b strings.Builder
+		require.NoError(t, Render(&b, sample(), FormatJSON))
+		assert.NotContains(t, b.String(), "fix_review", "an empty FixReview must not emit a fix_review key")
+	})
+
+	t.Run("round-trips-when-set", func(t *testing.T) {
+		findings := []reconcile.JSONFinding{
+			{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+				Reviewers: []string{"rev"},
+				FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+		}
+		var b strings.Builder
+		require.NoError(t, Render(&b, findings, FormatJSON))
+		assert.Contains(t, b.String(), "fix_review", "a set FixReview must emit the fix_review key")
+		var got []reconcile.JSONFinding
+		require.NoError(t, json.Unmarshal([]byte(b.String()), &got))
+		require.Len(t, got, 1)
+		assert.Equal(t, findings[0].FixReview, got[0].FixReview, "FixReview must round-trip through Unmarshal")
+	})
+}
+
 func TestRender_GoldenFiles(t *testing.T) {
 	for _, tc := range goldenCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -481,6 +556,37 @@ func TestRenderAXI_UnicodePreserved(t *testing.T) {
 	out := b.String()
 	assert.Contains(t, out, "src/café/main.go", "unicode file path preserved")
 	assert.Contains(t, out, "naïve façade", "unicode finding text preserved")
+}
+
+// TestRenderAXI_FixWarningAndFixReviewColumns pins the additive fix_warning and
+// fix_review AXI columns (Epic 35.3): an agent consuming --axi must see the same
+// warning / NEEDS_REVIEW signals --format json carries — the payload is documented
+// as a superset of the JSON form. Both columns follow the has-any discipline used
+// for disagreement: declared only when at least one finding carries the value.
+func TestRenderAXI_FixWarningAndFixReviewColumns(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH",
+			Reviewers:  []string{"rev"},
+			FixWarning: "invalid_syntax: 2:1: expected '}'",
+			FixReview:  "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "q", Confidence: "HIGH",
+			Reviewers: []string{"rev"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatAXI))
+	out := b.String()
+	header, _, _ := strings.Cut(out, "\n")
+	assert.Contains(t, header, "fix_warning")
+	assert.Contains(t, header, "fix_review")
+	assert.Contains(t, out, "invalid_syntax")
+	assert.Contains(t, out, "NEEDS_REVIEW")
+
+	// Absent signals declare no columns — the clean fixture's header must not grow.
+	var clean strings.Builder
+	require.NoError(t, Render(&clean, sample(), FormatAXI))
+	cleanHeader, _, _ := strings.Cut(clean.String(), "\n")
+	assert.NotContains(t, cleanHeader, "fix_warning")
+	assert.NotContains(t, cleanHeader, "fix_review")
 }
 
 // TestRenderAXI_CapsOversizeCell pins the AXI payload byte-safety bound (TD from
