@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -67,6 +68,35 @@ func (s *sequencedExecutor) promptAt(i int) string {
 	return s.prompts[i]
 }
 
+// flakySequencedExecutor is a sequencedExecutor that can also script an error
+// at a given call index, so the gate's retry-that-FAILS branch is drivable.
+type flakySequencedExecutor struct {
+	mu    sync.Mutex
+	outs  []string
+	errAt map[int]error
+	calls int
+}
+
+func (s *flakySequencedExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.calls
+	s.calls++
+	if err, ok := s.errAt[i]; ok {
+		return "", err
+	}
+	if i >= len(s.outs) {
+		i = len(s.outs) - 1
+	}
+	return s.outs[i], nil
+}
+
+func (s *flakySequencedExecutor) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
 // gateFinding builds one fix-eligible finding at the given path.
 func gateFinding(file string) []reconcile.JSONFinding {
 	return []reconcile.JSONFinding{
@@ -117,6 +147,47 @@ func TestGenerateFixes_RetryPromptCarriesSmellFeedback(t *testing.T) {
 	// untrusted finding-data delimiter buildFixPrompt already establishes.
 	assert.Less(t, strings.Index(retry, "rejected"), strings.Index(retry, "\n---\n"),
 		"retry instructions must precede the untrusted-data delimiter")
+}
+
+// The retry-that-FAILS branch (postCheck over the retry's output returning
+// ok=false) must fail exactly as a first attempt would: no Fix, the classified
+// FixWarning, and no further retry.
+func TestGenerateFixes_HardSmellRetryFailureModes(t *testing.T) {
+	cases := []struct {
+		name       string
+		retryOut   string
+		retryErr   error
+		wantFix    string
+		wantWarn   string
+		wantReview string
+	}{
+		{"provider error", "", errors.New("provider boom"), "", "fix generation failed:", ""},
+		{"empty completion", "   ", nil, "", "fix generation returned an empty completion", ""},
+		{"decline sentinel", "ATCR_DECLINE: too complex", nil, "", "executor declined:", ""},
+		// The non-diff escape hatch is DELIBERATE (clarification Q1): a prose
+		// retry is not gateable, so it is accepted as-is. This case pins that so
+		// a future tightening cannot break it silently.
+		{"free-form prose", "just change the return value to 1", nil, "just change the return value to 1", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings := gateFinding("a.go")
+			rec := &flakySequencedExecutor{outs: []string{dsTestOnly, tc.retryOut}, errAt: map[int]error{}}
+			if tc.retryErr != nil {
+				rec.errAt[1] = tc.retryErr
+			}
+			generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+
+			assert.Equal(t, 2, rec.callCount(), "exactly one retry, no more")
+			assert.Equal(t, tc.wantFix, findings[0].Fix)
+			if tc.wantWarn == "" {
+				assert.Empty(t, findings[0].FixWarning)
+			} else {
+				assert.Contains(t, findings[0].FixWarning, tc.wantWarn)
+			}
+			assert.Equal(t, tc.wantReview, findings[0].FixReview)
+		})
+	}
 }
 
 // Two consecutive HARD verdicts halt the automation: no fix is written, and the
