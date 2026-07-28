@@ -337,6 +337,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				// (non-silent) and drop the partial text so a truncated runaway fails over
 				// visibly instead of landing a silent no-op "success". Takes priority over
 				// the empty-completion branch below (truncation is the more specific cause).
+				// NOTE: unlike the ceiling skips and the self-decline below, these two
+				// branches stamp FixWarning even when f.Fix is non-empty. That asymmetry is
+				// DELIBERATE and covered by TestGenerateFixes_EmptyCompletionLeavesFix: the
+				// pre-existing Fix here is the REVIEWER's own suggestion, which the documented
+				// contract keeps in place while recording why generation produced nothing
+				// (docs/registry.md). The prior-tier guard elsewhere protects a previous
+				// EXECUTOR's generated fix — a different thing that f.Fix == "" cannot
+				// distinguish. Do not "symmetrize" these without a real discriminator.
 				if truncated {
 					logPipelineWarning(log.FromContext(ctx), "executor_truncated_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
 					f.FixWarning = "fix generation truncated (finish_reason=length); no usable patch"
@@ -388,6 +396,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// FixReview so a human sees which shortcut was taken. evaluateFixSmell returns
 			// nil for anything that is not a scannable unified diff, so free-form fixes
 			// (the common case) pass through untouched at zero cost.
+			if len(fix) > maxFixBytes {
+				// Never a SILENT bypass: a fix too large to scan is written unscanned, so
+				// say so — otherwise "scanned and clean" and "never scanned" look identical
+				// in the run output, and a reward hack padded past the cap is invisible.
+				logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", fmt.Sprintf("%s:%d: fix is %d bytes, over the %d-byte scan cap; diff-smell gate skipped", f.File, f.Line, len(fix), maxFixBytes))
+			}
 			smellRes := evaluateFixSmell(fix, f.File)
 			if smellRes != nil && smellRes.Summary.Verdict == smellVerdictHard {
 				feedback := smellFeedback(smellRes)

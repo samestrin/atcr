@@ -106,12 +106,23 @@ func validateGoFixSyntax(fix string) error {
 	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
 		return nil // explicitly another language — not this guard's concern
 	}
+	if len(code) > maxFixBytes {
+		return nil // pathological size: not a genuine fix — skip the triple AST parse
+	}
 	// A unified diff is not Go source: parsing one yields a guaranteed bogus
 	// "expected declaration, found diff". nonGoFenceLangs already exempts a fix
 	// fenced as ```diff / ```patch, but an UNFENCED diff — the shape --auto-fix
 	// consumes via payload.BuildEntriesFromDiff — reached the parser and was
 	// mis-flagged. Exempt it on content, not just on fence label (Epic 35.3).
-	if looksLikeUnifiedDiff(code) {
+	//
+	// The test is deliberately STRICTER than the gate's looksLikeUnifiedDiff: it
+	// requires the diff to START the content, not merely appear somewhere in it. A
+	// whole-input scan would exempt any Go file that happens to embed a diff
+	// fixture in a raw string literal — the exact shape of this package's own test
+	// files — silencing the guard on genuinely broken Go. The gate can afford the
+	// permissive scan (a false "this is a diff" only means an extra scan); this
+	// guard cannot (a false exemption means a real parse error goes unreported).
+	if startsWithDiffHeader(code) {
 		return nil
 	}
 	// Cap the size of the code actually parsed, not the raw fix. A small fenced

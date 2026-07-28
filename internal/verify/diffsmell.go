@@ -13,17 +13,23 @@ package verify
 // suppressing it. generateFixes uses it as a pre-write gate on executor-produced
 // fixes.
 //
-// Divergences from upstream, both deliberate and both recorded in the epic's
-// Clarifications section:
+// Divergences from upstream, all deliberate:
 //
 //   - Types and helpers are unexported and prefixed `smell*` to fit this package.
 //   - Callers must pre-filter with looksLikeUnifiedDiff. Upstream is always fed a
 //     real diff (a file path or a git rev); here a Finding.Fix is free-form, so
 //     non-diff content must be classified clean rather than parsed as one.
+//   - A `+++ /dev/null` deletion hunk stays bound to its file instead of unbinding
+//     the parser, and a deleted test file raises the new HARD `test_deleted`
+//     smell. Upstream drops both, so deleting a whole test file alongside any
+//     implementation change scored `clean` — the single most blatant reward hack.
+//   - Assertions replaced one-for-one raise a SOFT `weakened_assertion`. Upstream
+//     only fires on a net LOSS, so swapping a strong assertion for a weak one
+//     scored clean.
 //
 // The `test_only` suppression for test-file findings is NOT applied here — the
-// analyzer stays a faithful port, and the gate applies that policy at the call
-// site where the finding's own path is known.
+// analyzer stays a faithful port in that respect, and the gate applies that
+// policy at the call site where the finding's own path is known.
 
 import (
 	"fmt"
@@ -55,9 +61,12 @@ const (
 const (
 	smellTestOnly          = "test_only"
 	smellWeakenedAssertion = "weakened_assertion"
-	smellSuppression       = "suppression"
-	smellEmptyCatch        = "empty_catch"
-	smellStubBody          = "stub_body"
+	// smellTestDeleted is an atcr addition, not an upstream type: upstream has no
+	// deletion detector at all. See the deletion branch in analyzeDiff.
+	smellTestDeleted = "test_deleted"
+	smellSuppression = "suppression"
+	smellEmptyCatch  = "empty_catch"
+	smellStubBody    = "stub_body"
 )
 
 // Severity values, mirroring upstream's smell.severity. HARD smells reject a
@@ -166,6 +175,24 @@ func looksLikeUnifiedDiff(text string) bool {
 	return false
 }
 
+// startsWithDiffHeader reports whether the FIRST non-blank line of text is a
+// unified-diff header. It is the strict counterpart to looksLikeUnifiedDiff:
+// where that one scans the whole input (correct for the gate, which loses nothing
+// on a false positive), this one demands the diff lead the content, so a Go file
+// that merely embeds a diff fixture in a raw string cannot claim the exemption.
+func startsWithDiffHeader(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		return strings.HasPrefix(line, "diff --git ") ||
+			strings.HasPrefix(line, "--- ") ||
+			strings.HasPrefix(line, "+++ ") ||
+			smellHunkRe.MatchString(line)
+	}
+	return false
+}
+
 type smellAddedLine struct {
 	text   string
 	lineNo int
@@ -174,6 +201,7 @@ type smellAddedLine struct {
 type smellFileChange struct {
 	path    string
 	isTest  bool
+	deleted bool // the new side is /dev/null: the file is removed outright
 	added   []smellAddedLine
 	removed []string
 }
@@ -190,6 +218,10 @@ func analyzeDiff(diff string) *smellResult {
 	files := []*smellFileChange{}
 	byPath := map[string]*smellFileChange{}
 	var cur *smellFileChange
+	// lastOldPath is the most recent `--- a/<path>` header. It is what a deletion
+	// hunk must be attributed to: its `+++` side is /dev/null, which carries no
+	// path of its own.
+	lastOldPath := ""
 	newLineNo := 0
 
 	ensure := func(p string) *smellFileChange {
@@ -213,9 +245,28 @@ func analyzeDiff(diff string) *smellResult {
 				cur = ensure(p)
 			}
 		case strings.HasPrefix(line, "+++ "):
-			cur = ensure(smellHeaderPath(line[4:]))
+			// DIVERGENCE from upstream: a `+++ /dev/null` header (a file DELETION)
+			// made upstream's ensure() return nil, unbinding cur — which silently
+			// discarded every `-` line of the deleted file. A deleted test file
+			// therefore contributed no removed assertions, so a diff that deletes a
+			// whole test AND edits an implementation file scored clean: test_only
+			// could not fire (implCount > 0) and weakened_assertion had nothing to
+			// count. That is the single most blatant reward hack this gate exists to
+			// block. Keep cur bound to the file the deletion is about — from the
+			// preceding `diff --git` header, or failing that the `--- a/<path>` one —
+			// and record the deletion.
+			if p := smellHeaderPath(line[4:]); p == "/dev/null" || p == "" {
+				if cur == nil {
+					cur = ensure(lastOldPath)
+				}
+				if cur != nil {
+					cur.deleted = true
+				}
+			} else {
+				cur = ensure(p)
+			}
 		case strings.HasPrefix(line, "--- "):
-			// old-file header — ignore
+			lastOldPath = smellHeaderPath(line[4:])
 		case strings.HasPrefix(line, "@@"):
 			newLineNo = smellNewHunkStart(line)
 		case strings.HasPrefix(line, "+"):
@@ -265,8 +316,17 @@ func analyzeDiff(diff string) *smellResult {
 	}
 
 	for _, fc := range files {
-		// HARD: a test file removed more assertions than it added.
 		if fc.isTest {
+			// HARD: deleting a test file outright. DIVERGENCE from upstream, which has
+			// no deletion detector — it relies on test_only, which cannot fire when the
+			// same diff also edits an implementation file. Deleting the test IS the
+			// reward hack, whether or not anything else changed, and unlike
+			// weakened_assertion it does not depend on the deleted lines happening to
+			// match the assertion regex.
+			if fc.deleted {
+				add(smell{Type: smellTestDeleted, Severity: smellSeverityHard, File: fc.path,
+					Evidence: "fix deleted a test file outright"})
+			}
 			removedAsserts, addedAsserts := 0, 0
 			for _, r := range fc.removed {
 				if smellAssertionRe.MatchString(r) {
@@ -278,9 +338,22 @@ func analyzeDiff(diff string) *smellResult {
 					addedAsserts++
 				}
 			}
-			if removedAsserts > addedAsserts {
+			switch {
+			case removedAsserts > addedAsserts:
+				// HARD: a net loss of assertions is unambiguous.
 				add(smell{Type: smellWeakenedAssertion, Severity: smellSeverityHard, File: fc.path,
 					Evidence: "test removed assertion(s) without replacing them"})
+			case removedAsserts > 0 && removedAsserts == addedAsserts:
+				// SOFT: assertions replaced one-for-one. DIVERGENCE from upstream, which
+				// only compares counts and so misses the classic swap of
+				// `require.Equal(t, want, got)` for `require.NotNil(t, got)` — equal
+				// counts, strictly weaker check. Line counting cannot tell that apart
+				// from a legitimate assertion rewrite, so it annotates rather than
+				// blocks: SOFT is exactly the "a human should glance at this" tier. This
+				// is also the backstop that survives evaluateFixSmell's test_only
+				// suppression for test-path findings.
+				add(smell{Type: smellWeakenedAssertion, Severity: smellSeveritySoft, File: fc.path,
+					Evidence: "test replaced assertion(s) one-for-one; verify they were not weakened"})
 			}
 		}
 

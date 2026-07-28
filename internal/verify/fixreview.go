@@ -18,14 +18,6 @@ const smellRetryInstruction = "Your previous attempt was rejected: it made the f
 	"Fix the underlying problem in the implementation instead. " +
 	"Do not delete or weaken tests. If you genuinely cannot fix the root cause, decline rather than retry the same shortcut."
 
-// buildFixReview renders the annotation stamped on a fix that the diff-smell gate
-// ACCEPTED despite SOFT smells (suppression / empty_catch / stub_body). It names
-// every smell type found so a human reviewer knows which shortcut was taken.
-//
-// It returns "" for a nil or smell-free result, so a clean fix is never annotated.
-// Only the type list is included — never the raw evidence line — because the
-// evidence is verbatim model-generated diff text, whereas the type list is a
-// closed, trusted vocabulary; the location detail already lives in the finding.
 // evaluateFixSmell is the gate's decision function: it scans a candidate fix for
 // over-simplification smells and applies the two atcr-specific policies the raw
 // analyzer deliberately does not (Epic 35.3 clarifications Q1 and Q2).
@@ -95,6 +87,14 @@ func dropSmellType(res *smellResult, typ string) {
 	}
 }
 
+// buildFixReview renders the annotation stamped on a fix that the diff-smell gate
+// ACCEPTED despite SOFT smells (suppression / empty_catch / stub_body). It names
+// every smell type found so a human reviewer knows which shortcut was taken.
+//
+// It returns "" for a nil or smell-free result, so a clean fix is never annotated.
+// Only the type list is included — never the raw evidence line — because the
+// evidence is verbatim model-generated diff text, whereas the type list is a
+// closed, trusted vocabulary; the location detail already lives in the finding.
 func buildFixReview(res *smellResult) string {
 	types := smellTypes(res)
 	if len(types) == 0 {

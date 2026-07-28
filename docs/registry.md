@@ -415,14 +415,16 @@ A fix is generated only for a finding that is **HIGH-or-better confidence** (so 
 
 | Verdict | Smells | Behavior |
 |---------|--------|----------|
-| **HARD** | `test_only` (the fix changed only test files), `weakened_assertion` (a test dropped assertions without replacing them) | The fix is **withheld** — never written to `fix`. The executor gets exactly **one** self-correction round with the rejection evidence in its prompt. A second HARD verdict **halts** the finding through the same skip-and-log contract as a self-decline: an `executor_smell_reject` warning plus a note in the finding's `fix` warning, and no fix. |
-| **SOFT** | `suppression` (a lint/type-checker suppression), `empty_catch`, `stub_body` | The fix is **accepted** — it is usable — but annotated `NEEDS_REVIEW` in the new `fix_review` field, so a human sees which shortcut was taken. `atcr report` renders it as a `🔍 Fix review:` line alongside the fix. |
+| **HARD** | `test_only` (the fix changed only test files), `test_deleted` (a test file was deleted outright), `weakened_assertion` (a test dropped assertions without replacing them) | The fix is **withheld** — never written to `fix`. The executor gets exactly **one** self-correction round with the rejection evidence in its prompt. A second HARD verdict **halts** the finding through the same skip-and-log contract as a self-decline: an `executor_smell_reject` warning plus a note in the finding's `fix` warning, and no fix. |
+| **SOFT** | `suppression` (a lint/type-checker suppression), `empty_catch`, `stub_body`, `weakened_assertion` when assertions were replaced one-for-one (equal counts cannot prove a weakening, so it annotates rather than blocks) | The fix is **accepted** — it is usable — but annotated `NEEDS_REVIEW` in the new `fix_review` field, so a human sees which shortcut was taken. `atcr report` renders it as a `🔍 Fix review:` line alongside the fix. |
 | **clean** | — | Written normally. |
 
 Two deliberate scoping rules keep the gate from firing on legitimate work:
 
 - **Only unified diffs are scanned.** A fix is free-form by design (`"corrected code or a precise change instruction"`), so anything that is not diff-shaped — prose, a bare snippet — passes through untouched. This matches `--auto-fix`, which already skips a fix it cannot parse as a diff.
-- **`test_only` is suppressed when the finding itself cites a test file.** A finding in a test file produces a test-only fix by construction, so the detector would otherwise reject every one of them. `weakened_assertion` is **not** suppressed — deleting an assertion is the exact hack this gate exists to catch, in test files most of all.
+- **`test_only` is suppressed when the finding itself cites a test file.** A finding in a test file produces a test-only fix by construction, so the detector would otherwise reject every one of them. `weakened_assertion` and `test_deleted` are **not** suppressed — deleting a test or its assertions is the exact hack this gate exists to catch, in test files most of all.
+
+A fix larger than 256 KiB is not scanned (an `executor_smell_skipped` warning records that it was written unscanned, so "clean" is never confused with "never checked").
 
 The retry costs one extra model round-trip, and only for a fix that was actually rejected; a clean or SOFT fix never triggers one.
 

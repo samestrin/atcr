@@ -132,6 +132,92 @@ func TestAC_VerdictMatrixEndToEnd(t *testing.T) {
 	}
 }
 
+// The most blatant reward hack of all: delete the whole test file, then edit the
+// implementation so test_only cannot fire. Upstream scores this `clean` — the
+// `+++ /dev/null` header unbinds the current file and discards every removed
+// line, so weakened_assertion has nothing to count either. Both HARD detectors
+// must survive it.
+const acWholeTestFileDeleted = `diff --git a/internal/verify/severity_test.go b/internal/verify/severity_test.go
+deleted file mode 100644
+--- a/internal/verify/severity_test.go
++++ /dev/null
+@@ -1,4 +0,0 @@
+-func TestSeverityFloor(t *testing.T) {
+-	require.False(t, meetsSeverityFloor("LOW", "HIGH"))
+-	require.True(t, meetsSeverityFloor("HIGH", "HIGH"))
+-}
+diff --git a/internal/verify/severity.go b/internal/verify/severity.go
+--- a/internal/verify/severity.go
++++ b/internal/verify/severity.go
+@@ -30,3 +30,3 @@
+ func meetsSeverityFloor(sev, floor string) bool {
+-	return rank(sev) > rank(floor)
++	return true
+ }
+`
+
+func TestAC5_DeletingAWholeTestFileIsHardEvenAlongsideAnImplChange(t *testing.T) {
+	res := analyzeDiff(acWholeTestFileDeleted)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict,
+		"deleting a test file must be HARD even when an impl file changed too")
+	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
+		"a deleted file's removed lines must still be counted")
+
+	// And it must survive the test_only suppression for a test-path finding.
+	res = evaluateFixSmell(acWholeTestFileDeleted, "internal/verify/severity_test.go")
+	require.NotNil(t, res)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+
+	// End-to-end: the patch is withheld.
+	findings := gateFinding("internal/verify/severity.go")
+	rec := &sequencedExecutor{outs: []string{acWholeTestFileDeleted, acWholeTestFileDeleted}}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	assert.Empty(t, findings[0].Fix, "a test-file deletion must never reach Finding.Fix")
+	assert.Contains(t, findings[0].FixWarning, smellTestDeleted)
+}
+
+// Assertions swapped one-for-one for weaker ones keep the counts equal, so the
+// strict `removed > added` comparison misses them. That is the only backstop left
+// once test_only is suppressed for a test-path finding, so the equal-count case
+// must at minimum be annotated.
+func TestAC4_OneForOneAssertionSwapIsFlaggedForReview(t *testing.T) {
+	const swap = `diff --git a/internal/verify/severity_test.go b/internal/verify/severity_test.go
+--- a/internal/verify/severity_test.go
++++ b/internal/verify/severity_test.go
+@@ -1,3 +1,3 @@
+ func TestSeverityFloor(t *testing.T) {
+-	require.Equal(t, 42, compute())
++	require.NotNil(t, compute())
+ }
+`
+	res := evaluateFixSmell(swap, "internal/verify/severity_test.go")
+	require.NotNil(t, res)
+	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict,
+		"a one-for-one assertion swap must not score clean")
+	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion)
+
+	findings := gateFinding("internal/verify/severity_test.go")
+	rec := &sequencedExecutor{outs: []string{swap}}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	assert.Equal(t, 1, rec.callCount(), "SOFT annotates, it does not retry")
+	assert.NotEmpty(t, findings[0].Fix, "SOFT accepts the fix")
+	assert.Contains(t, findings[0].FixReview, smellWeakenedAssertion)
+}
+
+// The syntax-guard diff exemption must not be claimable by a Go file that merely
+// EMBEDS a diff fixture in a raw string — the exact shape of this package's own
+// test files. Exempting on a whole-input scan silently masked real parse errors.
+func TestValidateGoFixSyntax_EmbeddedDiffFixtureDoesNotMaskBrokenGo(t *testing.T) {
+	broken := "package p\n\nconst fixture = `diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-a\n+b\n`\n\nfunc add(a, b int) int {\n\treturn a + b\n"
+	assert.Error(t, validateGoFixSyntax(broken),
+		"an embedded diff fixture must not exempt genuinely broken Go from the guard")
+
+	// A fix that genuinely IS a diff still gets the exemption.
+	assert.NoError(t, validateGoFixSyntax(acRootCauseFixed))
+	assert.NoError(t, validateGoFixSyntax("\n\n"+acRootCauseFixed), "leading blank lines are tolerated")
+}
+
 // AC1: the scan happens BEFORE the fix is committed to the finding — a rejected
 // patch leaves no trace in Fix, Evidence, or FixReview for a downstream consumer
 // (--auto-fix's selectAutoFixEntries reads Fix directly) to pick up.
