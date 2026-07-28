@@ -42,17 +42,23 @@ type replayStats struct {
 	toBlocks int
 	toFiles  int
 
-	// baseBytes/escalatedBytes are the rendered payload sizes for THIS
+	// bareBytes/baseBytes/escalatedBytes are the rendered payload sizes for THIS
 	// population, so a Go-only byte delta is never reported against an
 	// all-files byte total.
+	bareBytes      int
 	baseBytes      int
 	escalatedBytes int
 }
 
 // addBytes folds one file's rendered sizes in.
-func (r *replayStats) addBytes(base, escalated int) {
+func (r *replayStats) addBytes(bare, base, escalated int) {
 	r.baseBytes += base
 	r.escalatedBytes += escalated
+}
+
+// featureDelta reports the escalated payload against the bare-diff body.
+func (r *replayStats) featureDelta() float64 {
+	return 0
 }
 
 // byteDelta is the percentage increase in payload bytes escalation caused over
@@ -177,11 +183,32 @@ func TestReplayStats_RatesAndAttribution(t *testing.T) {
 	require.InDelta(t, 33.333, r.signalRate(sigComplexity), 0.001, "B and C")
 
 	// Byte accounting: 200 extra bytes over a 1500-byte base = +13.33%.
-	r.addBytes(1000, 1200)
-	r.addBytes(500, 500)
+	r.addBytes(800, 1000, 1200)
+	r.addBytes(400, 500, 500)
 	require.Equal(t, 1500, r.baseBytes)
 	require.Equal(t, 1700, r.escalatedBytes)
 	require.InDelta(t, 13.333, r.byteDelta(), 0.001)
+}
+
+// TestReplayStats_BareBytesSeparatesSkeletonFromPromotion pins the disclosure
+// the byte report rests on: byteDelta() charges the AST skeleton to the BASE
+// side, so it measures the cost of MODE PROMOTION alone. The skeleton is itself
+// gated by the escalation config, so an operator running with the feature OFF
+// pays neither — the whole-feature cost is the escalated payload against the
+// BARE diff body, and both figures must be recoverable from one report.
+func TestReplayStats_BareBytesSeparatesSkeletonFromPromotion(t *testing.T) {
+	var r replayStats
+
+	// One file: 100 B bare diff body, +50 B skeleton (the escalation-enabled
+	// base render), 200 B once promoted.
+	r.addBytes(100, 150, 200)
+
+	require.Equal(t, 100, r.bareBytes, "bare fileBody total must be retained, not folded into base")
+	require.Equal(t, 150, r.baseBytes)
+	require.Equal(t, 200, r.escalatedBytes)
+
+	require.InDelta(t, 33.333, r.byteDelta(), 0.001, "promotion-only cost, skeleton on both sides")
+	require.InDelta(t, 100.0, r.featureDelta(), 0.001, "whole-feature cost over plain diff mode, skeleton included")
 }
 
 // TestReplayStats_EmptyWindowIsNotADivideByZero guards the degenerate case: a
@@ -192,6 +219,7 @@ func TestReplayStats_EmptyWindowIsNotADivideByZero(t *testing.T) {
 	require.Equal(t, 0.0, r.promotionRate())
 	require.Equal(t, 0.0, r.signalRate(sigChurn))
 	require.Equal(t, 0.0, r.byteDelta(), "baseBytes <= 0 must report 0, not NaN")
+	require.Equal(t, 0.0, r.featureDelta(), "bareBytes <= 0 must report 0, not NaN")
 }
 
 // Replay-harness knobs. The window defaults to 40 commits because that is the
@@ -504,9 +532,9 @@ func accumulateBytes(g *gitRunner, cfg EscalationConfig, base, head string, f ch
 		escalatedBytes = len(injectSkeleton(promotedBody, skel))
 	}
 
-	rep.all.addBytes(baseBytes, escalatedBytes)
+	rep.all.addBytes(len(baseBody), baseBytes, escalatedBytes)
 	if isGo {
-		rep.goOnly.addBytes(baseBytes, escalatedBytes)
+		rep.goOnly.addBytes(len(baseBody), baseBytes, escalatedBytes)
 	}
 }
 
