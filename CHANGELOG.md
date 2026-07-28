@@ -88,6 +88,8 @@ Makes the payload mode a floor rather than a ceiling: the payload builder now pr
 - Grounding after a `blocks`-mode payload build no longer spawns its own `--unified=0` subprocess — the escalation pass already populated that cache.
 - `docs/payload-modes.md` and `docs/registry.md` document the escalation ladder, the skeleton format and its cap, the cost cap, and the new configuration block.
 
+> **Correction (35.4.0).** The Added entry above describes the churn signal as a "churn ratio over added+deleted lines". That was the shipped behavior only briefly: the 35.1 double-counting fix changed it to `max(added, deleted)`, so a pure move or a rewrite is not scored twice. The historical text is left as written; `docs/payload-modes.md` and `internal/payload/escalation.go` carry the current definition.
+
 *Shipped via /execute-epic (epic 35.1)*
 
 ## [35.0.0] - 2026-07-27
