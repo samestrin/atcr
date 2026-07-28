@@ -81,7 +81,6 @@ type smell struct {
 	Type     string
 	Severity string
 	File     string
-	Line     int // new-file line number for added-line smells
 	Evidence string
 }
 
@@ -201,8 +200,7 @@ func startsWithDiffHeader(text string) bool {
 }
 
 type smellAddedLine struct {
-	text   string
-	lineNo int
+	text string
 }
 
 type smellFileChange struct {
@@ -229,7 +227,6 @@ func analyzeDiff(diff string) *smellResult {
 	// hunk must be attributed to: its `+++` side is /dev/null, which carries no
 	// path of its own.
 	lastOldPath := ""
-	newLineNo := 0
 
 	ensure := func(p string) *smellFileChange {
 		if p == "" || p == "/dev/null" {
@@ -275,12 +272,12 @@ func analyzeDiff(diff string) *smellResult {
 		case strings.HasPrefix(line, "--- "):
 			lastOldPath = smellHeaderPath(line[4:])
 		case strings.HasPrefix(line, "@@"):
-			newLineNo = smellNewHunkStart(line)
+			// hunk header — line numbers are deliberately not tracked (no
+			// production consumer ever read them)
 		case strings.HasPrefix(line, "+"):
 			if cur != nil {
-				cur.added = append(cur.added, smellAddedLine{text: line[1:], lineNo: newLineNo})
+				cur.added = append(cur.added, smellAddedLine{text: line[1:]})
 			}
-			newLineNo++
 		case strings.HasPrefix(line, "-"):
 			if cur != nil {
 				cur.removed = append(cur.removed, line[1:])
@@ -289,7 +286,6 @@ func analyzeDiff(diff string) *smellResult {
 			// "\ No newline at end of file" — ignore
 		default:
 			// context line (leading space) or stray line
-			newLineNo++
 		}
 	}
 
@@ -373,7 +369,7 @@ func analyzeDiff(diff string) *smellResult {
 				continue
 			}
 			if smellSuppressionRe.MatchString(a.text) {
-				add(smell{Type: smellSuppression, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
+				add(smell{Type: smellSuppression, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
 			}
 			// The empty-catch pattern must also see consecutive added lines
 			// joined: formatters emit `catch (e) {` and `}` on separate lines,
@@ -384,10 +380,10 @@ func analyzeDiff(diff string) *smellResult {
 				pair = a.text + "\n" + fc.added[i+1].text
 			}
 			if smellEmptyCatchRe.MatchString(pair) {
-				add(smell{Type: smellEmptyCatch, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
+				add(smell{Type: smellEmptyCatch, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
 			}
 			if smellStubBodyRe.MatchString(a.text) {
-				add(smell{Type: smellStubBody, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
+				add(smell{Type: smellStubBody, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
 			}
 		}
 	}
@@ -448,33 +444,6 @@ func smellBPathFromGitHeader(line string) string {
 	}
 	b = strings.Trim(b, `"`)
 	return smellHeaderPath(b)
-}
-
-// smellMaxHunkDigits bounds the hunk-start parse. Upstream accumulates digits
-// unbounded, which silently wraps on a pathological header; here the diff is
-// MODEL-generated, so an absurd `@@ -1 +999...9 @@` is reachable input and its
-// wrapped (possibly negative) result would ride into a smell's Line and out
-// through the FixReview annotation. 9 digits holds any real file (999,999,999
-// lines) and cannot overflow int32-width arithmetic.
-const smellMaxHunkDigits = 9
-
-// smellNewHunkStart returns the new-file starting line of a hunk header, or 0.
-// A header whose line number exceeds smellMaxHunkDigits yields 0 (unknown line)
-// rather than a wrapped value — the same fail-soft posture the rest of this
-// analyzer takes on unparseable input.
-func smellNewHunkStart(line string) int {
-	m := smellHunkRe.FindStringSubmatch(line)
-	if m == nil {
-		return 0
-	}
-	if len(m[1]) > smellMaxHunkDigits {
-		return 0
-	}
-	n := 0
-	for _, c := range m[1] {
-		n = n*10 + int(c-'0')
-	}
-	return n
 }
 
 // smellTypes returns the distinct smell types in res, sorted, for a stable
