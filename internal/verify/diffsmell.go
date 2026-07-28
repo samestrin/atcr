@@ -317,10 +317,24 @@ func smellBPathFromGitHeader(line string) string {
 	return smellHeaderPath(fields[len(fields)-1])
 }
 
+// smellMaxHunkDigits bounds the hunk-start parse. Upstream accumulates digits
+// unbounded, which silently wraps on a pathological header; here the diff is
+// MODEL-generated, so an absurd `@@ -1 +999...9 @@` is reachable input and its
+// wrapped (possibly negative) result would ride into a smell's Line and out
+// through the FixReview annotation. 9 digits holds any real file (999,999,999
+// lines) and cannot overflow int32-width arithmetic.
+const smellMaxHunkDigits = 9
+
 // smellNewHunkStart returns the new-file starting line of a hunk header, or 0.
+// A header whose line number exceeds smellMaxHunkDigits yields 0 (unknown line)
+// rather than a wrapped value — the same fail-soft posture the rest of this
+// analyzer takes on unparseable input.
 func smellNewHunkStart(line string) int {
 	m := smellHunkRe.FindStringSubmatch(line)
 	if m == nil {
+		return 0
+	}
+	if len(m[1]) > smellMaxHunkDigits {
 		return 0
 	}
 	n := 0

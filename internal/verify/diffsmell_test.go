@@ -157,6 +157,38 @@ func TestAnalyzeDiff_FileAndLineAttribution(t *testing.T) {
 	assert.Empty(t, res.Files.Test)
 }
 
+// A pathological hunk-start must not wrap into a garbage (or negative) line
+// number — the diff is model-generated, so an absurd header is reachable input.
+func TestAnalyzeDiff_HunkStartOverflowIsFailSoft(t *testing.T) {
+	res := analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +99999999999999999999999 @@\n+\t// TODO: later\n")
+	require.Len(t, res.Smells, 1)
+	assert.Equal(t, 0, res.Smells[0].Line, "overflowing hunk start must degrade to unknown line, not wrap")
+
+	// The largest in-range header still parses exactly.
+	res = analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +999999999 @@\n+\t// TODO: later\n")
+	require.Len(t, res.Smells, 1)
+	assert.Equal(t, 999999999, res.Smells[0].Line)
+}
+
+// Deleting a whole test file is the archetypal reward hack: it must be HARD.
+func TestAnalyzeDiff_TestFileDeletionIsHard(t *testing.T) {
+	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\ndeleted file mode 100644\n--- a/x_test.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Contains(t, res.Summary.ByType, smellTestOnly)
+}
+
+// A CRLF diff (or one wrapped in a markdown fence) must still be recognized and
+// parsed — an executor is free to emit either.
+func TestAnalyzeDiff_CRLFAndFencedDiffs(t *testing.T) {
+	crlf := "diff --git a/x.go b/x.go\r\n--- a/x.go\r\n+++ b/x.go\r\n@@ -1 +1,2 @@\r\n+\t// TODO: x\r\n"
+	assert.True(t, looksLikeUnifiedDiff(crlf))
+	assert.Equal(t, smellVerdictSoftOnly, analyzeDiff(crlf).Summary.Verdict)
+
+	fenced := "```diff\n" + dsTestOnly + "```\n"
+	assert.True(t, looksLikeUnifiedDiff(fenced))
+	assert.Equal(t, smellVerdictHard, analyzeDiff(fenced).Summary.Verdict)
+}
+
 // A rename-style header with no +++ line still attributes to the b/ path.
 func TestAnalyzeDiff_GitHeaderFallbackPath(t *testing.T) {
 	res := analyzeDiff("diff --git a/foo/bar.go b/foo/bar.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
