@@ -158,6 +158,11 @@ func TestIsSmellTestPath(t *testing.T) {
 		"internal/verify/latest_results.go",
 		"src/protest.ts",
 		"internal/verify/select.go",
+		// A bare `spec` path segment is a documentation/spec directory, not a
+		// test convention — the _spec.rb / .spec.ts filename regexes carry that
+		// load.
+		"api/spec/openapi.yaml",
+		"docs/spec/README.md",
 	} {
 		assert.False(t, isSmellTestPath(p), "expected NON-test path: %s", p)
 	}
