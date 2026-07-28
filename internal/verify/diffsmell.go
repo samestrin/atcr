@@ -358,11 +358,19 @@ func analyzeDiff(diff string) *smellResult {
 		}
 
 		// SOFT: per-added-line fingerprints.
-		for _, a := range fc.added {
+		for i, a := range fc.added {
 			if smellSuppressionRe.MatchString(a.text) {
 				add(smell{Type: smellSuppression, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
 			}
-			if smellEmptyCatchRe.MatchString(a.text) {
+			// The empty-catch pattern must also see consecutive added lines
+			// joined: formatters emit `catch (e) {` and `}` on separate lines,
+			// and Go's \s matches the newline, so the pair reveals what a
+			// strictly per-line scan cannot.
+			pair := a.text
+			if i+1 < len(fc.added) {
+				pair = a.text + "\n" + fc.added[i+1].text
+			}
+			if smellEmptyCatchRe.MatchString(pair) {
 				add(smell{Type: smellEmptyCatch, Severity: smellSeveritySoft, File: fc.path, Line: a.lineNo, Evidence: strings.TrimSpace(a.text)})
 			}
 			if smellStubBodyRe.MatchString(a.text) {
