@@ -250,6 +250,13 @@ type baselineWriteback struct {
 	reviewed  map[string]string      // path -> review-time sha256 of files ACTUALLY in the payload
 	tracked   []string               // full in-scope tracked set, for self-trim on a whole-repo run
 	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
+	// uncovered is the subset of reviewed whose chunk FAILED, so those files went
+	// unreviewed and must NOT be recorded (Epic 35.2 / TD-013). Stamped by runEngine
+	// from the raw pre-merge results, after which chunk identity is unrecoverable.
+	// nil (the default) means full coverage — every reviewed file is recorded, which
+	// is the pre-35.2 behavior and the path a resume/direct caller that never runs
+	// the engine keeps.
+	uncovered map[string]struct{}
 }
 
 // CommitBaselineIndex persists the incremental file-hash index after a COMPLETED
@@ -924,6 +931,17 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
+	// Baseline partial-coverage attribution (Epic 35.2 / TD-013) — MUST run before
+	// mergeChunkResults below, which collapses per-chunk success/failure into a bare
+	// UnreviewedChunks count and discards chunk identity for good. Records which
+	// reviewed files their chunk failed to cover so CommitBaselineIndex can record
+	// the succeeded chunks' files and leave only the uncovered ones for the next
+	// scan. nil for a diff-range review (p.baseline == nil), which never touches the
+	// index.
+	if p.baseline != nil {
+		p.baseline.uncovered = uncoveredBaselineFiles(p.Slots, results, p.baseline.reviewed)
+	}
+
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
 	// back as N results under the same Agent name; collapse them into one result
 	// per persona BEFORE any downstream step so stage classification, the summary
@@ -1490,8 +1508,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 					for _, ck := range chunks {
 						var pb strings.Builder
+						chunkFiles := make([]string, 0, len(ck))
 						for _, e := range ck {
 							pb.WriteString(e.Body)
+							chunkFiles = append(chunkFiles, e.Path)
 						}
 						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
 						// event decided upstream, not a per-chunk property (mirrors the chunked path).
@@ -1499,6 +1519,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if rerr != nil {
 							return rerr
 						}
+						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
+						// Tagged HERE — at capChunks output, after tail-coalescing — so the
+						// identity matches the slot actually dispatched. runEngine reads it
+						// pre-merge to attribute a failed chunk to its files, so a partially
+						// failed baseline run records the succeeded chunks' files instead of
+						// discarding the whole write-back. Only the Primary is tagged: the
+						// attribution reads the slot's Primary, and a fallback reviews the SAME
+						// chunk as the primary it substitutes for.
+						primary.chunkFiles = chunkFiles
 						fbs, cerr := buildChain(name, primary)
 						if cerr != nil {
 							return cerr
