@@ -9,6 +9,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -181,9 +182,13 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
 // set but cc or disp is nil (harness unavailable), generateFixes degrades to the
 // snippet path with a logged warning rather than dropping the fix — agent_mode=false
 // is the unchanged Epic 7.0 path regardless of cc.
-func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) {
+//
+// It returns the number of diff-smell-gate retries attempted across all findings
+// (each doubles that finding's model spend), so the caller can surface a
+// systematically rejected executor in the run Result (TD: executor.go:395).
+func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) int {
 	if ex == nil || complete == nil || reg == nil {
-		return
+		return 0
 	}
 	// Defense-in-depth: registry validation already guarantees the executor's
 	// provider is defined, so this guard never fires on a validated registry. It
@@ -192,7 +197,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	prov, ok := reg.Providers[ex.Provider]
 	if !ok {
 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
-		return
+		return 0
 	}
 	minSev := ex.EffectiveFixMinSeverity()
 	// Complexity ceilings (Sprint 32.1): resolved once, outside the loop, mirroring
@@ -210,6 +215,9 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	}
 	sem := make(chan struct{}, maxPar)
 	var wg sync.WaitGroup
+	// Counted across the worker pool, hence atomic: each diff-smell-gate retry is
+	// a second full executor round-trip whose cost must stay visible.
+	var smellRetries int64
 	for i := range findings {
 		// Bail promptly on cancellation: without this the loop keeps enqueuing
 		// every remaining finding even after ctx is done, and a nil fix_timeout
@@ -414,6 +422,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			if smellRes != nil && smellRes.Summary.Verdict == smellVerdictHard {
 				feedback := smellFeedback(smellRes)
 				logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (retrying once)", f.File, f.Line, feedback))
+				atomic.AddInt64(&smellRetries, 1)
 				retryFix, retryOK := postCheck(generate(feedback))
 				if !retryOK {
 					return // postCheck already classified and stamped the retry's failure
@@ -458,6 +467,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		}(f)
 	}
 	wg.Wait()
+	return int(smellRetries)
 }
 
 // callExecutor invokes the executor model for one finding, applying a per-call

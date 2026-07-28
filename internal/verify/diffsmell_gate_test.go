@@ -306,7 +306,7 @@ func TestGenerateFixes_SmellRetryReusesSnippet(t *testing.T) {
 	assert.Equal(t, 1, disp.count(), "the retry must reuse the first attempt's snippet, not re-read it")
 }
 
-// The smell-gate retry count rides generateFixes's return so the run summary can
+// The smell-gate retry count rides generateFixes's return so the run Result can
 // surface a systematically rejected executor's doubled model spend.
 func TestGenerateFixes_SmellRetryCount(t *testing.T) {
 	findings := gateFinding("a.go")
