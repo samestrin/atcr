@@ -267,7 +267,7 @@ func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
 // smellTypes returns the deterministic, sorted, deduplicated type list used for
 // the FixReview annotation.
 func TestSmellTypes(t *testing.T) {
-	res := analyzeDiff(dsSuppression + strings.Replace(dsStubBody, "select.go", "other.go", -1))
+	res := analyzeDiff(dsSuppression + strings.ReplaceAll(dsStubBody, "select.go", "other.go"))
 	assert.Equal(t, []string{smellStubBody, smellSuppression}, smellTypes(res))
 	assert.Empty(t, smellTypes(analyzeDiff(dsImplOnly)))
 	assert.Empty(t, smellTypes(nil))
