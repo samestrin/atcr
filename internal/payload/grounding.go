@@ -3,8 +3,6 @@ package payload
 import (
 	"context"
 	"strings"
-
-	"github.com/samestrin/atcr/internal/log"
 )
 
 // LineRange is an inclusive, 1-based line span in the head file — the exported
@@ -39,7 +37,7 @@ type ChangedLines map[string]FileChange
 // --no-ignore review whose grounding took this path would silently drop every
 // finding on an ignored file (the file absent from the changed-lines map).
 func BuildChangedLines(ctx context.Context, repo, base, head string, opts ...RangeOption) (ChangedLines, error) {
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	for _, o := range opts {
 		o(g)
 	}

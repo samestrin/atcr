@@ -49,13 +49,22 @@ func (f changedFile) pathspec() []string {
 // first passing through that gate.
 type rangeState struct {
 	key        string
-	files      []changedFile          // changed files (one --name-status -M)
-	binary     map[string]bool        // head path -> binary (one --numstat -M)
-	fc         map[string]string      // head path -> --function-context chunk
-	plain      map[string]string      // head path -> --unified=10 chunk
-	raw        map[string]string      // head path -> plain -M diff chunk
-	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
-	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+	files      []changedFile           // changed files (one --name-status -M)
+	binary     map[string]bool         // head path -> binary (one --numstat -M)
+	fc         map[string]string       // head path -> --function-context chunk
+	plain      map[string]string       // head path -> --unified=10 chunk
+	raw        map[string]string       // head path -> plain -M diff chunk
+	zeroCtx    map[string]string       // head path -> --unified=0 chunk (raw)
+	lineRanges map[string][]lineRange  // head path -> head-side changed ranges
+	headSrc    map[string]string       // head path -> full HEAD blob (one `git show` each)
+	fileCtx    map[string]analyzedFile // head path -> memoized escalation analysis (once per file per range)
+	// churn is the head path -> added+deleted line count from the SAME
+	// `--numstat -M` process that fills binary. The HEAD-SIDE changed-line
+	// ranges (parseHeadRanges) drop pure-deletion hunks — they mark no head
+	// lines — so churn is the only source of deleted-line VOLUME.
+	// parseAllHunkRanges separately preserves deletion hunks for the hunk-count
+	// and adjacency signals.
+	churn map[string]int
 
 	// diffPathspec holds the trailing `-- …` pathspec args applied to every
 	// whole-range diff so git emits exactly the kept (non-ignored) files' chunks.
@@ -77,6 +86,12 @@ type rangeState struct {
 	// changedFilesMemo.
 	allIgnored      bool
 	allIgnoredCount int
+
+	// escalationDegraded records that the change set exceeded escalation.MaxFiles
+	// and the whole pass was skipped, so the manifest can disclose it rather than
+	// leaving a reader to wonder why nothing escalated. It lives in rangeState so
+	// forRange's range-change reset clears it with the rest of the range caches.
+	escalationDegraded bool
 }
 
 // pathspecArgs returns the precomputed trailing pathspec args for whole-range
@@ -132,6 +147,11 @@ func buildDiffPathspec(kept []changedFile, exclude []string) []string {
 // column-0 `diff --git` boundaries, and served to every file from the cache.
 // This keeps the per-file helpers' signatures intact (so their direct unit
 // tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
+// The O(1) claim covers the whole-range DIFF caches only: the Epic 35.1
+// escalation pass adds one `git show` per changed file in diff/blocks mode,
+// bounded by EscalationConfig.MaxFiles — see
+// TestBuildEntries_EscalationCostsOneProcessPerFile and
+// TestBuildEntries_AboveCapRestoresConstantProcessCount.
 type gitRunner struct {
 	ctx    context.Context
 	dir    string
@@ -140,6 +160,12 @@ type gitRunner struct {
 	// execCount counts git subprocess invocations (every output call). It backs
 	// the constant-process-count regression test; it is otherwise inert.
 	execCount int
+
+	// analyzeCount counts how many times the escalation analysis pass actually
+	// measured a file (the AST parse + skeleton + line-count work), as opposed to
+	// serving a memoized result. It backs the once-per-file regression test; it is
+	// otherwise inert.
+	analyzeCount int
 
 	// noIgnore disables the .gitignore/.atcrignore payload filter for this runner
 	// (the --no-ignore opt-out). Default false → filtering active.
@@ -151,9 +177,36 @@ type gitRunner struct {
 	ignore      *ignoreMatcher
 	ignoreReady bool
 
+	// escalation holds the resolved per-file escalation thresholds (Epic 35.1).
+	// A zero value disables the feature entirely, so a runner built without
+	// newGitRunner behaves exactly as it did before escalation existed.
+	escalation EscalationConfig
+
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
 	state rangeState
+}
+
+// newGitRunner builds a runner with escalation defaults applied. Every entry
+// point that renders changed-file payloads goes through it, so the per-file
+// escalation feature is on by default and opt-out via WithEscalation, rather
+// than silently inert wherever a construction site was missed.
+//
+// Consequence (2026-07-27 TD, Q4): the exported flat builders — Build, BuildDiff,
+// BuildBlocks, BuildFiles, BuildEntries — construct their runner here with no
+// WithEscalation option, so they always run at DefaultEscalationConfig() with NO
+// override point; no payload_escalation setting (not even max_files: 0) can reach
+// them. That is intentional and safe today: the only production payload path goes
+// through NewRangeBuilder + WithEscalation (buildPayloads), and the flat builders
+// are used by tests only. A caller needing configurable escalation must use
+// NewRangeBuilder rather than these package-level functions.
+func newGitRunner(ctx context.Context, repo string) *gitRunner {
+	return &gitRunner{
+		ctx:        ctx,
+		dir:        repo,
+		logger:     log.FromContext(ctx),
+		escalation: DefaultEscalationConfig(),
+	}
 }
 
 // matcher returns the runner's repo-root ignore matcher, loading it once from
@@ -520,16 +573,51 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 		return nil, fmt.Errorf("git diff --numstat failed: %w", err)
 	}
 	set := make(map[string]bool)
+	churn := make(map[string]int)
 	if out != "" {
 		for _, line := range strings.Split(out, "\n") {
 			fields := strings.SplitN(line, "\t", 3)
-			if len(fields) >= 3 && fields[0] == "-" && fields[1] == "-" {
-				set[numstatNewPath(fields[2])] = true
+			if len(fields) < 3 {
+				continue
 			}
+			path := numstatNewPath(fields[2])
+			if fields[0] == "-" && fields[1] == "-" {
+				set[path] = true
+				continue
+			}
+			// The churn signal is max(added, deleted), NOT their sum: numstat
+			// reports a MODIFIED line as one addition AND one deletion, so summing
+			// double-counts it and the ratio churn/head_lines stops being a fraction
+			// of HEAD lines (a 30%-modified file would read as 0.6). Taking the max
+			// keeps it a true fraction — the meaning both DefaultEscalationChurnRatio
+			// and the registry's <= 1.0 bound assume (Epic 35.1). A non-numeric field
+			// skips the line, leaving the path with no churn entry: churnLines then
+			// reports ok=false and analyzeFile marks the churn measure not-applicable
+			// rather than scoring it as a spurious 0% churn.
+			added, aerr := strconv.Atoi(fields[0])
+			deleted, derr := strconv.Atoi(fields[1])
+			if aerr != nil || derr != nil {
+				continue
+			}
+			churn[path] = max(added, deleted)
 		}
 	}
 	s.binary = set
+	s.churn = churn
 	return set, nil
+}
+
+// churnLines returns the churn measure max(added, deleted) for path, served from
+// the memoized whole-range numstat — a fraction-of-HEAD-lines measure that counts
+// a modified line once, not twice. ok is false when the range had no numstat entry
+// for the path (binary, or not present in this diff).
+func (g *gitRunner) churnLines(base, head, path string) (int, bool, error) {
+	if _, err := g.binarySet(base, head); err != nil {
+		return 0, false, err
+	}
+	s := g.forRange(base, head)
+	n, ok := s.churn[path]
+	return n, ok, nil
 }
 
 // fcChunks / plainChunks / rawChunks memoize the whole-range function-context,
@@ -623,6 +711,40 @@ func (g *gitRunner) headContent(head, path string) (string, error) {
 	return string(out), nil
 }
 
+// headContentMemo is headContent memoized per range, so a file whose HEAD blob
+// is read by both the escalation analysis pass and a files-mode render costs one
+// `git show` rather than two. Errors are not cached: an unreadable blob is
+// re-attempted rather than poisoning the range.
+func (g *gitRunner) headContentMemo(base, head, path string) (string, error) {
+	s := g.forRange(base, head)
+	if src, ok := s.headSrc[path]; ok {
+		return src, nil
+	}
+	src, err := g.headContent(head, path)
+	if err != nil {
+		return "", err
+	}
+	if s.headSrc == nil {
+		s.headSrc = make(map[string]string)
+	}
+	s.headSrc[path] = src
+	return src, nil
+}
+
+// headContentReuseMemo returns the HEAD blob, reusing the per-range memo when the
+// blob is ALREADY cached (by the escalation analysis pass or a prior build on this
+// runner) but NOT populating it on a miss. The files-mode render uses this: an
+// escalated file's blob is already memoized so the render reuses it, while a pure
+// files-mode run — where the render is the sole reader — reads unmemoized rather
+// than retaining every full HEAD blob for the life of the range at a 0% hit rate
+// (Epic 35.1 TD). Errors are surfaced, never cached.
+func (g *gitRunner) headContentReuseMemo(base, head, path string) (string, error) {
+	if src, ok := g.forRange(base, head).headSrc[path]; ok {
+		return src, nil
+	}
+	return g.headContent(head, path)
+}
+
 // hunkHeaderRe captures the head-side start and length from a unified-diff
 // hunk header: `@@ -a,b +c,d @@`.
 var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
@@ -650,6 +772,48 @@ func parseHeadRanges(chunk string) []lineRange {
 		ranges = append(ranges, lineRange{start: start, end: start + length - 1})
 	}
 	return ranges
+}
+
+// parseAllHunkRanges parses EVERY hunk header in a zero-context chunk,
+// including pure deletions, which parseHeadRanges drops.
+//
+// parseHeadRanges answers "which head lines changed" — a pure deletion marks
+// none, so skipping it is right there. The escalation heuristic instead asks
+// "how scattered is this change", and a deletion is as much evidence of churn as
+// an insertion. A pure deletion is represented as an empty range anchored at the
+// head line it was removed from, so hunk counting and adjacency see it while
+// changed-line counting still totals zero head lines for it.
+func parseAllHunkRanges(chunk string) []lineRange {
+	var ranges []lineRange
+	for _, line := range strings.Split(chunk, "\n") {
+		m := hunkHeaderRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		start, _ := strconv.Atoi(m[1])
+		length := 1
+		if m[2] != "" {
+			length, _ = strconv.Atoi(m[2])
+		}
+		if length == 0 {
+			// git reports the line AFTER which the deletion occurred; the removed
+			// content sat between start and start+1.
+			ranges = append(ranges, lineRange{start: start + 1, end: start})
+			continue
+		}
+		ranges = append(ranges, lineRange{start: start, end: start + length - 1})
+	}
+	return ranges
+}
+
+// allHunkRanges returns every hunk range for path, including pure deletions,
+// from the memoized whole-range zero-context diff.
+func (g *gitRunner) allHunkRanges(base, head string, paths ...string) ([]lineRange, error) {
+	chunks, err := g.zeroCtxChunks(base, head)
+	if err != nil {
+		return nil, err
+	}
+	return parseAllHunkRanges(chunks[headPathOf(paths)]), nil
 }
 
 // zeroCtxChunks memoizes the whole-range zero-context (--unified=0) diff split

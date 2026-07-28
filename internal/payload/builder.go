@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/samestrin/atcr/internal/log"
 )
 
 // PayloadMode is the typed enum of reviewer-input modes. Values are lowercase;
@@ -93,11 +91,16 @@ func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
 // entries to ApplyByteBudget, derive the changed-file count from len(entries),
 // and record per-file truncation in status.json. The flat Build* entry points
 // all join these entries, so both forms are byte-identical by construction.
+//
+// Escalation caveat: this and the flat Build* wrappers construct their runner via
+// newGitRunner, which always seeds DefaultEscalationConfig() with no override point
+// (see newGitRunner). Use NewRangeBuilder + WithEscalation for a configurable
+// escalation pass; these package-level functions are for the test/simple path.
 func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string) ([]FileEntry, error) {
 	if err := validatePayloadMode(mode); err != nil {
 		return nil, err
 	}
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	return g.buildEntries(mode, base, head)
 }
 
@@ -119,13 +122,50 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 	if err != nil {
 		return nil, err
 	}
+	// Per-file escalation and skeleton injection (Epic 35.1). The pass is gated
+	// on the change-set size: each analyzed file costs one `git show` plus one
+	// AST parse, and that cost is paid once per DISTINCT payload mode built for
+	// the roster (at most twice — files mode skips analysis) on one shared
+	// RangeBuilder before fan-out, not once per parallel agent: headContentMemo
+	// memoizes the `git show` per range and buildSlots reuses the resulting
+	// entries for every agent. A large range still degrades to the configured
+	// mode for every file rather than paying it.
+	// Degradation is specifically "the change set was too big to analyze", NOT
+	// any other reason the pass is skipped. Files mode skips analysis by design
+	// and loses nothing by it, so it never reports a degradation regardless of
+	// change-set size.
+	if mode != ModeFiles && len(files) > 0 && g.escalation.MaxFiles > 0 && !g.escalation.Enabled(len(files)) {
+		g.forRange(base, head).escalationDegraded = true
+		g.log().Warn("payload: per-file escalation and AST skeletons disabled for this run",
+			"changed_files", len(files), "max_files", g.escalation.MaxFiles)
+	}
+	// Files mode is already the top of the escalation ladder and suppresses the
+	// skeleton (the whole file is present), so analyzing would spend a `git show`
+	// and an AST parse per file to reach a conclusion that cannot change anything.
+	// The same holds when every signal is zeroed: nothing can fire and no
+	// skeleton can render, so the pass would only reproduce the base mode.
+	analyze := mode != ModeFiles && g.escalation.Enabled(len(files)) && g.escalation.anySignalEnabled()
+
 	entries := make([]FileEntry, 0, len(files))
 	for _, f := range files {
-		body, err := g.fileBody(mode, base, head, f)
+		fileMode := mode
+		skel := ""
+		if analyze {
+			if fc, ok := g.analyzeFile(base, head, f); ok {
+				fileMode = g.escalation.escalate(mode, fc.signals)
+				// Files mode already carries the whole HEAD file, so a skeleton
+				// of it would be pure duplication.
+				if fileMode != ModeFiles {
+					skel = fc.skeleton
+				}
+			}
+		}
+		body, err := g.fileBody(fileMode, base, head, f)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body})
+		body = injectSkeleton(body, skel)
+		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body, Mode: fileMode})
 	}
 	return entries, nil
 }
@@ -142,7 +182,7 @@ func (g *gitRunner) buildEntriesValidated(mode PayloadMode, base, head string) (
 // equals len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files
 // when both use the same filtering mode.
 func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	if err := validateRange(g, base, head); err != nil {
 		return 0, err
 	}
@@ -210,7 +250,14 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		} else {
 			fmt.Fprintf(&b, fileHeaderFmt+"\n", f.path)
 		}
-		content, err := g.headContent(head, f.path)
+		// Reuse the memo when the analysis pass (or a prior build on this runner)
+		// already cached this blob — a file escalates INTO files mode only after
+		// analyzeFile read it, so that read is reused instead of a second `git
+		// show`. On a miss the render is the sole reader, so it reads WITHOUT
+		// caching: populating headSrc here would retain every full HEAD blob (on
+		// top of the identical FileEntry.Body) for the life of the range at a 0%
+		// hit rate — the pure files-mode waste this avoids (Epic 35.1 TD).
+		content, err := g.headContentReuseMemo(base, head, f.path)
 		if err != nil {
 			return "", fmt.Errorf("reading head content of %s: %w", f.path, err)
 		}
@@ -269,8 +316,10 @@ func renderWithSentinels(content string, ranges []lineRange) string {
 		}
 		// Neutralize content lines that would spoof a sentinel: a head file
 		// containing a literal sentinel line could otherwise mislead consumers
-		// about which regions changed.
-		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) {
+		// about which regions changed, or — with the skeleton markers — inject a
+		// fabricated declaration map the reviewing model trusts as authoritative.
+		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) ||
+			strings.HasPrefix(line, skeletonStart) || strings.HasPrefix(line, skeletonEnd) {
 			b.WriteString("> ")
 		}
 		b.WriteString(line)

@@ -157,3 +157,44 @@ func TestManifest_TimeoutSecsOmittedWhenZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "timeout_secs", "zero timeout_secs must be omitted via omitempty")
 }
+
+// --- Epic 35.1: per-file escalation disclosure ---
+
+// TestManifest_EscalationFieldsRoundTrip verifies the escalation disclosure
+// fields serialize under their wire names and read back. A typo'd json tag
+// compiles fine while silently dropping the field from the on-disk artifact —
+// downstream tooling would read a manifest claiming nothing escalated.
+func TestManifest_EscalationFieldsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{
+		Base:               "a",
+		Head:               "b",
+		StartedAt:          time.Now().UTC(),
+		PerFilePayload:     map[string]string{"f0.go": "files"},
+		EscalationDegraded: true,
+	}
+	require.NoError(t, WriteManifest(path, m))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"per_file_payload"`, "per_file_payload key must appear in JSON")
+	assert.Contains(t, string(data), `"escalation_degraded"`, "escalation_degraded key must appear in JSON")
+
+	var got Manifest
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, map[string]string{"f0.go": "files"}, got.PerFilePayload)
+	assert.True(t, got.EscalationDegraded)
+}
+
+// TestManifest_EscalationFieldsOmittedWhenZero verifies omitempty keeps both
+// escalation fields out of the JSON when nothing escalated, so a pre-35.1
+// reader sees a byte-identical manifest and "escalation never ran" (degraded)
+// stays distinguishable from "nothing was complex enough to escalate".
+func TestManifest_EscalationFieldsOmittedWhenZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	require.NoError(t, WriteManifest(path, &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC()}))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "per_file_payload", "empty PerFilePayload must be omitted via omitempty")
+	assert.NotContains(t, string(data), "escalation_degraded", "false EscalationDegraded must be omitted via omitempty")
+}

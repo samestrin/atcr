@@ -70,6 +70,31 @@ type Manifest struct {
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
 	Stages []string `json:"stages,omitempty"`
 
+	// PerFilePayload records, per escalated file (keyed by repo-relative head path),
+	// the mode it was rendered in for the GLOBAL-budget AUDIT payload (mp.Kept) — an
+	// UPPER BOUND on every agent's delivered set, NOT necessarily the mode any single
+	// reviewer saw. It is derived from the survivors of the whole-run
+	// PayloadByteBudget pass (perFileModes, internal/fanout/review.go); each agent
+	// then re-sheds the same pre-budget entries against its own (never larger)
+	// window, so a file listed here may have been dropped for some agents, and the
+	// field can name an escalated mode no single reviewer actually received.
+	// Narrowing it to true per-agent delivery is tracked as open technical debt.
+	// Written only for files the heuristic promoted above the configured mode, so a
+	// review where nothing escalated omits the field entirely and the manifest is
+	// byte-identical to what earlier versions produced. PayloadMode and
+	// PerAgentPayload still record what was CONFIGURED.
+	PerFilePayload map[string]string `json:"per_file_payload,omitempty"`
+
+	// EscalationDegraded is true ONLY when a git-range review's change set exceeded
+	// the escalation file cap, so the per-file escalation and skeleton passes were
+	// skipped wholesale. Its ABSENCE (false/omitted) carries no information: it
+	// reads identically whether nothing was complex enough to escalate, the feature
+	// was disabled with max_files: 0 (builder.go guards degradation on MaxFiles > 0),
+	// there was no RangeBuilder (the --all/--dir baseline and --diff-file paths force
+	// it false), or a files-only roster never ran the pass at all. Do NOT read a
+	// false/absent value as "escalation ran and found nothing to promote".
+	EscalationDegraded bool `json:"escalation_degraded,omitempty"`
+
 	// Review is the enriched record of the review stage's tool-using agents
 	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered
 	// stage-name list, unchanged from 1.x) rather than nested inside it, because

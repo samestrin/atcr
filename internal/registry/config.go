@@ -40,6 +40,14 @@ const (
 	// lines). nil = unset (inherit the default); any explicit value must be
 	// within 1..MaxContextLinesCap.
 	MaxContextLinesCap = 1000000
+	// MaxEscalationHunkGapLines, MaxEscalationFiles, and
+	// MaxEscalationSkeletonLines are sanity ceilings on the payload_escalation
+	// thresholds (Epic 35.1). Values above them reinstate precisely the payload
+	// bloat and uncapped in-memory blob retention the defaults exist to prevent,
+	// so they are rejected rather than honored. nil = default; 0 = disabled.
+	MaxEscalationHunkGapLines  = 1000
+	MaxEscalationFiles         = 5000
+	MaxEscalationSkeletonLines = 2000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -193,6 +201,32 @@ type VerifyConfig struct {
 	MinSeverity string `yaml:"min_severity,omitempty"` // floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
 	Votes       int    `yaml:"votes,omitempty"`        // skeptics per finding (default 1)
 	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
+}
+
+// PayloadEscalationConfig is the optional registry-level per-file payload
+// escalation block (Epic 35.1). It tunes when the payload builder promotes an
+// individual file above the run's configured payload mode: ChurnRatio,
+// MinHunks, and HunkGapLines are the diff-native signals; MinCyclomatic is the
+// McCabe signal derived from the file's AST; MaxFiles caps how many changed
+// files a run may scan before the whole feature degrades to plain diff.
+//
+// Every field is a pointer so an explicit 0 — the documented way to disable one
+// signal — is distinguishable from unset, mirroring DebateConfig.MaxItems.
+//
+// The resolved counterpart lives in internal/payload (EscalationConfig), which
+// this package deliberately does not import: registry depends on nothing under
+// internal/, the same boundary that keeps validPayloadModes duplicated in
+// payload.go. TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes
+// together so they cannot drift.
+type PayloadEscalationConfig struct {
+	ChurnRatio    *float64 `yaml:"churn_ratio,omitempty"`    // nil = default 0.5; 0 disables
+	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 4; 0 disables
+	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 10; 0 disables
+	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 15; 0 disables
+	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
+	// MaxSkeletonLines caps declaration headers rendered per file; nil = default
+	// 60; 0 disables skeleton injection while leaving escalation active.
+	MaxSkeletonLines *int `yaml:"max_skeleton_lines,omitempty"`
 }
 
 // ExecutorConfig is the optional top-level fix-generation model (Epic 7.0). It is
@@ -517,6 +551,13 @@ type Registry struct {
 	// without a debate block still yields the resolved defaults.
 	Debate DebateConfig `yaml:"debate,omitempty"`
 
+	// PayloadEscalation is the optional per-file payload-escalation block (Epic
+	// 35.1). Every threshold is a pointer so an explicit 0 (disable this signal)
+	// stays distinguishable from unset (nil → the built-in default applied by
+	// internal/payload.ResolveEscalationConfig). A registry without the block
+	// still yields the resolved defaults.
+	PayloadEscalation PayloadEscalationConfig `yaml:"payload_escalation,omitempty"`
+
 	// Executor is the optional fix-generation model (Epic 7.0). A pointer so an
 	// absent block (nil) — the backward-compatible default — is distinguishable
 	// from a configured one; nil means no fix generation runs.
@@ -629,6 +670,14 @@ func (r *Registry) validate() error {
 	if r.Debate.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
 	}
+	// payload_escalation.* (Epic 35.1): every threshold is opt-in and every one
+	// treats 0 as "disable this signal". Negatives are errors, the bloat- and
+	// memory-sensitive thresholds are capped by the MaxEscalation* ceilings, and
+	// churn_ratio must be a finite fraction <= 1.0 — it is a fraction of a
+	// file's lines, and a value above 1 (or NaN, which yaml.v3 resolves from
+	// .nan) could never fire, which is a silent misconfiguration rather than a
+	// stricter setting.
+	errs = append(errs, r.validatePayloadEscalation()...)
 
 	for _, name := range sortedKeys(r.Providers) {
 		errs = append(errs, validateProvider(name, r.Providers[name])...)
@@ -639,6 +688,44 @@ func (r *Registry) validate() error {
 	errs = append(errs, r.validateExecutor()...)
 
 	return errors.Join(errs...)
+}
+
+// validatePayloadEscalation checks the optional payload_escalation block. Unset
+// (nil) fields are always valid — they resolve to defaults downstream. A set
+// field must be non-negative, and churn_ratio must additionally be a finite
+// fraction (<= 1.0) — yaml.v3 resolves .nan/.inf, which would otherwise slip
+// past every comparison.
+func (r *Registry) validatePayloadEscalation() []error {
+	pe := r.PayloadEscalation
+	var errs []error
+	if pe.ChurnRatio != nil {
+		if math.IsNaN(*pe.ChurnRatio) || math.IsInf(*pe.ChurnRatio, 0) {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be a finite number, got %v", *pe.ChurnRatio))
+		} else if *pe.ChurnRatio < 0 {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be >= 0 (0 = disabled), got %v", *pe.ChurnRatio))
+		} else if *pe.ChurnRatio > 1 {
+			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be <= 1.0 (it is a fraction of a file's lines), got %v", *pe.ChurnRatio))
+		}
+	}
+	for _, f := range []struct {
+		name string
+		val  *int
+		max  int // 0 = no ceiling
+	}{
+		{"min_hunks", pe.MinHunks, 0},
+		{"hunk_gap_lines", pe.HunkGapLines, MaxEscalationHunkGapLines},
+		{"min_cyclomatic", pe.MinCyclomatic, 0},
+		{"max_files", pe.MaxFiles, MaxEscalationFiles},
+		{"max_skeleton_lines", pe.MaxSkeletonLines, MaxEscalationSkeletonLines},
+	} {
+		if f.val != nil && *f.val < 0 {
+			errs = append(errs, fmt.Errorf("payload_escalation.%s must be >= 0 (0 = disabled), got %d", f.name, *f.val))
+		}
+		if f.val != nil && f.max > 0 && *f.val > f.max {
+			errs = append(errs, fmt.Errorf("payload_escalation.%s must be <= %d (larger values reinstate the payload bloat / memory blow-up the defaults protect against), got %d", f.name, f.max, *f.val))
+		}
+	}
+	return errs
 }
 
 // validateExecutor returns every fault found in the optional executor block (Epic

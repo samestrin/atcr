@@ -3,8 +3,6 @@ package payload
 import (
 	"context"
 	"sync/atomic"
-
-	"github.com/samestrin/atcr/internal/log"
 )
 
 // RangeBuilder computes every whole-range artifact a fan-out review needs — the
@@ -44,11 +42,19 @@ func WithoutIgnoreFilter() RangeOption {
 	return func(g *gitRunner) { g.noIgnore = true }
 }
 
+// WithEscalation sets the per-file escalation thresholds for this builder
+// (Epic 35.1). Callers pass the registry-resolved config; omitting the option
+// leaves the built-in defaults in place. Pass a zero EscalationConfig to turn
+// per-file escalation and skeleton injection off entirely.
+func WithEscalation(c EscalationConfig) RangeOption {
+	return func(g *gitRunner) { g.escalation = c }
+}
+
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
 // gitRunner (seeded with the context logger) across all its builds. Options
 // customize the runner (e.g. WithoutIgnoreFilter).
 func NewRangeBuilder(ctx context.Context, repo, base, head string, opts ...RangeOption) *RangeBuilder {
-	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
+	g := newGitRunner(ctx, repo)
 	for _, o := range opts {
 		o(g)
 	}
@@ -112,12 +118,16 @@ func (b *RangeBuilder) BuildEntries(mode PayloadMode) ([]FileEntry, error) {
 
 // BuildChangedLines returns the grounding changed-lines map for the range,
 // reusing the builder's memoized --name-status and zero-context diff. Reuse
-// always elides validateRange and the --name-status process; the --unified=0
-// zero-context diff is elided only when a zeroCtx-consuming payload mode (files)
-// already ran on this builder — the default blocks mode does not populate the
-// zero-context cache, so grounding after a blocks-mode build spawns one
-// --unified=0 subprocess (validateRange + --name-status stay elided). Mirrors
-// the package-level BuildChangedLines; the fail-open contract (a git error
+// always elides validateRange and the --name-status process. Files mode
+// consumes the zero-context diff directly, and with escalation enabled (the
+// default) a diff/blocks-mode build populates the zero-context cache as a side
+// effect of hunk-range measurement — so grounding after those builds elides
+// the --unified=0 process entirely (pinned by
+// TestRangeBuilder_BlocksModeGroundingReusesZeroContext). The residual +1
+// --unified=0 subprocess returns only when escalation is disabled, pinned by
+// TestRangeBuilder_BlocksModeGroundingSpawnsOneDiffWithoutEscalation.
+// (validateRange + --name-status stay elided either way.) Mirrors the
+// package-level BuildChangedLines; the fail-open contract (a git error
 // disables the grounding gate) lives at the fan-out caller.
 func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 	if !b.inUse.CompareAndSwap(0, 1) {
@@ -139,7 +149,11 @@ func (b *RangeBuilder) BuildChangedLines() (ChangedLines, error) {
 // large multi-mode diffs without re-spawning any git process — grounding reads
 // the retained zero-context cache and the retained --name-status list. A later
 // BuildEntries call re-populates the per-mode caches from the retained
-// range-level state if needed, so a RangeBuilder stays reusable after release.
+// range-level state if needed, so a RangeBuilder stays reusable after release —
+// with one exception: headSrc (the full HEAD blobs) is NOT rebuildable from
+// retained state, so a later files-mode or escalating build after release
+// re-spawns one `git show` per changed file. Only call ReleaseModeCaches once
+// every mode's entries are materialized.
 func (b *RangeBuilder) ReleaseModeCaches() {
 	if !b.inUse.CompareAndSwap(0, 1) {
 		panic("payload.RangeBuilder used concurrently: it is not safe for concurrent use")
@@ -150,4 +164,20 @@ func (b *RangeBuilder) ReleaseModeCaches() {
 	s.plain = nil
 	s.raw = nil
 	s.lineRanges = nil
+	// headSrc holds a full HEAD blob per analyzed file — the largest per-mode
+	// cache by far. Grounding does not read it, so it is released with the rest.
+	s.headSrc = nil
+	// fileCtx holds the memoized per-file escalation analysis (parse/skeleton).
+	// It is dead weight once every mode's entries are materialized, and like
+	// headSrc it is re-derivable by a later BuildEntries, so release it too.
+	s.fileCtx = nil
+}
+
+// EscalationDegraded reports whether the change set exceeded the escalation
+// file cap, so the per-file escalation and skeleton passes were skipped for the
+// whole run. Call it after a BuildEntries; before any build it reports false.
+// The review layer records it in the manifest so a reader can tell "nothing was
+// complex enough to escalate" apart from "escalation never ran".
+func (b *RangeBuilder) EscalationDegraded() bool {
+	return b.g.forRange(b.base, b.head).escalationDegraded
 }
