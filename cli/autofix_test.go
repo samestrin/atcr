@@ -1023,13 +1023,13 @@ func TestSelectAutoFixEntries_FiltersByThresholdAndFix(t *testing.T) {
 		{Severity: "LOW", File: "b.txt", Line: 1, Fix: diffFor("b.txt")}, // below threshold
 		{Severity: "CRITICAL", File: "c.txt", Line: 1, Fix: ""},          // no fix
 	}
-	entries, _, err := selectAutoFixEntries(findings, "HIGH")
+	entries, _, _, err := selectAutoFixEntries(findings, "HIGH")
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "a.txt", entries[0].Path)
 
 	// No threshold -> every finding carrying a Fix is included.
-	all, _, err := selectAutoFixEntries(findings, "")
+	all, _, _, err := selectAutoFixEntries(findings, "")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 }
@@ -1042,10 +1042,31 @@ func TestSelectAutoFixEntries_DedupesByPath(t *testing.T) {
 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
 	}
-	entries, _, err := selectAutoFixEntries(findings, "")
+	entries, _, _, err := selectAutoFixEntries(findings, "")
 	require.NoError(t, err)
 	require.Len(t, entries, 1, "one entry per target path per run")
 	require.Equal(t, "same.txt", entries[0].Path)
+}
+
+// TestSelectAutoFixEntries_FixReviewBecomesReviewFlag: a finding the diff-smell
+// gate accepted despite a SOFT smell carries FixReview — the NEEDS_REVIEW signal
+// must reach the auto-fix PR body's Review Warnings section, not vanish on the
+// one path where a reviewer is least likely to read the markdown report.
+func TestSelectAutoFixEntries_FixReviewBecomesReviewFlag(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.txt", Line: 1, Fix: diffFor("a.txt"),
+			FixReview: "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression"},
+		{Severity: "HIGH", File: "b.txt", Line: 1, Fix: diffFor("b.txt")}, // clean — no flag
+	}
+	_, flags, _, err := selectAutoFixEntries(findings, "")
+	require.NoError(t, err)
+	require.Len(t, flags, 1)
+	require.Equal(t, "a.txt", flags[0].Path)
+	require.Contains(t, flags[0].Reason, "NEEDS_REVIEW")
+
+	body := withReviewWarnings("orig body", flags)
+	require.Contains(t, body, "## Review Warnings")
+	require.Contains(t, body, "NEEDS_REVIEW")
 }
 
 // TestSelectAutoFixEntries_CountsSkippedDuplicates: when a second fix for the
@@ -1055,7 +1076,7 @@ func TestSelectAutoFixEntries_CountsSkippedDuplicates(t *testing.T) {
 		{Severity: "HIGH", File: "same.txt", Line: 1, Fix: diffFor("same.txt")},
 		{Severity: "HIGH", File: "same.txt", Line: 9, Fix: diffFor("same.txt")},
 	}
-	entries, skipped, err := selectAutoFixEntries(findings, "")
+	entries, _, skipped, err := selectAutoFixEntries(findings, "")
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, 1, skipped, "second fix for the same path must be counted as skipped")
