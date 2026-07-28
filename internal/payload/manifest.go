@@ -70,13 +70,19 @@ type Manifest struct {
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
 	Stages []string `json:"stages,omitempty"`
 
-	// PerFilePayload records the payload mode each file was ACTUALLY rendered in
-	// (Epic 35.1), keyed by repo-relative head path. It is written only for files
-	// the escalation heuristic promoted above the run's configured mode, so a
+	// PerFilePayload records, per escalated file (keyed by repo-relative head path),
+	// the mode it was rendered in for the GLOBAL-budget AUDIT payload (mp.Kept) — an
+	// UPPER BOUND on every agent's delivered set, NOT necessarily the mode any single
+	// reviewer saw. It is derived from the survivors of the whole-run
+	// PayloadByteBudget pass (perFileModes, internal/fanout/review.go); each agent
+	// then re-sheds the same pre-budget entries against its own (never larger)
+	// window, so a file listed here may have been dropped for some agents, and the
+	// field can name an escalated mode no single reviewer actually received.
+	// Narrowing it to true per-agent delivery is tracked as open technical debt.
+	// Written only for files the heuristic promoted above the configured mode, so a
 	// review where nothing escalated omits the field entirely and the manifest is
 	// byte-identical to what earlier versions produced. PayloadMode and
-	// PerAgentPayload still record what was CONFIGURED; this records what a
-	// reviewer saw.
+	// PerAgentPayload still record what was CONFIGURED.
 	PerFilePayload map[string]string `json:"per_file_payload,omitempty"`
 
 	// EscalationDegraded is true ONLY when a git-range review's change set exceeded
