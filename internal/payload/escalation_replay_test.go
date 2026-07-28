@@ -118,10 +118,10 @@ func TestReplayStats_RatesAndAttribution(t *testing.T) {
 		changedLines: 5, headLines: 100, churnApplicable: true,
 		hunks: []lineRange{{start: 1, end: 5}}, cyclomatic: 3,
 	})
-	// E: adjacency only. Gap between hunks is 15-12-1 = 2 < 10.
+	// E: adjacency only. Gap between hunks is 14-12-1 = 1 < 2.
 	r.record(cfg, ModeDiff, fileSignals{
 		changedLines: 10, headLines: 100, churnApplicable: true,
-		hunks: []lineRange{{start: 10, end: 12}, {start: 15, end: 20}},
+		hunks: []lineRange{{start: 10, end: 12}, {start: 14, end: 20}},
 	})
 
 	require.Equal(t, 5, r.files)

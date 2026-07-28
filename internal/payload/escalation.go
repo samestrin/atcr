@@ -6,16 +6,27 @@ const (
 	// DefaultEscalationChurnRatio fires when at least half a file's HEAD lines
 	// are touched — the "the file was substantially rewritten" signal.
 	DefaultEscalationChurnRatio = 0.5
-	// DefaultEscalationMinHunks fires on scattered edits: four or more separate
-	// hunks in one file is the architectural-thrashing shape a net diff hides.
-	DefaultEscalationMinHunks = 4
+	// DefaultEscalationMinHunks fires on scattered edits: this many or more
+	// separate hunks in one file is the architectural-thrashing shape a net diff
+	// hides. Tuned from 4 to 8 in Epic 35.4: at 4, an ordinary rename or signature
+	// change rippling through a file promoted it, and the signal alone fired on
+	// 23% of changed Go files.
+	DefaultEscalationMinHunks = 8
 	// DefaultEscalationHunkGapLines fires when two hunks sit closer than this
-	// many unchanged lines apart, i.e. the same region was churned twice.
-	DefaultEscalationHunkGapLines = 10
+	// many unchanged lines apart, i.e. the same region was churned twice. Tuned
+	// from 10 to 2 in Epic 35.4: under --unified=0 a single logical change
+	// routinely leaves hunks a few lines apart, so a 10-line window measured the
+	// ordinary shape of a diff rather than genuine same-region churn — it was the
+	// single worst offender at 28.5% of changed Go files. At 2, only hunks that
+	// touch or are separated by one unchanged line count as the same region.
+	DefaultEscalationHunkGapLines = 2
 	// DefaultEscalationMinCyclomatic is the McCabe floor above which a CHANGED
 	// function's control flow is too branchy to review from hunks alone. The score
 	// is scoped to the functions the diff touched, not the file-wide maximum.
-	DefaultEscalationMinCyclomatic = 15
+	// Tuned from 15 to 20 in Epic 35.4: 15 is the conventional "complex function"
+	// line, but the score now measures only the changed function, where ordinary
+	// validation and dispatch code clears 15 without being unreadable from hunks.
+	DefaultEscalationMinCyclomatic = 20
 	// DefaultEscalationMaxSkeletonLines caps how many declaration headers a
 	// skeleton renders. A generated file with hundreds of declarations would
 	// otherwise prepend hundreds of lines to a one-line diff, in every mode

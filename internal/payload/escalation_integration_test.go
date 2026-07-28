@@ -622,16 +622,19 @@ func TestEscalationIntegration_DeletionHeavyRewriteEscalates(t *testing.T) {
 // the coupling the manifest's per_file_payload rests on. A whole-file rewrite
 // cannot test this (its -U10 and function-context renders converge to the
 // same single hunk), so this fixture escalates via the hunk-count signal
-// instead: four one-line edits scattered across one large function. The
+// instead: eight one-line edits scattered across one large function. The
 // function-context render then contains the WHOLE function while the plain
-// -U10 render holds only four narrow hunks, so the two modes are
+// -U10 render holds only eight narrow hunks, so the two modes are
 // distinguishable line-by-line — and rendering `mode` instead of the
 // escalated `fileMode` (the regression the churn/deletion tests cannot see)
 // fails the Contains assertion below.
 func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 	var v1 strings.Builder
 	v1.WriteString("package p\n\nfunc Big() int {\n\ttotal := 0\n")
-	editLines := map[int]bool{5: true, 30: true, 55: true, 80: true}
+	// Eight edit sites, all at least 11 lines clear of the midpoint marker at
+	// index 67 (so a -U10 render cannot reach it) and at least 3 unchanged lines
+	// apart (so the hunk-count signal fires, not adjacency).
+	editLines := map[int]bool{5: true, 15: true, 25: true, 35: true, 45: true, 85: true, 95: true, 105: true}
 	for i := 0; i < 110; i++ {
 		if i == 67 {
 			v1.WriteString("\ttotal += 999 // MIDPOINT-UNCHANGED-MARKER\n")
@@ -655,14 +658,14 @@ func TestEscalationIntegration_RecordedModeMatchesRenderedBody(t *testing.T) {
 		}
 	}
 	write(t, dir, "big.go", strings.Join(v2, "\n"))
-	head := commitAll(t, dir, "v2: four scattered edits")
+	head := commitAll(t, dir, "v2: eight scattered edits")
 
 	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
 	require.Equal(t, ModeBlocks, entries[0].Mode,
-		"four scattered hunks escalate via the hunk-count signal")
+		"eight scattered hunks escalate via the hunk-count signal")
 	require.Contains(t, entries[0].Body, "MIDPOINT-UNCHANGED-MARKER",
 		"a blocks render includes the whole enclosing function — if the builder rendered the unescalated mode, this marker (>10 lines from every edit) would be absent")
 
