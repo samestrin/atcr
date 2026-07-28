@@ -187,7 +187,10 @@ func TestReplayStats_EmptyWindowIsNotADivideByZero(t *testing.T) {
 
 // Replay-harness knobs. The window defaults to 40 commits because that is the
 // exact window the original ~59% measurement was taken over (Epic 35.4 source
-// TD), so a re-measurement is directly comparable to it.
+// TD). Since replayCommits passes --no-merges, the window is the last 40
+// NON-MERGE commits: the direct comparability to the original measurement
+// holds only on this repo's merge-free squash history — on a history with
+// merges the window spans a different stretch of history.
 const (
 	defaultReplayCommits = 40
 	replayCommitsEnv     = "ATCR_REPLAY_COMMITS"
