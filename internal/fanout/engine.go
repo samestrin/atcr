@@ -138,25 +138,8 @@ type Agent struct {
 	DegradationAction    string
 
 	// chunkFiles is the set of repo-relative file paths THIS agent's baseline
-	// (--all/--dir) chunk carries, tagged by buildSlots' baseline branch at
-	// PartitionByBudget output — after capChunks tail-coalescing, so the identity
-	// matches the slot that is actually dispatched (Epic 35.2 / TD-013). It is the
-	// only record of which files a chunk covered: mergeResultGroup collapses
-	// per-chunk success/failure into a bare UnreviewedChunks count, so without this
-	// tag a partially-failed baseline run cannot tell which files went unreviewed.
-	//
-	// nil means "this slot vouches for NOTHING" — never "covers everything". That
-	// polarity is deliberate: buildSlots has slot paths that cannot attribute files
-	// (the review_strategy=chunked branch splits payload TEXT, and a files-mode
-	// baseline payload can reach it), and an untagged slot must degrade to re-review,
-	// never to a silent skip. Full coverage is established in uncoveredBaselineFiles
-	// by "every dispatched slot succeeded", not by any per-slot sentinel. The baseline
-	// bulk fall-through is therefore tagged EXPLICITLY with the whole payload rather
-	// than left nil.
-	//
-	// Unexported because it never leaves the package: runEngine consumes it via
-	// slot/result index correspondence before mergeChunkResults runs, so no exported
-	// Slot/Result field is needed and no MCP/status consumer sees a shape change.
+	// (--all/--dir) chunk carries; nil means the slot vouches for NOTHING. See
+	// uncoveredBaselineFiles for the attribution contract and the nil polarity.
 	chunkFiles []string
 
 	// chunkMaxLines is the per-model chunk line budget (Epic 19.10 F3) this agent's

@@ -981,25 +981,16 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
-	// Baseline partial-coverage attribution (Epic 35.2 / TD-013) — MUST run before
-	// mergeChunkResults below, which collapses per-chunk success/failure into a bare
-	// UnreviewedChunks count and discards chunk identity for good. Records which
-	// reviewed files their chunk failed to cover so CommitBaselineIndex can record
-	// the succeeded chunks' files and leave only the uncovered ones for the next
-	// scan. nil for a diff-range review (p.baseline == nil), which never touches the
-	// index.
+	// Baseline partial-coverage attribution — MUST run before mergeChunkResults below,
+	// which discards chunk identity for good. No-op for a diff-range review.
 	//
-	// RESUME INVARIANT (do not "optimize" this): on the resume path p.Slots holds
-	// only the PENDING personas, so a file an already-completed persona reviewed is
-	// still reported uncovered when a pending chunk carrying it fails. That
-	// over-exclusion is deliberate and fail-open (the file is re-reviewed next scan,
-	// never silently skipped) — it is the plan's stated mitigation for ambiguous
-	// chunk attribution. Relaxing it from the on-disk union of agent statuses would
-	// be UNSOUND: a resume rebuilds the FULL superset payload (idx=nil bypasses the
-	// hash-skip), so a completed persona's "OK with zero unreviewed chunks" record
-	// only proves it covered the ORIGINAL, hash-skipped subset — clearing the
-	// uncovered set on that evidence would record files no agent ever saw. Per-chunk
-	// identity is not persisted, so the conservative read is the only sound one.
+	// RESUME INVARIANT (do not "optimize" this): a resume dispatches only the PENDING
+	// personas, so a completed persona's file is still reported uncovered when a
+	// pending chunk carrying it fails. Relaxing that over-exclusion from the on-disk
+	// agent statuses is UNSOUND — a resume rebuilds the FULL superset payload, so a
+	// completed persona's clean record only proves it covered the original
+	// hash-skipped subset. Pinned by
+	// TestUncoveredBaselineFiles_ResumePartialSlotSetStaysFailOpen.
 	if p.baseline != nil {
 		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
