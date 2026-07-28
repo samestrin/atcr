@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 )
@@ -63,13 +64,24 @@ func renderSkeleton(entries []skeletonEntry, maxLines int) string {
 	var b strings.Builder
 	b.WriteString(skeletonStart)
 	b.WriteByte('\n')
+	rendered := 0
 	for _, e := range entries {
+		// Stop before the block outgrows the ceiling. The line-count cap bounds the
+		// number of entries but not their bytes; this bounds the bytes so a run
+		// that raised MaxSkeletonLines cannot prepend an unbounded block.
+		if b.Len() >= maxSkeletonBlockBytes {
+			break
+		}
 		b.WriteByte('L')
 		b.WriteString(strconv.Itoa(e.StartLine))
 		b.WriteString(": ")
-		b.WriteString(e.Header)
+		b.WriteString(truncateHeader(e.Header))
 		b.WriteByte('\n')
+		rendered++
 	}
+	// Fold any block-ceiling remainder into the same disclosed count as the
+	// line-cap elision, so a partial map is never mistaken for a complete one.
+	elided += len(entries) - rendered
 	if elided > 0 {
 		// Disclosed, never silent: a reviewer must know the map is partial rather
 		// than conclude the file has no further declarations.
@@ -81,9 +93,19 @@ func renderSkeleton(entries []skeletonEntry, maxLines int) string {
 }
 
 // truncateHeader bounds a single declaration header to maxSkeletonHeaderBytes,
-// appending skeletonHeaderTruncSuffix when it clips.
+// appending skeletonHeaderTruncSuffix when it clips. The cut lands on a rune
+// boundary so the result is always valid UTF-8. The rendered line still begins
+// with "L<digits>: ", so truncation cannot make a line start with a payload
+// section marker regardless of what the header contained.
 func truncateHeader(h string) string {
-	return h // STUB (RED): real byte-bounded truncation lands in GREEN
+	if len(h) <= maxSkeletonHeaderBytes {
+		return h
+	}
+	cut := maxSkeletonHeaderBytes
+	for cut > 0 && !utf8.RuneStart(h[cut]) {
+		cut--
+	}
+	return h[:cut] + skeletonHeaderTruncSuffix
 }
 
 // injectSkeleton splices skel into body immediately after body's first line.
