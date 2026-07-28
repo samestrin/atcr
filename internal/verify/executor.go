@@ -434,11 +434,24 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// the MORE suspicious of the two attempts, and exactly the escape a model
 			// just told "your previous attempt was rejected" would find.
 			scanFix := func(candidate string) *smellResult {
-				if len(candidate) > maxFixBytes {
-					// Never a SILENT bypass: a fix too large to scan is written unscanned, so
-					// say so — otherwise "scanned and clean" and "never scanned" look identical
-					// in the run output, and a reward hack padded past the cap is invisible.
-					logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", fmt.Sprintf("%s:%d: fix is %d bytes, over the %d-byte scan cap; diff-smell gate skipped", f.File, f.Line, len(candidate), maxFixBytes))
+				// Never a SILENT bypass: a fix the gate cannot scan is written unscanned, so
+				// say so — otherwise "scanned and clean" and "never scanned" look identical
+				// in the run output, and a reward hack that dodges the scan is invisible.
+				// smellScanSkipReason is the same predicate evaluateFixSmell returns nil on,
+				// so the log can never disagree with the decision it describes.
+				//
+				// The two shapes get different volumes deliberately. Oversize is rare and
+				// suspicious (a fix padded past the cap), so it warns. Non-diff is the COMMON
+				// case — buildFixPrompt asks for free-form "corrected code or a precise change
+				// instruction" — so it records at debug: a warning per finding would drown the
+				// run output and train the reader to ignore the class entirely.
+				if reason := smellScanSkipReason(candidate); reason != "" {
+					detail := fmt.Sprintf("%s:%d: %s; diff-smell gate skipped", f.File, f.Line, reason)
+					if len(candidate) > maxFixBytes {
+						logPipelineWarning(log.FromContext(ctx), "executor_smell_skipped", detail)
+					} else {
+						log.FromContext(ctx).Debug("pipeline warning detail", "class", "executor_smell_skipped", "detail", detail)
+					}
 					return nil
 				}
 				return evaluateFixSmell(candidate, f.File)

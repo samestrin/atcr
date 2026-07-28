@@ -1,6 +1,9 @@
 package verify
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // fixReviewPrefix is the NEEDS_REVIEW marker that leads every FixReview
 // annotation, so the shortcut is greppable in findings.json and unmistakable in
@@ -44,17 +47,29 @@ const smellRetryInstruction = "Your previous attempt was rejected: it made the f
 // being masked to clean. weakened_assertion is NOT suppressed: deleting an
 // assertion is the reward hack this gate exists to catch, in test files most of all.
 // smellScanSkipReason reports why the diff-smell gate cannot scan fix, or "" when
-// it can. TODO(RED): stub — always reports "scannable".
-func smellScanSkipReason(_ string) string { return "" }
+// it can. It is the SINGLE source of truth for both bypass shapes: evaluateFixSmell
+// uses it to decide whether to return nil, and the executor's scanFix uses the same
+// call to decide what to log. Keeping one predicate is the point — the byte
+// threshold used to be tested independently in both places, so raising it in one
+// would have silently stopped the other from announcing the bypass.
+//
+// Oversize is reported ahead of shape: a fix padded past the cap is the more
+// suspicious of the two, so the reason should name it even when the padding also
+// destroyed the diff shape.
+func smellScanSkipReason(fix string) string {
+	switch {
+	case fix == "":
+		return "fix is empty"
+	case len(fix) > maxFixBytes:
+		return fmt.Sprintf("fix is %d bytes, over the %d-byte scan cap", len(fix), maxFixBytes)
+	case !looksLikeUnifiedDiff(fix):
+		return "fix is not a unified diff"
+	}
+	return ""
+}
 
 func evaluateFixSmell(fix, findingFile string) *smellResult {
-	// Defensive: a nil/empty fix is never gateable. Redundant with the
-	// looksLikeUnifiedDiff check below (which also rejects ""), but explicit so a
-	// future caller change degrades to pass-through rather than a nil dereference.
-	if fix == "" {
-		return nil
-	}
-	if len(fix) > maxFixBytes || !looksLikeUnifiedDiff(fix) {
+	if smellScanSkipReason(fix) != "" {
 		return nil
 	}
 	res := analyzeDiff(fix)
