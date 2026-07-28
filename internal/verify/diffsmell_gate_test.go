@@ -315,6 +315,42 @@ func TestGenerateFixes_AgentModeHardSmellRetriesViaAgentPath(t *testing.T) {
 	assert.Empty(t, findings[0].FixWarning)
 }
 
+// The agent-mode double-HARD halt must mirror the snippet path: no fix is
+// written, the warning names the smell, and the snippet path is never consulted.
+func TestGenerateFixes_AgentModeSecondHardSmellWithholdsFix(t *testing.T) {
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: `{"fix":` + jsonQuote(dsTestOnly) + `,"explanation":"e"}`},
+		{content: `{"fix":` + jsonQuote(dsTestOnly) + `,"explanation":"e"}`},
+	}}
+	rec := &sequencedExecutor{outs: []string{"snippet path must not be used"}}
+	findings := gateFinding("a.go")
+	generateFixes(context.Background(), findings, agentGateConfig(), agentGateRegistry(), rec, cc, okDispatcher(), 0)
+
+	assert.Equal(t, 0, rec.callCount(), "the snippet path must not be consulted")
+	assert.Equal(t, 2, cc.chatCallCount(), "the gate must not retry more than once")
+	assert.Empty(t, findings[0].Fix, "a twice-rejected fix must never be written")
+	assert.Contains(t, findings[0].FixWarning, smellTestOnly, "the warning must name the smell that halted it")
+	assert.Empty(t, findings[0].FixReview, "a rejected fix is not a NEEDS_REVIEW acceptance")
+}
+
+// The agent-mode SOFT path must mirror the snippet path: the fix is accepted
+// and annotated NEEDS_REVIEW via FixReview, with no retry and no warning.
+func TestGenerateFixes_AgentModeSoftSmellAcceptedWithFixReview(t *testing.T) {
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: `{"fix":` + jsonQuote(dsSuppression) + `,"explanation":"e"}`},
+	}}
+	rec := &sequencedExecutor{outs: []string{"snippet path must not be used"}}
+	findings := gateFinding("a.go")
+	generateFixes(context.Background(), findings, agentGateConfig(), agentGateRegistry(), rec, cc, okDispatcher(), 0)
+
+	assert.Equal(t, 0, rec.callCount(), "the snippet path must not be consulted")
+	assert.Equal(t, 1, cc.chatCallCount(), "a SOFT smell is accepted without a retry")
+	assert.Equal(t, strings.TrimSpace(dsSuppression), findings[0].Fix)
+	assert.Contains(t, findings[0].FixReview, fixReviewPrefix)
+	assert.Contains(t, findings[0].FixReview, smellSuppression)
+	assert.Empty(t, findings[0].FixWarning, "an accepted fix must never carry a warning")
+}
+
 // --- oversized fixes are not scanned (cost guard) ---
 
 func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
