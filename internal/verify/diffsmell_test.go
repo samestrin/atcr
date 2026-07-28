@@ -561,3 +561,39 @@ func TestAnalyzeDiff_OverflowingHunkCountFailsOpen(t *testing.T) {
 	assert.Contains(t, res.Summary.ByType, smellTestSkipped, "got %v", res.Summary.ByType)
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
 }
+
+// looksLikeUnifiedDiff explicitly accepts a HEADERLESS diff (old-file/new-file
+// header pairs with no `diff --git` lines), so analyzeDiff must handle one. In
+// that shape `cur` still points at the PREVIOUS file when a `+++ /dev/null`
+// deletion arrives, so binding the deletion only when cur == nil stamps it on the
+// wrong file and the deleted test never enters `files` at all.
+const dsHeaderlessDeletion = `--- a/internal/verify/impl.go
++++ b/internal/verify/impl.go
+@@ -10,3 +10,3 @@
+ func pick() int {
+-	return 0
++	return 1
+ }
+--- a/internal/verify/select_test.go
++++ /dev/null
+@@ -1,2 +0,0 @@
+-	require.Equal(t, 1, pick())
+-	require.NoError(t, err)
+`
+
+func TestAnalyzeDiff_HeaderlessDeletionBindsToOldPath(t *testing.T) {
+	res := analyzeDiff(dsHeaderlessDeletion)
+	assert.Equal(t, []string{"internal/verify/select_test.go"}, res.Files.Test,
+		"the deleted test must be recorded, got test=%v impl=%v", res.Files.Test, res.Files.Impl)
+	assert.Equal(t, []string{"internal/verify/impl.go"}, res.Files.Impl)
+	assert.Contains(t, res.Summary.ByType, smellTestDeleted, "got %v", res.Summary.ByType)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+
+	// The same diff WITH `diff --git` headers already scored hard; the headerless
+	// shape must not be the weaker path.
+	withHeaders := analyzeDiff("diff --git a/internal/verify/impl.go b/internal/verify/impl.go\n" +
+		strings.Replace(dsHeaderlessDeletion, "--- a/internal/verify/select_test.go",
+			"diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go\n--- a/internal/verify/select_test.go", 1))
+	assert.Equal(t, res.Summary.Verdict, withHeaders.Summary.Verdict)
+	assert.Contains(t, withHeaders.Summary.ByType, smellTestDeleted)
+}
