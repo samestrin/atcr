@@ -1,6 +1,6 @@
 # Migrating the private `claude-prompts` skills to the `/atcr` dispatcher
 
-atcr's standalone skill ([`skill/SKILL.md`](../skill/SKILL.md)) is a single `/atcr <command>` dispatcher. The private `claude-prompts` skills (`execute-code-review`, `reconcile-code-review`) that drive the internal `.planning/` sprint workflow can adopt the same dispatcher pattern — but that migration is a **manual operator action**, documented here, not something this repository's tooling performs.
+atcr's standalone skill ([`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md)) is a single `/atcr <command>` dispatcher. The private `claude-prompts` skills (`execute-code-review`, `reconcile-code-review`) that drive the internal `.planning/` sprint workflow can adopt the same dispatcher pattern — but that migration is a **manual operator action**, documented here, not something this repository's tooling performs.
 
 ## Why this is a manual step
 
@@ -13,7 +13,7 @@ This is a deliberate descope, **not** an open compatibility question. Epic 12.0 
 When you next update the `claude-prompts` repository, migrate its atcr-related skills to the dispatcher pattern:
 
 1. **Replace the fragmented private skills** (`execute-code-review`, `reconcile-code-review`, and related single-capability skills) with a single `atcr` dispatcher skill.
-2. **Copy or adapt the dispatcher template** from this repo's [`skill/SKILL.md`](../skill/SKILL.md) (and its on-demand siblings `host-review.md`, `ambiguity-adjudication.md`, `findings-format.md`).
+2. **Copy or adapt the dispatcher template** from this repo's [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) (and its on-demand siblings `host-review.md`, `ambiguity-adjudication.md`, `findings-format.md`).
 3. **Preserve any `.planning/` sprint-workflow hooks** the private skills still rely on — the dispatcher changes the skill's entrypoint UX, not its integration with the private sprint workflow.
 4. **Validate against the backend contract** in [`docs/code-review-backend.md`](code-review-backend.md) — the `--output-dir` + `reconcile` output tree and findings formats — the same contract the repo-local regression test locks.
 
@@ -23,6 +23,6 @@ This document is the deliverable; the migration itself is performed manually in 
 
 ## Related
 
-- [`skill/SKILL.md`](../skill/SKILL.md) — the `/atcr <command>` dispatcher template.
+- [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) — the `/atcr <command>` dispatcher template.
 - [`docs/skill-usage.md`](skill-usage.md) — standalone skill installation and usage.
 - [`docs/code-review-backend.md`](code-review-backend.md) — the `--output-dir` backend contract to validate against.

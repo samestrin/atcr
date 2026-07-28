@@ -253,7 +253,7 @@ func TestSkill_BodyLineBudget(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Sprint 20.1 — shared skill conventions extraction (Story 4). RED until
-// skill/CONVENTIONS.md is authored, embedded as ConventionsMD, and SKILL.md's
+// skills/atcr/CONVENTIONS.md is authored, embedded as ConventionsMD, and SKILL.md's
 // Prerequisites section is reduced to a pointer.
 // ---------------------------------------------------------------------------
 
@@ -309,8 +309,8 @@ func TestSkill_PrerequisitesIsPointer(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Sprint 20.1 — /atcr debt resolve skill route (Story 3). RED until
-// skill/debt-resolve/SKILL.md is authored, embedded as DebtResolveMD, and
-// skill/SKILL.md's `atcr debt` row documents the resolve route.
+// skills/atcr/debt-resolve.md is authored, embedded as DebtResolveMD, and
+// skills/atcr/SKILL.md's `atcr debt` row documents the resolve route.
 // ---------------------------------------------------------------------------
 
 // TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve/SKILL.md is

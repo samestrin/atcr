@@ -224,7 +224,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - `cmd/atcr/` — binary entry point and subcommands
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
 - `personas/` — the nine embedded default personas + `_base.md`
-- `skill/` — the atcr Agent Skill (host review + orchestration)
+- `skills/atcr/` — the atcr Agent Skill (host review + orchestration)
 - `docs/` — user documentation
 - `examples/` — CI gate script
 - `.planning/` — development planning artifacts

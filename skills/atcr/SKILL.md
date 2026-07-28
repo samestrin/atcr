@@ -83,7 +83,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 
 <!-- Convention: one line per command, mirroring newRootCmd (cmd/atcr/main.go).
 When a command is added to or removed from newRootCmd, update exactly one row
-here (and skill/skill_test.go's dispatcherCommands list) so routing-table drift
+here (and skills/skills_test.go's dispatcherCommands list) so routing-table drift
 is caught, and keep SKILL.md within its ~500-line budget. -->
 
 ## Host Review Instructions

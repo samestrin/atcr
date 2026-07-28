@@ -2,7 +2,7 @@
 
 The atcr skill turns a host AI agent (e.g. Claude Code) into the **+1 reviewer** on an atcr review panel. It orchestrates the full flow — resolve range → fan out to the reviewer pool → host review → reconcile → report — and contributes its own adversarial review so reconciliation always has at least two independent sources. Beyond one-off review, it can accumulate findings into a durable local backlog and autonomously work through it — see [Technical Debt Resolution](#technical-debt-resolution).
 
-The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispatcher — plus a set of sibling files it loads on demand: [`host-review.md`](../skill/host-review.md), [`ambiguity-adjudication.md`](../skill/ambiguity-adjudication.md), [`findings-format.md`](../skill/findings-format.md), the shared [`CONVENTIONS.md`](../skill/CONVENTIONS.md), and the [`debt-resolve/SKILL.md`](../skill/debt-resolve/SKILL.md) route. None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install the whole directory together so the on-demand references resolve.
+The skill is [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) — a `/atcr <command>` dispatcher — plus a set of sibling files it loads on demand: [`host-review.md`](../skills/atcr/host-review.md), [`ambiguity-adjudication.md`](../skills/atcr/ambiguity-adjudication.md), [`findings-format.md`](../skills/atcr/findings-format.md), the shared [`CONVENTIONS.md`](../skills/atcr/CONVENTIONS.md), and the [`debt-resolve.md`](../skills/atcr/debt-resolve.md) route. None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install the whole directory together so the on-demand references resolve.
 
 ## Prerequisites
 
@@ -12,15 +12,14 @@ The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispa
 
 ## Installation
 
-The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the instruction files — `SKILL.md` plus its on-demand secondary `.md` files, including the nested `debt-resolve/` route — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Copy the `debt-resolve/` subdirectory too (a flat `cp skill/*.md` would miss it):
+The skill installs by copying `skills/atcr/` into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the whole directory — `SKILL.md` plus every on-demand secondary `.md` file beside it — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Every reference is a flat sibling, so one recursive copy is enough:
 
 ```sh
-mkdir -p .claude/skills/atcr/debt-resolve
-cp skill/*.md .claude/skills/atcr/
-cp skill/debt-resolve/*.md .claude/skills/atcr/debt-resolve/
+mkdir -p .claude/skills/atcr
+cp -R skills/atcr/. .claude/skills/atcr/
 ```
 
-Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
+Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skills/atcr/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
 
 ## Usage
 

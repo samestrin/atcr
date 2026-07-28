@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// skillRoutingRow matches a routing-table row in skill/SKILL.md of the form
+// skillRoutingRow matches a routing-table row in skills/atcr/SKILL.md of the form
 // `| ` + "`atcr <name>`" + ` | ... |`, capturing the top-level command name.
 // Anchoring to the leading table pipe keeps prose mentions and the frontmatter
 // description (which also list command names) out of the parsed set.
@@ -36,20 +36,20 @@ func topLevelRegistry() map[string]bool {
 // documents as `atcr <name>`.
 func skillRoutedCommands(t *testing.T) map[string]bool {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repoRootDir(t), "skill", "SKILL.md"))
-	require.NoError(t, err, "read skill/SKILL.md")
+	data, err := os.ReadFile(filepath.Join(repoRootDir(t), "skills", "atcr", "SKILL.md"))
+	require.NoError(t, err, "read skills/atcr/SKILL.md")
 	routed := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		if m := skillRoutingRow.FindStringSubmatch(line); m != nil {
 			routed[m[1]] = true
 		}
 	}
-	require.NotEmpty(t, routed, "no `atcr <command>` routing rows parsed from skill/SKILL.md")
+	require.NotEmpty(t, routed, "no `atcr <command>` routing rows parsed from skills/atcr/SKILL.md")
 	return routed
 }
 
 // TestSkillRoutingTableMatchesRegistry closes the gap left by
-// skill/skill_test.go's TestSkill_DispatcherRoutingTable, which only proves the
+// skills/skills_test.go's TestSkill_DispatcherRoutingTable, which only proves the
 // SKILL.md table is a SUPERSET of a hand-copied slice. Living in cmd/atcr's own
 // test package (which can import package main, unlike the skill package), it
 // asserts BIDIRECTIONAL set-equality between the SKILL.md routing table and the
@@ -57,7 +57,7 @@ func skillRoutedCommands(t *testing.T) map[string]bool {
 // every routed command is really registered. Adding a command to NewRootCmd
 // without documenting it, or documenting a command that does not exist, now
 // fails the build. No production code or new package is required (TD
-// skill/skill_test.go:131).
+// skills/skills_test.go:131).
 func TestSkillRoutingTableMatchesRegistry(t *testing.T) {
 	registry := topLevelRegistry()
 	routed := skillRoutedCommands(t)
