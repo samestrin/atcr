@@ -21,15 +21,23 @@ package payload
 // that promote are the large ones.
 //
 // Measured over `main`'s last 40 commits (400 changed Go files) with
-// TestEscalationReplay_MeasureRepoHistory, 2026-07-28:
+// TestEscalationReplay_MeasureRepoHistory, 2026-07-28. The window head is
+// pinned so the SAME window can be re-derived after main advances — without
+// the SHA a re-measurement runs over a different population and a threshold
+// regression cannot be separated from window drift:
+//
+//	window head: 0819bcf105bbcf3e0e213f03ef32fb58bcae16a5
 //
 //	before (35.1 defaults 4/10/15): 37.0% promoted, +48.0% bytes
 //	after  (this block, 8/2/20):    21.5% promoted, +34.1% bytes
 //
-// Re-measure with:
+// Re-measure over the same window with:
 //
-//	ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \
-//	  go test ./internal/payload/ -run TestEscalationReplay -v
+//	ATCR_REPLAY=1 ATCR_REPLAY_REF=0819bcf105bbcf3e0e213f03ef32fb58bcae16a5 \
+//	  ATCR_REPLAY_COMMITS=40 go test ./internal/payload/ -run TestEscalationReplay -v
+//
+// (ATCR_REPLAY_REF=main re-measures whatever window main then points at — that
+// tracks drift but is NOT a re-derivation of the numbers above.)
 //
 // Damping one signal shifts load onto the others, so re-measure ALL of them
 // (the harness reports per-signal rates) rather than only the one being changed.
