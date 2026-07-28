@@ -244,6 +244,28 @@ func TestReplayStats_EmptyWindowIsNotADivideByZero(t *testing.T) {
 	require.Equal(t, 0.0, r.featureDelta(), "bareBytes <= 0 must report 0, not NaN")
 }
 
+// TestReplayHarnessRoutesGitThroughGitexec guards this file's own git
+// invocations. TestAC4_NoBareGitExecOutsideGitexec skips _test.go files by
+// design — AC4 governs production call sites — so nothing else catches a bare
+// git spawn here. It matters for the harness specifically because this is a
+// MEASUREMENT: an unhardened child reads the developer's system and global
+// gitconfig (log.showSignature, log.date, aliases, diff.external), which turns
+// a reproducible acceptance number into an environment-dependent one.
+func TestReplayHarnessRoutesGitThroughGitexec(t *testing.T) {
+	src, err := os.ReadFile("escalation_replay_test.go")
+	require.NoError(t, err)
+
+	// Split so the needle is not itself a literal occurrence in this file — the
+	// assertion would otherwise always match its own source.
+	bare := "exec.Command(" + `"git"`
+	// Asserted on the boolean rather than via NotContains/Contains so a failure
+	// prints the reason instead of dumping this whole file into the log.
+	require.False(t, strings.Contains(string(src), bare),
+		"replay harness must not spawn git directly — route through gitexec.CommandContextFn")
+	require.True(t, strings.Contains(string(src), "gitexec.CommandContextFn("),
+		"replay harness git calls must be hardened and bound to the test context")
+}
+
 // Replay-harness knobs. The window defaults to 40 commits because that is the
 // exact window the original ~59% measurement was taken over (Epic 35.4 source
 // TD). Since replayCommits passes --no-merges, the window is the last 40
