@@ -163,7 +163,7 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 // scanning only the description would not see either command.
 func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
 	desc := fieldValue(frontmatter(t), "description")
-	for _, name := range []string{"quality-report", "config"} {
+	for _, name := range []string{"quality-report", "config", "skill"} {
 		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
 			"frontmatter description must enumerate the %q command", name)
 	}

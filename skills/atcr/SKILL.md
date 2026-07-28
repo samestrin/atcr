@@ -1,6 +1,6 @@
 ---
 name: atcr
-description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
+description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, skill, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
 ---
 
 # atcr — Agent Team Code Review
@@ -58,7 +58,7 @@ If the pool partially fails (some agents error, at least one succeeds), reconcil
 
 ## Commands
 
-Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess. If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`) expose them via `atcr <command> --help`; never invent subcommand names.
+Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess. If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `skill`) expose them via `atcr <command> --help`; never invent subcommand names.
 
 | Command | What it does |
 |---------|--------------|
@@ -88,7 +88,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
 | `atcr version` | Print the atcr version |
 
-<!-- Convention: one line per command, mirroring newRootCmd (cmd/atcr/main.go).
+<!-- Convention: one line per command, mirroring NewRootCmd (cli/main.go).
 When a command is added to or removed from newRootCmd, update exactly one row
 here (and skills/skills_test.go's dispatcherCommands list) so routing-table drift
 is caught, and keep SKILL.md within its ~500-line budget. -->
