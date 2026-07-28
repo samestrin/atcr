@@ -550,3 +550,14 @@ func TestAnalyzeDiff_PlusPlusContentIsNotAHeader(t *testing.T) {
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion, "got %v", res.Summary.ByType)
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
 }
+
+// A hunk header declaring an absurd line count must not let the body escape the
+// scan. Failing CLOSED (an integer wrap to a negative count skips the body) would
+// hand a crafted fix a one-line bypass of every detector.
+func TestAnalyzeDiff_OverflowingHunkCountFailsOpen(t *testing.T) {
+	huge := strings.Repeat("9", 25)
+	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1," + huge +
+		" +1,2 @@\n+\tt.Skip(\"gone\")\n-\trequire.Equal(t, 1, 2)\n")
+	assert.Contains(t, res.Summary.ByType, smellTestSkipped, "got %v", res.Summary.ByType)
+	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+}

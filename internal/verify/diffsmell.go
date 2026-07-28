@@ -43,8 +43,10 @@ package verify
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -563,14 +565,18 @@ func smellIsHunkBodyLine(line string) bool {
 }
 
 // smellHunkCount parses a hunk header's optional line-count capture. An omitted
-// count means exactly one line, per the unified-diff format.
+// count means exactly one line, per the unified-diff format. A count too large
+// for an int fails OPEN — the hunk stays unbounded and smellIsHunkBodyLine ends
+// it — because failing closed would let a crafted `@@ -1,<20 digits> +1 @@`
+// header wrap to a negative count, skip the body entirely, and hide every smell
+// in it.
 func smellHunkCount(s string) int {
 	if s == "" {
 		return 1
 	}
-	n := 0
-	for _, r := range s {
-		n = n*10 + int(r-'0')
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return math.MaxInt32
 	}
 	return n
 }
