@@ -167,6 +167,10 @@ func (b *RangeBuilder) ReleaseModeCaches() {
 	// headSrc holds a full HEAD blob per analyzed file — the largest per-mode
 	// cache by far. Grounding does not read it, so it is released with the rest.
 	s.headSrc = nil
+	// fileCtx holds the memoized per-file escalation analysis (parse/skeleton).
+	// It is dead weight once every mode's entries are materialized, and like
+	// headSrc it is re-derivable by a later BuildEntries, so release it too.
+	s.fileCtx = nil
 }
 
 // EscalationDegraded reports whether the change set exceeded the escalation

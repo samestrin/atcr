@@ -147,16 +147,41 @@ type fileContext struct {
 	skeleton string
 }
 
-// analyzeFile measures a changed file's escalation signals and extracts its HEAD
-// skeleton. ok is false when the file cannot contribute signals at all (deleted,
-// or its HEAD blob is unreadable), in which case the caller leaves the file in
-// the run's configured mode.
-//
-// Reading HEAD costs one `git show` per file, memoized per range. This is why
-// the whole pass is gated behind EscalationConfig.Enabled: in diff and blocks
-// mode the builder otherwise spends a constant number of git processes
-// regardless of change-set size.
+// analyzedFile is a memoized analyzeFile result: the measured context and whether
+// it is usable. ok=false means the file cannot contribute signals (deleted,
+// unreadable, or over the byte ceiling).
+type analyzedFile struct {
+	ctx fileContext
+	ok  bool
+}
+
+// analyzeFile measures a changed file's escalation signals, memoized per head
+// path for the life of the range. buildEntriesValidated runs once per DISTINCT
+// payload mode built for the roster, but the measurement — an AST parse, a
+// full-file skeleton, a line count — is byte-identical across modes, so it is
+// computed once per file and reused. A heterogeneous diff+blocks roster therefore
+// no longer pays the parse/skeleton twice (Epic 35.1 TD). ok is false when the
+// file cannot contribute signals at all; the caller then leaves it in the run's
+// configured mode.
 func (g *gitRunner) analyzeFile(base, head string, f changedFile) (fileContext, bool) {
+	s := g.forRange(base, head)
+	if a, ok := s.fileCtx[f.path]; ok {
+		return a.ctx, a.ok
+	}
+	g.analyzeCount++
+	ctx, valid := g.analyzeFileUncached(base, head, f)
+	if s.fileCtx == nil {
+		s.fileCtx = make(map[string]analyzedFile)
+	}
+	s.fileCtx[f.path] = analyzedFile{ctx: ctx, ok: valid}
+	return ctx, valid
+}
+
+// analyzeFileUncached is the actual measurement pass. Reading HEAD costs one
+// `git show` per file, memoized per range; this is why the whole pass is gated
+// behind EscalationConfig.Enabled, so diff and blocks mode spend a constant
+// number of git processes regardless of change-set size.
+func (g *gitRunner) analyzeFileUncached(base, head string, f changedFile) (fileContext, bool) {
 	if f.kind == kindDeleted {
 		return fileContext{}, false
 	}

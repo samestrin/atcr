@@ -49,14 +49,15 @@ func (f changedFile) pathspec() []string {
 // first passing through that gate.
 type rangeState struct {
 	key        string
-	files      []changedFile          // changed files (one --name-status -M)
-	binary     map[string]bool        // head path -> binary (one --numstat -M)
-	fc         map[string]string      // head path -> --function-context chunk
-	plain      map[string]string      // head path -> --unified=10 chunk
-	raw        map[string]string      // head path -> plain -M diff chunk
-	zeroCtx    map[string]string      // head path -> --unified=0 chunk (raw)
-	lineRanges map[string][]lineRange // head path -> head-side changed ranges
-	headSrc    map[string]string      // head path -> full HEAD blob (one `git show` each)
+	files      []changedFile           // changed files (one --name-status -M)
+	binary     map[string]bool         // head path -> binary (one --numstat -M)
+	fc         map[string]string       // head path -> --function-context chunk
+	plain      map[string]string       // head path -> --unified=10 chunk
+	raw        map[string]string       // head path -> plain -M diff chunk
+	zeroCtx    map[string]string       // head path -> --unified=0 chunk (raw)
+	lineRanges map[string][]lineRange  // head path -> head-side changed ranges
+	headSrc    map[string]string       // head path -> full HEAD blob (one `git show` each)
+	fileCtx    map[string]analyzedFile // head path -> memoized escalation analysis (once per file per range)
 	// churn is the head path -> added+deleted line count from the SAME
 	// `--numstat -M` process that fills binary. The HEAD-SIDE changed-line
 	// ranges (parseHeadRanges) drop pure-deletion hunks — they mark no head
@@ -159,6 +160,12 @@ type gitRunner struct {
 	// execCount counts git subprocess invocations (every output call). It backs
 	// the constant-process-count regression test; it is otherwise inert.
 	execCount int
+
+	// analyzeCount counts how many times the escalation analysis pass actually
+	// measured a file (the AST parse + skeleton + line-count work), as opposed to
+	// serving a memoized result. It backs the once-per-file regression test; it is
+	// otherwise inert.
+	analyzeCount int
 
 	// noIgnore disables the .gitignore/.atcrignore payload filter for this runner
 	// (the --no-ignore opt-out). Default false → filtering active.

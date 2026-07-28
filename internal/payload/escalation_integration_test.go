@@ -455,6 +455,24 @@ func TestChurnLines_UsesMaxNotSumSoModifiedLinesCountOnce(t *testing.T) {
 	require.Equal(t, 30, n, "churn must be max(added, deleted), not their sum (60)")
 }
 
+// The escalation analysis (AST parse + skeleton + line count) is byte-identical
+// across payload modes, so a heterogeneous roster building two modes on one range
+// must measure each file exactly once, not once per mode.
+func TestEscalationIntegration_AnalyzeMemoizedAcrossModes(t *testing.T) {
+	dir, base, head := thrashingRepo(t)
+
+	rb := NewRangeBuilder(context.Background(), dir, base, head, WithEscalation(DefaultEscalationConfig()))
+	_, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	afterDiff := rb.g.analyzeCount
+	require.Equal(t, 1, afterDiff, "the one changed file must be measured once in the first mode")
+
+	_, err = rb.BuildEntries(ModeBlocks)
+	require.NoError(t, err)
+	require.Equal(t, afterDiff, rb.g.analyzeCount,
+		"a second mode on the same range must reuse the memoized analysis, not re-measure")
+}
+
 func TestEscalationIntegration_EscalatedFileReadsHeadBlobOnce(t *testing.T) {
 	dir, base, head := thrashingRepo(t)
 
