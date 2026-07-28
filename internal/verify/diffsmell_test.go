@@ -634,9 +634,36 @@ func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
 func TestAnalyzeDiff_RemovedDashDashLineIsContent(t *testing.T) {
 	res := analyzeDiff("diff --git a/tests/schema.sql b/tests/schema.sql\n" +
 		"--- a/tests/schema.sql\n+++ b/tests/schema.sql\n@@ -1,2 +1,1 @@\n" +
-		"-- assert row count\n-SELECT assert_count(1);\n+SELECT 1;\n" + dsImplOnly)
+		// Diff line = the `-` removal prefix + the SQL comment `-- assert row count`.
+		// The `-- assert row count` comment is the ONLY removed line carrying an
+		// assertion token, so the smell fires if and only if that line survives the
+		// parse. (A second assertion-bearing removed line would mask the defect.)
+		"--- assert row count\n-SELECT count(*) FROM t;\n+SELECT 1;\n" + dsImplOnly)
 	require.Len(t, res.Files.Test, 1, "test=%v impl=%v", res.Files.Test, res.Files.Impl)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
 		"the removed `-- assert` line must be counted, got %v", res.Summary.ByType)
 	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+}
+
+// Fix-generating models append explanatory prose after the diff constantly, and
+// a markdown bullet list starts every line with `- `. Parsing that as removed
+// content turns a GOOD fix into a false HARD weakened_assertion: the fix is
+// withheld, a retry round-trip is burned, and the finding is stamped with a
+// FixWarning accusing the model of deleting assertions it never touched.
+func TestAnalyzeDiff_TrailingProseIsNotDiffContent(t *testing.T) {
+	prose := "\nNotes on this change:\n" +
+		"- assert the new value is returned\n" +
+		"- expect no regression in the caller\n" +
+		"+ follow-up: extend to the batch path\n"
+
+	withProse := analyzeDiff(dsImplOnly + dsTestOnlyClean + prose)
+	clean := analyzeDiff(dsImplOnly + dsTestOnlyClean)
+
+	assert.Equal(t, clean.Summary.Verdict, withProse.Summary.Verdict,
+		"trailing prose must not change the verdict; got %v vs %v",
+		withProse.Summary.ByType, clean.Summary.ByType)
+	assert.NotContains(t, withProse.Summary.ByType, smellWeakenedAssertion,
+		"prose bullets are not removed assertions; got %v", withProse.Summary.ByType)
+	assert.Equal(t, clean.Files.Impl, withProse.Files.Impl)
+	assert.Equal(t, clean.Files.Test, withProse.Files.Test)
 }
