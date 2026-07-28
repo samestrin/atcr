@@ -225,28 +225,15 @@ func TestIsSmellTestPath(t *testing.T) {
 	}
 }
 
-// File attribution and hunk line numbers must survive parsing so a SOFT smell can
-// point at a real location.
-func TestAnalyzeDiff_FileAndLineAttribution(t *testing.T) {
+// File attribution must survive parsing so a SOFT smell points at the right
+// file. (Line numbers are deliberately NOT tracked: no production consumer ever
+// read them — the quoted evidence line is sufficient to relocate a smell.)
+func TestAnalyzeDiff_FileAttribution(t *testing.T) {
 	res := analyzeDiff(dsSuppression)
 	require.Len(t, res.Smells, 1)
 	assert.Equal(t, "internal/verify/select.go", res.Smells[0].File)
-	assert.Equal(t, 11, res.Smells[0].Line)
 	assert.Equal(t, []string{"internal/verify/select.go"}, res.Files.Impl)
 	assert.Empty(t, res.Files.Test)
-}
-
-// A pathological hunk-start must not wrap into a garbage (or negative) line
-// number — the diff is model-generated, so an absurd header is reachable input.
-func TestAnalyzeDiff_HunkStartOverflowIsFailSoft(t *testing.T) {
-	res := analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +99999999999999999999999 @@\n+\t// TODO: later\n")
-	require.Len(t, res.Smells, 1)
-	assert.Equal(t, 0, res.Smells[0].Line, "overflowing hunk start must degrade to unknown line, not wrap")
-
-	// The largest in-range header still parses exactly.
-	res = analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +999999999 @@\n+\t// TODO: later\n")
-	require.Len(t, res.Smells, 1)
-	assert.Equal(t, 999999999, res.Smells[0].Line)
 }
 
 // Deleting a whole test file is the archetypal reward hack: it must be HARD,
