@@ -245,6 +245,9 @@ func analyzeDiff(diff string) *smellResult {
 	// hunk must be attributed to: its `+++` side is /dev/null, which carries no
 	// path of its own.
 	lastOldPath := ""
+	// Old paths of test files renamed to a non-test path in this diff. Collected
+	// from the `diff --git` header, the only line carrying the pre-rename name.
+	renamedAwayTests := []string{}
 
 	ensure := func(p string) *smellFileChange {
 		if p == "" || p == "/dev/null" {
@@ -265,6 +268,15 @@ func analyzeDiff(diff string) *smellResult {
 			// "diff --git a/old b/new" — tentative file (overridden by +++).
 			if p := smellBPathFromGitHeader(line); p != "" {
 				cur = ensure(p)
+				// The a/ side is the ONLY place a rename's old path appears. A test
+				// renamed to a non-test path is disabled as surely as a deleted one,
+				// and is worse for this analyzer than a deletion: the new path is
+				// classified IMPL, which additionally suppresses test_only for
+				// everything else in the diff.
+				if a := smellAPathFromGitHeader(line); a != "" && a != p &&
+					isSmellTestPath(a) && !isSmellTestPath(p) {
+					renamedAwayTests = append(renamedAwayTests, a)
+				}
 			}
 		case strings.HasPrefix(line, "+++ "):
 			// DIVERGENCE from upstream: a `+++ /dev/null` header (a file DELETION)
@@ -328,6 +340,12 @@ func analyzeDiff(diff string) *smellResult {
 		} else {
 			res.Summary.Soft++
 		}
+	}
+
+	// HARD: a test file was renamed out of the test namespace.
+	for _, p := range renamedAwayTests {
+		add(smell{Type: smellTestRenamedAway, Severity: smellSeverityHard, File: p,
+			Evidence: "fix renamed a test file to a non-test path, disabling it"})
 	}
 
 	// HARD: the fix touched only tests.
@@ -477,6 +495,23 @@ func smellBPathFromGitHeader(line string) string {
 	}
 	b = strings.Trim(b, `"`)
 	return smellHeaderPath(b)
+}
+
+// smellAPathFromGitHeader extracts the OLD path from "diff --git a/x b/y" — the
+// only line in a rename that carries it. It mirrors smellBPathFromGitHeader's
+// separator-based split so a path containing a space is not truncated.
+func smellAPathFromGitHeader(line string) string {
+	rest := strings.TrimPrefix(line, "diff --git ")
+	var a string
+	if i := strings.LastIndex(rest, ` "b/`); i >= 0 {
+		a = rest[:i]
+	} else if i := strings.LastIndex(rest, " b/"); i >= 0 {
+		a = rest[:i]
+	} else {
+		return ""
+	}
+	a = strings.Trim(strings.TrimSpace(a), `"`)
+	return smellHeaderPath(a)
 }
 
 // smellTypes returns the distinct smell types in res, sorted, for a stable
