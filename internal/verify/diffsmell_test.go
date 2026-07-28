@@ -334,6 +334,63 @@ func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
 	assert.Contains(t, fb, "(+20 more)", "the dropped remainder must be reported, never silently truncated")
 }
 
+// A line that is merely relocated or reindented within the same file is not a
+// NEW shortcut: its text appears verbatim among the file's removed lines, so the
+// per-line SOFT fingerprints must not fire on it (TD: diffsmell.go:120 — frequent
+// false positives on moves erode trust in the NEEDS_REVIEW marker).
+func TestAnalyzeDiff_RelocatedLineIsClean(t *testing.T) {
+	relocated := `diff --git a/internal/verify/select.go b/internal/verify/select.go
+--- a/internal/verify/select.go
++++ b/internal/verify/select.go
+@@ -10,3 +10,2 @@
+ func a() {
+-	//nolint:gosec // trust me
+ 	return 1
+ }
+@@ -20,2 +20,3 @@
+ func b() {
++	//nolint:gosec // trust me
+ 	return 2
+ }
+`
+	res := analyzeDiff(relocated)
+	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
+	assert.Empty(t, res.Smells)
+
+	reindented := `diff --git a/internal/verify/select.go b/internal/verify/select.go
+--- a/internal/verify/select.go
++++ b/internal/verify/select.go
+@@ -10,3 +10,3 @@
+ func pick() int {
+-	// TODO: implement properly
++		// TODO: implement properly
+ 	return 1
+ }
+`
+	res = analyzeDiff(reindented)
+	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
+	assert.Empty(t, res.Smells)
+}
+
+// Relocation suppression must not hide a genuinely NEW shortcut added alongside
+// the moved line: only the line with no removed-lines twin is reported.
+func TestAnalyzeDiff_RelocationDoesNotHideNewSmell(t *testing.T) {
+	res := analyzeDiff(`diff --git a/internal/verify/select.go b/internal/verify/select.go
+--- a/internal/verify/select.go
++++ b/internal/verify/select.go
+@@ -10,3 +10,4 @@
+ func pick() int {
+-	//nolint:gosec // trust me
++	//nolint:gosec // trust me
++	//nolint:errcheck // new one
+ 	return 1
+ }
+`)
+	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict)
+	require.Len(t, res.Smells, 1)
+	assert.Equal(t, "//nolint:errcheck // new one", res.Smells[0].Evidence)
+}
+
 // smellTypes returns the deterministic, sorted, deduplicated type list used for
 // the FixReview annotation.
 func TestSmellTypes(t *testing.T) {
