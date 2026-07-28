@@ -156,6 +156,13 @@ func TestReplayStats_RatesAndAttribution(t *testing.T) {
 	require.InDelta(t, 0.0, r.signalRate(sigHunkCount), 0.001, "no file reaches the min-hunks threshold")
 	require.InDelta(t, 20.0, r.signalRate(sigAdjacency), 0.001, "E only")
 	require.InDelta(t, 40.0, r.signalRate(sigComplexity), 0.001, "B and C")
+
+	// Byte accounting: 200 extra bytes over a 1500-byte base = +13.33%.
+	r.addBytes(1000, 1200)
+	r.addBytes(500, 500)
+	require.Equal(t, 1500, r.baseBytes)
+	require.Equal(t, 1700, r.escalatedBytes)
+	require.InDelta(t, 13.333, r.byteDelta(), 0.001)
 }
 
 // TestReplayStats_EmptyWindowIsNotADivideByZero guards the degenerate case: a
@@ -165,6 +172,7 @@ func TestReplayStats_EmptyWindowIsNotADivideByZero(t *testing.T) {
 	var r replayStats
 	require.Equal(t, 0.0, r.promotionRate())
 	require.Equal(t, 0.0, r.signalRate(sigChurn))
+	require.Equal(t, 0.0, r.byteDelta(), "baseBytes <= 0 must report 0, not NaN")
 }
 
 // Replay-harness knobs. The window defaults to 40 commits because that is the
