@@ -57,9 +57,15 @@ import (
 // magnitude — paid for in tokens on every rejected fix. The type and severity
 // names, which carry the actionable signal, are a closed vocabulary and are never
 // truncated; only the quoted evidence and the item count are bounded.
+// The FILE PATH is model-controlled too — it comes verbatim from
+// `+++ b/<anything>` via smellHeaderPath, which caps nothing — so it is bounded
+// on the same footing as the evidence, and the whole rendered string is capped as
+// a backstop.
 const (
 	maxSmellEvidenceRunes = 200
 	maxSmellFeedbackItems = 10
+	maxSmellPathRunes     = 200
+	maxSmellFeedbackRunes = maxSmellFeedbackItems * (maxSmellEvidenceRunes + maxSmellPathRunes + 64)
 )
 
 // Verdict values, mirroring upstream's summary.verdict.
@@ -657,16 +663,16 @@ func smellFeedback(res *smellResult) string {
 		b.WriteString(" (")
 		b.WriteString(s.Severity)
 		b.WriteString(")")
-		if s.File != "" {
+		if p := smellFlatten(s.File); p != "" {
 			b.WriteString(" at ")
-			b.WriteString(s.File)
+			b.WriteString(truncateRunes(p, maxSmellPathRunes))
 		}
 		if ev := smellFlatten(s.Evidence); ev != "" {
 			b.WriteString(": ")
 			b.WriteString(truncateRunes(ev, maxSmellEvidenceRunes))
 		}
 	}
-	return smellFlatten(b.String())
+	return truncateRunes(smellFlatten(b.String()), maxSmellFeedbackRunes)
 }
 
 // truncateRunes shortens s to at most n runes, appending an ellipsis when it was
