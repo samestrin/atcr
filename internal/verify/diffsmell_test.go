@@ -202,6 +202,10 @@ func TestIsSmellTestPath(t *testing.T) {
 		"spec/models/user_spec.rb",
 		"src/main/UserTest.java",
 		"src/UserTests.cs",
+		// Mainstream layouts: .NET test projects, JVM Test dirs, Go golden files.
+		"MyProj.Tests/Foo.cs",
+		"src/Test/Foo.java",
+		"internal/verify/testdata/x.json",
 	} {
 		assert.True(t, isSmellTestPath(p), "expected test path: %s", p)
 	}
