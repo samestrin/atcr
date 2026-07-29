@@ -342,6 +342,21 @@ func TestSkill_ConventionsRelocatedChecks(t *testing.T) {
 		"gh CLI note must retain its PR-resolution context")
 }
 
+// TestSkill_PathSafetyAdmitsResolutionEdits — the .atcr/ rooting rule cannot be
+// stated absolutely. debt-resolve.md's entire purpose is writing OUTSIDE .atcr/:
+// RED authors a failing test, GREEN edits the implementation, REFACTOR cleans it
+// up. An unqualified "never outside it" leaves an agent reading both documents
+// with two instructions it cannot both obey, so it has to guess which one the
+// author meant. Both files must carry the carve-out.
+func TestSkill_PathSafetyAdmitsResolutionEdits(t *testing.T) {
+	for name, md := range map[string]string{"CONVENTIONS.md": ConventionsMD, "debt-resolve.md": DebtResolveMD} {
+		assert.NotRegexp(t, regexp.MustCompile(`(?i)never outside it|never touches`), md,
+			"%s states the .atcr/ rooting rule absolutely, contradicting the resolution route's source and test edits", name)
+		assert.Regexp(t, regexp.MustCompile(`(?i)source and test files`), md,
+			"%s must name the working-tree source and test edits a resolution route makes", name)
+	}
+}
+
 // TestSkill_ConventionsPathSafety (AC 04-01 Scenario 2, Edge Case 3) — a
 // .atcr/ path-safety section states public-skill file operations stay rooted at
 // .atcr/ and never write under .planning/.
