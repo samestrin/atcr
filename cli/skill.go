@@ -172,6 +172,15 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 	user, _ := cmd.Flags().GetBool("user")
 	force, _ := cmd.Flags().GetBool("force")
 
+	// A set-but-empty --dir (`--dir "$UNSET_VAR"`) is an invocation mistake, not
+	// "no --dir given": resolveSkillDest treats "" as absent and the export would
+	// silently land on the harness's default path. Changed() is the same idiom
+	// audit_report.go and debt_resolve.go use for set-vs-empty.
+	if cmd.Flags().Changed("dir") && dir == "" {
+		return usageError(fmt.Errorf(
+			"--dir was supplied empty (an unset variable in --dir \"$VAR\" is the usual cause); omit --dir to use the harness path, or pass a non-empty directory"))
+	}
+
 	dest, err := resolveSkillDest(harness, user, dir)
 	if err != nil {
 		return err
