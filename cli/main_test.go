@@ -59,6 +59,7 @@ func TestRootCmd_HasExactlyTwentyFiveSubcommands(t *testing.T) {
 		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
 			continue
 		}
+		assert.False(t, names[c.Name()], "subcommand %q is registered more than once", c.Name())
 		names[c.Name()] = true
 	}
 	assert.Len(t, names, 25)
