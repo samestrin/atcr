@@ -254,6 +254,36 @@ and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
 > so cherry-picked production runs cannot game it — see
 > [`docs/benchmark.md`](benchmark.md).
 
+### `scorecard.TrustPriors` (Go API)
+
+`TrustPriors(dir string, minRuns int) (map[string]float64, error)` is the shared
+per-reviewer corroboration-rate resolver behind `atcr personas list --scores`
+and the skeptic-selection score map — one aggregation instead of each consumer
+rolling its own. It reads the store at `dir` (same store `atcr leaderboard`
+reads), sums `Runs`, `findings_corroborated`, and `findings_raised` across a
+reviewer's `(reviewer, model)` leaderboard rows (a reviewer that ran under
+several models is one entry, not one per model), and returns the recomputed
+rate keyed by **lowercase reviewer name**.
+
+- **Absence means "no history", not "zero trust".** A reviewer whose summed
+  `Runs` is below `minRuns` is omitted from the map entirely rather than present
+  at `0.0` — callers can tell "never measured" apart from "measured and found
+  untrustworthy". `minRuns <= 0` applies no floor.
+- **A present `0.0` is a distinct case from absence**, and can mean either
+  "corroboration rate genuinely measured at zero" or "this reviewer cleared
+  `minRuns` but has never raised a finding at all" (the `findings_raised`
+  denominator was zero, so the ratio is defined as `0.0` — never `NaN`/`Inf`).
+  A caller that treats a present `0.0` as proof of a poorly-performing reviewer
+  should first check whether it also raised any findings.
+- **Best-effort against the store.** A missing, empty, or unreadable store
+  directory yields an empty map and a nil error — this is a read-only,
+  never-fails resolver; it does not create the store or write to it.
+- `DefaultTrustMinRuns` is the conservative default floor (`20`) for a caller
+  that does not pick its own `minRuns`. `atcr personas list --scores` calls
+  `TrustPriors(dir, 0)` explicitly instead — that table is meant to show every
+  reviewer with any history at all, so it opts out of the default floor rather
+  than inheriting it.
+
 ### `atcr reconcile --no-scorecard`
 
 Suppress scorecard emission for a single reconcile run.
