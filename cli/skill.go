@@ -321,6 +321,19 @@ func writeSkillTree(src fs.FS, root, dest string) (map[string]bool, error) {
 			if rel == "." {
 				return nil
 			}
+			// os.MkdirAll returns nil when target is already a SYMLINK to an
+			// existing directory, so every file beneath it would then resolve
+			// through the link and land outside dest — the same write-through
+			// hazard the leaf-file branch below guards, one level up and silent.
+			// Replace the link with a real directory, exactly as the file branch
+			// replaces a symlinked file.
+			if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				if err := os.Remove(target); err != nil {
+					return fmt.Errorf("replacing symlinked directory %s: %w", target, err)
+				}
+			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				return fmt.Errorf("inspecting %s: %w", target, statErr)
+			}
 			return os.MkdirAll(target, 0o755)
 		}
 
@@ -332,7 +345,12 @@ func writeSkillTree(src fs.FS, root, dest string) (map[string]bool, error) {
 		// symlink and would write the skill content THROUGH it, clobbering a file
 		// outside the destination entirely — a real hazard for anyone who
 		// symlinked an installed skill file back to a source checkout. Replacing
-		// the entry keeps every write inside dest.
+		// the entry keeps this write inside dest.
+		//
+		// Together with the directory branch above, that holds for every path
+		// component this walk creates. It does NOT extend to dest itself: a
+		// caller who names a symlink as the destination is followed, because
+		// that destination was chosen deliberately.
 		//
 		// A DIRECTORY sharing the file's name is never removed: deleting an
 		// empty one would be an undocumented prune (the contract is "overwrites
