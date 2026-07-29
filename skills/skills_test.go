@@ -313,10 +313,10 @@ func TestSkill_PrerequisitesIsPointer(t *testing.T) {
 // skills/atcr/SKILL.md's `atcr debt` row documents the resolve route.
 // ---------------------------------------------------------------------------
 
-// TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve/SKILL.md is
+// TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve.md is
 // embedded as a non-empty constant, mirroring the other secondary files.
 func TestSkill_DebtResolveEmbedded(t *testing.T) {
-	require.NotEmpty(t, DebtResolveMD, "debt-resolve/SKILL.md must be embedded and non-empty")
+	require.NotEmpty(t, DebtResolveMD, "debt-resolve.md must be embedded and non-empty")
 }
 
 // TestSkill_DebtResolveStages (AC 03-06 Scenario 2, AC 03-01) — the four cycle
@@ -333,11 +333,11 @@ func TestSkill_DebtResolveStages(t *testing.T) {
 // Prerequisites checks verbatim.
 func TestSkill_DebtResolveReferencesConventions(t *testing.T) {
 	assert.Contains(t, DebtResolveMD, "CONVENTIONS.md",
-		"debt-resolve/SKILL.md must reference CONVENTIONS.md, not restate its checks")
+		"debt-resolve.md must reference CONVENTIONS.md, not restate its checks")
 	assert.NotContains(t, DebtResolveMD, binaryHaltMsg,
-		"debt-resolve/SKILL.md must not duplicate the binary-on-PATH halt (it lives in CONVENTIONS.md)")
+		"debt-resolve.md must not duplicate the binary-on-PATH halt (it lives in CONVENTIONS.md)")
 	assert.NotContains(t, DebtResolveMD, gitWorktreeHaltMsg,
-		"debt-resolve/SKILL.md must not duplicate the git-worktree halt (it lives in CONVENTIONS.md)")
+		"debt-resolve.md must not duplicate the git-worktree halt (it lives in CONVENTIONS.md)")
 }
 
 // TestSkill_DebtResolveSelectionRule (AC 03-03) — the deterministic selection
