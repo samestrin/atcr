@@ -134,7 +134,7 @@ its run_id via `reconciled/summary.json`).
 atcr scorecard 2026-06-14T10:00:00Z-abc123
 
 # By review directory path
-atcr scorecard ./.atcr/runs/abc123
+atcr scorecard ./.atcr/reviews/abc123
 ```
 
 Columns: `REVIEWER  MODEL  RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY`,
@@ -381,10 +381,10 @@ file I/O, or review-orchestration machinery — those stay ATCR-internal. The
 library is stdlib-only with no third-party dependencies, which is what makes it
 embeddable and independently auditable.
 
-During extraction the module lives at `./reconcile/` inside this repository and is
-consumed by ATCR through a root `go.mod` `replace` directive — the documented
-development-time bridge. `github.com/samestrin/atcr/reconcile` is the intended
-public import path; separate-repository publication follows the extraction.
+During extraction the module lived at `./reconcile/` inside this repository. It is
+now consumed through a versioned `require github.com/samestrin/atcr/reconcile`
+(currently `v0.1.1`) in the root `go.mod`, published via `reconcile/vX.Y.Z` tags;
+a `go.work` `use` entry bridges local development against the in-repo copy.
 
 ---
 

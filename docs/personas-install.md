@@ -99,13 +99,13 @@ No scorecard data found at <path>
 
 ### `atcr personas search <keyword>`
 
-Fetches the registry's `index.json` and lists entries whose name or description matches the keyword:
+Fetches the registry's `index.json` and lists entries whose name, description, provider, or model matches the keyword:
 
 ```bash
 atcr personas search performance
-# NAME                  VERSION  DESCRIPTION
-# performance/sql       1.0.0    SQL/ORM query performance
-# performance/memory    1.1.0    Memory leak patterns
+# NAME                  VERSION  PROVIDER    MODEL              DESCRIPTION
+# performance/sql       1.0.0    openrouter  anthropic/claude   SQL/ORM query performance
+# performance/memory    1.1.0    openrouter  openai/gpt-5       Memory leak patterns
 ```
 
 Use `search` to discover a persona's exact slug before `install`. When nothing matches, it prints `No personas found matching "<keyword>"`.
@@ -222,13 +222,13 @@ OPENROUTER_API_KEY=… atcr models refresh
 - It refuses to overwrite the snapshot with an empty catalog and leaves the existing snapshot untouched on any fetch or write error (atomic replace).
 - A refreshed snapshot reaches the default `models check` path by rebuilding the binary (the snapshot is embedded at build time) or, at runtime, via the `ATCR_CATALOG_SNAPSHOT` override.
 
-The catalog schema, exit-code contract, and `--json` shape are specified in the plan documentation: [models-check-command.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/models-check-command.md), [openrouter-catalog-api.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md), and [catalog-snapshot-fixture.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/catalog-snapshot-fixture.md).
+`atcr models check` exits `0` when the embedded snapshot is current, `1` when it's stale (a newer catalog is available), and `2` on a fetch/environment failure; `--json` emits the stale/current verdict alongside the snapshot and live catalog versions. The catalog schema is the same `id`/`canonical_slug`/`created`/`expiration_date` shape described in [personas-authoring.md § Model family/channel bindings](personas-authoring.md#6-model-familychannel-bindings-and-resolved-locks-epic-197).
 
 ## Reproducible by default: locks, not live models
 
 Reviews are **reproducible by default**. A persona's `model` field is a resolved **lock** — a concrete slug — and every review runs that locked slug. The resolver and the model catalog endpoint are **never touched on the review hot path**: a clean diff can never sprout new findings from a model that silently changed underneath it.
 
-The model changes only when you explicitly run `atcr personas upgrade`, which re-resolves any `binding:`, advances the lock, and reports exactly what changed. A persona installed before Epic 19.7 needs no migration — its pinned `model` value already serves as its initial lock. Silent runtime "always latest" resolution is deliberately not offered; opting into a floating channel is done through a persona's `binding:` at authoring time, not at review time. The reproducibility posture and the `fetch()`/`Upgrade()` reuse seams are detailed in [existing-resolver-patterns.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
+The model changes only when you explicitly run `atcr personas upgrade`, which re-resolves any `binding:`, advances the lock, and reports exactly what changed. A persona installed before Epic 19.7 needs no migration — its pinned `model` value already serves as its initial lock. Silent runtime "always latest" resolution is deliberately not offered; opting into a floating channel is done through a persona's `binding:` at authoring time, not at review time.
 
 ## Discover and install a persona by model
 

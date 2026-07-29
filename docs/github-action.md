@@ -92,7 +92,7 @@ builds and invokes the binary; it does not provision a registry for you.
 ## Manual smoke test
 
 The automated end-to-end coverage runs against a fake GitHub API
-(`net/http/httptest`) — see `cmd/atcr/github_integration_test.go` and the
+(`net/http/httptest`) — see `cli/github_integration_test.go` and the
 `internal/ghaction` tests. To validate against the **real** GitHub API once,
 end-to-end, on a throwaway PR:
 

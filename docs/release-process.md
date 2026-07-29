@@ -189,8 +189,8 @@ TD-002). Do not cut a module tag against a private repo.
    the app release workflow.
 
 3. **Let the module CI gate run.** The `reconcile/v*` tag push fires
-   [`reconcile-module.yml`](../.github/workflows/reconcile-module.yml) on the
-   `[self-hosted, gauntlet]` runner (`gofmt`, `golangci-lint`, `go test -race`
+   [`reconcile-module.yml`](../.github/workflows/reconcile-module.yml) on
+   `ubuntu-latest` (`gofmt`, `golangci-lint`, `go test -race`
    inside `./reconcile`). Confirm it is green with no `could not read Username`
    or other module-fetch/auth error. That green run is the module release —
    there is no further publish step.

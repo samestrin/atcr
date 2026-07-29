@@ -192,7 +192,7 @@ Contract](#drafting-agent-contract)):
 | `vendor_guide_url` | Parsed from the persona `.md`'s `<!-- vendor-guidance: <description>, <url> -->` HTML-comment preamble. The marker format is test-enforced by `personas/community_test.go`'s `vendorGuidanceRe` (`(?m)<!--\s*vendor-guidance:\s*(\S.*?)\s*-->`); the captured value is `<description>, <url>` and the agent extracts the URL from it. |
 
 **Trigger.** The judgment agent fires off the `atcr models check --json` output
-rendered by `renderDriftJSON` (`cmd/atcr/models.go`). A non-empty findings set
+rendered by `renderDriftJSON` (`cli/models.go`). A non-empty findings set
 exits the command with code `1` (`driftFoundError.ExitCode()` → `exitFailure`),
 which is the cron script's signal that drift was found and classification should
 run; a clean check exits `0` and the agent does nothing.

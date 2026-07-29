@@ -28,15 +28,15 @@ Keys are resolved from the environment at invoke time — never stored, never wr
 
 ## When you need what
 
-- **Prompt-based panel review (stage 1): nothing is required.** Direct provider blocks like the ones above are the complete setup — no proxy, no infrastructure.
-- **Tool-calling reviewers (roadmap stage 2): a normalizing proxy is recommended — not required — for maximum compatibility.** Function-calling dialects vary enough across providers that a proxy meaningfully raises the fraction of your roster that tool-calls cleanly.
+- **Prompt-based panel review: nothing is required.** Direct provider blocks like the ones above are the complete setup — no proxy, no infrastructure.
+- **Tool-calling reviewers (shipped, opt-in per agent via `tools: true`): a normalizing proxy is recommended — not required — for maximum compatibility.** Function-calling dialects vary enough across providers that a proxy meaningfully raises the fraction of your roster that tool-calls cleanly.
 
 ## The recommended proxy: LiteLLM (or similar)
 
 Route providers through a normalizing proxy such as [LiteLLM](https://github.com/BerriAI/litellm) and point atcr at the proxy as a single provider. A proxy buys:
 
 - **Tool-call normalization.** Providers diverge on function-calling dialects: parallel tool calls, tool-call JSON emitted as plain text in `content`, off-spec "compatible" servers. A proxy flattens most of this before atcr sees it.
-- **Reasoning/thinking token normalization.** Reasoning models return thinking in different fields (`reasoning_content`, thinking blocks, vendor extensions). atcr extracts findings only from `message.content`; a proxy standardizes where reasoning lands so it never pollutes responses or wastes budget unpredictably.
+- **Reasoning/thinking token normalization.** Reasoning models return thinking in different fields (`reasoning_content`, thinking blocks, vendor extensions). atcr extracts findings from `message.content`, falling back to `reasoning_content` only when `content` is empty (a reasoning model that exhausted its output budget); a proxy standardizes where reasoning lands so it never pollutes responses or wastes budget unpredictably.
 - **One endpoint, one key.** A 12-model roster becomes one `base_url` and one env var.
 - **Provider-side rate limiting and model aliases.** Rate limits handled at the proxy can shrink or eliminate the `serial_agents` lane; aliases let the registry survive model deprecations without edits.
 

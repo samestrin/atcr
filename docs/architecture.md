@@ -103,9 +103,9 @@ See [cross-examination.md](cross-examination.md) and the focused
 
 ### 5. Report — render the deliverable
 
-`atcr report` renders `md`, `json`, or `checklist` views over the reconciled
-findings. The [findings format](findings-format.md) is stable and machine
--parseable for downstream consumers.
+`atcr report` renders `md`, `json`, `checklist`, `sarif`, or `axi` views over the
+reconciled findings. The [findings format](findings-format.md) is stable and
+machine-parseable for downstream consumers.
 
 ## Configuration model
 
