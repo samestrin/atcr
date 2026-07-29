@@ -1,4 +1,4 @@
-package skill
+package skills
 
 import (
 	"os"
@@ -14,7 +14,7 @@ import (
 // required facts are present as literal substrings, not prose quality. The store
 // path, flag name, rotation shard, and cycle-stage names are checked against the
 // landed behavior in cli/debt_resolve.go, cli/reconcile.go, and
-// skill/debt-resolve/SKILL.md so the doc cannot silently drift from the code.
+// skills/atcr/debt-resolve.md so the doc cannot silently drift from the code.
 func TestDocs_SkillUsageDocumentsDebtResolve(t *testing.T) {
 	root := repoRoot(t)
 	docPath := filepath.Join(root, "docs", "skill-usage.md")

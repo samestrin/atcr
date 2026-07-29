@@ -354,6 +354,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 		newHistoryCmd(),
 		newAuditReportCmd(),
 		newConfigCmd(),
+		newSkillCmd(),
 		newVersionCmd(),
 	)
 	return root

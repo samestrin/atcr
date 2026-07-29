@@ -101,6 +101,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
+| `atcr skill` | Install the embedded Agent Skill; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes it to your agent harness's skills directory |
 | `atcr version` | Print the atcr version |
 
 Key flags:
@@ -224,7 +225,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - `cmd/atcr/` — binary entry point and subcommands
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
 - `personas/` — the nine embedded default personas + `_base.md`
-- `skill/` — the atcr Agent Skill (host review + orchestration)
+- `skills/atcr/` — the atcr Agent Skill (host review + orchestration); it is embedded in the binary, so `atcr skill export` installs it
 - `docs/` — user documentation
 - `examples/` — CI gate script
 - `.planning/` — development planning artifacts

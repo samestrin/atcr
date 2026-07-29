@@ -2,7 +2,7 @@
 
 The atcr skill turns a host AI agent (e.g. Claude Code) into the **+1 reviewer** on an atcr review panel. It orchestrates the full flow — resolve range → fan out to the reviewer pool → host review → reconcile → report — and contributes its own adversarial review so reconciliation always has at least two independent sources. Beyond one-off review, it can accumulate findings into a durable local backlog and autonomously work through it — see [Technical Debt Resolution](#technical-debt-resolution).
 
-The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispatcher — plus a set of sibling files it loads on demand: [`host-review.md`](../skill/host-review.md), [`ambiguity-adjudication.md`](../skill/ambiguity-adjudication.md), [`findings-format.md`](../skill/findings-format.md), the shared [`CONVENTIONS.md`](../skill/CONVENTIONS.md), and the [`debt-resolve/SKILL.md`](../skill/debt-resolve/SKILL.md) route. None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install the whole directory together so the on-demand references resolve.
+The skill is [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) — a `/atcr <command>` dispatcher — plus a set of sibling files it loads on demand: [`host-review.md`](../skills/atcr/host-review.md), [`ambiguity-adjudication.md`](../skills/atcr/ambiguity-adjudication.md), [`findings-format.md`](../skills/atcr/findings-format.md), the shared [`CONVENTIONS.md`](../skills/atcr/CONVENTIONS.md), and the [`debt-resolve.md`](../skills/atcr/debt-resolve.md) route. None contain executable code; they are instructions the agent follows, invoking the `atcr` binary at each step. Install the whole directory together so the on-demand references resolve.
 
 ## Prerequisites
 
@@ -12,15 +12,48 @@ The skill is [`skill/SKILL.md`](../skill/SKILL.md) — a `/atcr <command>` dispa
 
 ## Installation
 
-The skill installs by file copy into your agent's skills directory. For Claude Code, the project-local location is `.claude/skills/atcr/`. Copy the instruction files — `SKILL.md` plus its on-demand secondary `.md` files, including the nested `debt-resolve/` route — not `SKILL.md` alone, or the host-review, adjudication, findings-format, conventions, and debt-resolve references will fail to resolve at runtime. Copy the `debt-resolve/` subdirectory too (a flat `cp skill/*.md` would miss it):
+The skill ships **inside the `atcr` binary**. Export it — no source checkout, no manual copy:
 
 ```sh
-mkdir -p .claude/skills/atcr/debt-resolve
-cp skill/*.md .claude/skills/atcr/
-cp skill/debt-resolve/*.md .claude/skills/atcr/debt-resolve/
+atcr skill export                 # -> .claude/skills/atcr/ (project-local, default)
+atcr skill export --user          # -> ~/.claude/skills/atcr/
 ```
 
-Standard skill resolution applies: a project-local copy wins over a globally installed one, and the copy shipped in this repo (`skill/`) is the canonical reference. To install globally for your user, copy the same files into your agent's user-level skills directory instead.
+A project-level export path is relative to the **process working directory**, not resolved against the repository root — run the command from your repo root, or pass `--dir <path>` to name the destination explicitly. Running it from a subdirectory writes `<subdir>/.claude/skills/atcr/`, which your harness will not find.
+
+That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Install the whole directory: `SKILL.md` alone leaves the host-review, adjudication, findings-format, conventions, and debt-resolve references unresolvable at runtime.
+
+### Choosing a harness
+
+`--harness` selects the install convention; the default is `claude`.
+
+| `--harness` | Project-level | User-level |
+|-------------|---------------|------------|
+| `claude` *(default)* | `.claude/skills/atcr/` | `~/.claude/skills/atcr/` |
+| `codex` | `.codex/skills/atcr/` | `~/.codex/skills/atcr/` |
+| `kimi` | `.kimi/skills/atcr/` | `~/.kimi/skills/atcr/` |
+| `opencode` | `.opencode/skills/atcr/` | `~/.config/opencode/skills/atcr/` |
+| `antigravity` | `.agents/skills/atcr/` | `~/.gemini/config/skills/atcr/` |
+| `agents` | `.agents/skills/atcr/` | `~/.agents/skills/atcr/` |
+
+**You rarely need more than one export.** Two cross-reading conventions do most of the work:
+
+- **`.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode.** Kimi merges brand directories with `kimi > claude > codex` priority; opencode scans `.claude/skills/*/SKILL.md` directly. The default `claude` export therefore already serves three of the five harnesses.
+- **`.agents/skills/` is the vendor-neutral path,** read natively by Kimi CLI, opencode, and Antigravity CLI. Use `--harness agents` for one tool-agnostic install.
+
+`.claude` ∪ `.agents` ∪ `.codex` covers every harness in the table, so at most three exports are ever needed. Note the table has six `--harness` values but covers five tools: `agents` is a vendor-neutral alias for the `.agents/skills/` path convention, not a sixth tool.
+
+For a harness not listed — or any other location — pass `--dir`. It overrides `--harness`/`--user` entirely and is the skill directory itself, not a parent:
+
+```sh
+atcr skill export --dir ~/.someagent/skills/atcr
+```
+
+An unrecognized `--harness` exits non-zero and lists the values it knows rather than guessing a path. Export refuses to overwrite an existing non-empty destination; pass `--force` when you mean to replace it.
+
+**Upgrading an existing install:** `--force` overwrites the files this export writes but never deletes anything — export does not prune. Anything already in the destination that the export did not write is left in place, and the command prints a stderr warning naming those leftover files. If you are upgrading an install that predates the flattened skill layout (which had a nested `debt-resolve/` subdirectory), delete that leftover subdirectory: a stale nested `SKILL.md` is loaded by the harness as a second, conflicting skill.
+
+Standard skill resolution applies: a project-local copy wins over a globally installed one. The copy in this repo (`skills/atcr/`) is the canonical source the binary embeds — exporting produces files byte-identical to the copy embedded in the binary you ran. That is the same thing as `skills/atcr/` only when the two were built from the same commit: an older installed `atcr` exports the tree it was compiled with. The export prints its own version alongside the destination, so check it against this repo before treating a difference as a bug.
 
 ## Usage
 
@@ -32,10 +65,14 @@ Invoke the skill from within a git repository and give it one of:
 | Branch name | `feature-x` | Reviews the branch vs. the detected default branch |
 | PR URL | `https://github.com/owner/repo/pull/42` | Resolves base/head via `gh`, then reviews |
 | (nothing) | — | Reviews the current branch vs. the default branch |
+| Whole repository | `--all` | Reviews every non-ignored, git-tracked file as a full-repository baseline scan |
+| A subtree | `--dir <path>` | Reviews every non-ignored, git-tracked file under that repo-root-relative directory as a scoped baseline scan |
+
+Baseline runs (`--all` / `--dir`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--fresh` to bypass that index and re-review everything in scope. Baseline mode has no diff range — `--all` and `--dir` never combine with `--base`/`--head`/`--merge-commit` or with each other.
 
 The skill then:
 
-1. Pre-flights the range (`atcr range`).
+1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--dir`), which has no range to resolve.
 2. Starts the pool review in the background (`atcr review`) and polls `atcr status <id>` until it completes (10s interval, 10-minute default timeout).
 3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.txt`.
 4. Reconciles all sources (`atcr reconcile <id>`).
@@ -58,7 +95,7 @@ To drive atcr as the reviewer backend for a separate code-review skill or pipeli
 
 > **Two different `atcr debt` families — don't conflate them.** This section is the **public, standalone** debt loop: the `/atcr debt resolve` route over the local, `.atcr/`-scoped store that `atcr reconcile` populates. It is entirely separate from the **private, sprint-pipeline** commands `atcr debt list` / `add` / `dashboard`, which read the `.planning/technical-debt/` store and are documented in [technical-debt.md](technical-debt.md). Both share the `atcr debt` command surface but read and write different, non-overlapping data stores; which one applies to you depends on whether your repo uses the private `.planning/` sprint workflow.
 
-Beyond one-off review, atcr accumulates findings into a durable local backlog and can autonomously work through it. `atcr reconcile` appends each run's reconciled findings to a local technical-debt store, and the `/atcr debt resolve` route reads that backlog and fixes items through a per-item RED→GREEN→ADVERSARIAL→REFACTOR cycle. This is the standalone counterpart of the private `/resolve-td` loop, with zero `.planning/` dependency.
+Beyond one-off review, atcr accumulates findings into a durable local backlog and can autonomously work through it. `atcr reconcile` appends each run's reconciled findings to a local technical-debt store, and the `/atcr debt resolve` route reads that backlog and fixes items through a per-item RED→GREEN→ADVERSARIAL→REFACTOR cycle. The whole loop is repo-agnostic, with zero `.planning/` dependency.
 
 ### The `/atcr debt resolve` route
 
