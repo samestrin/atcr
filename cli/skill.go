@@ -242,23 +242,22 @@ func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool)
 		}
 		return nil
 	})
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		_, _ = fmt.Fprintf(errOut,
+			"warning: %s holds %d file(s) this export did not write, left in place: %s\n",
+			dest, len(stale), strings.Join(stale, ", "))
+		_, _ = fmt.Fprintln(errOut,
+			"         If they are from an older atcr skill install, delete them — a leftover nested SKILL.md is loaded as a second skill.")
+	}
 	if err != nil {
-		// A failed walk means the stale-file scan silently did nothing — the
-		// safety net above is absent and the user must know, or a broken tree
+		// The walk aborted mid-scan. What was found before the error is still
+		// reported above — discarding it would contradict the point of the
+		// warning — and the scan's failure must be admitted, or a broken tree
 		// looks exactly like a clean one.
 		_, _ = fmt.Fprintf(errOut,
-			"warning: could not scan %s for leftover skill files: %v\n", dest, err)
-		return
+			"warning: leftover scan of %s was incomplete (%v); other leftovers may be unreported\n", dest, err)
 	}
-	if len(stale) == 0 {
-		return
-	}
-	sort.Strings(stale)
-	_, _ = fmt.Fprintf(errOut,
-		"warning: %s holds %d file(s) this export did not write, left in place: %s\n",
-		dest, len(stale), strings.Join(stale, ", "))
-	_, _ = fmt.Fprintln(errOut,
-		"         If they are from an older atcr skill install, delete them — a leftover nested SKILL.md is loaded as a second skill.")
 }
 
 // writeSkillTree writes the embedded skill directory's contents to dest and
