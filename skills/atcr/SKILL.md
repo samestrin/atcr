@@ -13,7 +13,7 @@ Your job in this skill is to: validate the input, start the review, perform the 
 
 This skill has **no project-state knowledge**: the input is a git range, branch, or PR reference, and the output is a review directory under `.atcr/reviews/<id>/`. It works in any git repository.
 
-This skill is the `/atcr <command>` dispatcher: it routes a user request to a single `atcr` CLI command, never a direct engine call. The full routing table is in *Commands* below; the `review` command runs the multi-step host-review flow described in *Orchestration Steps*, while every other command is a single `atcr` invocation.
+This skill is the `/atcr <command>` dispatcher: it routes a user request to a single `atcr` CLI command, never a direct engine call. The full routing table is in *Commands* below; two routes are multi-step — `review` runs the host-review flow described in *Orchestration Steps*, and `debt resolve` runs the RED→GREEN→ADVERSARIAL→REFACTOR cycle described in `debt-resolve.md` — while every other command is a single `atcr` invocation.
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ If the pool partially fails (some agents error, at least one succeeds), reconcil
 
 ## Commands
 
-Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess. If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `skill`) expose them via `atcr <command> --help`; never invent subcommand names.
+Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `skill`) expose them via `atcr <command> --help`; never invent subcommand names.
 
 | Command | What it does |
 |---------|--------------|
