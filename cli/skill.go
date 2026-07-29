@@ -290,6 +290,12 @@ func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool)
 // for the skill (dest is already `.../atcr`). Files land 0644 inside a 0755
 // directory: this is instruction text an agent reads, never a secret and never
 // executable.
+//
+// Error contract: the returned map always holds exactly what was written
+// before the failure — the full set on a mid-walk partial write, nil when no
+// write was attempted — so the caller can inventory a half-updated tree.
+// (An empty embedded tree cannot reach the success path: fs.WalkDir errors on
+// the missing root long before the walk body runs.)
 func writeSkillTree(dest string) (map[string]bool, error) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return nil, fmt.Errorf("creating destination %s: %w", dest, err)
@@ -360,9 +366,6 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 				err, dest, strings.Join(done, ", "))
 		}
 		return written, err
-	}
-	if len(written) == 0 {
-		return nil, fmt.Errorf("no skill files embedded under %s — this is a build defect", skills.SkillDir)
 	}
 	return written, nil
 }
