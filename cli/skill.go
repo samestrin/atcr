@@ -356,7 +356,7 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 			}
 			sort.Strings(done)
 			return written, fmt.Errorf(
-				"%w (destination %s is now partially updated — these file(s) were already replaced: %s; re-run with --force once the cause is fixed)",
+				"%w (destination %s is now partially updated — these file(s) were already replaced: %s; fix the cause named above and re-run with --force, which the now non-empty destination requires)",
 				err, dest, strings.Join(done, ", "))
 		}
 		return written, err
