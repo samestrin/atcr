@@ -165,18 +165,16 @@ func TestReference_DebtResolveIsAPlainReference(t *testing.T) {
 		"debt-resolve.md must not carry a standalone trigger phrase")
 }
 
+// standaloneTrigger matches the shapes that would make a harness offer a
+// file as an independently-invocable skill: a "Use when ..." trigger line
+// (the Agent Skill description convention) or a "loaded on demand from the
+// ... dispatcher" routing note.
+var standaloneTrigger = regexp.MustCompile(`(?mi)^use when\b|loaded on demand from the .* dispatcher`)
+
 // hasStandaloneTrigger reports whether md carries a marker that would make a
 // harness offer the file as an independently-invocable skill.
 func hasStandaloneTrigger(md string) bool {
-	for _, trigger := range []string{
-		"Use when a standalone atcr user asks",
-		"Loaded on demand from the atcr dispatcher",
-	} {
-		if strings.Contains(md, trigger) {
-			return true
-		}
-	}
-	return false
+	return standaloneTrigger.MatchString(md)
 }
 
 // TestReference_DebtResolveTriggerShapeGeneralizes (AC3) — the trigger guard
