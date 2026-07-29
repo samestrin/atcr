@@ -35,7 +35,7 @@ var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
 // the debt-resolve skill route shells out to. It lists open items from the local TD
 // store (deterministically sorted for the skill's selection rule) and records
 // resolution outcomes as append-only status records. The actual fix cycle
-// (RED→GREEN→ADVERSARIAL→REFACTOR) is agent-driven in skill/debt-resolve/SKILL.md;
+// (RED→GREEN→ADVERSARIAL→REFACTOR) is agent-driven in skills/atcr/debt-resolve.md;
 // this subcommand is the store's read/mark-resolved contract, never a code editor.
 func newDebtResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{

@@ -1,6 +1,6 @@
 ---
 name: atcr
-description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
+description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, skill, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
 ---
 
 # atcr — Agent Team Code Review
@@ -13,7 +13,7 @@ Your job in this skill is to: validate the input, start the review, perform the 
 
 This skill has **no project-state knowledge**: the input is a git range, branch, or PR reference, and the output is a review directory under `.atcr/reviews/<id>/`. It works in any git repository.
 
-This skill is the `/atcr <command>` dispatcher: it routes a user request to a single `atcr` CLI command, never a direct engine call. The full routing table is in *Commands* below; the `review` command runs the multi-step host-review flow described in *Orchestration Steps*, while every other command is a single `atcr` invocation.
+This skill is the `/atcr <command>` dispatcher: it routes a user request to a single `atcr` CLI command, never a direct engine call. The full routing table is in *Commands* below; two routes are multi-step — `review` runs the host-review flow described in *Orchestration Steps*, and `debt resolve` runs the RED→GREEN→ADVERSARIAL→REFACTOR cycle described in `debt-resolve.md` — while every other command is a single `atcr` invocation.
 
 ## Prerequisites
 
@@ -27,18 +27,24 @@ Accept any one of:
 - **Branch name** — `feature-x`. Review it against the detected default branch (let `atcr` auto-resolve: pass no range flags, or `--base <default> --head feature-x`).
 - **PR URL** — `https://github.com/<owner>/<repo>/pull/<n>`. Resolve refs with `gh pr view <n> --json baseRefName,headRefName`, then pass them as `--base`/`--head`.
 - **No input** — review the current branch against the detected default branch (run with no range flags).
+- **Whole repository** — a request to review the *codebase* rather than a change ("review this repo", "onboard this project", "there is no PR history"). Pass `--all`: every non-ignored, git-tracked file is reviewed as a full-repository baseline scan.
+- **A subtree** — a request scoped to one directory ("review `internal/auth`"). Pass `--dir <path>`, repo-root-relative: every non-ignored, git-tracked file under that directory is reviewed as a scoped baseline scan.
 
-If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, or PR URL.`
+If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, PR URL, or a baseline scope (--all / --dir <path>).`
+
+**Baseline mode has no diff range.** `--all` and `--dir` are mutually exclusive with `--base`, `--head`, and `--merge-commit`, and with each other — never compose them. A baseline scan reviews files as they stand, so there is no base to diff against; combining them is a usage error, not a narrowing.
+
+Baseline runs consult a per-file content-hash index and skip any in-scope file whose content is unchanged since it was last reviewed, so a re-run costs only what actually changed. Pass `--fresh` to bypass that index and re-review every in-scope file regardless.
 
 ## Orchestration Steps
 
 Run these in order. Each step is a single `atcr` CLI invocation; never reach into the engine directly.
 
-1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.`
+1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.` **Skip this step entirely in baseline mode** (`--all` / `--dir`): there is no range to resolve, so go straight to step 2.
 
-2. **Start the review (background)** — `atcr review [--base X --head Y]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it.
+2. **Start the review (background)** — `atcr review [--base X --head Y | --all | --dir <path>] [--fresh]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it. A baseline scan covers the whole repository or subtree rather than a diff, so expect it to take proportionally longer than a range review.
 
-3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); both are configurable. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
+3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); these are defaults only — no CLI flag, env var, or config key controls them, but the user may override them in the request and you adjust your own polling loop. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
 
 4. **Host review (your +1 pass)** — read the payload from `.atcr/reviews/<id>/payload/` and write your findings to `.atcr/reviews/<id>/sources/host/findings.txt` (load `host-review.md` on demand for the full instructions). The host-review step reads only files under the review directory and issues no atcr calls of its own.
 
@@ -52,7 +58,7 @@ If the pool partially fails (some agents error, at least one succeeds), reconcil
 
 ## Commands
 
-Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess. If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`) expose them via `atcr <command> --help`; never invent subcommand names.
+Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `skill`) expose them via `atcr <command> --help`; never invent subcommand names.
 
 | Command | What it does |
 |---------|--------------|
@@ -75,15 +81,16 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
-| `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and the debt-resolve route autonomously fixes its items — see `debt-resolve/SKILL.md` |
+| `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and autonomously fixes its items through the RED→GREEN→ADVERSARIAL→REFACTOR cycle — load the sibling `debt-resolve.md` on demand for that route |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
+| `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the skill directory to your harness's skills location. If the destination exists and is not empty, the command exits 2 — surface its message and ask the user before re-running with `--force`, and report any stale-file warning it prints on stderr |
 | `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
 | `atcr version` | Print the atcr version |
 
-<!-- Convention: one line per command, mirroring newRootCmd (cmd/atcr/main.go).
+<!-- Convention: one line per command, mirroring NewRootCmd (cli/main.go).
 When a command is added to or removed from newRootCmd, update exactly one row
-here (and skill/skill_test.go's dispatcherCommands list) so routing-table drift
+here (and skills/skills_test.go's dispatcherCommands list) so routing-table drift
 is caught, and keep SKILL.md within its ~500-line budget. -->
 
 ## Host Review Instructions
@@ -96,4 +103,4 @@ After `atcr reconcile`, you may optionally adjudicate the gray-zone clusters in 
 
 ## Findings Format Reference
 
-The findings stream is a versioned, pipe-delimited contract — per-source `findings.txt` files carry 8 columns, and reconciled output carries 9 (a `REVIEWERS` list plus a `CONFIDENCE` column). The full reference is in `findings-format.md`, which points to the canonical `docs/findings-format.md` rather than redefining the column contract.
+The findings stream is a versioned, pipe-delimited contract — per-source `findings.txt` files carry 8 columns, and reconciled output carries 9 (a `REVIEWERS` list plus a `CONFIDENCE` column). The full reference is in `findings-format.md`, which carries the column contract in full and is self-contained — load that sibling, not `docs/findings-format.md`, which is repo-only background and is not part of an exported install.

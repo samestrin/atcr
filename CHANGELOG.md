@@ -1,3 +1,30 @@
+## [35.5.0] - 2026-07-28
+
+Makes the shipped Agent Skill installable in one command and internally coherent. The install root becomes `skills/` with one directory per skill, the `debt-resolve` sub-skill collapses back into the single `/atcr` dispatcher it was always meant to be, the dispatcher finally learns the baseline-review routes Epic 35.0 shipped, and the documented two-line `cp` install is replaced by `atcr skill export`.
+
+### Added
+
+- `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the embedded skill tree to disk, so installing no longer requires a source checkout. `--harness` selects a known convention (default `claude`); an unrecognized value exits non-zero listing the known harnesses and naming `--dir` rather than guessing a path. Refuses to overwrite a non-empty destination without `--force`, and warns about files it left in place that it did not write.
+- Harness→path table covering `claude`, `codex`, `kimi`, `opencode`, `antigravity`, and the vendor-neutral `agents`, pinned by test so external convention drift is visible rather than silent. Because `.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode, and `.agents/skills/` by Kimi CLI, opencode, and Antigravity CLI, one export usually serves several tools.
+- The `/atcr` dispatcher now accepts `--all` (whole repository) and `--dir <path>` (subtree) as review inputs, with their mutual exclusivity against `--base`/`--head`/`--merge-commit` and the `--fresh` file-hash-index bypass documented. Baseline review shipped in Epic 35.0 but was unreachable from the skill.
+
+### Changed
+
+- Install root renamed `skill/` → `skills/atcr/`, one directory per skill with the directory name matching its `name:` frontmatter. `cp -r skills/* <dest>` is now correct in one line, and a second skill can land beside the first without another rename.
+- `debt-resolve/SKILL.md` flattened to `skills/atcr/debt-resolve.md` and stripped of its YAML frontmatter. It was a nested second `SKILL.md` declaring a top-level skill name while describing itself as both a dispatcher sub-route and an independently-triggered skill; it is now unambiguously an on-demand reference reached through the `atcr debt` routing row.
+- `docs/skill-usage.md`'s Installation section prescribes `atcr skill export` and documents the harness table and cross-reading behavior, replacing the two `cp` lines and their nested-directory footgun.
+
+### Fixed
+
+- The `CONVENTIONS.md` reference inside the debt-resolve route resolved to a path that did not exist (`debt-resolve/CONVENTIONS.md`); flattening makes it a true sibling. A test now asserts every on-demand reference resolves in the referencing file's own directory.
+- `atcr skill export` replaces an existing entry rather than writing through it, so a symlinked skill file cannot redirect a write outside the destination.
+
+### Removed
+
+- **Breaking (Go API):** the public package `github.com/samestrin/atcr/skill` and its exported `SkillMD`/`HostReviewMD`/`AmbiguityAdjudicationMD`/`FindingsFormatMD`/`ConventionsMD`/`DebtResolveMD` vars are gone, replaced by `github.com/samestrin/atcr/skills`. The package existed for build-time embed verification and had no importers in this repository, but any downstream importer must update the path.
+
+*Shipped via /execute-epic (epic 35.5)*
+
 ## [35.4.0] - 2026-07-28
 
 Retunes the per-file payload-escalation defaults against a measured replay of real history. Escalation shipped in 35.1 with thresholds chosen by reasoning rather than measurement, and they promoted 37% of changed Go files above their configured mode at a cost of +48% payload bytes — an operator who configured `diff` was effectively not getting `diff`. The new defaults measure 21.5% promoted at +34% bytes, and the acceptance target they were tuned to now ships in the code so the next change to them has a baseline to re-validate against.

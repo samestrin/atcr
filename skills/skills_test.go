@@ -1,6 +1,8 @@
-package skill
+package skills
 
 import (
+	"io/fs"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -107,14 +109,71 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 	assert.Contains(t, AmbiguityAdjudicationMD, "ambiguous_hash")
 }
 
+// embeddedSkillDocs maps each shipped skill file to the string var carrying its
+// content. It is the single enumeration the content tests iterate, and
+// TestSkill_EveryTreeFileHasContentAssertions below pins it against Tree so a
+// seventh file cannot be added, exported, and silently skipped by every
+// content assertion in this package.
+func embeddedSkillDocs() map[string]string {
+	return map[string]string{
+		"SKILL.md":                  SkillMD,
+		"host-review.md":            HostReviewMD,
+		"ambiguity-adjudication.md": AmbiguityAdjudicationMD,
+		"findings-format.md":        FindingsFormatMD,
+		"CONVENTIONS.md":            ConventionsMD,
+		"debt-resolve.md":           DebtResolveMD,
+	}
+}
+
+// TestSkill_EveryTreeFileHasContentAssertions — Tree is what `atcr skill export`
+// ships, but every content assertion in this package runs against the named
+// string vars, and that enumeration is hand-written. Adding a seventh secondary
+// .md therefore lands it in the exported tree with no build-time content check
+// at all. Walking Tree and demanding each file appear in embeddedSkillDocs turns
+// that silent gap into a failing build.
+func TestSkill_EveryTreeFileHasContentAssertions(t *testing.T) {
+	docs := embeddedSkillDocs()
+
+	var shipped []string
+	require.NoError(t, fs.WalkDir(Tree, SkillDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(SkillDir, p)
+		if relErr != nil {
+			return relErr
+		}
+		shipped = append(shipped, filepath.ToSlash(rel))
+		return nil
+	}))
+
+	require.NotEmpty(t, shipped, "the embedded tree must not be empty")
+
+	for _, name := range shipped {
+		body, ok := docs[name]
+		assert.True(t, ok,
+			"%s ships in Tree but has no entry in embeddedSkillDocs, so no content assertion covers it — "+
+				"add an embedded var and its assertions", name)
+		assert.NotEmpty(t, body, "%s is enumerated but its embedded content is empty", name)
+	}
+
+	for name := range docs {
+		assert.Contains(t, shipped, name,
+			"embeddedSkillDocs names %s, which is not in Tree — the file was renamed or removed", name)
+	}
+}
+
 // TestSkill_NoAbsoluteOrClaudePaths enforces AC 05-01 Edge Case 2: the body
 // references only the atcr binary and review-directory-relative paths — no
 // .claude-specific paths and no absolute filesystem paths.
 func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
-	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD, ConventionsMD, DebtResolveMD} {
-		assert.NotContains(t, md, ".claude", "no .claude-specific paths in any skill body")
+	for name, md := range embeddedSkillDocs() {
+		assert.NotContains(t, md, ".claude", "no .claude-specific paths in %s", name)
 		for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
-			assert.NotContains(t, md, abs, "no absolute filesystem path %q", abs)
+			assert.NotContains(t, md, abs, "no absolute filesystem path %q in %s", abs, name)
 		}
 	}
 }
@@ -130,11 +189,13 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // dispatcher routing table must cover 1:1. If a command is added to or removed
 // from NewRootCmdWithClient, update this list so the routing-table test catches drift
 // rather than letting the routing table silently diverge (AC 01-01, Edge Case 1).
+// cli/skill_routing_test.go holds the authoritative bidirectional command↔row
+// check; this list is a package-local guard only.
 var dispatcherCommands = []string{
 	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
-	"models", "debt", "history", "audit-report", "version",
+	"models", "debt", "history", "audit-report", "skill", "config", "version",
 }
 
 // TestSkill_DispatcherRoutingTable (AC 01-01) — every live Cobra command is
@@ -151,8 +212,7 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 
 	// Frontmatter description must describe a general-purpose dispatcher, not
 	// only the review→reconcile→report flow (AC 01-01, Scenario 3).
-	fm := frontmatter(t)
-	desc := fieldValue(fm, "description")
+	desc := frontmatterField(t, SkillMD, "description")
 	assert.Regexp(t, regexp.MustCompile(`(?i)dispatch|<command>|command`), desc,
 		"description must reflect the /atcr <command> dispatcher, not a review-only flow")
 }
@@ -162,8 +222,8 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 // and config were routed without the description listing them, so a maintainer
 // scanning only the description would not see either command.
 func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
-	desc := fieldValue(frontmatter(t), "description")
-	for _, name := range []string{"quality-report", "config"} {
+	desc := frontmatterField(t, SkillMD, "description")
+	for _, name := range []string{"quality-report", "config", "skill"} {
 		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
 			"frontmatter description must enumerate the %q command", name)
 	}
@@ -228,8 +288,7 @@ func TestSkill_SecondaryFilesVerbatim(t *testing.T) {
 // TestSkill_FrontmatterConstraints (AC 01-04) — name/description obey the Agent
 // Skill format limits so the skill is guaranteed loadable by Claude Code.
 func TestSkill_FrontmatterConstraints(t *testing.T) {
-	fm := frontmatter(t)
-	name := fieldValue(fm, "name")
+	name := frontmatterField(t, SkillMD, "name")
 	require.NotEmpty(t, name, "frontmatter name must be present")
 	assert.LessOrEqual(t, len(name), 64, "name must be <=64 chars")
 	assert.Regexp(t, regexp.MustCompile(`^[a-z0-9-]+$`), name,
@@ -238,7 +297,7 @@ func TestSkill_FrontmatterConstraints(t *testing.T) {
 		assert.NotContains(t, name, banned, "name must not contain %q", banned)
 	}
 
-	desc := fieldValue(fm, "description")
+	desc := frontmatterField(t, SkillMD, "description")
 	require.NotEmpty(t, desc, "frontmatter description must be present")
 	assert.LessOrEqual(t, len(desc), 1024, "description must be <=1024 chars")
 }
@@ -253,7 +312,7 @@ func TestSkill_BodyLineBudget(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Sprint 20.1 — shared skill conventions extraction (Story 4). RED until
-// skill/CONVENTIONS.md is authored, embedded as ConventionsMD, and SKILL.md's
+// skills/atcr/CONVENTIONS.md is authored, embedded as ConventionsMD, and SKILL.md's
 // Prerequisites section is reduced to a pointer.
 // ---------------------------------------------------------------------------
 
@@ -283,6 +342,37 @@ func TestSkill_ConventionsRelocatedChecks(t *testing.T) {
 		"gh CLI note must retain its PR-resolution context")
 }
 
+// TestSkill_FindingsFormatDescribedAsSelfContained — SKILL.md's pointer must not
+// describe findings-format.md as a redirect to docs/findings-format.md. docs/ is
+// not part of an exported install, so an agent that believes the sibling only
+// forwards elsewhere concludes the column contract is unreachable and skips
+// loading the one file that actually carries it.
+func TestSkill_FindingsFormatDescribedAsSelfContained(t *testing.T) {
+	assert.NotRegexp(t, regexp.MustCompile(`(?i)rather than redefining the column contract`), SkillMD,
+		"SKILL.md still describes findings-format.md as forwarding to docs/ instead of carrying the contract")
+	assert.Regexp(t, regexp.MustCompile(`(?i)self-contained`), FindingsFormatMD,
+		"findings-format.md must state that its contract is self-contained")
+	assert.Regexp(t, regexp.MustCompile(`(?i)self-contained`), SkillMD,
+		"SKILL.md must describe findings-format.md as self-contained, matching what that file says of itself")
+}
+
+// TestSkill_PathSafetyAdmitsResolutionEdits — the .atcr/ rooting rule cannot be
+// stated absolutely. debt-resolve.md's entire purpose is writing OUTSIDE .atcr/:
+// RED authors a failing test, GREEN edits the implementation, REFACTOR cleans it
+// up. An unqualified "never outside it" leaves an agent reading both documents
+// with two instructions it cannot both obey, so it has to guess which one the
+// author meant. Both files must carry the carve-out.
+func TestSkill_PathSafetyAdmitsResolutionEdits(t *testing.T) {
+	for name, md := range map[string]string{"CONVENTIONS.md": ConventionsMD, "debt-resolve.md": DebtResolveMD} {
+		assert.NotRegexp(t, regexp.MustCompile(`(?i)never outside it|never touches`), md,
+			"%s states the .atcr/ rooting rule absolutely, contradicting the resolution route's source and test edits", name)
+		// \W+ between the words so markdown emphasis and line wrapping do not
+		// decide whether the carve-out counts as present.
+		assert.Regexp(t, regexp.MustCompile(`(?i)source\W+and\W+test\W+files`), md,
+			"%s must name the working-tree source and test edits a resolution route makes", name)
+	}
+}
+
 // TestSkill_ConventionsPathSafety (AC 04-01 Scenario 2, Edge Case 3) — a
 // .atcr/ path-safety section states public-skill file operations stay rooted at
 // .atcr/ and never write under .planning/.
@@ -309,14 +399,14 @@ func TestSkill_PrerequisitesIsPointer(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Sprint 20.1 — /atcr debt resolve skill route (Story 3). RED until
-// skill/debt-resolve/SKILL.md is authored, embedded as DebtResolveMD, and
-// skill/SKILL.md's `atcr debt` row documents the resolve route.
+// skills/atcr/debt-resolve.md is authored, embedded as DebtResolveMD, and
+// skills/atcr/SKILL.md's `atcr debt` row documents the resolve route.
 // ---------------------------------------------------------------------------
 
-// TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve/SKILL.md is
+// TestSkill_DebtResolveEmbedded (AC 03-06 Scenario 1) — debt-resolve.md is
 // embedded as a non-empty constant, mirroring the other secondary files.
 func TestSkill_DebtResolveEmbedded(t *testing.T) {
-	require.NotEmpty(t, DebtResolveMD, "debt-resolve/SKILL.md must be embedded and non-empty")
+	require.NotEmpty(t, DebtResolveMD, "debt-resolve.md must be embedded and non-empty")
 }
 
 // TestSkill_DebtResolveStages (AC 03-06 Scenario 2, AC 03-01) — the four cycle
@@ -333,11 +423,11 @@ func TestSkill_DebtResolveStages(t *testing.T) {
 // Prerequisites checks verbatim.
 func TestSkill_DebtResolveReferencesConventions(t *testing.T) {
 	assert.Contains(t, DebtResolveMD, "CONVENTIONS.md",
-		"debt-resolve/SKILL.md must reference CONVENTIONS.md, not restate its checks")
+		"debt-resolve.md must reference CONVENTIONS.md, not restate its checks")
 	assert.NotContains(t, DebtResolveMD, binaryHaltMsg,
-		"debt-resolve/SKILL.md must not duplicate the binary-on-PATH halt (it lives in CONVENTIONS.md)")
+		"debt-resolve.md must not duplicate the binary-on-PATH halt (it lives in CONVENTIONS.md)")
 	assert.NotContains(t, DebtResolveMD, gitWorktreeHaltMsg,
-		"debt-resolve/SKILL.md must not duplicate the git-worktree halt (it lives in CONVENTIONS.md)")
+		"debt-resolve.md must not duplicate the git-worktree halt (it lives in CONVENTIONS.md)")
 }
 
 // TestSkill_DebtResolveSelectionRule (AC 03-03) — the deterministic selection
@@ -370,30 +460,110 @@ func TestSkill_DebtResolveCLIInvocationOnly(t *testing.T) {
 }
 
 // TestSkill_DebtRowDocumentsResolve (AC 03-01) — SKILL.md's `atcr debt` row (or a
-// dedicated pointer) surfaces the resolve route and points at debt-resolve/SKILL.md.
+// dedicated pointer) surfaces the resolve route and points at debt-resolve.md.
+// Epic 35.5 flattened that pointer from the nested debt-resolve/SKILL.md to a plain
+// sibling reference; TestReference_DebtRowPointsAtFlattenedFile additionally pins
+// that the pointer lives inside the `atcr debt` row rather than a second row.
 func TestSkill_DebtRowDocumentsResolve(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`(?i)resolve`), SkillMD,
 		"SKILL.md must document the atcr debt resolve route")
-	assert.Contains(t, SkillMD, "`debt-resolve/SKILL.md`",
-		"SKILL.md must point at the on-demand debt-resolve/SKILL.md secondary file")
+	assert.Contains(t, SkillMD, "`debt-resolve.md`",
+		"SKILL.md must point at the on-demand debt-resolve.md secondary file")
 }
 
-// frontmatter returns the YAML frontmatter block between the first two --- lines.
-func frontmatter(t *testing.T) string {
-	t.Helper()
-	require.True(t, strings.HasPrefix(SkillMD, "---\n"), "SKILL.md must open with YAML frontmatter")
-	end := strings.Index(SkillMD[4:], "\n---")
-	require.GreaterOrEqual(t, end, 0, "frontmatter must be closed by ---")
-	return SkillMD[4 : 4+end]
-}
+// ---------------------------------------------------------------------------
+// Epic 35.5 — baseline review (--all / --dir) reaches the dispatcher.
+// ---------------------------------------------------------------------------
 
-// fieldValue extracts a single-line `key: value` field from a YAML frontmatter
-// block. Returns "" if the key is absent.
-func fieldValue(fm, key string) string {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `:\s*(.+)$`)
-	m := re.FindStringSubmatch(fm)
-	if len(m) < 2 {
-		return ""
+// TestSkill_BaselineReviewRoutes (AC4) — Epic 35.0 shipped full-repository and
+// scoped baseline review, but the dispatcher never learned them: a user with the
+// skill installed could not reach the feature at all. SKILL.md must accept both
+// as inputs and state their mutual exclusivity against the range flags, mirroring
+// validateRangeFlags in cli/flags.go. This is the routing-drift guard for the
+// baseline routes — removing either from SKILL.md fails the build.
+func TestSkill_BaselineReviewRoutes(t *testing.T) {
+	// Scoped to the Input Format section. A repo-wide substring search would stay
+	// green on the single mutual-exclusivity sentence alone, so deleting both
+	// route bullets would not fail the test — exactly the regression AC4 names.
+	inputs := skillSection(t, "## Input Format", "## Orchestration Steps")
+	for _, flag := range []string{"--all", "--dir"} {
+		assert.Contains(t, inputs, "`"+flag+"`",
+			"the Input Format section must document the %s baseline input", flag)
 	}
-	return strings.TrimSpace(m[1])
+	for _, bullet := range []string{"**Whole repository**", "**A subtree**"} {
+		assert.Contains(t, inputs, bullet,
+			"the Input Format section must carry the %s baseline route bullet", bullet)
+	}
+
+	// The routes must also be reachable from the orchestration the agent runs,
+	// not merely listed as accepted input.
+	steps := skillSection(t, "## Orchestration Steps", "## Commands")
+	for _, flag := range []string{"--all", "--dir", "--fresh"} {
+		assert.Contains(t, steps, flag,
+			"the Orchestration Steps must show %s on the atcr review invocation", flag)
+	}
+
+	// Mutual exclusivity against every range flag must be stated, or an agent
+	// will happily compose --all with --base and hit a usage error at runtime.
+	assert.Empty(t, missingExclusivityFlags(SkillMD),
+		"SKILL.md's mutual-exclusivity sentence must name every baseline and range flag")
+
+	// The file-hash index skip is the one baseline behavior a user must know
+	// about to get a re-review of unchanged files.
+	assert.Contains(t, SkillMD, "`--fresh`",
+		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
+}
+
+// missingExclusivityFlags returns the baseline/range flags not named on the
+// mutual-exclusivity SENTENCE itself. The flags also appear in the Input
+// Format git-range bullet and Orchestration step 1, so a whole-file search
+// can never fail; a missing exclusivity sentence flags every flag.
+func missingExclusivityFlags(md string) []string {
+	sentence := ""
+	re := regexp.MustCompile(`(?i)mutually exclusive|cannot be combined`)
+	for _, line := range strings.Split(md, "\n") {
+		if re.MatchString(line) {
+			sentence = line
+			break
+		}
+	}
+	var missing []string
+	for _, flag := range []string{"--all", "--dir", "--base", "--head", "--merge-commit"} {
+		if !strings.Contains(sentence, flag) {
+			missing = append(missing, flag)
+		}
+	}
+	return missing
+}
+
+// TestSkill_ExclusivityGuardIsSentenceScoped (AC4) — the exclusivity check
+// must read the exclusivity SENTENCE, not the whole file: the range flags
+// also appear in the Input Format git-range bullet and Orchestration step 1,
+// so a whole-file search stays green even when the sentence itself is
+// stripped down to a bare "mutually exclusive" — exactly the mutation AC4
+// names.
+func TestSkill_ExclusivityGuardIsSentenceScoped(t *testing.T) {
+	stripped := "Inputs: `--base` and `--head` select a range, or `--merge-commit`.\n" +
+		"Orchestration: run with --all or --dir.\n" +
+		"Note: baseline and range are mutually exclusive.\n"
+	assert.Equal(t, []string{"--all", "--dir", "--base", "--head", "--merge-commit"},
+		missingExclusivityFlags(stripped),
+		"a bare exclusivity sentence must be flagged even when the flags appear elsewhere in the file")
+
+	assert.Empty(t, missingExclusivityFlags(SkillMD),
+		"the shipped exclusivity sentence must name every baseline and range flag")
+}
+
+// skillSection returns the body of SKILL.md between the start heading and the
+// next heading, so a section-scoped assertion cannot be satisfied by a match
+// elsewhere in the file. Both headings must be present.
+func skillSection(t *testing.T, start, end string) string {
+	t.Helper()
+	from := strings.Index(SkillMD, "\n"+start+"\n")
+	require.GreaterOrEqual(t, from, 0, "SKILL.md must contain the %q heading", start)
+	from += len(start) + 2
+
+	to := strings.Index(SkillMD[from:], "\n"+end+"\n")
+	require.GreaterOrEqual(t, to, 0, "SKILL.md must contain the %q heading after %q", end, start)
+	return SkillMD[from : from+to]
 }
