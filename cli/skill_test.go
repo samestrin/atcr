@@ -14,18 +14,20 @@ import (
 	"github.com/samestrin/atcr/skills"
 )
 
-// execSkillExport executes `atcr skill export` with args, returning combined
-// stdout+stderr and the error. It drives the real command tree so flag parsing,
-// usage-error classification, and RunE all participate.
-func execSkillExport(t *testing.T, args ...string) (string, error) {
+// execSkillExport executes `atcr skill export` with args, returning stdout and
+// stderr separately plus the error, so tests can assert WHICH stream a message
+// lands on (warnings must not pollute a piped stdout). It drives the real
+// command tree so flag parsing, usage-error classification, and RunE all
+// participate.
+func execSkillExport(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	root := NewRootCmd()
 	root.SetOut(&out)
-	root.SetErr(&out)
+	root.SetErr(&errOut)
 	root.SetArgs(append([]string{"skill", "export"}, args...))
 	err := root.Execute()
-	return out.String(), err
+	return out.String(), errOut.String(), err
 }
 
 // TestSkillExport_RoundTripsByteIdentical (AC5) — exporting into an empty
@@ -36,7 +38,7 @@ func execSkillExport(t *testing.T, args ...string) (string, error) {
 func TestSkillExport_RoundTripsByteIdentical(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
-	_, err := execSkillExport(t, "--dir", dest)
+	_, _, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err, "export into an empty directory must succeed")
 
 	srcDir := filepath.Join(repoRootDir(t), "skills", skills.SkillDir)
@@ -80,11 +82,11 @@ func TestSkillExport_UnknownHarnessIsAUsageError(t *testing.T) {
 	dest := t.TempDir()
 	t.Chdir(dest)
 
-	out, err := execSkillExport(t, "--harness", "nonesuch")
+	out, errOut, err := execSkillExport(t, "--harness", "nonesuch")
 	require.Error(t, err, "an unknown harness must fail")
 	assert.Equal(t, 2, exitCode(err), "an unknown harness is a usage error (exit 2)")
 
-	msg := out + err.Error()
+	msg := out + errOut + err.Error()
 	for name := range skillHarnesses {
 		assert.Contains(t, msg, name, "the error must list the known harness %q", name)
 	}
@@ -151,10 +153,10 @@ func TestSkillExport_EmptyDirFlagIsAUsageError(t *testing.T) {
 	dest := t.TempDir()
 	t.Chdir(dest)
 
-	out, err := execSkillExport(t, "--dir", "")
+	out, errOut, err := execSkillExport(t, "--dir", "")
 	require.Error(t, err, "a set-but-empty --dir must fail rather than fall back to the harness path")
 	assert.Equal(t, 2, exitCode(err), "a set-but-empty --dir is a usage error (exit 2)")
-	assert.Contains(t, out+err.Error(), "--dir", "the error must name the flag at fault")
+	assert.Contains(t, out+errOut+err.Error(), "--dir", "the error must name the flag at fault")
 
 	_, statErr := os.Stat(filepath.Join(dest, ".claude"))
 	assert.Error(t, statErr, "nothing may be written under the default harness path when --dir was supplied")
@@ -171,7 +173,7 @@ func TestSkillExport_UserHarnessWritesToUserPath(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)
 
-	out, err := execSkillExport(t, "--harness", "codex", "--user")
+	out, _, err := execSkillExport(t, "--harness", "codex", "--user")
 	require.NoError(t, err, "--user export must succeed")
 
 	userDest := filepath.Join(home, ".codex", "skills", "atcr")
@@ -191,15 +193,15 @@ func TestSkillExport_RefusesNonEmptyDestinationWithoutForce(t *testing.T) {
 	existing := filepath.Join(dest, "SKILL.md")
 	require.NoError(t, os.WriteFile(existing, []byte("do not clobber me"), 0o644))
 
-	out, err := execSkillExport(t, "--dir", dest)
+	out, errOut, err := execSkillExport(t, "--dir", dest)
 	require.Error(t, err, "a non-empty destination must be refused without --force")
-	assert.Contains(t, out+err.Error(), dest, "the refusal must name the path it would have written")
+	assert.Contains(t, out+errOut+err.Error(), dest, "the refusal must name the path it would have written")
 
 	kept, readErr := os.ReadFile(existing)
 	require.NoError(t, readErr)
 	assert.Equal(t, "do not clobber me", string(kept), "the refused export must not have written anything")
 
-	_, err = execSkillExport(t, "--dir", dest, "--force")
+	_, _, err = execSkillExport(t, "--dir", dest, "--force")
 	require.NoError(t, err, "--force must permit the overwrite")
 	overwritten, readErr := os.ReadFile(existing)
 	require.NoError(t, readErr)
@@ -213,7 +215,7 @@ func TestSkillExport_EmptyExistingDestinationIsAllowed(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 
-	_, err := execSkillExport(t, "--dir", dest)
+	_, _, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err, "an existing but empty destination must not require --force")
 
 	_, statErr := os.Stat(filepath.Join(dest, "SKILL.md"))
@@ -226,7 +228,7 @@ func TestSkillExport_EmptyExistingDestinationIsAllowed(t *testing.T) {
 func TestSkillExport_ReportsDestinationAndFileCount(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
-	out, err := execSkillExport(t, "--dir", dest)
+	out, _, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err)
 	assert.Contains(t, out, dest, "success output must name the destination")
 }
@@ -318,12 +320,13 @@ func TestSkillExport_WarnsAboutLeftoverFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(legacy, "SKILL.md"),
 		[]byte("---\nname: atcr-debt-resolve\n---\n"), 0o644))
 
-	out, err := execSkillExport(t, "--dir", dest, "--force")
+	out, errOut, err := execSkillExport(t, "--dir", dest, "--force")
 	require.NoError(t, err)
 
-	assert.Contains(t, out, "debt-resolve/SKILL.md",
+	assert.Contains(t, errOut, "debt-resolve/SKILL.md",
 		"the export must name the leftover file it did not write")
-	assert.Contains(t, out, "warning:", "leftovers must be reported as a warning")
+	assert.Contains(t, errOut, "warning:", "leftovers must be reported as a warning")
+	assert.NotContains(t, out, "warning:", "the leftover warning must go to stderr, not pollute a piped stdout")
 
 	_, statErr := os.Stat(filepath.Join(legacy, "SKILL.md"))
 	assert.NoError(t, statErr, "export must warn about leftovers, never delete them")
@@ -343,12 +346,12 @@ func TestSkillExport_WarnsDespiteIncompleteLeftoverScan(t *testing.T) {
 	require.NoError(t, os.Chmod(unreadable, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
 
-	out, err := execSkillExport(t, "--dir", dest, "--force")
+	_, errOut, err := execSkillExport(t, "--dir", dest, "--force")
 	require.NoError(t, err)
 
-	assert.Contains(t, out, "leftover.md",
+	assert.Contains(t, errOut, "leftover.md",
 		"leftovers found before the walk error must still be reported")
-	assert.Contains(t, out, "incomplete",
+	assert.Contains(t, errOut, "incomplete",
 		"an aborted leftover scan must say it did not finish")
 }
 
@@ -363,10 +366,10 @@ func TestSkillExport_IgnoresOSMetadataFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dest, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dest, ".DS_Store"), []byte("finder"), 0o644))
 
-	out, err := execSkillExport(t, "--dir", dest)
+	out, errOut, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err, "a directory holding only dot-prefixed OS metadata must not require --force")
-	assert.NotContains(t, out, "warning:", "OS metadata must not be reported as a stale skill file")
-	assert.NotContains(t, out, ".DS_Store", "OS metadata must not be named in the output")
+	assert.NotContains(t, errOut, "warning:", "OS metadata must not be reported as a stale skill file")
+	assert.NotContains(t, out+errOut, ".DS_Store", "OS metadata must not be named in the output")
 
 	_, statErr := os.Stat(filepath.Join(dest, "SKILL.md"))
 	assert.NoError(t, statErr, "the export must have written the skill tree")
@@ -395,10 +398,10 @@ func TestSkillExport_DirectoryCollidingWithSkillFile(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(collision, "mine.md"), []byte("user data"), 0o644))
 			}
 
-			out, err := execSkillExport(t, "--dir", dest, "--force")
+			out, errOut, err := execSkillExport(t, "--dir", dest, "--force")
 			require.Error(t, err, "a directory colliding with an embedded file name must fail, not be pruned")
 			assert.Equal(t, 2, exitCode(err), "a name collision is a usage-grade error (exit 2)")
-			assert.Contains(t, out+err.Error(), "CONVENTIONS.md", "the error must name the collision")
+			assert.Contains(t, out+errOut+err.Error(), "CONVENTIONS.md", "the error must name the collision")
 
 			info, statErr := os.Lstat(collision)
 			require.NoError(t, statErr, "the colliding directory must be left in place")
@@ -419,10 +422,10 @@ func TestSkillExport_PartialWriteReportsWhatLanded(t *testing.T) {
 	require.NoError(t, os.MkdirAll(collision, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(collision, "mine.md"), []byte("user data"), 0o644))
 
-	out, err := execSkillExport(t, "--dir", dest, "--force")
+	out, errOut, err := execSkillExport(t, "--dir", dest, "--force")
 	require.Error(t, err, "a mid-walk collision must fail the export")
 
-	msg := out + err.Error()
+	msg := out + errOut + err.Error()
 	assert.Contains(t, msg, "partially updated", "the error must state the tree is half-updated")
 	assert.Contains(t, msg, "CONVENTIONS.md", "the error must name a file that was already replaced")
 }
@@ -432,9 +435,9 @@ func TestSkillExport_PartialWriteReportsWhatLanded(t *testing.T) {
 func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
-	out, err := execSkillExport(t, "--dir", dest)
+	out, errOut, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err)
-	assert.NotContains(t, out, "warning:", "a clean export must emit no leftover warning")
+	assert.NotContains(t, out+errOut, "warning:", "a clean export must emit no leftover warning")
 }
 
 // TestSkillExport_StaleScanFailureIsVisible — warnStaleSkillFiles exists to catch
@@ -466,7 +469,7 @@ func TestSkillExport_ReplacesSymlinkRatherThanWritingThroughIt(t *testing.T) {
 	require.NoError(t, os.WriteFile(victim, []byte("untouched"), 0o644))
 	require.NoError(t, os.Symlink(victim, filepath.Join(dest, "SKILL.md")))
 
-	_, err := execSkillExport(t, "--dir", dest, "--force")
+	_, _, err := execSkillExport(t, "--dir", dest, "--force")
 	require.NoError(t, err)
 
 	survived, readErr := os.ReadFile(victim)
@@ -486,10 +489,10 @@ func TestSkillExport_DestinationIsAFileIsAUsageError(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 	require.NoError(t, os.WriteFile(dest, []byte("i am a file"), 0o644))
 
-	out, err := execSkillExport(t, "--dir", dest)
+	out, errOut, err := execSkillExport(t, "--dir", dest)
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "a non-directory destination is a usage error")
-	assert.Contains(t, out+err.Error(), "not a directory", "the message must name the actual problem")
+	assert.Contains(t, out+errOut+err.Error(), "not a directory", "the message must name the actual problem")
 }
 
 // TestSkillExport_DirExpandsLeadingTilde — --dir is documented with a ~/ example,
@@ -511,7 +514,7 @@ func TestSkillExport_DirExpandsLeadingTilde(t *testing.T) {
 func TestSkillExport_DefaultHarnessWritesToProjectPath(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	_, err := execSkillExport(t)
+	_, _, err := execSkillExport(t)
 	require.NoError(t, err, "the default invocation must succeed")
 
 	_, statErr := os.Stat(filepath.Join(".claude", "skills", "atcr", "SKILL.md"))
