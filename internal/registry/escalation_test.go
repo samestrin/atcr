@@ -72,15 +72,43 @@ func TestPayloadEscalation_ValidateRejectsChurnRatioAboveOne(t *testing.T) {
 	require.Contains(t, err.Error(), "payload_escalation.churn_ratio")
 }
 
+// TestPayloadEscalation_ValidateRejectsUnreachableHunkGap pins the same rule
+// churn_ratio > 1 already carries: a threshold that can never fire is a silent
+// misconfiguration, not a stricter setting. Under --unified=0 git never emits
+// two hunks with zero unchanged lines between them, so `gap < 1` is
+// unsatisfiable and hunk_gap_lines: 1 disables adjacency exactly as 0 does —
+// while reading like a deliberately tight window. Rejecting it forces the
+// operator to say which one they meant.
+func TestPayloadEscalation_ValidateRejectsUnreachableHunkGap(t *testing.T) {
+	var r Registry
+	err := yaml.Unmarshal([]byte("payload_escalation:\n  hunk_gap_lines: 1\n"), &r)
+	require.NoError(t, err)
+	require.NotNil(t, r.PayloadEscalation.HunkGapLines)
+
+	err = r.validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payload_escalation.hunk_gap_lines")
+	require.Contains(t, err.Error(), "0", "the message must point at 0 (disable) as one of the two meaningful choices")
+	require.Contains(t, err.Error(), ">= 2", "the message must point at >= 2 as the other")
+}
+
 func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 	overGap := MaxEscalationHunkGapLines + 1
 	overFiles := MaxEscalationFiles + 1
 	overSkel := MaxEscalationSkeletonLines + 1
 
+	overHunks := MaxEscalationMinHunks + 1
+	overCyclo := MaxEscalationMinCyclomatic + 1
+
 	for name, cfg := range map[string]PayloadEscalationConfig{
 		"hunk_gap_lines":     {HunkGapLines: &overGap},
 		"max_files":          {MaxFiles: &overFiles},
 		"max_skeleton_lines": {MaxSkeletonLines: &overSkel},
+		// min_hunks and min_cyclomatic are FLOORS, so an absurdly large value is
+		// not "stricter" — it is a threshold no real file can reach, which
+		// silently disables the signal. Same class as churn_ratio > 1.
+		"min_hunks":      {MinHunks: &overHunks},
+		"min_cyclomatic": {MinCyclomatic: &overCyclo},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := Registry{PayloadEscalation: cfg}
@@ -92,8 +120,10 @@ func TestPayloadEscalation_ValidateRejectsAboveCeilings(t *testing.T) {
 
 	// The ceilings themselves are legal — only values above them are absurd.
 	atGap, atFiles, atSkel := MaxEscalationHunkGapLines, MaxEscalationFiles, MaxEscalationSkeletonLines
+	atHunks, atCyclo := MaxEscalationMinHunks, MaxEscalationMinCyclomatic
 	r := Registry{PayloadEscalation: PayloadEscalationConfig{
 		HunkGapLines: &atGap, MaxFiles: &atFiles, MaxSkeletonLines: &atSkel,
+		MinHunks: &atHunks, MinCyclomatic: &atCyclo,
 	}}
 	require.NoError(t, r.validate())
 }

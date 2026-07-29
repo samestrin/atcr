@@ -10,9 +10,9 @@ func TestDefaultEscalationConfig_Thresholds(t *testing.T) {
 	c := DefaultEscalationConfig()
 
 	require.Equal(t, 0.5, c.ChurnRatio)
-	require.Equal(t, 4, c.MinHunks)
-	require.Equal(t, 10, c.HunkGapLines)
-	require.Equal(t, 15, c.MinCyclomatic)
+	require.Equal(t, 8, c.MinHunks)
+	require.Equal(t, 2, c.HunkGapLines)
+	require.Equal(t, 20, c.MinCyclomatic)
 	require.Equal(t, 50, c.MaxFiles)
 	require.Equal(t, 60, c.MaxSkeletonLines)
 }
@@ -140,16 +140,39 @@ func TestEscalate_ChurnRatioFiresToBlocks(t *testing.T) {
 	require.Equal(t, ModeBlocks, got)
 }
 
+func TestEscalate_ChurnRatioBoundary(t *testing.T) {
+	c := DefaultEscalationConfig()
+
+	// Exactly at the threshold: >= includes the boundary, so 50/100 fires.
+	at := c.escalate(ModeDiff, fileSignals{
+		changedLines: 50, headLines: 100, churnApplicable: true,
+		hunks:      []lineRange{{start: 1, end: 50}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeBlocks, at, "ratio exactly 0.5 must fire (>= boundary)")
+
+	// One line below: 49/100 is under the threshold and stays in diff mode.
+	below := c.escalate(ModeDiff, fileSignals{
+		changedLines: 49, headLines: 100, churnApplicable: true,
+		hunks:      []lineRange{{start: 1, end: 49}},
+		cyclomatic: 2,
+	})
+	require.Equal(t, ModeDiff, below, "ratio just below 0.5 must not fire")
+}
+
 func TestEscalate_HunkCountFiresToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
-	// Four well-separated hunks in a large file: low churn, no adjacency, but
-	// the hunk count alone is the architectural-thrashing signal.
+	// Eight well-separated hunks in a large file: churn not applicable
+	// (churnApplicable false), no adjacency — the hunk count alone is the
+	// architectural-thrashing signal.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 8, headLines: 1000,
+		headLines: 1000,
 		hunks: []lineRange{
 			{start: 10, end: 11}, {start: 200, end: 201},
 			{start: 400, end: 401}, {start: 600, end: 601},
+			{start: 700, end: 701}, {start: 750, end: 751},
+			{start: 800, end: 801}, {start: 850, end: 851},
 		},
 		cyclomatic: 2,
 	})
@@ -160,11 +183,11 @@ func TestEscalate_HunkCountFiresToBlocks(t *testing.T) {
 func TestEscalate_AdjacentHunksFireToBlocks(t *testing.T) {
 	c := DefaultEscalationConfig()
 
-	// Two hunks separated by 5 unchanged lines (< 10): a rewrite that churned
+	// Two hunks separated by 1 unchanged line (< 2): a rewrite that churned
 	// the same region across commits.
 	got := c.escalate(ModeDiff, fileSignals{
 		changedLines: 4, headLines: 1000,
-		hunks:      []lineRange{{start: 100, end: 101}, {start: 107, end: 108}},
+		hunks:      []lineRange{{start: 100, end: 101}, {start: 103, end: 104}},
 		cyclomatic: 2,
 	})
 
@@ -174,10 +197,10 @@ func TestEscalate_AdjacentHunksFireToBlocks(t *testing.T) {
 func TestEscalate_DistantHunksDoNotFire(t *testing.T) {
 	c := DefaultEscalationConfig()
 
-	// Gap of exactly 10 unchanged lines is NOT "< 10" — boundary must not fire.
+	// Gap of exactly 2 unchanged lines is NOT "< 2" — boundary must not fire.
 	got := c.escalate(ModeDiff, fileSignals{
 		changedLines: 4, headLines: 1000,
-		hunks:      []lineRange{{start: 100, end: 101}, {start: 112, end: 113}},
+		hunks:      []lineRange{{start: 100, end: 101}, {start: 104, end: 105}},
 		cyclomatic: 2,
 	})
 
@@ -191,24 +214,24 @@ func TestEscalate_PureDeletionAnchorCountsTowardAdjacency(t *testing.T) {
 	// end) anchored where the lines were removed. Against that shape the gap
 	// formula `next.start - prev.end - 1` yields exactly the unchanged head
 	// lines between the deletion point and the next hunk, so a deletion that
-	// sits close to another edit fires adjacency: lines 10..17 unchanged.
-	close := c.escalate(ModeDiff, fileSignals{
+	// sits close to another edit fires adjacency: line 10 unchanged.
+	adjacent := c.escalate(ModeDiff, fileSignals{
 		changedLines: 4, headLines: 1000,
-		hunks:      []lineRange{{start: 10, end: 9}, {start: 18, end: 19}},
+		hunks:      []lineRange{{start: 10, end: 9}, {start: 11, end: 12}},
 		cyclomatic: 2,
 	})
-	require.Equal(t, ModeBlocks, close,
-		"a deletion 8 unchanged lines from the next hunk is adjacency evidence")
+	require.Equal(t, ModeBlocks, adjacent,
+		"a deletion 1 unchanged line from the next hunk is adjacency evidence")
 
-	// Same inverted anchor, but the next hunk is 10 unchanged lines away —
+	// Same inverted anchor, but the next hunk is 2 unchanged lines away —
 	// the same non-firing boundary as two well-formed ranges.
 	distant := c.escalate(ModeDiff, fileSignals{
 		changedLines: 4, headLines: 1000,
-		hunks:      []lineRange{{start: 10, end: 9}, {start: 20, end: 21}},
+		hunks:      []lineRange{{start: 10, end: 9}, {start: 12, end: 13}},
 		cyclomatic: 2,
 	})
 	require.Equal(t, ModeDiff, distant,
-		"a deletion 10 unchanged lines from the next hunk is not adjacency")
+		"a deletion 2 unchanged lines from the next hunk is not adjacency")
 }
 
 func TestEscalate_CyclomaticAloneFiresToBlocks(t *testing.T) {
@@ -217,7 +240,7 @@ func TestEscalate_CyclomaticAloneFiresToBlocks(t *testing.T) {
 	got := c.escalate(ModeDiff, fileSignals{
 		changedLines: 2, headLines: 1000,
 		hunks:      []lineRange{{start: 10, end: 11}},
-		cyclomatic: 15,
+		cyclomatic: 20,
 	})
 
 	require.Equal(t, ModeBlocks, got)
@@ -319,10 +342,14 @@ func TestEscalate_DisabledSignalsNeverFire(t *testing.T) {
 	// A fully zeroed config is the operator's off switch: no file escalates.
 	c := EscalationConfig{}
 
+	// Every signal WOULD fire under DefaultEscalationConfig(): churn 500/500,
+	// eight hunks (>= MinHunks 8), adjacent pairs (< 2 unchanged lines apart),
+	// cyclomatic 900. Only the zeroed thresholds suppress them.
 	got := c.escalate(ModeDiff, fileSignals{
-		changedLines: 500, headLines: 500,
+		changedLines: 500, headLines: 500, churnApplicable: true,
 		hunks: []lineRange{
 			{start: 1, end: 2}, {start: 4, end: 5}, {start: 7, end: 8}, {start: 10, end: 11},
+			{start: 13, end: 14}, {start: 16, end: 17}, {start: 19, end: 20}, {start: 22, end: 23},
 		},
 		cyclomatic: 900,
 	})

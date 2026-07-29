@@ -1,21 +1,96 @@
 package payload
 
-// Built-in per-file escalation thresholds (Epic 35.1). They are the resolved
-// values when a registry sets no payload_escalation block.
+// Built-in per-file escalation thresholds (Epic 35.1, retuned in Epic 35.4).
+// They are the resolved values when a registry sets no payload_escalation block.
+//
+// # Acceptance target for these numbers
+//
+// These are not chosen by feel — they are tuned against a measured replay of
+// real history, and any future change to them must re-validate against the same
+// target:
+//
+//	Target band: 15-25% of changed Go files promoted above their configured
+//	mode, at <= +40% payload bytes over the escalation-enabled base render
+//	(skeleton included on BOTH sides). The byte ceiling is the binding
+//	constraint; the file-rate band is the readable proxy for it.
+//
+// "over the escalation-enabled base render" is the load-bearing qualifier: the
+// AST skeleton is prepended to every analyzed file once escalation is on, so it
+// is charged to the base side and the +40% ceiling measures the cost of MODE
+// PROMOTION alone — not the cost of turning the feature on. Skeleton injection
+// is itself gated by the escalation config, so an operator running with the
+// feature off pays neither. The replay harness therefore reports both figures
+// (bare / base / escalated totals, promotion_delta and feature_delta); see
+// escalation_replay_test.go's accumulateBytes for the accounting.
+//
+// The band is anchored to the payload-byte budget rather than to a bare
+// percentage because an operator who configures `diff` is buying a token cost,
+// not a file count. A tighter byte anchor is not reachable by tuning: disabling
+// the adjacency signal outright with min_hunks 10 and min_cyclomatic 25 (the
+// sweep's strictest candidate) still measures +25% bytes, because the files
+// that promote are the large ones.
+//
+// Measured over `main`'s last 40 commits (400 changed Go files) with
+// TestEscalationReplay_MeasureRepoHistory, 2026-07-28. The window head is
+// pinned so the SAME window can be re-derived after main advances — without
+// the SHA a re-measurement runs over a different population and a threshold
+// regression cannot be separated from window drift:
+//
+//	window head: 0819bcf105bbcf3e0e213f03ef32fb58bcae16a5
+//
+//	before (35.1 defaults 4/10/15): 37.0% promoted, +48.0% bytes
+//	after  (this block, 8/2/20):    21.5% promoted, +34.1% bytes
+//
+// Those byte figures are promotion-only, per the qualifier above. Over the same
+// window the whole-feature cost against plain diff mode is +60.7% (bare 2373158
+// B, base 2845644 B, escalated 3814837 B), of which the skeleton alone is
+// +19.9%. Both are printed by the harness — quote the one that matches the
+// question being asked.
+//
+// Re-measure over the same window with:
+//
+//	ATCR_REPLAY=1 ATCR_REPLAY_REF=0819bcf105bbcf3e0e213f03ef32fb58bcae16a5 \
+//	  ATCR_REPLAY_COMMITS=40 go test ./internal/payload/ -run TestEscalationReplay -v
+//
+// (ATCR_REPLAY_REF=main re-measures whatever window main then points at — that
+// tracks drift but is NOT a re-derivation of the numbers above.)
+//
+// Damping one signal shifts load onto the others, so re-measure ALL of them
+// (the harness reports per-signal rates) rather than only the one being changed.
 const (
 	// DefaultEscalationChurnRatio fires when at least half a file's HEAD lines
 	// are touched — the "the file was substantially rewritten" signal.
 	DefaultEscalationChurnRatio = 0.5
-	// DefaultEscalationMinHunks fires on scattered edits: four or more separate
-	// hunks in one file is the architectural-thrashing shape a net diff hides.
-	DefaultEscalationMinHunks = 4
+	// DefaultEscalationMinHunks fires on scattered edits: this many or more
+	// separate hunks in one file is the architectural-thrashing shape a net diff
+	// hides. Tuned from 4 to 8 in Epic 35.4: at 4, an ordinary rename or signature
+	// change rippling through a file promoted it, and the signal fired on 23% of
+	// changed Go files (counted independently — signals overlap, so the
+	// per-signal rates sum above the promotion rate).
+	DefaultEscalationMinHunks = 8
 	// DefaultEscalationHunkGapLines fires when two hunks sit closer than this
-	// many unchanged lines apart, i.e. the same region was churned twice.
-	DefaultEscalationHunkGapLines = 10
+	// many unchanged lines apart, i.e. the same region was churned twice. Tuned
+	// from 10 to 2 in Epic 35.4: under --unified=0 a single logical change
+	// routinely leaves hunks a few lines apart, so a 10-line window measured the
+	// ordinary shape of a diff rather than genuine same-region churn — it was the
+	// single worst offender at 28.5% of changed Go files (counted independently —
+	// signals overlap, so the per-signal rates sum above the promotion rate),
+	// and still fires on 13.0% at this setting. At 2, only hunks separated by
+	// one unchanged line count as the same region.
+	//
+	// Note the granularity floor this implies: git does not emit two hunks with
+	// ZERO unchanged lines between them under --unified=0 (it merges them into
+	// one), so `gap < 1` is unsatisfiable for well-formed ranges and the settings
+	// 0 and 1 both mean "off". 2 is therefore the narrowest setting that still
+	// fires. This is a property of the `gap < N` formulation, not of this value.
+	DefaultEscalationHunkGapLines = 2
 	// DefaultEscalationMinCyclomatic is the McCabe floor above which a CHANGED
 	// function's control flow is too branchy to review from hunks alone. The score
 	// is scoped to the functions the diff touched, not the file-wide maximum.
-	DefaultEscalationMinCyclomatic = 15
+	// Tuned from 15 to 20 in Epic 35.4: 15 is the conventional "complex function"
+	// line, but the score now measures only the changed function, where ordinary
+	// validation and dispatch code clears 15 without being unreadable from hunks.
+	DefaultEscalationMinCyclomatic = 20
 	// DefaultEscalationMaxSkeletonLines caps how many declaration headers a
 	// skeleton renders. A generated file with hundreds of declarations would
 	// otherwise prepend hundreds of lines to a one-line diff, in every mode
@@ -160,15 +235,30 @@ func (c EscalationConfig) escalate(base PayloadMode, s fileSignals) PayloadMode 
 
 // diffNativeFires reports whether the parse-free signals — churn ratio, hunk
 // count, hunk adjacency — indicate a structurally confusing diff.
+//
+// The three clauses are separate predicates rather than inline conditions so
+// the escalation-rate measurement can attribute a promotion to the signal that
+// actually caused it: this disjunction short-circuits, so a file firing both
+// churn and adjacency would otherwise only ever be counted against churn, and
+// "which signal is the worst offender" would be unanswerable (Epic 35.4).
 func (c EscalationConfig) diffNativeFires(s fileSignals) bool {
-	if c.ChurnRatio > 0 && s.churnApplicable && s.headLines > 0 &&
-		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio {
-		return true
-	}
-	if c.MinHunks > 0 && len(s.hunks) >= c.MinHunks {
-		return true
-	}
-	return c.hunksAreAdjacent(s.hunks)
+	return c.churnFires(s) || c.hunkCountFires(s) || c.hunksAreAdjacent(s.hunks)
+}
+
+// churnFires reports whether the file was substantially rewritten: changed
+// lines as a fraction of HEAD lines at or above ChurnRatio. changedLines is
+// max(added, deleted), not their sum (diff.go), so a pure move does not read as
+// double churn. A file whose churn measure is not applicable — an added file,
+// or one with no numstat entry — never fires it.
+func (c EscalationConfig) churnFires(s fileSignals) bool {
+	return c.ChurnRatio > 0 && s.churnApplicable && s.headLines > 0 &&
+		float64(s.changedLines)/float64(s.headLines) >= c.ChurnRatio
+}
+
+// hunkCountFires reports whether the file's edits are scattered across at least
+// MinHunks separate hunks.
+func (c EscalationConfig) hunkCountFires(s fileSignals) bool {
+	return c.MinHunks > 0 && len(s.hunks) >= c.MinHunks
 }
 
 // hunksAreAdjacent reports whether any two consecutive hunks are separated by
