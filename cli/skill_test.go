@@ -241,14 +241,11 @@ func TestSkillExport_ReportsDestinationAndFileCount(t *testing.T) {
 		"success output must report the number of files written")
 }
 
-// TestSkillExport_DocumentedInDispatcher (AC6, routing-drift) — `atcr skill` is a
-// real top-level command, so SKILL.md's Commands table must route it; the
-// bidirectional check in skill_routing_test.go enforces the other direction.
-func TestSkillExport_DocumentedInDispatcher(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "skills", skills.SkillDir, "SKILL.md"))
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), "`atcr skill`", "SKILL.md must route the skill command")
-}
+// (TestSkillExport_DocumentedInDispatcher was removed: its substring check passed
+// on any mention of `atcr skill` anywhere in SKILL.md, making it a strictly
+// weaker duplicate of TestSkillRoutingTableMatchesRegistry in
+// cli/skill_routing_test.go, which enforces registry↔routing-table set-equality
+// in both directions.)
 
 // TestSkillExport_InstallDocReplacesManualCopy (AC5) — docs/skill-usage.md's
 // Installation section prescribes the export command and no longer hands the user
