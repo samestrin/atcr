@@ -372,6 +372,41 @@ func TestSkillExport_IgnoresOSMetadataFiles(t *testing.T) {
 	assert.NoError(t, statErr, "the export must have written the skill tree")
 }
 
+// TestSkillExport_DirectoryCollidingWithSkillFile — a directory sharing a name
+// with an embedded skill file (a pre-flatten debt-resolve/, or a user-created
+// SKILL.md/) is a name collision the user must resolve, not something to
+// delete. The command's contract is "overwrites but never prunes": removing an
+// EMPTY such directory is an undocumented prune, and failing on a NON-EMPTY one
+// with a raw ENOTEMPTY (exit 1) misclassifies a usage mistake as a system
+// error. Both forms must exit 2 naming the collision.
+func TestSkillExport_DirectoryCollidingWithSkillFile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		populate bool
+	}{
+		{"empty directory", false},
+		{"non-empty directory", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := filepath.Join(t.TempDir(), "atcr")
+			collision := filepath.Join(dest, "CONVENTIONS.md")
+			require.NoError(t, os.MkdirAll(collision, 0o755))
+			if tc.populate {
+				require.NoError(t, os.WriteFile(filepath.Join(collision, "mine.md"), []byte("user data"), 0o644))
+			}
+
+			out, err := execSkillExport(t, "--dir", dest, "--force")
+			require.Error(t, err, "a directory colliding with an embedded file name must fail, not be pruned")
+			assert.Equal(t, 2, exitCode(err), "a name collision is a usage-grade error (exit 2)")
+			assert.Contains(t, out+err.Error(), "CONVENTIONS.md", "the error must name the collision")
+
+			info, statErr := os.Lstat(collision)
+			require.NoError(t, statErr, "the colliding directory must be left in place")
+			assert.True(t, info.IsDir(), "the colliding directory must not have been replaced")
+		})
+	}
+}
+
 // TestSkillExport_CleanDestinationWarnsAboutNothing — the warning must not fire on
 // the ordinary path, or it becomes noise every user learns to ignore.
 func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
