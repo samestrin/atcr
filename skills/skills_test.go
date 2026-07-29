@@ -424,12 +424,22 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
 }
 
-// missingExclusivityFlags returns the baseline/range flags SKILL.md does not
-// name where it states mutual exclusivity.
+// missingExclusivityFlags returns the baseline/range flags not named on the
+// mutual-exclusivity SENTENCE itself. The flags also appear in the Input
+// Format git-range bullet and Orchestration step 1, so a whole-file search
+// can never fail; a missing exclusivity sentence flags every flag.
 func missingExclusivityFlags(md string) []string {
+	sentence := ""
+	re := regexp.MustCompile(`(?i)mutually exclusive|cannot be combined`)
+	for _, line := range strings.Split(md, "\n") {
+		if re.MatchString(line) {
+			sentence = line
+			break
+		}
+	}
 	var missing []string
 	for _, flag := range []string{"--all", "--dir", "--base", "--head", "--merge-commit"} {
-		if !strings.Contains(md, flag) {
+		if !strings.Contains(sentence, flag) {
 			missing = append(missing, flag)
 		}
 	}
