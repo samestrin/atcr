@@ -11,33 +11,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mdRef matches a backticked bare markdown filename — `host-review.md`,
-// `debt-resolve.md`. It deliberately requires the name to contain no `/`, so a
-// legitimate repo-relative prose citation like `docs/findings-format.md` is not
-// mistaken for a claim that the file sits beside SKILL.md.
-var mdRef = regexp.MustCompile("`([A-Za-z0-9._-]+\\.md)`")
+// mdRef matches a markdown-file reference in any of the natural citation
+// forms: a backticked name (`host-review.md`), an optional ./ prefix
+// (`./host-review.md`), a markdown link target ([text](host-review.md)), a
+// bolded name (**host-review.md**), or a bare name.md token in prose. The
+// captured path may carry directory segments (`sub/name.md`); those resolve
+// relative to the repository root — the convention repo-relative prose
+// citations like `docs/findings-format.md` follow — while bare names must
+// resolve as siblings of the citing file.
+var mdRef = regexp.MustCompile("(?:`|\\]\\(|\\*\\*|^|[\\s(])(\\./)?((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.md)")
 
-// reviewArtifacts are bare `.md` names the skill mentions as OUTPUT of a review
-// run — they live under `.atcr/reviews/<id>/`, are produced at runtime, and are
-// never siblings of SKILL.md. Everything else a shipped skill names by bare
-// filename is an on-demand reference the agent is expected to load, so it must
-// resolve in the same directory.
-var reviewArtifacts = map[string]bool{
-	"report.md": true, // reconciled/report.md — the rendered report
-	"review.md": true, // sources/<reviewer>/review.md — a reviewer's narrative
+// reviewArtifacts are `.md` basenames a skill file names as OUTPUT of a
+// review run — they live under `.atcr/reviews/<id>/`, are produced at
+// runtime, and are never siblings of SKILL.md. The exemption is scoped to
+// the specific files that legitimately cite each artifact; any other file
+// citing these names is pointing at a file that does not exist. Everything
+// else a shipped skill names by bare filename is an on-demand reference the
+// agent is expected to load, so it must resolve in the same directory.
+var reviewArtifacts = map[string]map[string]bool{
+	"SKILL.md":        {"report.md": true}, // orchestration step: the rendered report
+	"host-review.md":  {"review.md": true}, // sources/host/review.md — the host narrative
+	"debt-resolve.md": {"review.md": true}, // tells the agent to read the host's review.md
 }
 
 // findBrokenMarkdownRefs returns every markdown reference in content that
-// does not resolve as a sibling of the citing file (dir). Self-references
-// and runtime review artifacts are skipped. checked counts the references
-// actually verified, so callers can prove the scan was non-vacuous.
+// does not resolve: bare names against dir (the citing file's own directory)
+// and path forms against repoRoot. Self-references and the citing file's own
+// review artifacts are skipped. checked counts the references actually
+// verified, so callers can prove the scan was non-vacuous.
 func findBrokenMarkdownRefs(repoRoot, dir, fileName string, content []byte) (broken []string, checked int) {
 	for _, m := range mdRef.FindAllStringSubmatch(string(content), -1) {
-		ref := m[1]
-		if ref == fileName || reviewArtifacts[ref] {
-			continue // self-reference, or a runtime review artifact
+		ref := m[2]
+		if ref == fileName || reviewArtifacts[fileName][filepath.Base(ref)] {
+			continue // self-reference, or a runtime review artifact this file cites
 		}
-		if _, err := os.Stat(filepath.Join(dir, ref)); err != nil {
+		target := filepath.Join(dir, ref)
+		if strings.Contains(ref, "/") {
+			// Path-form citations are repo-relative prose (docs/findings-format.md),
+			// not sibling claims — but they must still resolve.
+			target = filepath.Join(repoRoot, ref)
+		}
+		if _, err := os.Stat(target); err != nil {
 			broken = append(broken, ref)
 			continue
 		}
