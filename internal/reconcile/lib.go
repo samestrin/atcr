@@ -51,12 +51,6 @@ const (
 	ConfidenceVerified = reclib.ConfidenceVerified
 
 	CategoryOutOfScope = reclib.CategoryOutOfScope
-
-	MergeThreshold = reclib.MergeThreshold
-	GrayLow        = reclib.GrayLow
-
-	EvidenceSep          = reclib.EvidenceSep
-	FixAttributionPrefix = reclib.FixAttributionPrefix
 )
 
 // SeverityRank is the canonical severity rubric, re-exported from the library
@@ -74,14 +68,6 @@ var SeverityRank = func() map[string]int {
 // one implementation of each.
 func NormalizeSeverity(s string) string { return reclib.NormalizeSeverity(s) }
 
-func Merge(group []Finding) Merged { return reclib.Merge(group) }
-
-func Cluster(findings []Finding) [][]Finding { return reclib.Cluster(findings) }
-
-func DedupeCluster(cluster []Finding) ([][]Finding, []AmbiguousCluster) {
-	return reclib.DedupeCluster(cluster)
-}
-
 func AmbiguousID(file string, line int, problemA, problemB string) string {
 	return reclib.AmbiguousID(file, line, problemA, problemB)
 }
@@ -90,19 +76,7 @@ func AmbiguousHash(clusters []AmbiguousCluster) string { return reclib.Ambiguous
 
 func HashBytes(data []byte) string { return reclib.HashBytes(data) }
 
-func ConfidenceForVerdict(prior, verdict string) string {
-	return reclib.ConfidenceForVerdict(prior, verdict)
-}
-
 func ConfidenceFor(reviewerCount int) string { return reclib.ConfidenceFor(reviewerCount) }
-
-func ConfidenceAtOrAbove(c, floor string) bool { return reclib.ConfidenceAtOrAbove(c, floor) }
-
-func HasFixAttribution(evidence, name string) bool { return reclib.HasFixAttribution(evidence, name) }
-
-func AppendFixAttribution(evidence, name string) string {
-	return reclib.AppendFixAttribution(evidence, name)
-}
 
 // Result is ATCR's reconcile result. It mirrors reclib.Result (its fields are the
 // library types via the aliases above) but is a distinct internal type so the
@@ -141,8 +115,9 @@ func Reconcile(sources []Source, opts Options) Result {
 			// Inline the stream.Finding -> reconcile.Finding field map. The canonical
 			// implementation lives in the boundary adapter (internal/reconcile/adapter),
 			// but this package cannot import adapter without an import cycle (adapter
-			// imports this package). TD-006 tracks collapsing to one implementation
-			// once Phase 3 flips consumers to the library.
+			// imports this package), so this copy stays inline by design — resolved
+			// as of Epic 8.0 Clarification Q8/Q9 (2026-06-23): the duplication is
+			// permanent under the current package layout, not a pending collapse.
 			fs[j] = Finding{
 				Severity:   f.Severity,
 				File:       f.File,

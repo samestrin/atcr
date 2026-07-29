@@ -21,6 +21,7 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/scorecard"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // countScorecardLines totals the JSONL record lines in the isolated per-user
@@ -693,10 +694,10 @@ func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 
 	res := reconcile.Result{
-		Findings: []reconcile.Merged{
-			{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
 		},
-		Summary: reconcile.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
 	persistLocalDebt("review", res, false, &diag)
@@ -727,10 +728,10 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 
 	// Reconcile re-detects the identical finding (same file/line/problem → same id).
 	res := reconcile.Result{
-		Findings: []reconcile.Merged{
-			{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
 		},
-		Summary: reconcile.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
 	persistLocalDebt("review", res, false, &diag)
@@ -755,14 +756,14 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
 	isolate(t)
 
-	findings := []reconcile.Merged{
-		{Finding: reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "real bug", Fix: "fix it", Category: "correctness", EstMinutes: 10}},
-		{Finding: reconcile.Finding{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "out of scope", Fix: "n/a", Category: reconcile.CategoryOutOfScope, EstMinutes: 5}},
-		{Finding: reconcile.Finding{Severity: "HIGH", File: "c.go", Line: 3, Problem: "refuted", Fix: "n/a", Category: "security", EstMinutes: 10, Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic"}}},
+	findings := []reclib.Merged{
+		{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "real bug", Fix: "fix it", Category: "correctness", EstMinutes: 10}},
+		{Finding: reclib.Finding{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "out of scope", Fix: "n/a", Category: reclib.CategoryOutOfScope, EstMinutes: 5}},
+		{Finding: reclib.Finding{Severity: "HIGH", File: "c.go", Line: 3, Problem: "refuted", Fix: "n/a", Category: "security", EstMinutes: 10, Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "skeptic"}}},
 	}
 	res := reconcile.Result{
 		Findings: findings,
-		Summary:  reconcile.Summary{ReconciledAt: "2026-07-12T00:00:00Z"},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-12T00:00:00Z"},
 	}
 
 	var diag bytes.Buffer
