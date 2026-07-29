@@ -99,10 +99,12 @@ func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 	return expanded, nil
 }
 
-// dirIsNonEmpty reports whether path exists and holds at least one entry. A
-// missing path is empty, not an error: creating it is the ordinary case. A path
-// that exists but is not a directory is a usage error, reported as such rather
-// than surfacing a raw ENOTDIR from the subsequent read.
+// dirIsNonEmpty reports whether path exists and holds at least one meaningful
+// entry. A missing path is empty, not an error: creating it is the ordinary
+// case. Dot-prefixed entries (.DS_Store, editor swap files) are OS metadata,
+// not content, and never make a directory non-empty. A path that exists but is
+// not a directory is a usage error, reported as such rather than surfacing a
+// raw ENOTDIR from the subsequent read.
 func dirIsNonEmpty(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -120,7 +122,12 @@ func dirIsNonEmpty(path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(entries) > 0, nil
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // newSkillCmd builds `atcr skill`: install the Agent Skill that ships inside this
@@ -227,11 +234,22 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 // debt-resolve/SKILL.md declaring its own skill name, which is precisely the
 // defect the flatten removed and which a harness would happily load alongside the
 // real one. Naming the leftovers lets the user delete them deliberately.
+// Dot-prefixed entries (.DS_Store, editor swap files) are OS metadata, not
+// skill files, and are never reported.
 func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool) {
 	var stale []string
 	err := filepath.WalkDir(dest, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			if path != dest && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
 		}
 		rel, relErr := filepath.Rel(dest, path)
 		if relErr != nil {
@@ -248,7 +266,7 @@ func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool)
 			"warning: %s holds %d file(s) this export did not write, left in place: %s\n",
 			dest, len(stale), strings.Join(stale, ", "))
 		_, _ = fmt.Fprintln(errOut,
-			"         If they are from an older atcr skill install, delete them — a leftover nested SKILL.md is loaded as a second skill.")
+			"         If any are from an older atcr skill install, delete them — a leftover nested SKILL.md is loaded as a second skill.")
 	}
 	if err != nil {
 		// The walk aborted mid-scan. What was found before the error is still
