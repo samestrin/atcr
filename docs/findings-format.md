@@ -157,8 +157,8 @@ The other v1 review artifacts carry reserved fields for the agentic stages on th
 
 | Artifact | Field | 1.x value | Reserved for |
 |----------|-------|-----------|--------------|
-| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran; `WriteManifest` normalizes nil to `["review"]` so the field is always present; readers MUST default an absent `stages` to `["review"]` for older manifests written before this field existed. **Active in 3.0:** `atcr verify` appends `"verify"` (idempotently) | later stages append `"debate"` (Epics 4.0–5.0) |
-| per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | absent — no tool loop ran | **Epic 2.0** — tool-using reviewer loop |
+| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran; `WriteManifest` normalizes nil to `["review"]` so the field is always present; readers MUST default an absent `stages` to `["review"]` for older manifests written before this field existed. **Active in 3.0:** `atcr verify` appends `"verify"` (idempotently). **Active in 6.0:** `atcr debate` appends `"debate"` (idempotently) | — |
+| per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | **Active:** present as possibly-zero integers for a `tools: true` agent (the tool-using reviewer loop shipped); absent for a single-shot agent | — |
 
 ## Companion artifact: `disagreements.json`
 

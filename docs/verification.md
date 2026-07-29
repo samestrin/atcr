@@ -68,10 +68,13 @@ Refuted findings stay in `findings.json` and in the report under a collapsed **R
 
 ## Gate Semantics
 
-The CI gate reads verdicts directly. Refuted findings never block a merge.
+`atcr verify` itself has no `--fail-on` or `--require-verified` flag — it only
+computes and persists verdicts. The CI gate that reads those verdicts lives on
+`atcr reconcile` and `atcr review`, and reads verdicts directly: refuted
+findings never block a merge.
 
-- **`--fail-on <severity>`** — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
-- **`--require-verified`** — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). To guard against a silently permissive gate, `--require-verified` is refused unless the verify stage actually ran (the manifest `stages` must contain `"verify"`).
+- **`--fail-on <severity>`** (on `atcr reconcile` / `atcr review`) — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
+- **`--require-verified`** (on `atcr reconcile` / `atcr review`) — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). On `atcr reconcile`, if the verify stage never ran, `--require-verified` does **not** refuse — it logs a warning and the gate proceeds (a silently permissive gate is possible). On `atcr review`, `--require-verified` is refused outright unless combined with `--verify` or `--debate` (`error: --require-verified requires --fail-on and --verify or --debate`, exit 2).
 - **`--repo <path>`** — reviewed repository root that skeptics inspect and the redactor relativizes absolute paths against. Defaults to the current working directory; use this to verify findings against a repo other than the CWD or when running `verify` from outside the repo root (Epic 22.1).
 
 | Finding | v1 confidence | verdict | `--fail-on high` | `--fail-on high --require-verified` |
@@ -81,7 +84,7 @@ The CI gate reads verdicts directly. Refuted findings never block a merge.
 | F3 | HIGH | unverifiable | counts | does not count |
 | F4 | MEDIUM | confirmed (VERIFIED) | does not count | does not count |
 
-Exit codes: `0` verification completed (gate passed or none requested), `1` gate failed, `2` usage/configuration error.
+`atcr verify` exit codes: `0` success, `1` no reconciled findings found (run `atcr reconcile` first), `2` usage or configuration error. `atcr verify` has no gate of its own; gate pass/fail exit codes belong to `atcr reconcile` / `atcr review`.
 
 ## Cost Controls
 
@@ -93,7 +96,7 @@ Verification roughly doubles per-finding cost, so it is bounded several ways:
 - **`--fresh`** — re-verify every finding, even those already carrying a verdict from a previous run. Without it, already-verified findings are skipped (idempotent re-runs are cheap).
 - **Per-finding budgets** — each skeptic reuses the reviewer tool-loop budgets: `max_turns`, `tool_budget_bytes`, and `timeout_secs` from the skeptic's agent config. A tripped budget yields `unverifiable`, never a dropped finding.
 
-Note: findings are currently verified sequentially (and the skeptics within a finding sequentially), so a `--thorough` run over many findings is `findings × votes` provider calls back to back.
+Note: findings are verified concurrently through a bounded worker pool (`verify.max_parallel`, default `4`); the skeptics within a single finding run sequentially, so a `--thorough` run is `votes` provider calls back to back per finding, with up to `verify.max_parallel` findings in flight at once.
 
 ## Artifacts
 
@@ -129,11 +132,11 @@ Note: findings are currently verified sequentially (and the skeptics within a fi
 }
 ```
 
-The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic transcripts are written under `verify/raw/<skeptic>/transcript.jsonl` in the same format the reviewer tool loop uses.
+The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
 ## MCP tool
 
-The `atcr_verify` MCP tool mirrors the CLI and routes through the same orchestrator, so the artifacts are identical. It accepts `id_or_path` (review id only — paths are not accepted), `fresh`, `thorough`, `min_severity`, `fail_on`, and `require_verified`, and returns `verdict_counts`, `findings_processed`, `duration_ms`, and a `gate_status` object (omitted when `fail_on` is not provided). Missing reconciled findings returns the same clear error as the CLI: `no reconciled findings found: run 'atcr reconcile' first`.
+The `atcr_verify` MCP tool mirrors the CLI and routes through the same orchestrator, so the artifacts are identical. It accepts `id_or_path` (review id only — paths are not accepted), `fresh`, `thorough`, `minSeverity`, `failOn`, and `requireVerified` (camelCase, matching the tool's JSON argument keys), and returns `verdict_counts`, `findings_processed`, `duration_ms`, and a `gate_status` object (omitted when `fail_on` is not provided). Missing reconciled findings returns the same clear error as the CLI: `no reconciled findings found in <dir> — run 'atcr reconcile' first`.
 
 ## Related documents
 

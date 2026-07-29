@@ -168,7 +168,7 @@ Before submitting your persona, confirm every item:
 - [ ] **Prompt template** mirrors the canonical structure: `## Role`, `## Focus`, `## Scope` (`{{.ScopeRule}}`), `## Severity Rubric`, the exact 7-column `## Output Format` contract, and `## Payload` (`{{.Payload}}`).
 - [ ] **Required template variables** are all present and the template renders with no leftover `{{ }}` actions.
 - [ ] **Category word** for the persona's target class appears in the prompt template itself.
-- [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/`, named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
+- [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/` (built-in) or `personas/community/testdata/` (community persona), named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
 - [ ] **Fixture test passes** locally with no network access.
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
 - [ ] **Index entry** (if the persona ships in the community `index.json`) carries non-empty `provider` and `model` that **exactly match** the persona YAML's `provider`/`model` — enforced by a `go test` gate, not editorial review.
@@ -237,7 +237,7 @@ binding: anthropic/claude-opus@stable   # OPTIONAL logical binding (Epic 19.7)
 
 **Families** — alias-covered families (Anthropic, OpenAI, Google, Moonshot tiers) bind to a provider-owned `~…-latest` alias the provider resolves server-side; the alias-less brands resolve by newest `created` timestamp under their catalog vendor prefix. Note `glm` keys the `z-ai/` catalog namespace — there is no `glm/` namespace.
 
-Implementation detail — the catalog schema (`id`, `canonical_slug`, `created`, `expiration_date`), the `~…-latest` alias behavior, and the `@stable` preview/deprecation heuristic are specified in the plan documentation: [openrouter-catalog-api.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/openrouter-catalog-api.md) and [existing-resolver-patterns.md](../.planning/sprints/completed/19.7_live_model_resolution/plan/documentation/existing-resolver-patterns.md).
+Implementation detail — the catalog schema is `id`, `canonical_slug`, `created`, and `expiration_date` per OpenRouter model entry; a `~…-latest` alias resolves server-side to the provider's current GA model; the `@stable` heuristic excludes any entry carrying `expiration_date` or a preview/beta/exp token in `id`/`canonical_slug`, then picks the newest `created` among what remains.
 
 See [personas-install.md](personas-install.md) for installing and using personas, and [registry.md](registry.md) for the full agent schema and routing semantics.
 

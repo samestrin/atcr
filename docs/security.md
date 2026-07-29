@@ -36,11 +36,11 @@ git-subprocess hardening layer) plus one visibility control (review warnings).
 
 ## Pathguard: the protected-path write gate
 
-`internal/security` exports `IsProtectedPath(path string) bool`, a
+`internal/security` exports `IsProtectedPath(path, root string) bool`, a
 **denylist path matcher** with no side effects beyond the symlink resolution it
-needs. It is the shape-analogue of `internal/validation`'s `FilePath` denylist,
-but scoped to **repo-relative host-execution/config paths** rather than absolute
-system directories.
+needs; `root` anchors that symlink-resolution layer. It is the shape-analogue of
+`internal/validation`'s `FilePath` denylist, but scoped to **repo-relative
+host-execution/config paths** rather than absolute system directories.
 
 `internal/autofix`'s `applyOne` calls it as a **fail-closed gate** at the single
 host-repo write choke point — immediately after the existing path-containment
@@ -110,30 +110,34 @@ process environment:
 
 Each call site keeps its own pre-existing environment customizations
 (`LC_ALL=C` / `LANG=C`, credential-helper overrides) as additive appends — the
-hardening layers *over* them, it does not replace them. All six production call
-sites — `cmd/atcr/autofix.go`, `internal/fanout/review.go`,
+hardening layers *over* them, it does not replace them. All seven production call
+sites — `cli/autofix.go`, `internal/fanout/review.go`,
 `internal/gitrange/resolver.go`, `internal/payload/diff.go`,
-`internal/personas/submit.go`, and `internal/stream/fileindex.go` — construct
-their commands exclusively through `gitexec`. A whole-tree regression test fails
+`internal/personas/submit.go`, `internal/stream/fileindex.go`, and
+`internal/tools/snapshot.go` — construct their commands exclusively through
+`gitexec`. A whole-tree regression test fails
 the build if a bare `exec.Command("git", ...)` reappears anywhere outside the
 wrapper, so the guarantee cannot silently erode. (The two intentionally
 out-of-scope files — `internal/verify/localvalidate.go` and
 `internal/sandbox/docker.go` — are excluded by that test with an inline
 rationale.)
 
-## Non-blocking review warnings: executable-bit & build-script changes
+## Non-blocking review warnings: build-script changes
 
-Not every risky change is a protected-path write. A patch that flips a file's
-**executable bit**, or that touches a **build script** (`Makefile`, `*.sh`,
-`package.json`, `Dockerfile`, `Jenkinsfile`, or a CI config outside `.github/`
-such as `.gitlab-ci.yml` or `.circleci/`), is legitimate often enough that
-blocking it would be wrong — but it deserves a second look.
+Not every risky change is a protected-path write. A patch that touches a
+**build script** (`Makefile`, `*.sh`, `package.json`, `Dockerfile`, `Jenkinsfile`,
+or a CI config outside `.github/` such as `.gitlab-ci.yml` or `.circleci/`), is
+legitimate often enough that blocking it would be wrong — but it deserves a
+second look.
 
-`internal/security`'s `FlagsForReview(path string, oldMode, newMode int) (bool, string)`
+`internal/security`'s `FlagsForReview(path string) (bool, string)`
 is a **non-blocking** check: it never refuses a patch and never errors. It reports
-whether a successfully-applied entry changed the executable bit
-(`oldMode&0111 != newMode&0111`) or landed on a build-script path, along with a
-human-readable reason. `atcr` already never auto-merges an `--auto-fix` change —
+whether a successfully-applied entry landed on a build-script path, along with a
+human-readable reason. It deliberately does **not** flag executable-bit changes:
+the apply pipeline writes every file through `atomicfs.WriteFileAtomic` (fixed
+`0644`) and the GitHub commit hardcodes blob mode `100644`, so a diff's exec-bit
+change never lands in the working tree or the PR — flagging it would warn about a
+change that does not happen. `atcr` already never auto-merges an `--auto-fix` change —
 it always opens a pull request and leaves the merge to a human — so human review
 is already the terminal gate. `FlagsForReview` makes elevated-risk patches
 **visible in that existing review** rather than adding a new gate: when any
@@ -151,7 +155,7 @@ flagged paths leaves the PR body byte-identical to today.
 
 Together these ensure an LLM-generated patch cannot silently plant a host-executed
 trigger, cannot hijack an `atcr` git call through a poisoned system/global/repo
-config, and cannot slip an executable-bit or build-script change past human review
+config, and cannot slip a build-script change past human review
 unremarked.
 
 ---

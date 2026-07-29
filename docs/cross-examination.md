@@ -117,7 +117,7 @@ The report gains a **Contested findings** section listing each ruling with a one
 
 ## MCP tool
 
-The `atcr_debate` MCP tool mirrors the CLI and routes through the same orchestrator, so the artifacts are identical. It accepts `id_or_path` (review id only), `singleModel`, `failOn`, and `requireVerified`, and returns `selected`, `upheld`, `overturned`, `split`, `unresolved`, `overflow`, `durationMs`, and a `gateStatus` object (omitted when `failOn` is not provided). Missing reconciled findings returns the same error as the CLI: `no reconciled findings found … run 'atcr reconcile' first`.
+The `atcr_debate` MCP tool mirrors the CLI and routes through the same orchestrator, so the artifacts are identical. It accepts `id_or_path` (review id only), `singleModel`, `registryPath` (override the registry file path), `failOn`, and `requireVerified`, and returns `review_id`, `selected`, `upheld`, `overturned`, `split`, `unresolved`, `overflow`, `durationMs`, and a `gateStatus` object (omitted when `failOn` is not provided). Missing reconciled findings returns the same error as the CLI: `no reconciled findings found in <dir> — run 'atcr reconcile' first`.
 
 ## Related documents
 

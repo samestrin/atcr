@@ -46,7 +46,7 @@ clean copy.
 
 **`/work` is writable for `--auto-fix` validation, via an ephemeral copy.** The
 patched working tree is mounted **read-only at `/src`**, and `/work` is backed by
-a fresh writable `tmpfs` that the container seeds with `cp -a /src/. /work/`
+a fresh writable `tmpfs` that the container seeds with `cp -R /src/. /work/`
 before your `validate_command` runs; the command then executes against that
 writable `/work` copy. Because the snapshot side (`/src`) stays read-only for the
 container's entire lifetime and every write lands in the throwaway `/work` tmpfs
@@ -68,8 +68,8 @@ so a valid non-Go fix is validated and its PR opened rather than silently
 reverted.
 
 > **Image requirement.** The ephemeral-copy overlay runs your `validate_command`
-> inside `/bin/sh -c 'cp -a /src/. /work/ && cd /work && exec "$@"'`, so the
-> validation image must provide **`/bin/sh` and `cp`** — true for `alpine`- and
+> inside `/bin/sh -c 'cp -R /src/. /work/ || exit 125; cd /work && exec "$@"'`, so
+> the validation image must provide **`/bin/sh` and `cp`** — true for `alpine`- and
 > `golang`-family images, but **not** for `distroless`/`scratch` images, which
 > ship neither. If your image has no shell, base it on one that does. The `/work`
 > tmpfs is sized by an internal default and, like every tmpfs, counts against the

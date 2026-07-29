@@ -47,7 +47,7 @@ one-line description, and the current review's id and status:
 
 ```
 home[1|]{exec_path|description|review_id|review_status}:
-  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|20260718T142233Z-9f3a|completed
+  ~/go/bin/atcr|Agent Team Code Review — a review panel, not a reviewer|2026-07-18_main|completed
 ```
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
@@ -61,7 +61,7 @@ human-oriented stdout line and emit a single-row TOON array describing the run:
 
 ```
 review_summary[1|]{id|dir|agents_succeeded|agents_total|agents_failed|agents_timed_out|api_calls|findings_total}:
-  20260718T142233Z-9f3a|.atcr/reviews/20260718T142233Z-9f3a|3|3|0|0|9|2
+  2026-07-18_main|.atcr/reviews/2026-07-18_main|3|3|0|0|9|2
 ```
 
 The header names the pipe (`|`) delimiter and the fixed column order; the single
