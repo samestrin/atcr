@@ -19,6 +19,8 @@ atcr skill export                 # -> .claude/skills/atcr/ (project-local, defa
 atcr skill export --user          # -> ~/.claude/skills/atcr/
 ```
 
+A project-level export path is relative to the **process working directory**, not resolved against the repository root — run the command from your repo root, or pass `--dir <path>` to name the destination explicitly. Running it from a subdirectory writes `<subdir>/.claude/skills/atcr/`, which your harness will not find.
+
 That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Install the whole directory: `SKILL.md` alone leaves the host-review, adjudication, findings-format, conventions, and debt-resolve references unresolvable at runtime.
 
 ### Choosing a harness
