@@ -213,7 +213,7 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 			"destination %s already exists and is not empty; re-run with --force to overwrite it", dest))
 	}
 
-	written, err := writeSkillTree(dest)
+	written, err := writeSkillTree(skills.Tree, skills.SkillDir, dest)
 	if err != nil {
 		// A partial write leaves a half-updated tree; report what was NOT
 		// written as well, so the failure leaves the same leftover inventory
@@ -284,29 +284,34 @@ func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool)
 	}
 }
 
-// writeSkillTree writes the embedded skill directory's contents to dest and
+// writeSkillTree writes the contents of src's root directory to dest and
 // returns the set of destination-relative paths it wrote. The contents are
 // copied, not the directory itself, because a harness skill directory is named
 // for the skill (dest is already `.../atcr`). Files land 0644 inside a 0755
 // directory: this is instruction text an agent reads, never a secret and never
 // executable.
 //
+// Production always passes skills.Tree and skills.SkillDir; the parameters exist
+// so tests can drive a NESTED source tree. The embedded tree is flat today, so
+// the subdirectory branch below is otherwise unreachable — and an untestable
+// path-safety guard is one nobody notices breaking.
+//
 // Error contract: the returned map always holds exactly what was written
 // before the failure — the full set on a mid-walk partial write, nil when no
 // write was attempted — so the caller can inventory a half-updated tree.
 // (An empty embedded tree cannot reach the success path: fs.WalkDir errors on
 // the missing root long before the walk body runs.)
-func writeSkillTree(dest string) (map[string]bool, error) {
+func writeSkillTree(src fs.FS, root, dest string) (map[string]bool, error) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return nil, fmt.Errorf("creating destination %s: %w", dest, err)
 	}
 
 	written := map[string]bool{}
-	err := fs.WalkDir(skills.Tree, skills.SkillDir, func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(src, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(skills.SkillDir, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
@@ -319,7 +324,7 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 			return os.MkdirAll(target, 0o755)
 		}
 
-		data, err := skills.Tree.ReadFile(path)
+		data, err := fs.ReadFile(src, path)
 		if err != nil {
 			return fmt.Errorf("reading embedded %s: %w", path, err)
 		}

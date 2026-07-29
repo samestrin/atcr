@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -485,6 +486,47 @@ func TestSkillExport_ReplacesSymlinkRatherThanWritingThroughIt(t *testing.T) {
 	inside, readErr := os.ReadFile(filepath.Join(dest, "SKILL.md"))
 	require.NoError(t, readErr)
 	assert.Equal(t, skills.SkillMD, string(inside), "the symlink must have been replaced by a real file")
+}
+
+// TestWriteSkillTree_ReplacesSymlinkedSubdirectoryRatherThanWritingThroughIt —
+// the leaf-file guard above only covers FILES. os.MkdirAll returns nil when the
+// target is already a symlink to an existing directory, so every file beneath it
+// then resolves THROUGH the link and lands outside dest while the export still
+// exits 0. The embedded tree is flat today, which is why this drives
+// writeSkillTree with a nested source directly: re-nesting the tree would make
+// the hole live, and a guard nobody can test is a guard nobody notices breaking.
+func TestWriteSkillTree_ReplacesSymlinkedSubdirectoryRatherThanWritingThroughIt(t *testing.T) {
+	tmp := t.TempDir()
+
+	outside := filepath.Join(tmp, "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+
+	dest := filepath.Join(tmp, "atcr")
+	require.NoError(t, os.MkdirAll(dest, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dest, "sub")))
+
+	src := fstest.MapFS{
+		"atcr/SKILL.md":      {Data: []byte("root file\n")},
+		"atcr/sub/nested.md": {Data: []byte("nested file\n")},
+	}
+
+	written, err := writeSkillTree(src, "atcr", dest)
+	require.NoError(t, err)
+
+	leaked, readErr := os.ReadDir(outside)
+	require.NoError(t, readErr)
+	assert.Empty(t, leaked,
+		"export must not write through a symlinked subdirectory to a location outside the destination")
+
+	realSub := filepath.Join(dest, "sub")
+	info, statErr := os.Lstat(realSub)
+	require.NoError(t, statErr)
+	assert.Zero(t, info.Mode()&os.ModeSymlink, "the symlinked subdirectory must have been replaced by a real directory")
+
+	nested, readErr := os.ReadFile(filepath.Join(realSub, "nested.md"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "nested file\n", string(nested), "the nested file must land inside the destination")
+	assert.True(t, written["sub/nested.md"], "the nested file must be reported as written")
 }
 
 // TestSkillExport_DestinationIsAFileIsAUsageError — a destination that exists as a
