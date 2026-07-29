@@ -48,6 +48,15 @@ const (
 	MaxEscalationHunkGapLines  = 1000
 	MaxEscalationFiles         = 5000
 	MaxEscalationSkeletonLines = 2000
+	// MaxEscalationMinHunks and MaxEscalationMinCyclomatic are sanity ceilings on
+	// the two FLOOR thresholds (Epic 35.4). They guard the opposite failure from
+	// the ceilings above: min_hunks and min_cyclomatic gate promotion on "at
+	// least this much", so an absurdly large value is not a stricter setting, it
+	// is a threshold no real file can reach — the signal is silently dead. Both
+	// are set far above any legitimate tuning range (the shipped defaults are 8
+	// and 20), so they reject typos and overflow without constraining anyone.
+	MaxEscalationMinHunks      = 1000
+	MaxEscalationMinCyclomatic = 1000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -219,11 +228,20 @@ type VerifyConfig struct {
 // payload.go. TestPayloadEscalationMirrorsPayloadOverrides pins the two shapes
 // together so they cannot drift.
 type PayloadEscalationConfig struct {
-	ChurnRatio    *float64 `yaml:"churn_ratio,omitempty"`    // nil = default 0.5; 0 disables
-	MinHunks      *int     `yaml:"min_hunks,omitempty"`      // nil = default 4; 0 disables
-	HunkGapLines  *int     `yaml:"hunk_gap_lines,omitempty"` // nil = default 10; 0 disables
-	MinCyclomatic *int     `yaml:"min_cyclomatic,omitempty"` // nil = default 15; 0 disables
-	MaxFiles      *int     `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
+	ChurnRatio *float64 `yaml:"churn_ratio,omitempty"` // nil = default 0.5; 0 disables
+	// MinHunks and MinCyclomatic are FLOORS ("fires at or above"), so a value
+	// past MaxEscalationMinHunks / MaxEscalationMinCyclomatic is rejected rather
+	// than honored: no real file reaches it, so it would silently disable the
+	// signal instead of tightening it. Use 0 to disable deliberately.
+	MinHunks *int `yaml:"min_hunks,omitempty"` // nil = default 8; 0 disables
+	// HunkGapLines: nil = default 2; 0 disables. 1 is REJECTED, not honored: the
+	// signal fires on `gap < HunkGapLines`, and under --unified=0 git never emits
+	// two hunks with zero unchanged lines between them (it merges them), so a gap
+	// of 0 is unreachable and 1 would disable adjacency while reading like a
+	// deliberately tight window.
+	HunkGapLines  *int `yaml:"hunk_gap_lines,omitempty"`
+	MinCyclomatic *int `yaml:"min_cyclomatic,omitempty"` // nil = default 20; 0 disables
+	MaxFiles      *int `yaml:"max_files,omitempty"`      // nil = default 50; 0 disables the feature
 	// MaxSkeletonLines caps declaration headers rendered per file; nil = default
 	// 60; 0 disables skeleton injection while leaving escalation active.
 	MaxSkeletonLines *int `yaml:"max_skeleton_lines,omitempty"`
@@ -707,23 +725,46 @@ func (r *Registry) validatePayloadEscalation() []error {
 			errs = append(errs, fmt.Errorf("payload_escalation.churn_ratio must be <= 1.0 (it is a fraction of a file's lines), got %v", *pe.ChurnRatio))
 		}
 	}
+	// Two kinds of threshold share this loop, and exceeding each one fails a
+	// different way — hence the per-field reason. A CEILING field (max_files,
+	// max_skeleton_lines, hunk_gap_lines) bounds work, so too large reinstates
+	// the bloat the default prevents. A FLOOR field (min_hunks, min_cyclomatic)
+	// gates promotion on "at least this much", so too large is not stricter — it
+	// is unreachable, and the signal is silently dead.
+	const (
+		whyBloat = "larger values reinstate the payload bloat / memory blow-up the defaults protect against"
+		whyDead  = "this is a floor, so a larger value is not stricter — no real file reaches it and the signal is silently disabled (use 0 to disable it deliberately)"
+	)
 	for _, f := range []struct {
 		name string
 		val  *int
 		max  int // 0 = no ceiling
+		why  string
 	}{
-		{"min_hunks", pe.MinHunks, 0},
-		{"hunk_gap_lines", pe.HunkGapLines, MaxEscalationHunkGapLines},
-		{"min_cyclomatic", pe.MinCyclomatic, 0},
-		{"max_files", pe.MaxFiles, MaxEscalationFiles},
-		{"max_skeleton_lines", pe.MaxSkeletonLines, MaxEscalationSkeletonLines},
+		{"min_hunks", pe.MinHunks, MaxEscalationMinHunks, whyDead},
+		{"hunk_gap_lines", pe.HunkGapLines, MaxEscalationHunkGapLines, whyBloat},
+		{"min_cyclomatic", pe.MinCyclomatic, MaxEscalationMinCyclomatic, whyDead},
+		{"max_files", pe.MaxFiles, MaxEscalationFiles, whyBloat},
+		{"max_skeleton_lines", pe.MaxSkeletonLines, MaxEscalationSkeletonLines, whyBloat},
 	} {
 		if f.val != nil && *f.val < 0 {
 			errs = append(errs, fmt.Errorf("payload_escalation.%s must be >= 0 (0 = disabled), got %d", f.name, *f.val))
 		}
 		if f.val != nil && f.max > 0 && *f.val > f.max {
-			errs = append(errs, fmt.Errorf("payload_escalation.%s must be <= %d (larger values reinstate the payload bloat / memory blow-up the defaults protect against), got %d", f.name, f.max, *f.val))
+			errs = append(errs, fmt.Errorf("payload_escalation.%s must be <= %d (%s), got %d", f.name, f.max, f.why, *f.val))
 		}
+	}
+	// hunk_gap_lines: 1 is unreachable, not strict. The adjacency signal fires on
+	// `gap < hunk_gap_lines`, and git does not emit two hunks with zero unchanged
+	// lines between them under --unified=0, so gap < 1 can never hold. Accepting
+	// it would silently disable the signal while reading like the tightest
+	// possible window — the same "could never fire, so it is a silent
+	// misconfiguration rather than a stricter setting" case churn_ratio > 1 is
+	// rejected for above.
+	if pe.HunkGapLines != nil && *pe.HunkGapLines == 1 {
+		errs = append(errs, errors.New("payload_escalation.hunk_gap_lines must be 0 (disable adjacency) or >= 2: "+
+			"the signal fires on gap < hunk_gap_lines, and git never emits two hunks with zero unchanged lines "+
+			"between them under --unified=0, so 1 can never fire"))
 	}
 	return errs
 }
