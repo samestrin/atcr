@@ -407,6 +407,26 @@ func TestSkillExport_DirectoryCollidingWithSkillFile(t *testing.T) {
 	}
 }
 
+// TestSkillExport_PartialWriteReportsWhatLanded — a mid-walk failure leaves the
+// destination half-updated, and the error must say so: name that the tree is
+// partially updated and list at least one file that was already replaced, or
+// the user cannot tell a half-written tree from an untouched one. A non-empty
+// directory named after the 4th-walked embedded file forces the abort after
+// three files have landed.
+func TestSkillExport_PartialWriteReportsWhatLanded(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+	collision := filepath.Join(dest, "debt-resolve.md")
+	require.NoError(t, os.MkdirAll(collision, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(collision, "mine.md"), []byte("user data"), 0o644))
+
+	out, err := execSkillExport(t, "--dir", dest, "--force")
+	require.Error(t, err, "a mid-walk collision must fail the export")
+
+	msg := out + err.Error()
+	assert.Contains(t, msg, "partially updated", "the error must state the tree is half-updated")
+	assert.Contains(t, msg, "CONVENTIONS.md", "the error must name a file that was already replaced")
+}
+
 // TestSkillExport_CleanDestinationWarnsAboutNothing — the warning must not fire on
 // the ordinary path, or it becomes noise every user learns to ignore.
 func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
