@@ -257,13 +257,16 @@ and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
 ### `scorecard.TrustPriors` (Go API)
 
 `TrustPriors(dir string, minRuns int) (map[string]float64, error)` is the shared
-per-reviewer corroboration-rate resolver behind `atcr personas list --scores`
-and the skeptic-selection score map — one aggregation instead of each consumer
-rolling its own. It reads the store at `dir` (same store `atcr leaderboard`
-reads), sums `Runs`, `findings_corroborated`, and `findings_raised` across a
-reviewer's `(reviewer, model)` leaderboard rows (a reviewer that ran under
-several models is one entry, not one per model), and returns the recomputed
-rate keyed by **lowercase reviewer name**.
+per-reviewer corroboration-rate resolver behind `atcr personas list --scores` —
+one aggregation instead of each consumer rolling its own. It reads the store at
+`dir` (same store `atcr leaderboard` reads), sums `Runs`, `findings_corroborated`,
+and `findings_raised` across a reviewer's `(reviewer, model)` leaderboard rows (a
+reviewer that ran under several models is one entry, not one per model), and
+returns the recomputed rate keyed by **lowercase reviewer name**. It is designed
+to back a second consumer — the skeptic-selection score map at
+`internal/verify/select.go` — but that wiring is not yet done (`pipeline.go`
+still passes `nil`); a future epic wires it, reusing this same resolver rather
+than growing a third aggregation.
 
 - **Absence means "no history", not "zero trust".** A reviewer whose summed
   `Runs` is below `minRuns` is omitted from the map entirely rather than present

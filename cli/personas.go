@@ -218,6 +218,12 @@ func newPersonasListCmd() *cobra.Command {
 // joining each persona to its scorecard rate. When the scorecard store has no
 // data, every row shows n/a and a footer names the path that was checked.
 func listPersonasWithScores(cmd *cobra.Command, dir string) error {
+	// The err != nil branch below (and its "is unreadable" footer) is unreachable
+	// via the real loadPersonasScores today: scorecard.TrustPriors is best-effort
+	// by contract and never returns a non-nil error, so a permission-denied or
+	// corrupted store now degrades to the "no data" footer instead. The branch is
+	// kept because personasScores is an injectable seam — tests still exercise it
+	// via a fake — and because DefaultDir() itself can still fail.
 	data, err := personasScores(cmd.ErrOrStderr())
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
