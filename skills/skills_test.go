@@ -415,17 +415,43 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 
 	// Mutual exclusivity against every range flag must be stated, or an agent
 	// will happily compose --all with --base and hit a usage error at runtime.
-	for _, rangeFlag := range []string{"--base", "--head", "--merge-commit"} {
-		assert.Contains(t, SkillMD, rangeFlag,
-			"SKILL.md must name %s when stating baseline mutual exclusivity", rangeFlag)
-	}
-	assert.Regexp(t, regexp.MustCompile(`(?i)mutually exclusive|cannot be combined`), SkillMD,
-		"SKILL.md must state that baseline mode is mutually exclusive with the range flags")
+	assert.Empty(t, missingExclusivityFlags(SkillMD),
+		"SKILL.md's mutual-exclusivity sentence must name every baseline and range flag")
 
 	// The file-hash index skip is the one baseline behavior a user must know
 	// about to get a re-review of unchanged files.
 	assert.Contains(t, SkillMD, "`--fresh`",
 		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
+}
+
+// missingExclusivityFlags returns the baseline/range flags SKILL.md does not
+// name where it states mutual exclusivity.
+func missingExclusivityFlags(md string) []string {
+	var missing []string
+	for _, flag := range []string{"--all", "--dir", "--base", "--head", "--merge-commit"} {
+		if !strings.Contains(md, flag) {
+			missing = append(missing, flag)
+		}
+	}
+	return missing
+}
+
+// TestSkill_ExclusivityGuardIsSentenceScoped (AC4) — the exclusivity check
+// must read the exclusivity SENTENCE, not the whole file: the range flags
+// also appear in the Input Format git-range bullet and Orchestration step 1,
+// so a whole-file search stays green even when the sentence itself is
+// stripped down to a bare "mutually exclusive" — exactly the mutation AC4
+// names.
+func TestSkill_ExclusivityGuardIsSentenceScoped(t *testing.T) {
+	stripped := "Inputs: `--base` and `--head` select a range, or `--merge-commit`.\n" +
+		"Orchestration: run with --all or --dir.\n" +
+		"Note: baseline and range are mutually exclusive.\n"
+	assert.Equal(t, []string{"--all", "--dir", "--base", "--head", "--merge-commit"},
+		missingExclusivityFlags(stripped),
+		"a bare exclusivity sentence must be flagged even when the flags appear elsewhere in the file")
+
+	assert.Empty(t, missingExclusivityFlags(SkillMD),
+		"the shipped exclusivity sentence must name every baseline and range flag")
 }
 
 // skillSection returns the body of SKILL.md between the start heading and the
