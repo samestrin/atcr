@@ -51,6 +51,8 @@ atcr skill export --dir ~/.someagent/skills/atcr
 
 An unrecognized `--harness` exits non-zero and lists the values it knows rather than guessing a path. Export refuses to overwrite an existing non-empty destination; pass `--force` when you mean to replace it.
 
+**Upgrading an existing install:** `--force` overwrites the files this export writes but never deletes anything — export does not prune. Anything already in the destination that the export did not write is left in place, and the command prints a stderr warning naming those leftover files. If you are upgrading an install that predates the flattened skill layout (which had a nested `debt-resolve/` subdirectory), delete that leftover subdirectory: a stale nested `SKILL.md` is loaded by the harness as a second, conflicting skill.
+
 Standard skill resolution applies: a project-local copy wins over a globally installed one. The copy in this repo (`skills/atcr/`) is the canonical source the binary embeds — exporting produces byte-identical files.
 
 ## Usage
