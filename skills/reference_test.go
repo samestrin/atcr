@@ -217,14 +217,7 @@ func TestReference_DebtRowPointsAtFlattenedFile(t *testing.T) {
 // private planning-pipeline skills by name. They are not part of atcr's release
 // surface, so a standalone user reading the installed tree cannot act on them.
 func TestReference_NoPrivateSkillCitations(t *testing.T) {
-	for name, md := range map[string]string{
-		"SKILL.md":                  SkillMD,
-		"debt-resolve.md":           DebtResolveMD,
-		"CONVENTIONS.md":            ConventionsMD,
-		"host-review.md":            HostReviewMD,
-		"ambiguity-adjudication.md": AmbiguityAdjudicationMD,
-		"findings-format.md":        FindingsFormatMD,
-	} {
+	for name, md := range embeddedSkillDocs() {
 		for _, private := range []string{"/resolve-td", "/finalize-td", "/execute-code-review", "/reconcile-code-review"} {
 			assert.NotContains(t, md, private,
 				"%s cites the private skill %q, which is not part of atcr's release surface", name, private)

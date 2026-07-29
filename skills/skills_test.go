@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"io/fs"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -107,14 +109,71 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 	assert.Contains(t, AmbiguityAdjudicationMD, "ambiguous_hash")
 }
 
+// embeddedSkillDocs maps each shipped skill file to the string var carrying its
+// content. It is the single enumeration the content tests iterate, and
+// TestSkill_EveryTreeFileHasContentAssertions below pins it against Tree so a
+// seventh file cannot be added, exported, and silently skipped by every
+// content assertion in this package.
+func embeddedSkillDocs() map[string]string {
+	return map[string]string{
+		"SKILL.md":                  SkillMD,
+		"host-review.md":            HostReviewMD,
+		"ambiguity-adjudication.md": AmbiguityAdjudicationMD,
+		"findings-format.md":        FindingsFormatMD,
+		"CONVENTIONS.md":            ConventionsMD,
+		"debt-resolve.md":           DebtResolveMD,
+	}
+}
+
+// TestSkill_EveryTreeFileHasContentAssertions — Tree is what `atcr skill export`
+// ships, but every content assertion in this package runs against the named
+// string vars, and that enumeration is hand-written. Adding a seventh secondary
+// .md therefore lands it in the exported tree with no build-time content check
+// at all. Walking Tree and demanding each file appear in embeddedSkillDocs turns
+// that silent gap into a failing build.
+func TestSkill_EveryTreeFileHasContentAssertions(t *testing.T) {
+	docs := embeddedSkillDocs()
+
+	var shipped []string
+	require.NoError(t, fs.WalkDir(Tree, SkillDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(SkillDir, p)
+		if relErr != nil {
+			return relErr
+		}
+		shipped = append(shipped, filepath.ToSlash(rel))
+		return nil
+	}))
+
+	require.NotEmpty(t, shipped, "the embedded tree must not be empty")
+
+	for _, name := range shipped {
+		body, ok := docs[name]
+		assert.True(t, ok,
+			"%s ships in Tree but has no entry in embeddedSkillDocs, so no content assertion covers it — "+
+				"add an embedded var and its assertions", name)
+		assert.NotEmpty(t, body, "%s is enumerated but its embedded content is empty", name)
+	}
+
+	for name := range docs {
+		assert.Contains(t, shipped, name,
+			"embeddedSkillDocs names %s, which is not in Tree — the file was renamed or removed", name)
+	}
+}
+
 // TestSkill_NoAbsoluteOrClaudePaths enforces AC 05-01 Edge Case 2: the body
 // references only the atcr binary and review-directory-relative paths — no
 // .claude-specific paths and no absolute filesystem paths.
 func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
-	for _, md := range []string{SkillMD, HostReviewMD, AmbiguityAdjudicationMD, FindingsFormatMD, ConventionsMD, DebtResolveMD} {
-		assert.NotContains(t, md, ".claude", "no .claude-specific paths in any skill body")
+	for name, md := range embeddedSkillDocs() {
+		assert.NotContains(t, md, ".claude", "no .claude-specific paths in %s", name)
 		for _, abs := range []string{"/Users/", "/home/", "/opt/", "C:\\"} {
-			assert.NotContains(t, md, abs, "no absolute filesystem path %q", abs)
+			assert.NotContains(t, md, abs, "no absolute filesystem path %q in %s", abs, name)
 		}
 	}
 }
