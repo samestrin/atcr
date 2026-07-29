@@ -160,6 +160,28 @@ func TestSkillExport_EmptyDirFlagIsAUsageError(t *testing.T) {
 	assert.Error(t, statErr, "nothing may be written under the default harness path when --dir was supplied")
 }
 
+// TestSkillExport_UserHarnessWritesToUserPath — the --user flag's only other
+// coverage is a direct resolveSkillDest call, so a broken flag wire-up (the
+// `user := false` mutation) would ship silently. This drives the real command
+// tree: HOME is redirected to a temp dir, and the export must land in the
+// harness's user-level path under it, not the project path under the cwd.
+func TestSkillExport_UserHarnessWritesToUserPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := t.TempDir()
+	t.Chdir(work)
+
+	out, err := execSkillExport(t, "--harness", "codex", "--user")
+	require.NoError(t, err, "--user export must succeed")
+
+	userDest := filepath.Join(home, ".codex", "skills", "atcr")
+	assert.Contains(t, out, userDest, "the export must report the user-level destination")
+	_, statErr := os.Stat(filepath.Join(userDest, "SKILL.md"))
+	assert.NoError(t, statErr, "--user must write to the user-level path")
+	_, statErr = os.Stat(filepath.Join(work, ".codex"))
+	assert.Error(t, statErr, "--user must not write to the project path under the cwd")
+}
+
 // TestSkillExport_RefusesNonEmptyDestinationWithoutForce (AC7) — an existing
 // non-empty destination is never silently clobbered, and the refusal names the
 // path it would have written so the user can act on it. --force overwrites.
