@@ -352,7 +352,9 @@ func TestSkill_PathSafetyAdmitsResolutionEdits(t *testing.T) {
 	for name, md := range map[string]string{"CONVENTIONS.md": ConventionsMD, "debt-resolve.md": DebtResolveMD} {
 		assert.NotRegexp(t, regexp.MustCompile(`(?i)never outside it|never touches`), md,
 			"%s states the .atcr/ rooting rule absolutely, contradicting the resolution route's source and test edits", name)
-		assert.Regexp(t, regexp.MustCompile(`(?i)source and test files`), md,
+		// \W+ between the words so markdown emphasis and line wrapping do not
+		// decide whether the carve-out counts as present.
+		assert.Regexp(t, regexp.MustCompile(`(?i)source\W+and\W+test\W+files`), md,
 			"%s must name the working-tree source and test edits a resolution route makes", name)
 	}
 }

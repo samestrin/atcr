@@ -15,10 +15,14 @@ no sprint state, no private technical-debt README.
 
 Shared prerequisites and path-safety rules live in the sibling `CONVENTIONS.md` — read
 it first. In short: the `atcr` binary must be on `PATH`, the working directory must be inside a
-git work tree, and every file operation stays rooted under `.atcr/` and never touches
-`.planning/`. This route reads and writes the store **only** through the
-`atcr debt resolve` CLI subcommand; never read or parse `.atcr/debt/*.jsonl` shards
-directly.
+git work tree, the debt store stays rooted under `.atcr/`, and `.planning/` is off-limits.
+This route reads and writes the store **only** through the `atcr debt resolve` CLI
+subcommand; never read or parse `.atcr/debt/*.jsonl` shards directly.
+
+The `.atcr/` rooting covers the store, not the repository. Resolving an item means
+editing **source and test files** in the user's normal working tree — that is what the
+RED, GREEN, and REFACTOR stages below do, along with the branch and commits they
+produce.
 
 ## Store Access (CLI-only)
 
