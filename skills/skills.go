@@ -20,8 +20,9 @@
 // Embedding them here lets tests verify their content at build time and lets
 // the export command write the tree out without shipping it separately.
 //
-// go:embed cannot traverse `../`, so this file sits at or above every file it
-// embeds — hence skills/skills.go rather than skills/atcr/skills.go.
+// The go:embed directive cannot traverse `../`, so this file sits at or above
+// every file it embeds — hence skills/skills.go rather than
+// skills/atcr/skills.go.
 package skills
 
 import (
