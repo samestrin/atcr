@@ -12,7 +12,7 @@ atcr reads configuration from a user file, optional project files, and embedded 
 ## Three concepts, deliberately decoupled
 
 - **Provider** — an OpenAI-compatible endpoint + key environment variable. See [providers.md](providers.md).
-- **Persona** — a named prompt: lens, personality, severity rubric. atcr ships six (bruce/generalist+correctness, greta/algorithmic, kai/architecture, mira/production, dax/tests+error-paths, otto/style+idiom); `atcr init` writes editable copies into `.atcr/personas/`.
+- **Persona** — a named prompt: lens, personality, severity rubric. atcr ships nine (bruce/generalist+correctness, greta/algorithmic, kai/architecture, mira/production, dax/tests+error-paths, otto/style+idiom, ingrid/idiomatic-style+conventions, penny/performance+resource, sasha/security+injection); `atcr init` writes editable copies into `.atcr/personas/`.
 - **Agent** — a provider+model binding that references a persona. Fallback agents reference the *same persona* — a fallback is by construction the same lens on a different model, never duplicated prompt text.
 
 ## `registry.yaml` (user level)
@@ -273,7 +273,7 @@ An agent may declare an optional `language` scope — the file extensions it spe
 |-------|------|---------|-------------------|--------|
 | `language` | string[] (per agent) | — (no constraint) | each entry must be non-empty in canonical form and free of control characters | Declares the file extensions this agent specializes in. When a finding's file extension matches one of these, the agent is **preferred** in skeptic selection over an agent with no matching scope. Optional and backward-compatible — an omitted field imposes no constraint. |
 
-**Canonical format — no leading dot, lowercased.** Entries are canonicalized at load: surrounding whitespace is trimmed, a single leading dot is stripped, and the value is lowercased. So `go`, `.go`, and ` .GO ` all store as `go` and compare identically against a finding's normalized file extension. Multiple values are allowed:
+**Canonical format — no leading dots, lowercased.** Entries are canonicalized at load: surrounding whitespace is trimmed, all leading dots are stripped, and the value is lowercased. So `go`, `.go`, `..go`, and ` .GO ` all store as `go` and compare identically against a finding's normalized file extension. Multiple values are allowed:
 
 ```yaml
 agents:

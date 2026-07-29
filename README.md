@@ -92,7 +92,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
 | `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
-| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard`); see [docs/technical-debt.md](docs/technical-debt.md) |
+| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard` / `resolve` / `compact`); see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
@@ -176,7 +176,7 @@ atcr is a PR gate with no glue code: `--fail-on <severity>` returns a nonzero ex
 atcr review && atcr reconcile --fail-on high   # exit 1 if HIGH+ findings survive
 ```
 
-Exit codes: **0** success · **1** failure (including a `--fail-on` threshold violation) · **2** usage or configuration error.
+Exit codes: **0** success · **1** failure (including a `--fail-on` threshold violation) · **2** usage or configuration error · **3** authentication failure (`--sync-cloud` missing or rejected `ATCR_API_KEY`).
 
 GitHub Actions:
 
@@ -222,7 +222,8 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 
 ## Repository layout
 
-- `cmd/atcr/` — binary entry point and subcommands
+- `cmd/atcr/` — thin binary entry-point shim
+- `cli/` — the importable command tree (all subcommand logic)
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
 - `personas/` — the nine embedded default personas + `_base.md`
 - `skills/atcr/` — the atcr Agent Skill (host review + orchestration); it is embedded in the binary, so `atcr skill export` installs it
@@ -242,4 +243,4 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 
 > **Pro-Tip:** Use `git worktree` to work on multiple branches without disturbing your main checkout — e.g. `git worktree add ../atcr-feature-x feature-x` checks out `feature-x` into a sibling directory you can build/test in isolation, then `git worktree remove ../atcr-feature-x` cleans it up when done.
 
-Go 1.25+. Three direct dependencies: `spf13/cobra`, `gopkg.in/yaml.v3`, `modelcontextprotocol/go-sdk`.
+Go 1.25+. Direct dependencies are listed in `go.mod`; beyond `spf13/cobra`, `gopkg.in/yaml.v3`, and `modelcontextprotocol/go-sdk` they include `tetratelabs/wazero` (WASM parsers), `github.com/cli/go-gh` (PR resolution), and others.
