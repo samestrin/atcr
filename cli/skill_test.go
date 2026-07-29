@@ -276,6 +276,36 @@ func TestSkillExport_InstallDocReplacesManualCopy(t *testing.T) {
 	assert.Contains(t, install, ".agents/skills", "Installation must document the vendor-neutral .agents path")
 }
 
+// TestSkillExport_ReportsVersionWithDestination — "byte-identical to skills/atcr/"
+// only holds for a binary built from the same commit. An older installed atcr
+// exports the tree IT was compiled with, and nothing in the output says which
+// that is, so a user comparing an export against a newer checkout has no way to
+// tell a stale binary from a real discrepancy. The success line must name the
+// version alongside the destination.
+func TestSkillExport_ReportsVersionWithDestination(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+
+	out, _, err := execSkillExport(t, "--dir", dest)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, atcrVersion(),
+		"the export success output must name the atcr version that produced the tree")
+	assert.Contains(t, out, dest, "the export success output must still name the destination")
+}
+
+// TestSkillUsageDoc_QualifiesByteIdenticalClaim — docs/skill-usage.md must not
+// state the byte-identical guarantee unconditionally; it holds against the
+// binary's embedded copy, not against whatever skills/atcr/ happens to hold now.
+func TestSkillUsageDoc_QualifiesByteIdenticalClaim(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "docs", "skill-usage.md"))
+	require.NoError(t, err)
+	doc := string(raw)
+
+	require.Contains(t, doc, "byte-identical", "the doc must still make the guarantee it is qualifying")
+	assert.Regexp(t, regexp.MustCompile(`(?i)byte-identical[^.\n]*\b(embedded|binary|built|compiled)\b`), doc,
+		"the byte-identical claim must be qualified to the copy embedded in the running binary")
+}
+
 // sectionOf returns the body of the markdown section introduced by heading, up to
 // the next heading at the same level. Returns "" when the heading is absent. The
 // heading is matched anchored to a line boundary and the terminator level is
