@@ -4,7 +4,7 @@ atcr's standalone skill ([`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md)) is a
 
 ## Why this is a manual step
 
-The private skills live in a **separate repository** (`~/Documents/GitHub/claude-prompts/.claude/skills/`), outside this repository's workspace. Automated tooling operating in the `atcr` repo has write access only to `/Users/samestrin/Documents/GitHub/atcr`, so it cannot edit, stage, or commit files in `claude-prompts`. Migrating those skills is therefore left to a manual operator step.
+The private skills live in a **separate repository** (the `claude-prompts` repo, outside this repository's workspace). Automated tooling operating in the `atcr` repo has write access only within this repository's own workspace, so it cannot edit, stage, or commit files in `claude-prompts`. Migrating those skills is therefore left to a manual operator step.
 
 This is a deliberate descope, **not** an open compatibility question. Epic 12.0 (Skill Integration) already validated the private-skill backward-compatibility end-to-end from the external (`claude-prompts`) side, and this repository additionally locks the documented `atcr review --output-dir` + `atcr reconcile` backend contract with a repo-local regression test (see [`docs/code-review-backend.md`](code-review-backend.md)). The private skills remain fully supported.
 
@@ -19,7 +19,7 @@ When you next update the `claude-prompts` repository, migrate its atcr-related s
 
 ## Scope boundary
 
-This document is the deliverable; the migration itself is performed manually in the `claude-prompts` repository. This repository's tooling makes no writes to `~/Documents/GitHub/claude-prompts/`.
+This document is the deliverable; the migration itself is performed manually in the `claude-prompts` repository. This repository's tooling makes no writes to the `claude-prompts` repository.
 
 ## Related
 
