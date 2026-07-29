@@ -270,6 +270,21 @@ func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
 	assert.NotContains(t, out, "warning:", "a clean export must emit no leftover warning")
 }
 
+// TestSkillExport_StaleScanFailureIsVisible — warnStaleSkillFiles exists to catch
+// leftover files, so when the scan itself fails (e.g. an unreadable subdirectory
+// mid-walk) the safety net is silently absent. The walk error must surface as a
+// warning rather than return quietly, or a broken tree looks exactly like a clean
+// one.
+func TestSkillExport_StaleScanFailureIsVisible(t *testing.T) {
+	var errOut strings.Builder
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+
+	warnStaleSkillFiles(&errOut, missing, map[string]bool{})
+
+	assert.Contains(t, errOut.String(), "warning:",
+		"a failed leftover-file scan must be visible, not silent")
+}
+
 // TestSkillExport_ReplacesSymlinkRatherThanWritingThroughIt — os.WriteFile follows
 // a symlink, which would push skill content through the link and clobber a file
 // OUTSIDE the destination while still exiting 0. A user who symlinked an installed
