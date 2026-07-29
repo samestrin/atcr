@@ -329,6 +329,29 @@ func TestSkillExport_WarnsAboutLeftoverFiles(t *testing.T) {
 	assert.NoError(t, statErr, "export must warn about leftovers, never delete them")
 }
 
+// TestSkillExport_WarnsDespiteIncompleteLeftoverScan — one unreadable
+// subdirectory aborts the walk with an error, but the leftovers found BEFORE
+// the error must still be named: silently dropping them contradicts the whole
+// point of the warning (a leftover nested SKILL.md loads as a second skill).
+// The scan's failure must also be admitted, or the report reads as complete.
+func TestSkillExport_WarnsDespiteIncompleteLeftoverScan(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+	unreadable := filepath.Join(dest, "unreadable")
+	require.NoError(t, os.MkdirAll(unreadable, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(unreadable, "trapped.md"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dest, "leftover.md"), []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+
+	out, err := execSkillExport(t, "--dir", dest, "--force")
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "leftover.md",
+		"leftovers found before the walk error must still be reported")
+	assert.Contains(t, out, "incomplete",
+		"an aborted leftover scan must say it did not finish")
+}
+
 // TestSkillExport_CleanDestinationWarnsAboutNothing — the warning must not fire on
 // the ordinary path, or it becomes noise every user learns to ignore.
 func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
