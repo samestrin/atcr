@@ -86,13 +86,13 @@ func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 			harness, strings.Join(knownHarnesses(), ", ")))
 	}
 
-	path := h.project
-	if user {
-		path = h.user
+	if !user {
+		return h.project, nil
 	}
 	// expandHome (quickstart.go) turns the table's leading `~/` into the real home
-	// directory; a project-relative path has no `~` and passes through unchanged.
-	expanded, err := expandHome(path)
+	// directory. Only the user-level branch reaches it — a project-relative path
+	// has no `~` — so a failure here always names the user-level install path.
+	expanded, err := expandHome(h.user)
 	if err != nil {
 		return "", fmt.Errorf("resolving home directory for the %s user-level install path: %w", harness, err)
 	}
