@@ -5,13 +5,17 @@
 // fields are stamped back onto the reconciled wire record — keeping that
 // ATCR-specific machinery out of the stdlib-only public library.
 //
-// Phase 3 transitional note: this package has zero non-test callers today.
-// RunReconcile (gate.go) reaches lib.go's Reconcile wrapper, which inlines the
+// Boundary note: this package has zero non-test callers today. RunReconcile
+// (gate.go) reaches lib.go's Reconcile wrapper, which inlines the
 // stream.Finding→Finding field map because adapter imports internal/reconcile,
-// creating an import cycle that prevents the reverse import. TD-006 tracks
-// collapsing to one conversion once Phase 3 inverts the dependency. The absence
-// of live callers does not mean this package is unused or safe to delete — it
-// is the intended Phase 3 boundary, not yet reached by the live path.
+// creating an import cycle that prevents the reverse import. Epic 8.0
+// Clarification Q9 (2026-06-23) and Epic 35.7 confirm this is not a pending
+// Phase-3 step: routing through adapter.ToFinding instead would require moving
+// JSONFinding/Verification out of internal/reconcile, which stays out of scope
+// by design (see .planning/technical-debt/README.md for the tracked, still-open
+// structural fix). The absence of live callers does not mean this package is
+// unused or safe to delete — it is the intended boundary, just not reachable
+// from lib.go's inline copy under the current package layout.
 package adapter
 
 import (
