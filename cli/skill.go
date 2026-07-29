@@ -215,6 +215,12 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 
 	written, err := writeSkillTree(dest)
 	if err != nil {
+		// A partial write leaves a half-updated tree; report what was NOT
+		// written as well, so the failure leaves the same leftover inventory
+		// the success path does.
+		if len(written) > 0 {
+			warnStaleSkillFiles(cmd.ErrOrStderr(), dest, written)
+		}
 		return err
 	}
 	warnStaleSkillFiles(cmd.ErrOrStderr(), dest, written)
@@ -316,6 +322,20 @@ func writeSkillTree(dest string) (map[string]bool, error) {
 		// outside the destination entirely — a real hazard for anyone who
 		// symlinked an installed skill file back to a source checkout. Replacing
 		// the entry keeps every write inside dest.
+		//
+		// A DIRECTORY sharing the file's name is never removed: deleting an
+		// empty one would be an undocumented prune (the contract is "overwrites
+		// but never prunes") and os.Remove on a non-empty one fails with a raw
+		// ENOTEMPTY. Both are the user's call to resolve, so they are reported
+		// as a usage-grade collision instead.
+		info, statErr := os.Lstat(target)
+		switch {
+		case statErr == nil && info.IsDir():
+			return usageError(fmt.Errorf(
+				"replacing %s: a directory already exists with that name; move it aside and re-run", target))
+		case statErr != nil && !errors.Is(statErr, os.ErrNotExist):
+			return fmt.Errorf("inspecting %s: %w", target, statErr)
+		}
 		if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("replacing %s: %w", target, err)
 		}
