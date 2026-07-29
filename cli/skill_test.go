@@ -143,6 +143,23 @@ func TestSkillExport_ResolveDestination(t *testing.T) {
 	assert.Equal(t, "/tmp/somewhere/atcr", explicit, "--dir is the literal destination, with no skill name appended")
 }
 
+// TestSkillExport_EmptyDirFlagIsAUsageError — an explicitly empty `--dir ""` —
+// the normal result of `--dir "$SKILLS_DIR"` with an unset or typo'd variable —
+// must be rejected as a usage error, not silently treated as "no --dir given"
+// while the export writes to the harness's default path.
+func TestSkillExport_EmptyDirFlagIsAUsageError(t *testing.T) {
+	dest := t.TempDir()
+	t.Chdir(dest)
+
+	out, err := execSkillExport(t, "--dir", "")
+	require.Error(t, err, "a set-but-empty --dir must fail rather than fall back to the harness path")
+	assert.Equal(t, 2, exitCode(err), "a set-but-empty --dir is a usage error (exit 2)")
+	assert.Contains(t, out+err.Error(), "--dir", "the error must name the flag at fault")
+
+	_, statErr := os.Stat(filepath.Join(dest, ".claude"))
+	assert.Error(t, statErr, "nothing may be written under the default harness path when --dir was supplied")
+}
+
 // TestSkillExport_RefusesNonEmptyDestinationWithoutForce (AC7) — an existing
 // non-empty destination is never silently clobbered, and the refusal names the
 // path it would have written so the user can act on it. --force overwrites.
