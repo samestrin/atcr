@@ -130,11 +130,13 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // dispatcher routing table must cover 1:1. If a command is added to or removed
 // from NewRootCmdWithClient, update this list so the routing-table test catches drift
 // rather than letting the routing table silently diverge (AC 01-01, Edge Case 1).
+// cli/skill_routing_test.go holds the authoritative bidirectional command↔row
+// check; this list is a package-local guard only.
 var dispatcherCommands = []string{
 	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
-	"models", "debt", "history", "audit-report", "skill", "version",
+	"models", "debt", "history", "audit-report", "skill", "config", "version",
 }
 
 // TestSkill_DispatcherRoutingTable (AC 01-01) — every live Cobra command is
