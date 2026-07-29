@@ -342,6 +342,20 @@ func TestSkill_ConventionsRelocatedChecks(t *testing.T) {
 		"gh CLI note must retain its PR-resolution context")
 }
 
+// TestSkill_FindingsFormatDescribedAsSelfContained — SKILL.md's pointer must not
+// describe findings-format.md as a redirect to docs/findings-format.md. docs/ is
+// not part of an exported install, so an agent that believes the sibling only
+// forwards elsewhere concludes the column contract is unreachable and skips
+// loading the one file that actually carries it.
+func TestSkill_FindingsFormatDescribedAsSelfContained(t *testing.T) {
+	assert.NotRegexp(t, regexp.MustCompile(`(?i)rather than redefining the column contract`), SkillMD,
+		"SKILL.md still describes findings-format.md as forwarding to docs/ instead of carrying the contract")
+	assert.Regexp(t, regexp.MustCompile(`(?i)self-contained`), FindingsFormatMD,
+		"findings-format.md must state that its contract is self-contained")
+	assert.Regexp(t, regexp.MustCompile(`(?i)self-contained`), SkillMD,
+		"SKILL.md must describe findings-format.md as self-contained, matching what that file says of itself")
+}
+
 // TestSkill_PathSafetyAdmitsResolutionEdits — the .atcr/ rooting rule cannot be
 // stated absolutely. debt-resolve.md's entire purpose is writing OUTSIDE .atcr/:
 // RED authors a failing test, GREEN edits the implementation, REFACTOR cleans it

@@ -103,4 +103,4 @@ After `atcr reconcile`, you may optionally adjudicate the gray-zone clusters in 
 
 ## Findings Format Reference
 
-The findings stream is a versioned, pipe-delimited contract — per-source `findings.txt` files carry 8 columns, and reconciled output carries 9 (a `REVIEWERS` list plus a `CONFIDENCE` column). The full reference is in `findings-format.md`, which points to the canonical `docs/findings-format.md` rather than redefining the column contract.
+The findings stream is a versioned, pipe-delimited contract — per-source `findings.txt` files carry 8 columns, and reconciled output carries 9 (a `REVIEWERS` list plus a `CONFIDENCE` column). The full reference is in `findings-format.md`, which carries the column contract in full and is self-contained — load that sibling, not `docs/findings-format.md`, which is repo-only background and is not part of an exported install.

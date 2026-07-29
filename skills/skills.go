@@ -46,8 +46,9 @@ var HostReviewMD string
 //go:embed atcr/ambiguity-adjudication.md
 var AmbiguityAdjudicationMD string
 
-// FindingsFormatMD is the embedded findings-format reference; it points to the
-// canonical docs/findings-format.md rather than redefining the column contract.
+// FindingsFormatMD is the embedded findings-format reference. It carries the
+// column contract in full — docs/findings-format.md is repo-only background and
+// ships with no exported install, so the sibling cannot merely forward to it.
 //
 //go:embed atcr/findings-format.md
 var FindingsFormatMD string
