@@ -222,14 +222,18 @@ func TestSkillExport_InstallDocReplacesManualCopy(t *testing.T) {
 }
 
 // sectionOf returns the body of the markdown section introduced by heading, up to
-// the next heading at the same level. Returns "" when the heading is absent.
+// the next heading at the same level. Returns "" when the heading is absent. The
+// heading is matched anchored to a line boundary and the terminator level is
+// derived from the matched line — a deeper same-named heading (### X contains
+// ## X as raw text) must not shift or truncate the scanned region.
 func sectionOf(doc, heading string) string {
-	start := strings.Index(doc, heading)
-	if start < 0 {
+	idx := strings.Index("\n"+doc, "\n"+heading)
+	if idx < 0 {
 		return ""
 	}
-	rest := doc[start+len(heading):]
-	level := strings.Repeat("#", strings.Count(heading, "#"))
+	line := doc[idx:] // haystack offset absorbs the prepended "\n"
+	level := strings.Repeat("#", len(line)-len(strings.TrimLeft(line, "#")))
+	rest := line[len(heading):]
 	if end := strings.Index(rest, "\n"+level+" "); end >= 0 {
 		return rest[:end]
 	}
