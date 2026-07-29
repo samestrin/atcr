@@ -166,6 +166,14 @@ func newSkillExportCmd() *cobra.Command {
 	return cmd
 }
 
+// runSkillExport writes the embedded skill tree to the resolved destination.
+//
+// The non-empty check and the write are deliberately NOT atomic: there is a
+// TOCTOU window between dirIsNonEmpty and writeSkillTree with no lock or O_EXCL,
+// so --force is advisory — a concurrent export, an editor, or a second process
+// can populate dest in between and the write proceeds. The check exists to stop
+// the common case (clobbering an existing install by accident), not to
+// serialize concurrent writers; at this scale a lock file is not warranted.
 func runSkillExport(cmd *cobra.Command, _ []string) error {
 	harness := mustFlag(cmd, "harness")
 	dir := mustFlag(cmd, "dir")
