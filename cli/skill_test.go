@@ -352,6 +352,26 @@ func TestSkillExport_WarnsDespiteIncompleteLeftoverScan(t *testing.T) {
 		"an aborted leftover scan must say it did not finish")
 }
 
+// TestSkillExport_IgnoresOSMetadataFiles — a destination holding only OS
+// metadata (Finder's .DS_Store, editor swap files) is not "non-empty" in any
+// sense the user cares about: it must not demand --force, and the export must
+// not report the metadata as a leftover skill file. On macOS merely opening
+// the installed skills folder in Finder would otherwise produce a permanent
+// confusing warning on every subsequent export.
+func TestSkillExport_IgnoresOSMetadataFiles(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "atcr")
+	require.NoError(t, os.MkdirAll(dest, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dest, ".DS_Store"), []byte("finder"), 0o644))
+
+	out, err := execSkillExport(t, "--dir", dest)
+	require.NoError(t, err, "a directory holding only dot-prefixed OS metadata must not require --force")
+	assert.NotContains(t, out, "warning:", "OS metadata must not be reported as a stale skill file")
+	assert.NotContains(t, out, ".DS_Store", "OS metadata must not be named in the output")
+
+	_, statErr := os.Stat(filepath.Join(dest, "SKILL.md"))
+	assert.NoError(t, statErr, "the export must have written the skill tree")
+}
+
 // TestSkillExport_CleanDestinationWarnsAboutNothing — the warning must not fire on
 // the ordinary path, or it becomes noise every user learns to ignore.
 func TestSkillExport_CleanDestinationWarnsAboutNothing(t *testing.T) {
