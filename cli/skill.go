@@ -226,7 +226,12 @@ func runSkillExport(cmd *cobra.Command, _ []string) error {
 	warnStaleSkillFiles(cmd.ErrOrStderr(), dest, written)
 
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "Exported %d skill file(s) to %s\n", len(written), dest); err != nil {
+	// Name the version: the exported tree is the copy embedded in THIS binary,
+	// which is only the repo's skills/atcr/ when the two were built from the same
+	// commit. Without it, a user diffing an export against a newer checkout
+	// cannot tell a stale binary from a real discrepancy.
+	if _, err := fmt.Fprintf(out, "Exported %d skill file(s) to %s (atcr %s)\n",
+		len(written), dest, atcrVersion()); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "Point your agent at %s, or restart it if it indexes skills at startup.\n", dest)

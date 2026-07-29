@@ -53,7 +53,7 @@ An unrecognized `--harness` exits non-zero and lists the values it knows rather 
 
 **Upgrading an existing install:** `--force` overwrites the files this export writes but never deletes anything — export does not prune. Anything already in the destination that the export did not write is left in place, and the command prints a stderr warning naming those leftover files. If you are upgrading an install that predates the flattened skill layout (which had a nested `debt-resolve/` subdirectory), delete that leftover subdirectory: a stale nested `SKILL.md` is loaded by the harness as a second, conflicting skill.
 
-Standard skill resolution applies: a project-local copy wins over a globally installed one. The copy in this repo (`skills/atcr/`) is the canonical source the binary embeds — exporting produces byte-identical files.
+Standard skill resolution applies: a project-local copy wins over a globally installed one. The copy in this repo (`skills/atcr/`) is the canonical source the binary embeds — exporting produces files byte-identical to the copy embedded in the binary you ran. That is the same thing as `skills/atcr/` only when the two were built from the same commit: an older installed `atcr` exports the tree it was compiled with. The export prints its own version alongside the destination, so check it against this repo before treating a difference as a bug.
 
 ## Usage
 
