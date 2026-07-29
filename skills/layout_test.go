@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,53 @@ func TestLayout_OneSkillMDPerSkillDirectory(t *testing.T) {
 			"%s/%s declares name %q but lives in directory %q — directory name must match the frontmatter",
 			installRoot, rel, name, dirName)
 	}
+}
+
+// TestLayout_EverySkillDirectoryShipsInTree (AC1) — every skill directory on
+// disk under the install root must also be embedded in skills.Tree, or
+// `atcr skill export` silently ships a subset: the layout is justified as "a
+// second skill needs no further rename", but `//go:embed atcr` embeds only
+// the one directory, so a second skill would build green and export nothing.
+func TestLayout_EverySkillDirectoryShipsInTree(t *testing.T) {
+	root := skillsDir(t)
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err, "read %s/", installRoot)
+
+	var onDisk []string
+	for _, e := range entries {
+		if e.IsDir() {
+			onDisk = append(onDisk, e.Name())
+		}
+	}
+	require.NotEmpty(t, onDisk, "no skill directories under %s/", installRoot)
+
+	assert.Empty(t, dirsMissingFromFS(Tree, onDisk),
+		"skill directories on disk but absent from skills.Tree — export would silently drop them")
+}
+
+// dirsMissingFromFS returns the directory names not present at the top level
+// of fsys — the gap between the on-disk install root and the embedded tree.
+func dirsMissingFromFS(fsys fs.FS, names []string) []string {
+	var missing []string
+	for _, name := range names {
+		if _, err := fs.ReadDir(fsys, name); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// TestLayout_TreeGapIsDetected — the disk↔Tree guard must actually fire: a
+// second skill directory present on disk but absent from the embedded FS
+// (exactly the atcr-lite mutation) is reported, not waved through.
+func TestLayout_TreeGapIsDetected(t *testing.T) {
+	tree := fstest.MapFS{
+		"atcr/SKILL.md": &fstest.MapFile{Data: []byte("x")},
+	}
+	assert.Equal(t, []string{"atcr-lite"}, dirsMissingFromFS(tree, []string{"atcr", "atcr-lite"}),
+		"a second on-disk skill missing from the tree must be reported")
+	assert.Empty(t, dirsMissingFromFS(tree, []string{"atcr"}),
+		"the shipped skill itself must not be flagged")
 }
 
 // TestLayout_NoStaleSkillPathReferences (AC8) — no tracked source, doc, or test
