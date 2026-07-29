@@ -151,8 +151,7 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 
 	// Frontmatter description must describe a general-purpose dispatcher, not
 	// only the review→reconcile→report flow (AC 01-01, Scenario 3).
-	fm := frontmatter(t)
-	desc := fieldValue(fm, "description")
+	desc := frontmatterField(t, SkillMD, "description")
 	assert.Regexp(t, regexp.MustCompile(`(?i)dispatch|<command>|command`), desc,
 		"description must reflect the /atcr <command> dispatcher, not a review-only flow")
 }
@@ -162,7 +161,7 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 // and config were routed without the description listing them, so a maintainer
 // scanning only the description would not see either command.
 func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
-	desc := fieldValue(frontmatter(t), "description")
+	desc := frontmatterField(t, SkillMD, "description")
 	for _, name := range []string{"quality-report", "config", "skill"} {
 		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
 			"frontmatter description must enumerate the %q command", name)
@@ -228,8 +227,7 @@ func TestSkill_SecondaryFilesVerbatim(t *testing.T) {
 // TestSkill_FrontmatterConstraints (AC 01-04) — name/description obey the Agent
 // Skill format limits so the skill is guaranteed loadable by Claude Code.
 func TestSkill_FrontmatterConstraints(t *testing.T) {
-	fm := frontmatter(t)
-	name := fieldValue(fm, "name")
+	name := frontmatterField(t, SkillMD, "name")
 	require.NotEmpty(t, name, "frontmatter name must be present")
 	assert.LessOrEqual(t, len(name), 64, "name must be <=64 chars")
 	assert.Regexp(t, regexp.MustCompile(`^[a-z0-9-]+$`), name,
@@ -238,7 +236,7 @@ func TestSkill_FrontmatterConstraints(t *testing.T) {
 		assert.NotContains(t, name, banned, "name must not contain %q", banned)
 	}
 
-	desc := fieldValue(fm, "description")
+	desc := frontmatterField(t, SkillMD, "description")
 	require.NotEmpty(t, desc, "frontmatter description must be present")
 	assert.LessOrEqual(t, len(desc), 1024, "description must be <=1024 chars")
 }
@@ -379,26 +377,6 @@ func TestSkill_DebtRowDocumentsResolve(t *testing.T) {
 		"SKILL.md must document the atcr debt resolve route")
 	assert.Contains(t, SkillMD, "`debt-resolve.md`",
 		"SKILL.md must point at the on-demand debt-resolve.md secondary file")
-}
-
-// frontmatter returns the YAML frontmatter block between the first two --- lines.
-func frontmatter(t *testing.T) string {
-	t.Helper()
-	require.True(t, strings.HasPrefix(SkillMD, "---\n"), "SKILL.md must open with YAML frontmatter")
-	end := strings.Index(SkillMD[4:], "\n---")
-	require.GreaterOrEqual(t, end, 0, "frontmatter must be closed by ---")
-	return SkillMD[4 : 4+end]
-}
-
-// fieldValue extracts a single-line `key: value` field from a YAML frontmatter
-// block. Returns "" if the key is absent.
-func fieldValue(fm, key string) string {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `:\s*(.+)$`)
-	m := re.FindStringSubmatch(fm)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(m[1])
 }
 
 // ---------------------------------------------------------------------------
