@@ -41,7 +41,7 @@ That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Inst
 - **`.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode.** Kimi merges brand directories with `kimi > claude > codex` priority; opencode scans `.claude/skills/*/SKILL.md` directly. The default `claude` export therefore already serves three of the five harnesses.
 - **`.agents/skills/` is the vendor-neutral path,** read natively by Kimi CLI, opencode, and Antigravity CLI. Use `--harness agents` for one tool-agnostic install.
 
-`.claude` ∪ `.agents` ∪ `.codex` covers every harness in the table, so at most two exports are ever needed.
+`.claude` ∪ `.agents` ∪ `.codex` covers every harness in the table, so at most three exports are ever needed. Note the table has six `--harness` values but covers five tools: `agents` is a vendor-neutral alias for the `.agents/skills/` path convention, not a sixth tool.
 
 For a harness not listed — or any other location — pass `--dir`. It overrides `--harness`/`--user` entirely and is the skill directory itself, not a parent:
 
