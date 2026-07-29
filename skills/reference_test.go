@@ -161,14 +161,36 @@ func TestReference_DebtResolveIsAPlainReference(t *testing.T) {
 		"debt-resolve.md must carry no YAML frontmatter — it is a reference file, not a skill")
 	assert.NotContains(t, DebtResolveMD, "name: atcr-debt-resolve",
 		"debt-resolve.md must not declare a top-level skill name")
+	assert.False(t, hasStandaloneTrigger(DebtResolveMD),
+		"debt-resolve.md must not carry a standalone trigger phrase")
+}
 
+// hasStandaloneTrigger reports whether md carries a marker that would make a
+// harness offer the file as an independently-invocable skill.
+func hasStandaloneTrigger(md string) bool {
 	for _, trigger := range []string{
 		"Use when a standalone atcr user asks",
 		"Loaded on demand from the atcr dispatcher",
 	} {
-		assert.NotContains(t, DebtResolveMD, trigger,
-			"debt-resolve.md must not carry the standalone trigger phrase %q", trigger)
+		if strings.Contains(md, trigger) {
+			return true
+		}
 	}
+	return false
+}
+
+// TestReference_DebtResolveTriggerShapeGeneralizes (AC3) — the trigger guard
+// must catch the SHAPE of a standalone-skill marker, not only the two
+// historical literals: a freshly worded "Use when ..." trigger line or a
+// reworded "loaded on demand from the <x> dispatcher" is the same
+// harness-invocation risk in new clothes.
+func TestReference_DebtResolveTriggerShapeGeneralizes(t *testing.T) {
+	assert.True(t, hasStandaloneTrigger("# x\n\nUse when a standalone user asks to resolve technical debt.\n"),
+		"a reworded Use-when trigger line must trip the guard")
+	assert.True(t, hasStandaloneTrigger("Loaded on demand from the atcr dispatcher, never directly."),
+		"the historical literal must still trip the guard")
+	assert.False(t, hasStandaloneTrigger(DebtResolveMD),
+		"debt-resolve.md itself must stay clean")
 }
 
 // TestReference_DebtRowPointsAtFlattenedFile (AC3) — SKILL.md's `atcr debt` row
