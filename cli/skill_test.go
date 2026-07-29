@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -262,8 +263,15 @@ func TestSkillExport_InstallDocReplacesManualCopy(t *testing.T) {
 	assert.Contains(t, install, "atcr skill export", "Installation must prescribe the export command")
 	assert.NotContains(t, install, "cp ", "Installation must no longer hand the user a cp pipeline")
 
+	// Pin each harness to its OWN ROW in the --harness table, not to a bare
+	// substring of the section. Two of the six names are words the surrounding
+	// prose already contains for other reasons — "claude" via .claude/skills/
+	// and "agents" via .agents/skills/ — so a Contains check passes even with
+	// those rows deleted, which is the one regression it exists to catch.
 	for name := range skillHarnesses {
-		assert.Contains(t, install, name, "Installation must document the %q harness", name)
+		row := regexp.MustCompile("(?m)^\\|\\s*`" + regexp.QuoteMeta(name) + "`")
+		assert.Regexp(t, row, install,
+			"Installation must document the %q harness as a row in the --harness table, not only in prose", name)
 	}
 	assert.Contains(t, install, ".agents/skills", "Installation must document the vendor-neutral .agents path")
 }
