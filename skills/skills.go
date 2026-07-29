@@ -4,9 +4,11 @@
 // agent; there is no runtime Go logic here — orchestration is a sequence of atcr
 // CLI invocations.
 //
-// The install root is plural (`skills/`) with one directory per skill, so
-// `cp -r skills/* <dest>` is correct in one line and a second skill can land
-// beside the first without another rename. Each skill directory's name matches
+// The install root is plural (`skills/`) with one directory per skill, so a
+// second skill can land beside the first without another rename. Install with
+// `atcr skill export` — it copies only the skill directory's contents, while a
+// bare `cp -r skills/* <dest>` would also drop this package's Go source and
+// test files into the destination. Each skill directory's name matches
 // its SKILL.md `name:` frontmatter — `skills/atcr/` for `name: atcr`.
 //
 // atcr/SKILL.md is a /atcr <command> dispatcher: a routing table over the atcr

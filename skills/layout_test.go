@@ -14,8 +14,9 @@ import (
 )
 
 // installRoot is the shipped-skill install root: one directory per skill, each
-// named for its SKILL.md `name:` frontmatter. Plural so `cp -r skills/* <dest>`
-// is correct in one line and a second skill needs no further rename.
+// named for its SKILL.md `name:` frontmatter. Plural so a second skill needs no
+// further rename; install via `atcr skill export`, not a bare `cp` of the
+// install root (that would copy this package's Go source files too).
 const installRoot = "skills"
 
 // skillsDir returns the absolute path to the install root.
