@@ -65,10 +65,14 @@ Invoke the skill from within a git repository and give it one of:
 | Branch name | `feature-x` | Reviews the branch vs. the detected default branch |
 | PR URL | `https://github.com/owner/repo/pull/42` | Resolves base/head via `gh`, then reviews |
 | (nothing) | — | Reviews the current branch vs. the default branch |
+| Whole repository | `--all` | Reviews every non-ignored, git-tracked file as a full-repository baseline scan |
+| A subtree | `--dir <path>` | Reviews every non-ignored, git-tracked file under that repo-root-relative directory as a scoped baseline scan |
+
+Baseline runs (`--all` / `--dir`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--fresh` to bypass that index and re-review everything in scope. Baseline mode has no diff range — `--all` and `--dir` never combine with `--base`/`--head`/`--merge-commit` or with each other.
 
 The skill then:
 
-1. Pre-flights the range (`atcr range`).
+1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--dir`), which has no range to resolve.
 2. Starts the pool review in the background (`atcr review`) and polls `atcr status <id>` until it completes (10s interval, 10-minute default timeout).
 3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.txt`.
 4. Reconciles all sources (`atcr reconcile <id>`).
