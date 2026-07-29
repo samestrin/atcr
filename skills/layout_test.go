@@ -1,14 +1,17 @@
 package skills
 
 import (
+	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +139,10 @@ func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 	//     followed by the old package name and then a quote or whitespace.
 	//  3. the quoted path-segment form used by filepath.Join, where the old
 	//     directory name is a string argument followed by a skill filename.
+	//  4. the same Join form WITHOUT a following filename literal, which form 3
+	//     misses. It is scoped to a Join call on purpose: the old directory name
+	//     is also the name of the `atcr skill` command, so a bare quoted
+	//     occurrence is usually a legitimate command name, not a path.
 	//
 	// Every pattern is assembled from parts, and this file names the old directory
 	// nowhere as a literal, so the guard scans itself without self-matching.
@@ -144,54 +151,63 @@ func TestLayout_NoStaleSkillPathReferences(t *testing.T) {
 		`(^|[^a-zA-Z0-9_-])` + old + `/`,
 		`atcr/` + old + `["'\s]`,
 		`"` + old + `"\s*,\s*"[A-Za-z0-9._-]+\.md"`,
+		`Join\([^)]*"` + old + `"`,
 	}, "|"))
 
-	scanned := map[string]bool{".go": true, ".md": true, ".yml": true, ".yaml": true, ".json": true, ".sh": true}
-	skipDirs := map[string]bool{"node_modules": true, "bin": true, "vendor": true, "testdata": true}
-
+	// Scope is every TRACKED file, which is what this test's contract says and
+	// what a filesystem walk kept failing to deliver: .githooks/ fell to the
+	// dot-directory rule while .github was admitted, extensionless files (the
+	// hooks themselves) and .txt/.toml/.patch files sat outside the extension
+	// allowlist, and testdata/ was skipped wholesale. A stale reference planted
+	// in any of those survived the scan. git is the authority on what is
+	// tracked, so ask git rather than maintaining skip lists that drift.
 	var offenders []string
-	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			// Dot-directories (.git, .planning, .atcr, .github's workflows are
-			// wanted though) and known build/dep trees are out of scope.
-			name := d.Name()
-			if path != root && (strings.HasPrefix(name, ".") && name != ".github") {
-				return fs.SkipDir
-			}
-			if skipDirs[name] {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !scanned[filepath.Ext(path)] {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		rel = filepath.ToSlash(rel)
+	for _, rel := range trackedFiles(t, root) {
+		// CHANGELOG.md is exempt: historical entries record the paths as they
+		// were and are not rewritten.
 		if rel == "CHANGELOG.md" {
-			return nil
+			continue
 		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
+		raw, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue // tracked but deleted in the work tree
+		}
+		require.NoError(t, readErr, "read %s", rel)
+		if !utf8.Valid(raw) {
+			continue // binary fixture (the .wasm parsers) — no source text to go stale
 		}
 		for i, line := range strings.Split(string(raw), "\n") {
 			if stale.MatchString(line) {
 				offenders = append(offenders, rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 		}
-		return nil
-	}), "walk %s", root)
+	}
 
 	assert.Empty(t, offenders,
 		"stale references to the pre-rename install root remain (it is now %s/%s/):\n%s",
 		installRoot, SkillDir, strings.Join(offenders, "\n"))
+}
+
+// trackedFiles returns every path git tracks under root, repo-relative and
+// slash-separated. Without git there is no "tracked" to scan, so the caller
+// skips rather than silently falling back to a filesystem walk — the fallback
+// would reintroduce exactly the blind spots this replaced.
+func trackedFiles(t *testing.T, root string) []string {
+	t.Helper()
+
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		t.Skipf("git ls-files failed in %s (%v) — cannot enumerate tracked files", root, err)
+	}
+
+	var files []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			files = append(files, p)
+		}
+	}
+	require.NotEmpty(t, files, "git tracks no files under %s", root)
+	return files
 }
 
 // frontmatterField extracts a single-line `key: value` field from a markdown
