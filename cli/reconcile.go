@@ -296,10 +296,10 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 		// so the local TD backlog matches what the gate considers real.
 		// Path-warned findings are also skipped: a file that did not resolve under
 		// the repo root is treated as a hallucinated path (Epic 5.0).
-		if strings.ToLower(strings.TrimSpace(f.Category)) == reconcile.CategoryOutOfScope {
+		if strings.ToLower(strings.TrimSpace(f.Category)) == reclib.CategoryOutOfScope {
 			continue
 		}
-		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reconcile.VerdictRefuted {
+		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reclib.VerdictRefuted {
 			continue
 		}
 		if f.PathWarning != "" {

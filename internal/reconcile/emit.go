@@ -271,7 +271,9 @@ func toAmbiguousWire(clusters []AmbiguousCluster) []ambiguousWire {
 	for i, c := range clusters {
 		fs := make([]stream.Finding, len(c.Findings))
 		for j, f := range c.Findings {
-			// Inline the library Finding -> stream.Finding field map (TD-006 inlined).
+			// Inline the library Finding -> stream.Finding field map — permanently
+			// inline per Epic 8.0 Clarification Q8 (2026-06-23): this is a distinct
+			// direction/purpose from adapter.ToJSONFinding, not a pending collapse.
 			fs[j] = stream.Finding{
 				Severity:   f.Severity,
 				File:       f.File,

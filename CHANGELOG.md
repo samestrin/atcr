@@ -1,3 +1,16 @@
+## [35.7.0] - 2026-07-29
+
+Completes Epic 8.0's deferred Phase 3 for the reconcile core. Consumers that only need a pure re-export now import the extracted `reconcile/` library directly, and the dead half of the `internal/reconcile` compatibility shim is gone. No behavior change: the full suite's output is byte-identical to the pre-migration baseline.
+
+### Changed
+
+- `cli/reconcile.go` and its test now qualify pure re-export symbols (`CategoryOutOfScope`, `VerdictRefuted`, `Verification`) through the `reclib "github.com/samestrin/atcr/reconcile"` library import instead of the `internal/reconcile` shim, matching the convention the rest of the consumer set already followed. The remaining 29 consumer files across `cli/`, `internal/debate`, `internal/ghaction`, `internal/mcp`, `internal/report`, `internal/repro`, and `internal/verify` were verified already correct; `internal/scorecard/reconcile.go` stays on `internal/reconcile` because its only reference is the ATCR-internal `Result`.
+- The four stale `TD-006` comments in `internal/reconcile/{lib,emit,helpers_test}.go` and `internal/reconcile/adapter/adapter.go` no longer point at a tracking row that does not exist. The still-open structural fix they conflated with themselves — routing `lib.go`'s inlined `stream.Finding` field map through `adapter.ToFinding` — is recorded as tracked debt instead, since it stays blocked while `JSONFinding` remains in `internal/reconcile`.
+
+### Removed
+
+- 11 dead re-export declarations from `internal/reconcile/lib.go` (aliases, constants, and delegating wrappers with no remaining callers anywhere). `Result`, `Reconcile`, the `JSONFinding` schema, the `MergeJSONFindings` family, the disagreement radar, the gate, path validation, source discovery, adjudication, and file I/O are unchanged and stay ATCR-internal by design. Declarations still called unqualified from inside `internal/reconcile` itself were deliberately retained — deleting them requires rewriting those call sites first.
+
 ## [35.5.0] - 2026-07-28
 
 Makes the shipped Agent Skill installable in one command and internally coherent. The install root becomes `skills/` with one directory per skill, the `debt-resolve` sub-skill collapses back into the single `/atcr` dispatcher it was always meant to be, the dispatcher finally learns the baseline-review routes Epic 35.0 shipped, and the documented two-line `cp` install is replaced by `atcr skill export`.
