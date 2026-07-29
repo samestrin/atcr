@@ -236,6 +236,32 @@ func sectionOf(doc, heading string) string {
 	return rest
 }
 
+// TestSectionOf_AnchorsHeadingToLineBoundary — sectionOf must not match a heading
+// as raw text: "### Installation" contains "## Installation", so an unanchored
+// search would shift the scanned region into the deeper section's body and weaken
+// the doc assertions that rely on it.
+func TestSectionOf_AnchorsHeadingToLineBoundary(t *testing.T) {
+	doc := strings.Join([]string{
+		"# Doc",
+		"",
+		"### Installation",
+		"DEEPER BODY",
+		"",
+		"## Installation",
+		"REAL BODY",
+		"",
+		"## Next",
+		"TAIL",
+	}, "\n")
+
+	install := sectionOf(doc, "## Installation")
+
+	assert.Contains(t, install, "REAL BODY")
+	assert.NotContains(t, install, "DEEPER BODY",
+		"a deeper same-named heading must not shift the scanned region")
+	assert.NotContains(t, install, "TAIL", "the section ends at the next same-level heading")
+}
+
 // TestSkillExport_WarnsAboutLeftoverFiles — export overwrites but never prunes,
 // so an install predating the debt-resolve flatten keeps its nested
 // debt-resolve/SKILL.md. That leftover declares its own skill name and a harness
