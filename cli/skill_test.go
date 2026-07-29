@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -223,14 +224,21 @@ func TestSkillExport_EmptyExistingDestinationIsAllowed(t *testing.T) {
 }
 
 // TestSkillExport_ReportsDestinationAndFileCount — the success path tells the user
-// where the tree landed, so the next step (pointing an agent at it) needs no
-// guessing.
+// where the tree landed and how much of it, so the next step (pointing an agent
+// at it) needs no guessing. The count is pinned against the embedded tree: the
+// second success line already contains the destination, so a dest-only
+// assertion leaves the count line untested.
 func TestSkillExport_ReportsDestinationAndFileCount(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "atcr")
 
 	out, _, err := execSkillExport(t, "--dir", dest)
 	require.NoError(t, err)
 	assert.Contains(t, out, dest, "success output must name the destination")
+
+	entries, readErr := fs.ReadDir(skills.Tree, skills.SkillDir)
+	require.NoError(t, readErr)
+	assert.Contains(t, out, fmt.Sprintf("Exported %d skill file(s)", len(entries)),
+		"success output must report the number of files written")
 }
 
 // TestSkillExport_DocumentedInDispatcher (AC6, routing-drift) — `atcr skill` is a
