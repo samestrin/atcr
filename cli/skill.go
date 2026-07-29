@@ -225,7 +225,15 @@ func warnStaleSkillFiles(errOut io.Writer, dest string, written map[string]bool)
 		}
 		return nil
 	})
-	if err != nil || len(stale) == 0 {
+	if err != nil {
+		// A failed walk means the stale-file scan silently did nothing — the
+		// safety net above is absent and the user must know, or a broken tree
+		// looks exactly like a clean one.
+		_, _ = fmt.Fprintf(errOut,
+			"warning: could not scan %s for leftover skill files: %v\n", dest, err)
+		return
+	}
+	if len(stale) == 0 {
 		return
 	}
 	sort.Strings(stale)
