@@ -32,6 +32,42 @@ func TestTrustExempt_HighTrustSingletonSurvivesConsensusFilter(t *testing.T) {
 	eq(t, res.Summary.AuthorityPromoted, 0, "no PageRank authority promotion occurred")
 }
 
+// TestTrustExempt_Direct table-drives the exemption predicate directly, the way
+// TestDemoteByTrust_Direct does for demotion. It pins the two guards the
+// end-to-end tests can never reach, because Reconcile only ever builds findings
+// with at least one reviewer: a 2-reviewer finding (not a singleton, so never
+// exempt) and an empty Reviewers slice. The empty-slice case is the one that
+// matters for safety — len(f.Reviewers) != 1 short-circuits before
+// f.Reviewers[0] is evaluated, so the index access cannot panic.
+func TestTrustExempt_Direct(t *testing.T) {
+	priors := map[string]float64{
+		"reliable": trustHighThreshold,
+		"flaky":    trustLowThreshold,
+	}
+
+	cases := []struct {
+		name      string
+		reviewers []string
+		priors    map[string]float64
+		want      bool
+	}{
+		{"a high-trust sole reviewer is exempt", []string{"reliable"}, priors, true},
+		{"a mixed-case sole reviewer resolves to its lowercase prior key", []string{"Reliable"}, priors, true},
+		{"a low-trust sole reviewer is not exempt", []string{"flaky"}, priors, false},
+		{"a sole reviewer absent from priors is not exempt", []string{"stranger"}, priors, false},
+		{"nil priors is a complete no-op", []string{"reliable"}, nil, false},
+		{"empty priors is a complete no-op", []string{"reliable"}, map[string]float64{}, false},
+		{"a 2-reviewer finding is never a singleton, so never exempt", []string{"reliable", "flaky"}, priors, false},
+		{"an empty Reviewers slice is guarded before the index access", nil, priors, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eq(t, trustExempt(Finding{Confidence: ConfMedium, Reviewers: tc.reviewers}, tc.priors), tc.want, tc.name)
+		})
+	}
+}
+
 // TestDemoteByTrust_Direct unit-tests the pure demotion predicate directly (the
 // same pattern TestConsensusExempt_Predicate uses for consensusExempt): a
 // ConfMedium singleton with a low-trust sole reviewer demotes to ConfLow, and
