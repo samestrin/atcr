@@ -1,3 +1,27 @@
+## [35.9.1] - 2026-07-30
+
+Makes the epic-14.2 consensus filter's corroboration bar configurable via `--consensus=off|lenient|strict` and a matching `consensus:` config key, with `strict` (today's hardcoded behavior) as the default — then uses those levels to close the half of epic 35.9's AC2 that was unverifiable without them. Supersedes epic 35.6, which reached `completed/` without ever being implemented.
+
+### Added
+
+- `atcr reconcile --consensus <level>`: `strict` (default) sidecars every uncorroborated singleton below `HIGH` confidence; `lenient` raises the kept-bar to `MEDIUM`, keeping `MEDIUM`-confidence singletons and sidecarring only `LOW` ones; `off` makes the filter inert, restoring pre-14.2 behavior. Levels are case- and whitespace-insensitive; an invalid value is a usage error (exit 2) naming the valid levels.
+- `consensus:` config key on the standard precedence chain — explicit flag/argument > `.atcr/config.yaml` > `~/.config/atcr/registry.yaml` > embedded `strict` — resolved by the new `registry.ResolveConsensus`, which mirrors `ResolveGateThreshold` (no embedded default inside the resolver; the call site maps `""` to `strict`). `atcr init` seeds `consensus: strict` with a levels-comment; existing configs are untouched.
+- `consensus` argument on the MCP `atcr_reconcile` tool, resolved through the same chain so the CLI and MCP entry points cannot fork. An invalid value returns a tool error naming the valid levels.
+- `reconcile.Options.Consensus` plus the exported `ConsensusStrict`/`ConsensusLenient`/`ConsensusOff` constants, `ConsensusLevels`, and `NormalizeConsensus` — the closed vocabulary every surface validates against. An empty or unrecognized value resolves to `strict`, so the filter can never be silently disabled by a value that bypassed boundary validation.
+
+### Changed
+
+- Only the singleton corroboration bar is configurable. The 3-distinct-reviewer panel floor (`consensusMinReviewers`) and every exemption (`consensusExempt`: security-related, `HIGH`/`CRITICAL`, out-of-scope, confirmed; and `trustExempt`: high-trust sole reviewer) behave identically at all three levels — the internal confidence ladder and exemption rules stay out of the public API.
+- The `consensus:` level now also resolves for `atcr review` (one-shot) and `atcr review --resume` from the config and registry tiers, so the key is honored at every reconcile entry point rather than only by `atcr reconcile`. Neither command takes a `--consensus` flag. Both resolve and validate it up front, before any fan-out, so a bad configured value fails fast instead of after a paid review.
+- Epic 35.9's trust-prior demotion is documented as independent of the level: it runs ahead of the filter and is gated only by the panel floor, so a low-trust singleton is `LOW` at every level — the level decides only whether that `LOW` finding is then sidecarred.
+- `docs/registry.md`, `docs/scorecard.md`, `reconcile/README.md`, the `reconcile` command long help, and the `atcr init` config template document the knob. `docs/scorecard.md` additionally warns that a non-`strict` run skews the reviewer corroboration rates it later reads back as trust priors, and recommends `--no-scorecard` for exploratory runs.
+
+### Fixed
+
+- Epic 35.9's AC2 is now fully verified. `TestDemoteByTrust_ObservableViaConsensusLevel` drops the security-category escape hatch the original demotion test needed to stay observable under `strict`, and pins a plain non-exempt low-trust-demoted singleton as sidecarred under both `strict` and `lenient` and kept under `off` carrying `Confidence == LOW`.
+
+*Shipped via /execute-epic (epic 35.9.1)*
+
 ## [35.9.0] - 2026-07-29
 
 Consumes the per-reviewer trust prior (epic 35.8) at reconcile time, so the epic-14.2 consensus filter's drop/keep decision on an uncorroborated singleton finding is informed by a reviewer's measured track record, not just in-run reviewer count.
