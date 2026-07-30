@@ -192,17 +192,27 @@ func Reconcile(sources []Source, opts Options) Result {
 	// is more plausibly a hallucination than a rare true positive, so route it to the
 	// ambiguous sidecar instead of promoting it to findings.json — UNLESS a false
 	// negative would be too costly (consensusExempt). This runs after DBSCAN clustering
-	// (first pass) and the merge/authority passes, so consensusSingleton sees each
+	// (first pass) and the merge/authority passes, so consensusSingletonAt sees each
 	// finding's final confidence (authority-promoted singletons are HIGH and never
 	// dropped). The reviewer-count gate preserves the documented single-API-key
 	// workflow (host + 1 pool persona = 2 reviewers), where nearly every finding is a
 	// singleton. Filtered findings stay sorted-order-stable (kept preserves order) and
 	// recoverable from the sidecar for adjudication.
+	//
+	// Epic 35.9.1 makes only the corroboration bar configurable (opts.Consensus):
+	// consensusFloor maps the level to the confidence floor and reports whether the
+	// filter runs at all (off -> inert, ConsensusFiltered stays 0). Everything else is
+	// deliberately level-independent — the consensusMinReviewers gate above, and BOTH
+	// exemption terms below. Keeping !trustExempt(...) in the predicate at every level
+	// is what preserves epic 35.9's high-trust-singleton escape hatch under strict;
+	// dropping it while restructuring this block is the regression this epic guards
+	// against explicitly (AC5).
 	consensusFiltered := 0
-	if panel >= consensusMinReviewers {
+	floor, filterEnabled := consensusFloor(opts.Consensus)
+	if filterEnabled && panel >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
-			if consensusSingleton(m) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
+			if consensusSingletonAt(m, floor) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
 				ambiguous = append(ambiguous, consensusNoiseCluster(m.Finding))
 				consensusFiltered++
 				continue

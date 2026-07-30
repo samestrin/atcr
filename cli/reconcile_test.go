@@ -1107,3 +1107,92 @@ func TestConsensusFlagValue_WhitespaceIsUnset(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("consensus", "   "))
 	assert.Equal(t, "", consensusFlagValue(cmd))
 }
+
+// consensusSummary reads a reconciled run's summary.json and returns the
+// consensus_filtered count, so a test can assert the filter was inert (0)
+// rather than inferring it from the surviving-finding set alone.
+func consensusSummary(t *testing.T, id string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", id, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var s struct {
+		ConsensusFiltered int `json:"consensus_filtered"`
+	}
+	require.NoError(t, json.Unmarshal(data, &s))
+	return s.ConsensusFiltered
+}
+
+// TestReconcileCmd_ConsensusOffKeepsEverySingleton (AC1) drives the flag
+// end-to-end: off makes the filter inert, so every uncorroborated singleton on a
+// 3-reviewer panel reaches findings.json with consensus_filtered at 0.
+func TestReconcileCmd_ConsensusOffKeepsEverySingleton(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "off", "r"))
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+	assert.Equal(t, 0, consensusSummary(t, "r"), "off must leave consensus_filtered at 0")
+}
+
+// TestReconcileCmd_ConsensusLenientKeepsMediumSingletons (AC1): lenient keeps
+// the panel's MEDIUM-confidence singletons that strict sidecars.
+func TestReconcileCmd_ConsensusLenientKeepsMediumSingletons(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "lenient", "r"))
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+	assert.Equal(t, 0, consensusSummary(t, "r"))
+}
+
+// TestReconcileCmd_ConsensusStrictMatchesNoFlag (AC1 golden): strict, an
+// uppercase STRICT, a whitespace-padded value, and no flag at all reproduce the
+// identical pre-change sidecar set.
+func TestReconcileCmd_ConsensusStrictMatchesNoFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"reconcile", "r"},
+		{"reconcile", "--consensus", "strict", "r"},
+		{"reconcile", "--consensus", "STRICT", "r"},
+		{"reconcile", "--consensus", "  strict  ", "r"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			isolate(t)
+			fixtureReview(t, "r", trustPanelSources())
+
+			require.Equal(t, 0, execCmd(t, args...))
+
+			assert.Empty(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+				"strict sidecars every uncorroborated singleton")
+			assert.Equal(t, 3, consensusSummary(t, "r"))
+		})
+	}
+}
+
+// TestReconcileCmd_ConsensusConfigPrecedence (AC3) exercises the config tier
+// end-to-end: .atcr/config.yaml consensus is honored without a flag, and an
+// explicit flag overrides it.
+func TestReconcileCmd_ConsensusConfigPrecedence(t *testing.T) {
+	t.Run("config honored without flag", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		writeProjectConfig(t, "consensus: lenient\n")
+
+		require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+		assert.Len(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")), 3)
+		assert.Equal(t, 0, consensusSummary(t, "r"))
+	})
+
+	t.Run("flag overrides config", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		writeProjectConfig(t, "consensus: off\n")
+
+		require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "strict", "r"))
+		assert.Empty(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+		assert.Equal(t, 3, consensusSummary(t, "r"))
+	})
+}

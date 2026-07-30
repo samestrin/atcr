@@ -129,12 +129,18 @@ func panelReviewers(sources []Source) int {
 // also drops a ConfLow untrusted-source singleton (reachable since epic 35.9's
 // demoteByTrust demotes low-trust ConfMedium singletons to ConfLow).
 func consensusSingleton(m Merged) bool {
-	return !ConfidenceAtOrAbove(m.Confidence, ConfHigh)
+	return consensusSingletonAt(m, ConfHigh)
 }
 
-// consensusSingletonAt is a wrong-answer stub (RED): it ignores the floor.
+// consensusSingletonAt is consensusSingleton with the corroboration bar
+// parameterized (epic 35.9.1): a finding is a drop candidate when its
+// confidence is BELOW floor. ConfHigh reproduces the strict/pre-35.9.1
+// predicate exactly; ConfMedium is the lenient bar, under which an
+// uncorroborated ConfMedium singleton is kept and only ConfLow is droppable.
+// The floor is the only thing a level moves — every exemption predicate is
+// applied unchanged by the caller at both levels.
 func consensusSingletonAt(m Merged, floor string) bool {
-	return consensusSingleton(m)
+	return !ConfidenceAtOrAbove(m.Confidence, floor)
 }
 
 // consensusExempt reports whether a singleton is too costly to drop as a probable
