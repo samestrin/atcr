@@ -22,6 +22,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
@@ -709,6 +710,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+			TrustPriors:  scorecard.ResolveTrustPriors(),
 		})
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))

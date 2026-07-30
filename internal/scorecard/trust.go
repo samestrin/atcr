@@ -56,7 +56,25 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 	return rates, nil
 }
 
-// ResolveTrustPriors is a stub pending implementation (RED).
+// ResolveTrustPriors resolves the default scorecard store directory and reads
+// TrustPriors from it at DefaultTrustMinRuns, degrading to a nil map on any
+// failure (an unresolvable user config dir, or TrustPriors' own best-effort
+// "missing/unreadable store" case) — never an error, never a blocker for the
+// caller (epic 35.9 AC5). This is the single helper every reconcile.RunReconcile
+// call site (cli/reconcile.go, cli/resume.go, cli/review.go,
+// internal/mcp/handlers.go) uses to attach the reviewer trust prior to
+// reclib.Options.TrustPriors before calling RunReconcile — NOT called from
+// inside internal/reconcile itself, because internal/scorecard already imports
+// internal/reconcile (EmitForReconcile takes a reconcile.Result), so the
+// reverse import would cycle.
 func ResolveTrustPriors() map[string]float64 {
-	return nil
+	dir, err := DefaultDir()
+	if err != nil {
+		return nil
+	}
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	if err != nil {
+		return nil
+	}
+	return priors
 }

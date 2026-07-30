@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -831,6 +832,54 @@ func reconciledPathWarning(t *testing.T, id string) string {
 	require.NoError(t, json.Unmarshal(data, &findings))
 	require.NotEmpty(t, findings, "expected at least one reconciled finding")
 	return findings[0].PathWarning
+}
+
+// TestReconcileCmd_AppliesScorecardTrustPrior (epic 35.9 AC1): `atcr reconcile`
+// threads the reviewer trust prior end-to-end. "trusted" has
+// DefaultTrustMinRuns of scorecard history at a 1.0 corroboration rate (at/above
+// trustHighThreshold) and raises a singleton with no in-run corroboration and no
+// PageRank authority (no reviewer pair agrees on anything) — it must still
+// reach findings.json, proving RunReconcile's call site actually resolves and
+// attaches scorecard.ResolveTrustPriors(), not just tolerates its absence.
+func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
+	isolate(t) // isolate() points HOME/XDG_CONFIG_HOME at a fresh temp dir
+
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-r%02d", i),
+			Reviewer:             "trusted",
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+
+	fixtureReview(t, "r", map[string]string{
+		"sources/a/findings.txt": "MEDIUM|foo.go:10|possible nil deref on this path|fix|correctness|10|ev|trusted\n",
+		"sources/b/findings.txt": "MEDIUM|bar.go:20|unused import lingers in this file|fix|style|10|ev|stranger\n",
+		"sources/c/findings.txt": "MEDIUM|baz.go:30|request body is not validated|fix|correctness|10|ev|third\n",
+	})
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", "r", "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal(data, &findings))
+
+	var trustedSurvived bool
+	for _, f := range findings {
+		if f.File == "foo.go" {
+			trustedSurvived = true
+		}
+	}
+	assert.True(t, trustedSurvived,
+		"atcr reconcile threads the reviewer trust prior through RunReconcile end-to-end")
 }
 
 // TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
