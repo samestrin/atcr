@@ -236,6 +236,28 @@ func TestNormalizeConsensus_Vocabulary(t *testing.T) {
 		"documentation order: default first")
 }
 
+// TestConsensusFloor_LevelsDistinct pins each level in the public vocabulary to
+// a distinct (floor, enabled) pair, so a future fourth level cannot be added to
+// the const block and ConsensusLevels and then silently behave as strict —
+// without this guard nothing fails when the switch is not extended. (Verified
+// by mutation: appending a dummy constant to ConsensusLevels makes the pair
+// collide with strict's and this test fails.)
+func TestConsensusFloor_LevelsDistinct(t *testing.T) {
+	type pair struct {
+		floor   string
+		enabled bool
+	}
+	seen := map[pair]string{}
+	for _, level := range ConsensusLevels {
+		floor, enabled := consensusFloor(level)
+		p := pair{floor, enabled}
+		if prev, dup := seen[p]; dup {
+			t.Errorf("levels %q and %q map to the same (floor, enabled) pair %v", prev, level, p)
+		}
+		seen[p] = level
+	}
+}
+
 // TestDemoteByTrust_ObservableViaConsensusLevel closes epic 35.9's AC2, the half
 // that was unverifiable until the levels existed.
 //
