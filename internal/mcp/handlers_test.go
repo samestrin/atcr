@@ -968,6 +968,7 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 // argument is a tool error naming the valid levels — the MCP analogue of the
 // CLI's exit-2 usage error.
 func TestReconcileHandler_InvalidConsensus(t *testing.T) {
+	isolateUserConfig(t)
 	root := t.TempDir()
 	reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
