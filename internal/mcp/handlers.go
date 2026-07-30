@@ -380,6 +380,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		TotalFindings: res.Summary.TotalFindings,
 		Partial:       res.Summary.Partial,
 		FailOn:        threshold,
+		Consensus:     consensusLevel,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false

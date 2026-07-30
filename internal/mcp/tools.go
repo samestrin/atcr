@@ -174,6 +174,7 @@ type ReconcileResult struct {
 	TotalFindings int                     `json:"total_findings"`
 	Partial       bool                    `json:"partial"`
 	FailOn        string                  `json:"fail_on,omitempty"`
+	Consensus     string                  `json:"consensus,omitempty"`
 	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
 }
 
