@@ -211,3 +211,79 @@ func TestNormalizeConsensus_Vocabulary(t *testing.T) {
 	deepEq(t, ConsensusLevels, []string{ConsensusStrict, ConsensusLenient, ConsensusOff},
 		"documentation order: default first")
 }
+
+// TestDemoteByTrust_ObservableViaConsensusLevel closes epic 35.9's AC2, the half
+// that was unverifiable until the levels existed.
+//
+// It mirrors TestDemoteByTrust_LowTrustSingletonDemotedToConfLow (trust_test.go)
+// but drops that test's security-category escape hatch. That test had to label
+// its finding "security" so consensusExempt would spare it — otherwise strict
+// sidecarred the demoted finding and the demotion could not be observed at all.
+// Here the finding is a plain style singleton with no exemption of any kind, so
+// the LEVEL is the only thing keeping it alive:
+//
+//   - strict  — sidecarred (the pre-35.9.1 blind spot this test documents)
+//   - lenient — still sidecarred: ConfLow is below the MEDIUM bar
+//   - off     — kept, carrying Confidence == LOW, which is the end-to-end proof
+//     that demoteByTrust actually fired
+func TestDemoteByTrust_ObservableViaConsensusLevel(t *testing.T) {
+	sources := func() []Source {
+		return []Source{
+			{Name: "a", Findings: []Finding{
+				cf("MEDIUM", "foo.go", 10, "unused import lingers in this file", "style", "flaky"),
+			}},
+			{Name: "b", Findings: []Finding{
+				cf("MEDIUM", "bar.go", 20, "this name reads ambiguously here", "style", "stranger"),
+			}},
+			{Name: "c", Findings: []Finding{
+				cf("MEDIUM", "baz.go", 30, "request body is not validated", "correctness", "third"),
+			}},
+		}
+	}
+	priors := map[string]float64{"flaky": trustLowThreshold}
+
+	// findConfidence returns the confidence of the finding at file, and whether it
+	// survived to Findings at all.
+	findConfidence := func(res Result, file string) (string, bool) {
+		for _, m := range res.Findings {
+			if m.File == file {
+				return m.Confidence, true
+			}
+		}
+		return "", false
+	}
+
+	// strict: the demoted singleton is sidecarred, so the demotion is invisible in
+	// findings.json. This is the baseline that made 35.9's AC2 unverifiable.
+	strict := Reconcile(sources(), Options{Consensus: ConsensusStrict, TrustPriors: priors})
+	_, survivedStrict := findConfidence(strict, "foo.go")
+	isTrue(t, !survivedStrict, "strict sidecars the demoted non-exempt singleton")
+	isTrue(t, inAmbiguousSingleton(strict, "foo.go"), "and it is recoverable from the sidecar")
+
+	// lenient: ConfLow is still below the MEDIUM bar, so it is sidecarred here too
+	// — while the two undemoted ConfMedium singletons survive. That contrast is
+	// what proves the demotion changed this finding's fate specifically.
+	lenient := Reconcile(sources(), Options{Consensus: ConsensusLenient, TrustPriors: priors})
+	_, survivedLenient := findConfidence(lenient, "foo.go")
+	isTrue(t, !survivedLenient, "lenient sidecars the demoted ConfLow singleton")
+	isTrue(t, inAmbiguousSingleton(lenient, "foo.go"), "and it is recoverable from the sidecar")
+	isTrue(t, hasFinding(lenient, "bar.go"), "an undemoted ConfMedium singleton survives lenient")
+	isTrue(t, hasFinding(lenient, "baz.go"), "an undemoted ConfMedium singleton survives lenient")
+	eq(t, lenient.Summary.ConsensusFiltered, 1, "exactly the demoted finding is filtered under lenient")
+
+	// off: the filter is inert, so the demoted finding reaches findings.json still
+	// carrying ConfLow — the end-to-end observation epic 35.9 AC2 asked for.
+	off := Reconcile(sources(), Options{Consensus: ConsensusOff, TrustPriors: priors})
+	conf, survivedOff := findConfidence(off, "foo.go")
+	isTrue(t, survivedOff, "off keeps the demoted singleton in findings.json")
+	eq(t, conf, ConfLow, "and it carries Confidence == LOW, proving demoteByTrust fired")
+	eq(t, off.Summary.ConsensusFiltered, 0, "off leaves ConsensusFiltered at 0")
+
+	// The demotion is level-independent: without the trust prior the same finding
+	// is ConfMedium under off, so ConfLow above is attributable to the prior and
+	// not to anything the level did.
+	noPriors := Reconcile(sources(), Options{Consensus: ConsensusOff})
+	conf, survived := findConfidence(noPriors, "foo.go")
+	isTrue(t, survived, "off keeps the singleton with no priors too")
+	eq(t, conf, ConfMedium, "without the low-trust prior the same finding is ConfMedium")
+}
