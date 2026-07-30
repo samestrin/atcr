@@ -70,7 +70,8 @@ func panelReviewers(sources []Source) int {
 // distinct reviewers, and any finding the authority graph (epic 13.3) or the verify
 // stage promoted to HIGH/VERIFIED is corroborated and never dropped. Keying on
 // confidence rather than len(Reviewers) preserves authority promotion for free and
-// also drops a (reserved, currently unused) ConfLow untrusted-source singleton.
+// also drops a ConfLow untrusted-source singleton (reachable since epic 35.9's
+// demoteByTrust demotes low-trust ConfMedium singletons to ConfLow).
 func consensusSingleton(m Merged) bool {
 	return !ConfidenceAtOrAbove(m.Confidence, ConfHigh)
 }
