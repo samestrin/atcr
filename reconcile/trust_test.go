@@ -53,6 +53,22 @@ func TestDemoteByTrust_Direct(t *testing.T) {
 		ConfMedium, "a 2-reviewer finding is never demoted")
 }
 
+// TestTrust_MidRangeRateIsCompleteNoOp pins the neutral zone between the two
+// threshold constants: every existing trust test sits exactly ON a boundary
+// (trustLowThreshold 0.3 or trustHighThreshold 0.7), so a regression that
+// widens a comparison or swaps which constant gates which predicate (e.g.
+// trustExempt comparing against trustLowThreshold, or demoteByTrust against
+// trustHighThreshold) would pass them all undetected. A mid-range rate must be
+// a complete no-op through both predicates.
+func TestTrust_MidRangeRateIsCompleteNoOp(t *testing.T) {
+	mid := map[string]float64{"mid": (trustLowThreshold + trustHighThreshold) / 2}
+
+	eq(t, trustExempt(Finding{Confidence: ConfMedium, Reviewers: []string{"mid"}}, mid),
+		false, "a mid-range rate never exempts from the consensus filter")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"mid"}}}, mid).Confidence,
+		ConfMedium, "a mid-range rate never demotes to ConfLow")
+}
+
 // TestDemoteByTrust_LowTrustSingletonDemotedToConfLow proves demotion is
 // reachable end-to-end through Reconcile on a real >= consensusMinReviewers
 // panel (the same floor the consensus filter itself gates on — see the
