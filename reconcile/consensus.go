@@ -132,6 +132,11 @@ func consensusSingleton(m Merged) bool {
 	return !ConfidenceAtOrAbove(m.Confidence, ConfHigh)
 }
 
+// consensusSingletonAt is a wrong-answer stub (RED): it ignores the floor.
+func consensusSingletonAt(m Merged, floor string) bool {
+	return consensusSingleton(m)
+}
+
 // consensusExempt reports whether a singleton is too costly to drop as a probable
 // hallucination and must survive to findings.json regardless of corroboration. A
 // finding is exempt when it is security-related, HIGH/CRITICAL severity, an
