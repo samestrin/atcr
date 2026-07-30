@@ -15,6 +15,8 @@ import (
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
+	// DefaultConsensus is a wrong-answer stub (RED).
+	DefaultConsensus = ""
 	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
@@ -69,6 +71,8 @@ type ProjectConfig struct {
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// Consensus is a wrong-answer stub (RED).
+	Consensus string `yaml:"consensus,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
