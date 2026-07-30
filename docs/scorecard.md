@@ -290,8 +290,8 @@ than growing a third aggregation.
   `DefaultDir()` + `TrustPriors(dir, DefaultTrustMinRuns)` in one best-effort
   call, degrading to a nil map on any failure (an unresolvable config dir, a
   missing/unreadable store) rather than erroring. Every `atcr reconcile` /
-  `atcr resume` / `atcr review` (one-shot mode) / MCP `atcr_reconcile` call
-  site resolves it and threads the result into
+  `atcr review --resume` / `atcr review` (one-shot mode) / MCP
+  `atcr_reconcile` call site resolves it and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
   consumes: a singleton from a historically reliable reviewer survives the
   filter without in-run corroboration, and one from a historically unreliable
