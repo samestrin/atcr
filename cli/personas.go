@@ -29,49 +29,20 @@ type personasScoreData struct {
 // `list` path can be verified never to call it.
 var personasScores = loadPersonasScores
 
-// loadPersonasScores reads the scorecard records, aggregates them, and keys the
-// corroboration rate by lowercase reviewer name. A missing store yields zero
-// records (no error) so `--scores` degrades to an all-n/a table with a footer.
-func loadPersonasScores(errW io.Writer) (personasScoreData, error) {
+// loadPersonasScores reads the scorecard store and keys the corroboration rate
+// by lowercase reviewer name via scorecard.TrustPriors. minRuns=0 applies no
+// floor — `--scores` shows every reviewer with any history at all, degrading to
+// an all-n/a table with a footer when the store has none. The io.Writer param
+// is unused (TrustPriors has no diagnostics sink of its own) but kept so
+// loadPersonasScores still matches the personasScores var's injectable shape.
+func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	dir, err := scorecard.DefaultDir()
 	if err != nil {
 		return personasScoreData{}, err
 	}
-	records, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: errW})
-	if err != nil {
-		return personasScoreData{path: dir}, err
-	}
-	return personasScoreData{rates: reviewerCorroborationRates(scorecard.Aggregate(records)), path: dir}, nil
-}
-
-// reviewerCorroborationRates collapses leaderboard rows into one corroboration
-// rate per reviewer, keyed by lowercase reviewer name. Aggregate groups by
-// (reviewer, model), so a reviewer that ran under several models yields multiple
-// rows sharing one Reviewer name; this sums corroborated/raised across those
-// rows and recomputes the ratio (matching scorecard's own formula) so the rate
-// is a true per-reviewer aggregate rather than whichever model's row sorted last.
-func reviewerCorroborationRates(rows []scorecard.LeaderboardRow) map[string]float64 {
-	type tally struct{ corroborated, raised int }
-	byReviewer := map[string]*tally{}
-	for _, row := range rows {
-		key := strings.ToLower(row.Reviewer)
-		t := byReviewer[key]
-		if t == nil {
-			t = &tally{}
-			byReviewer[key] = t
-		}
-		t.corroborated += row.FindingsCorroborated
-		t.raised += row.FindingsRaised
-	}
-	rates := make(map[string]float64, len(byReviewer))
-	for name, t := range byReviewer {
-		if t.raised > 0 {
-			rates[name] = float64(t.corroborated) / float64(t.raised)
-		} else {
-			rates[name] = 0
-		}
-	}
-	return rates
+	// TrustPriors is best-effort by contract: it never returns a non-nil error.
+	rates, _ := scorecard.TrustPriors(dir, 0)
+	return personasScoreData{rates: rates, path: dir}, nil
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -247,6 +218,12 @@ func newPersonasListCmd() *cobra.Command {
 // joining each persona to its scorecard rate. When the scorecard store has no
 // data, every row shows n/a and a footer names the path that was checked.
 func listPersonasWithScores(cmd *cobra.Command, dir string) error {
+	// The err != nil branch below (and its "is unreadable" footer) is unreachable
+	// via the real loadPersonasScores today: scorecard.TrustPriors is best-effort
+	// by contract and never returns a non-nil error, so a permission-denied or
+	// corrupted store now degrades to the "no data" footer instead. The branch is
+	// kept because personasScores is an injectable seam — tests still exercise it
+	// via a fake — and because DefaultDir() itself can still fail.
 	data, err := personasScores(cmd.ErrOrStderr())
 	if err != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)

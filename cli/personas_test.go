@@ -18,18 +18,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewerCorroborationRates_CollapsesModels(t *testing.T) {
-	// One reviewer, two models → one collapsed rate of (3+1)/(4+6) = 0.4, not a
-	// last-wins single-model rate (3/4 or 1/6).
-	rows := []scorecard.LeaderboardRow{
-		{Reviewer: "Sasha", Model: "opus", FindingsCorroborated: 3, FindingsRaised: 4},
-		{Reviewer: "sasha", Model: "sonnet", FindingsCorroborated: 1, FindingsRaised: 6},
-		{Reviewer: "penny", Model: "opus", FindingsCorroborated: 0, FindingsRaised: 0},
+// TestLoadPersonasScores_RealStoreSumsAcrossModelsAndCase migrates the intent of
+// the deleted reviewerCorroborationRates unit test (one reviewer, two models,
+// mixed case → one collapsed rate) into an end-to-end exercise of
+// loadPersonasScores against a real scorecard store, now that the aggregation
+// itself lives in scorecard.TrustPriors and is unit-tested there directly
+// (internal/scorecard/trust_test.go).
+func TestLoadPersonasScores_RealStoreSumsAcrossModelsAndCase(t *testing.T) {
+	isolate(t)
+	storeRecord(t, reviewerRec("2026-07-01T10:00:00Z-r1", "Sasha", "opus", 4, 3))
+	storeRecord(t, reviewerRec("2026-07-02T10:00:00Z-r2", "SASHA", "sonnet", 6, 1))
+	storeRecord(t, reviewerRec("2026-07-03T10:00:00Z-r3", "Penny", "opus", 0, 0))
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.4, data.rates["sasha"], 1e-9)
+	assert.Contains(t, data.rates, "penny", "minRuns=0 at this call site must keep a single-run reviewer")
+	assert.InDelta(t, 0.0, data.rates["penny"], 1e-9)
+}
+
+// TestLoadPersonasScores_EmptyStoreYieldsEmptyMapNoError locks the AC4
+// "no data" regression path against the real store (not the injected
+// personasScores fake TestPersonasList_ScoresNoDataFooter uses).
+func TestLoadPersonasScores_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
+	isolate(t)
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, data.rates)
+}
+
+// TestLoadPersonasScores_UnreadableDirDoesNotError locks in the one real
+// behavior change from delegating to scorecard.TrustPriors: today
+// loadPersonasScores propagates a genuine ReadAll error (e.g. permission
+// denied); TrustPriors' best-effort contract swallows it instead, so
+// --scores degrades to the "no data" footer rather than an error banner.
+func TestLoadPersonasScores_UnreadableDirDoesNotError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: permission bits do not block root reads")
 	}
-	rates := reviewerCorroborationRates(rows)
-	assert.InDelta(t, 0.4, rates["sasha"], 1e-9)
-	assert.InDelta(t, 0.0, rates["penny"], 1e-9) // raised==0 → 0, still present
-	assert.Len(t, rates, 2)
+	isolate(t)
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o755))
+	require.NoError(t, os.Mkdir(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	data, err := loadPersonasScores(io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, data.rates)
 }
 
 // executeSplit runs the root command with separate stdout/stderr buffers so a
