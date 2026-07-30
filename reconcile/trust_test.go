@@ -33,12 +33,15 @@ func TestTrustExempt_HighTrustSingletonSurvivesConsensusFilter(t *testing.T) {
 }
 
 // TestTrustExempt_Direct table-drives the exemption predicate directly, the way
-// TestDemoteByTrust_Direct does for demotion. It pins the two guards the
-// end-to-end tests can never reach, because Reconcile only ever builds findings
-// with at least one reviewer: a 2-reviewer finding (not a singleton, so never
-// exempt) and an empty Reviewers slice. The empty-slice case is the one that
-// matters for safety — len(f.Reviewers) != 1 short-circuits before
-// f.Reviewers[0] is evaluated, so the index access cannot panic.
+// TestDemoteByTrust_Direct does for demotion. It pins the two guards none of the
+// end-to-end tests above happen to exercise: a 2-reviewer finding (not a
+// singleton, so never exempt) and an empty Reviewers slice. The empty-slice case
+// is the one that matters for safety — len(f.Reviewers) != 1 short-circuits
+// before f.Reviewers[0] is evaluated, so the index access cannot panic.
+//
+// That case is reachable end-to-end, not merely defensive: distinctReviewers
+// (merge.go) drops empty reviewer names, so a group whose source findings all
+// carry Reviewer: "" merges to a ConfMedium finding with Reviewers == [].
 func TestTrustExempt_Direct(t *testing.T) {
 	priors := map[string]float64{
 		"reliable": trustHighThreshold,
@@ -87,6 +90,8 @@ func TestDemoteByTrust_Direct(t *testing.T) {
 		ConfHigh, "a non-ConfMedium finding (already HIGH) is never demoted")
 	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky", "other"}}}, low).Confidence,
 		ConfMedium, "a 2-reviewer finding is never demoted")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: nil}}, low).Confidence,
+		ConfMedium, "an empty Reviewers slice is guarded before the index access")
 }
 
 // TestTrust_MidRangeRateIsCompleteNoOp pins the neutral zone between the two
