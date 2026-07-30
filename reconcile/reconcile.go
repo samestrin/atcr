@@ -84,11 +84,15 @@ type Summary struct {
 	// DBSCAN noise (as opposed to multi-finding gray pairs).
 	NoiseCount int `json:"noise_count"`
 	// ConsensusFiltered is the number of uncorroborated singletons the epic-14.2
-	// consensus filter routed to the ambiguous sidecar (single-reviewer, below-HIGH
-	// confidence, not exempt) when the panel had at least consensusMinReviewers
-	// distinct reviewers. Zero when the panel was too small for the filter to run or
-	// nothing was dropped. Observability only — the dropped findings live in the
-	// sidecar.
+	// consensus filter routed to the ambiguous sidecar (single-reviewer, below the
+	// confidence bar, not exempt) when the panel had at least consensusMinReviewers
+	// distinct reviewers. The bar is opts.Consensus-dependent (see the
+	// Options.Consensus godoc): below-HIGH under strict, below-MEDIUM under
+	// lenient. Zero when the panel was too small for the filter to run, when
+	// nothing was dropped, or when the filter was turned off entirely
+	// (ConsensusOff) — a 0 therefore cannot distinguish "off" from
+	// "strict with nothing to filter". Observability only — the dropped findings
+	// live in the sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
