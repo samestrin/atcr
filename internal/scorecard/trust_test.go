@@ -92,6 +92,30 @@ func TestTrustPriors_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
 	assert.Empty(t, rates)
 }
 
+// --- ResolveTrustPriors (epic 35.9 T2 wiring) ---
+
+func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
+	// No atcr/scorecard store under a fresh HOME (AC5): degrades to an empty
+	// map, never an error, never a blocked caller.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+
+	assert.Empty(t, ResolveTrustPriors())
+}
+
+func TestResolveTrustPriors_ReadsTheDefaultStore(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	appendN(t, dir, DefaultTrustMinRuns, "Trusted", "m", 1, 1)
+
+	rates := ResolveTrustPriors()
+	require.Contains(t, rates, "trusted")
+	assert.InDelta(t, 1.0, rates["trusted"], 1e-9)
+}
+
 func TestTrustPriors_MissingDirYieldsEmptyMapNoError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
 

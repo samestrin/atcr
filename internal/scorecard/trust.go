@@ -55,3 +55,8 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 	}
 	return rates, nil
 }
+
+// ResolveTrustPriors is a stub pending implementation (RED).
+func ResolveTrustPriors() map[string]float64 {
+	return nil
+}
