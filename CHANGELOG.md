@@ -1,3 +1,18 @@
+## [35.9.0] - 2026-07-29
+
+Consumes the per-reviewer trust prior (epic 35.8) at reconcile time, so the epic-14.2 consensus filter's drop/keep decision on an uncorroborated singleton finding is informed by a reviewer's measured track record, not just in-run reviewer count.
+
+### Added
+
+- `reconcile.Options.TrustPriors`: a caller-supplied map of lowercase reviewer name to historical corroboration rate. A singleton whose sole reviewer's prior is at or above the high-trust threshold survives the consensus filter without in-run corroboration or PageRank authority. A singleton whose sole reviewer's prior is at or below the low-trust threshold is demoted to `LOW` confidence — the first reconcile-time path to `ConfLow`, previously reachable only post-verify via a refuted verdict. Both effects are scoped to the same panel-size floor the consensus filter itself gates on (>= 3 distinct reviewers); a nil/empty map is a complete no-op.
+- `scorecard.ResolveTrustPriors()`: resolves the default scorecard store and reads `TrustPriors` at `DefaultTrustMinRuns`, degrading to a nil map on any failure (missing store, unresolvable config dir) rather than erroring. Every `atcr reconcile`, `atcr review --resume`, `atcr review` (one-shot mode), and MCP `atcr_reconcile` call site now resolves and attaches it.
+
+### Changed
+
+- `docs/scorecard.md` and `reconcile/README.md` document the trust-prior mechanism and its cold-start contract: a reviewer needs `DefaultTrustMinRuns` (20) summed runs before its prior applies at all.
+
+*Shipped via /execute-epic (epic 35.9)*
+
 ## [35.8.0] - 2026-07-29
 
 Promotes the reviewer→corroboration-rate resolver already backing `atcr personas list --scores` out of `cli/personas.go` and into `internal/scorecard` as a shared, minimum-history-aware resolver, so skeptic selection and future trust-aware consensus filtering reuse one aggregation instead of growing a second copy.
