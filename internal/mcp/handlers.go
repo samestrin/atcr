@@ -298,6 +298,21 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		threshold = t
 	}
 
+	// Consensus precedence parity with the CLI: explicit consensus argument >
+	// project config > user-global registry, with "" mapping to strict. Resolved
+	// and validated before any work, for the same fail-fast reason as the gate.
+	rawConsensus, err := registry.ResolveConsensus(e.root, in.Consensus)
+	if err != nil {
+		return nil, ReconcileResult{}, err
+	}
+	// Report the resolved raw value, not in.Consensus: an invalid level may have
+	// come from the config tier with no argument passed at all.
+	consensusLevel, ok := reclib.NormalizeConsensus(rawConsensus)
+	if !ok {
+		return nil, ReconcileResult{}, fmt.Errorf("invalid consensus level %q: must be one of %s",
+			strings.TrimSpace(rawConsensus), strings.Join(reclib.ConsensusLevels, ", "))
+	}
+
 	// --require-verified is meaningless without a gate (the same fail-fast rule as
 	// the CLI, AC 05-01 EC3): a strict gate that never runs gives false confidence.
 	if in.RequireVerified && threshold == "" {
@@ -337,6 +352,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
 		Root:        "",
 		TrustPriors: scorecard.ResolveTrustPriors(),
+		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err

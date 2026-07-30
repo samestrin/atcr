@@ -15,8 +15,13 @@ import (
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
-	// DefaultConsensus is a wrong-answer stub (RED).
-	DefaultConsensus = ""
+	// DefaultConsensus is the embedded consensus-filter level (epic 35.9.1):
+	// "strict" reproduces the hardcoded epic-14.2 behavior, so an unconfigured
+	// project sees no change. Unlike DefaultFailOn it is a real default rather
+	// than template-only seeding — ResolveConsensus returns "" when nothing is
+	// configured and each call site maps "" to this value, because an
+	// unresolvable level must never silently disable the filter.
+	DefaultConsensus = "strict"
 	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
@@ -71,7 +76,11 @@ type ProjectConfig struct {
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
-	// Consensus is a wrong-answer stub (RED).
+	// Consensus selects the epic-14.2 consensus filter's corroboration bar
+	// (epic 35.9.1): strict (default — today's behavior), lenient (keep
+	// MEDIUM-confidence singletons), or off (filter inert). Empty inherits the
+	// registry tier or DefaultConsensus. Enum validation lives at the call
+	// sites (ResolveConsensus returns the raw string), matching fail_on.
 	Consensus string `yaml:"consensus,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
@@ -150,6 +159,14 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+	b.WriteString("# consensus: corroboration bar for the reconcile consensus filter, applied\n")
+	b.WriteString("#   only once a panel has 3+ distinct reviewers. One of:\n")
+	b.WriteString("#     strict  — (default) sidecar every singleton below HIGH confidence\n")
+	b.WriteString("#     lenient — keep MEDIUM-confidence singletons; sidecar only LOW ones\n")
+	b.WriteString("#     off     — filter inert; every singleton reaches findings.json\n")
+	b.WriteString("#   Security, HIGH/CRITICAL, out-of-scope, and high-trust singletons are\n")
+	b.WriteString("#   exempt at every level — only the corroboration bar moves.\n")
+	fmt.Fprintf(&b, "consensus: %s\n", DefaultConsensus)
 	b.WriteString("# telemetry: anonymous usage ping. Default enabled; set false (or export\n")
 	b.WriteString("#   ATCR_TELEMETRY=0) to opt out. Either surface disabling is sufficient.\n")
 	b.WriteString("# telemetry: true\n")

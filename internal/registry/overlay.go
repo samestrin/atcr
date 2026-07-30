@@ -44,6 +44,7 @@ var sharedSettingsKeys = []string{
 	"cache_max_bytes",
 	"max_sprint_plan_bytes",
 	"fail_on",
+	"consensus",
 }
 
 // amendWithSettingsHint checks whether a YAML strict-parse error mentions a

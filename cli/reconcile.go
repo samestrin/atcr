@@ -107,6 +107,15 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve the consensus filter level BEFORE any I/O for the same reason as
+	// the gate above: a bad --consensus (or a bad config consensus, which is not
+	// validated at load time) must fail fast as a usage error (exit 2) rather
+	// than after a reconcile has already written artifacts.
+	consensusLevel, err := resolveConsensusLevel(consensusFlagValue(cmd))
+	if err != nil {
+		return err
+	}
+
 	// --require-verified is meaningless without a gate: a strict gate that never
 	// runs gives false confidence (the "gate that catches nothing" failure mode
 	// Epic 3.0 exists to eliminate). Fail fast as a usage error (AC 05-01 EC3).
@@ -153,6 +162,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		Partial:      fanout.ReadManifestPartial(reviewDir),
 		Root:         repoRoot, // validate finding file paths against --repo (Epic 22.1; default ".")
 		TrustPriors:  scorecard.ResolveTrustPriors(),
+		Consensus:    consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the
@@ -442,16 +452,46 @@ func resolveGateThreshold(cmd *cobra.Command) (string, error) {
 	return validateGate(raw)
 }
 
-// consensusFlagValue is a wrong-answer stub (RED).
+// consensusFlagValue reads the --consensus flag and trims it, mirroring
+// gateFlagValue's semantic exactly: a whitespace-only value is unset (it falls
+// through to the config chain), never a usage error on one surface and a config
+// fallback on another.
 func consensusFlagValue(cmd *cobra.Command) string {
 	v, _ := cmd.Flags().GetString("consensus")
-	return v
+	return strings.TrimSpace(v)
 }
 
-// resolveConsensusLevel is a wrong-answer stub (RED): it never consults the
-// precedence chain and never validates.
+// resolveConsensusLevel resolves the consensus filter level via the shared
+// registry.ResolveConsensus precedence chain (explicit > project config >
+// user-global registry; no embedded default inside the resolver), then maps the
+// resolver's "" to strict and enum-validates here — config consensus, like
+// config fail_on, is not validated at load time. A broken project config is a
+// usage error (exit 2, the repo's own config). The same resolver backs the MCP
+// atcr_reconcile handler and the review/resume reconcile call sites, so the
+// layers cannot fork.
+//
+// It takes the explicit value rather than a *cobra.Command because only `atcr
+// reconcile` registers a --consensus flag; review and resume resolve the same
+// chain with an empty explicit value (config/registry tiers only).
 func resolveConsensusLevel(explicit string) (string, error) {
-	return explicit, nil
+	raw, err := registry.ResolveConsensus(".", explicit)
+	if err != nil {
+		return "", usageError(err)
+	}
+	return validateConsensus(raw)
+}
+
+// validateConsensus canonicalizes and enum-validates a consensus level; an
+// invalid value is a usage error (exit 2) naming the valid levels, mirroring
+// validateGate. An empty value canonicalizes to strict (NormalizeConsensus),
+// so nothing configured anywhere keeps today's behavior.
+func validateConsensus(v string) (string, error) {
+	c, ok := reclib.NormalizeConsensus(v)
+	if !ok {
+		return "", usageError(fmt.Errorf("invalid consensus level %q: must be one of %s",
+			strings.TrimSpace(v), strings.Join(reclib.ConsensusLevels, ", ")))
+	}
+	return c, nil
 }
 
 // validateGate canonicalizes and enum-validates a gate severity; an invalid

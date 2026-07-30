@@ -1040,11 +1040,17 @@ func TestReconcileCmd_InvalidConsensusExitsTwo(t *testing.T) {
 	isolate(t)
 	fixtureReview(t, "r", trustPanelSources())
 
-	code, _, stderr := execCmdSplit(t, "reconcile", "--consensus", "bogus", "r")
-	require.Equal(t, 2, code)
-	assert.Contains(t, stderr, "strict")
-	assert.Contains(t, stderr, "lenient")
-	assert.Contains(t, stderr, "off")
+	require.Equal(t, 2, execCmd(t, "reconcile", "--consensus", "bogus", "r"))
+
+	// The exit code alone does not prove the message is actionable, and the
+	// command tree surfaces usage errors through main() rather than
+	// cmd.ErrOrStderr(), so assert the message at its source.
+	_, err := resolveConsensusLevel("bogus")
+	require.Error(t, err)
+	for _, level := range reclib.ConsensusLevels {
+		assert.Contains(t, err.Error(), level, "the usage error must name every valid level")
+	}
+	assert.Contains(t, err.Error(), "bogus", "the usage error must echo the rejected value")
 }
 
 // TestReconcileCmd_InvalidConsensusInConfigExitsTwo (AC2/AC3): the config tier

@@ -36,6 +36,15 @@ type Options struct {
 	// byte-identical to pre-35.9 behavior, mirroring epic 13.3's
 	// empty-authority-map guarantee.
 	TrustPriors map[string]float64
+	// Consensus selects the consensus filter's corroboration bar (epic 35.9.1):
+	// ConsensusStrict (the default, and what "" means), ConsensusLenient, or
+	// ConsensusOff. It moves ONLY that bar — the consensusMinReviewers panel
+	// floor and the consensusExempt/trustExempt exemptions are identical at
+	// every level, and demoteByTrust runs ahead of the filter unaffected by it.
+	// An empty or unrecognized value resolves to strict (consensusFloor fails
+	// safe), so a caller that never sets this field, or one that bypassed
+	// boundary validation, keeps byte-identical pre-35.9.1 behavior.
+	Consensus string
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for

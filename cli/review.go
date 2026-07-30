@@ -706,11 +706,20 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
+		// The consensus level comes from the config/registry tiers only — there is
+		// deliberately no --consensus flag on `review` (epic 35.9.1 scope). Threading
+		// it here is what keeps `consensus:` from being a half-working config key
+		// honored by `atcr reconcile` but silently ignored by the one-shot path.
+		consensusLevel, cerr := resolveConsensusLevel("")
+		if cerr != nil {
+			return cerr
+		}
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
 			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 			TrustPriors:  scorecard.ResolveTrustPriors(),
+			Consensus:    consensusLevel,
 		})
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))

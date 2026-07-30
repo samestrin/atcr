@@ -12,16 +12,60 @@ import "strings"
 // than a rare true positive.
 const consensusMinReviewers = 3
 
-// Consensus filter levels (epic 35.9.1) — wrong-answer stubs (RED).
+// Consensus filter levels (epic 35.9.1). They move ONLY the singleton
+// corroboration bar — consensusMinReviewers (the panel-size floor) and
+// consensusExempt/trustExempt (the exemption set) are identical at every level,
+// deliberately keeping the internal confidence ladder and the exemption rules
+// out of the public API.
+//
+//   - ConsensusStrict is the default and reproduces the hardcoded epic-14.2
+//     behavior exactly: every singleton below ConfHigh is sidecarred.
+//   - ConsensusLenient raises the kept-bar to ConfMedium, so an uncorroborated
+//     MEDIUM singleton survives and only a ConfLow one is sidecarred.
+//   - ConsensusOff makes the filter inert, restoring pre-14.2 behavior.
 const (
 	ConsensusOff     = "off"
 	ConsensusLenient = "lenient"
 	ConsensusStrict  = "strict"
 )
 
-// NormalizeConsensus is a wrong-answer stub (RED): it accepts everything.
+// ConsensusLevels lists the valid levels in documentation order (default
+// first), so every surface that must name them in an error or a help string
+// reads them from one place instead of re-listing them.
+var ConsensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
+
+// NormalizeConsensus canonicalizes a consensus level token and reports whether
+// it is in the closed vocabulary. It is case- and whitespace-insensitive
+// (following validateGate/ParseSeverity rather than the exact-lowercase
+// on_overflow/payload_mode convention), and treats the empty string as the
+// unset case: valid, canonicalizing to ConsensusStrict, so an unconfigured
+// project keeps today's behavior. Callers phrase their own failure for an
+// invalid token — a CLI usage error (exit 2) or an MCP tool error.
 func NormalizeConsensus(v string) (string, bool) {
-	return v, true
+	switch c := strings.ToLower(strings.TrimSpace(v)); c {
+	case "":
+		return ConsensusStrict, true
+	case ConsensusStrict, ConsensusLenient, ConsensusOff:
+		return c, true
+	default:
+		return "", false
+	}
+}
+
+// consensusFloor maps an effective level to the confidence floor
+// consensusSingletonAt tests against, and reports whether the filter runs at
+// all. An unrecognized level fails SAFE — it is treated as strict rather than
+// disabling the filter — so a value that somehow bypassed boundary validation
+// can never silently widen what reaches findings.json.
+func consensusFloor(level string) (floor string, enabled bool) {
+	switch c, ok := NormalizeConsensus(level); {
+	case ok && c == ConsensusOff:
+		return "", false
+	case ok && c == ConsensusLenient:
+		return ConfMedium, true
+	default:
+		return ConfHigh, true
+	}
 }
 
 // trustHighThreshold / trustLowThreshold gate the reconcile-time trust prior

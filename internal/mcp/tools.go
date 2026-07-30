@@ -76,6 +76,7 @@ type ReconcileArgs struct {
 	IDOrPath        string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile (review id only; paths are not accepted); defaults to .atcr/latest"`
 	FailOn          string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
 	RequireVerified bool   `json:"require_verified,omitempty" jsonschema:"with fail_on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate; requires fail_on"`
+	Consensus       string `json:"consensus,omitempty" jsonschema:"consensus filter level for uncorroborated singletons on a 3+ reviewer panel: strict (default), lenient (keep MEDIUM-confidence singletons), or off (filter inert)"`
 }
 
 // VerifyArgs are the atcr_verify tool arguments. id_or_path is the review id

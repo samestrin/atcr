@@ -364,11 +364,19 @@ func recordResumeAudit(cmd *cobra.Command, ctx context.Context, dir string, ts t
 // The partial flag is read from the just-finalized review so reconcile records the
 // run's partial provenance.
 func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) (int, error) {
+	// Config/registry tiers only — `resume` has no --consensus flag (epic 35.9.1
+	// scope). It reconciles and persists like `atcr reconcile` does, so leaving
+	// Consensus unresolved here would silently ignore a configured level.
+	consensusLevel, cerr := resolveConsensusLevel("")
+	if cerr != nil {
+		return 0, cerr
+	}
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 		TrustPriors:  scorecard.ResolveTrustPriors(),
+		Consensus:    consensusLevel,
 	})
 	if err != nil {
 		return 0, usageError(fmt.Errorf("resume failed: %w", err))
