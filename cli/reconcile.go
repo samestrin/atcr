@@ -37,7 +37,29 @@ smallest covering AST block of its source line, so findings group together even
 when line numbers drift, with line proximity as the per-finding fallback when no
 parser is available or the source is missing. Set ATCR_DISABLE_AST_GROUPING to a
 truthy value (1, true) to revert to legacy line-proximity-only clustering; a
-falsy, unparseable, or unset value keeps AST grouping on.`,
+falsy, unparseable, or unset value keeps AST grouping on.
+
+Once a panel has 3 or more distinct reviewers, the consensus filter routes
+uncorroborated singleton findings to the ambiguous sidecar instead of
+findings.json, on the theory that a real issue would likely be caught by more
+than one reviewer. --consensus selects how tolerant that filter is:
+
+  strict   (default) sidecar every singleton below HIGH confidence — the
+           behavior shipped in epic 14.2
+  lenient  keep MEDIUM-confidence singletons; sidecar only LOW-confidence ones
+  off      filter inert; every singleton reaches findings.json, restoring
+           pre-14.2 behavior
+
+Only the corroboration bar moves. The 3-reviewer panel floor and every
+exemption (security-related, HIGH/CRITICAL severity, out-of-scope, and
+high-trust-reviewer singletons) apply identically at all three levels, and a
+filtered finding is always recoverable from the sidecar. Below the panel floor
+the filter is inert regardless of level.
+
+The level also resolves from a consensus: key in .atcr/config.yaml or
+~/.config/atcr/registry.yaml; the flag overrides both. Note that --consensus is
+a flag on this command only — atcr review and atcr review --resume honor the
+config/registry tiers but take no flag.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runReconcile,
 	}

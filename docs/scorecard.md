@@ -295,7 +295,12 @@ than growing a third aggregation.
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
   consumes: a singleton from a historically reliable reviewer survives the
   filter without in-run corroboration, and one from a historically unreliable
-  reviewer is demoted to `LOW` confidence. See
+  reviewer is demoted to `LOW` confidence. The demotion is independent of the
+  `consensus` filter level (`--consensus` / `consensus:`) — it runs ahead of the
+  filter, so a low-trust singleton is `LOW` at every level; only whether that
+  `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
+  `findings.json` still carrying `LOW`, which is the only configuration in which
+  the demotion is observable end-to-end. See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
   (20) summed runs before its prior applies at all — every reviewer on a fresh

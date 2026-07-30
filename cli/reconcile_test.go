@@ -1196,3 +1196,20 @@ func TestReconcileCmd_ConsensusConfigPrecedence(t *testing.T) {
 		assert.Equal(t, 3, consensusSummary(t, "r"))
 	})
 }
+
+// TestReconcileCmd_LongHelpDocumentsConsensus (T3): the command's long help must
+// document --consensus, every level, that strict is the default, and that off
+// restores pre-14.2 behavior — a flag whose only documentation is a one-line
+// usage string is not discoverable.
+func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
+	long := newReconcileCmd().Long
+
+	assert.Contains(t, long, "--consensus")
+	for _, level := range reclib.ConsensusLevels {
+		assert.Contains(t, long, level, "long help must name the %s level", level)
+	}
+	assert.Contains(t, long, "default", "long help must say which level is the default")
+	assert.Regexp(t, `(?s)off.*pre-14\.2|pre-14\.2.*off`, long,
+		"long help must say off restores pre-14.2 behavior")
+	assert.Contains(t, long, "consensus:", "long help must point at the config key too")
+}
