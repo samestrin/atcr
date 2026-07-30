@@ -60,7 +60,7 @@ func NormalizeConsensus(v string) (string, bool) {
 func consensusFloor(level string) (floor string, enabled bool) {
 	switch c, ok := NormalizeConsensus(level); {
 	case ok && c == ConsensusOff:
-		return "", false
+		return ConfHigh, false
 	case ok && c == ConsensusLenient:
 		return ConfMedium, true
 	default:
@@ -138,8 +138,15 @@ func consensusSingleton(m Merged) bool {
 // predicate exactly; ConfMedium is the lenient bar, under which an
 // uncorroborated ConfMedium singleton is kept and only ConfLow is droppable.
 // The floor is the only thing a level moves — every exemption predicate is
-// applied unchanged by the caller at both levels.
+// applied unchanged by the caller at both levels. A floor naming no recognized
+// confidence tier reports false (nothing is a drop candidate): ConfidenceAtOrAbove
+// fails closed on such a floor and the negation would otherwise make EVERY
+// finding droppable, so the guard keeps a missed enabled check degrading to
+// strict instead of delete-everything.
 func consensusSingletonAt(m Merged, floor string) bool {
+	if confidenceRank[strings.ToUpper(strings.TrimSpace(floor))] == 0 {
+		return false
+	}
 	return !ConfidenceAtOrAbove(m.Confidence, floor)
 }
 
