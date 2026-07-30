@@ -335,7 +335,8 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// repo. An empty root hard-disables AST file reads (proximity fallback) and
 		// makes finding-path validation a no-op, rather than keying findings off
 		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
-		Root: "",
+		Root:        "",
+		TrustPriors: scorecard.ResolveTrustPriors(),
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err

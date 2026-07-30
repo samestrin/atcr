@@ -16,7 +16,8 @@ const (
 
 // Confidence values. HIGH = 2+ distinct reviewers OR a single reviewer whose
 // run authority exceeds the baseline (see promoteByAuthority), MEDIUM = single
-// reviewer, LOW = reserved for untrusted sources (unused in v1).
+// reviewer, LOW = untrusted-source singletons (assigned post-verify by a
+// refuted verdict, and at reconcile time since epic 35.9's demoteByTrust).
 const (
 	ConfHigh   = "HIGH"
 	ConfMedium = "MEDIUM"

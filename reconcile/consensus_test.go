@@ -102,7 +102,8 @@ func TestConsensusFilter_InactiveBelowThreeReviewers(t *testing.T) {
 }
 
 func TestConsensusSingleton_And_PanelReviewers(t *testing.T) {
-	// consensusSingleton keys on confidence below HIGH (MEDIUM or the reserved LOW),
+	// consensusSingleton keys on confidence below HIGH (MEDIUM or LOW — the
+	// latter reachable via epic 35.9's demoteByTrust),
 	// so an authority/verify-promoted HIGH is kept and a ConfLow untrusted singleton
 	// is dropped.
 	isTrue(t, consensusSingleton(Merged{Finding{Confidence: ConfMedium}}), "medium is a singleton")

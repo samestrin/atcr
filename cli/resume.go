@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
 )
 
@@ -367,6 +368,7 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) (int, 
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+		TrustPriors:  scorecard.ResolveTrustPriors(),
 	})
 	if err != nil {
 		return 0, usageError(fmt.Errorf("resume failed: %w", err))

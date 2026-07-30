@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,8 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/scorecard"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -163,6 +166,103 @@ func execResume(t *testing.T, args ...string) (int, string) {
 		out += err.Error()
 	}
 	return exitCode(err), out
+}
+
+// seedTrustedReviewer appends DefaultTrustMinRuns scorecard records for reviewer
+// at a 1.0 corroboration rate, so scorecard.ResolveTrustPriors() resolves it at
+// or above the reconcile-time high-trust threshold. Shared by the resume and
+// review trust-prior wiring tests.
+func seedTrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-r%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+}
+
+// trustPanelSources is the fixture body for a 3-reviewer panel in which every
+// finding is an uncorroborated MEDIUM singleton — the exact shape the epic-14.2
+// consensus filter drops unless a scorecard trust prior exempts the reviewer.
+// Nothing is severity- or category-exempt, so survival is attributable solely to
+// the trust prior.
+func trustPanelSources() map[string]string {
+	return map[string]string{
+		"sources/a/findings.txt": "MEDIUM|foo.go:10|possible nil deref on this path|Guard it|correctness|10|ev|trusted\n",
+		"sources/b/findings.txt": "MEDIUM|bar.go:20|unused import lingers in this file|Drop it|style|10|ev|stranger\n",
+		"sources/c/findings.txt": "MEDIUM|baz.go:30|request body is not validated|Validate it|correctness|10|ev|third\n",
+	}
+}
+
+// reconciledFiles reads a review's reconciled findings.json and returns the File
+// field of every surviving finding.
+func reconciledFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []struct {
+		File string `json:"file"`
+	}
+	require.NoError(t, json.Unmarshal(data, &findings))
+	files := make([]string, 0, len(findings))
+	for _, f := range findings {
+		files = append(files, f.File)
+	}
+	return files
+}
+
+// reconciledLines is the line-number counterpart of reconciledFiles, for panels
+// whose findings all cite the same file at different lines.
+func reconciledLines(t *testing.T, dir string) []int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []struct {
+		Line int `json:"line"`
+	}
+	require.NoError(t, json.Unmarshal(data, &findings))
+	lines := make([]int, 0, len(findings))
+	for _, f := range findings {
+		lines = append(lines, f.Line)
+	}
+	return lines
+}
+
+// TestResumeReconcile_AppliesScorecardTrustPrior covers the resume half of the
+// epic-35.9 wiring that TestReconcileCmd_AppliesScorecardTrustPrior covers for
+// `atcr reconcile`: resumeReconcile (cli/resume.go) must resolve and attach
+// scorecard.ResolveTrustPriors() to reclib.Options, not merely tolerate its
+// absence. It drives resumeReconcile directly rather than the whole --resume
+// command so the assertion isolates the reconcile call site from range/roster
+// pre-checks. Deleting the TrustPriors line from resumeReconcile drops foo.go
+// and fails this test.
+func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
+	isolate(t)
+	seedTrustedReviewer(t, "trusted")
+	fixtureReview(t, "r", trustPanelSources())
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	dir := filepath.Join(".atcr", "reviews", "r")
+
+	_, err := resumeReconcile(context.Background(), cmd, dir)
+	require.NoError(t, err)
+
+	files := reconciledFiles(t, dir)
+	require.Contains(t, files, "foo.go",
+		"resumeReconcile threads the reviewer trust prior into RunReconcile")
+	require.NotContains(t, files, "bar.go",
+		"a singleton from a reviewer with no scorecard history is still sidecarred")
 }
 
 func TestResume_IncompatibleWithIDIsExit2(t *testing.T) {

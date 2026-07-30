@@ -286,6 +286,25 @@ than growing a third aggregation.
   `TrustPriors(dir, 0)` explicitly instead — that table is meant to show every
   reviewer with any history at all, so it opts out of the default floor rather
   than inheriting it.
+- **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
+  `DefaultDir()` + `TrustPriors(dir, DefaultTrustMinRuns)` in one best-effort
+  call, degrading to a nil map on any failure (an unresolvable config dir, a
+  missing/unreadable store) rather than erroring. Every `atcr reconcile` /
+  `atcr review --resume` / `atcr review` (one-shot mode) / MCP
+  `atcr_reconcile` call site resolves it and threads the result into
+  `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
+  consumes: a singleton from a historically reliable reviewer survives the
+  filter without in-run corroboration, and one from a historically unreliable
+  reviewer is demoted to `LOW` confidence. See
+  [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
+  mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
+  (20) summed runs before its prior applies at all — every reviewer on a fresh
+  install, and any reviewer below that floor, is simply absent from the map,
+  so reconcile behaves byte-identically to pre-35.9 until history accumulates.
+  This resolver is intentionally not called from inside
+  `internal/reconcile` itself: `internal/scorecard` already imports
+  `internal/reconcile` (for `EmitForReconcile`), so the reverse import would
+  cycle — each CLI/MCP call site resolves and attaches it instead.
 
 ### `atcr reconcile --no-scorecard`
 

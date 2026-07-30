@@ -40,6 +40,7 @@ The deterministic Go reconciler — cluster → dedupe → merge → confidence 
 ```bash
 # 1. Install (Go 1.25+)
 go install github.com/samestrin/atcr/cmd/atcr@latest
+# ...or grab a prebuilt binary from GitHub Releases (tagged via GoReleaser),
 # ...or, from a clone, run the wrapper (same go install, plus a Go preflight + PATH check):
 ./install.sh
 
@@ -67,6 +68,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 3. **Chutes → Featherless — explore, not default.** More models, but slower inference, tighter context windows, and concurrency limits. Try Chutes first, then Featherless: explore, not default.
 4. **LiteLLM — Advanced.** An OpenAI-compatible proxy for aggregating several providers behind one endpoint. Keep it Advanced; it is not a first-run recommendation.
 5. **Frontier / majors personas — opt-in, bring your own key.** Personas prompt-tuned per each frontier provider's own official prompting guide are installed deliberately by anyone who already holds that provider's API key. They stay opt-in and outside the default funnel — see [docs/personas-install.md](docs/personas-install.md) to discover and install one by the model you have.
+6. **Local models (Ollama-class) — privacy-first, zero egress.** Community personas `gerald`, `orson`, and `liam` target local models across three hardware tiers, so the whole panel can run on your own hardware with no code leaving the machine — see [docs/personas-install.md](docs/personas-install.md). The community catalog also ships specialty lenses like `simon`, an anti-slop reviewer targeting AI-generated code bloat and over-engineering.
 
 `atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
 
@@ -78,8 +80,8 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 
 | Command | Purpose |
 |---------|---------|
-| `atcr review` | Resolve the git range, build payloads, fan out to the reviewer pool, write per-agent + merged findings |
-| `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts |
+| `atcr review` | Resolve the git range (or scan the whole repo with `--all` / a subtree with `--dir`), build payloads, fan out to the reviewer pool, write per-agent + merged findings; `--auto-fix` applies sandboxed fixes and opens a PR |
+| `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts; a trust-aware consensus filter uses scorecard history to keep high-trust reviewers' singletons and demote low-trust ones |
 | `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
 | `atcr report` | Render md / json / checklist / sarif / axi views over the reconciled findings |
@@ -92,22 +94,23 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
 | `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
-| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard` / `resolve` / `compact`); see [docs/technical-debt.md](docs/technical-debt.md) |
+| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard` / `resolve` / `compact`); `resolve --status wontfix --reason "<text>"` dismisses a false-positive finding so it stops resurfacing — see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
 | `atcr quality-report` | Render the aggregate persona+model dismissed/confirmed prompt-quality signal (distinct from `atcr report`; content-free — persona, model, and counts only) |
 | `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate |
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
-| `atcr personas` | Manage community reviewer personas |
+| `atcr personas` | Manage community reviewer personas; `submit` contributes a locally-tuned persona back upstream as a PR — see [docs/personas-authoring.md](docs/personas-authoring.md) |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
 | `atcr skill` | Install the embedded Agent Skill; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes it to your agent harness's skills directory |
 | `atcr version` | Print the atcr version |
 
 Key flags:
 
-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items; a missing/empty plan is ignored, an unreadable one warns and proceeds) / `--pr <n>` (stamp the pull-request number on this run's audit record; falls back to `GITHUB_REF` when unset)
-- `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items; a missing/empty plan is ignored, an unreadable one warns and proceeds) / `--pr <n>` (stamp the pull-request number on this run's audit record; falls back to `GITHUB_REF` when unset) / `--all` / `--dir <path>` (baseline whole-repo or subtree review — see below) / `--fresh` (bypass the baseline incremental cache and rescan everything) / `--no-ignore` (include files matched by `.gitignore` / `.atcrignore`) / `--auto-fix` (apply sandboxed fixes and open a PR — see below) / `--axi` (token-dense TOON output for agent callers — see below) / `--sync-cloud` / `--cloud-endpoint <url>` (upload this run's telemetry; requires `ATCR_API_KEY`) / `--preview` (dry-run the quality-signal payload without sending it) / `--byte-budget <n>` / `--max-parallel <n>`
+- One-shot pipeline chaining on `atcr review`: `--verify` / `--require-verified` / `--debate` / `--thorough` / `--single-model` / `--min-severity <severity>` run reconcile → verify → debate in a single command; `--exec` opts into sandboxed reproduction of findings (see [docs/execution.md](docs/execution.md))
+- `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs) / `--repo <path>` (validate findings against a repo other than the current directory; also on `atcr verify`)
 - `atcr audit-report --pr <n>` (required — render the compliance report for that PR's recorded review runs; a PR with no recorded runs exits non-zero)
 - `atcr report --format md|json|checklist|sarif|axi` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
 - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
@@ -115,6 +118,9 @@ Key flags:
 Environment variables:
 
 - `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. AST grouping covers Go, Python, TypeScript/JavaScript, PHP, Rust, Bash, Java, Kotlin, C/C++, and C#; any other file type falls back to line proximity. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
+- `ATCR_TELEMETRY` — names the **enabled** state (note the inverse direction vs. `ATCR_DISABLE_AST_GROUPING`): `ATCR_TELEMETRY=0` disables the anonymous usage ping. See [docs/telemetry.md](docs/telemetry.md).
+- `ATCR_API_KEY` — API key for `--sync-cloud` telemetry uploads; a missing or rejected key exits with code **3**.
+- `ATCR_AXI_MAX_LINES` — caps `--axi` output before truncation (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).
 
 ### Redirecting output for orchestrators (`--output-dir`)
 
@@ -146,13 +152,28 @@ atcr review --resume ./path        # an explicit review directory
 - If every agent already completed, resume just re-runs reconciliation. `--resume` cannot be combined with `--id` or `--output-dir`.
 - Re-running an explicit `--id` (or a non-empty `--output-dir`) whose directory already exists is rejected; the error names the two ways forward — `--resume <id>` to continue it non-destructively, or `--force` to back the prior tree up to `<dir>.bak` and start fresh. `--resume` and `--force` are mutually exclusive (opposite collision resolutions).
 
+## Baseline review (`--all` / `--dir`)
+
+`atcr review` does not require a diff range: `--all` scans the whole repository and `--dir <path>` scans a subtree — useful for a first pass over a legacy codebase or a periodic full audit. Baseline runs are incremental: files whose content hash is unchanged since the last baseline are skipped, and `--fresh` forces a full rescan. `--all` / `--dir` are mutually exclusive with `--base` / `--head` / `--merge-commit`.
+
+## Auto-fix (`--auto-fix`)
+
+`atcr review --auto-fix` turns findings into fixes: an executor model generates a patch per eligible finding, atcr applies it to the working tree, validates it (build + tests), auto-reverts on failure, and opens a GitHub pull request with the results. It never auto-merges.
+
+- **Sandboxed by default — no opt-in.** Post-apply validation runs model-authored code, so it executes inside the same container isolation as `--exec` (no network, read-only root filesystem, dropped capabilities, resource caps). If no sandbox backend is configured or available, the command fails closed rather than validating on the host; `--no-sandbox` is the explicit danger opt-out.
+- **Config edits blocked by default.** Patches touching `.git/`, `.githooks/`, CI workflows, `.env*`, `.planning/`, or `.atcr/` are rejected unless you pass `--allow-config-edits` (danger).
+- **Two-tier execution.** Complexity ceilings (`max_severity_for_fix`, `max_estimated_minutes`) let a cheap executor model handle simple fixes and escalate the rest to a frontier model — worked examples in `examples/registry-with-executor*.yaml`.
+- **Shortcut fixes rejected.** Fixes that smell like reward-hacking (deleted assertions, added suppressions, swallowed errors, stubbed bodies) are rejected/retried or flagged `NEEDS_REVIEW` rather than applied.
+
+`--repo` / `--token` / `--api-url` target a non-default GitHub remote. See [docs/auto-fix.md](docs/auto-fix.md) and [docs/security.md](docs/security.md).
+
+## Agent consumption (`--axi`)
+
+`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap tunable via `ATCR_AXI_MAX_LINES`. Available on `atcr review`, bare `atcr`, and as `atcr report --format axi`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
+
 ## Payload modes
 
 `atcr` ships three payload modes that control what each reviewer agent sees. The default is `blocks`; set per-agent overrides in `~/.config/atcr/registry.yaml` when a model handles a different format better.
-
-## Project-defined providers and agents
-
-A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlaying the user registry so a clone is self-contained — project entries shadow same-named user entries whole; new names are added. Because a project-defined provider could direct a key to an arbitrary endpoint, atcr gates them: run `atcr trust` to authorize a project provider (it pins the `base_url` + `api_key_env` pair) before any review or `atcr doctor` will use it. See [docs/registry.md](docs/registry.md#project-registry-overlay).
 
 | Mode | What the reviewer sees | When to use |
 |------|------------------------|-------------|
@@ -161,6 +182,16 @@ A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlayin
 | `files` | Full head-version content of changed files with changed regions marked | Highest token cost. Audit-style review of small ranges. |
 
 One run can mix payloads — the frontier model reads the `diff`, the local 8B gets `blocks` — and `manifest.json` records who saw what. See [docs/payload-modes.md](docs/payload-modes.md) for the decision guide, byte-budget truncation, and per-mode scope rules.
+
+Payloads are also filtered, promoted, and sized automatically:
+
+- **Ignore filtering.** Changed files matching the repo-root `.gitignore` or `.atcrignore` are excluded from payloads by default; `--no-ignore` opts out.
+- **Automatic per-file escalation.** Complex files (high churn, many hunks, high cyclomatic complexity) are promoted up the ladder — `diff` → `blocks` → `files` — and payloads are prepended with an AST skeleton of the changed files' HEAD version so a `diff`-mode reviewer still sees the surrounding structure. Tunable via the `payload_escalation` registry block; `manifest.json` records what each reviewer actually saw per file.
+- **Per-model sizing.** Each reviewer's payload is sized to its own model's context window with the output budget reserved; when a payload still overflows, the `on_overflow` policy applies (`chunk` default / `truncate` / `fallback` / `fail`), and `max_sprint_plan_bytes` caps the `--sprint-plan` injection. See [docs/registry.md](docs/registry.md).
+
+## Project-defined providers and agents
+
+A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlaying the user registry so a clone is self-contained — project entries shadow same-named user entries whole; new names are added. Because a project-defined provider could direct a key to an arbitrary endpoint, atcr gates them: run `atcr trust` to authorize a project provider (it pins the `base_url` + `api_key_env` pair) before any review or `atcr doctor` will use it. See [docs/registry.md](docs/registry.md#project-registry-overlay).
 
 ## Tool-using reviewers (cost guidance)
 
@@ -202,7 +233,7 @@ jobs:
           atcr reconcile --fail-on high
 ```
 
-A ready-to-adapt script lives at [examples/ci-gate.sh](examples/ci-gate.sh). Shallow checkouts (`fetch-depth: 1`) break merge-base resolution; atcr detects this and errors with `git fetch --unshallow` guidance rather than producing a wrong range. See [docs/ci-integration.md](docs/ci-integration.md).
+A ready-to-adapt script lives at [examples/ci-gate.sh](examples/ci-gate.sh). Or skip the hand-rolled workflow entirely: the repo ships a composite GitHub Action ([`action.yml`](action.yml)) that runs review → reconcile → `atcr github` and posts the result as a PR check with optional inline comments — see [docs/github-action.md](docs/github-action.md). Shallow checkouts (`fetch-depth: 1`) break merge-base resolution; atcr detects this and errors with `git fetch --unshallow` guidance rather than producing a wrong range. See [docs/ci-integration.md](docs/ci-integration.md).
 
 ## Providers
 
@@ -215,20 +246,33 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/payload-modes.md](docs/payload-modes.md) — blocks vs. diff vs. files, token guidance
 - [docs/findings-format.md](docs/findings-format.md) — the versioned `atcr-findings/v1` contract
 - [docs/execution.md](docs/execution.md) — opt-in `--exec` sandboxed reproduction, the `evidence_exec` block, and the security posture
+- [docs/auto-fix.md](docs/auto-fix.md) — `--auto-fix` sandboxed validation, executor tiers, the PR flow
+- [docs/security.md](docs/security.md) — sandbox guarantees, workspace integrity, blocked paths
+- [docs/verification.md](docs/verification.md) — `atcr verify` adversarial skeptics and confidence v2
+- [docs/cross-examination.md](docs/cross-examination.md) — the `atcr debate` proposer/challenger/judge stage
 - [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
 - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
+- [docs/github-action.md](docs/github-action.md) — the composite PR-review GitHub Action
 - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
 - [docs/metrics.md](docs/metrics.md) — metric catalog, end-of-review CLI summary, and the `atcr_metrics` MCP tool
+- [docs/scorecard.md](docs/scorecard.md) — per-reviewer scorecards, trust priors, and the leaderboard
+- [docs/benchmark.md](docs/benchmark.md) — benchmark-suite tooling for the public leaderboard
+- [docs/telemetry.md](docs/telemetry.md) — what telemetry collects, opting out, and `--sync-cloud`
+- [docs/personas-install.md](docs/personas-install.md) — discovering and installing provider and community personas
+- [docs/personas-authoring.md](docs/personas-authoring.md) — writing and submitting your own community persona
+- [docs/agentic-consumption.md](docs/agentic-consumption.md) — driving atcr from another agent via `--axi`
 
 ## Repository layout
 
 - `cmd/atcr/` — thin binary entry-point shim
 - `cli/` — the importable command tree (all subcommand logic)
-- `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `reconcile`, `report`, `mcp`)
+- `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `report`, `mcp`, `verify`, `debate`, `autofix`, `sandbox`, `scorecard`, `telemetry`, and more)
+- `reconcile/` — the deterministic reconciler as a standalone Go module (importable as a library; wired into the build via `go.work`)
 - `personas/` — the nine embedded default personas + `_base.md`
 - `skills/atcr/` — the atcr Agent Skill (host review + orchestration); it is embedded in the binary, so `atcr skill export` installs it
 - `docs/` — user documentation
-- `examples/` — CI gate script
+- `examples/` — CI gate script, a live-audit example, and sample executor registries
+- `bin/` — local build output (`go build -o bin/atcr`)
 - `.planning/` — development planning artifacts
 
 ## Development

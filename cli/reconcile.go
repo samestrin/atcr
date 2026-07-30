@@ -151,6 +151,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
 		Root:         repoRoot, // validate finding file paths against --repo (Epic 22.1; default ".")
+		TrustPriors:  scorecard.ResolveTrustPriors(),
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the

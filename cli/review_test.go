@@ -3,13 +3,16 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +24,99 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// perAgentMockProvider returns an httptest server speaking the OpenAI
+// chat-completions shape that replies with a DIFFERENT finding per model, so a
+// multi-agent roster produces a panel of uncorroborated singletons rather than
+// the same finding N times. byModel is keyed by the model id liveReviewConfig
+// assigns each agent ("m-<agent>"); an unknown model yields no findings.
+func perAgentMockProvider(t *testing.T, byModel map[string]string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal(body, &req)
+		resp := map[string]any{"choices": []map[string]any{
+			{"message": map[string]string{"role": "assistant", "content": byModel[req.Model]}},
+		}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// initGitRepoWithWideChange seeds a repo whose HEAD commit adds a single wide
+// file, so a review over HEAD^..HEAD has many grounded lines to cite. The stock
+// initGitRepoWithChange only touches one line, which the fan-out's grounding
+// filter would reject every finding against but the one on that exact line —
+// too narrow for a panel of three findings that must stay far enough apart not
+// to cluster together.
+func initGitRepoWithWideChange(t *testing.T) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	run("init", "-q")
+	require.NoError(t, os.WriteFile("seed.txt", []byte("seed\n"), 0o644))
+	run("add", "seed.txt")
+	run("commit", "-q", "-m", "init")
+
+	var b bytes.Buffer
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	require.NoError(t, os.WriteFile("wide.go", b.Bytes(), 0o644))
+	run("add", "wide.go")
+	run("commit", "-q", "-m", "wide")
+}
+
+// TestReviewCmd_OneShotAppliesScorecardTrustPrior covers the one-shot half of the
+// epic-35.9 wiring that TestReconcileCmd_AppliesScorecardTrustPrior covers for
+// `atcr reconcile`: runReview's in-process reconcile (cli/review.go) must resolve
+// and attach scorecard.ResolveTrustPriors() to reclib.Options, not merely tolerate
+// its absence. A --fail-on gate is what routes the run into that one-shot block;
+// CRITICAL is chosen so the MEDIUM panel never trips the gate and the exit code
+// stays 0. "trusted" clears DefaultTrustMinRuns at a 1.0 rate, so its otherwise
+// uncorroborated singleton must survive the consensus filter while the two
+// no-history reviewers' singletons are sidecarred. All three cite the same file
+// at widely separated lines (the only file in the patch), so the assertions key
+// on line number. Deleting the TrustPriors line from the one-shot RunReconcile
+// call drops the wide.go:10 finding and fails this test.
+func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+	seedTrustedReviewer(t, "trusted")
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-trusted":  "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		"m-stranger": "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
+		"m-third":    "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "trusted", "stranger", "third")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"),
+		"a MEDIUM-only panel does not trip a CRITICAL gate")
+
+	id, err := os.ReadFile(filepath.Join(".atcr", "latest"))
+	require.NoError(t, err)
+	dir := filepath.Join(".atcr", "reviews", strings.TrimSpace(string(id)))
+
+	lines := reconciledLines(t, dir)
+	require.Contains(t, lines, 10,
+		"the one-shot reconcile threads the reviewer trust prior into RunReconcile")
+	require.NotContains(t, lines, 30,
+		"a singleton from a reviewer with no scorecard history is still sidecarred")
+}
 
 // TestResolveRedactRoot_ReturnsAbsolute verifies the happy path resolves the
 // repo root to an absolute path used for AC6 path relativization.

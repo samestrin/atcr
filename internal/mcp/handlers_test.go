@@ -3,6 +3,9 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -418,6 +421,95 @@ func TestReconcileHandler_NoResults(t *testing.T) {
 	assert.Contains(t, msg, "no agent results found")
 	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews", id, "reconciled"),
 		"fail-before-emit: an empty review must not get reconciled artifacts as a side effect")
+}
+
+// trustPanelFixture builds a review whose three pool agents each raise a
+// distinct, uncorroborated MEDIUM finding. That is the exact shape the epic-14.2
+// consensus filter acts on: the panel clears consensusMinReviewers (3 distinct
+// reviewers), nothing is corroborated in-run, and no finding is severity- or
+// category-exempt, so every singleton is dropped unless a reviewer's scorecard
+// trust prior exempts it. Returns the review id.
+func trustPanelFixture(t *testing.T, root string) string {
+	t.Helper()
+	id := "2026-07-30_trust"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	for _, a := range []struct{ name, row string }{
+		{"trusted", "MEDIUM|foo.go:10|possible nil deref on this path|Guard it|correctness|10|ev|trusted"},
+		{"stranger", "MEDIUM|bar.go:20|unused import lingers in this file|Drop it|style|10|ev|stranger"},
+		{"third", "MEDIUM|baz.go:30|request body is not validated|Validate it|correctness|10|ev|third"},
+	} {
+		writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", a.name, "findings.txt"), a.row)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["trusted","stranger","third"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":3,"succeeded":3,"failed":0,"partial":false,"total_findings":3}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	return id
+}
+
+// seedTrustedReviewer appends DefaultTrustMinRuns scorecard records for reviewer
+// at a 1.0 corroboration rate, so scorecard.ResolveTrustPriors() resolves it at
+// or above the reconcile-time high-trust threshold.
+func seedTrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-r%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+}
+
+// reconciledFiles reads the reconciled findings.json for review id and returns
+// the File field of every surviving finding.
+func reconciledFiles(t *testing.T, root, id string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []struct {
+		File string `json:"file"`
+	}
+	require.NoError(t, json.Unmarshal(data, &findings))
+	files := make([]string, 0, len(findings))
+	for _, f := range findings {
+		files = append(files, f.File)
+	}
+	return files
+}
+
+// TestReconcileHandler_AppliesScorecardTrustPrior covers the MCP half of the
+// epic-35.9 wiring that cli/reconcile.go's TestReconcileCmd_AppliesScorecardTrustPrior
+// covers for the CLI: handleReconcile (internal/mcp/handlers.go) must resolve and
+// attach scorecard.ResolveTrustPriors() to reclib.Options, not merely tolerate its
+// absence. "trusted" clears DefaultTrustMinRuns at a 1.0 rate, so its otherwise
+// uncorroborated singleton must survive the consensus filter while the two
+// no-history reviewers' singletons are sidecarred. Deleting the TrustPriors line
+// from handleReconcile drops foo.go and fails this test.
+func TestReconcileHandler_AppliesScorecardTrustPrior(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	seedTrustedReviewer(t, "trusted")
+	id := trustPanelFixture(t, root)
+
+	e := &engine{root: root, diag: io.Discard}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	files := reconciledFiles(t, root, id)
+	assert.Contains(t, files, "foo.go",
+		"handleReconcile threads the reviewer trust prior into RunReconcile")
+	assert.NotContains(t, files, "bar.go",
+		"a singleton from a reviewer with no scorecard history is still sidecarred")
 }
 
 // --- atcr_report ---------------------------------------------------------

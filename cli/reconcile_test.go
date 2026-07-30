@@ -833,6 +833,36 @@ func reconciledPathWarning(t *testing.T, id string) string {
 	return findings[0].PathWarning
 }
 
+// TestReconcileCmd_AppliesScorecardTrustPrior (epic 35.9 AC1): `atcr reconcile`
+// threads the reviewer trust prior end-to-end. "trusted" has
+// DefaultTrustMinRuns of scorecard history at a 1.0 corroboration rate (at/above
+// trustHighThreshold) and raises a singleton with no in-run corroboration and no
+// PageRank authority (no reviewer pair agrees on anything) — it must still
+// reach findings.json, proving RunReconcile's call site actually resolves and
+// attaches scorecard.ResolveTrustPriors(), not just tolerates its absence.
+func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
+	isolate(t) // isolate() points HOME/XDG_CONFIG_HOME at a fresh temp dir
+
+	seedTrustedReviewer(t, "trusted")
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", "r", "reconciled", "findings.json"))
+	require.NoError(t, err)
+	var findings []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal(data, &findings))
+
+	var trustedSurvived bool
+	for _, f := range findings {
+		if f.File == "foo.go" {
+			trustedSurvived = true
+		}
+	}
+	assert.True(t, trustedSurvived,
+		"atcr reconcile threads the reviewer trust prior through RunReconcile end-to-end")
+}
+
 // TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
 // --repo threads the reviewed-repo root into path validation, so a finding whose
 // cited file exists in <other-repo> (but not the CWD) validates clean instead of
