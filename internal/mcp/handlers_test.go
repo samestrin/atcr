@@ -939,12 +939,13 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 	cases := []struct {
 		level        string
 		wantFiltered int
+		wantEcho     string
 	}{
-		{"", 3},        // unset → strict
-		{"strict", 3},  // explicit strict is identical
-		{"STRICT", 3},  // case-insensitive, like fail_on
-		{"lenient", 0}, // MEDIUM singletons survive
-		{"off", 0},     // filter inert
+		{"", 3, "strict"},         // unset → strict
+		{"strict", 3, "strict"},   // explicit strict is identical
+		{"STRICT", 3, "strict"},   // case-insensitive, like fail_on
+		{"lenient", 0, "lenient"}, // MEDIUM singletons survive
+		{"off", 0, "off"},         // filter inert
 	}
 	for _, tc := range cases {
 		t.Run("level="+tc.level, func(t *testing.T) {
@@ -957,9 +958,13 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 			if tc.level != "" {
 				args["consensus"] = tc.level
 			}
-			callOK[ReconcileResult](t, cs, ToolReconcile, args)
+			// Wire-level map (not the typed struct) so the echo key itself is
+			// asserted: a client sees the JSON, not the Go field.
+			out := callOK[map[string]any](t, cs, ToolReconcile, args)
 
 			assert.Equal(t, tc.wantFiltered, mcpConsensusFiltered(t, root, id))
+			assert.Equal(t, tc.wantEcho, out["consensus"],
+				"the result must echo the resolved consensus level")
 		})
 	}
 }
