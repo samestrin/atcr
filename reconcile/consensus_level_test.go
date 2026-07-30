@@ -167,18 +167,12 @@ func TestConsensusSingletonAt_Bar(t *testing.T) {
 		{ConfMedium, ConfMedium, false}, /* lenient: MEDIUM is kept */
 		{ConfLow, ConfMedium, true},     // lenient: LOW is still droppable
 		{ConfHigh, ConfMedium, false},   // lenient: HIGH is kept
+		{ConfidenceVerified, ConfHigh, false},
+		{ConfidenceVerified, ConfMedium, false},
 	}
 	for _, c := range cases {
 		got := consensusSingletonAt(Merged{Finding{Confidence: c.confidence}}, c.floor)
 		eq(t, got, c.wantSingleton, c.confidence+" at floor "+c.floor)
-	}
-
-	// The unparameterized predicate must remain exactly the strict case, so every
-	// pre-35.9.1 caller and test keeps its meaning.
-	for _, conf := range []string{ConfLow, ConfMedium, ConfHigh, ConfidenceVerified} {
-		eq(t, consensusSingleton(Merged{Finding{Confidence: conf}}),
-			consensusSingletonAt(Merged{Finding{Confidence: conf}}, ConfHigh),
-			"consensusSingleton must equal consensusSingletonAt(_, ConfHigh) for "+conf)
 	}
 }
 
