@@ -12,6 +12,19 @@ import "strings"
 // than a rare true positive.
 const consensusMinReviewers = 3
 
+// trustHighThreshold / trustLowThreshold gate the reconcile-time trust prior
+// (epic 35.9, consuming scorecard.TrustPriors from epic 35.8): a singleton
+// whose sole reviewer's historical corroboration rate is at or above
+// trustHighThreshold is exempt from the consensus filter regardless of in-run
+// corroboration or PageRank authority (trustExempt); one at or below
+// trustLowThreshold is demoted to ConfLow (demoteByTrust). Hardcoded alongside
+// consensusMinReviewers, not flags — mirrors epic 35.6's restraint on exposing
+// internal filter constants.
+const (
+	trustHighThreshold = 0.7
+	trustLowThreshold  = 0.3
+)
+
 // categorySecurity is the literal finding category exempt from the consensus filter.
 // securityRelated recognizes synonyms and substrings as well, so a single reviewer
 // labeling a genuine vulnerability "vulnerability", "auth", or "injection" is not
@@ -86,6 +99,42 @@ func consensusExempt(f Finding) bool {
 		return true
 	}
 	return false
+}
+
+// trustExempt reports whether a singleton's sole reviewer has a historically
+// reliable trust prior (>= trustHighThreshold), exempting it from the
+// consensus filter regardless of in-run corroboration or PageRank authority.
+// priors is keyed by lowercase reviewer name (scorecard.TrustPriors); the
+// lookup lowercases f.Reviewers[0] to match — the same mismatch guarded
+// against in internal/verify/select_test.go (TD-013). A finding with other
+// than exactly one reviewer, or whose sole reviewer is absent from priors (no
+// history, or below scorecard.DefaultTrustMinRuns), is never exempt by this
+// predicate; a nil/empty priors map is a complete no-op.
+func trustExempt(f Finding, priors map[string]float64) bool {
+	if len(priors) == 0 || len(f.Reviewers) != 1 {
+		return false
+	}
+	rate, ok := priors[strings.ToLower(f.Reviewers[0])]
+	return ok && rate >= trustHighThreshold
+}
+
+// demoteByTrust (epic 35.9) sets Confidence to ConfLow on a singleton whose
+// sole reviewer's trust prior is at or below trustLowThreshold, making ConfLow
+// reachable at reconcile time for the first time (previously assigned only
+// post-verify, by a refuted verdict — see ConfidenceForVerdict). Scoped to
+// findings that are currently ConfMedium singletons — never a 2+-reviewer
+// finding (already ConfHigh via ConfidenceFor) or one PageRank authority
+// already promoted to ConfHigh (promoteByAuthority runs before this in
+// Reconcile) — so demotion only ever narrows, never overrides, an existing
+// promotion path. A nil/empty priors map is a complete no-op.
+func demoteByTrust(m Merged, priors map[string]float64) Merged {
+	if len(priors) == 0 || m.Confidence != ConfMedium || len(m.Reviewers) != 1 {
+		return m
+	}
+	if rate, ok := priors[strings.ToLower(m.Reviewers[0])]; ok && rate <= trustLowThreshold {
+		m.Confidence = ConfLow
+	}
+	return m
 }
 
 // consensusNoiseCluster wraps a consensus-filtered singleton as a single-finding

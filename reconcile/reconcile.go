@@ -26,6 +26,16 @@ type Options struct {
 	// Nil keeps the legacy line-proximity-only behavior. The interface is
 	// stdlib-only so wiring a wazero-backed grouper adds no dependency here.
 	Grouper Grouper
+	// TrustPriors maps a reviewer's lowercase name to its historical
+	// corroboration rate (findings corroborated / findings raised), the shape
+	// scorecard.TrustPriors (epic 35.8) returns. It exempts a high-trust
+	// reviewer's singleton from the consensus filter (trustExempt) and demotes
+	// a low-trust reviewer's singleton to ConfLow (demoteByTrust) — pure data
+	// in, no I/O inside the library, the same injection shape as Grouper. Nil
+	// or empty is a complete no-op: confidence and filtering stay
+	// byte-identical to pre-35.9 behavior, mirroring epic 13.3's
+	// empty-authority-map guarantee.
+	TrustPriors map[string]float64
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for
@@ -136,6 +146,16 @@ func Reconcile(sources []Source, opts Options) Result {
 	}
 	sortMerged(merged)
 
+	// Trust-prior demotion (epic 35.9): before the consensus filter runs, demote
+	// a ConfMedium singleton to ConfLow when its sole reviewer's historical
+	// corroboration rate is at or below trustLowThreshold — making ConfLow
+	// reachable at reconcile time for the first time. Runs after the authority
+	// pass above so a PageRank-promoted ConfHigh finding is never touched (see
+	// demoteByTrust's guard), and a nil/empty opts.TrustPriors is a no-op.
+	for i := range merged {
+		merged[i] = demoteByTrust(merged[i], opts.TrustPriors)
+	}
+
 	// NoiseCount reflects DBSCAN-isolated singletons only, so capture it before the
 	// consensus filter appends its own single-finding clusters to the sidecar below.
 	noiseCount := 0
@@ -162,7 +182,7 @@ func Reconcile(sources []Source, opts Options) Result {
 	if panelReviewers(sources) >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
-			if consensusSingleton(m) && !consensusExempt(m.Finding) {
+			if consensusSingleton(m) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
 				ambiguous = append(ambiguous, consensusNoiseCluster(m.Finding))
 				consensusFiltered++
 				continue
