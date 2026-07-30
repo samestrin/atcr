@@ -1,3 +1,19 @@
+## [35.8.0] - 2026-07-29
+
+Promotes the reviewer→corroboration-rate resolver already backing `atcr personas list --scores` out of `cli/personas.go` and into `internal/scorecard` as a shared, minimum-history-aware resolver, so skeptic selection and future trust-aware consensus filtering reuse one aggregation instead of growing a second copy.
+
+### Added
+
+- `scorecard.TrustPriors(dir, minRuns)`: the shared per-reviewer corroboration-rate resolver, keyed by lowercase reviewer name, summed across a reviewer's `(reviewer, model)` rows. A reviewer below `minRuns` is omitted from the map rather than present at zero, so callers can distinguish "no history" from "measured untrustworthy". A missing, empty, or unreadable scorecard store yields an empty map and a nil error. `scorecard.DefaultTrustMinRuns` (20) is the conservative default floor for a caller that does not pick its own.
+
+### Changed
+
+- `atcr personas list --scores` now delegates to `scorecard.TrustPriors(dir, 0)` instead of its own private aggregation; output is unchanged (no floor applies at this call site).
+
+### Removed
+
+- The private `cli.reviewerCorroborationRates` helper, superseded by `scorecard.TrustPriors`.
+
 ## [35.7.0] - 2026-07-29
 
 Completes Epic 8.0's deferred Phase 3 for the reconcile core. Consumers that only need a pure re-export now import the extracted `reconcile/` library directly, and the dead half of the `internal/reconcile` compatibility shim is gone. No behavior change: the full suite's output is byte-identical to the pre-migration baseline.
