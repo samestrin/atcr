@@ -158,7 +158,10 @@ func Reconcile(sources []Source, opts Options) Result {
 	// single-API-key host + 1 pool persona workflow, the common case) must not
 	// have its findings.json Confidence silently downgraded by reviewer history
 	// the consensus filter itself would never have engaged for.
-	if panelReviewers(sources) >= consensusMinReviewers {
+	// The panel size gates both this demotion pass and the consensus filter
+	// below; compute it once — sources are not mutated in between.
+	panel := panelReviewers(sources)
+	if panel >= consensusMinReviewers {
 		for i := range merged {
 			merged[i] = demoteByTrust(merged[i], opts.TrustPriors)
 		}
@@ -187,7 +190,7 @@ func Reconcile(sources []Source, opts Options) Result {
 	// singleton. Filtered findings stay sorted-order-stable (kept preserves order) and
 	// recoverable from the sidecar for adjudication.
 	consensusFiltered := 0
-	if panelReviewers(sources) >= consensusMinReviewers {
+	if panel >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
 			if consensusSingleton(m) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
