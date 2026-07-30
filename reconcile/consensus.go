@@ -63,7 +63,11 @@ func consensusFloor(level string) (floor string, enabled bool) {
 		return ConfHigh, false
 	case ok && c == ConsensusLenient:
 		return ConfMedium, true
+	case ok && c == ConsensusStrict:
+		return ConfHigh, true
 	default:
+		// Invalid token only (every valid level is cased above): fail safe to
+		// strict rather than disabling the filter.
 		return ConfHigh, true
 	}
 }
