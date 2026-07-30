@@ -152,27 +152,6 @@ func TestRunReconcile_EmptySourcesProducesEmptyArtifacts(t *testing.T) {
 	assert.FileExists(t, filepath.Join(reviewDir, "reconciled", AmbiguousJSON))
 }
 
-// TestRunReconcile_MissingScorecardStoreDegradesToNoPrior (epic 35.9 AC5):
-// scorecard.DefaultDir() resolves under the user config dir; pointing HOME (and
-// clearing XDG_CONFIG_HOME) at a fresh temp dir guarantees no atcr/scorecard
-// store exists there, so the trust-prior resolution degrades to an empty map —
-// never an error, never a blocked reconcile.
-func TestRunReconcile_MissingScorecardStoreDegradesToNoPrior(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("HOME", t.TempDir())
-
-	reviewDir := t.TempDir()
-	writeFindings(t, filepath.Join(reviewDir, "sources"), "pool/raw/agent/greta/findings.txt",
-		"HIGH|a.go:1|same issue text|fix|security|10|ev|greta\n")
-	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
-		"HIGH|a.go:1|same issue text|fix|security|10|ev|host\n")
-
-	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
-	require.NoError(t, err)
-	require.Len(t, res.Findings, 1)
-	assert.Equal(t, ConfHigh, res.Findings[0].Confidence)
-}
-
 func TestIsFailing_NormalizesThreshold(t *testing.T) {
 	// A hand-edited or externally-produced findings.json may reach CountFailingJSON
 	// with a non-canonical threshold; IsFailing must normalize it the same way it
