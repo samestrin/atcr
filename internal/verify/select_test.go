@@ -533,7 +533,7 @@ func TestSelectEligibleSkeptics_BackwardCompatNoLanguageField(t *testing.T) {
 }
 
 // TestSelectEligibleSkeptics_ScoreMapKeyNormalization (TD-013): the scores map
-// produced by reviewerCorroborationRates is keyed lowercase, but registry agent
+// produced by scorecard.TrustPriors is keyed lowercase, but registry agent
 // names retain their YAML casing. Without lowercasing the lookup, a mixed-case
 // agent name like "Archer" misses its rate and sorts as if it were 0.
 func TestSelectEligibleSkeptics_ScoreMapKeyNormalization(t *testing.T) {
@@ -545,7 +545,7 @@ func TestSelectEligibleSkeptics_ScoreMapKeyNormalization(t *testing.T) {
 		},
 	}
 	finding := reconcile.JSONFinding{File: "main.go", Reviewers: []string{}}
-	// scores keyed lowercase — exactly as reviewerCorroborationRates produces.
+	// scores keyed lowercase — exactly as scorecard.TrustPriors produces.
 	scores := map[string]float64{"archer": 0.90, "bravo": 0.20}
 	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
 	require.Equal(t, []string{"Archer", "bravo"}, got, "mixed-case registry key must match lowercase score-map key")
