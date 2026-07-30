@@ -53,6 +53,15 @@ func TestTrustPriors_BelowMinRunsAbsent(t *testing.T) {
 	assert.False(t, present, "reviewer below minRuns must be absent, not zero-valued")
 }
 
+func TestTrustPriors_AtMinRunsPresent(t *testing.T) {
+	dir := t.TempDir()
+	appendN(t, dir, 10, "Robin", "opus", 1, 1)
+
+	rates, err := TrustPriors(dir, 10)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "robin", "reviewer at exactly minRuns must be present (inclusive floor)")
+}
+
 func TestTrustPriors_MinRunsZeroOrNegativeAppliesNoFloor(t *testing.T) {
 	dir := t.TempDir()
 	appendN(t, dir, 1, "Penny", "opus", 1, 1)
