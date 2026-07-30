@@ -20,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/scorecard"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -255,7 +256,9 @@ func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	dir := filepath.Join(".atcr", "reviews", "r")
 
-	_, err := resumeReconcile(context.Background(), cmd, dir)
+	// reclib.ConsensusStrict is what runResume resolves for an unconfigured
+	// project, so this exercises the unchanged default path.
+	_, err := resumeReconcile(context.Background(), cmd, dir, reclib.ConsensusStrict)
 	require.NoError(t, err)
 
 	files := reconciledFiles(t, dir)

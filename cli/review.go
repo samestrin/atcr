@@ -327,6 +327,18 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
+	// Resolve the consensus level here too — beside the gate, before any review
+	// work — rather than at the in-process reconcile below. A bad configured
+	// value is a usage error (exit 2), and resolving it late would burn a full
+	// (paid) fan-out before failing. There is deliberately no --consensus flag on
+	// `review` (epic 35.9.1 scope), so this reads the config/registry tiers only;
+	// threading it at all is what keeps `consensus:` from being honored by
+	// `atcr reconcile` yet silently ignored on the one-shot path.
+	consensusLevel, err := resolveConsensusLevel("")
+	if err != nil {
+		return err
+	}
+
 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
 	// --min-severity here too, before any API calls, so a bad value fails fast.
 	verifyFlag, _ := cmd.Flags().GetBool("verify")
@@ -706,14 +718,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
-		// The consensus level comes from the config/registry tiers only — there is
-		// deliberately no --consensus flag on `review` (epic 35.9.1 scope). Threading
-		// it here is what keeps `consensus:` from being a half-working config key
-		// honored by `atcr reconcile` but silently ignored by the one-shot path.
-		consensusLevel, cerr := resolveConsensusLevel("")
-		if cerr != nil {
-			return cerr
-		}
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
