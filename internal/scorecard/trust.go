@@ -72,9 +72,8 @@ func ResolveTrustPriors() map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
-	if err != nil {
-		return nil
-	}
+	// TrustPriors is documented best-effort and never returns a non-nil error,
+	// so the error is discarded (matching cli/personas.go's convention).
+	priors, _ := TrustPriors(dir, DefaultTrustMinRuns)
 	return priors
 }
