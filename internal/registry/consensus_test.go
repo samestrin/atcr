@@ -77,6 +77,38 @@ func TestResolveConsensus_Precedence(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestResolveConsensus_ProjectConfigWithoutKeyFallsThrough pins the path every
+// repository initialized before epic 35.9.1 takes: a project config that is
+// present but carries no consensus key (or only whitespace) must fall through
+// to the user-global registry tier, not count as "project tier decided".
+func TestResolveConsensus_ProjectConfigWithoutKeyFallsThrough(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	regYAML := "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\nagents:\n  a:\n    provider: p\n    model: m\nconsensus: off\n"
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(regYAML), 0o644))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+
+	// Project config present WITHOUT a consensus key → registry tier decides.
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\n"), 0o644))
+	v, err := ResolveConsensus(root, "")
+	require.NoError(t, err)
+	assert.Equal(t, "off", v, "keyless project config must fall through to the user-global registry")
+
+	// A whitespace-only project value is not a decision either.
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\nconsensus: \"   \"\n"), 0o644))
+	v, err = ResolveConsensus(root, "")
+	require.NoError(t, err)
+	assert.Equal(t, "off", v, "whitespace-only project value must fall through to the user-global registry")
+}
+
 // TestResolveConsensus_BrokenUserRegistrySkipped documents the asymmetry the
 // gate resolver established: a broken user-global registry is skipped
 // best-effort so it never blocks a reconcile that does not otherwise need it.
