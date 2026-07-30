@@ -1022,3 +1022,82 @@ func TestReconcileCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
 	require.Equal(t, exitAuth, execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r"))
 	require.False(t, got, "a missing key must fail fast with zero network")
 }
+
+// --- Configurable consensus filter: flag + config surface (epic 35.9.1) -----
+
+// writeProjectConfig writes a minimal .atcr/config.yaml carrying the given extra
+// keys, so a test can exercise the config tier of a precedence chain.
+func writeProjectConfig(t *testing.T, extra string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents:\n  - a\n"+extra), 0o644))
+}
+
+// TestReconcileCmd_InvalidConsensusExitsTwo (AC2): an out-of-vocabulary level is
+// a usage error (exit 2) naming the valid values, mirroring --fail-on.
+func TestReconcileCmd_InvalidConsensusExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	code, _, stderr := execCmdSplit(t, "reconcile", "--consensus", "bogus", "r")
+	require.Equal(t, 2, code)
+	assert.Contains(t, stderr, "strict")
+	assert.Contains(t, stderr, "lenient")
+	assert.Contains(t, stderr, "off")
+}
+
+// TestReconcileCmd_InvalidConsensusInConfigExitsTwo (AC2/AC3): the config tier
+// is validated at the same call site, so a bad .atcr/config.yaml value is a
+// usage error too — config consensus is not validated at load time.
+func TestReconcileCmd_InvalidConsensusInConfigExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
+}
+
+// TestResolveConsensusLevel_Precedence (AC3) drives the CLI-side resolver
+// directly: nothing configured maps to strict, a config value is honored, an
+// explicit flag beats the config, and the token is case- and
+// whitespace-insensitive (the validateGate convention, not on_overflow's).
+func TestResolveConsensusLevel_Precedence(t *testing.T) {
+	isolate(t)
+
+	// Nothing configured anywhere → "" from the resolver → strict at the call site.
+	got, err := resolveConsensusLevel("")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusStrict, got)
+
+	// Case- and whitespace-insensitive canonicalization.
+	for _, raw := range []string{"lenient", "LENIENT", "  Lenient  "} {
+		got, err = resolveConsensusLevel(raw)
+		require.NoError(t, err, raw)
+		assert.Equal(t, reclib.ConsensusLenient, got, raw)
+	}
+
+	// Config tier honored when no explicit value is given.
+	writeProjectConfig(t, "consensus: off\n")
+	got, err = resolveConsensusLevel("")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusOff, got)
+
+	// An explicit value still beats the config tier.
+	got, err = resolveConsensusLevel("strict")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusStrict, got)
+
+	// An invalid value is an error at the call site.
+	_, err = resolveConsensusLevel("bogus")
+	require.Error(t, err)
+}
+
+// TestConsensusFlagValue_WhitespaceIsUnset mirrors gateFlagValue's semantic: a
+// whitespace-only --consensus is unset (falls through to the config chain), not
+// a usage error.
+func TestConsensusFlagValue_WhitespaceIsUnset(t *testing.T) {
+	cmd := newReconcileCmd()
+	require.NoError(t, cmd.Flags().Set("consensus", "   "))
+	assert.Equal(t, "", consensusFlagValue(cmd))
+}

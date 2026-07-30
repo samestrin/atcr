@@ -44,6 +44,7 @@ falsy, unparseable, or unset value keeps AST grouping on.`,
 	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against (default: current directory)")
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+	cmd.Flags().String("consensus", "", "consensus filter level: strict (default), lenient, or off")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
@@ -439,6 +440,18 @@ func resolveGateThreshold(cmd *cobra.Command) (string, error) {
 		return "", nil // no configured gate → opt-in no-op
 	}
 	return validateGate(raw)
+}
+
+// consensusFlagValue is a wrong-answer stub (RED).
+func consensusFlagValue(cmd *cobra.Command) string {
+	v, _ := cmd.Flags().GetString("consensus")
+	return v
+}
+
+// resolveConsensusLevel is a wrong-answer stub (RED): it never consults the
+// precedence chain and never validates.
+func resolveConsensusLevel(explicit string) (string, error) {
+	return explicit, nil
 }
 
 // validateGate canonicalizes and enum-validates a gate severity; an invalid

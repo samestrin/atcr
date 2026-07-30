@@ -12,6 +12,18 @@ import "strings"
 // than a rare true positive.
 const consensusMinReviewers = 3
 
+// Consensus filter levels (epic 35.9.1) — wrong-answer stubs (RED).
+const (
+	ConsensusOff     = "off"
+	ConsensusLenient = "lenient"
+	ConsensusStrict  = "strict"
+)
+
+// NormalizeConsensus is a wrong-answer stub (RED): it accepts everything.
+func NormalizeConsensus(v string) (string, bool) {
+	return v, true
+}
+
 // trustHighThreshold / trustLowThreshold gate the reconcile-time trust prior
 // (epic 35.9, consuming scorecard.TrustPriors from epic 35.8): a singleton
 // whose sole reviewer's historical corroboration rate is at or above
