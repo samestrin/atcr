@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -844,26 +843,8 @@ func reconciledPathWarning(t *testing.T, id string) string {
 func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
 	isolate(t) // isolate() points HOME/XDG_CONFIG_HOME at a fresh temp dir
 
-	dir, err := scorecard.DefaultDir()
-	require.NoError(t, err)
-	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
-		require.NoError(t, scorecard.Append(dir, scorecard.Record{
-			SchemaVersion:        1,
-			RecordType:           scorecard.RecordTypeReviewer,
-			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-r%02d", i),
-			Reviewer:             "trusted",
-			Model:                "m",
-			Role:                 "reviewer",
-			FindingsRaised:       1,
-			FindingsCorroborated: 1,
-		}))
-	}
-
-	fixtureReview(t, "r", map[string]string{
-		"sources/a/findings.txt": "MEDIUM|foo.go:10|possible nil deref on this path|fix|correctness|10|ev|trusted\n",
-		"sources/b/findings.txt": "MEDIUM|bar.go:20|unused import lingers in this file|fix|style|10|ev|stranger\n",
-		"sources/c/findings.txt": "MEDIUM|baz.go:30|request body is not validated|fix|correctness|10|ev|third\n",
-	})
+	seedTrustedReviewer(t, "trusted")
+	fixtureReview(t, "r", trustPanelSources())
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
 
