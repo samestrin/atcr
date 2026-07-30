@@ -167,6 +167,14 @@ func Reconcile(sources []Source, opts Options) Result {
 	// single-API-key host + 1 pool persona workflow, the common case) must not
 	// have its findings.json Confidence silently downgraded by reviewer history
 	// the consensus filter itself would never have engaged for.
+	//
+	// Demotion is deliberately INDEPENDENT of opts.Consensus (epic 35.9.1): only
+	// the panel floor gates it, so a low-trust singleton is ConfLow at every
+	// level. What the level changes is whether that ConfLow finding is then
+	// sidecarred — under ConsensusOff the filter is inert and the demoted finding
+	// reaches findings.json still carrying Confidence == LOW, which is the only
+	// configuration in which the demotion is observable end-to-end (epic 35.9
+	// AC2).
 	// The panel size gates both this demotion pass and the consensus filter
 	// below; compute it once — sources are not mutated in between.
 	panel := panelReviewers(sources)
