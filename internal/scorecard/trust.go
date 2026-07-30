@@ -1,6 +1,9 @@
 package scorecard
 
-import "strings"
+import (
+	"io"
+	"strings"
+)
 
 // DefaultTrustMinRuns is the conservative minimum-run floor a reviewer must
 // clear before its corroboration rate is trusted by a caller that does not
@@ -27,7 +30,7 @@ const DefaultTrustMinRuns = 20
 // error — this is a best-effort read, matching ReadAll's "no data yet"
 // contract; it never returns an error or panics.
 func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
-	records, _ := ReadAll(dir, ReadOpts{Writer: discardWriter{}})
+	records, _ := ReadAll(dir, ReadOpts{Writer: io.Discard})
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
@@ -52,10 +55,3 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 	}
 	return rates, nil
 }
-
-// discardWriter is a no-op io.Writer so TrustPriors' best-effort ReadAll call
-// never surfaces read-path diagnostics (malformed lines, adjacent-month
-// spans) to a caller that only wants the aggregated rates.
-type discardWriter struct{}
-
-func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
