@@ -1213,3 +1213,18 @@ func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
 		"long help must say off restores pre-14.2 behavior")
 	assert.Contains(t, long, "consensus:", "long help must point at the config key too")
 }
+
+// TestResolveConsensusLevel_BrokenProjectConfigIsUsageError: a present-but-broken
+// .atcr/config.yaml is the repo's own config, so it surfaces as a usage error
+// (exit 2) rather than being silently skipped — the same asymmetry
+// ResolveGateThreshold establishes against the best-effort registry tier.
+func TestResolveConsensusLevel_BrokenProjectConfigIsUsageError(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents: []\n"), 0o644)) // an empty roster is a load error
+
+	_, err := resolveConsensusLevel("")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "a broken project config is a usage error")
+}
