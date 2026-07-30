@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1136,16 +1137,64 @@ func TestReconcileCmd_ConsensusOffKeepsEverySingleton(t *testing.T) {
 	assert.Equal(t, 0, consensusSummary(t, "r"), "off must leave consensus_filtered at 0")
 }
 
+// seedUntrustedReviewer is seedTrustedReviewer's counterpart: it appends
+// DefaultTrustMinRuns scorecard records at a 0.0 corroboration rate, so
+// scorecard.ResolveTrustPriors() resolves the reviewer at or below the
+// reconcile-time LOW-trust threshold and demoteByTrust demotes its singleton to
+// ConfLow. That is the only way to produce a ConfLow finding at the CLI layer,
+// which is what makes lenient distinguishable from off end-to-end.
+func seedUntrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-u%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 0,
+		}))
+	}
+}
+
 // TestReconcileCmd_ConsensusLenientKeepsMediumSingletons (AC1): lenient keeps
-// the panel's MEDIUM-confidence singletons that strict sidecars.
+// MEDIUM-confidence singletons but still sidecars LOW-confidence ones.
+//
+// "stranger" is seeded as a low-trust reviewer so its singleton is demoted to
+// ConfLow — without that, every finding in the panel is ConfMedium and lenient
+// would be indistinguishable from off at this layer, letting a wiring bug that
+// mapped lenient to off pass unnoticed.
 func TestReconcileCmd_ConsensusLenientKeepsMediumSingletons(t *testing.T) {
 	isolate(t)
+	seedUntrustedReviewer(t, "stranger") // owns bar.go in trustPanelSources
 	fixtureReview(t, "r", trustPanelSources())
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "lenient", "r"))
 
+	assert.ElementsMatch(t, []string{"foo.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+		"lenient keeps the two ConfMedium singletons")
+	assert.Equal(t, 1, consensusSummary(t, "r"),
+		"and sidecars exactly the demoted ConfLow one — the assertion that separates lenient from off")
+}
+
+// TestReconcileCmd_ConsensusOffKeepsDemotedSingleton (AC6, CLI layer): the same
+// low-trust panel under off keeps ALL three findings, proving off is not merely
+// an alias for lenient.
+func TestReconcileCmd_ConsensusOffKeepsDemotedSingleton(t *testing.T) {
+	isolate(t)
+	seedUntrustedReviewer(t, "stranger")
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "off", "r"))
+
 	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"},
-		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+		"off keeps the demoted ConfLow singleton that lenient sidecars")
 	assert.Equal(t, 0, consensusSummary(t, "r"))
 }
 

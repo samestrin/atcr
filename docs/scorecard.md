@@ -300,7 +300,19 @@ than growing a third aggregation.
   filter, so a low-trust singleton is `LOW` at every level; only whether that
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
-  the demotion is observable end-to-end. See
+  the demotion is observable end-to-end.
+  > **Caution — a non-`strict` run skews the scorecard it later reads.** Reviewer
+  > records are computed from the **post-filter** finding set (`res.Findings`), so
+  > under `lenient` or `off` the extra surviving singletons each increment
+  > `findings_raised` without incrementing `findings_corroborated`, lowering that
+  > reviewer's corroboration rate. Because `ResolveTrustPriors` reads those same
+  > records, a run at a relaxed level durably depresses the priors that
+  > `trustExempt` and `demoteByTrust` apply on **later `strict` runs** — a
+  > cross-run feedback loop, not a per-run effect. Scorecard history is therefore
+  > not directly comparable across levels. If you are exploring the sidecar with
+  > `--consensus off` or `lenient`, pass `--no-scorecard` so the exploratory run
+  > does not enter reviewer history.
+  See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
   (20) summed runs before its prior applies at all — every reviewer on a fresh

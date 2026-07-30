@@ -192,6 +192,13 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
+	// Record the effective consensus level: it can come from ~/.config/atcr/registry.yaml
+	// with nothing local naming it, and ConsensusFiltered == 0 alone cannot distinguish
+	// "off" from "strict with nothing to filter" — so without this a non-default level
+	// changes findings.json with no trace in the run output.
+	logger.Info("consensus filter level resolved", "consensus", consensusLevel,
+		"filtered", res.Summary.ConsensusFiltered)
+
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
