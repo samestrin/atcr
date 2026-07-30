@@ -182,6 +182,30 @@ func TestConsensusSingletonAt_Bar(t *testing.T) {
 	}
 }
 
+// TestConsensusSingletonAt_UnrecognizedFloorKeeps guards the fail-safe posture:
+// a floor that names no recognized confidence tier (e.g. the "" consensusFloor
+// historically returned for off) must NOT make every finding a drop candidate.
+// ConfidenceAtOrAbove fails closed on such a floor and consensusSingletonAt
+// negates it, so without a guard the whole panel — including VERIFIED findings —
+// would be droppable if a caller ever skipped the enabled check.
+func TestConsensusSingletonAt_UnrecognizedFloorKeeps(t *testing.T) {
+	for _, floor := range []string{"", "bogus"} {
+		for _, conf := range []string{ConfLow, ConfMedium, ConfHigh, ConfidenceVerified} {
+			isTrue(t, !consensusSingletonAt(Merged{Finding{Confidence: conf}}, floor),
+				conf+" at unrecognized floor must not be a drop candidate")
+		}
+	}
+}
+
+// TestConsensusFloor_OffReturnsUsableFloor pins the off case returning a real
+// floor alongside enabled=false, so a dropped enabled check degrades to strict
+// rather than to delete-everything.
+func TestConsensusFloor_OffReturnsUsableFloor(t *testing.T) {
+	floor, enabled := consensusFloor(ConsensusOff)
+	isTrue(t, !enabled, "off disables the filter")
+	eq(t, floor, ConfHigh, "off still returns a usable (strict) floor")
+}
+
 // TestNormalizeConsensus_Vocabulary pins the closed enum and its case- and
 // whitespace-insensitivity, the contract both the CLI and MCP surfaces validate
 // against.
