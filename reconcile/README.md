@@ -185,6 +185,23 @@ result safely.
   confirmed. The `Summary.ConsensusFiltered` count records how many were routed
   this way; a two-reviewer panel (the host + 1 pool persona workflow) leaves the
   filter inert so real findings are never dropped wholesale.
+- **Reviewer trust prior.** `Options.TrustPriors` — a caller-supplied map of
+  lowercase reviewer name to historical corroboration rate — adds two more
+  exceptions to the consensus filter on top of the exemption list above. A
+  singleton whose sole reviewer's prior is high (a track record of raising
+  findings that hold up) is exempt from the filter the same way a
+  security-related or `HIGH`/`CRITICAL` finding is, surviving to `findings.json`
+  with zero in-run corroboration and zero PageRank authority. A singleton whose
+  sole reviewer's prior is low is demoted to `LOW` confidence instead — the
+  first reconcile-time path to `ConfLow` (previously reachable only
+  post-verify, when a skeptic refutes a finding). Demotion never fires on a
+  finding that already has two or more reviewers, or one PageRank authority
+  already promoted to `HIGH`. `TrustPriors` is nil for a caller that does not
+  track reviewer history (ATCR's own `scorecard.TrustPriors`, epic 35.8, omits
+  a reviewer until it clears a minimum-run floor) — a nil or empty map is a
+  complete no-op, so confidence and filtering are byte-identical to the
+  pre-trust-prior behavior until a reviewer earns enough history to have an
+  opinion about it.
 
 ## JSON format adapter
 
