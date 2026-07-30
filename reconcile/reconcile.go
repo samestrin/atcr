@@ -151,9 +151,17 @@ func Reconcile(sources []Source, opts Options) Result {
 	// corroboration rate is at or below trustLowThreshold — making ConfLow
 	// reachable at reconcile time for the first time. Runs after the authority
 	// pass above so a PageRank-promoted ConfHigh finding is never touched (see
-	// demoteByTrust's guard), and a nil/empty opts.TrustPriors is a no-op.
-	for i := range merged {
-		merged[i] = demoteByTrust(merged[i], opts.TrustPriors)
+	// demoteByTrust's guard), and a nil/empty opts.TrustPriors is a no-op. Gated
+	// on the same panel-size floor as the consensus filter below: the epic's own
+	// rationale frames demotion's effect as tied to the (>= consensusMinReviewers)
+	// consensus-filter regime, so a 1-2-reviewer panel (the documented
+	// single-API-key host + 1 pool persona workflow, the common case) must not
+	// have its findings.json Confidence silently downgraded by reviewer history
+	// the consensus filter itself would never have engaged for.
+	if panelReviewers(sources) >= consensusMinReviewers {
+		for i := range merged {
+			merged[i] = demoteByTrust(merged[i], opts.TrustPriors)
+		}
 	}
 
 	// NoiseCount reflects DBSCAN-isolated singletons only, so capture it before the

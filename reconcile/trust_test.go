@@ -32,10 +32,46 @@ func TestTrustExempt_HighTrustSingletonSurvivesConsensusFilter(t *testing.T) {
 	eq(t, res.Summary.AuthorityPromoted, 0, "no PageRank authority promotion occurred")
 }
 
+// TestDemoteByTrust_Direct unit-tests the pure demotion predicate directly (the
+// same pattern TestConsensusExempt_Predicate uses for consensusExempt): a
+// ConfMedium singleton with a low-trust sole reviewer demotes to ConfLow, and
+// every guard (no priors, above-threshold rate, multi-reviewer, non-MEDIUM
+// confidence) leaves the finding untouched.
+func TestDemoteByTrust_Direct(t *testing.T) {
+	low := map[string]float64{"flaky": trustLowThreshold}
+
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, low).Confidence,
+		ConfLow, "a low-trust ConfMedium singleton demotes to ConfLow")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, nil).Confidence,
+		ConfMedium, "nil priors is a no-op")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"reliable"}}},
+		map[string]float64{"reliable": trustHighThreshold}).Confidence,
+		ConfMedium, "a rate above trustLowThreshold is not demoted")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfHigh, Reviewers: []string{"flaky"}}}, low).Confidence,
+		ConfHigh, "a non-ConfMedium finding (already HIGH) is never demoted")
+	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky", "other"}}}, low).Confidence,
+		ConfMedium, "a 2-reviewer finding is never demoted")
+}
+
+// TestDemoteByTrust_LowTrustSingletonDemotedToConfLow proves demotion is
+// reachable end-to-end through Reconcile on a real >= consensusMinReviewers
+// panel (the same floor the consensus filter itself gates on — see the
+// TestDemoteByTrust_Direct guard tests for the panel-size-independent
+// predicate). The demoted singleton is given the "security" category so it
+// also survives consensusExempt and stays visible in res.Findings — otherwise
+// the consensus filter would immediately sidecar it (clearing Confidence in
+// the wire shape) and the demotion would be unobservable here, exactly as
+// AC2 notes: a ConfLow singleton is sidecarred under strict regardless.
 func TestDemoteByTrust_LowTrustSingletonDemotedToConfLow(t *testing.T) {
 	sources := []Source{
 		{Name: "a", Findings: []Finding{
-			cf("MEDIUM", "foo.go", 10, "possible nil deref on this path", "correctness", "flaky"),
+			cf("MEDIUM", "foo.go", 10, "request path is not authorization checked", "security", "flaky"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "bar.go", 20, "unused import lingers in this file", "style", "stranger"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("MEDIUM", "baz.go", 30, "request body is not validated", "correctness", "third"),
 		}},
 	}
 	priors := map[string]float64{"flaky": trustLowThreshold}
@@ -48,7 +84,7 @@ func TestDemoteByTrust_LowTrustSingletonDemotedToConfLow(t *testing.T) {
 			eq(t, m.Confidence, ConfLow, "low-trust singleton is demoted to ConfLow")
 		}
 	}
-	isTrue(t, found, "the demoted singleton still reaches findings.json under a 1-reviewer panel")
+	isTrue(t, found, "a consensus-exempt (security) singleton still reaches findings.json after demotion")
 }
 
 func TestTrustPriors_ReviewerKeyLowercased(t *testing.T) {
