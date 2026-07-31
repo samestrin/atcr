@@ -4,11 +4,12 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 )
 
 // sharedTiers holds the two file tiers every shared setting reads — the project
 // config (.atcr/config.yaml) and the user-global registry
-// (~/.config/atcr/registry.yaml) — loaded at most once.
+// (~/.config/atcr/registry.yaml) — each loaded at most once.
 //
 // Either field is nil when its tier is absent or (for the registry only) broken:
 // a missing project config is skipped, a present-but-broken one is an error
@@ -18,10 +19,38 @@ import (
 // tiers once is what keeps them from drifting apart.
 type sharedTiers struct {
 	proj *ProjectConfig
-	reg  *Registry
+
+	// The registry tier is loaded LAZILY, at most once (regOnce), because it is
+	// the expensive one: under ATCR_REGISTRY_URL it is an HTTP GET with a 10s
+	// timeout. A project config that already answers every setting asked for must
+	// not pay for it. The once still guarantees the single-load property when two
+	// settings both fall through.
+	regOnce sync.Once
+	reg     *Registry
 }
 
-// loadSharedTiers reads both file tiers under root a single time.
+// registry returns the user-global registry tier, loading it on first use. A
+// load failure — absent file, unreachable URL, broken YAML — yields nil and is
+// swallowed best-effort, so a broken user registry never blocks a run that does
+// not otherwise need it.
+func (t *sharedTiers) registry() *Registry {
+	t.regOnce.Do(func() {
+		// No os.Stat gate on the local registry path: LoadRegistry delegates to
+		// loadRegistryBytes, which reads from ATCR_REGISTRY_URL and ignores the
+		// local path entirely when that env var is set. Gating on the local file
+		// skipped the whole tier without attempting a fetch, so an Epic 19.2 shared
+		// team registry (remote URL, no local file) was silently ignored.
+		if regPath, err := DefaultRegistryPath(); err == nil {
+			if reg, err := LoadRegistry(regPath); err == nil {
+				t.reg = reg
+			}
+		}
+	})
+	return t.reg
+}
+
+// loadSharedTiers reads the project tier under root a single time; the registry
+// tier loads lazily on first use (see registry).
 func loadSharedTiers(root string) (*sharedTiers, error) {
 	var t sharedTiers
 
@@ -40,18 +69,6 @@ func loadSharedTiers(root string) (*sharedTiers, error) {
 		return nil, err
 	}
 
-	// No os.Stat gate on the local registry path either: LoadRegistry delegates
-	// to loadRegistryBytes, which reads from ATCR_REGISTRY_URL and ignores the
-	// local path entirely when that env var is set. Gating on the local file
-	// skipped the whole tier without attempting a fetch, so an Epic 19.2 shared
-	// team registry (remote URL, no local file) was silently ignored. The load's
-	// own error — missing file, unreachable URL, broken YAML — stays swallowed
-	// best-effort, which is what kept the absent-file case quiet before.
-	if regPath, err := DefaultRegistryPath(); err == nil {
-		if reg, err := LoadRegistry(regPath); err == nil {
-			t.reg = reg
-		}
-	}
 	return &t, nil
 }
 
@@ -64,8 +81,8 @@ func (t *sharedTiers) pick(pickProj func(*ProjectConfig) string, pickReg func(*R
 			return v
 		}
 	}
-	if t.reg != nil {
-		if v := strings.TrimSpace(pickReg(t.reg)); v != "" {
+	if reg := t.registry(); reg != nil {
+		if v := strings.TrimSpace(pickReg(reg)); v != "" {
 			return v
 		}
 	}
