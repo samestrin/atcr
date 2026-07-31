@@ -138,6 +138,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Record the effective consensus level: it can come from ~/.config/atcr/registry.yaml
+	// with nothing local naming it, and ConsensusFiltered == 0 alone cannot distinguish
+	// "off" from "strict with nothing to filter" — so without this a non-default level
+	// changes findings.json with no trace in the run output. Logged at resolve time,
+	// not post-run, so the level is still recorded when the reconcile below fails —
+	// the run where an operator most needs to know which configuration was in effect.
+	logger.Info("consensus filter level resolved", "consensus", consensusLevel)
+
 	// --require-verified is meaningless without a gate: a strict gate that never
 	// runs gives false confidence (the "gate that catches nothing" failure mode
 	// Epic 3.0 exists to eliminate). Fail fast as a usage error (AC 05-01 EC3).
@@ -192,12 +200,9 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
-	// Record the effective consensus level: it can come from ~/.config/atcr/registry.yaml
-	// with nothing local naming it, and ConsensusFiltered == 0 alone cannot distinguish
-	// "off" from "strict with nothing to filter" — so without this a non-default level
-	// changes findings.json with no trace in the run output.
-	logger.Info("consensus filter level resolved", "consensus", consensusLevel,
-		"filtered", res.Summary.ConsensusFiltered)
+	// The filtered count is only known post-run; it rides its own line now that
+	// the level itself is recorded at resolve time above.
+	logger.Info("consensus filter applied", "filtered", res.Summary.ConsensusFiltered)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
