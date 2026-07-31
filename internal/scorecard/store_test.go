@@ -3,10 +3,12 @@ package scorecard
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -427,5 +429,144 @@ func TestStore_DiagWriter_TypedNilFallsBackToStderr(t *testing.T) {
 	var typedNil *bytes.Buffer // nil pointer, but a non-nil io.Writer interface
 	if got := diagWriter(typedNil); got != os.Stderr {
 		t.Fatalf("typed-nil writer must fall back to os.Stderr, got %T", got)
+	}
+}
+
+// --- ReadSince: windowed, file-selecting read (epic 35.11 T1) ---
+
+// writeMonthFile writes raw content as dir/<stem>.jsonl. Tests use it (rather
+// than Append) when the month stem must be controlled independently of any
+// run_id — including stems Append could never produce.
+func writeMonthFile(t *testing.T, dir, stem, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, stem+".jsonl"), []byte(content), 0o600))
+}
+
+// recordLine marshals a reviewer record to one JSONL line.
+func recordLine(t *testing.T, runID, reviewer string) string {
+	t.Helper()
+	b, err := json.Marshal(sampleRecord(runID, reviewer))
+	require.NoError(t, err)
+	return string(b) + "\n"
+}
+
+// poisonMonth seeds a month file whose ONLY line is malformed JSON. Reading it
+// emits a "malformed record" diagnostic, so an empty diagnostics buffer proves
+// the file was never opened — the by-construction evidence AC1 needs. Asserting
+// on the returned records alone could not distinguish "read and filtered out"
+// from "never read".
+func poisonMonth(t *testing.T, dir, stem string) {
+	t.Helper()
+	writeMonthFile(t, dir, stem, "{not json\n")
+}
+
+func TestReadSince_WindowCoveringAllMonthsReadsEverything(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "bruce"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	assert.Len(t, recs, 3, "a window spanning every month file must read them all")
+}
+
+func TestReadSince_WindowCoveringSubsetSkipsOlderFilesEntirely(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
+	// Outside a 20-day window ending 2026-07-15, and unreadable if opened.
+	poisonMonth(t, dir, "2026-01")
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 20*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "only the month files overlapping the window are read")
+	assert.Equal(t, "dax", recs[0].Reviewer)
+	assert.Empty(t, diag.String(), "an out-of-window month file must never be opened (no diagnostic emitted)")
+}
+
+func TestReadSince_WindowCoveringNoMonthsIsEmptyNotError(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	poisonMonth(t, dir, "2020-01")
+	poisonMonth(t, dir, "2019-11")
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err, "a window matching no month file is empty, not an error")
+	assert.Empty(t, recs)
+	assert.Empty(t, diag.String(), "no month file overlaps the window, so none may be opened")
+}
+
+func TestReadSince_UnparseableMonthStemIsReadFailOpen(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	// A stem that is not YYYY-MM cannot be proven outside the window, so it is
+	// read rather than silently dropping whatever history it holds.
+	writeMonthFile(t, dir, "backup", recordLine(t, "2026-07-10T10:00:00Z-odd", "vera"))
+
+	recs, err := ReadSince(dir, 24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "an unparseable month stem is read fail-open, never dropped")
+	assert.Equal(t, "vera", recs[0].Reviewer)
+}
+
+func TestReadSince_NonPositiveWindowDelegatesToReadAll(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2019-01", recordLine(t, "2019-01-10T10:00:00Z-old", "archer"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	for _, since := range []time.Duration{0, -1 * time.Hour} {
+		recs, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		all, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, all, recs, "since=%v must be identical to ReadAll", since)
+	}
+}
+
+func TestReadSince_MissingDirYieldsNilNoError(t *testing.T) {
+	recs, err := ReadSince(filepath.Join(t.TempDir(), "does-not-exist"), 180*24*time.Hour, time.Now(), ReadOpts{})
+	require.NoError(t, err, "a missing store directory is 'no data yet', matching ReadAll")
+	assert.Empty(t, recs)
+}
+
+func TestReadSince_IgnoresNonJSONLAndSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "2026-07.jsonl.d"), 0o700))
+
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "non-.jsonl entries and directories are ignored, as in ReadAll")
+}
+
+func TestReadSince_MonthOverlapBoundaries(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		stem  string
+		since time.Duration
+		want  bool
+	}{
+		{"current month always overlaps", "2026-07", time.Hour, true},
+		{"month ending exactly at the cutoff is excluded", "2026-06", 15*24*time.Hour - 12*time.Hour, false},
+		{"month containing the cutoff overlaps", "2026-06", 20 * 24 * time.Hour, true},
+		{"month entirely before the cutoff is excluded", "2026-05", 20 * 24 * time.Hour, false},
+		{"month entirely after now is excluded", "2026-09", 365 * 24 * time.Hour, false},
+		{"month containing now overlaps even from the future edge", "2026-07", time.Nanosecond, true},
+		{"unparseable stem overlaps (fail-open)", "not-a-month", time.Hour, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, monthOverlapsWindow(tc.stem, now.Add(-tc.since), now))
+		})
 	}
 }

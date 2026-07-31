@@ -314,6 +314,18 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	return all, nil
 }
 
+// ReadSince is the windowed counterpart to ReadAll (epic 35.11 T1).
+// RED stub: ignores the window and reads every month file.
+func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([]Record, error) {
+	return ReadAll(dir, opts)
+}
+
+// monthOverlapsWindow reports whether the month named by stem intersects the
+// window. RED stub: claims every month overlaps.
+func monthOverlapsWindow(stem string, cutoff, now time.Time) bool {
+	return true
+}
+
 // adjacentMonths returns the YYYY-MM stems on either side of month. ok is false
 // for an unparseable month (the caller then scans the primary month only).
 func adjacentMonths(month string) (prev, next string, ok bool) {
