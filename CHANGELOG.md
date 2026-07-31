@@ -1,3 +1,20 @@
+## [Unreleased]
+
+Exposes epic 35.3's diff-smell analyzer as a standalone command. That epic ported the analyzer into `internal/verify/diffsmell.go` and wired it into the auto-fix gate, but explicitly scoped out "any subprocess or CLI shell-out" — so the detection logic had no way to reach a consumer outside this binary. This adds the surface; it adds no analysis.
+
+### Added
+
+- `atcr verify diff [file]`: scans a unified diff for over-simplification ("reward-hack") fingerprints — `test_only`, `test_deleted`, `test_skipped`, `test_renamed_away`, `weakened_assertion`, `suppression`, `empty_catch`, `stub_body` — and reports a `clean` / `soft_only` / `hard` verdict. Deterministic and model-free: no agent, no provider, no network. Reads from a file argument, stdin (the default, or an explicit `-`), the git index (`--staged`), or a commit range (`--range`); the four sources are mutually exclusive. `--repo` targets a tree other than the CWD.
+- `--fail-on hard|soft|none` on `atcr verify diff` gates the exit code. Gating is opt-in, matching `atcr review --fail-on`: without the flag the verdict is reported and the command exits `0`. The standard exit table is reused unchanged — `1` for a tripped gate, `2` for usage errors — so no new exit code is introduced. A tripped gate still prints the full report.
+- `--json` on `atcr verify diff` emits the scan as the sole content of stdout, with field names mirroring the upstream `llm-tools` `diff-smell` tool so an existing consumer can repoint without reshaping. Empty collections render as `[]` / `{}`, never `null`.
+- `verify.AnalyzeDiff`, `verify.LooksLikeUnifiedDiff`, the `verify.DiffSmell*` types, and the `Verdict*` / `Severity*` constants — the exported seam over the package-local analyzer. A translation layer only; `diffsmell.go` and its corpus tests stay the single source of truth for what a smell is.
+
+### Notes
+
+- `test_only` is **not** suppressed on this surface. The in-process fix gate suppresses it when the finding's own file is a test path; a standalone caller has no finding to key that exemption on, so a test-only diff reads as `hard`.
+- Input that is not a unified diff is a usage error (exit `2`), diverging from the in-process gate, which classifies unparseable content as clean. That gate reads a free-form `Finding.Fix`; a caller of this command asserted "here is a diff", so a silent `clean` would be a false pass. Empty input is still clean.
+- `atcr verify` gains a subcommand while remaining a leaf that takes `[id-or-path]`. Cobra resolves a matching child before positional args, so a review id or path literally named `diff` must now be passed as `atcr verify -- diff`.
+
 ## [35.9.1] - 2026-07-30
 
 Makes the epic-14.2 consensus filter's corroboration bar configurable via `--consensus=off|lenient|strict` and a matching `consensus:` config key, with `strict` (today's hardcoded behavior) as the default — then uses those levels to close the half of epic 35.9's AC2 that was unverifiable without them. Supersedes epic 35.6, which reached `completed/` without ever being implemented.

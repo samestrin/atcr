@@ -240,6 +240,9 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 	}
 	nextIdx := -1
 	for i := idx + 1; i < len(tokens); i++ {
+		if endsInvocation(tokens[i]) {
+			return
+		}
 		if reFlag.MatchString(tokens[i]) {
 			continue
 		}
@@ -257,6 +260,40 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 		return
 	}
 	validateSubcommandChain(tokens, nextIdx, groups, isWord, reFlag, path, errs)
+}
+
+// endsInvocation reports whether a token terminates the argv of the command
+// currently being validated, so the subcommand scan must stop rather than read
+// the next bare word as a subcommand name.
+//
+// It exists because a command can be BOTH a group and a leaf: `atcr verify`
+// takes an optional [id-or-path] AND owns the `diff` subcommand. Before that was
+// true, every group had no positional args, so "the next bare word must be a
+// subcommand" always held and these three shapes were never exercised:
+//
+//   - a trailing shell comment — `atcr verify <id> --exec  # standalone verify`
+//     read "standalone" as a subcommand of verify
+//   - a second invocation on one line — `atcr verify → atcr debate` (a pipeline
+//     diagram) read "atcr" as a subcommand of verify
+//   - a positional placeholder — `atcr verify [id-or-path]  # verify a review`
+//     is precisely the leaf usage, so nothing after it can be a subcommand
+//
+// Stopping at a placeholder does mean a doc that writes `atcr benchmark <sub>`
+// where a real subcommand belongs is no longer flagged. That is the intended
+// trade: a placeholder is the author saying "an argument goes here", and
+// treating it as a subcommand slot is what produced the false failures above.
+func endsInvocation(tok string) bool {
+	switch {
+	case strings.HasPrefix(tok, "#"): // trailing shell comment
+		return true
+	case tok == "atcr": // a second invocation on the same line
+		return true
+	case strings.HasPrefix(tok, "<"), strings.HasPrefix(tok, "["): // positional placeholder
+		return true
+	case tok == "|", tok == "&&", tok == "||", tok == ";", tok == ">", tok == ">>":
+		return true
+	}
+	return false
 }
 
 // validateInvocationTokens checks a single `atcr ...` token sequence against the
@@ -321,6 +358,51 @@ func TestSubcommandValidationSkipsFlags(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected validation to reject bogus subcommand `frobnicate` after flag, got errors: %v", errs)
+	}
+}
+
+// TestSubcommandValidationStopsAtInvocationEnd pins endsInvocation against the
+// leaf-and-group case (`atcr verify` owns `diff` AND takes [id-or-path]). Each
+// shape below is real prose from docs/ that the scanner misread as a subcommand
+// slot the moment `verify` gained a child. Asserted directly rather than left to
+// the docs so a later doc rewrite cannot silently retire the coverage.
+func TestSubcommandValidationStopsAtInvocationEnd(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+
+	for _, tc := range []struct {
+		name   string
+		tokens []string
+	}{
+		{"trailing comment", []string{"verify", "<review-id>", "--exec", "#", "standalone", "verify"}},
+		{"placeholder then comment", []string{"verify", "[id-or-path]", "#", "verify", "a", "review"}},
+		{"second invocation on one line", []string{"verify", "→", "atcr", "debate"}},
+		{"pipe", []string{"verify", "|", "jq"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if errs := validateInvocationTokens(tc.tokens, "fixture", cmds, groups); len(errs) != 0 {
+				t.Errorf("expected `atcr %s` to pass, got errors: %v", strings.Join(tc.tokens, " "), errs)
+			}
+		})
+	}
+
+	// The stop rules must not disarm the check itself: a bogus subcommand with
+	// no terminator in front of it is still rejected.
+	errs := validateInvocationTokens([]string{"verify", "frobnicate"}, "fixture", cmds, groups)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected `atcr verify frobnicate` to still be rejected, got errors: %v", errs)
+	}
+
+	// And the real subcommand must resolve.
+	if errs := validateInvocationTokens([]string{"verify", "diff", "--staged"}, "fixture", cmds, groups); len(errs) != 0 {
+		t.Errorf("expected `atcr verify diff --staged` to pass, got errors: %v", errs)
 	}
 }
 
