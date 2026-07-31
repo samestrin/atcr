@@ -52,7 +52,7 @@ const smellCleanDiff = `diff --git a/foo.go b/foo.go
 
 // runSmell executes `atcr verify diff <args...>` with stdin bound to in,
 // returning the exit code and stdout/stderr separately. Split streams matter:
-// --json must put the payload on stdout with nothing else mixed in.
+// stdout must stay payload-only, with the clean-input notes on stderr.
 func runSmell(t *testing.T, in string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
@@ -109,15 +109,15 @@ func stageTestDeletion(t *testing.T) {
 // --- verdict reporting ----------------------------------------------------
 
 func TestVerifyDiffCmd_CleanDiffReportsClean(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellCleanDiff)
+	code, stdout, _ := runSmell(t, smellCleanDiff, "--diff", "-")
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "clean")
 }
 
 func TestVerifyDiffCmd_HardDiffReportsHardAndNamesSmell(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellHardDiff)
+	code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-")
 	// No --fail-on, so reporting a HARD verdict must NOT change the exit code:
-	// gating is opt-in, matching `atcr review --fail-on`.
+	// gating is opt-in, preserving upstream's always-zero behavior (AC3).
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "hard")
 	require.Contains(t, stdout, "test_deleted")
@@ -125,24 +125,59 @@ func TestVerifyDiffCmd_HardDiffReportsHardAndNamesSmell(t *testing.T) {
 }
 
 func TestVerifyDiffCmd_SoftDiffReportsSoftOnly(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellSoftDiff)
+	code, stdout, _ := runSmell(t, smellSoftDiff, "--diff", "-")
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "soft_only")
 	require.Contains(t, stdout, "suppression")
 }
 
-// Nothing staged / nothing piped is legitimately clean, not an input error:
-// `atcr verify diff --staged` on a clean tree must succeed.
-func TestVerifyDiffCmd_EmptyInputIsClean(t *testing.T) {
-	code, stdout, _ := runSmell(t, "")
+// The text renderer cites file:line when the smell has one (T2), so a consuming
+// gate can copy the location straight into a technical-debt row.
+func TestVerifyDiffCmd_TextRendererCitesFileLine(t *testing.T) {
+	code, stdout, _ := runSmell(t, smellSoftDiff, "--diff", "-")
 	require.Equal(t, 0, code)
-	require.Contains(t, stdout, "clean")
+	require.Contains(t, stdout, "foo.go:2")
 }
 
-// --- JSON contract --------------------------------------------------------
+// --- clean-not-error inputs (AC5) ----------------------------------------
+
+func TestVerifyDiffCmd_EmptyInputIsCleanWithStderrNote(t *testing.T) {
+	code, stdout, stderr := runSmell(t, "", "--diff", "-")
+	require.Equal(t, 0, code)
+	require.Contains(t, stdout, "clean")
+	require.Contains(t, stderr, "empty diff")
+}
+
+// Non-diff content is reported clean with a note rather than refused, keeping
+// drop-in parity with upstream diff-smell, which never exits nonzero on content.
+func TestVerifyDiffCmd_NonDiffInputIsCleanWithStderrNote(t *testing.T) {
+	for _, in := range []string{
+		"add a nil check to Foo",
+		"+ add a nil check to Foo",
+		"package p\n\nfunc Foo() int { return 1 }\n",
+	} {
+		code, stdout, stderr := runSmell(t, in, "--diff", "-")
+		require.Equal(t, 0, code, "non-diff input %q must not fail", in)
+		require.Contains(t, stdout, "clean")
+		require.Contains(t, stderr, "not a unified diff")
+	}
+}
+
+func TestVerifyDiffCmd_CleanNoteStaysOffStdoutUnderJSON(t *testing.T) {
+	code, stdout, stderr := runSmell(t, "not a diff at all", "--diff", "-", "--json")
+	require.Equal(t, 0, code)
+	require.Contains(t, stderr, "not a unified diff")
+
+	// AC5: stdout under --json contains ONLY the JSON document.
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &m), "stdout must be JSON only, got: %q", stdout)
+	require.Equal(t, "clean", m["summary"].(map[string]any)["verdict"])
+}
+
+// --- JSON contract (AC1) --------------------------------------------------
 
 func TestVerifyDiffCmd_JSONPayloadOnlyOnStdout(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellHardDiff, "--json")
+	code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-", "--json")
 	require.Equal(t, 0, code)
 
 	var got struct {
@@ -154,6 +189,7 @@ func TestVerifyDiffCmd_JSONPayloadOnlyOnStdout(t *testing.T) {
 			Type     string `json:"type"`
 			Severity string `json:"severity"`
 			File     string `json:"file"`
+			Line     int    `json:"line"`
 			Evidence string `json:"evidence"`
 		} `json:"smells"`
 		Summary struct {
@@ -165,8 +201,6 @@ func TestVerifyDiffCmd_JSONPayloadOnlyOnStdout(t *testing.T) {
 			Verdict   string         `json:"verdict"`
 		} `json:"summary"`
 	}
-	// Unmarshalling the WHOLE buffer proves stdout carries the payload and
-	// nothing else — a stray human line would make this fail.
 	require.NoError(t, json.Unmarshal([]byte(stdout), &got), "stdout must be JSON only, got: %q", stdout)
 
 	require.Equal(t, "hard", got.Summary.Verdict)
@@ -177,17 +211,29 @@ func TestVerifyDiffCmd_JSONPayloadOnlyOnStdout(t *testing.T) {
 	require.NotEmpty(t, got.Smells)
 }
 
-func TestVerifyDiffCmd_JSONCleanHasEmptyArraysNotNull(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellCleanDiff, "--json")
-	require.Equal(t, 0, code)
-	require.NotContains(t, stdout, "null")
-
+// AC1: the three top-level keys are exactly files/smells/summary, and the
+// verdict is drawn from the closed set.
+func TestVerifyDiffCmd_JSONTopLevelKeysAreExact(t *testing.T) {
+	_, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-", "--json")
 	var m map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &m))
-	require.Equal(t, "clean", m["summary"].(map[string]any)["verdict"])
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	require.ElementsMatch(t, []string{"files", "smells", "summary"}, keys)
+	require.Contains(t, []string{"clean", "soft_only", "hard"},
+		m["summary"].(map[string]any)["verdict"])
 }
 
-// --- gate -----------------------------------------------------------------
+func TestVerifyDiffCmd_JSONCleanHasEmptyArraysNotNull(t *testing.T) {
+	code, stdout, _ := runSmell(t, smellCleanDiff, "--diff", "-", "--json")
+	require.Equal(t, 0, code)
+	require.NotContains(t, stdout, "null")
+}
+
+// --- gate (AC3) -----------------------------------------------------------
 
 func TestVerifyDiffCmd_FailOnGate(t *testing.T) {
 	for _, tc := range []struct {
@@ -203,12 +249,10 @@ func TestVerifyDiffCmd_FailOnGate(t *testing.T) {
 		{"soft diff, gate soft", smellSoftDiff, []string{"--fail-on", "soft"}, 1},
 		{"clean diff, gate soft", smellCleanDiff, []string{"--fail-on", "soft"}, 0},
 		{"clean diff, gate hard", smellCleanDiff, []string{"--fail-on", "hard"}, 0},
-		// `none` is an explicit synonym for unset, so a scripted consumer can
-		// always pass the flag and vary only its value.
 		{"hard diff, gate none", smellHardDiff, []string{"--fail-on", "none"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			code, _, _ := runSmell(t, tc.diff, tc.failOn...)
+			code, _, _ := runSmell(t, tc.diff, append([]string{"--diff", "-"}, tc.failOn...)...)
 			require.Equal(t, tc.want, code)
 		})
 	}
@@ -217,47 +261,61 @@ func TestVerifyDiffCmd_FailOnGate(t *testing.T) {
 // A tripped gate still prints the report — the consumer must be able to read
 // WHY it failed from the same invocation, not have to re-run without the gate.
 func TestVerifyDiffCmd_GateFailureStillReports(t *testing.T) {
-	code, stdout, stderr := runSmell(t, smellHardDiff, "--fail-on", "hard")
+	code, stdout, stderr := runSmell(t, smellHardDiff, "--diff", "-", "--fail-on", "hard")
 	require.Equal(t, 1, code)
 	require.Contains(t, stdout, "test_deleted")
 	require.Contains(t, stderr, "hard")
 }
 
 func TestVerifyDiffCmd_GateFailureUnderJSONKeepsStdoutParseable(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellHardDiff, "--json", "--fail-on", "hard")
+	code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-", "--json", "--fail-on", "hard")
 	require.Equal(t, 1, code)
 	var m map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &m), "stdout must stay JSON-only when the gate trips")
 }
 
 func TestVerifyDiffCmd_InvalidFailOnIsUsageError(t *testing.T) {
+	// Severities belong to `atcr review`/`reconcile`; this command takes verdicts.
 	for _, v := range []string{"bogus", "HIGH", "critical", "  "} {
-		code, _, _ := runSmell(t, smellCleanDiff, "--fail-on", v)
+		code, _, _ := runSmell(t, smellCleanDiff, "--diff", "-", "--fail-on", v)
 		require.Equal(t, 2, code, "--fail-on %q must be a usage error", v)
 	}
 }
 
-// --- input sources --------------------------------------------------------
+// AC3: an invalid --fail-on is rejected BEFORE any git process is spawned, so a
+// bad flag in a non-repo directory still exits 2 rather than failing on git.
+func TestVerifyDiffCmd_InvalidFailOnRejectedBeforeGit(t *testing.T) {
+	isolate(t) // a temp dir that is NOT a git repo
+	code, _, stderr := runSmell(t, "", "--staged", "--fail-on", "bogus")
+	require.Equal(t, 2, code)
+	require.Contains(t, stderr, "--fail-on")
+	require.NotContains(t, stderr, "git diff", "the gate must be validated before git runs")
+}
 
-func TestVerifyDiffCmd_ReadsFileArgument(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "patch.diff")
+// --- input sources (AC2) --------------------------------------------------
+
+func TestVerifyDiffCmd_DiffFlagReadsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "patch.diff")
 	require.NoError(t, os.WriteFile(path, []byte(smellHardDiff), 0o644))
 
-	code, stdout, _ := runSmell(t, "", path)
+	code, stdout, _ := runSmell(t, "", "--diff", path)
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "test_deleted")
 }
 
-// "-" is the conventional explicit stdin token; it must not be read as a path.
-func TestVerifyDiffCmd_DashReadsStdin(t *testing.T) {
-	code, stdout, _ := runSmell(t, smellHardDiff, "-")
+func TestVerifyDiffCmd_DiffDashReadsStdin(t *testing.T) {
+	code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-")
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "test_deleted")
 }
 
 func TestVerifyDiffCmd_MissingFileIsUsageError(t *testing.T) {
-	code, _, _ := runSmell(t, "", filepath.Join(t.TempDir(), "nope.diff"))
+	code, _, _ := runSmell(t, "", "--diff", filepath.Join(t.TempDir(), "nope.diff"))
+	require.Equal(t, 2, code)
+}
+
+func TestVerifyDiffCmd_EmptyDiffFlagIsUsageError(t *testing.T) {
+	code, _, _ := runSmell(t, "", "--diff", "  ")
 	require.Equal(t, 2, code)
 }
 
@@ -273,13 +331,14 @@ func TestVerifyDiffCmd_StagedScansIndex(t *testing.T) {
 	require.Contains(t, stdout, "foo_test.go")
 }
 
-func TestVerifyDiffCmd_StagedOnCleanIndexIsClean(t *testing.T) {
+func TestVerifyDiffCmd_StagedOnCleanIndexIsCleanWithNote(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
 
-	code, stdout, _ := runSmell(t, "", "--staged")
+	code, stdout, stderr := runSmell(t, "", "--staged")
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "clean")
+	require.Contains(t, stderr, "empty diff")
 }
 
 func TestVerifyDiffCmd_RangeScansCommitRange(t *testing.T) {
@@ -292,6 +351,51 @@ func TestVerifyDiffCmd_RangeScansCommitRange(t *testing.T) {
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "hard")
 	require.Contains(t, stdout, "test_deleted")
+}
+
+// --rev is the DEFAULT source: a bare `atcr verify diff` scans HEAD.
+func TestVerifyDiffCmd_RevIsDefaultSourceAndScansHEAD(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	stageTestDeletion(t)
+	gitSmell(t, "commit", "-q", "-m", "delete the test")
+
+	for _, args := range [][]string{nil, {"--rev", "HEAD"}} {
+		code, stdout, _ := runSmell(t, "", args...)
+		require.Equal(t, 0, code, "args %v", args)
+		require.Contains(t, stdout, "test_deleted", "args %v", args)
+	}
+}
+
+// `git show --format=` must suppress the commit header, or the subject and
+// author lines would reach the parser as content.
+func TestVerifyDiffCmd_RevSuppressesCommitHeader(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	stageTestDeletion(t)
+	gitSmell(t, "commit", "-q", "-m", "//nolint:sneaky subject line")
+
+	_, stdout, _ := runSmell(t, "", "--rev", "HEAD", "--json")
+	require.NotContains(t, stdout, "sneaky",
+		"the commit subject must not be scanned as diff content")
+}
+
+// AC2: the same diff through two different sources yields identical JSON.
+func TestVerifyDiffCmd_SourcesAgreeByteForByte(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	stageTestDeletion(t)
+
+	_, viaStaged, _ := runSmell(t, "", "--staged", "--json")
+
+	// Capture the same diff to a file and feed it back through --diff.
+	path := filepath.Join(t.TempDir(), "staged.diff")
+	out, err := exec.Command("git", "-C", requireTempWorkdir(t), "diff", "--no-ext-diff", "--no-color", "--cached").Output()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, out, 0o644))
+
+	_, viaFile, _ := runSmell(t, "", "--diff", path, "--json")
+	require.Equal(t, viaStaged, viaFile, "the same diff through two sources must yield identical JSON")
 }
 
 func TestVerifyDiffCmd_RepoFlagTargetsAnotherTree(t *testing.T) {
@@ -313,64 +417,54 @@ func TestVerifyDiffCmd_BadRepoIsUsageError(t *testing.T) {
 	require.Equal(t, 2, code)
 }
 
-// --- input-source conflicts ----------------------------------------------
+// --- source conflicts (AC4) ----------------------------------------------
 
-func TestVerifyDiffCmd_StagedAndRangeAreMutuallyExclusive(t *testing.T) {
-	code, _, _ := runSmell(t, "", "--staged", "--range", "HEAD~1..HEAD")
-	require.Equal(t, 2, code)
-}
-
-func TestVerifyDiffCmd_FileArgWithGitSourceIsUsageError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "patch.diff")
-	require.NoError(t, os.WriteFile(path, []byte(smellCleanDiff), 0o644))
-
+func TestVerifyDiffCmd_SourcesAreMutuallyExclusive(t *testing.T) {
 	for _, args := range [][]string{
-		{path, "--staged"},
-		{path, "--range", "HEAD~1..HEAD"},
+		{"--diff", "-", "--staged"},
+		{"--staged", "--rev", "HEAD"},
+		{"--staged", "--range", "HEAD~1..HEAD"},
+		{"--diff", "-", "--rev", "HEAD"},
+		{"--range", "a..b", "--rev", "HEAD"},
 	} {
-		code, _, _ := runSmell(t, "", args...)
+		code, _, stderr := runSmell(t, "", args...)
 		require.Equal(t, 2, code, "args %v must be a usage error", args)
+		require.Contains(t, stderr, "mutually exclusive")
+		// AC4: the message names BOTH offending flags.
+		require.Contains(t, stderr, args[0])
 	}
 }
 
-// --range is interpolated into git's argv. A value that starts with "-" would
-// be read by git as an OPTION, not a revision range — reject it before exec.
-func TestVerifyDiffCmd_RangeRejectsLeadingDash(t *testing.T) {
+// --range / --rev are interpolated into git's argv. A value starting with "-"
+// would be read as an OPTION — `--output=<path>` alone is enough to make the
+// scan write a file of the caller's choosing.
+func TestVerifyDiffCmd_RevArgsRejectLeadingDash(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
-	for _, r := range []string{"--output=/tmp/pwned", "-p", "--exec=touch /tmp/x"} {
-		code, _, _ := runSmell(t, "", "--range", r)
-		require.Equal(t, 2, code, "--range %q must be rejected", r)
+	for _, flag := range []string{"--range", "--rev"} {
+		for _, v := range []string{"--output=/tmp/pwned", "-p", "--exec=touch /tmp/x"} {
+			code, _, _ := runSmell(t, "", flag, v)
+			require.Equal(t, 2, code, "%s %q must be rejected", flag, v)
+		}
 	}
 }
 
-func TestVerifyDiffCmd_EmptyRangeIsUsageError(t *testing.T) {
+func TestVerifyDiffCmd_EmptyRevArgsAreUsageErrors(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
-	code, _, _ := runSmell(t, "", "--range", "   ")
+	for _, flag := range []string{"--range", "--rev"} {
+		code, _, _ := runSmell(t, "", flag, "   ")
+		require.Equal(t, 2, code, "%s with a blank value must be a usage error", flag)
+	}
+}
+
+func TestVerifyDiffCmd_PositionalArgIsUsageError(t *testing.T) {
+	// Sources are named by flag; a stray positional must not be silently ignored.
+	code, _, _ := runSmell(t, "", "patch.diff")
 	require.Equal(t, 2, code)
 }
 
-// --- non-diff input -------------------------------------------------------
-
-// Unlike the in-process fix gate (which treats free-form Finding.Fix as clean
-// by construction), a caller of THIS command asserted "here is a diff". Silently
-// reporting clean for input that was never scanned would hand a consumer a
-// false pass, so non-diff content is a usage error instead.
-func TestVerifyDiffCmd_NonDiffInputIsUsageError(t *testing.T) {
-	for _, in := range []string{
-		"add a nil check to Foo",
-		"+ add a nil check to Foo",
-		"package p\n\nfunc Foo() int { return 1 }\n",
-	} {
-		code, _, stderr := runSmell(t, in)
-		require.Equal(t, 2, code, "non-diff input %q must be a usage error", in)
-		require.Contains(t, stderr, "unified diff")
-	}
-}
-
-// --- wiring ---------------------------------------------------------------
+// --- wiring (AC6) ---------------------------------------------------------
 
 func TestVerifyDiffCmd_RegisteredUnderVerify(t *testing.T) {
 	out, err := execute(t, "verify", "--help")
@@ -378,10 +472,19 @@ func TestVerifyDiffCmd_RegisteredUnderVerify(t *testing.T) {
 	require.Contains(t, out, "diff")
 }
 
+// AC6: the parent command's own flags and args are unchanged.
+func TestVerifyDiffCmd_ParentFlagsUnchanged(t *testing.T) {
+	out, err := execute(t, "verify", "--help")
+	require.NoError(t, err)
+	for _, f := range []string{"--fresh", "--thorough", "--min-severity", "--exec", "--repo"} {
+		require.Contains(t, out, f, "`atcr verify` must keep its own flag %s", f)
+	}
+}
+
 // The shadowing escape hatch documented on the AddCommand call site: `--`
 // terminates cobra's child search, so the parent still receives "diff" as its
-// positional id. Exit 2 here is the parent's own "no such review" path, NOT a
-// flag error — reaching it at all is the proof.
+// positional id. Exit 2 here is the parent's own "no such review" path, NOT the
+// diff scanner's — reaching it at all is the proof.
 func TestVerifyDiffCmd_DoubleDashReachesParentWithDiffAsID(t *testing.T) {
 	isolate(t)
 	code, _, stderr := runSmellParent(t, "--", "diff")

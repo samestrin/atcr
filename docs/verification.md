@@ -72,8 +72,8 @@ Refuted findings stay in `findings.json` and in the report under a collapsed **R
 computes and persists verdicts. The CI gate that reads those verdicts lives on
 `atcr reconcile` and `atcr review`, and reads verdicts directly: refuted
 findings never block a merge. (The `atcr verify diff` subcommand has its own,
-unrelated `--fail-on` — it gates on diff-smell verdicts, not on findings. See
-[Diff-Smell Scanning](#diff-smell-scanning) below.)
+unrelated `--fail-on` — it gates on diff-smell verdicts, not on finding
+severities. See [diff-smell.md](diff-smell.md).)
 
 - **`--fail-on <severity>`** (on `atcr reconcile` / `atcr review`) — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
 - **`--require-verified`** (on `atcr reconcile` / `atcr review`) — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). On `atcr reconcile`, if the verify stage never ran, `--require-verified` does **not** refuse — it logs a warning and the gate proceeds (a silently permissive gate is possible). On `atcr review`, `--require-verified` is refused outright unless combined with `--verify` or `--debate` (`error: --require-verified requires --fail-on and --verify or --debate`, exit 2).
@@ -136,79 +136,25 @@ Note: findings are verified concurrently through a bounded worker pool (`verify.
 
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
 
-## Diff-Smell Scanning
+## Diff-Smell: the deterministic sibling
 
-Skeptic verification asks "is this finding real?". Diff-smell asks a different,
-purely mechanical question: **did this patch cheat?** It scans a unified diff for
-the fingerprints of an over-simplified ("reward-hacked") change — one that makes a
-test pass by deleting the test rather than fixing the code.
+`atcr verify diff` shares this namespace but does something different, and a
+reader landing here should not assume it spawns models. Skeptic verification asks
+*"is this finding real?"* and costs a model call per finding. Diff-smell asks
+*"did this patch cheat?"* — scanning a unified diff for the mechanical
+fingerprints of an over-simplified change (a deleted test, a skipped test, a
+weakened assertion, a lint suppression). It is deterministic and model-free: no
+agent, no provider, no API key, no network.
 
-It is deterministic and model-free: same diff in, same verdict out. No agent, no
-provider, no API key, no network.
+It is the same analyzer that already gates atcr's auto-fix pipeline, exposed as a
+command so an external consumer can call it.
 
 ```bash
-atcr verify diff --staged                    # scan the git index
-atcr verify diff --range main..HEAD          # scan a commit range
-atcr verify diff patch.diff                  # scan a file
-git diff | atcr verify diff                  # scan stdin (the default)
+atcr verify diff --staged --fail-on hard
 ```
 
-### Smells
-
-| Smell | Severity | What it catches |
-|-------|----------|-----------------|
-| `test_only` | hard | the change touched only test files — no implementation change |
-| `test_deleted` | hard | a test file was deleted outright |
-| `test_skipped` | hard | a skip/ignore marker was added (`t.Skip(`, `@pytest.mark.skip`, `it.skip(`, `xit(`, `@Ignore`, `@Disabled`, `#[ignore]`) |
-| `test_renamed_away` | hard | a test file was renamed to a non-test path, disabling it |
-| `weakened_assertion` | hard / soft | assertions removed without replacement (hard), or replaced one-for-one (soft — verify they were not weakened) |
-| `suppression` | soft | a linter/type-checker suppression was added (`//nolint`, `@ts-ignore`, `# noqa`, …) |
-| `empty_catch` | soft | an empty or swallowing exception handler was added |
-| `stub_body` | soft | a stub / not-implemented / standalone TODO body was added |
-
-A line that also appears verbatim among the same file's removed lines is treated
-as relocated, not introduced, so moving or reindenting code raises nothing.
-
-### Verdicts and exit codes
-
-The verdict is `hard` if any hard smell fired, `soft_only` if only soft smells
-fired, else `clean`.
-
-Gating is **opt-in**, matching `atcr review --fail-on`: without the flag the
-command reports the verdict and exits `0`.
-
-- **`--fail-on hard`** — exit `1` on a `hard` verdict.
-- **`--fail-on soft`** — exit `1` on `hard` or `soft_only`.
-- **`--fail-on none`** — explicit no-op, so a script can always pass the flag and vary only its value.
-
-Exit codes follow the standard table: `0` success, `1` the gate tripped, `2` a
-usage error (bad `--fail-on` value, unreadable file, git failure, conflicting
-input sources, or input that is not a unified diff). A tripped gate still prints
-the full report, so one run tells you both that it failed and why.
-
-### Machine-readable output
-
-`--json` puts the scan on stdout and nothing else, so it pipes straight into a
-parser. Field names mirror the upstream `llm-tools` `diff-smell` tool:
-
-```json
-{
-  "files": {"test": ["foo_test.go"], "impl": ["foo.go"]},
-  "smells": [
-    {"type": "test_deleted", "severity": "hard", "file": "foo_test.go", "evidence": "fix deleted a test file outright"}
-  ],
-  "summary": {"test_files": 1, "impl_files": 1, "hard": 1, "soft": 0, "by_type": {"test_deleted": 1}, "verdict": "hard"}
-}
-```
-
-Empty collections render as `[]` / `{}`, never `null`.
-
-### Notes
-
-- **`test_only` is not suppressed here.** A diff touching only test files raises the hard `test_only` smell. The in-process fix gate suppresses that case when the finding's own file is a test, but a standalone caller has no finding to key that exemption on — so a legitimately test-only commit reads as `hard`. Use `--fail-on soft`/`hard` accordingly, or scan a range that includes the implementation change.
-- **Input must be a unified diff.** Non-diff content is a usage error (exit `2`), not a silent `clean` — reporting `clean` for input that was never scanned would hand a caller a false pass. Empty input (nothing staged) *is* clean.
-- **One source at a time.** A file argument, `-`, `--staged`, and `--range` are mutually exclusive; naming none reads stdin.
-- **Same analyzer as the auto-fix gate.** This is the surface over the analyzer that already gates executor-produced fixes, so a patch judged here is judged by identical logic.
+See **[diff-smell.md](diff-smell.md)** for the smell catalogue, the JSON shape and
+its stability contract, the exit-code table, and the version-probe recipe.
 
 ## MCP tool
 

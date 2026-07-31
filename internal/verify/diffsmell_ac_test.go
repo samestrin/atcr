@@ -157,8 +157,8 @@ diff --git a/internal/verify/severity.go b/internal/verify/severity.go
 `
 
 func TestAC5_DeletingAWholeTestFileIsHardEvenAlongsideAnImplChange(t *testing.T) {
-	res := analyzeDiff(acWholeTestFileDeleted)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict,
+	res := AnalyzeDiff(acWholeTestFileDeleted)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict,
 		"deleting a test file must be HARD even when an impl file changed too")
 	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
@@ -167,7 +167,7 @@ func TestAC5_DeletingAWholeTestFileIsHardEvenAlongsideAnImplChange(t *testing.T)
 	// And it must survive the test_only suppression for a test-path finding.
 	res = evaluateFixSmell(acWholeTestFileDeleted, "internal/verify/severity_test.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 
 	// End-to-end: the patch is withheld.
 	findings := gateFinding("internal/verify/severity.go")
@@ -193,7 +193,7 @@ func TestAC4_OneForOneAssertionSwapIsFlaggedForReview(t *testing.T) {
 `
 	res := evaluateFixSmell(swap, "internal/verify/severity_test.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict,
+	assert.Equal(t, VerdictSoftOnly, res.Summary.Verdict,
 		"a one-for-one assertion swap must not score clean")
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion)
 

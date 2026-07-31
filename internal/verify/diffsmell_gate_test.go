@@ -485,7 +485,7 @@ func TestGenerateFixes_OversizedFixSkipsGate(t *testing.T) {
 }
 
 // The gate has TWO nil-return shapes and both are bypasses, so both must leave a
-// trace. Oversize was announced from the start; !looksLikeUnifiedDiff was silent,
+// trace. Oversize was announced from the start; !LooksLikeUnifiedDiff was silent,
 // so a genuine diff that failed the heuristic (a context diff, a mangled header)
 // slipped past with nothing in the log to say the scan never ran — exactly the
 // asymmetry the oversize announcement exists to prevent.
@@ -535,7 +535,7 @@ func TestValidateGoFixSyntax_UnifiedDiffExempt(t *testing.T) {
 // The most common LLM answer shape is a prose lead-in then an unfenced diff.
 // Anchoring the exemption on the literal first non-blank line rejected it, fed it
 // to go/parser, and stamped invalid_syntax on a perfectly good fix — while the
-// gate's looksLikeUnifiedDiff happily called the same string a diff. The two
+// gate's LooksLikeUnifiedDiff happily called the same string a diff. The two
 // halves of Epic 35.3 must agree, and a good Fix must never carry a FixWarning.
 const guardProseThenDiff = `Here is the fix:
 
@@ -561,7 +561,7 @@ const guardGoFileWithDiffFixture = "package p\n\n" +
 func TestValidateGoFixSyntax_ProsePrefixedDiffExempt(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(guardProseThenDiff),
 		"a prose lead-in before an unfenced diff must stay exempt")
-	assert.True(t, looksLikeUnifiedDiff(guardProseThenDiff),
+	assert.True(t, LooksLikeUnifiedDiff(guardProseThenDiff),
 		"precondition: the gate already treats this shape as a diff")
 
 	// The loosening must not swallow the case it was tightened against.
@@ -591,12 +591,12 @@ func TestEvaluateFixSmell(t *testing.T) {
 	// test_only survives for an impl-file finding...
 	res := evaluateFixSmell(dsTestOnlyClean, "a.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 
 	// ...and is suppressed for a test-file finding, taking the verdict with it.
 	res = evaluateFixSmell(dsTestOnlyClean, "internal/verify/select_test.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
+	assert.Equal(t, VerdictClean, res.Summary.Verdict)
 	assert.NotContains(t, res.Summary.ByType, smellTestOnly)
 	assert.Equal(t, 0, res.Summary.Hard)
 
@@ -606,14 +606,14 @@ func TestEvaluateFixSmell(t *testing.T) {
 		"+	require.NotZero(t, pick()) //nolint:all", 1)
 	res = evaluateFixSmell(withNolint, "internal/verify/select_test.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict)
+	assert.Equal(t, VerdictSoftOnly, res.Summary.Verdict)
 	assert.Contains(t, res.Summary.ByType, smellSuppression)
 
 	// Suppressing test_only must NOT mask a co-occurring HARD one: a test-file
 	// finding whose fix also drops an assertion stays hard.
 	res = evaluateFixSmell(dsTestOnly, "internal/verify/select_test.go")
 	require.NotNil(t, res)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 	assert.NotContains(t, res.Summary.ByType, smellTestOnly)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion)
 }

@@ -118,7 +118,7 @@ func validateGoFixSyntax(fix string) error {
 	// consumes via payload.BuildEntriesFromDiff — reached the parser and was
 	// mis-flagged. Exempt it on content, not just on fence label (Epic 35.3).
 	//
-	// The test is deliberately STRICTER than the gate's looksLikeUnifiedDiff: it
+	// The test is deliberately STRICTER than the gate's LooksLikeUnifiedDiff: it
 	// requires the diff to START the content, not merely appear somewhere in it. A
 	// whole-input scan would exempt any Go file that happens to embed a diff
 	// fixture in a raw string literal — the exact shape of this package's own test

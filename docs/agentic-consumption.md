@@ -37,6 +37,29 @@ atcr review --axi > run.toon 2> review.log
 atcr report --format axi > findings.toon 2> report.log
 ```
 
+### `atcr verify diff --json` — payload-only without AXI
+
+One further agent-facing surface is not an AXI mode but obeys the same stdout
+discipline: `atcr verify diff --json` emits a JSON scan result as the **sole**
+content of stdout, with every note and diagnostic on stderr.
+
+It is worth an orchestrator's attention for a reason the AXI surfaces are not:
+it is **deterministic and model-free** — no agent, no provider, no API key, no
+network — so an agent can run it inside a credential-free sandbox, on every
+commit, at zero token cost, and get a byte-identical answer for a byte-identical
+diff.
+
+```bash
+# Gate a patch on reward-hack fingerprints; payload on stdout, notes on stderr.
+atcr verify diff --staged --json > smell.json 2> smell.log
+```
+
+Two inputs that might look like errors are deliberately not: an empty diff and
+content that is not a unified diff both report `clean` and exit `0`, with the
+explanation on stderr — so `smell.json` above is always a parseable document.
+Gating is opt-in via `--fail-on`; see [diff-smell.md](diff-smell.md) for the JSON
+shape and its stability contract.
+
 ### The bare `atcr --axi` home payload
 
 A bare `atcr` (no subcommand) renders a live "home view" instead of static help
