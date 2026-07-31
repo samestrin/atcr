@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -430,6 +431,32 @@ func TestStore_DiagWriter_TypedNilFallsBackToStderr(t *testing.T) {
 	if got := diagWriter(typedNil); got != os.Stderr {
 		t.Fatalf("typed-nil writer must fall back to os.Stderr, got %T", got)
 	}
+}
+
+// TestReadRecords_BufferSizesToFileNotMaxLineBytes locks the allocation bound:
+// reading a small month file must not allocate the flat 1 MiB maxLineBytes
+// buffer — the buffer sizes to the file (maxLineBytes is only the cap), so a
+// ~KB-scale file costs ~KB-scale allocations. Measured via TotalAlloc around a
+// single read: 1 MiB before the fix, a few KB after; the 256 KiB threshold sits
+// far from both signals.
+func TestReadRecords_BufferSizesToFileNotMaxLineBytes(t *testing.T) {
+	dir := t.TempDir()
+	var content string
+	for i := 0; i < 5; i++ {
+		content += recordLine(t, "2026-06-14T10:00:00Z-a", "bruce")
+	}
+	path := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	recs, err := ReadRecords(path, ReadOpts{Writer: io.Discard})
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Len(t, recs, 5)
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10),
+		"reading a %d-byte file must not allocate the flat %d-byte maxLineBytes buffer", len(content), maxLineBytes)
 }
 
 // --- ReadSince: windowed, file-selecting read (epic 35.11 T1) ---
