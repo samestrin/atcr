@@ -314,16 +314,76 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	return all, nil
 }
 
-// ReadSince is the windowed counterpart to ReadAll (epic 35.11 T1).
-// RED stub: ignores the window and reads every month file.
+// ReadSince is the windowed counterpart to ReadAll: it reads only the month
+// files under dir whose calendar month overlaps [now-since, now], so records
+// outside the window are never opened, read, or parsed. This bounds the read at
+// FILE SELECTION — the cost an in-memory post-read filter (ApplyFilters) cannot
+// touch, because that filter runs after every month file has already been read.
+//
+// since <= 0 means "no window" and delegates to ReadAll verbatim, so the
+// windowed and all-history paths share one enumeration at the boundary rather
+// than drifting apart.
+//
+// A month file whose stem is not a parseable YYYY-MM is READ (fail-open): an
+// odd filename cannot prove its contents fall outside the window, and silently
+// dropping history is worse than reading one extra file. Non-.jsonl entries and
+// subdirectories are ignored, and a missing directory is (nil, nil) — both
+// matching ReadAll's contract.
+//
+// The window is compared against the month stem, not against each record's
+// run_id, so a record whose run_id disagrees with the file it landed in (clock
+// skew, a late write) is included or excluded with its file. Callers needing
+// record-level precision should filter the result (see ApplyFilters); for a
+// window measured in months that off-by-one-month edge is immaterial.
 func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([]Record, error) {
-	return ReadAll(dir, opts)
+	if since <= 0 {
+		return ReadAll(dir, opts)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading scorecard dir: %w", err)
+	}
+	cutoff := now.Add(-since)
+	var all []Record
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		if !monthOverlapsWindow(strings.TrimSuffix(e.Name(), ".jsonl"), cutoff, now) {
+			continue
+		}
+		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return all, err
+		}
+		all = append(all, recs...)
+	}
+	return all, nil
 }
 
-// monthOverlapsWindow reports whether the month named by stem intersects the
-// window. RED stub: claims every month overlaps.
+// monthOverlapsWindow reports whether the calendar month named by stem
+// (YYYY-MM) intersects the window [cutoff, now]. The month is treated as the
+// half-open instant range [first-of-month, first-of-next-month), so a month
+// ending exactly AT the cutoff holds no instant at or after it and is excluded,
+// while a month containing the cutoff (or now) overlaps. A month starting after
+// now is excluded — a future-stamped file cannot hold history inside the
+// window.
+//
+// An unparseable stem returns true: ReadSince fails open rather than dropping a
+// file it cannot place in time.
 func monthOverlapsWindow(stem string, cutoff, now time.Time) bool {
-	return true
+	start, err := time.Parse("2006-01", stem)
+	if err != nil {
+		return true
+	}
+	end := start.AddDate(0, 1, 0)
+	return !start.After(now) && end.After(cutoff)
 }
 
 // adjacentMonths returns the YYYY-MM stems on either side of month. ok is false

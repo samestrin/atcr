@@ -477,16 +477,35 @@ func TestReadSince_WindowCoveringSubsetSkipsOlderFilesEntirely(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
-	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
-	// Outside a 20-day window ending 2026-07-15, and unreadable if opened.
+	// Both are entirely before the cutoff of a 10-day window ending 2026-07-15
+	// (2026-07-05), and both are unreadable if opened.
+	poisonMonth(t, dir, "2026-06")
 	poisonMonth(t, dir, "2026-01")
 
 	var diag bytes.Buffer
-	recs, err := ReadSince(dir, 20*24*time.Hour, now, ReadOpts{Writer: &diag})
+	recs, err := ReadSince(dir, 10*24*time.Hour, now, ReadOpts{Writer: &diag})
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "only the month files overlapping the window are read")
 	assert.Equal(t, "dax", recs[0].Reviewer)
 	assert.Empty(t, diag.String(), "an out-of-window month file must never be opened (no diagnostic emitted)")
+}
+
+// TestReadSince_OverlappingMonthIsReadWhole pins the file-level granularity: the
+// window selects FILES, not records, so a month that overlaps the window is read
+// in full — including records stamped before the cutoff. Trimming to the exact
+// cutoff is a record-level concern (ApplyFilters), deliberately not duplicated
+// here.
+func TestReadSince_OverlappingMonthIsReadWhole(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	// A 20-day window cuts off at 2026-06-25, which falls inside 2026-06, so the
+	// whole June file is in play even though this record predates the cutoff.
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-02T10:00:00Z-early-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	recs, err := ReadSince(dir, 20*24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 2, "a month overlapping the window is read whole, pre-cutoff records included")
 }
 
 func TestReadSince_WindowCoveringNoMonthsIsEmptyNotError(t *testing.T) {
