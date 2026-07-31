@@ -252,3 +252,58 @@ func TestLoadSharedTiers_NoRegistryAnywhereIsSilent(t *testing.T) {
 	assert.Equal(t, "", failOn)
 	assert.Equal(t, "", consensus)
 }
+
+// TestResolveSharedSettings_SkipsRegistryWhenProjectAnswers guards the other
+// half of the cost story: dropping the local-file stat gate must not make the
+// user-registry load EAGER. When .atcr/config.yaml already answers both
+// settings the registry tier is never consulted, so under ATCR_REGISTRY_URL a
+// fully-configured project pays no HTTP GET (and no 10s timeout on a flaky
+// endpoint) for an answer it already had.
+func TestResolveSharedSettings_SkipsRegistryWhenProjectAnswers(t *testing.T) {
+	var fetches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(sharedTierRegistryYAML))
+	}))
+	t.Cleanup(srv.Close)
+
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\nfail_on: LOW\nconsensus: lenient\n"), 0o644))
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "LOW", failOn)
+	assert.Equal(t, "lenient", consensus)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&fetches),
+		"the registry tier must not be loaded when the project tier answered both settings")
+}
+
+// TestResolveSharedSettings_LoadsRegistryOnceForPartialFallthrough is the mixed
+// case: the project config answers only one setting, so the registry is needed
+// — once, for the other.
+func TestResolveSharedSettings_LoadsRegistryOnceForPartialFallthrough(t *testing.T) {
+	var fetches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(sharedTierRegistryYAML))
+	}))
+	t.Cleanup(srv.Close)
+
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\nfail_on: LOW\n"), 0o644))
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "LOW", failOn, "project tier still wins for the setting it names")
+	assert.Equal(t, "off", consensus, "the other setting falls through to the registry")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
+		"the fallthrough must cost exactly one registry load")
+}
