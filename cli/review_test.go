@@ -118,6 +118,38 @@ func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
 }
 
+// TestReviewCmd_OneShotHonorsConfiguredConsensusOff covers the review half of
+// epic 35.9.1's widened T1: runReview must thread the RESOLVED consensus level
+// into its in-process reconcile, not just resolve it. No reviewer has scorecard
+// history here, so under the strict default all three uncorroborated singletons
+// are sidecarred and findings.json is empty — with `consensus: off` in
+// .atcr/config.yaml all three must survive at consensus_filtered 0. Replacing
+// `Consensus: consensusLevel` with `Consensus: ""` at the one-shot RunReconcile
+// call site (cli/review.go) fails this test.
+func TestReviewCmd_OneShotHonorsConfiguredConsensusOff(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one":   "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		"m-two":   "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
+		"m-three": "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one", "two", "three")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// --fail-on is what routes the run into the one-shot reconcile block; CRITICAL
+	// keeps the MEDIUM-only panel from tripping the gate, so exit stays 0.
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
+
+	dir := latestReviewDir(t)
+	require.ElementsMatch(t, []int{10, 30, 50}, reconciledLines(t, dir),
+		"off keeps every uncorroborated singleton on the one-shot path")
+	require.Equal(t, 0, consensusSummary(t, filepath.Base(dir)),
+		"off must leave consensus_filtered at 0")
+}
+
 // TestResolveRedactRoot_ReturnsAbsolute verifies the happy path resolves the
 // repo root to an absolute path used for AC6 path relativization.
 func TestResolveRedactRoot_ReturnsAbsolute(t *testing.T) {
