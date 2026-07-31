@@ -527,6 +527,7 @@ func TestReadSince_WindowCoveringAllMonthsReadsEverything(t *testing.T) {
 	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: &diag})
 	require.NoError(t, err)
 	assert.Len(t, recs, 3, "a window spanning every month file must read them all")
+	assert.Empty(t, diag.String(), "every month file parses cleanly, so the read-everything case emits no diagnostic")
 }
 
 func TestReadSince_WindowCoveringSubsetSkipsOlderFilesEntirely(t *testing.T) {
