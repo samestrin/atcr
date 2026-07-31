@@ -35,14 +35,14 @@ func TestJSONFinding_FixReviewSerialization(t *testing.T) {
 // name every smell type so a human reviewer knows which shortcut was taken, and
 // stay single-line so it is safe wherever FixWarning already goes.
 func TestBuildFixReview(t *testing.T) {
-	got := buildFixReview(analyzeDiff(dsSuppression))
+	got := buildFixReview(AnalyzeDiff(dsSuppression))
 	assert.Equal(t, "NEEDS_REVIEW: fix accepted with over-simplification smell(s): suppression", got)
 
-	got = buildFixReview(analyzeDiff(dsStubBody))
+	got = buildFixReview(AnalyzeDiff(dsStubBody))
 	assert.Contains(t, got, smellStubBody)
 	assert.NotContains(t, got, "\n")
 
 	// A clean or nil result yields no annotation.
-	assert.Equal(t, "", buildFixReview(analyzeDiff(dsImplOnly)))
+	assert.Equal(t, "", buildFixReview(AnalyzeDiff(dsImplOnly)))
 	assert.Equal(t, "", buildFixReview(nil))
 }

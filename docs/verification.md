@@ -71,7 +71,9 @@ Refuted findings stay in `findings.json` and in the report under a collapsed **R
 `atcr verify` itself has no `--fail-on` or `--require-verified` flag — it only
 computes and persists verdicts. The CI gate that reads those verdicts lives on
 `atcr reconcile` and `atcr review`, and reads verdicts directly: refuted
-findings never block a merge.
+findings never block a merge. (The `atcr verify diff` subcommand has its own,
+unrelated `--fail-on` — it gates on diff-smell verdicts, not on finding
+severities. See [diff-smell.md](diff-smell.md).)
 
 - **`--fail-on <severity>`** (on `atcr reconcile` / `atcr review`) — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
 - **`--require-verified`** (on `atcr reconcile` / `atcr review`) — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). On `atcr reconcile`, if the verify stage never ran, `--require-verified` does **not** refuse — it logs a warning and the gate proceeds (a silently permissive gate is possible). On `atcr review`, `--require-verified` is refused outright unless combined with `--verify` or `--debate` (`error: --require-verified requires --fail-on and --verify or --debate`, exit 2).
@@ -133,6 +135,35 @@ Note: findings are verified concurrently through a bounded worker pool (`verify.
 ```
 
 The per-finding `model` (the different-model evidence) lives here, in `verification.json`, not in the `findings.json` block — the report's Skeptic section shows verdict/skeptic/reasoning and does not perform a registry lookup. Skeptic runs do not persist transcripts — only reviewer fan-out and debate do.
+
+## Diff-Smell: the deterministic sibling
+
+`atcr verify diff` shares this namespace but does something different, and a
+reader landing here should not assume it spawns models. Skeptic verification asks
+*"is this finding real?"* and costs a model call per finding. Diff-smell asks
+*"did this patch cheat?"* — scanning a unified diff for the mechanical
+fingerprints of an over-simplified change (a deleted test, a skipped test, a
+weakened assertion, a lint suppression). It is deterministic and model-free: no
+agent, no provider, no API key, no network.
+
+It is the same analyzer that already gates atcr's auto-fix pipeline, exposed as a
+command so an external consumer can call it.
+
+```bash
+atcr verify diff --staged --fail-on hard
+```
+
+Because `diff` is a subcommand of `verify`, and `verify` also takes an optional
+`[id-or-path]`, a review id or path literally named `diff` is shadowed: cobra
+resolves the subcommand first, so `atcr verify diff` always reaches the scanner.
+Verify such a review by passing it after `--`:
+
+```bash
+atcr verify -- diff
+```
+
+See **[diff-smell.md](diff-smell.md)** for the smell catalogue, the JSON shape and
+its stability contract, the exit-code table, and the version-probe recipe.
 
 ## MCP tool
 

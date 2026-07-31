@@ -78,6 +78,24 @@ func TestRangeCmd_ResolutionFailureIsUsageError(t *testing.T) {
 // have caught the branch-clobbering incident described on initGitRepo.
 func requireIsolatedWorkdir(t *testing.T) {
 	t.Helper()
+	wd := requireTempWorkdir(t)
+
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("refusing to run git against %s: it is already inside a git repository (%s). "+
+			"Running `git init` and committing here would rewrite that repository's refs.",
+			wd, strings.TrimSpace(string(out)))
+	}
+}
+
+// requireTempWorkdir fails the test unless the ambient working directory is a
+// temp dir, and returns it. It is the half of requireIsolatedWorkdir that every
+// ambient-cwd git helper needs — the "not already a repo" half above is specific
+// to helpers that run `git init`, and would reject a helper that legitimately
+// operates INSIDE a repo an earlier initGitRepo just created.
+func requireTempWorkdir(t *testing.T) string {
+	t.Helper()
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 
@@ -88,12 +106,5 @@ func requireIsolatedWorkdir(t *testing.T) {
 	require.True(t, strings.HasPrefix(resolved, tmp),
 		"refusing to run git against %s: this helper operates on the ambient working "+
 			"directory, so the test must t.Chdir into a temp dir first", wd)
-
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	if out, err := cmd.CombinedOutput(); err == nil {
-		t.Fatalf("refusing to run git against %s: it is already inside a git repository (%s). "+
-			"Running `git init` and committing here would rewrite that repository's refs.",
-			wd, strings.TrimSpace(string(out)))
-	}
+	return wd
 }

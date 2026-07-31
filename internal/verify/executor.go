@@ -433,7 +433,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// clean with no warning, no log record and no FixReview — failing open on
 			// the MORE suspicious of the two attempts, and exactly the escape a model
 			// just told "your previous attempt was rejected" would find.
-			scanFix := func(candidate string) *smellResult {
+			scanFix := func(candidate string) *SmellResult {
 				// Never a SILENT bypass: a fix the gate cannot scan is written unscanned, so
 				// say so — otherwise "scanned and clean" and "never scanned" look identical
 				// in the run output, and a reward hack that dodges the scan is invisible.
@@ -457,7 +457,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				return evaluateFixSmell(candidate, f.File)
 			}
 			smellRes := scanFix(fix)
-			if smellRes != nil && smellRes.Summary.Verdict == smellVerdictHard {
+			if smellRes != nil && smellRes.Summary.Verdict == VerdictHard {
 				feedback := smellFeedback(smellRes)
 				logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (retrying once)", f.File, f.Line, feedback))
 				atomic.AddInt64(&smellRetries, 1)
@@ -466,7 +466,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					return // postCheck already classified and stamped the retry's failure
 				}
 				retryRes := scanFix(retryFix)
-				if retryRes != nil && retryRes.Summary.Verdict == smellVerdictHard {
+				if retryRes != nil && retryRes.Summary.Verdict == VerdictHard {
 					reason := "diff-smell gate rejected two consecutive fixes: " + smellFeedback(retryRes)
 					logPipelineWarning(log.FromContext(ctx), "executor_smell_reject", fmt.Sprintf("%s:%d: %s (halted)", f.File, f.Line, reason))
 					// Same prior-tier-success guard as the ceiling skips and the self-decline

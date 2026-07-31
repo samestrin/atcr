@@ -13,6 +13,7 @@ package cli
 // mentions the fictional "atcr.yaml" or "Reconciler v2" will fail CI.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,9 +22,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/verify"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 // repoRootDir ascends from the test working directory (the package dir,
@@ -232,7 +235,7 @@ func reachableFlags(tokens []string) map[string]bool {
 // validateSubcommandChain recursively validates that bare-word tokens following
 // a command group are real subcommands, skipping any --flags that appear before
 // the next subcommand. It reports at most one error per level.
-func validateSubcommandChain(tokens []string, idx int, groups map[string]map[string]bool, isWord func(string) bool, reFlag *regexp.Regexp, path string, errs *[]string) {
+func validateSubcommandChain(tokens []string, idx int, groups map[string]map[string]bool, leaves map[string]bool, isWord func(string) bool, reFlag *regexp.Regexp, path string, errs *[]string) {
 	name := tokens[idx]
 	children, isGroup := groups[name]
 	if !isGroup || len(tokens) <= idx+1 {
@@ -240,6 +243,9 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 	}
 	nextIdx := -1
 	for i := idx + 1; i < len(tokens); i++ {
+		if endsInvocation(tokens[i], leaves[name]) {
+			return
+		}
 		if reFlag.MatchString(tokens[i]) {
 			continue
 		}
@@ -256,7 +262,88 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 		*errs = append(*errs, fmt.Sprintf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name, next, next, name))
 		return
 	}
-	validateSubcommandChain(tokens, nextIdx, groups, isWord, reFlag, path, errs)
+	validateSubcommandChain(tokens, nextIdx, groups, leaves, isWord, reFlag, path, errs)
+}
+
+// endsLine reports whether a token ends the current command's argv for SHELL
+// reasons — the rest of the line is a comment, a redirect, or a different
+// command. This holds for every command, group or leaf, and so is applied
+// unconditionally:
+//
+//   - a trailing shell comment — `atcr verify <id> --exec  # standalone verify`
+//     read "standalone" as a subcommand of verify
+//   - a second invocation on one line — `atcr verify → atcr debate` (a pipeline
+//     diagram) read "atcr" as a subcommand of verify
+//   - a pipe, operator, or redirect — everything after belongs to another process
+func endsLine(tok string) bool {
+	switch {
+	case strings.HasPrefix(tok, "#"): // trailing shell comment
+		return true
+	case tok == "atcr": // a second invocation on the same line
+		return true
+	case tok == "|", tok == "&&", tok == "||", tok == ";":
+		return true
+	case strings.HasPrefix(tok, ">"): // shell redirect — `>`, `>>`, and the spaceless shape docs actually use (`>/dev/null 2>&1`)
+		return true
+	}
+	return false
+}
+
+// isPositionalPlaceholder reports whether a token is a documentation placeholder
+// standing in for an argument value (`<file>`, `[id-or-path]`).
+func isPositionalPlaceholder(tok string) bool {
+	return strings.HasPrefix(tok, "<") || strings.HasPrefix(tok, "[")
+}
+
+// endsInvocation reports whether a token terminates the argv of the command
+// currently being validated, so the subcommand scan must stop rather than read
+// the next bare word as a subcommand name.
+//
+// The placeholder half is scoped by groupTakesPositional, and that scoping is the
+// whole point. A command can be BOTH a group and a leaf: `atcr verify` takes an
+// optional [id-or-path] AND owns the `diff` subcommand. There a placeholder is
+// precisely the leaf usage, so nothing after it can be a subcommand and stopping
+// is correct.
+//
+// For a PURE group — `debt`, `benchmark`, `config`, `models`, `personas`, `skill`
+// — there is no positional to stand in for, so a placeholder occupies the
+// SUBCOMMAND slot and the next bare word must still be validated. Applying the
+// relaxation to every group (as this did when it was introduced for verify) left
+// seven of the eight groups unvalidated: `atcr benchmark <sub> frobnicate` and
+// `atcr debt <file> frobnicate` both scored clean.
+func endsInvocation(tok string, groupTakesPositional bool) bool {
+	if endsLine(tok) {
+		return true
+	}
+	return groupTakesPositional && isPositionalPlaceholder(tok)
+}
+
+// groupLeafCommands returns the group commands that ALSO accept a positional
+// argument of their own — the group-and-leaf commands whose placeholder stop is
+// legitimate. Derived from the compiled command's Use string ("verify
+// [id-or-path]"), so the compiled tree stays the source of truth: a command that
+// gains or loses a positional needs no edit here.
+func groupLeafCommands() map[string]bool {
+	out := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		children := c.Commands()
+		if len(children) > 0 {
+			if fields := strings.Fields(c.Use); len(fields) > 1 {
+				for _, f := range fields[1:] {
+					if isPositionalPlaceholder(f) {
+						out[c.Name()] = true
+						break
+					}
+				}
+			}
+		}
+		for _, sub := range children {
+			walk(sub)
+		}
+	}
+	walk(NewRootCmd())
+	return out
 }
 
 // validateInvocationTokens checks a single `atcr ...` token sequence against the
@@ -272,15 +359,27 @@ func validateInvocationTokens(tokens []string, path string, cmds map[string]bool
 	case !cmds[name0]:
 		errs = append(errs, fmt.Sprintf("%s references `atcr %s` but %q is not a real command", path, name0, name0))
 	default:
-		validateSubcommandChain(tokens, 0, groups, isWord, reFlag, path, &errs)
+		validateSubcommandChain(tokens, 0, groups, groupLeafCommands(), isWord, reFlag, path, &errs)
+	}
+	// Both halves of the auditor must agree about where the invocation ends.
+	// Truncate at the first shell terminator so a flag named inside a trailing
+	// comment, or belonging to a second command on the same line, is not
+	// attributed to this one — the subcommand scan already stops there, and
+	// leaving the flag loop unbounded made the two halves disagree.
+	argv := tokens
+	for i, tok := range tokens {
+		if endsLine(tok) {
+			argv = tokens[:i]
+			break
+		}
 	}
 	// Validate each --flag against the flags reachable on the *specific* command
 	// this invocation addresses (per-command inheritance), not the global union of
 	// every flag in the tree. This rejects e.g. `atcr review --checkpoint`, where
 	// --checkpoint is real but belongs to `benchmark run`, matching the per-command
 	// scope the error message claims.
-	flags := reachableFlags(tokens)
-	for _, tok := range tokens {
+	flags := reachableFlags(argv)
+	for _, tok := range argv {
 		if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
 			errs = append(errs, fmt.Sprintf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0))
 		}
@@ -321,6 +420,144 @@ func TestSubcommandValidationSkipsFlags(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected validation to reject bogus subcommand `frobnicate` after flag, got errors: %v", errs)
+	}
+}
+
+// TestSubcommandValidationStopsAtInvocationEnd pins endsInvocation against the
+// leaf-and-group case (`atcr verify` owns `diff` AND takes [id-or-path]). Each
+// shape below is real prose from docs/ that the scanner misread as a subcommand
+// slot the moment `verify` gained a child. Asserted directly rather than left to
+// the docs so a later doc rewrite cannot silently retire the coverage.
+func TestSubcommandValidationStopsAtInvocationEnd(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+
+	for _, tc := range []struct {
+		name   string
+		tokens []string
+	}{
+		{"trailing comment", []string{"verify", "<review-id>", "--exec", "#", "standalone", "verify"}},
+		{"placeholder then comment", []string{"verify", "[id-or-path]", "#", "verify", "a", "review"}},
+		{"second invocation on one line", []string{"verify", "→", "atcr", "debate"}},
+		{"pipe", []string{"verify", "|", "jq"}},
+		// Anchored on `verify`, the one group that is ALSO a leaf. This case used
+		// to read {"debt", "<file>", "frobnicate"} and pass, which was the defect
+		// rather than the contract: `debt` takes no positional, so the placeholder
+		// sat in its subcommand slot and the bogus word went unchecked. That
+		// shape is now asserted to be REJECTED, in
+		// TestPlaceholderRelaxationIsScopedToGroupAndLeaf.
+		{"angle placeholder", []string{"verify", "<review-id>", "frobnicate"}},
+		{"double ampersand", []string{"debt", "&&", "frobnicate"}},
+		{"double pipe", []string{"debt", "||", "frobnicate"}},
+		{"semicolon", []string{"debt", ";", "frobnicate"}},
+		{"redirect with space", []string{"debt", ">", "frobnicate"}},
+		{"append redirect with space", []string{"debt", ">>", "frobnicate"}},
+		{"redirect without space", []string{"debt", ">/dev/null", "frobnicate"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if errs := validateInvocationTokens(tc.tokens, "fixture", cmds, groups); len(errs) != 0 {
+				t.Errorf("expected `atcr %s` to pass, got errors: %v", strings.Join(tc.tokens, " "), errs)
+			}
+		})
+	}
+
+	// The stop rules must not disarm the check itself: a bogus subcommand with
+	// no terminator in front of it is still rejected.
+	errs := validateInvocationTokens([]string{"verify", "frobnicate"}, "fixture", cmds, groups)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected `atcr verify frobnicate` to still be rejected, got errors: %v", errs)
+	}
+
+	// And the real subcommand must resolve.
+	if errs := validateInvocationTokens([]string{"verify", "diff", "--staged"}, "fixture", cmds, groups); len(errs) != 0 {
+		t.Errorf("expected `atcr verify diff --staged` to pass, got errors: %v", errs)
+	}
+}
+
+// TestPlaceholderRelaxationIsScopedToGroupAndLeaf asserts that stopping the
+// subcommand scan at a positional placeholder applies ONLY to a command that is
+// both a group and a leaf.
+//
+// `verify [id-or-path]` is the only such command in the tree: there a placeholder
+// IS the documented leaf usage, so nothing after it can be a subcommand. Every
+// other group (`debt`, `benchmark`, `config`, `models`, `personas`, `skill`) takes
+// no positional of its own, so a placeholder in its subcommand slot is the author
+// eliding the subcommand — and the next bare word must still be validated.
+// Applying the relaxation to all eight silently disarmed the auditor for seven of
+// them.
+func TestPlaceholderRelaxationIsScopedToGroupAndLeaf(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+
+	// The group-and-leaf case must stay relaxed (this is what the stop exists for).
+	for _, tokens := range [][]string{
+		{"verify", "[id-or-path]", "#", "verify", "a", "review"},
+		{"verify", "<review-id>", "--exec"},
+	} {
+		if errs := validateInvocationTokens(tokens, "fixture", cmds, groups); len(errs) != 0 {
+			t.Errorf("expected `atcr %s` to pass (verify is a group AND a leaf), got errors: %v",
+				strings.Join(tokens, " "), errs)
+		}
+	}
+
+	// A pure group must still catch a bogus subcommand after a placeholder.
+	for _, tokens := range [][]string{
+		{"debt", "<file>", "frobnicate"},
+		{"benchmark", "<sub>", "frobnicate"},
+	} {
+		errs := validateInvocationTokens(tokens, "fixture", cmds, groups)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected `atcr %s` to be rejected (%q takes no positional of its own, so the placeholder is its subcommand slot), got errors: %v",
+				strings.Join(tokens, " "), tokens[0], errs)
+		}
+	}
+}
+
+// TestFlagValidationHonorsInvocationEnd asserts the two halves of the auditor
+// agree about where an invocation ends. The subcommand scan stops at a shell
+// terminator; the flag loop must too, or a flag named inside a trailing comment
+// or belonging to a second command on the same line is attributed to the first
+// command and reported as a nonexistent flag.
+func TestFlagValidationHonorsInvocationEnd(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+	for _, tokens := range [][]string{
+		// --checkpoint is real, but on `benchmark run`; here it is inside a comment.
+		{"verify", "<review-id>", "--exec", "#", "then", "run", "--checkpoint"},
+		// --checkpoint belongs to the SECOND invocation on the line, not to review.
+		{"review", "&&", "atcr", "benchmark", "run", "--checkpoint"},
+	} {
+		if errs := validateInvocationTokens(tokens, "fixture", cmds, groups); len(errs) != 0 {
+			t.Errorf("expected `atcr %s` to pass (flags past a shell terminator are not this command's), got errors: %v",
+				strings.Join(tokens, " "), errs)
+		}
+	}
+
+	// The truncation must not disarm flag validation before the terminator.
+	errs := validateInvocationTokens([]string{"review", "--checkpoint", "#", "note"}, "fixture", cmds, groups)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err, "checkpoint") && strings.Contains(err, "no such flag") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected `atcr review --checkpoint` to still be rejected before the comment, got errors: %v", errs)
 	}
 }
 
@@ -594,6 +831,201 @@ func TestDocsClaimedFlagsAreReal(t *testing.T) {
 				t.Errorf("%s documents `--%s` as a flag but no such CLI flag exists", path, name)
 			}
 		}
+	}
+}
+
+// TestDiffSmellVersionProbeInspectsHelpText pins the documented "is this atcr new
+// enough?" probe against the shape that actually discriminates.
+//
+// `verify` is both a group and a leaf (it takes an optional [id-or-path]), so on
+// an atcr that predates `verify diff` cobra reads "diff" as a POSITIONAL and
+// --help short-circuits to verify's own help — exit 0. A probe keying on the exit
+// status therefore reports "new enough" on every binary ever shipped, and the
+// guarded call then dies with `unknown flag: --staged`. Under the documented
+// pre-commit hook's `set -euo pipefail` that blocks every commit — the exact
+// failure the probe exists to prevent.
+//
+// The probe must inspect the help TEXT instead. `--fail-on` is registered only on
+// `verify diff`, never on `verify`, so grepping for it separates the two.
+func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "diff-smell.md"))
+	if err != nil {
+		t.Fatalf("read docs/diff-smell.md: %v", err)
+	}
+	probed := 0
+	for i, ln := range strings.Split(string(b), "\n") {
+		if !strings.Contains(ln, "atcr verify diff --help") {
+			continue
+		}
+		probed++
+		if !strings.Contains(ln, "grep") || !strings.Contains(ln, "--fail-on") {
+			t.Errorf("docs/diff-smell.md:%d probes with %q, which exits 0 on an atcr that predates `verify diff`; "+
+				"the probe must inspect the help text, e.g. `atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null`",
+				i+1, strings.TrimSpace(ln))
+			continue
+		}
+		// `grep -q` exits at the first match and closes the pipe, so atcr is killed
+		// by SIGPIPE (141); under `set -o pipefail` — which the documented
+		// pre-commit hook enables — that becomes the pipeline's status and the
+		// probe reports "too old" on a NEW atcr, silently skipping the gate.
+		// Measured: PIPESTATUS=(141 0) with -q, (0 0) without.
+		if regexp.MustCompile(`grep\s+(-\w*q|--quiet|--silent)`).MatchString(ln) {
+			t.Errorf("docs/diff-smell.md:%d probes with %q; `grep -q` closes the pipe and SIGPIPEs atcr (141), "+
+				"which `set -o pipefail` turns into a false \"too old\" result. Let grep drain its input: `| grep -- '--fail-on' >/dev/null`",
+				i+1, strings.TrimSpace(ln))
+		}
+	}
+	if probed == 0 {
+		t.Fatal("docs/diff-smell.md documents no `atcr verify diff --help` version probe; the version-discoverability recipe is the consumer-adoption path and must stay documented")
+	}
+}
+
+// fencedBlock returns the sole ```<lang> fenced block in md, or "" when there is
+// not exactly one. Requiring exactly one keeps the caller from silently checking
+// whichever block happened to come first if the doc later grows another.
+func fencedBlock(md, lang string) string {
+	var blocks []string
+	var cur []string
+	in := false
+	for _, ln := range strings.Split(md, "\n") {
+		if in {
+			if strings.TrimSpace(ln) == "```" {
+				blocks = append(blocks, strings.Join(cur, "\n")+"\n")
+				cur, in = nil, false
+				continue
+			}
+			cur = append(cur, ln)
+			continue
+		}
+		if strings.TrimSpace(ln) == "```"+lang {
+			in = true
+		}
+	}
+	if len(blocks) != 1 {
+		return ""
+	}
+	return blocks[0]
+}
+
+// TestDiffSmellDocExampleMatchesAnalyzer makes the WORKED EXAMPLE in
+// docs/diff-smell.md a second golden rather than prose: it feeds the doc's own
+// ```diff block through AnalyzeDiff and compares the result to the doc's own
+// ```json block.
+//
+// TestSmellResult_GoldenJSON pins the shape against a copy of the document held
+// in the test file, and its failure message tells the developer to update
+// docs/diff-smell.md — but nothing mechanically checked that they did. The two
+// were in sync, so the drift that golden test exists to prevent could still land
+// undetected in the DOCS half of the contract, which is precisely what AC9 claims
+// cannot happen.
+func TestDiffSmellDocExampleMatchesAnalyzer(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "diff-smell.md"))
+	if err != nil {
+		t.Fatalf("read docs/diff-smell.md: %v", err)
+	}
+	md := string(b)
+
+	gotDiff := fencedBlock(md, "diff")
+	if gotDiff == "" {
+		t.Fatal("docs/diff-smell.md must contain exactly one ```diff block — the worked example that documents the JSON shape")
+	}
+	wantJSON := fencedBlock(md, "json")
+	if wantJSON == "" {
+		t.Fatal("docs/diff-smell.md must contain exactly one ```json block — the output of the worked example")
+	}
+
+	got, err := json.MarshalIndent(verify.AnalyzeDiff(gotDiff), "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	require.JSONEq(t, wantJSON, string(got),
+		"the ```json block in docs/diff-smell.md no longer matches what AnalyzeDiff produces for the ```diff block "+
+			"directly above it. The doc example is half of the public contract — update it, or fix the analyzer.")
+}
+
+// TestDiffSmellExitTwoCausesAreDocumented asserts BOTH exit tables enumerate
+// every real cause of exit 2, and stay in sync with each other.
+//
+// They previously listed exactly four ("bad --fail-on value, unreadable file, git
+// failure, or two named sources") while the command refused more than that. Each
+// omission below is verified against the binary:
+//
+//	--rev --output=/tmp/pwn  -> 2   (a revision-shaped value starting with '-')
+//	--rev ""                 -> 2   (an explicitly empty revision)
+//	--diff ""                -> 2   (an explicitly empty diff path)
+//	a source over the size cap -> 2
+//
+// The '-' rule in particular is a deliberate argument-injection guard, worth
+// documenting rather than leaving as a surprise.
+func TestDiffSmellExitTwoCausesAreDocumented(t *testing.T) {
+	root := repoRootDir(t)
+	// Each cause is a set of alternatives; the doc must express it somehow.
+	causes := []struct {
+		label string
+		anyOf []string
+	}{
+		{"a revision-shaped value starting with '-'", []string{"start with '-'", "starts with `-`", "leading `-`", "`-`-leading", "begins with `-`"}},
+		{"an explicitly empty --rev/--diff value", []string{"empty `--rev`", "empty value", "an empty ", "explicitly empty"}},
+		{"input over the size cap", []string{"too large", "size cap", "over the cap"}},
+	}
+	for _, name := range []string{"diff-smell.md", "ci-integration.md"} {
+		b, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatalf("read docs/%s: %v", name, err)
+		}
+		doc := string(b)
+		for _, c := range causes {
+			ok := false
+			for _, alt := range c.anyOf {
+				if strings.Contains(doc, alt) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				t.Errorf("docs/%s does not document exit 2 for %s; both exit tables must enumerate every cause", name, c.label)
+			}
+		}
+	}
+}
+
+// TestDiffSubcommandShadowingIsDocumented asserts the docs state the one
+// behaviour change adding `diff` under `verify` caused: cobra resolves a matching
+// child before positional args, so a review id or path literally named `diff` is
+// shadowed and reachable only as `atcr verify -- diff`.
+//
+// Verified: `atcr verify -- diff` reaches the parent and resolves
+// .atcr/reviews/diff, while `atcr verify diff` reaches the scanner. The trade-off
+// is recorded in CHANGELOG.md and in a code comment at cli/verify.go, but a user
+// whose review id happens to be `diff` reads the docs, not the source — and got a
+// diff scan with no hint why.
+func TestDiffSubcommandShadowingIsDocumented(t *testing.T) {
+	root := repoRootDir(t)
+	for _, name := range []string{"diff-smell.md", "verification.md"} {
+		b, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatalf("read docs/%s: %v", name, err)
+		}
+		if !strings.Contains(string(b), "atcr verify -- diff") {
+			t.Errorf("docs/%s does not document the `atcr verify -- diff` escape hatch; "+
+				"adding `diff` as a child of `verify` shadows a review id named `diff`, and that is "+
+				"reachable no other way", name)
+		}
+	}
+}
+
+// TestVerifyDiffOwnsFailOnAlone backs the probe above: it is only a valid version
+// discriminator while `--fail-on` is reachable on `verify diff` and NOT on its
+// parent. If a later change adds --fail-on to `verify`, the documented recipe
+// silently starts reporting "new enough" on old binaries again.
+func TestVerifyDiffOwnsFailOnAlone(t *testing.T) {
+	if !reachableFlags([]string{"verify", "diff"})["fail-on"] {
+		t.Error("`atcr verify diff` must own --fail-on; the documented version probe greps its help text for that flag")
+	}
+	if reachableFlags([]string{"verify"})["fail-on"] {
+		t.Error("`atcr verify` must NOT expose --fail-on: the documented version probe greps for it to tell a new atcr from an old one, and an inherited/duplicated flag would make an old binary indistinguishable")
 	}
 }
 

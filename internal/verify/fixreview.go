@@ -62,17 +62,17 @@ func smellScanSkipReason(fix string) string {
 		return "fix is empty"
 	case len(fix) > maxFixBytes:
 		return fmt.Sprintf("fix is %d bytes, over the %d-byte scan cap", len(fix), maxFixBytes)
-	case !looksLikeUnifiedDiff(fix):
+	case !LooksLikeUnifiedDiff(fix):
 		return "fix is not a unified diff"
 	}
 	return ""
 }
 
-func evaluateFixSmell(fix, findingFile string) *smellResult {
+func evaluateFixSmell(fix, findingFile string) *SmellResult {
 	if smellScanSkipReason(fix) != "" {
 		return nil
 	}
-	res := analyzeDiff(fix)
+	res := AnalyzeDiff(fix)
 	if res != nil && isSmellTestPath(findingFile) {
 		dropSmellType(res, smellTestOnly)
 	}
@@ -82,11 +82,11 @@ func evaluateFixSmell(fix, findingFile string) *smellResult {
 // dropSmellType removes every smell of the given type from res and re-derives the
 // counts and verdict, so a suppressed HARD smell cannot leave a stale "hard"
 // verdict behind and cannot mask a surviving SOFT one.
-func dropSmellType(res *smellResult, typ string) {
+func dropSmellType(res *SmellResult, typ string) {
 	if res == nil || res.Summary.ByType[typ] == 0 {
 		return
 	}
-	kept := make([]smell, 0, len(res.Smells))
+	kept := make([]Smell, 0, len(res.Smells))
 	for _, s := range res.Smells {
 		if s.Type != typ {
 			kept = append(kept, s)
@@ -96,7 +96,7 @@ func dropSmellType(res *smellResult, typ string) {
 	delete(res.Summary.ByType, typ)
 	res.Summary.Hard, res.Summary.Soft = 0, 0
 	for _, s := range res.Smells {
-		if s.Severity == smellSeverityHard {
+		if s.Severity == SeverityHard {
 			res.Summary.Hard++
 		} else {
 			res.Summary.Soft++
@@ -104,11 +104,11 @@ func dropSmellType(res *smellResult, typ string) {
 	}
 	switch {
 	case res.Summary.Hard > 0:
-		res.Summary.Verdict = smellVerdictHard
+		res.Summary.Verdict = VerdictHard
 	case res.Summary.Soft > 0:
-		res.Summary.Verdict = smellVerdictSoftOnly
+		res.Summary.Verdict = VerdictSoftOnly
 	default:
-		res.Summary.Verdict = smellVerdictClean
+		res.Summary.Verdict = VerdictClean
 	}
 }
 
@@ -120,7 +120,7 @@ func dropSmellType(res *smellResult, typ string) {
 // Only the type list is included — never the raw evidence line — because the
 // evidence is verbatim model-generated diff text, whereas the type list is a
 // closed, trusted vocabulary; the location detail already lives in the finding.
-func buildFixReview(res *smellResult) string {
+func buildFixReview(res *SmellResult) string {
 	types := smellTypes(res)
 	if len(types) == 0 {
 		return ""
