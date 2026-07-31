@@ -112,9 +112,6 @@ func TestSmellResult_VerdictVocabularyIsClosed(t *testing.T) {
 		{"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-func A() int { return 0 }\n+func A() int { return 1 }\n", VerdictClean},
 		{"", VerdictClean},
 	} {
-		require.Contains(t,
-			[]string{VerdictClean, VerdictSoftOnly, VerdictHard},
-			AnalyzeDiff(tc.diff).Summary.Verdict)
 		require.Equal(t, tc.want, AnalyzeDiff(tc.diff).Summary.Verdict)
 	}
 }
