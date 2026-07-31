@@ -181,9 +181,18 @@ func TestVerifyDiffCmd_HardDiffReportsHardAndNamesSmell(t *testing.T) {
 	// No --fail-on, so reporting a HARD verdict must NOT change the exit code:
 	// gating is opt-in, preserving upstream's always-zero behavior (AC3).
 	require.Equal(t, 0, code)
-	require.Contains(t, stdout, "hard")
-	require.Contains(t, stdout, "test_deleted")
+	// The VERDICT TOKEN, not the bare word. renderSmellText always prints
+	// "%d hard, %d soft smell(s)", so `Contains(stdout, "hard")` holds even for a
+	// soft_only verdict ("0 hard, 1 soft") and cannot fail. Mutation-proved:
+	// downgrading smellTestDeleted from SeverityHard to SeveritySoft left this
+	// test — and every other "reports hard" test — passing.
+	require.Contains(t, stdout, "verdict: hard")
 	require.Contains(t, stdout, "foo_test.go")
+	// The severity must be pinned ON THE test_deleted ROW. A bare "HARD" check is
+	// not enough here: this fixture also raises a HARD weakened_assertion, so
+	// downgrading test_deleted alone would still leave "HARD" and "verdict: hard"
+	// in the output.
+	require.Contains(t, stdout, "HARD test_deleted")
 }
 
 func TestVerifyDiffCmd_SoftDiffReportsSoftOnly(t *testing.T) {
@@ -191,6 +200,35 @@ func TestVerifyDiffCmd_SoftDiffReportsSoftOnly(t *testing.T) {
 	require.Equal(t, 0, code)
 	require.Contains(t, stdout, "soft_only")
 	require.Contains(t, stdout, "suppression")
+}
+
+// TestVerifyDiffCmd_GoldenText pins the ENTIRE text rendering byte-for-byte, the
+// way TestSmellResult_GoldenJSON pins the JSON. The one-liner verdict header is a
+// documented grep surface for consumers (docs/diff-smell.md: "scripts match on
+// the `verdict: ` prefix"), and until now it had no format guard at all — only
+// substring checks, one of which could not fail.
+//
+// The em dash is deliberate and documented: it is the shipped separator.
+func TestVerifyDiffCmd_GoldenText(t *testing.T) {
+	t.Run("with findings", func(t *testing.T) {
+		code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-")
+		require.Equal(t, 0, code)
+		// Two HARD smells: deleting the test file, and the assertions that went
+		// with it. Both are pinned by name, severity, and column alignment.
+		require.Equal(t,
+			"verdict: hard — 2 hard, 0 soft smell(s); 1 test file(s), 1 impl file(s)\n"+
+				"  HARD test_deleted       foo_test.go: fix deleted a test file outright\n"+
+				"  HARD weakened_assertion foo_test.go: test removed assertion(s) without replacing them\n",
+			stdout)
+	})
+
+	t.Run("clean", func(t *testing.T) {
+		code, stdout, _ := runSmell(t, smellCleanDiff, "--diff", "-")
+		require.Equal(t, 0, code)
+		require.Equal(t,
+			"verdict: clean — no over-simplification smells; 0 test file(s), 1 impl file(s)\n",
+			stdout)
+	})
 }
 
 // The text renderer cites file:line when the smell has one (T2), so a consuming
@@ -641,7 +679,7 @@ func TestVerifyDiffCmd_StagedScansIndex(t *testing.T) {
 
 	code, stdout, _ := runSmell(t, "", "--staged")
 	require.Equal(t, 0, code)
-	require.Contains(t, stdout, "hard")
+	require.Contains(t, stdout, "verdict: hard") // the token, not the bare word — see HardDiffReportsHardAndNamesSmell
 	require.Contains(t, stdout, "test_deleted")
 	require.Contains(t, stdout, "foo_test.go")
 }
