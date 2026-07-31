@@ -7,6 +7,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/report"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,6 +168,39 @@ func TestReportFormatDescriptions_DerivedFromFormats(t *testing.T) {
 	for _, f := range []string{"md", "json", "checklist", "sarif"} {
 		assert.Contains(t, desc, f, "MCP format description must list %q", f)
 		assert.Contains(t, descReport, f, "atcr_report description must list %q", f)
+	}
+}
+
+// TestReconcileInputSchema_ConsensusEnum verifies the atcr_reconcile input
+// schema constrains the consensus property to the closed level vocabulary
+// derived from reclib.ConsensusLevels (so it cannot drift), rejecting an
+// invalid value by JSON Schema validation before the handler runs — the
+// handler's own check remains as defense in depth for the config tier the
+// schema cannot cover. Asserted client-side so the registration wiring (not
+// just the builder) is covered.
+func TestReconcileInputSchema_ConsensusEnum(t *testing.T) {
+	cs := connectTest(t, t.TempDir(), fakeCompleter{})
+	tools := listTools(t, cs)
+	props := schemaProperties(t, tools[ToolReconcile])
+	consensus, ok := props["consensus"].(map[string]any)
+	require.True(t, ok, "atcr_reconcile must expose a consensus property")
+	want := make([]any, len(reclib.ConsensusLevels))
+	for i, l := range reclib.ConsensusLevels {
+		want[i] = l
+	}
+	enum, _ := consensus["enum"].([]any)
+	require.NotNil(t, enum,
+		"the consensus property must be enum-constrained to the closed vocabulary")
+	assert.ElementsMatch(t, want, enum)
+}
+
+// TestDescReconcile_DocumentsConsensus: a client model reading the atcr_reconcile
+// tool description must learn that the consensus argument exists and which
+// levels it accepts.
+func TestDescReconcile_DocumentsConsensus(t *testing.T) {
+	assert.Contains(t, descReconcile, "consensus")
+	for _, level := range reclib.ConsensusLevels {
+		assert.Contains(t, descReconcile, level, "descReconcile must name the %s level", level)
 	}
 }
 
