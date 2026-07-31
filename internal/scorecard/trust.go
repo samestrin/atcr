@@ -77,8 +77,9 @@ const defaultTrustWindow = 180 * 24 * time.Hour
 // finding still appears, at rate 0.0, via ratio()'s zero-denominator case).
 // minRuns <= 0 applies no floor.
 //
-// A missing or unreadable store directory yields an empty map and a nil
-// error — this is a best-effort read, matching ReadAll's "no data yet"
+// A missing, unreadable, or partially readable store (a mid-enumeration IO
+// failure on one month file) yields an empty map and a nil error — this is a
+// best-effort read, matching ReadAll's "no data yet"
 // contract; it never returns an error or panics.
 //
 // This function reads ALL HISTORY and always will: cli/personas.go calls it
@@ -106,7 +107,15 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 // silently stops trust exemption and demotion rather than merely speeding up the
 // read. See defaultTrustWindow.
 func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time) (map[string]float64, error) {
-	records, _ := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+	records, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+	if err != nil {
+		// The record slice is truncated at the failed month file. Aggregating
+		// it could push a reviewer under minRuns and silently disable trust
+		// exemption/demotion, so fail neutral (empty map) rather than compute
+		// priors from a partial store — the same "no data" state a missing
+		// store yields.
+		return map[string]float64{}, nil
+	}
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
