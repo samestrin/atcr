@@ -79,16 +79,6 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
-	// Resolve the consensus level up front, alongside the other usage-error
-	// checks and before any resume work: a bad configured value is a usage error
-	// (exit 2), and resolving it inside resumeReconcile would surface it only
-	// after the resumed fan-out completed. `resume` has no --consensus flag (epic
-	// 35.9.1 scope), so this reads the config/registry tiers only.
-	consensusLevel, err := resolveConsensusLevel("")
-	if err != nil {
-		return err
-	}
-
 	// --fresh has two fresh-review meanings — scoping the --verify stage and
 	// (since Sprint 35.0) bypassing the baseline file-hash skip (review.go) —
 	// and a resume honors neither: it re-reviews the resumed review's pending
@@ -121,6 +111,17 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}
+	}
+
+	// Resolve the consensus level after the flag-rejection block (argument errors
+	// precede config errors) but still before any resume work: a bad configured
+	// value is a usage error (exit 2), and resolving it inside resumeReconcile
+	// would surface it only after the resumed fan-out completed. `resume` has no
+	// --consensus flag (epic 35.9.1 scope), so this reads the config/registry
+	// tiers only.
+	consensusLevel, err := resolveConsensusLevel("")
+	if err != nil {
+		return err
 	}
 
 	dir, err := resolveResumeDir(anchor)
