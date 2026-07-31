@@ -625,6 +625,47 @@ func TestStore_ReadAll_UnreadableDirReturnsError(t *testing.T) {
 	require.Error(t, err, "ReadSince shares the same enumeration error path")
 }
 
+// TestReadPaths_ErrorsDoNotLeakAbsoluteStorePath is the read-path sibling of
+// TestAppend_ErrorDoesNotLeakAbsoluteStorePath. Every error the read paths
+// RETURN must carry the base name only: the absolute store path is
+// username-bearing (~/.config/atcr/scorecard) and these errors surface through
+// cli/leaderboard.go, so the read paths owe the same redaction Append applies.
+func TestReadPaths_ErrorsDoNotLeakAbsoluteStorePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+
+	t.Run("unreadable dir", func(t *testing.T) {
+		dir := t.TempDir()
+		locked := filepath.Join(dir, "locked")
+		require.NoError(t, os.Mkdir(locked, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+		_, err := ReadAll(locked, ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "ReadAll must not embed the absolute store path")
+
+		_, err = ReadSince(locked, 180*24*time.Hour, time.Now(), ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "ReadSince shares the enumeration, so it shares the redaction")
+	})
+
+	t.Run("unreadable month file", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+		require.NoError(t, os.Chmod(filepath.Join(dir, "2026-07.jsonl"), 0o000))
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-07.jsonl"), 0o600) })
+
+		_, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.Error(t, err, "the first per-file read error is propagated alongside the surviving records")
+		assert.NotContains(t, err.Error(), dir, "the propagated per-file error must be redacted too")
+
+		_, err = FindByRunID(dir, "2026-07-10T10:00:00Z-jul", ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "FindByRunID must not embed the absolute store path")
+	})
+}
+
 func TestReadSince_UnparseableMonthStemIsReadFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
