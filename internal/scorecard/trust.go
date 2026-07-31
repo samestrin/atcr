@@ -43,7 +43,10 @@ const DefaultTrustMinRuns = 20
 // therefore counted strict by the legacy default, so that compounding is
 // untested.
 //
-// KNOWN LIMITATION (accepted): a reviewer with no runs in the last 180d drops
+// KNOWN LIMITATION (accepted): a reviewer with no runs in any month file
+// overlapping the last 180d — monthOverlapsWindow includes the whole calendar
+// month holding the cutoff, so effective retention is 180d plus up to a month,
+// roughly 210d in the worst case — drops
 // out of the priors map and reverts to the neutral no-history state — the same
 // state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
 // lookup with no distinct "dormant" handling). Re-widening this constant, not an

@@ -294,8 +294,12 @@ than growing a third aggregation.
   this call on the primary path of every review and reconcile, its cost is
   unconditional and would otherwise grow without bound as the store accumulates
   months. The window selects whole month **files** before they are opened, so
-  history outside it is never read or parsed. Two consequences: a reviewer with
-  no runs in the last 180 days falls back to the neutral "no history" state
+  history outside it is never read or parsed. Because selection is per **month
+  file**, the whole calendar month containing the 180-day cutoff is included, so
+  effective retention is 180 days plus however far into that month the cutoff
+  falls — up to roughly 210 days, i.e. as many as 7 month files. Two
+  consequences: a reviewer with no runs in any month file overlapping the last
+  180 days falls back to the neutral "no history" state
   (absent from the map — the same state a brand-new reviewer occupies), and
   `TrustPriors(dir, minRuns)` itself is **unchanged and still all-history**, so
   `atcr personas list --scores` keeps reporting on the whole store. Every
@@ -340,8 +344,9 @@ than growing a third aggregation.
   See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
-  (20) summed `strict` runs **inside the 180-day window** before its prior
-  applies at all — every reviewer on a fresh
+  (20) summed `strict` runs **inside the windowed read** — the month files
+  overlapping the last 180 days, per the month-granularity note above — before
+  its prior applies at all. Every reviewer on a fresh
   install, and any reviewer below that floor, is simply absent from the map,
   so reconcile behaves byte-identically to pre-35.9 until history accumulates.
   This resolver is intentionally not called from inside

@@ -8,7 +8,7 @@ Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scoreca
 
 ### Changed
 
-- `scorecard.ResolveTrustPriors()` now reads a 180-day window instead of all history — roughly 4x faster and 4x less allocated against a 24-month store (5.9ms vs 24.2ms, 11.5MB vs 51.0MB). One consequence: a reviewer with no runs in the last 180 days falls back to the neutral "no history" state, the same state a brand-new reviewer occupies. The window is an internal constant; no new flag or config key.
+- `scorecard.ResolveTrustPriors()` now reads a 180-day window instead of all history — roughly 4x faster and 4x less allocated against a 24-month store (5.9ms vs 24.2ms, 11.5MB vs 51.0MB). One consequence: a reviewer with no runs in any month file overlapping the last 180 days falls back to the neutral "no history" state, the same state a brand-new reviewer occupies. Selection is per month file, so the whole calendar month containing the cutoff is included and effective retention is 180 days plus however far into that month the cutoff falls — up to roughly 210 days. The window is an internal constant; no new flag or config key.
 - `scorecard.TrustPriors(dir, minRuns)` is unchanged — same signature, same all-history semantics — so `atcr personas list --scores` still reports on the whole store.
 
 *Shipped via /execute-epic (epic 35.11)*
