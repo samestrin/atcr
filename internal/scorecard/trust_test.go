@@ -1,12 +1,14 @@
 package scorecard
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -148,4 +150,107 @@ func TestTrustPriors_ZeroDenominatorYieldsZeroNotNaN(t *testing.T) {
 	assert.Equal(t, 0.0, rates["ronin"])
 	assert.False(t, math.IsNaN(rates["ronin"]))
 	assert.False(t, math.IsInf(rates["ronin"], 0))
+}
+
+// TestTrustPriors_IgnoresNonStrictRuns closes the cross-run feedback loop epic
+// 35.9.1's configurable consensus levels opened. reviewerCounts computes
+// findings_raised/findings_corroborated from the POST-consensus-filter finding
+// set, so the same review yields a different corroboration rate per level: under
+// off or lenient the uncorroborated singletons strict would have sidecarred stay
+// in the set, inflating raised without raising corroborated. Feeding those rates
+// into TrustPriors durably depresses the priors demoteByTrust and trustExempt
+// apply on LATER strict runs.
+//
+// Every historical run predates the levels and was implicitly strict, so an
+// EMPTY consensus_level must count as strict — that is what keeps this filter
+// from silently discarding a store written before 35.9.1.
+func TestTrustPriors_IgnoresNonStrictRuns(t *testing.T) {
+	dir := t.TempDir()
+
+	// A reviewer with a clean strict history: every finding corroborated.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-s%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+	// Then a burst of off-level runs where nothing corroborated. These must not
+	// count: their raised counts include singletons a strict run would never
+	// have promoted into the finding set at all.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-o%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusOff,
+			FindingsRaised:       9,
+			FindingsCorroborated: 0,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 1.0, priors["bruce"], 0.0001,
+		"a non-strict run must not depress the trust prior later strict runs read")
+}
+
+// TestTrustPriors_EmptyConsensusLevelCountsAsStrict pins the backward-compatible
+// half: a store written before epic 35.9.1 carries no consensus_level at all, and
+// every one of those runs was strict by construction (the level did not exist).
+// Treating the empty value as non-strict would strand every existing reviewer
+// history and silently zero out the trust priors in the field.
+func TestTrustPriors_EmptyConsensusLevelCountsAsStrict(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion,
+			RecordType:    RecordTypeReviewer,
+			RunID:         fmt.Sprintf("2026-06-01T00:00:00Z-l%02d", i),
+			Reviewer:      "greta",
+			Model:         "m",
+			// ConsensusLevel deliberately unset: the pre-35.9.1 store shape.
+			FindingsRaised:       4,
+			FindingsCorroborated: 2,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "greta", "a pre-35.9.1 store must still yield priors")
+	assert.InDelta(t, 0.5, priors["greta"], 0.0001)
+}
+
+// TestTrustPriors_AllNonStrictYieldsNoPrior is the boundary: a reviewer whose
+// ONLY history is non-strict has no trusted measurement, so it is omitted
+// entirely rather than reported at a rate computed from level-dependent counts.
+// Omission (not a zero) is what lets callers distinguish "no history" from
+// "measured zero" — the contract TrustPriors already documents.
+func TestTrustPriors_AllNonStrictYieldsNoPrior(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-03T00:00:00Z-n%02d", i),
+			Reviewer:             "robin",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusLenient,
+			FindingsRaised:       3,
+			FindingsCorroborated: 3,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "robin",
+		"a reviewer with only non-strict history has no trusted measurement")
 }

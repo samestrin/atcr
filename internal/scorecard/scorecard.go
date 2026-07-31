@@ -65,6 +65,18 @@ type Record struct {
 	TokensOut            int     `json:"tokens_out"`
 	LatencyMS            int64   `json:"latency_ms"`
 
+	// ConsensusLevel is the reconcile consensus level this run's counts were
+	// measured under (epic 35.9.1). It matters because FindingsRaised and
+	// FindingsCorroborated are computed from the POST-filter finding set, so the
+	// same review yields a different CorroborationRate per level — and that rate
+	// feeds TrustPriors, which drives demoteByTrust/trustExempt on later runs.
+	// Recording it lets TrustPriors count only the strict runs its historical
+	// semantics assume. Omitted when empty: a store written before 35.9.1 has no
+	// level, and every one of those runs was strict by construction.
+	//
+	// STUB (RED): declared but never stamped. Populated in the next commit.
+	ConsensusLevel string `json:"consensus_level,omitempty"`
+
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
