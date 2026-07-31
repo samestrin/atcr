@@ -22,7 +22,6 @@ here is judged by identical logic.
 atcr verify diff                             # scan HEAD (the default)
 atcr verify diff --rev HEAD~1                # scan a single commit
 atcr verify diff --staged                    # scan the git index
-atcr verify diff --range main..HEAD          # scan a commit range
 atcr verify diff --diff patch.diff           # scan a file
 git diff | atcr verify diff --diff -         # scan stdin
 ```
@@ -36,11 +35,10 @@ default, so a bare `atcr verify diff` scans the last commit.
 |------|--------|
 | `--rev <rev>` | a single commit in `--repo` (default: `HEAD`) |
 | `--staged` | the staged changes in `--repo` |
-| `--range <a>..<b>` | a commit range in `--repo` |
 | `--diff <path>` | a unified diff read from a file |
 | `--diff -` | a unified diff read from stdin |
 
-`--repo <path>` sets the repository root for the three git-backed sources
+`--repo <path>` sets the repository root for the two git-backed sources
 (default: the current directory).
 
 Naming two sources is a usage error (exit `2`) that names both offenders, rather

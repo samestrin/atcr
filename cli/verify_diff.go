@@ -33,7 +33,7 @@ func newVerifyDiffCmd() *cobra.Command {
 			"or that resolves a lint by suppressing it.\n\n" +
 			"Deterministic and model-free — no agent, no provider, no API key, no network.\n\n" +
 			"Diff sources, one at a time: --diff <path> (or --diff - for stdin), --staged, " +
-			"--range <a>..<b>, or --rev <rev> (the default, HEAD). Reports a verdict of clean, " +
+			"or --rev <rev> (the default, HEAD). Reports a verdict of clean, " +
 			"soft_only, or hard, and exits 0 regardless of verdict unless --fail-on is set.\n\n" +
 			"Note: a diff touching only test files raises the HARD test_only smell here. The " +
 			"in-process fix gate suppresses that case for findings whose own file is a test, but " +
@@ -43,9 +43,8 @@ func newVerifyDiffCmd() *cobra.Command {
 	}
 	cmd.Flags().String("diff", "", "scan a unified diff read from this file, or from stdin when set to \"-\"")
 	cmd.Flags().Bool("staged", false, "scan the staged changes (git diff --cached) in --repo")
-	cmd.Flags().String("range", "", "scan a git commit range in --repo, e.g. main..HEAD")
 	cmd.Flags().String("rev", "HEAD", "scan a single commit in --repo (the default source)")
-	cmd.Flags().String("repo", ".", "repo root for --staged / --range / --rev (default: current directory)")
+	cmd.Flags().String("repo", ".", "repo root for --staged / --rev (default: current directory)")
 	cmd.Flags().Bool("json", false, "emit the scan as JSON on stdout instead of the text summary")
 	cmd.Flags().String("fail-on", "", "exit 1 when the verdict reaches this level: hard, soft, or none (default: never fail)")
 	return cmd
@@ -158,9 +157,9 @@ func smellGateError(res *verify.SmellResult, gate string) error {
 		res.Summary.Verdict, res.Summary.Hard, res.Summary.Soft, gate)
 }
 
-// diffSource names the four mutually exclusive sources, in flag-name form so a
-// conflict message can name both offenders (AC4).
-var diffSourceFlags = []string{"diff", "staged", "range", "rev"}
+// diffSource names the three mutually exclusive sources, in flag-name form so
+// a conflict message can name both offenders (AC4).
+var diffSourceFlags = []string{"diff", "staged", "rev"}
 
 // readDiffInput resolves the single diff source and returns its text plus a
 // human label for the stderr notes. At most one source may be NAMED; naming none
@@ -210,14 +209,6 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 		out, gerr := gitText(cmd, "diff", "--cached")
 		return out, "the staged changes", gerr
 
-	case cmd.Flags().Changed("range"):
-		spec, rerr := revArg(cmd, "range")
-		if rerr != nil {
-			return "", "", rerr
-		}
-		out, gerr := gitText(cmd, "diff", spec)
-		return out, spec, gerr
-
 	default:
 		spec, rerr := revArg(cmd, "rev")
 		if rerr != nil {
@@ -233,7 +224,7 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 
 // revArg reads a revision-shaped flag and refuses a value git would read as an
 // OPTION. Argv-only exec means no shell injection, but a leading "-" is still
-// live: `--range --output=<path>` alone is enough to make the scan write a file
+// live: `--rev --output=<path>` alone is enough to make the scan write a file
 // of the caller's choosing.
 func revArg(cmd *cobra.Command, name string) (string, error) {
 	raw, _ := cmd.Flags().GetString(name)

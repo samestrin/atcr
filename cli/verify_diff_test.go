@@ -437,18 +437,6 @@ func TestVerifyDiffCmd_StagedCleanIndexJSONStdoutIsJSONOnly(t *testing.T) {
 	require.Equal(t, "clean", m["summary"].(map[string]any)["verdict"])
 }
 
-func TestVerifyDiffCmd_RangeScansCommitRange(t *testing.T) {
-	isolate(t)
-	initGitRepo(t)
-	stageTestDeletion(t)
-	gitSmell(t, "commit", "-q", "-m", "delete the test")
-
-	code, stdout, _ := runSmell(t, "", "--range", "HEAD~1..HEAD")
-	require.Equal(t, 0, code)
-	require.Contains(t, stdout, "hard")
-	require.Contains(t, stdout, "test_deleted")
-}
-
 // --rev is the DEFAULT source: a bare `atcr verify diff` scans HEAD.
 func TestVerifyDiffCmd_RevIsDefaultSourceAndScansHEAD(t *testing.T) {
 	isolate(t)
@@ -585,9 +573,7 @@ func TestVerifyDiffCmd_SourcesAreMutuallyExclusive(t *testing.T) {
 	for _, args := range [][]string{
 		{"--diff", "-", "--staged"},
 		{"--staged", "--rev", "HEAD"},
-		{"--staged", "--range", "HEAD~1..HEAD"},
 		{"--diff", "-", "--rev", "HEAD"},
-		{"--range", "a..b", "--rev", "HEAD"},
 		// Reversed argv order: the message follows diffSourceFlags order, so
 		// the first argv flag is NOT necessarily the first flag named.
 		{"--rev", "HEAD", "--staged"},
@@ -609,27 +595,23 @@ func TestVerifyDiffCmd_SourcesAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
-// --range / --rev are interpolated into git's argv. A value starting with "-"
-// would be read as an OPTION — `--output=<path>` alone is enough to make the
-// scan write a file of the caller's choosing.
+// --rev is interpolated into git's argv. A value starting with "-" would be
+// read as an OPTION — `--output=<path>` alone is enough to make the scan write
+// a file of the caller's choosing.
 func TestVerifyDiffCmd_RevArgsRejectLeadingDash(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
-	for _, flag := range []string{"--range", "--rev"} {
-		for _, v := range []string{"--output=/tmp/pwned", "-p", "--exec=touch /tmp/x"} {
-			code, _, _ := runSmell(t, "", flag, v)
-			require.Equal(t, 2, code, "%s %q must be rejected", flag, v)
-		}
+	for _, v := range []string{"--output=/tmp/pwned", "-p", "--exec=touch /tmp/x"} {
+		code, _, _ := runSmell(t, "", "--rev", v)
+		require.Equal(t, 2, code, "--rev %q must be rejected", v)
 	}
 }
 
 func TestVerifyDiffCmd_EmptyRevArgsAreUsageErrors(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
-	for _, flag := range []string{"--range", "--rev"} {
-		code, _, _ := runSmell(t, "", flag, "   ")
-		require.Equal(t, 2, code, "%s with a blank value must be a usage error", flag)
-	}
+	code, _, _ := runSmell(t, "", "--rev", "   ")
+	require.Equal(t, 2, code, "--rev with a blank value must be a usage error")
 }
 
 func TestVerifyDiffCmd_PositionalArgIsUsageError(t *testing.T) {
