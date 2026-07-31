@@ -378,6 +378,13 @@ func TestSubcommandValidationStopsAtInvocationEnd(t *testing.T) {
 		{"placeholder then comment", []string{"verify", "[id-or-path]", "#", "verify", "a", "review"}},
 		{"second invocation on one line", []string{"verify", "→", "atcr", "debate"}},
 		{"pipe", []string{"verify", "|", "jq"}},
+		{"angle placeholder", []string{"debt", "<file>", "frobnicate"}},
+		{"double ampersand", []string{"debt", "&&", "frobnicate"}},
+		{"double pipe", []string{"debt", "||", "frobnicate"}},
+		{"semicolon", []string{"debt", ";", "frobnicate"}},
+		{"redirect with space", []string{"debt", ">", "frobnicate"}},
+		{"append redirect with space", []string{"debt", ">>", "frobnicate"}},
+		{"redirect without space", []string{"debt", ">/dev/null", "frobnicate"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if errs := validateInvocationTokens(tc.tokens, "fixture", cmds, groups); len(errs) != 0 {
