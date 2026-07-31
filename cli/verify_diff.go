@@ -272,7 +272,20 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 		// First-parent is also the right QUESTION for a gate: "what is this merge
 		// introducing to the branch it lands on?" For a single-parent commit the
 		// flags are a no-op, so the ordinary case is unchanged.
-		out, gerr := gitText(cmd, "show", "--format=", "--first-parent", "-m", spec)
+		// --end-of-options and the trailing `--` are git's own framing, and they
+		// close two DIFFERENT holes:
+		//
+		//   - --end-of-options stops option parsing, so a value beginning with '-'
+		//     cannot become a flag. This is the repo's standard (see
+		//     internal/gitrange/resolver.go and internal/fanout/review.go);
+		//     revArg's leading-dash check stays as defense in depth.
+		//   - `--` separates revisions from paths, which the dash check cannot do.
+		//     Without it `--rev foo.go` was accepted and run as
+		//     `git show HEAD -- foo.go`: git silently reinterpreted the value as a
+		//     PATHSPEC, scanning one file and exiting 0. A typo'd or stale rev in a
+		//     CI gate then narrows coverage instead of failing. With `--`, git
+		//     refuses it as a bad revision (exit 2).
+		out, gerr := gitText(cmd, "show", "--format=", "--first-parent", "-m", "--end-of-options", spec, "--")
 		return out, spec, gerr
 	}
 }
