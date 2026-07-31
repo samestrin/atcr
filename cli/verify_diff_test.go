@@ -337,10 +337,34 @@ func TestVerifyDiffCmd_GateFailureUnderJSONKeepsStdoutParseable(t *testing.T) {
 
 func TestVerifyDiffCmd_InvalidFailOnIsUsageError(t *testing.T) {
 	// Severities belong to `atcr review`/`reconcile`; this command takes verdicts.
-	for _, v := range []string{"bogus", "HIGH", "critical", "  "} {
+	// An empty/whitespace value is deliberately NOT in this set — it is unset, per
+	// TestVerifyDiffCmd_EmptyFailOnIsUnset below.
+	for _, v := range []string{"bogus", "HIGH", "critical"} {
 		code, _, _ := runSmell(t, smellCleanDiff, "--diff", "-", "--fail-on", v)
 		require.Equal(t, 2, code, "--fail-on %q must be a usage error", v)
 	}
+}
+
+// TestVerifyDiffCmd_EmptyFailOnIsUnset pins an explicitly-empty --fail-on as
+// UNSET rather than a usage error, matching the two sibling threshold readers:
+// verifyMinSeverity (cli/verify.go) and gateFlagValue (cli/reconcile.go) both
+// trim and treat whitespace-only as unset, and verifyMinSeverity's comment states
+// that as the shared convention.
+//
+// The shape this protects is exactly the one the `--fail-on none` affordance was
+// added for: `atcr verify diff --fail-on "$LEVEL"` with LEVEL unset. Treating it
+// as a usage error hard-fails CI here (exit 2) while being a silent no-op in
+// every sibling command.
+func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
+	// A HARD diff proves the gate is genuinely OFF, not merely that nothing tripped.
+	for _, v := range []string{"", " ", "\t "} {
+		code, stdout, _ := runSmell(t, smellHardDiff, "--diff", "-", "--fail-on", v)
+		require.Equal(t, 0, code, "--fail-on %q must be unset (gate off), not a usage error", v)
+		require.Contains(t, stdout, "verdict: hard", "the scan must still run and report")
+	}
+	// The relaxation must not swallow a genuinely bad value.
+	code, _, _ := runSmell(t, smellCleanDiff, "--diff", "-", "--fail-on", "bogus")
+	require.Equal(t, 2, code, "--fail-on bogus must still be a usage error")
 }
 
 // AC3: an invalid --fail-on is rejected BEFORE any git process is spawned, so a
