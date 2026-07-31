@@ -31,6 +31,12 @@ git diff | atcr verify diff --diff -         # scan stdin
 Exactly one source may be named. Naming none falls through to `--rev`'s `HEAD`
 default, so a bare `atcr verify diff` scans the last commit.
 
+> **A review id or path named `diff` is shadowed.** `verify` is both a group and a
+> leaf — it takes an optional `[id-or-path]` — and cobra resolves a matching
+> subcommand before positional args. So `atcr verify diff` always reaches this
+> scanner. To verify a review whose id happens to be `diff`, pass it after `--`:
+> `atcr verify -- diff`.
+
 | Flag | Source |
 |------|--------|
 | `--rev <rev>` | a single commit in `--repo` (default: `HEAD`) |

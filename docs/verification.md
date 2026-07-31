@@ -153,6 +153,15 @@ command so an external consumer can call it.
 atcr verify diff --staged --fail-on hard
 ```
 
+Because `diff` is a subcommand of `verify`, and `verify` also takes an optional
+`[id-or-path]`, a review id or path literally named `diff` is shadowed: cobra
+resolves the subcommand first, so `atcr verify diff` always reaches the scanner.
+Verify such a review by passing it after `--`:
+
+```bash
+atcr verify -- diff
+```
+
 See **[diff-smell.md](diff-smell.md)** for the smell catalogue, the JSON shape and
 its stability contract, the exit-code table, and the version-probe recipe.
 
