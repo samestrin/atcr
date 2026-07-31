@@ -55,6 +55,11 @@ const DefaultTrustMinRuns = 20
 // (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
 // against its own literal, so it can only catch a deliberate narrowing — it
 // cannot detect that 180d stopped being generous as the store ages).
+// TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor is its behavioral
+// complement: it seeds a literal 20 strict runs at a literal 9-day stride and
+// fails if this window or DefaultTrustMinRuns is moved against the other. Both
+// literals are deliberate — derived from the constants, the test would contract
+// with them and pass at any value.
 const defaultTrustWindow = 180 * 24 * time.Hour
 
 // TrustPriors reads the scorecard store at dir and returns each reviewer's

@@ -480,6 +480,48 @@ func TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement(t *testing.T) {
 		"defaultTrustWindow must stay >= 180d unless re-measured against a real store (epic 35.11 AC3)")
 }
 
+// TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor is the BEHAVIORAL
+// half of the guard above. That one compares a constant against its own literal
+// and so can only catch a deliberate narrowing of the WINDOW; it says nothing
+// about the other half of the interaction, DefaultTrustMinRuns. This one seeds a
+// reviewer at a steady low run rate spread across the window and asserts the
+// windowed read still returns it, so BOTH failure directions fail here: raising
+// DefaultTrustMinRuns above the seeded run count, or narrowing the window until
+// fewer of those runs remain inside it. That pairing is what trust.go's
+// defaultTrustWindow comment claims is protected.
+func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	// steadyRuns is a LITERAL 20 — the run count DefaultTrustMinRuns was measured
+	// at (trust.go), deliberately NOT written as DefaultTrustMinRuns. Seeding
+	// `DefaultTrustMinRuns` records and then asserting against the same constant
+	// is `n >= n`: it passes at any value, which is the very tautology this test
+	// exists to replace. The literal is what makes raising the floor fail here.
+	const steadyRuns = 20
+	// stride is likewise a LITERAL 9 days (180d / 20 runs), for the same reason:
+	// written as defaultTrustWindow/steadyRuns it would CONTRACT with the window,
+	// re-bunching every run inside whatever window remains and passing at 60d.
+	// Held fixed, the runs stay spread over ~171 real days, so narrowing the
+	// window leaves fewer than the floor inside it and this test fails. Spreading
+	// them at all — rather than bunching them into one month file — is also the
+	// shape the floor actually endangers: a reviewer active at a steady low rate.
+	// The +24h keeps the newest stride at `now` rather than one day past it.
+	const stride = 9 * 24 * time.Hour
+	for i := 0; i < steadyRuns; i++ {
+		at := now.Add(-time.Duration(i) * stride).Add(24 * time.Hour)
+		if at.After(now) {
+			at = now
+		}
+		appendNAt(t, dir, 1, "Steady", "opus", 1, 1, at)
+	}
+
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "steady",
+		"a reviewer holding 20 strict runs spread across defaultTrustWindow must clear the floor — if this fails, the window and the floor have drifted apart and both need re-measuring (epic 35.11 AC3)")
+}
+
 // --- Windowed-read benchmark (epic 35.11 T3) ---
 
 // seedMonthlyStore writes perMonth reviewer records into each of the `months`
