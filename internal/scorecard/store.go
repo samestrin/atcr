@@ -358,6 +358,15 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 // windowed and all-history paths share one enumeration at the boundary rather
 // than drifting apart.
 //
+// WHY EXPORTED with only one in-package caller (trustPriorsSince): the epic
+// 35.11 plan specified a store-level windowed read as the deliverable, paired
+// with the exported ReadAll it bounds — an unexported readSince would leave
+// ReadAll as the only public way to read the store, i.e. the unbounded one. The
+// asymmetry, not the caller count, is what earns the export. The known external
+// consumer is cli/leaderboard.go, which still runs ReadAll plus an in-memory
+// ApplyFilters against a 30d default and was explicitly out of scope for the
+// epic; moving it onto this function is the tracked follow-up.
+//
 // A month file whose stem is not a parseable YYYY-MM is READ (fail-open): an
 // odd filename cannot prove its contents fall outside the window, and silently
 // dropping history is worse than reading one extra file. Non-.jsonl entries and
