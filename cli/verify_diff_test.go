@@ -367,6 +367,74 @@ func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
 	require.Equal(t, 2, code, "--fail-on bogus must still be a usage error")
 }
 
+// --- merge commits --------------------------------------------------------
+
+// mergeWithTestDeletion builds a repo whose HEAD is a MERGE commit bringing in a
+// feature branch that deleted a test file while editing an implementation file.
+// The reward hack is on the feature side, so it is invisible to a merge diff
+// taken against all parents — which is exactly the shape CI presents, since
+// refs/pull/N/merge checkouts and post-merge branches routinely have a merge at
+// HEAD and --rev defaults to HEAD.
+func mergeWithTestDeletion(t *testing.T) string {
+	t.Helper()
+	isolate(t)
+	initGitRepo(t)
+	wd := requireTempWorkdir(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo.go"), []byte("package p\n\nfunc Foo() int { return 0 }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo_test.go"), []byte("package p\n\nfunc TestFoo(t *testing.T) { _ = Foo() }\n"), 0o644))
+	gitSmell(t, "add", "foo.go", "foo_test.go")
+	gitSmell(t, "commit", "-q", "-m", "add foo")
+
+	base := strings.TrimSpace(gitSmellOutput(t, "rev-parse", "HEAD"))
+	gitSmell(t, "checkout", "-q", "-b", "feature")
+	gitSmell(t, "rm", "-q", "foo_test.go")
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo.go"), []byte("package p\n\nfunc Foo() int { return 1 }\n"), 0o644))
+	gitSmell(t, "commit", "-q", "-am", "delete the failing test")
+
+	gitSmell(t, "checkout", "-q", base)
+	gitSmell(t, "checkout", "-q", "-B", "mainline")
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "other.txt"), []byte("unrelated\n"), 0o644))
+	gitSmell(t, "add", "other.txt")
+	gitSmell(t, "commit", "-q", "-m", "unrelated mainline work")
+	gitSmell(t, "merge", "-q", "--no-ff", "feature", "-m", "merge feature")
+
+	// Precondition: HEAD really is a merge (rev-list --parents prints sha + parents).
+	require.Len(t, strings.Fields(gitSmellOutput(t, "rev-list", "--parents", "-n1", "HEAD")), 3,
+		"fixture must produce a merge commit at HEAD")
+	return wd
+}
+
+// TestVerifyDiffCmd_MergeCommitIsScanned pins the gate against a merge at HEAD.
+//
+// `git show <merge>` prints NO diff by default, so the empty-input branch
+// reported `verdict: clean`, exit 0 — under `--fail-on hard`, a silent no-op
+// exactly where the gate is meant to run. `--first-parent -m` asks the question
+// the gate actually cares about: what is this merge introducing to the branch it
+// lands on?
+func TestVerifyDiffCmd_MergeCommitIsScanned(t *testing.T) {
+	wd := mergeWithTestDeletion(t)
+	code, stdout, _ := runSmell(t, "", "--rev", "HEAD", "--repo", wd, "--fail-on", "hard")
+	require.Equal(t, 1, code, "a merge that lands a deleted test must trip --fail-on hard, not report clean")
+	require.Contains(t, stdout, "verdict: hard")
+	require.Contains(t, stdout, "test_deleted")
+}
+
+// TestVerifyDiffCmd_NonMergeRevUnchanged is the negative control: the merge
+// handling must not alter the ordinary single-parent case.
+func TestVerifyDiffCmd_NonMergeRevUnchanged(t *testing.T) {
+	wd := mergeWithTestDeletion(t)
+	code, stdout, _ := runSmell(t, "", "--rev", "feature", "--repo", wd, "--fail-on", "hard")
+	require.Equal(t, 1, code)
+	require.Contains(t, stdout, "verdict: hard")
+	require.Contains(t, stdout, "test_deleted")
+
+	// And a commit that changes nothing suspicious still reports clean.
+	code, stdout, _ = runSmell(t, "", "--rev", "mainline~0^1", "--repo", wd)
+	require.Equal(t, 0, code)
+	require.Contains(t, stdout, "verdict: ")
+}
+
 // --- input size cap -------------------------------------------------------
 
 // oversizeDiff builds a syntactically valid unified diff of at least n bytes.
