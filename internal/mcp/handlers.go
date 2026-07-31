@@ -309,8 +309,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// come from the config tier with no argument passed at all.
 	consensusLevel, ok := reclib.NormalizeConsensus(rawConsensus)
 	if !ok {
-		return nil, ReconcileResult{}, fmt.Errorf("invalid consensus level %q: must be one of %s",
-			strings.TrimSpace(rawConsensus), strings.Join(reclib.ConsensusLevels, ", "))
+		return nil, ReconcileResult{}, reclib.InvalidConsensusError(rawConsensus)
 	}
 
 	// --require-verified is meaningless without a gate (the same fail-fast rule as

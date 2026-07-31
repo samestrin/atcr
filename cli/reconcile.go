@@ -530,8 +530,7 @@ func resolveConsensusLevel(explicit string) (string, error) {
 func validateConsensus(v string) (string, error) {
 	c, ok := reclib.NormalizeConsensus(v)
 	if !ok {
-		return "", usageError(fmt.Errorf("invalid consensus level %q: must be one of %s",
-			strings.TrimSpace(v), strings.Join(reclib.ConsensusLevels, ", ")))
+		return "", usageError(reclib.InvalidConsensusError(v))
 	}
 	return c, nil
 }

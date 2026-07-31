@@ -1,6 +1,9 @@
 package reconcile
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // consensusMinReviewers is the panel-size floor for the epic-14.2 consensus filter,
 // measured in DISTINCT REVIEWERS that contributed findings (see panelReviewers) —
@@ -33,6 +36,15 @@ const (
 // first), so every surface that must name them in an error or a help string
 // reads them from one place instead of re-listing them.
 var ConsensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
+
+// InvalidConsensusError builds the one invalid-level error sentence every
+// surface renders — wrapped in a CLI usage error (exit 2) or returned raw as
+// an MCP tool error — so the phrasing naming the closed vocabulary lives in
+// exactly one place and cannot fork. The rejected value is echoed trimmed.
+func InvalidConsensusError(v string) error {
+	return fmt.Errorf("invalid consensus level %q: must be one of %s",
+		strings.TrimSpace(v), strings.Join(ConsensusLevels, ", "))
+}
 
 // NormalizeConsensus canonicalizes a consensus level token and reports whether
 // it is in the closed vocabulary. It is case- and whitespace-insensitive
