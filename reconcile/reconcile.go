@@ -110,7 +110,12 @@ type Summary struct {
 	// `atcr personas list --scores` still reads all history, so it reports that
 	// reviewer as healthy — this count is the only place the divergence is
 	// observable without an all-history read. A drop between runs is the signal;
-	// an absolute value is not meaningful on its own. Observability only: it
+	// an absolute value is not meaningful on its own. KNOWN LIMITATION: it is a
+	// cardinality, not a roster, so one reviewer aging out while another crosses
+	// the min-runs floor in the same interval leaves the count flat and the
+	// churn invisible. That is the accepted cost of a signal that needs no
+	// second read; a per-reviewer diff would need the all-history set this
+	// exists to avoid. Observability only: it
 	// changes no finding, no confidence, and no exit code. 0 means the caller
 	// attached no priors (a fresh install, an unresolvable config dir, or an
 	// unreadable store — all of which degrade to a nil map by design).
