@@ -578,6 +578,53 @@ func TestReadSince_WindowCoveringNoMonthsIsEmptyNotError(t *testing.T) {
 	assert.Empty(t, diag.String(), "no month file overlaps the window, so none may be opened")
 }
 
+// TestReadSince_UnreadableInWindowFileReturnsPartialAndError pins the windowed
+// half of the readMonthFiles skip-and-continue contract: an in-window month
+// file that fails to open costs that ONE file — the surviving in-window months
+// are returned, and the error is still propagated so error-discarding callers
+// (trustPriorsSince) fail neutral while surfacing callers see the failure.
+func TestReadSince_UnreadableInWindowFileReturnsPartialAndError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "bruce"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	require.NoError(t, os.Chmod(filepath.Join(dir, "2026-05.jsonl"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-05.jsonl"), 0o600) })
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.Error(t, err, "an in-window read failure is still propagated")
+	require.Len(t, recs, 2, "the unreadable in-window file costs one file, not the window")
+	assert.Equal(t, "greta", recs[0].Reviewer)
+	assert.Equal(t, "dax", recs[1].Reviewer)
+	assert.Contains(t, diag.String(), "2026-05.jsonl", "the skipped file is named in a diagnostic")
+}
+
+// TestStore_ReadAll_UnreadableDirReturnsError pins the non-IsNotExist
+// os.ReadDir failure path: unlike a MISSING directory (empty, nil), an
+// unreadable one is a real error on ReadAll and — through the shared
+// readMonthFiles enumeration — on ReadSince too.
+func TestStore_ReadAll_UnreadableDirReturnsError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	require.NoError(t, os.Mkdir(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	_, err := ReadAll(locked, ReadOpts{Writer: io.Discard})
+	require.Error(t, err, "an unreadable store directory is an error, not 'no data yet'")
+	assert.Contains(t, err.Error(), "reading scorecard dir")
+
+	_, err = ReadSince(locked, 180*24*time.Hour, time.Now(), ReadOpts{Writer: io.Discard})
+	require.Error(t, err, "ReadSince shares the same enumeration error path")
+}
+
 func TestReadSince_UnparseableMonthStemIsReadFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
