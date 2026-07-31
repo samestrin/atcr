@@ -247,7 +247,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return nil, basePathErr(err)
 		}
 		for _, r := range recs {
 			if r.RunID == runID {
@@ -321,7 +321,7 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading scorecard dir: %w", err)
+		return nil, fmt.Errorf("reading scorecard dir: %w", basePathErr(err))
 	}
 	var all []Record
 	var firstErr error
@@ -339,7 +339,7 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 			}
 			_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: skipping unreadable month file %s: %v\n", e.Name(), err)
 			if firstErr == nil {
-				firstErr = err
+				firstErr = basePathErr(err)
 			}
 			continue
 		}
