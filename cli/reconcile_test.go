@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
@@ -184,6 +186,57 @@ func TestRunReconcile_NoSlogDefault(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	require.NoError(t, cmd.ParseFlags([]string{"r"}))
 	require.NotPanics(t, func() { _ = runReconcile(cmd, cmd.Flags().Args()) })
+}
+
+// TestRunReconcile_ConsensusLevelLoggedOnFailure verifies the resolved consensus
+// level is logged even when RunReconcile itself fails — the failed run is exactly
+// where an operator most needs to know which configuration was in effect, and a
+// post-run-only log line never fires on that path.
+func TestRunReconcile_ConsensusLevelLoggedOnFailure(t *testing.T) {
+	isolate(t)
+	// A review dir with no sources/ makes RunReconcile fail at Discover, after
+	// the consensus level has been resolved.
+	base := filepath.Join(".atcr", "reviews", "r")
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte("r\n"), 0o644))
+
+	var logBuf, errBuf bytes.Buffer
+	runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "r")
+
+	assert.Contains(t, logBuf.String(), "consensus filter level resolved",
+		"the resolved level must be logged even when the reconcile fails")
+	assert.Contains(t, logBuf.String(), "lenient",
+		"the log must name the level that was in effect")
+}
+
+// TestRunReconcile_NonStrictScorecardWarn verifies the docs/scorecard.md
+// caution is surfaced in-run: a non-strict consensus level with scorecard
+// emission enabled warns naming --no-scorecard, because the relaxed run's
+// records durably depress the reviewer trust priors later strict runs read.
+// Strict runs and runs already passing --no-scorecard stay silent.
+func TestRunReconcile_NonStrictScorecardWarn(t *testing.T) {
+	t.Run("lenient warns", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "r")
+		assert.Contains(t, logBuf.String(), "--no-scorecard",
+			"a non-strict run with scorecard emission must name the documented mitigation")
+	})
+	t.Run("strict is silent", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "strict", "r")
+		assert.NotContains(t, logBuf.String(), "--no-scorecard")
+	})
+	t.Run("no-scorecard is silent", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "--no-scorecard", "r")
+		assert.NotContains(t, logBuf.String(), "--no-scorecard")
+	})
 }
 
 // TestReconcileCmd_InProgressReviewRejected verifies a fan-out-managed review
@@ -791,15 +844,22 @@ func TestRunReconcile_PathWarnedFindingSkipped(t *testing.T) {
 	require.Equal(t, "real.go", recs[0].File)
 }
 
-// TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
-// readers (failOnThreshold on the one-shot review path, resolveGateThreshold on
-// the reconcile path) share one semantic: a whitespace-only flag value is unset
+// TestGateThresholdReaders_OneWhitespaceSemantic verifies the --fail-on readers
+// (failOnThreshold, flag-only; and the tiered readers that back the review and
+// reconcile paths) share one semantic: a whitespace-only flag value is unset
 // (no gate), not a usage error, and a real value canonicalizes identically.
 func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
 	isolate(t)
 	readers := map[string]func(*cobra.Command) (string, error){
-		"failOnThreshold":      failOnThreshold,
-		"resolveGateThreshold": resolveGateThreshold,
+		"failOnThreshold": failOnThreshold,
+		"resolveGateAndRawConsensus": func(cmd *cobra.Command) (string, error) {
+			gate, _, err := resolveGateAndRawConsensus(cmd)
+			return gate, err
+		},
+		"resolveGateAndConsensus": func(cmd *cobra.Command) (string, error) {
+			gate, _, err := resolveGateAndConsensus(gateFlagValue(cmd), "")
+			return gate, err
+		},
 	}
 	cases := []struct {
 		flag string
@@ -1021,4 +1081,331 @@ func TestReconcileCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "")
 	require.Equal(t, exitAuth, execCmd(t, "reconcile", "--sync-cloud", "--cloud-endpoint", srv.URL, "r"))
 	require.False(t, got, "a missing key must fail fast with zero network")
+}
+
+// --- Configurable consensus filter: flag + config surface (epic 35.9.1) -----
+
+// writeProjectConfig writes a minimal .atcr/config.yaml carrying the given extra
+// keys, so a test can exercise the config tier of a precedence chain.
+func writeProjectConfig(t *testing.T, extra string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents:\n  - a\n"+extra), 0o644))
+}
+
+// TestReconcileCmd_InvalidConsensusExitsTwo (AC2): an out-of-vocabulary level is
+// a usage error (exit 2) naming the valid values, mirroring --fail-on.
+func TestReconcileCmd_InvalidConsensusExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "--consensus", "bogus", "r"))
+
+	// The exit code alone does not prove the message is actionable, and the
+	// command tree surfaces usage errors through main() rather than
+	// cmd.ErrOrStderr(), so assert the message at its source.
+	_, err := resolveConsensusLevel("bogus")
+	require.Error(t, err)
+	for _, level := range reclib.ConsensusLevels() {
+		assert.Contains(t, err.Error(), level, "the usage error must name every valid level")
+	}
+	assert.Contains(t, err.Error(), "bogus", "the usage error must echo the rejected value")
+}
+
+// TestReconcileCmd_InvalidConsensusInConfigExitsTwo (AC2/AC3): the config tier
+// is validated at the same call site, so a bad .atcr/config.yaml value is a
+// usage error too — config consensus is not validated at load time.
+func TestReconcileCmd_InvalidConsensusInConfigExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
+}
+
+// TestResolveConsensusLevel_Precedence (AC3) drives the CLI-side resolver
+// directly: nothing configured maps to strict, a config value is honored, an
+// explicit flag beats the config, and the token is case- and
+// whitespace-insensitive (the validateGate convention, not on_overflow's).
+func TestResolveConsensusLevel_Precedence(t *testing.T) {
+	isolate(t)
+
+	// Nothing configured anywhere → "" from the resolver → strict at the call site.
+	got, err := resolveConsensusLevel("")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusStrict, got)
+
+	// Case- and whitespace-insensitive canonicalization.
+	for _, raw := range []string{"lenient", "LENIENT", "  Lenient  "} {
+		got, err = resolveConsensusLevel(raw)
+		require.NoError(t, err, raw)
+		assert.Equal(t, reclib.ConsensusLenient, got, raw)
+	}
+
+	// Config tier honored when no explicit value is given.
+	writeProjectConfig(t, "consensus: off\n")
+	got, err = resolveConsensusLevel("")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusOff, got)
+
+	// An explicit value still beats the config tier.
+	got, err = resolveConsensusLevel("strict")
+	require.NoError(t, err)
+	assert.Equal(t, reclib.ConsensusStrict, got)
+
+	// An invalid value is an error at the call site.
+	_, err = resolveConsensusLevel("bogus")
+	require.Error(t, err)
+}
+
+// TestConsensusFlagValue_ExplicitEmptyIsUsageError pins the deliberate
+// asymmetry with gateFlagValue: an ABSENT --consensus is unset (the config
+// chain decides), but an explicitly set empty or whitespace-only value is a
+// usage error. An empty --fail-on can only inherit a STRICTER gate, whereas an
+// empty --consensus can inherit a WEAKER one, so `atcr reconcile --consensus
+// "$LEVEL"` with an unset shell variable must not silently disable the
+// corroboration filter. Mirrors outputDirFromFlags' "--output-dir must not be
+// empty" rejection (cli/review.go:115-117).
+func TestConsensusFlagValue_ExplicitEmptyIsUsageError(t *testing.T) {
+	// Absent flag → unset, no error: the config/registry chain still decides.
+	got, err := consensusFlagValue(newReconcileCmd())
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+
+	for _, raw := range []string{"", "   "} {
+		cmd := newReconcileCmd()
+		require.NoError(t, cmd.Flags().Set("consensus", raw))
+
+		_, err := consensusFlagValue(cmd)
+		require.Error(t, err, "explicit %q must be rejected, not treated as unset", raw)
+		for _, level := range reclib.ConsensusLevels() {
+			assert.Contains(t, err.Error(), level,
+				"the usage error must name every valid level")
+		}
+	}
+}
+
+// TestReconcileCmd_ExplicitEmptyConsensusExitsTwo drives the same rejection
+// end-to-end, so the call-site wiring is locked too: without it runReconcile
+// would swallow the error and inherit whatever ~/.config/atcr/registry.yaml
+// says. The config tier here says off — the weaker level the empty flag would
+// otherwise silently pick up.
+func TestReconcileCmd_ExplicitEmptyConsensusExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+	writeProjectConfig(t, "consensus: off\n")
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "--consensus", "", "r"))
+}
+
+// consensusSummary reads a reconciled run's summary.json and returns the
+// consensus_filtered count, so a test can assert the filter was inert (0)
+// rather than inferring it from the surviving-finding set alone.
+func consensusSummary(t *testing.T, id string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(".atcr", "reviews", id, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var s struct {
+		ConsensusFiltered int `json:"consensus_filtered"`
+	}
+	require.NoError(t, json.Unmarshal(data, &s))
+	return s.ConsensusFiltered
+}
+
+// TestReconcileCmd_ConsensusOffKeepsEverySingleton (AC1) drives the flag
+// end-to-end: off makes the filter inert, so every uncorroborated singleton on a
+// 3-reviewer panel reaches findings.json with consensus_filtered at 0.
+func TestReconcileCmd_ConsensusOffKeepsEverySingleton(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "off", "r"))
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+	assert.Equal(t, 0, consensusSummary(t, "r"), "off must leave consensus_filtered at 0")
+}
+
+// seedUntrustedReviewer is seedTrustedReviewer's counterpart: it appends
+// DefaultTrustMinRuns scorecard records at a 0.0 corroboration rate, so
+// scorecard.ResolveTrustPriors() resolves the reviewer at or below the
+// reconcile-time LOW-trust threshold and demoteByTrust demotes its singleton to
+// ConfLow. That is the only way to produce a ConfLow finding at the CLI layer,
+// which is what makes lenient distinguishable from off end-to-end.
+func seedUntrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-u%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 0,
+		}))
+	}
+}
+
+// TestReconcileCmd_ConsensusLenientKeepsMediumSingletons (AC1): lenient keeps
+// MEDIUM-confidence singletons but still sidecars LOW-confidence ones.
+//
+// "stranger" is seeded as a low-trust reviewer so its singleton is demoted to
+// ConfLow — without that, every finding in the panel is ConfMedium and lenient
+// would be indistinguishable from off at this layer, letting a wiring bug that
+// mapped lenient to off pass unnoticed.
+func TestReconcileCmd_ConsensusLenientKeepsMediumSingletons(t *testing.T) {
+	isolate(t)
+	seedUntrustedReviewer(t, "stranger") // owns bar.go in trustPanelSources
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "lenient", "r"))
+
+	assert.ElementsMatch(t, []string{"foo.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+		"lenient keeps the two ConfMedium singletons")
+	assert.Equal(t, 1, consensusSummary(t, "r"),
+		"and sidecars exactly the demoted ConfLow one — the assertion that separates lenient from off")
+}
+
+// TestReconcileCmd_ConsensusOffKeepsDemotedSingleton (AC6, CLI layer): the same
+// low-trust panel under off keeps ALL three findings, proving off is not merely
+// an alias for lenient.
+func TestReconcileCmd_ConsensusOffKeepsDemotedSingleton(t *testing.T) {
+	isolate(t)
+	seedUntrustedReviewer(t, "stranger")
+	fixtureReview(t, "r", trustPanelSources())
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "off", "r"))
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"},
+		reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+		"off keeps the demoted ConfLow singleton that lenient sidecars")
+	assert.Equal(t, 0, consensusSummary(t, "r"))
+}
+
+// TestReconcileCmd_ConsensusStrictMatchesNoFlag (AC1 golden): strict, an
+// uppercase STRICT, a whitespace-padded value, and no flag at all reproduce the
+// identical pre-change sidecar set.
+func TestReconcileCmd_ConsensusStrictMatchesNoFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"reconcile", "r"},
+		{"reconcile", "--consensus", "strict", "r"},
+		{"reconcile", "--consensus", "STRICT", "r"},
+		{"reconcile", "--consensus", "  strict  ", "r"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			isolate(t)
+			fixtureReview(t, "r", trustPanelSources())
+
+			require.Equal(t, 0, execCmd(t, args...))
+
+			assert.Empty(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")),
+				"strict sidecars every uncorroborated singleton")
+			assert.Equal(t, 3, consensusSummary(t, "r"))
+		})
+	}
+}
+
+// TestReconcileCmd_ConsensusConfigPrecedence (AC3) exercises the config tier
+// end-to-end: .atcr/config.yaml consensus is honored without a flag, and an
+// explicit flag overrides it.
+func TestReconcileCmd_ConsensusConfigPrecedence(t *testing.T) {
+	t.Run("config honored without flag", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		writeProjectConfig(t, "consensus: lenient\n")
+
+		require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+		assert.Len(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")), 3)
+		assert.Equal(t, 0, consensusSummary(t, "r"))
+	})
+
+	t.Run("flag overrides config", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		writeProjectConfig(t, "consensus: off\n")
+
+		require.Equal(t, 0, execCmd(t, "reconcile", "--consensus", "strict", "r"))
+		assert.Empty(t, reconciledFiles(t, filepath.Join(".atcr", "reviews", "r")))
+		assert.Equal(t, 3, consensusSummary(t, "r"))
+	})
+}
+
+// TestReconcileCmd_LongHelpDocumentsConsensus (T3): the command's long help must
+// document --consensus, every level, that strict is the default, and what off
+// actually does — a flag whose only documentation is a one-line usage string is
+// not discoverable.
+//
+// "off restores pre-14.2 behavior" is specifically NOT what the help may say:
+// epic 35.9's trust demotion is gated only by the panel floor, so it still runs
+// under off and its ConfLow findings reach findings.json — a confidence tier
+// unreachable at reconcile time before 35.9, let alone before 14.2 (asserted in
+// TestDemoteByTrust_ObservableViaConsensusLevel). A user who sets off expecting
+// the old artifact shape must be told about that caveat here.
+func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
+	long := newReconcileCmd().Long
+
+	assert.Contains(t, long, "--consensus")
+	for _, level := range reclib.ConsensusLevels() {
+		assert.Contains(t, long, level, "long help must name the %s level", level)
+	}
+	assert.Contains(t, long, "default", "long help must say which level is the default")
+	assert.Contains(t, long, "pre-14.2", "long help must situate off against the pre-14.2 baseline")
+	assert.NotRegexp(t, `(?i)restor\w*\s+pre-14\.2`, long,
+		"off does NOT restore pre-14.2 behavior — the trust demotion still runs")
+	assert.Regexp(t, `(?is)off.*(LOW-confidence|LOW confidence)`, long,
+		"long help must warn that off output can still carry LOW-confidence findings")
+	assert.Contains(t, long, "consensus:", "long help must point at the config key too")
+}
+
+// TestResolveConsensusLevel_BrokenProjectConfigIsUsageError: a present-but-broken
+// .atcr/config.yaml is the repo's own config, so it surfaces as a usage error
+// (exit 2) rather than being silently skipped — the same asymmetry
+// ResolveGateThreshold establishes against the best-effort registry tier.
+func TestResolveConsensusLevel_BrokenProjectConfigIsUsageError(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents: []\n"), 0o644)) // an empty roster is a load error
+
+	_, err := resolveConsensusLevel("")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "a broken project config is a usage error")
+}
+
+// TestRunReconcile_ResolvesSharedSettingsInOneLoad pins the call-site half of
+// the shared-settings single load: runReconcile needs both fail_on and
+// consensus, and resolving them through two independent resolvers costs two
+// parses of .atcr/config.yaml and — under ATCR_REGISTRY_URL — two separate HTTP
+// GETs of the user registry. Because the registry tier is swallowed best-effort,
+// one fetch can succeed while the other fails, leaving the gate and the
+// consensus level resolved from DIFFERENT tiers inside one run.
+func TestRunReconcile_ResolvesSharedSettingsInOneLoad(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	const remote = "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\n" +
+		"agents:\n  a:\n    provider: p\n    model: m\nfail_on: CRITICAL\nconsensus: off\n"
+	var fetches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(remote))
+	}))
+	t.Cleanup(srv.Close)
+
+	// The tier is consulted only when the local registry file exists; its bytes
+	// come from the URL (see registry.loadRegistryBytes).
+	regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
+		"one reconcile must load the user registry once for both shared settings")
 }

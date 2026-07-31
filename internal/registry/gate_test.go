@@ -16,7 +16,6 @@ func TestResolveGateThreshold_ProjectRegistryOverlayHasNoEffect(t *testing.T) {
 	// read fail_on from the project overlay (which has no FailOn field).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	// Write a project registry overlay (no fail_on field — providers/agents only).
@@ -34,7 +33,6 @@ func TestResolveGateThreshold_ProjectRegistryOverlayHasNoEffect(t *testing.T) {
 func TestResolveGateThreshold_Precedence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	// Nothing configured anywhere → no gate (opt-in stays opt-in).

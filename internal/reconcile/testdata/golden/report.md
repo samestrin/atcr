@@ -6,6 +6,7 @@
 - Sources: host, pool
 - Clusters collapsed: 2
 - Severity disagreements: 1
+- Consensus level: strict
 - Out-of-scope findings: 1 (annotated, excluded from the gate)
 
 | Severity | HIGH conf | MEDIUM conf | LOW conf |

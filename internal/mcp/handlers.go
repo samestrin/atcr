@@ -287,16 +287,36 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// Gate precedence parity with the CLI: explicit fail_on argument > project
 	// config > user-global registry (no embedded default). Resolved and
 	// validated before any work (AC 04-03 Edge Case 5).
-	threshold := ""
-	if raw, err := registry.ResolveGateThreshold(e.root, in.FailOn); err != nil {
+	// Consensus precedence parity with the CLI: explicit consensus argument >
+	// project config > user-global registry, with "" mapping to strict. Both
+	// shared settings come from ONE tier load (the CLI does the same) so they can
+	// never be resolved from different tiers within a single reconcile.
+	rawGate, rawConsensus, err := registry.ResolveSharedSettings(e.root, in.FailOn, in.Consensus)
+	if err != nil {
 		return nil, ReconcileResult{}, err
-	} else if raw != "" {
-		t, err := reconcile.ParseSeverity(raw)
-		if err != nil {
-			return nil, ReconcileResult{}, err
+	}
+	threshold := ""
+	if rawGate != "" {
+		t, perr := reconcile.ParseSeverity(rawGate)
+		if perr != nil {
+			return nil, ReconcileResult{}, perr
 		}
 		threshold = t
 	}
+
+	// Report the resolved raw value, not in.Consensus: an invalid level may have
+	// come from the config tier with no argument passed at all.
+	consensusLevel, ok := reclib.NormalizeConsensus(rawConsensus)
+	if !ok {
+		return nil, ReconcileResult{}, reclib.InvalidConsensusError(rawConsensus)
+	}
+	// Record the effective level for the same reason the CLI does: it reaches an
+	// MCP-driven reconcile from .atcr/config.yaml or the machine-wide registry
+	// with no argument passed at all, and the persisted summary.json records only
+	// ConsensusFiltered (0 under both "off" and "strict with nothing to filter").
+	// Logged at resolve time, not post-run, so the level is still recorded when
+	// the reconcile below fails.
+	e.logger().Info("consensus filter level resolved", "consensus", consensusLevel)
 
 	// --require-verified is meaningless without a gate (the same fail-fast rule as
 	// the CLI, AC 05-01 EC3): a strict gate that never runs gives false confidence.
@@ -337,6 +357,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
 		Root:        "",
 		TrustPriors: scorecard.ResolveTrustPriors(),
+		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err
@@ -364,6 +385,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		TotalFindings: res.Summary.TotalFindings,
 		Partial:       res.Summary.Partial,
 		FailOn:        threshold,
+		Consensus:     consensusLevel,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false

@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Epic 14.2 AC2: the reconciler drops uncorroborated singleton findings (single
 // reviewer, MEDIUM confidence) to the ambiguous sidecar when the panel is large
@@ -102,13 +105,13 @@ func TestConsensusFilter_InactiveBelowThreeReviewers(t *testing.T) {
 }
 
 func TestConsensusSingleton_And_PanelReviewers(t *testing.T) {
-	// consensusSingleton keys on confidence below HIGH (MEDIUM or LOW — the
-	// latter reachable via epic 35.9's demoteByTrust),
+	// At the strict floor (ConfHigh) the predicate keys on confidence below HIGH
+	// (MEDIUM or LOW — the latter reachable via epic 35.9's demoteByTrust),
 	// so an authority/verify-promoted HIGH is kept and a ConfLow untrusted singleton
 	// is dropped.
-	isTrue(t, consensusSingleton(Merged{Finding{Confidence: ConfMedium}}), "medium is a singleton")
-	isTrue(t, consensusSingleton(Merged{Finding{Confidence: ConfLow}}), "low is a singleton")
-	isTrue(t, !consensusSingleton(Merged{Finding{Confidence: ConfHigh}}), "high is corroborated, not a singleton")
+	isTrue(t, consensusSingletonAt(Merged{Finding{Confidence: ConfMedium}}, ConfHigh), "medium is a singleton")
+	isTrue(t, consensusSingletonAt(Merged{Finding{Confidence: ConfLow}}, ConfHigh), "low is a singleton")
+	isTrue(t, !consensusSingletonAt(Merged{Finding{Confidence: ConfHigh}}, ConfHigh), "high is corroborated, not a singleton")
 
 	// panelReviewers counts distinct non-empty reviewers across all sources, not
 	// source directories, and ignores unattributed findings.
@@ -259,4 +262,24 @@ func TestConsensusExempt_Predicate(t *testing.T) {
 		"a low-severity stylistic finding is not exempt")
 	isTrue(t, !consensusExempt(Finding{Severity: "MEDIUM", Category: "correctness"}),
 		"a medium non-security finding is not exempt")
+}
+
+// TestInvalidConsensusError pins the shared invalid-level sentence: every
+// surface (CLI usage error, MCP tool error) must render the SAME message from
+// this one constructor, so the phrasing naming the closed vocabulary can never
+// fork. The value is echoed trimmed.
+func TestInvalidConsensusError(t *testing.T) {
+	err := InvalidConsensusError("  bogus  ")
+	if err == nil {
+		t.Fatal("expected a non-nil error")
+	}
+	msg := err.Error()
+	for _, want := range []string{`invalid consensus level "bogus"`, "must be one of", "strict", "lenient", "off"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q must contain %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "  bogus  ") {
+		t.Errorf("message %q must echo the value trimmed", msg)
+	}
 }

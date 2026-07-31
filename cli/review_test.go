@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,6 +117,38 @@ func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
 		"the one-shot reconcile threads the reviewer trust prior into RunReconcile")
 	require.NotContains(t, lines, 30,
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
+}
+
+// TestReviewCmd_OneShotHonorsConfiguredConsensusOff covers the review half of
+// epic 35.9.1's widened T1: runReview must thread the RESOLVED consensus level
+// into its in-process reconcile, not just resolve it. No reviewer has scorecard
+// history here, so under the strict default all three uncorroborated singletons
+// are sidecarred and findings.json is empty — with `consensus: off` in
+// .atcr/config.yaml all three must survive at consensus_filtered 0. Replacing
+// `Consensus: consensusLevel` with `Consensus: ""` at the one-shot RunReconcile
+// call site (cli/review.go) fails this test.
+func TestReviewCmd_OneShotHonorsConfiguredConsensusOff(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one":   "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		"m-two":   "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
+		"m-three": "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one", "two", "three")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// --fail-on is what routes the run into the one-shot reconcile block; CRITICAL
+	// keeps the MEDIUM-only panel from tripping the gate, so exit stays 0.
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
+
+	dir := latestReviewDir(t)
+	require.ElementsMatch(t, []int{10, 30, 50}, reconciledLines(t, dir),
+		"off keeps every uncorroborated singleton on the one-shot path")
+	require.Equal(t, 0, consensusSummary(t, filepath.Base(dir)),
+		"off must leave consensus_filtered at 0")
 }
 
 // TestResolveRedactRoot_ReturnsAbsolute verifies the happy path resolves the
@@ -883,4 +916,124 @@ func TestVerifyFreshFlag_UsageUnchangedAndDistinct(t *testing.T) {
 		"atcr verify --fresh must keep its original single meaning")
 	assert.NotSame(t, verifyFresh, newReviewCmd().Flags().Lookup("fresh"),
 		"review and verify --fresh are separate flag instances")
+}
+
+// TestRunReview_InvalidConsensusIgnoredWhenNoReconcile: the config-tier
+// consensus value is consumed only by the one-shot in-process reconcile, so a
+// plain `atcr review` (no --fail-on/--verify/--debate/--auto-fix) must not
+// abort on a bad value — the setting cannot influence that run. A reconciling
+// run must still fail fast on it, before any paid fan-out. (Errors are
+// asserted on the ExecuteContext return value: the root command silences
+// error output and main() does the printing.)
+func TestRunReview_InvalidConsensusIgnoredWhenNoReconcile(t *testing.T) {
+	isolate(t)
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	exec := func(args ...string) error {
+		root := NewRootCmd()
+		root.SetArgs(args)
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		return root.ExecuteContext(context.Background())
+	}
+
+	// No reconcile-triggering flag: the run fails later for other reasons in
+	// this bare fixture (no git range), but never with the consensus error.
+	err := exec("review", "--base", "HEAD^")
+	require.Error(t, err, "the bare fixture cannot complete a review")
+	require.NotContains(t, err.Error(), "invalid consensus level",
+		"a run that never reconciles must not be aborted by the consensus value")
+
+	// A reconciling run (--verify) still fails fast on the bad value, before
+	// any review work.
+	err = exec("review", "--base", "HEAD^", "--verify")
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "invalid consensus level",
+		"a reconciling run must fail fast on the bad config-tier value")
+}
+
+// TestReviewCmd_LogsResolvedConsensusLevel is the one-shot-review half of the
+// resolve-time consensus log that cli/reconcile.go already emits. The level can
+// come from ~/.config/atcr/registry.yaml with nothing local naming it, and
+// consensus_filtered == 0 cannot distinguish "off" from "strict with nothing to
+// filter" — so a review that reconciles under a non-default level must say so.
+// Logged at resolve time, not post-reconcile, so the record survives a run that
+// fails after the level was resolved.
+func TestReviewCmd_LogsResolvedConsensusLevel(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// --fail-on is what routes the run into the one-shot reconcile block (the
+	// only path that resolves a consensus level at all); CRITICAL keeps the
+	// MEDIUM-only finding from tripping the gate, so exit stays 0.
+	code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, stderr, "consensus filter level resolved",
+		"the one-shot review path must record the level it resolved")
+	require.Contains(t, stderr, "off", "the log must name the level that was in effect")
+}
+
+// TestRunReview_ResolvesSharedSettingsInOneLoad is the review half of the
+// single-load contract. It is written as a differential rather than an absolute
+// count because the roster load is a separate, legitimate consumer of the same
+// user registry: the property under test is that entering the RECONCILING
+// branch — the only branch that needs the consensus level — costs no ADDITIONAL
+// user-registry load, because the gate and the consensus level come from one
+// tier read. Resolving them independently makes the reconciling run pay one
+// extra HTTP GET, and (since the tier is swallowed best-effort) lets the two
+// settings land on different tiers within a single run.
+func TestRunReview_ResolvesSharedSettingsInOneLoad(t *testing.T) {
+	// countFetches runs one `atcr review` against a served user registry built
+	// from the roster registry plus extra, returning how many times the registry
+	// was fetched.
+	countFetches := func(t *testing.T, extra string) int32 {
+		t.Helper()
+		isolate(t)
+		t.Setenv(testReviewKeyEnv, "secret")
+		initGitRepoWithWideChange(t)
+		srv := perAgentMockProvider(t, map[string]string{
+			"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		})
+		liveReviewConfig(t, srv.URL, "one")
+
+		// The user registry IS the roster source here, so the served copy must be
+		// the real one liveReviewConfig wrote, plus the settings under test.
+		regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+		local, err := os.ReadFile(filepath.Join(regDir, "registry.yaml"))
+		require.NoError(t, err)
+		remote := string(local) + extra
+		require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
+
+		var fetches int32
+		regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&fetches, 1)
+			_, _ = w.Write([]byte(remote))
+		}))
+		t.Cleanup(regSrv.Close)
+		t.Setenv("ATCR_REGISTRY_URL", regSrv.URL+"/registry.yaml")
+
+		require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+		return atomic.LoadInt32(&fetches)
+	}
+
+	// Control: nothing configured, so the run never reaches the reconcile branch.
+	var baseline int32
+	t.Run("no gate configured", func(t *testing.T) { baseline = countFetches(t, "") })
+
+	// A configured gate routes the same run into the one-shot reconcile, which
+	// needs the consensus level too. That must come from the load the gate
+	// already paid for.
+	t.Run("configured gate reconciles", func(t *testing.T) {
+		got := countFetches(t, "fail_on: CRITICAL\nconsensus: off\n")
+		assert.Equal(t, baseline, got,
+			"entering the reconciling branch must not cost an extra user-registry load")
+	})
 }

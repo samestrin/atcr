@@ -36,6 +36,15 @@ type Options struct {
 	// byte-identical to pre-35.9 behavior, mirroring epic 13.3's
 	// empty-authority-map guarantee.
 	TrustPriors map[string]float64
+	// Consensus selects the consensus filter's corroboration bar (epic 35.9.1):
+	// ConsensusStrict (the default, and what "" means), ConsensusLenient, or
+	// ConsensusOff. It moves ONLY that bar — the consensusMinReviewers panel
+	// floor and the consensusExempt/trustExempt exemptions are identical at
+	// every level, and demoteByTrust runs ahead of the filter unaffected by it.
+	// An empty or unrecognized value resolves to strict (consensusFloor fails
+	// safe), so a caller that never sets this field, or one that bypassed
+	// boundary validation, keeps byte-identical pre-35.9.1 behavior.
+	Consensus string
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for
@@ -75,12 +84,22 @@ type Summary struct {
 	// DBSCAN noise (as opposed to multi-finding gray pairs).
 	NoiseCount int `json:"noise_count"`
 	// ConsensusFiltered is the number of uncorroborated singletons the epic-14.2
-	// consensus filter routed to the ambiguous sidecar (single-reviewer, below-HIGH
-	// confidence, not exempt) when the panel had at least consensusMinReviewers
-	// distinct reviewers. Zero when the panel was too small for the filter to run or
-	// nothing was dropped. Observability only — the dropped findings live in the
-	// sidecar.
+	// consensus filter routed to the ambiguous sidecar (single-reviewer, below the
+	// confidence bar, not exempt) when the panel had at least consensusMinReviewers
+	// distinct reviewers. The bar is opts.Consensus-dependent (see the
+	// Options.Consensus godoc): below-HIGH under strict, below-MEDIUM under
+	// lenient. Zero when the panel was too small for the filter to run, when
+	// nothing was dropped, or when the filter was turned off entirely
+	// (ConsensusOff) — a 0 therefore cannot distinguish "off" from
+	// "strict with nothing to filter". Observability only — the dropped findings
+	// live in the sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
+	// ConsensusLevel records the level the filter actually ran at, which
+	// ConsensusFiltered alone cannot convey (0 is ambiguous between "off" and
+	// "strict with nothing to filter"). Always one of the canonical levels: an
+	// unset or unrecognized Options.Consensus is recorded as the strict the
+	// filter failed safe to, never echoed back raw.
+	ConsensusLevel string `json:"consensus_level"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`
@@ -158,6 +177,14 @@ func Reconcile(sources []Source, opts Options) Result {
 	// single-API-key host + 1 pool persona workflow, the common case) must not
 	// have its findings.json Confidence silently downgraded by reviewer history
 	// the consensus filter itself would never have engaged for.
+	//
+	// Demotion is deliberately INDEPENDENT of opts.Consensus (epic 35.9.1): only
+	// the panel floor gates it, so a low-trust singleton is ConfLow at every
+	// level. What the level changes is whether that ConfLow finding is then
+	// sidecarred — under ConsensusOff the filter is inert and the demoted finding
+	// reaches findings.json still carrying Confidence == LOW, which is the only
+	// configuration in which the demotion is observable end-to-end (epic 35.9
+	// AC2).
 	// The panel size gates both this demotion pass and the consensus filter
 	// below; compute it once — sources are not mutated in between.
 	panel := panelReviewers(sources)
@@ -183,17 +210,28 @@ func Reconcile(sources []Source, opts Options) Result {
 	// is more plausibly a hallucination than a rare true positive, so route it to the
 	// ambiguous sidecar instead of promoting it to findings.json — UNLESS a false
 	// negative would be too costly (consensusExempt). This runs after DBSCAN clustering
-	// (first pass) and the merge/authority passes, so consensusSingleton sees each
+	// (first pass) and the merge/authority passes, so consensusSingletonAt sees each
 	// finding's final confidence (authority-promoted singletons are HIGH and never
 	// dropped). The reviewer-count gate preserves the documented single-API-key
 	// workflow (host + 1 pool persona = 2 reviewers), where nearly every finding is a
 	// singleton. Filtered findings stay sorted-order-stable (kept preserves order) and
 	// recoverable from the sidecar for adjudication.
+	//
+	// Epic 35.9.1 makes only the corroboration bar configurable (opts.Consensus):
+	// consensusFloor maps the level to the confidence floor and reports whether the
+	// filter runs at all (off -> inert, ConsensusFiltered stays 0). Everything else is
+	// deliberately level-independent — the consensusMinReviewers gate above, and BOTH
+	// exemption terms below. Keeping !trustExempt(...) in the predicate at every level
+	// is what preserves epic 35.9's high-trust-singleton escape hatch under strict;
+	// dropping it while restructuring this block is the regression this epic guards
+	// against explicitly (AC5).
 	consensusFiltered := 0
-	if panel >= consensusMinReviewers {
+	consensusLevel := effectiveConsensus(opts.Consensus)
+	floor, filterEnabled := consensusFloor(consensusLevel)
+	if filterEnabled && panel >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
-			if consensusSingleton(m) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
+			if consensusSingletonAt(m, floor) && !consensusExempt(m.Finding) && !trustExempt(m.Finding, opts.TrustPriors) {
 				ambiguous = append(ambiguous, consensusNoiseCluster(m.Finding))
 				consensusFiltered++
 				continue
@@ -226,6 +264,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			AmbiguousCount:        len(ambiguous),
 			NoiseCount:            noiseCount,
 			ConsensusFiltered:     consensusFiltered,
+			ConsensusLevel:        consensusLevel,
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),

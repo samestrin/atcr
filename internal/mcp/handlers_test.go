@@ -21,6 +21,7 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -891,4 +892,244 @@ func TestHandleReview_StampsAuditIdentity(t *testing.T) {
 		"a detached review's invocations must carry the review id that identifies them")
 	assert.Equal(t, "review", got.Stage)
 	assert.NotEmpty(t, got.AgentName, "the fan-out engine must still attach the persona")
+}
+
+// --- Configurable consensus filter (epic 35.9.1) ---------------------------
+
+// consensusPanelFixture writes a review whose three distinct reviewers each
+// raise one uncorroborated MEDIUM singleton — the shape the epic-14.2 consensus
+// filter sidecars wholesale under strict, so any survivor is attributable
+// solely to the configured level.
+func consensusPanelFixture(t *testing.T, root string) string {
+	t.Helper()
+	id := "2026-07-30_consensus"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "host", "findings.txt"),
+		"MEDIUM|foo.go:10|possible nil deref on this path|Guard it|correctness|10|ev|host")
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"MEDIUM|bar.go:20|unused import lingers in this file|Drop it|style|10|ev|greta")
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "bruce", "findings.txt"),
+		"MEDIUM|baz.go:30|request body is not validated|Validate it|correctness|10|ev|bruce")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta","bruce"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":2,"succeeded":2,"failed":0,"partial":false,"total_findings":2}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	return id
+}
+
+// mcpConsensusFiltered reads a reconciled run's summary.json consensus_filtered
+// count from the MCP server's review root.
+func mcpConsensusFiltered(t *testing.T, root, id string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var s struct {
+		ConsensusFiltered int `json:"consensus_filtered"`
+	}
+	require.NoError(t, json.Unmarshal(data, &s))
+	return s.ConsensusFiltered
+}
+
+// TestReconcileHandler_ConsensusLevels (AC1) drives the MCP consensus argument
+// through all three levels, proving the tool surface is wired to the same engine
+// knob as the CLI rather than silently ignoring the argument.
+func TestReconcileHandler_ConsensusLevels(t *testing.T) {
+	cases := []struct {
+		level        string
+		wantFiltered int
+		wantEcho     string
+	}{
+		{"", 3, "strict"},         // unset → strict
+		{"strict", 3, "strict"},   // explicit strict is identical
+		{"lenient", 0, "lenient"}, // MEDIUM singletons survive
+		{"off", 0, "off"},         // filter inert
+	}
+	for _, tc := range cases {
+		t.Run("level="+tc.level, func(t *testing.T) {
+			isolateUserConfig(t)
+			root := t.TempDir()
+			id := consensusPanelFixture(t, root)
+			cs := connectTest(t, root, fakeCompleter{})
+
+			args := map[string]any{}
+			if tc.level != "" {
+				args["consensus"] = tc.level
+			}
+			// Wire-level map (not the typed struct) so the echo key itself is
+			// asserted: a client sees the JSON, not the Go field.
+			out := callOK[map[string]any](t, cs, ToolReconcile, args)
+
+			assert.Equal(t, tc.wantFiltered, mcpConsensusFiltered(t, root, id))
+			assert.Equal(t, tc.wantEcho, out["consensus"],
+				"the result must echo the resolved consensus level")
+		})
+	}
+
+	// A case-variant is rejected by the input schema's enum — JSON Schema enums
+	// are exact-match, so the rejection fires before the handler's
+	// case-insensitive normalization can run. The MCP surface is stricter than
+	// the CLI flag here, and the description documents the lowercase vocabulary.
+	t.Run("level=STRICT rejected by schema enum", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+		msg := callErr(t, cs, ToolReconcile, map[string]any{"consensus": "STRICT"})
+		assert.Contains(t, msg, "enum",
+			"a case-variant must be rejected by the schema enum before the handler runs")
+	})
+}
+
+// seedUntrustedReviewer is seedTrustedReviewer's counterpart: it appends
+// DefaultTrustMinRuns scorecard records at a 0.0 corroboration rate, so
+// scorecard.ResolveTrustPriors() resolves the reviewer at or below the
+// reconcile-time LOW-trust threshold and demoteByTrust demotes its singleton to
+// ConfLow. That is the only way to produce a ConfLow finding at this layer,
+// which is what makes lenient distinguishable from off end-to-end.
+func seedUntrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-u%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 0,
+		}))
+	}
+}
+
+// TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton (AC1) is the
+// assertion that separates lenient from off on the MCP surface.
+// TestReconcileHandler_ConsensusLevels above cannot: every finding in
+// consensusPanelFixture resolves to ConfMedium, so lenient's ConfMedium floor
+// filters nothing and off's inert filter filters nothing — an identical
+// observable, which a wiring bug mapping lenient to off would pass. Seeding
+// greta (bar.go's reviewer) as low-trust makes demoteByTrust demote its
+// singleton to ConfLow, the only ConfLow-producing path at this layer, so
+// lenient must now sidecar exactly one finding. Mirrors the CLI-layer
+// TestReconcileCmd_ConsensusLenientKeepsMediumSingletons.
+func TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	seedUntrustedReviewer(t, "greta") // owns bar.go in consensusPanelFixture
+	id := consensusPanelFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	callOK[map[string]any](t, cs, ToolReconcile, map[string]any{"consensus": "lenient"})
+
+	assert.ElementsMatch(t, []string{"foo.go", "baz.go"}, reconciledFiles(t, root, id),
+		"lenient keeps the two ConfMedium singletons")
+	assert.Equal(t, 1, mcpConsensusFiltered(t, root, id),
+		"and sidecars exactly the demoted ConfLow one — the assertion that separates lenient from off")
+}
+
+// TestReconcileHandler_ConsensusOffKeepsDemotedSingleton (AC6, MCP layer) is the
+// other half of the pair: the same low-trust panel under off keeps ALL three
+// findings, proving off is not merely an alias for lenient. The two tests share
+// a fixture and disagree on the count by construction, so no implementation can
+// satisfy both while treating the levels as equivalent.
+func TestReconcileHandler_ConsensusOffKeepsDemotedSingleton(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	seedUntrustedReviewer(t, "greta")
+	id := consensusPanelFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	callOK[map[string]any](t, cs, ToolReconcile, map[string]any{"consensus": "off"})
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"}, reconciledFiles(t, root, id),
+		"off keeps the demoted ConfLow singleton that lenient sidecars")
+	assert.Equal(t, 0, mcpConsensusFiltered(t, root, id))
+}
+
+// TestReconcileHandler_InvalidConsensus (AC2): an out-of-vocabulary consensus
+// value is a tool error naming the valid levels — the MCP analogue of the
+// CLI's exit-2 usage error. An explicit argument is rejected by the input
+// schema's enum before the handler runs; a bad config-tier value (which no
+// argument schema can see) still hits the handler's own check.
+func TestReconcileHandler_InvalidConsensus(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	reviewFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	// Explicit argument: rejected by JSON Schema validation up front.
+	msg := callErr(t, cs, ToolReconcile, map[string]any{"consensus": "bogus"})
+	for _, level := range reclib.ConsensusLevels() {
+		assert.Contains(t, msg, level, "the schema rejection must name every valid level")
+	}
+
+	// Config tier: the argument schema cannot see it, so the handler's
+	// defense-in-depth check fires with its own message.
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
+		[]byte("agents:\n  - greta\nconsensus: bogus\n"), 0o644))
+	msg = callErr(t, cs, ToolReconcile, map[string]any{})
+	assert.Contains(t, msg, "invalid consensus level")
+	for _, level := range reclib.ConsensusLevels() {
+		assert.Contains(t, msg, level, "the handler error must name every valid level")
+	}
+}
+
+// TestReconcileHandler_ProjectConfigConsensusHonored (AC3): with no explicit
+// argument, the project config's consensus is honored through MCP exactly as it
+// is through the CLI — the same precedence chain, not a forked default.
+func TestReconcileHandler_ProjectConfigConsensusHonored(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := consensusPanelFixture(t, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
+		[]byte("agents:\n  - greta\nconsensus: off\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{})
+	assert.Equal(t, 0, mcpConsensusFiltered(t, root, id),
+		"project-config consensus must apply through MCP like the CLI")
+}
+
+// TestReconcileHandler_InvalidConsensusInConfig (AC2/AC3): an invalid level from
+// the config tier is rejected with a message naming the resolved value, not the
+// empty argument the caller passed.
+func TestReconcileHandler_InvalidConsensusInConfig(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	consensusPanelFixture(t, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
+		[]byte("agents:\n  - greta\nconsensus: bogus\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	msg := callErr(t, cs, ToolReconcile, map[string]any{})
+	assert.Contains(t, msg, "bogus", "the error must echo the resolved value, not the empty argument")
+}
+
+// TestReconcileHandler_LogsResolvedConsensusLevel is the MCP half of the
+// resolve-time consensus log the CLI emits on every reconcile write path. The
+// level reaches an MCP-driven reconcile from .atcr/config.yaml or the
+// machine-wide registry with no argument passed at all, and the persisted
+// summary.json records only consensus_filtered (0 under both "off" and "strict
+// with nothing to filter") — so without this line a serve-mode operator cannot
+// tell which configuration produced the artifacts on disk.
+func TestReconcileHandler_LogsResolvedConsensusLevel(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	consensusPanelFixture(t, root)
+
+	var buf bytes.Buffer
+	logger, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger, root: root}
+
+	_, _, err = e.handleReconcile(context.Background(), nil, ReconcileArgs{Consensus: "off"})
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "consensus filter level resolved",
+		"the MCP reconcile path must record the level it resolved")
+	assert.Contains(t, buf.String(), "off", "the log must name the level that was in effect")
 }

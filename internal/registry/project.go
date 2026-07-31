@@ -6,15 +6,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // Embedded defaults for project-level settings (the lowest precedence tier).
 // DefaultFailOn seeds ONLY the config template `atcr init` generates — it
 // never participates in gate resolution, which is opt-in (see
-// ResolveGateThreshold and the reconcile gate).
+// ResolveGateThreshold and the reconcile gate). DefaultConsensus, by contrast,
+// aliases the reconcile package's canonical level so the template seed and the
+// effective runtime default are one value, not two literals that can drift.
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
+	// DefaultConsensus is the embedded consensus-filter level (epic 35.9.1):
+	// "strict" reproduces the hardcoded epic-14.2 behavior, so an unconfigured
+	// project sees no change. ResolveConsensus returns "" when nothing is
+	// configured and each call site normalizes through
+	// reclib.NormalizeConsensus (whose "" maps to reclib.ConsensusStrict),
+	// because an unresolvable level must never silently disable the filter.
+	// Deriving this const from reclib.ConsensusStrict keeps the template seed
+	// and that effective default structurally identical.
+	DefaultConsensus = reclib.ConsensusStrict
 	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
@@ -69,6 +82,12 @@ type ProjectConfig struct {
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// Consensus selects the epic-14.2 consensus filter's corroboration bar
+	// (epic 35.9.1): strict (default — today's behavior), lenient (keep
+	// MEDIUM-confidence singletons), or off (filter inert). Empty inherits the
+	// registry tier or DefaultConsensus. Enum validation lives at the call
+	// sites (ResolveConsensus returns the raw string), matching fail_on.
+	Consensus string `yaml:"consensus,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -146,6 +165,14 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+	b.WriteString("# consensus: corroboration bar for the reconcile consensus filter, applied\n")
+	b.WriteString("#   only once a panel has 3+ distinct reviewers. One of:\n")
+	b.WriteString("#     strict  — (default) sidecar every singleton below HIGH confidence\n")
+	b.WriteString("#     lenient — keep MEDIUM-confidence singletons; sidecar only LOW ones\n")
+	b.WriteString("#     off     — filter inert; every singleton reaches findings.json\n")
+	b.WriteString("#   Security, HIGH/CRITICAL, out-of-scope, and high-trust singletons are\n")
+	b.WriteString("#   exempt at every level — only the corroboration bar moves.\n")
+	fmt.Fprintf(&b, "consensus: %s\n", DefaultConsensus)
 	b.WriteString("# telemetry: anonymous usage ping. Default enabled; set false (or export\n")
 	b.WriteString("#   ATCR_TELEMETRY=0) to opt out. Either surface disabling is sufficient.\n")
 	b.WriteString("# telemetry: true\n")
@@ -172,8 +199,11 @@ func DefaultProjectConfigYAML(roster []string) string {
 func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		// Message text mandated by AC 01-01 (Error Scenario 1).
-		return nil, fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init'", path)
+		// Message text mandated by AC 01-01 (Error Scenario 1). os.ErrNotExist is
+		// WRAPPED rather than replaced so a tiered resolver can skip this tier on
+		// absence alone (errors.Is) instead of pre-checking with os.Stat — a
+		// pre-check cannot tell "absent" from "unreachable", and races the read.
+		return nil, fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init': %w", path, os.ErrNotExist)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading project config: %w", err)

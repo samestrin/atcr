@@ -81,7 +81,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | Command | Purpose |
 |---------|---------|
 | `atcr review` | Resolve the git range (or scan the whole repo with `--all` / a subtree with `--dir`), build payloads, fan out to the reviewer pool, write per-agent + merged findings; `--auto-fix` applies sandboxed fixes and opens a PR |
-| `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts; a trust-aware consensus filter uses scorecard history to keep high-trust reviewers' singletons and demote low-trust ones |
+| `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts; a trust-aware consensus filter uses scorecard history to keep high-trust reviewers' singletons and demote low-trust ones, with `--consensus strict\|lenient\|off` tuning how tolerant it is |
 | `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
 | `atcr report` | Render md / json / checklist / sarif / axi views over the reconciled findings |

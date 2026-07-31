@@ -113,6 +113,23 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
+	// Resolve the consensus level after the flag-rejection block (argument errors
+	// precede config errors) but still before any resume work: a bad configured
+	// value is a usage error (exit 2), and resolving it inside resumeReconcile
+	// would surface it only after the resumed fan-out completed. `resume` has no
+	// --consensus flag (epic 35.9.1 scope), so this reads the config/registry
+	// tiers only.
+	consensusLevel, err := resolveConsensusLevel("")
+	if err != nil {
+		return err
+	}
+	// Record the effective level for the same reason cli/reconcile.go does: it
+	// can come from ~/.config/atcr/registry.yaml with nothing local naming it,
+	// and ConsensusFiltered == 0 alone cannot distinguish "off" from "strict with
+	// nothing to filter". Logged at resolve time, not post-run, so the level is
+	// still recorded when the resumed fan-out or re-reconcile below fails.
+	log.FromContext(cmd.Context()).Info("consensus filter level resolved", "consensus", consensusLevel)
+
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
 		return usageError(err)
@@ -221,7 +238,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err := fanout.ClearInterrupted(dir); err != nil {
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
-		reconciledTotal, err := resumeReconcile(ctx, cmd, dir)
+		reconciledTotal, err := resumeReconcile(ctx, cmd, dir, consensusLevel)
 		if err != nil {
 			return err
 		}
@@ -316,7 +333,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	if _, err := resumeReconcile(ctx, cmd, result.Dir); err != nil {
+	if _, err := resumeReconcile(ctx, cmd, result.Dir, consensusLevel); err != nil {
 		return err
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
@@ -363,12 +380,17 @@ func recordResumeAudit(cmd *cobra.Command, ctx context.Context, dir string, ts t
 // maps to a usage error (exit 2) with the on-disk review preserved for inspection.
 // The partial flag is read from the just-finalized review so reconcile records the
 // run's partial provenance.
-func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) (int, error) {
+func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLevel string) (int, error) {
+	// Config/registry tiers only — `resume` has no --consensus flag (epic 35.9.1
+	// scope). It reconciles and persists like `atcr reconcile` does, so leaving
+	// Consensus unresolved here would silently ignore a configured level. The
+	// level was validated up front in runResume, so this cannot fail late.
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 		TrustPriors:  scorecard.ResolveTrustPriors(),
+		Consensus:    consensusLevel,
 	})
 	if err != nil {
 		return 0, usageError(fmt.Errorf("resume failed: %w", err))

@@ -1,10 +1,5 @@
 package registry
 
-import (
-	"os"
-	"strings"
-)
-
 // ResolveGateThreshold resolves the reconcile gate severity honoring the
 // documented file-tier precedence: explicit value (--fail-on flag / fail_on
 // tool argument) > project config (.atcr/config.yaml) > user-global registry
@@ -20,34 +15,10 @@ import (
 // settings including fail_on live in .atcr/config.yaml and
 // ~/.config/atcr/registry.yaml.
 //
-// Error handling: a present-but-broken project config is an error (it is the
-// repo's own config); a missing project config is skipped; a broken user-global
-// registry is skipped best-effort so it never blocks a reconcile that does not
-// otherwise need it.
+// The tier walk itself lives in resolveFileTiered (shared_settings.go) so this
+// resolver and the consensus resolver cannot drift apart; a caller that needs
+// BOTH settings should use ResolveSharedSettings, which answers them from one
+// load.
 func ResolveGateThreshold(root, explicit string) (string, error) {
-	if v := strings.TrimSpace(explicit); v != "" {
-		return v, nil
-	}
-
-	projPath := DefaultProjectConfigPath(root)
-	if _, err := os.Stat(projPath); err == nil {
-		proj, err := LoadProjectConfig(projPath)
-		if err != nil {
-			return "", err
-		}
-		if v := strings.TrimSpace(proj.FailOn); v != "" {
-			return v, nil
-		}
-	}
-
-	if regPath, err := DefaultRegistryPath(); err == nil {
-		if _, serr := os.Stat(regPath); serr == nil {
-			if reg, err := LoadRegistry(regPath); err == nil {
-				if v := strings.TrimSpace(reg.FailOn); v != "" {
-					return v, nil
-				}
-			}
-		}
-	}
-	return "", nil
+	return resolveFileTiered(root, explicit, projFailOn, regFailOn)
 }
