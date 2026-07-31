@@ -12,9 +12,9 @@ no provider, no API key, no network. That makes it cheap enough to run on every
 commit and safe to run in a sandbox with no credentials.
 
 The same analyzer already gates atcr's own auto-fix pipeline — a model-produced
-fix that trips a HARD smell is rejected and retried before it is ever written
-(see [verification.md](verification.md)). `atcr verify diff` is that analyzer
-exposed as a command, so a patch judged here is judged by identical logic.
+fix that trips a HARD smell is rejected and retried before it is ever written.
+`atcr verify diff` is that analyzer exposed as a command, so a patch judged
+here is judged by identical logic.
 
 ## Usage
 
