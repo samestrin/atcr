@@ -290,7 +290,9 @@ func endsInvocation(tok string) bool {
 		return true
 	case strings.HasPrefix(tok, "<"), strings.HasPrefix(tok, "["): // positional placeholder
 		return true
-	case tok == "|", tok == "&&", tok == "||", tok == ";", tok == ">", tok == ">>":
+	case tok == "|", tok == "&&", tok == "||", tok == ";":
+		return true
+	case strings.HasPrefix(tok, ">"): // shell redirect — `>`, `>>`, and the spaceless shape docs actually use (`>/dev/null 2>&1`)
 		return true
 	}
 	return false
