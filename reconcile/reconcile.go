@@ -100,6 +100,21 @@ type Summary struct {
 	// unset or unrecognized Options.Consensus is recorded as the strict the
 	// filter failed safe to, never echoed back raw.
 	ConsensusLevel string `json:"consensus_level"`
+	// TrustPriorsResolved is the number of reviewers whose trust prior the caller
+	// resolved and attached via Options.TrustPriors — len(opts.TrustPriors), not a
+	// count of findings the priors affected. It exists because that map is read
+	// through a WINDOWED store read (scorecard.ResolveTrustPriors, epic 35.11):
+	// a reviewer with no runs in the window silently drops out of the map and
+	// loses trust exemption/demotion, and nothing else surfaces that. The
+	// scorecard read discards its own diagnostics (io.Discard) and
+	// `atcr personas list --scores` still reads all history, so it reports that
+	// reviewer as healthy — this count is the only place the divergence is
+	// observable without an all-history read. A drop between runs is the signal;
+	// an absolute value is not meaningful on its own. Observability only: it
+	// changes no finding, no confidence, and no exit code. 0 means the caller
+	// attached no priors (a fresh install, an unresolvable config dir, or an
+	// unreadable store — all of which degrade to a nil map by design).
+	TrustPriorsResolved int `json:"trust_priors_resolved"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`
