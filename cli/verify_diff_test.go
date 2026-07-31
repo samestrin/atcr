@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -365,6 +366,69 @@ func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
 	// The relaxation must not swallow a genuinely bad value.
 	code, _, _ := runSmell(t, smellCleanDiff, "--diff", "-", "--fail-on", "bogus")
 	require.Equal(t, 2, code, "--fail-on bogus must still be a usage error")
+}
+
+// --- repo-local config hardening ------------------------------------------
+
+// plantTextconvDriver arms the repo in the current working directory with a
+// repo-local textconv diff driver that EXECUTES a program, and returns the path
+// of the canary that program creates when it runs.
+//
+// This is a repo-local vector by construction: gitexec pins GIT_CONFIG_GLOBAL and
+// GIT_CONFIG_SYSTEM to /dev/null, and its package doc names repo-local config as
+// the surface it does NOT close. `--repo <path>` explicitly invites pointing the
+// scanner at a tree the operator does not control, so the command must neutralize
+// the driver itself.
+func plantTextconvDriver(t *testing.T) string {
+	t.Helper()
+	wd := requireTempWorkdir(t)
+	canary := filepath.Join(wd, "TEXTCONV_RAN")
+	script := filepath.Join(wd, "evil.sh")
+	require.NoError(t, os.WriteFile(script,
+		[]byte("#!/bin/sh\n: > \""+canary+"\"\necho converted\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, ".gitattributes"), []byte("*.bin diff=evil\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "data.bin"), []byte("payload-one\n"), 0o644))
+	gitSmell(t, "config", "diff.evil.textconv", script)
+	gitSmell(t, "add", "-A")
+	gitSmell(t, "commit", "-q", "-m", "arm textconv driver")
+
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "data.bin"), []byte("payload-two\n"), 0o644))
+	gitSmell(t, "add", "data.bin")
+	return canary
+}
+
+// TestVerifyDiffCmd_TextconvDriverIsNeutralized asserts a poisoned repo-local
+// textconv driver never runs. --no-ext-diff closes `diff.external`; textconv is a
+// SEPARATE execution vector it does not touch, so both git-backed sources must
+// pass --no-textconv.
+//
+// Verified by construction: with only `--no-ext-diff --no-color`, running this
+// fixture's diff creates the canary.
+func TestVerifyDiffCmd_TextconvDriverIsNeutralized(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the textconv driver fixture is a /bin/sh script")
+	}
+	t.Run("staged", func(t *testing.T) {
+		isolate(t)
+		initGitRepo(t)
+		canary := plantTextconvDriver(t)
+		wd := requireTempWorkdir(t)
+		code, _, _ := runSmell(t, "", "--staged", "--repo", wd)
+		require.Equal(t, 0, code)
+		require.NoFileExists(t, canary, "a repo-local textconv driver must not be executed by --staged")
+	})
+
+	t.Run("rev", func(t *testing.T) {
+		isolate(t)
+		initGitRepo(t)
+		canary := plantTextconvDriver(t)
+		wd := requireTempWorkdir(t)
+		gitSmell(t, "commit", "-q", "-m", "change payload")
+		_ = os.Remove(canary) // clear anything the commit itself may have triggered
+		code, _, _ := runSmell(t, "", "--rev", "HEAD", "--repo", wd)
+		require.Equal(t, 0, code)
+		require.NoFileExists(t, canary, "a repo-local textconv driver must not be executed by --rev")
+	})
 }
 
 // --- merge commits --------------------------------------------------------
