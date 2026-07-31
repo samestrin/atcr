@@ -399,6 +399,21 @@ func TestVerifyDiffCmd_StagedOnCleanIndexIsCleanWithNote(t *testing.T) {
 	require.Contains(t, stderr, "empty diff")
 }
 
+// AC5's specific combination: --staged on a clean index WITH --json — stdout
+// must be the JSON document only, with the explanatory note on stderr.
+func TestVerifyDiffCmd_StagedCleanIndexJSONStdoutIsJSONOnly(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+
+	code, stdout, stderr := runSmell(t, "", "--staged", "--json")
+	require.Equal(t, 0, code)
+	require.Contains(t, stderr, "empty diff")
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &m), "stdout must be JSON only, got: %q", stdout)
+	require.Equal(t, "clean", m["summary"].(map[string]any)["verdict"])
+}
+
 func TestVerifyDiffCmd_RangeScansCommitRange(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
