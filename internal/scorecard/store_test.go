@@ -271,6 +271,35 @@ func TestStore_ReadAll_MissingDir(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// TestStore_ReadAll_UnreadableMonthFileSkipsAndContinues locks the
+// abort-vs-continue decision for readMonthFiles: os.ReadDir returns entries
+// sorted ascending — chronological for YYYY-MM stems — so aborting the
+// enumeration on one unreadable month file would silently discard every NEWER
+// month (exactly the data the trust prior depends on). One bad file must cost
+// one file: the remaining months are returned, a diagnostic is emitted, and the
+// error is still propagated for ReadAll callers that surface it.
+func TestStore_ReadAll_UnreadableMonthFileSkipsAndContinues(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	writeMonthFile(t, dir, "2026-03", recordLine(t, "2026-03-10T10:00:00Z-mar", "bruce"))
+	writeMonthFile(t, dir, "2026-04", recordLine(t, "2026-04-10T10:00:00Z-apr", "greta"))
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "dax"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "ingrid"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "vera"))
+	require.NoError(t, os.Chmod(filepath.Join(dir, "2026-03.jsonl"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-03.jsonl"), 0o600) })
+
+	var diag bytes.Buffer
+	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
+	require.Error(t, err, "the read failure is still propagated for callers that surface it")
+	require.Len(t, recs, 4, "one unreadable month file must not discard the newer months")
+	assert.Equal(t, "greta", recs[0].Reviewer, "April is the first readable month")
+	assert.Equal(t, "vera", recs[3].Reviewer, "July — the newest month — still comes back")
+	assert.Contains(t, diag.String(), "2026-03.jsonl", "the skipped file is named in a diagnostic")
+}
+
 // TestStore_monthsToScan_InvalidDayNoBoundaryScan locks the fix: the day that
 // drives boundary scanning must come from a real parsed timestamp, not fixed
 // offset slicing. An impossible calendar day (Feb 30) must not be read off as a
