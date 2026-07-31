@@ -290,6 +290,16 @@ func monthsToScan(runID, month string) []string {
 // is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
 // Non-.jsonl files are ignored.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
+	return readMonthFiles(dir, nil, opts)
+}
+
+// readMonthFiles enumerates dir's *.jsonl month files and concatenates the
+// records of the ones keep accepts, where keep is passed the file's stem
+// (the name minus ".jsonl") and a nil keep reads every file. It is the single
+// enumeration both ReadAll and ReadSince run on, so the all-history and
+// windowed paths cannot drift in how they treat a missing directory,
+// non-.jsonl entries, subdirectories, or a file that vanishes mid-read.
+func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -300,6 +310,9 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	var all []Record
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		if keep != nil && !keep(strings.TrimSuffix(e.Name(), ".jsonl")) {
 			continue
 		}
 		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
@@ -339,32 +352,10 @@ func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([
 	if since <= 0 {
 		return ReadAll(dir, opts)
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading scorecard dir: %w", err)
-	}
 	cutoff := now.Add(-since)
-	var all []Record
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		if !monthOverlapsWindow(strings.TrimSuffix(e.Name(), ".jsonl"), cutoff, now) {
-			continue
-		}
-		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return all, err
-		}
-		all = append(all, recs...)
-	}
-	return all, nil
+	return readMonthFiles(dir, func(stem string) bool {
+		return monthOverlapsWindow(stem, cutoff, now)
+	}, opts)
 }
 
 // monthOverlapsWindow reports whether the calendar month named by stem
