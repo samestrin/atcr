@@ -114,11 +114,18 @@ func runVerifyDiff(cmd *cobra.Command, _ []string) error {
 }
 
 // smellGate reads and validates --fail-on, returning the canonical level or ""
-// when gating is off. An ABSENT flag is unset (opt-in no-op, matching
-// `atcr review --fail-on` and upstream's always-zero exit); an explicit "none"
-// is the same thing spelled out, so a scripted consumer can always pass the flag
-// and vary only its value. Any other value — including an explicitly empty one —
-// is a usage error (exit 2).
+// when gating is off. Three spellings mean unset: an ABSENT flag (opt-in no-op,
+// matching `atcr review --fail-on` and upstream's always-zero exit), an explicit
+// "none", and an explicitly EMPTY or whitespace-only value — so a scripted
+// consumer can always pass the flag and vary only its value. Any other value is
+// a usage error (exit 2).
+//
+// The empty case matters because it is the shape the "none" affordance was added
+// for: `atcr verify diff --fail-on "$LEVEL"` with LEVEL unset. It is also the
+// convention the two sibling threshold readers already share — verifyMinSeverity
+// (cli/verify.go) and gateFlagValue (cli/reconcile.go) both trim and treat
+// whitespace-only as unset. Refusing it here made one command hard-fail CI where
+// the others silently no-op.
 //
 // The values are verdicts (hard/soft), not the severities `atcr review` and
 // `atcr reconcile` take (CRITICAL/HIGH/MEDIUM/LOW). Same concept, disjoint value
@@ -129,7 +136,7 @@ func smellGate(cmd *cobra.Command) (string, error) {
 	}
 	raw, _ := cmd.Flags().GetString("fail-on")
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
-	case "none":
+	case "", "none":
 		return "", nil
 	case "hard", "soft":
 		return v, nil

@@ -106,6 +106,10 @@ exits `0` for every verdict — preserving drop-in parity with upstream
 - **`--fail-on soft`** — exit `1` on `hard` or `soft_only`.
 - **`--fail-on none`** — explicit no-op, so a script can always pass the flag and
   vary only its value.
+- **`--fail-on ""`** — an empty or whitespace-only value is also unset, so
+  `atcr verify diff --fail-on "$LEVEL"` is a no-op when `LEVEL` is unset rather
+  than a usage error. This matches `atcr verify --min-severity` and
+  `atcr reconcile --fail-on`.
 
 | Exit | Meaning |
 |------|---------|
