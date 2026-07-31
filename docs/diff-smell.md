@@ -138,6 +138,31 @@ failing:
 
 Both keep stdout payload-only, so `--json` output stays parseable in every case.
 
+## Text output
+
+Without `--json`, stdout carries a human summary: one greppable verdict line,
+then one indented row per smell, citing `file:line` where the smell has one.
+
+A scan with findings (the same input as the JSON example below):
+
+```text
+verdict: hard — 1 hard, 2 soft smell(s); 1 test file(s), 1 impl file(s)
+  HARD test_skipped       pkg/auth_test.go:12: t.Skip("flaky")
+  SOFT weakened_assertion pkg/auth_test.go: test replaced assertion(s) one-for-one; verify they were not weakened
+  SOFT suppression        pkg/auth.go:21: //nolint:errcheck
+```
+
+A clean scan:
+
+```text
+verdict: clean — no over-simplification smells; 0 test file(s), 1 impl file(s)
+```
+
+The separator on the verdict line is a U+2014 em dash — that is the shipped
+shape, recorded here so scripts match on the `verdict: ` prefix rather than the
+full line. The text format is best-effort human output and is **not** part of
+the stability contract below; pin to `--json` for anything a script parses.
+
 ## JSON output
 
 `--json` emits the result as the sole content of stdout. Field names are
