@@ -59,7 +59,7 @@ cannot feed the parser something that is not a plain unified diff.
 | `weakened_assertion` | hard / soft | assertions removed without replacement (hard), or replaced one-for-one (soft — verify they were not weakened) |
 | `suppression` | soft | a linter/type-checker suppression was added |
 | `empty_catch` | soft | an empty or swallowing exception handler was added |
-| `stub_body` | soft | a stub / not-implemented / standalone TODO body was added |
+| `stub_body` | soft | a stub / not-implemented / standalone TODO-or-FIXME body was added |
 
 `test_skipped` recognizes `t.Skip(`, `@pytest.mark.skip`, `it.skip(`,
 `test.skip(`, `describe.skip(`, `xit(`, `xdescribe(`, `@Ignore`, `@Disabled`, and
