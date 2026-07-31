@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -978,4 +979,43 @@ func TestReviewCmd_LogsResolvedConsensusLevel(t *testing.T) {
 	require.Contains(t, stderr, "consensus filter level resolved",
 		"the one-shot review path must record the level it resolved")
 	require.Contains(t, stderr, "off", "the log must name the level that was in effect")
+}
+
+// TestRunReview_ResolvesSharedSettingsInOneLoad is the review half of the
+// single-load contract: a reconciling `atcr review` needs both fail_on and
+// consensus, and resolving them through two independent resolvers re-parses the
+// config tiers per setting — two HTTP GETs of the user registry under
+// ATCR_REGISTRY_URL, either of which can fail independently because the tier is
+// swallowed best-effort.
+func TestRunReview_ResolvesSharedSettingsInOneLoad(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one")
+
+	// The user registry IS the roster source here, so the served copy must be the
+	// real one liveReviewConfig wrote, plus the shared setting under test.
+	regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	local, err := os.ReadFile(filepath.Join(regDir, "registry.yaml"))
+	require.NoError(t, err)
+	remote := string(local) + "consensus: off\n"
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
+
+	var fetches int32
+	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(remote))
+	}))
+	t.Cleanup(regSrv.Close)
+
+	t.Setenv("ATCR_REGISTRY_URL", regSrv.URL+"/registry.yaml")
+
+	// --fail-on routes the run into the one-shot reconcile, the only branch that
+	// needs BOTH settings.
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
+		"a reconciling review must load the user registry once for both shared settings")
 }
