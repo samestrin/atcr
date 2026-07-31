@@ -205,6 +205,36 @@ func TestAnalyzeDiff_MalformedHunkHeaderYieldsNoLine(t *testing.T) {
 	require.Len(t, res.Smells, 1)
 }
 
+// A hunk header whose new-side start digits overflow an int yields NO line
+// rather than numbering this hunk's additions from the previous hunk's
+// position — a confidently wrong file:line is worse than an absent one. The
+// overflow is the ONLY way the start parse can fail once the strict
+// hunk-counts shape matched, so this is the case that pins the `newLine = 0`
+// reset: without it the second smell below would carry the first hunk's
+// carried-over position instead of zero.
+func TestAnalyzeDiff_OverflowHunkStartYieldsNoLine(t *testing.T) {
+	const d = `diff --git a/a.go b/a.go
+--- a/a.go
++++ b/a.go
+@@ -1,1 +1,2 @@
+ ok()
++	//nolint:first
+@@ -1,1 +99999999999999999999,2 @@
++	//nolint:overflow
+ ctx()
+`
+	res := AnalyzeDiff(d)
+	require.Len(t, res.Smells, 2)
+	require.Equal(t, 2, res.Smells[0].Line)
+	require.Zero(t, res.Smells[1].Line,
+		"an overflowing +start must yield no line, not a carried-over one")
+
+	b, err := json.Marshal(res.Smells[1])
+	require.NoError(t, err)
+	require.NotContains(t, string(b), `"line"`,
+		"omitempty must drop the key for a smell with no line, not emit 0")
+}
+
 // Every collection is materialized, so the JSON form never carries null and a
 // consumer indexing a field need not nil-check one that is merely empty.
 func TestSmellResult_EmptyCollectionsAreNotNull(t *testing.T) {
