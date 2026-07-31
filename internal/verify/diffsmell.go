@@ -317,8 +317,9 @@ type smellAddedLine struct {
 	text string
 	// line is the added line's position in the NEW file, derived from the hunk
 	// header's new-side start and advanced across the hunk body. Zero when the
-	// hunk header carried no parseable start (a malformed `@@` line), which
-	// omitempty then drops rather than reporting a wrong line.
+	// header's start digits overflowed an int — the only way the parse can fail
+	// once the strict hunk-counts shape matched — which omitempty then drops
+	// rather than reporting a wrong line.
 	line int
 }
 
@@ -478,10 +479,12 @@ func AnalyzeDiff(diff string) *SmellResult {
 				newRemaining = smellHunkCount(m[2])
 				inHunk = oldRemaining > 0 || newRemaining > 0
 				// Seed the new-file position from `+<start>`. Reset to 0 rather than
-				// carried over when the start is unparseable, so a malformed header
-				// yields no line (omitempty drops it) instead of numbering this hunk's
-				// additions from the PREVIOUS hunk's position — a confidently wrong
-				// file:line is worse than none.
+				// carried over when the start digits overflow an int — the ONLY way
+				// strconv.Atoi can fail here, since smellHunkCountsRe matching
+				// strictly implies smellHunkRe matches — so an overflowing header
+				// yields no line (omitempty drops it) instead of numbering this
+				// hunk's additions from the PREVIOUS hunk's position: a
+				// confidently wrong file:line is worse than none.
 				newLine = 0
 				if hm := smellHunkRe.FindStringSubmatch(line); hm != nil {
 					if n, err := strconv.Atoi(hm[1]); err == nil {
