@@ -982,40 +982,58 @@ func TestReviewCmd_LogsResolvedConsensusLevel(t *testing.T) {
 }
 
 // TestRunReview_ResolvesSharedSettingsInOneLoad is the review half of the
-// single-load contract: a reconciling `atcr review` needs both fail_on and
-// consensus, and resolving them through two independent resolvers re-parses the
-// config tiers per setting — two HTTP GETs of the user registry under
-// ATCR_REGISTRY_URL, either of which can fail independently because the tier is
-// swallowed best-effort.
+// single-load contract. It is written as a differential rather than an absolute
+// count because the roster load is a separate, legitimate consumer of the same
+// user registry: the property under test is that entering the RECONCILING
+// branch — the only branch that needs the consensus level — costs no ADDITIONAL
+// user-registry load, because the gate and the consensus level come from one
+// tier read. Resolving them independently makes the reconciling run pay one
+// extra HTTP GET, and (since the tier is swallowed best-effort) lets the two
+// settings land on different tiers within a single run.
 func TestRunReview_ResolvesSharedSettingsInOneLoad(t *testing.T) {
-	isolate(t)
-	t.Setenv(testReviewKeyEnv, "secret")
-	initGitRepoWithWideChange(t)
-	srv := perAgentMockProvider(t, map[string]string{
-		"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+	// countFetches runs one `atcr review` against a served user registry built
+	// from the roster registry plus extra, returning how many times the registry
+	// was fetched.
+	countFetches := func(t *testing.T, extra string) int32 {
+		t.Helper()
+		isolate(t)
+		t.Setenv(testReviewKeyEnv, "secret")
+		initGitRepoWithWideChange(t)
+		srv := perAgentMockProvider(t, map[string]string{
+			"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		})
+		liveReviewConfig(t, srv.URL, "one")
+
+		// The user registry IS the roster source here, so the served copy must be
+		// the real one liveReviewConfig wrote, plus the settings under test.
+		regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+		local, err := os.ReadFile(filepath.Join(regDir, "registry.yaml"))
+		require.NoError(t, err)
+		remote := string(local) + extra
+		require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
+
+		var fetches int32
+		regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			atomic.AddInt32(&fetches, 1)
+			_, _ = w.Write([]byte(remote))
+		}))
+		t.Cleanup(regSrv.Close)
+		t.Setenv("ATCR_REGISTRY_URL", regSrv.URL+"/registry.yaml")
+
+		require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+		return atomic.LoadInt32(&fetches)
+	}
+
+	// Control: nothing configured, so the run never reaches the reconcile branch.
+	var baseline int32
+	t.Run("no gate configured", func(t *testing.T) { baseline = countFetches(t, "") })
+
+	// A configured gate routes the same run into the one-shot reconcile, which
+	// needs the consensus level too. That must come from the load the gate
+	// already paid for.
+	t.Run("configured gate reconciles", func(t *testing.T) {
+		got := countFetches(t, "fail_on: CRITICAL\nconsensus: off\n")
+		assert.Equal(t, baseline, got,
+			"entering the reconciling branch must not cost an extra user-registry load")
 	})
-	liveReviewConfig(t, srv.URL, "one")
-
-	// The user registry IS the roster source here, so the served copy must be the
-	// real one liveReviewConfig wrote, plus the shared setting under test.
-	regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
-	local, err := os.ReadFile(filepath.Join(regDir, "registry.yaml"))
-	require.NoError(t, err)
-	remote := string(local) + "consensus: off\n"
-	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
-
-	var fetches int32
-	regSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&fetches, 1)
-		_, _ = w.Write([]byte(remote))
-	}))
-	t.Cleanup(regSrv.Close)
-
-	t.Setenv("ATCR_REGISTRY_URL", regSrv.URL+"/registry.yaml")
-
-	// --fail-on routes the run into the one-shot reconcile, the only branch that
-	// needs BOTH settings.
-	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
-	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
-		"a reconciling review must load the user registry once for both shared settings")
 }
