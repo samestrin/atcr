@@ -13,6 +13,7 @@ package cli
 // mentions the fictional "atcr.yaml" or "Reconciler v2" will fail CI.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,9 +22,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/verify"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 // repoRootDir ascends from the test working directory (the package dir,
@@ -876,6 +879,70 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 	if probed == 0 {
 		t.Fatal("docs/diff-smell.md documents no `atcr verify diff --help` version probe; the version-discoverability recipe is the consumer-adoption path and must stay documented")
 	}
+}
+
+// fencedBlock returns the sole ```<lang> fenced block in md, or "" when there is
+// not exactly one. Requiring exactly one keeps the caller from silently checking
+// whichever block happened to come first if the doc later grows another.
+func fencedBlock(md, lang string) string {
+	var blocks []string
+	var cur []string
+	in := false
+	for _, ln := range strings.Split(md, "\n") {
+		if in {
+			if strings.TrimSpace(ln) == "```" {
+				blocks = append(blocks, strings.Join(cur, "\n")+"\n")
+				cur, in = nil, false
+				continue
+			}
+			cur = append(cur, ln)
+			continue
+		}
+		if strings.TrimSpace(ln) == "```"+lang {
+			in = true
+		}
+	}
+	if len(blocks) != 1 {
+		return ""
+	}
+	return blocks[0]
+}
+
+// TestDiffSmellDocExampleMatchesAnalyzer makes the WORKED EXAMPLE in
+// docs/diff-smell.md a second golden rather than prose: it feeds the doc's own
+// ```diff block through AnalyzeDiff and compares the result to the doc's own
+// ```json block.
+//
+// TestSmellResult_GoldenJSON pins the shape against a copy of the document held
+// in the test file, and its failure message tells the developer to update
+// docs/diff-smell.md — but nothing mechanically checked that they did. The two
+// were in sync, so the drift that golden test exists to prevent could still land
+// undetected in the DOCS half of the contract, which is precisely what AC9 claims
+// cannot happen.
+func TestDiffSmellDocExampleMatchesAnalyzer(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "diff-smell.md"))
+	if err != nil {
+		t.Fatalf("read docs/diff-smell.md: %v", err)
+	}
+	md := string(b)
+
+	gotDiff := fencedBlock(md, "diff")
+	if gotDiff == "" {
+		t.Fatal("docs/diff-smell.md must contain exactly one ```diff block — the worked example that documents the JSON shape")
+	}
+	wantJSON := fencedBlock(md, "json")
+	if wantJSON == "" {
+		t.Fatal("docs/diff-smell.md must contain exactly one ```json block — the output of the worked example")
+	}
+
+	got, err := json.MarshalIndent(verify.AnalyzeDiff(gotDiff), "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	require.JSONEq(t, wantJSON, string(got),
+		"the ```json block in docs/diff-smell.md no longer matches what AnalyzeDiff produces for the ```diff block "+
+			"directly above it. The doc example is half of the public contract — update it, or fix the analyzer.")
 }
 
 // TestDiffSmellExitTwoCausesAreDocumented asserts BOTH exit tables enumerate

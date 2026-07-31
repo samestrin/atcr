@@ -95,7 +95,9 @@ func TestSmellResult_GoldenJSON(t *testing.T) {
 		"the diff-smell JSON shape is a PUBLIC CONTRACT consumed by `atcr verify diff --json`. "+
 			"A renamed key, a removed field, or a changed verdict vocabulary is BREAKING: it needs a "+
 			"CHANGELOG \"Breaking\" entry and a docs/diff-smell.md update. Adding a new smell type is "+
-			"additive and should not have reached this assertion.")
+			"additive and should not have reached this assertion. The docs half is enforced "+
+			"mechanically by TestDiffSmellDocExampleMatchesAnalyzer (cli), which runs this analyzer "+
+			"over the doc's own ```diff fence and compares it to the doc's own ```json fence.")
 }
 
 // The verdict vocabulary is closed. A consumer branches on exactly these three.
