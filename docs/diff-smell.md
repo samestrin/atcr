@@ -49,9 +49,16 @@ no-op precisely where CI runs it — `--rev` defaults to `HEAD`, and both
 Single-parent commits are unaffected.
 
 Naming two sources is a usage error (exit `2`) that names both offenders, rather
-than a silent precedence win. Git is always invoked with `--no-ext-diff` and
-`--no-color`, so a repo-local `diff.external` or a `color.ui = always` config
-cannot feed the parser something that is not a plain unified diff.
+than a silent precedence win.
+
+Git is always invoked with `--no-ext-diff`, `--no-textconv`, and `--no-color`.
+The first two matter for safety, not formatting: `--repo <path>` invites pointing
+the scanner at a tree you do not control, and a repo-local `diff.external` **or**
+a `[diff "x"] textconv = <program>` driver (armed by a worktree `.gitattributes`)
+would otherwise execute an arbitrary program with your privileges. They are
+separate vectors — disabling one does not disable the other. `--no-color` keeps a
+`color.ui = always` config from feeding ANSI escapes to a parser expecting a plain
+unified diff.
 
 **Size cap.** Every source refuses input over **2 MiB** with a "too large to
 scan" usage error (exit `2`). The relocation check compares each added line

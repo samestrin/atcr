@@ -306,12 +306,23 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 	return spec, nil
 }
 
-// gitText runs a hardened `git -C <repo> <sub> --no-ext-diff --no-color ...` and
-// returns stdout. Both flags are passed at the call site rather than by gitexec
-// because they are diff-command-specific: --no-ext-diff neutralizes a poisoned
-// repo-local diff.external (see internal/gitexec's package doc), and --no-color
-// defeats a `color.ui = always` config that would otherwise feed ANSI escapes to
-// a parser expecting a plain unified diff. Any git failure is a usage error
+// gitText runs a hardened `git -C <repo> <sub> --no-ext-diff --no-color
+// --no-textconv ...` and returns stdout. All three are passed at the call site
+// rather than by gitexec because they are diff-command-specific, and each closes
+// a different hole in a repo whose local config the operator does not control —
+// which `--repo <path>` explicitly invites (internal/gitexec's package doc names
+// repo-local config as the surface it does NOT close):
+//
+//   - --no-ext-diff neutralizes a poisoned repo-local `diff.external`.
+//   - --no-textconv neutralizes a repo-local `[diff "x"] textconv = <program>`
+//     paired with a worktree .gitattributes mapping a path to that driver. This
+//     is a SEPARATE execution vector that --no-ext-diff does not touch: verified
+//     by construction, with only --no-ext-diff --no-color the driver runs and
+//     executes an arbitrary program with the caller's privileges.
+//   - --no-color defeats a `color.ui = always` config that would otherwise feed
+//     ANSI escapes to a parser expecting a plain unified diff.
+//
+// Any git failure is a usage error
 // (exit 2), so exit 1 keeps meaning "the gate tripped" and nothing else — with
 // one exception: a cancelled context propagates as a plain error, because an
 // interrupt is not a bad invocation.
@@ -324,7 +335,7 @@ func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	argv := append([]string{"-C", repo, sub, "--no-ext-diff", "--no-color"}, extra...)
+	argv := append([]string{"-C", repo, sub, "--no-ext-diff", "--no-color", "--no-textconv"}, extra...)
 
 	var stdout cappedBuffer
 	var stderr bytes.Buffer
