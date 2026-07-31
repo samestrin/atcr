@@ -16,7 +16,6 @@ import (
 func TestResolveConsensus_ProjectRegistryOverlayHasNoEffect(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	atcrDir := filepath.Join(root, ".atcr")
@@ -36,7 +35,6 @@ func TestResolveConsensus_ProjectRegistryOverlayHasNoEffect(t *testing.T) {
 func TestResolveConsensus_Precedence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	// Nothing configured anywhere → "" (the call site maps it to strict).
@@ -85,7 +83,6 @@ func TestResolveConsensus_Precedence(t *testing.T) {
 func TestResolveConsensus_ProjectConfigWithoutKeyFallsThrough(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	regDir := filepath.Join(home, ".config", "atcr")
@@ -116,7 +113,6 @@ func TestResolveConsensus_ProjectConfigWithoutKeyFallsThrough(t *testing.T) {
 func TestResolveConsensus_BrokenUserRegistrySkipped(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 
 	regDir := filepath.Join(home, ".config", "atcr")
