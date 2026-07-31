@@ -87,17 +87,38 @@ func runSmellContext(ctx context.Context, t *testing.T, in string, args ...strin
 // inherited, which is no safer (see initGitRepo's incident note). The
 // not-already-a-repo half is deliberately not asserted — these calls run INSIDE
 // the repo initGitRepo just created.
-func gitSmell(t *testing.T, args ...string) {
-	t.Helper()
-	wd := requireTempWorkdir(t)
-	cmd := exec.Command("git", append([]string{"-C", wd}, args...)...)
-	cmd.Env = append(os.Environ(),
+// gitSmellEnv is the hardened, identity-pinned environment every test-side git
+// subprocess runs with — the same config surface gitexec pins in production
+// (GIT_CONFIG_GLOBAL/SYSTEM=/dev/null), so a test asserting the CLI and a raw
+// git call agree byte-for-byte never reads the runner's global git config on
+// one side only.
+func gitSmellEnv() []string {
+	return append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 	)
+}
+
+func gitSmell(t *testing.T, args ...string) {
+	t.Helper()
+	wd := requireTempWorkdir(t)
+	cmd := exec.Command("git", append([]string{"-C", wd}, args...)...)
+	cmd.Env = gitSmellEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+// gitSmellOutput is gitSmell for callers that need stdout back — same -C
+// scoping and hardened env.
+func gitSmellOutput(t *testing.T, args ...string) string {
+	t.Helper()
+	wd := requireTempWorkdir(t)
+	cmd := exec.Command("git", append([]string{"-C", wd}, args...)...)
+	cmd.Env = gitSmellEnv()
+	out, err := cmd.Output()
+	require.NoError(t, err, "git %v: %s", args, out)
+	return string(out)
 }
 
 // stageTestDeletion builds a repo whose STAGED change deletes a committed test
@@ -493,11 +514,13 @@ func TestVerifyDiffCmd_SourcesAgreeByteForByte(t *testing.T) {
 
 	_, viaStaged, _ := runSmell(t, "", "--staged", "--json")
 
-	// Capture the same diff to a file and feed it back through --diff.
+	// Capture the same diff to a file and feed it back through --diff. The raw
+	// git call runs under the SAME hardened env as the CLI path (gitexec), so
+	// the byte-for-byte comparison never reads the runner's global git config
+	// on one side only.
 	path := filepath.Join(t.TempDir(), "staged.diff")
-	out, err := exec.Command("git", "-C", requireTempWorkdir(t), "diff", "--no-ext-diff", "--no-color", "--cached").Output()
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, out, 0o644))
+	out := gitSmellOutput(t, "diff", "--no-ext-diff", "--no-color", "--cached")
+	require.NoError(t, os.WriteFile(path, []byte(out), 0o644))
 
 	_, viaFile, _ := runSmell(t, "", "--diff", path, "--json")
 	require.Equal(t, viaStaged, viaFile, "the same diff through two sources must yield identical JSON")
