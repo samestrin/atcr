@@ -715,7 +715,18 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 		probed++
 		if !strings.Contains(ln, "grep") || !strings.Contains(ln, "--fail-on") {
 			t.Errorf("docs/diff-smell.md:%d probes with %q, which exits 0 on an atcr that predates `verify diff`; "+
-				"the probe must inspect the help text, e.g. `atcr verify diff --help 2>&1 | grep -q -- '--fail-on'`",
+				"the probe must inspect the help text, e.g. `atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null`",
+				i+1, strings.TrimSpace(ln))
+			continue
+		}
+		// `grep -q` exits at the first match and closes the pipe, so atcr is killed
+		// by SIGPIPE (141); under `set -o pipefail` — which the documented
+		// pre-commit hook enables — that becomes the pipeline's status and the
+		// probe reports "too old" on a NEW atcr, silently skipping the gate.
+		// Measured: PIPESTATUS=(141 0) with -q, (0 0) without.
+		if regexp.MustCompile(`grep\s+(-\w*q|--quiet|--silent)`).MatchString(ln) {
+			t.Errorf("docs/diff-smell.md:%d probes with %q; `grep -q` closes the pipe and SIGPIPEs atcr (141), "+
+				"which `set -o pipefail` turns into a false \"too old\" result. Let grep drain its input: `| grep -- '--fail-on' >/dev/null`",
 				i+1, strings.TrimSpace(ln))
 		}
 	}

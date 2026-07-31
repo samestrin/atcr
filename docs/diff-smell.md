@@ -277,12 +277,28 @@ gracefully — a consumer should skip the gate with a warning, not hard-fail, wh
 running against an older atcr:
 
 ```bash
-if atcr verify diff --help >/dev/null 2>&1; then
+if atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
   atcr verify diff --staged --fail-on hard
 else
   echo "warning: atcr is too old for 'verify diff'; skipping the diff-smell gate" >&2
 fi
 ```
+
+**Probe the help TEXT, not the exit status.** `verify` is both a group and a leaf
+— it takes an optional `[id-or-path]` — so on an older atcr cobra reads `diff` as
+a positional and `--help` short-circuits to `verify`'s own help, exiting `0`. So
+does `atcr help verify diff`. An exit-status probe therefore reports "new enough"
+on *every* binary ever shipped, and the guarded call then dies with
+`unknown flag: --staged`. `--fail-on` is registered only on `verify diff`, never
+on `verify`, so grepping the help output for it is what actually separates the
+two.
+
+**Use `grep … >/dev/null`, not `grep -q`.** `-q` exits at the first match and
+closes the pipe, so `atcr` is killed by `SIGPIPE` and reports `141`. Under the
+`set -o pipefail` that the hook below (and most CI shells) enable, that failure
+becomes the pipeline's status — and the probe reports "too old" on a *new* atcr,
+silently skipping the gate. Letting `grep` drain its input avoids the signal
+entirely.
 
 `atcr version` reports the installed version if you would rather compare
 directly.
@@ -294,7 +310,7 @@ directly.
 # .git/hooks/pre-commit — block a staged reward hack before it becomes a commit.
 set -euo pipefail
 
-if ! atcr verify diff --help >/dev/null 2>&1; then
+if ! atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
   exit 0   # older atcr: no gate, no failure
 fi
 
