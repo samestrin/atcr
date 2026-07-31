@@ -69,9 +69,15 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// Emit is best-effort and logs its own failures; ignore the return so
 	// reconcile never fails on a scorecard write.
 	_ = Emit(EmitInput{
-		RunID:            runID,
-		Findings:         findings,
-		Reviewers:        reviewers,
+		RunID:     runID,
+		Findings:  findings,
+		Reviewers: reviewers,
+		// The counts above come from res.Findings, the POST-consensus-filter set,
+		// so they are only comparable across runs at the same level. Recording the
+		// level is what lets TrustPriors restrict itself to the strict runs its
+		// historical semantics assume, instead of letting an exploratory off or
+		// lenient run durably depress the priors later strict runs read.
+		ConsensusLevel:   res.Summary.ConsensusLevel,
 		VerificationPath: verPath,
 	}, opts)
 }

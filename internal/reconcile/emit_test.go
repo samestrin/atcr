@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -594,4 +595,28 @@ func TestRenderMarkdown_PathWarningLabelMapping(t *testing.T) {
 		assert.Contains(t, out, "disk quota exceeded", "non-canonical warning must render verbatim")
 		assert.NotContains(t, out, "File not found", "File not found label must not appear for non-canonical warnings")
 	})
+}
+
+// TestEmit_ReportRecordsConsensusLevelUnconditionally pins the level onto
+// report.md whether or not anything was filtered. `off` is reachable with no
+// flag at all (a checked-in .atcr/config.yaml or a machine-wide
+// ~/.config/atcr/registry.yaml), and both `off` and "strict with nothing to
+// filter" render consensus_filtered 0 — so a count-gated line leaves the report
+// silent about the configuration that produced it.
+func TestEmit_ReportRecordsConsensusLevelUnconditionally(t *testing.T) {
+	for _, level := range []string{reclib.ConsensusStrict, reclib.ConsensusLenient, reclib.ConsensusOff} {
+		dir := t.TempDir()
+		res := Reconcile(goldenCorpusSources(), Options{
+			ReconciledAt: time.Unix(1700000000, 0).UTC(),
+			Consensus:    level,
+		})
+		require.Equal(t, 0, res.Summary.ConsensusFiltered,
+			"this corpus filters nothing at any level, which is the point")
+		require.NoError(t, Emit(dir, res))
+
+		got, err := os.ReadFile(filepath.Join(dir, ReportMD))
+		require.NoError(t, err)
+		assert.Contains(t, string(got), "- Consensus level: "+level,
+			"report.md must name the level even when nothing was filtered")
+	}
 }

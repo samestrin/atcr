@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/scorecard"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -255,7 +257,9 @@ func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	dir := filepath.Join(".atcr", "reviews", "r")
 
-	_, err := resumeReconcile(context.Background(), cmd, dir)
+	// reclib.ConsensusStrict is what runResume resolves for an unconfigured
+	// project, so this exercises the unchanged default path.
+	_, err := resumeReconcile(context.Background(), cmd, dir, reclib.ConsensusStrict)
 	require.NoError(t, err)
 
 	files := reconciledFiles(t, dir)
@@ -477,6 +481,114 @@ func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
 	}
 }
 
+// TestResume_ArgErrorsPrecedeConsensusConfigError: argument errors must precede
+// config errors. With a broken consensus value in .atcr/config.yaml, a flag
+// misuse like --fresh must be reported first — the user cannot act on the
+// config-tier consensus problem until the flag error is fixed.
+func TestResume_ArgErrorsPrecedeConsensusConfigError(t *testing.T) {
+	isolate(t)
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	code, out := execResume(t, "review", "--resume", "latest", "--fresh")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "does not support --fresh",
+		"the flag misuse must be reported before the config-tier consensus error")
+}
+
+// appendProjectConfig appends extra YAML to the project config liveReviewConfig
+// already wrote, so a resume test can add a `consensus:` key without disturbing
+// the agent roster the resumed manifest must match.
+func appendProjectConfig(t *testing.T, extra string) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(".atcr", "config.yaml"), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
+	_, err = f.WriteString(extra)
+	require.NoError(t, err)
+}
+
+// countingMockProvider is liveMockProvider plus a request counter, so a test can
+// assert a resume failed BEFORE any agent was dispatched rather than merely that
+// it failed.
+func countingMockProvider(t *testing.T) (*httptest.Server, *int32) {
+	t.Helper()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = io.ReadAll(r.Body)
+		content := "CRITICAL|a.txt:1|Unchecked call|Guard it|security|15|evidence"
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// seedPanelSources writes a findings fixture into an existing review directory,
+// so a resumed re-reconcile has a real multi-reviewer panel to filter.
+func seedPanelSources(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, body := range files {
+		full := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte("# atcr-findings/v1\n"+body), 0o644))
+	}
+}
+
+// TestResume_HonorsConfiguredConsensusOff drives runResume end-to-end (not
+// resumeReconcile directly) so the resume path's OWN resolveConsensusLevel("")
+// call is exercised: with `consensus: off` in .atcr/config.yaml every
+// uncorroborated singleton on a 3-reviewer panel must survive the resumed
+// re-reconcile at consensus_filtered 0. Passing "" through to resumeReconcile
+// instead of the resolved level filters all three and fails this test.
+func TestResume_HonorsConfiguredConsensusOff(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// Every roster agent is already complete, so the resume performs no review
+	// work and the only observable is the re-reconcile it runs.
+	dir := writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce"}, []string{"bruce"})
+	seedPanelSources(t, dir, trustPanelSources())
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	require.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"}, reconciledFiles(t, dir),
+		"off keeps every uncorroborated singleton on the resumed re-reconcile")
+	require.Equal(t, 0, consensusSummary(t, "2026-06-18_demo"),
+		"off must leave consensus_filtered at 0")
+}
+
+// TestResume_InvalidConfiguredConsensusFailsBeforeFanout pins the ORDERING the
+// resolve site's placement exists for: a bad configured level is a usage error
+// (exit 2) raised before the resumed fan-out dispatches its pending agent, not
+// after the agent has burned a provider call. Resolving inside resumeReconcile
+// instead would surface the same error only once the fan-out had completed.
+func TestResume_InvalidConfiguredConsensusFailsBeforeFanout(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv, calls := countingMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	appendProjectConfig(t, "consensus: bogus\n")
+
+	// robin is pending, so a resume that got past the consensus check WOULD
+	// dispatch it and hit the provider.
+	writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "bogus", "the usage error must echo the rejected value")
+	require.Zero(t, atomic.LoadInt32(calls),
+		"the invalid level must be rejected before the resumed fan-out dispatches an agent")
+}
+
 // TestResume_ChainedStageFlagsAreExit2 pins the fail-closed contract for the
 // flags that parse on the shared review command but are read only by runReview's
 // fresh path: with --resume they must be rejected (exit 2) pointing at the
@@ -558,4 +670,29 @@ func TestResume_PrintsReviewSummary(t *testing.T) {
 	require.Equal(t, 0, code, "resume completes -> exit 0")
 	require.Contains(t, out, "Total elapsed:", "resume completion must print the end-of-review summary")
 	require.Contains(t, out, "Agents:", "resume summary includes the per-attempt agent line")
+}
+
+// TestResume_LogsResolvedConsensusLevel is the resume half of the resolve-time
+// consensus log cli/reconcile.go already emits: a resumed re-reconcile persists
+// reconciled artifacts under a level that can come entirely from config, and
+// consensus_filtered == 0 alone cannot distinguish "off" from "strict with
+// nothing to filter". Without the log the resumed run leaves no trace of which
+// configuration produced its artifacts.
+func TestResume_LogsResolvedConsensusLevel(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	appendProjectConfig(t, "consensus: off\n")
+
+	dir := writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce"}, []string{"bruce"})
+	seedPanelSources(t, dir, trustPanelSources())
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "consensus filter level resolved",
+		"the resume path must record the level it resolved")
+	require.Contains(t, out, "off", "the log must name the level that was in effect")
 }

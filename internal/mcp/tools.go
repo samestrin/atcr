@@ -9,6 +9,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/verify"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // mcpAllowedFormats is the explicit allow list of report formats surfaced through
@@ -76,6 +77,7 @@ type ReconcileArgs struct {
 	IDOrPath        string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile (review id only; paths are not accepted); defaults to .atcr/latest"`
 	FailOn          string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
 	RequireVerified bool   `json:"require_verified,omitempty" jsonschema:"with fail_on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate; requires fail_on"`
+	Consensus       string `json:"consensus,omitempty" jsonschema:"consensus filter level for uncorroborated singletons on a 3+ reviewer panel: strict (default), lenient (keep MEDIUM-confidence singletons), or off (filter inert)"`
 }
 
 // VerifyArgs are the atcr_verify tool arguments. id_or_path is the review id
@@ -173,6 +175,7 @@ type ReconcileResult struct {
 	TotalFindings int                     `json:"total_findings"`
 	Partial       bool                    `json:"partial"`
 	FailOn        string                  `json:"fail_on,omitempty"`
+	Consensus     string                  `json:"consensus,omitempty"`
 	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
 }
 
@@ -229,7 +232,7 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict)."
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."
@@ -274,6 +277,29 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 			p.Enum[i] = f
 		}
 		p.Description = "output format (default " + report.FormatMarkdown + "): " + mcpReportFormatsText()
+	}
+	return s, nil
+}
+
+// reconcileInputSchema builds the atcr_reconcile input schema with the consensus
+// property constrained to the closed level vocabulary from reclib.ConsensusLevels
+// — the same source the CLI usage error and the handler's defense-in-depth check
+// read, so the three can never drift — so an invalid value is rejected by JSON
+// Schema validation before the handler runs. The handler check stays: it covers
+// the config/registry tiers, which no argument schema can see.
+func reconcileInputSchema() (*jsonschema.Schema, error) {
+	s, err := jsonschema.For[ReconcileArgs](nil)
+	if err != nil {
+		// Coverage exclusion: same unreachable-defense rationale as
+		// reportInputSchema above — jsonschema.For cannot fail for the
+		// statically-known ReconcileArgs struct.
+		return nil, fmt.Errorf("inferring atcr_reconcile schema: %w", err)
+	}
+	if p := s.Properties["consensus"]; p != nil {
+		p.Enum = make([]any, len(reclib.ConsensusLevels()))
+		for i, l := range reclib.ConsensusLevels() {
+			p.Enum[i] = l
+		}
 	}
 	return s, nil
 }

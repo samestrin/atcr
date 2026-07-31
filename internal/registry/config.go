@@ -527,6 +527,11 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// Consensus is the user-level (global) tier of the consensus-filter level
+	// (epic 35.9.1): strict (default), lenient, or off. The project tier
+	// (ProjectConfig.Consensus) overrides it, and an explicit --consensus /
+	// consensus argument overrides both — see ResolveConsensus.
+	Consensus string `yaml:"consensus,omitempty"`
 	// ReviewStrategy is the run-wide fan-out strategy (Epic 14.3): "bulk"
 	// (default) or "chunked". A global toggle resolved once per run at the
 	// registry and project tiers (there is intentionally no CLI override); the

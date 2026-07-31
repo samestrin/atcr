@@ -185,6 +185,16 @@ result safely.
   confirmed. The `Summary.ConsensusFiltered` count records how many were routed
   this way; a two-reviewer panel (the host + 1 pool persona workflow) leaves the
   filter inert so real findings are never dropped wholesale.
+- **Consensus level — `Options.Consensus`.** The corroboration bar above is
+  configurable: `ConsensusStrict` (the default, and what `""` means) drops every
+  singleton below `HIGH`, exactly as described; `ConsensusLenient` raises the
+  kept-bar to `MEDIUM`, so an uncorroborated `MEDIUM` singleton survives and only
+  a `LOW`-confidence one is sidecarred; `ConsensusOff` makes the filter inert at
+  any panel size, leaving `Summary.ConsensusFiltered` at 0. **Only the bar
+  moves** — the three-distinct-reviewer panel floor and every exemption
+  (security-related, `HIGH`/`CRITICAL`, out-of-scope, confirmed, and the
+  high-trust-reviewer exemption below) are identical at all three levels, and an
+  unrecognized value fails safe to strict rather than disabling the filter.
 - **Reviewer trust prior.** `Options.TrustPriors` — a caller-supplied map of
   lowercase reviewer name to historical corroboration rate — adds two more
   exceptions to the consensus filter on top of the exemption list above. A
@@ -196,7 +206,12 @@ result safely.
   first reconcile-time path to `ConfLow` (previously reachable only
   post-verify, when a skeptic refutes a finding). Demotion never fires on a
   finding that already has two or more reviewers, or one PageRank authority
-  already promoted to `HIGH`. `TrustPriors` is nil for a caller that does not
+  already promoted to `HIGH`. Demotion is independent of `Options.Consensus` —
+  it runs ahead of the filter and only the panel floor gates it — so a low-trust
+  singleton is `LOW` at every level; the level decides only whether that `LOW`
+  finding is then sidecarred. Under `ConsensusOff` it reaches `findings.json`
+  still carrying `LOW`, the only configuration in which the demotion is
+  observable end-to-end. `TrustPriors` is nil for a caller that does not
   track reviewer history (ATCR's own `scorecard.TrustPriors`, epic 35.8, omits
   a reviewer until it clears a minimum-run floor) — a nil or empty map is a
   complete no-op, so confidence and filtering are byte-identical to the

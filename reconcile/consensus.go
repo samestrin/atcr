@@ -1,6 +1,9 @@
 package reconcile
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // consensusMinReviewers is the panel-size floor for the epic-14.2 consensus filter,
 // measured in DISTINCT REVIEWERS that contributed findings (see panelReviewers) —
@@ -11,6 +14,102 @@ import "strings"
 // one reviewer, so an uncorroborated singleton is more plausibly a hallucination
 // than a rare true positive.
 const consensusMinReviewers = 3
+
+// Consensus filter levels (epic 35.9.1). They move ONLY the singleton
+// corroboration bar — consensusMinReviewers (the panel-size floor) and
+// consensusExempt/trustExempt (the exemption set) are identical at every level,
+// deliberately keeping the internal confidence ladder and the exemption rules
+// out of the public API.
+//
+//   - ConsensusStrict is the default and reproduces the hardcoded epic-14.2
+//     behavior exactly: every singleton below ConfHigh is sidecarred.
+//   - ConsensusLenient raises the kept-bar to ConfMedium, so an uncorroborated
+//     MEDIUM singleton survives and only a ConfLow one is sidecarred.
+//   - ConsensusOff makes the consensus filter inert. Note that epic 35.9's trust
+//     demotion still applies (it is gated only by the panel floor), so off output
+//     can contain ConfLow findings pre-14.2 output never did — see
+//     TestDemoteByTrust_ObservableViaConsensusLevel.
+const (
+	ConsensusOff     = "off"
+	ConsensusLenient = "lenient"
+	ConsensusStrict  = "strict"
+)
+
+// consensusLevels lists the valid levels in documentation order (default
+// first), so every surface that must name them in an error or a help string
+// reads them from one place instead of re-listing them. Unexported: an exported
+// slice in a separately published module is shared mutable state, and any
+// consumer assigning to an element would corrupt every CLI usage error and MCP
+// tool-error string built from it. ConsensusLevels() is the accessor.
+var consensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
+
+// ConsensusLevels returns the valid consensus levels in documentation order
+// (default first) — a FRESH slice per call, so a consumer of this module cannot
+// write through the returned value and corrupt the vocabulary every CLI usage
+// error and MCP tool-error string is built from.
+func ConsensusLevels() []string {
+	return append([]string(nil), consensusLevels...)
+}
+
+// InvalidConsensusError builds the one invalid-level error sentence every
+// surface renders — wrapped in a CLI usage error (exit 2) or returned raw as
+// an MCP tool error — so the phrasing naming the closed vocabulary lives in
+// exactly one place and cannot fork. The rejected value is echoed trimmed.
+func InvalidConsensusError(v string) error {
+	return fmt.Errorf("invalid consensus level %q: must be one of %s",
+		strings.TrimSpace(v), strings.Join(consensusLevels, ", "))
+}
+
+// NormalizeConsensus canonicalizes a consensus level token and reports whether
+// it is in the closed vocabulary. It is case- and whitespace-insensitive
+// (following validateGate/ParseSeverity rather than the exact-lowercase
+// on_overflow/payload_mode convention), and treats the empty string as the
+// unset case: valid, canonicalizing to ConsensusStrict, so an unconfigured
+// project keeps today's behavior. Callers phrase their own failure for an
+// invalid token — a CLI usage error (exit 2) or an MCP tool error.
+func NormalizeConsensus(v string) (string, bool) {
+	switch c := strings.ToLower(strings.TrimSpace(v)); c {
+	case "":
+		return ConsensusStrict, true
+	case ConsensusStrict, ConsensusLenient, ConsensusOff:
+		return c, true
+	default:
+		return "", false
+	}
+}
+
+// effectiveConsensus canonicalizes a configured level to the one the filter will
+// actually run at, collapsing the unset and unrecognized cases to the strict
+// that consensusFloor fails safe to. Feeding its result into consensusFloor
+// makes that fail-safe structural instead of a fact restated in two switches,
+// and gives Summary.ConsensusLevel a value that always names the real behavior
+// rather than echoing back an invalid token.
+func effectiveConsensus(level string) string {
+	if c, ok := NormalizeConsensus(level); ok {
+		return c
+	}
+	return ConsensusStrict
+}
+
+// consensusFloor maps an effective level to the confidence floor
+// consensusSingletonAt tests against, and reports whether the filter runs at
+// all. An unrecognized level fails SAFE — it is treated as strict rather than
+// disabling the filter — so a value that somehow bypassed boundary validation
+// can never silently widen what reaches findings.json.
+func consensusFloor(level string) (floor string, enabled bool) {
+	switch c, ok := NormalizeConsensus(level); {
+	case ok && c == ConsensusOff:
+		return ConfHigh, false
+	case ok && c == ConsensusLenient:
+		return ConfMedium, true
+	case ok && c == ConsensusStrict:
+		return ConfHigh, true
+	default:
+		// Invalid token only (every valid level is cased above): fail safe to
+		// strict rather than disabling the filter.
+		return ConfHigh, true
+	}
+}
 
 // trustHighThreshold / trustLowThreshold gate the reconcile-time trust prior
 // (epic 35.9, consuming scorecard.TrustPriors from epic 35.8): a singleton
@@ -64,16 +163,33 @@ func panelReviewers(sources []Source) int {
 	return len(seen)
 }
 
-// consensusSingleton reports whether a reconciled finding is an uncorroborated
-// singleton — the drop candidate for the consensus filter. "Uncorroborated" is
-// confidence below HIGH: ConfidenceFor gives MEDIUM to a finding with fewer than two
-// distinct reviewers, and any finding the authority graph (epic 13.3) or the verify
-// stage promoted to HIGH/VERIFIED is corroborated and never dropped. Keying on
-// confidence rather than len(Reviewers) preserves authority promotion for free and
-// also drops a ConfLow untrusted-source singleton (reachable since epic 35.9's
-// demoteByTrust demotes low-trust ConfMedium singletons to ConfLow).
-func consensusSingleton(m Merged) bool {
-	return !ConfidenceAtOrAbove(m.Confidence, ConfHigh)
+// consensusSingletonAt reports whether a reconciled finding is an
+// uncorroborated singleton — the drop candidate for the consensus filter — with
+// the corroboration bar parameterized (epic 35.9.1): a finding is a drop
+// candidate when its confidence is BELOW floor.
+//
+// "Uncorroborated" is confidence below the floor rather than len(Reviewers):
+// ConfidenceFor gives MEDIUM to a finding with fewer than two distinct
+// reviewers, so keying on confidence preserves authority promotion (epic 13.3)
+// and verify promotion for free — anything raised to HIGH/VERIFIED is
+// corroborated and never dropped — and also drops a ConfLow untrusted-source
+// singleton (reachable since epic 35.9's demoteByTrust demotes low-trust
+// ConfMedium singletons to ConfLow).
+//
+// ConfHigh reproduces the strict/pre-35.9.1
+// predicate exactly; ConfMedium is the lenient bar, under which an
+// uncorroborated ConfMedium singleton is kept and only ConfLow is droppable.
+// The floor is the only thing a level moves — every exemption predicate is
+// applied unchanged by the caller at both levels. A floor naming no recognized
+// confidence tier reports false (nothing is a drop candidate): ConfidenceAtOrAbove
+// fails closed on such a floor and the negation would otherwise make EVERY
+// finding droppable, so the guard keeps a missed enabled check degrading to
+// strict instead of delete-everything.
+func consensusSingletonAt(m Merged, floor string) bool {
+	if confidenceRank[strings.ToUpper(strings.TrimSpace(floor))] == 0 {
+		return false
+	}
+	return !ConfidenceAtOrAbove(m.Confidence, floor)
 }
 
 // consensusExempt reports whether a singleton is too costly to drop as a probable

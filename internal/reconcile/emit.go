@@ -508,6 +508,16 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// only when nonzero, keeping report.md byte-identical on the common path.
 		fmt.Fprintf(&b, "- Authority promoted: %d\n", summary.AuthorityPromoted)
 	}
+	if summary.ConsensusLevel != "" {
+		// Rendered UNCONDITIONALLY (unlike the count below): the level is reachable
+		// with no flag at all — from a checked-in .atcr/config.yaml or a machine-wide
+		// ~/.config/atcr/registry.yaml — and a count of 0 cannot distinguish "the
+		// filter was off" from "the filter ran and dropped nothing". A report that
+		// omits it leaves no record of which configuration produced these artifacts.
+		// Guarded on non-empty only so a Summary built by an older embedder (or a
+		// hand-constructed one in a test) does not render an empty level.
+		fmt.Fprintf(&b, "- Consensus level: %s\n", summary.ConsensusLevel)
+	}
 	if summary.ConsensusFiltered > 0 {
 		// Surface epic-14.2 consensus filtering to report-only readers: uncorroborated
 		// singletons routed to the ambiguous sidecar. Rendered only when nonzero so
