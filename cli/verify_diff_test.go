@@ -331,6 +331,26 @@ func TestVerifyDiffCmd_StagedScansIndex(t *testing.T) {
 	require.Contains(t, stdout, "foo_test.go")
 }
 
+// --staged=false assigns the bool to turn the source OFF: cobra still marks the
+// flag Changed, so keying the source on Changed misreads an explicit opt-out as
+// naming the source. The parsed value, not Changed, decides.
+func TestVerifyDiffCmd_StagedFalseIsNotASource(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	stageTestDeletion(t)
+	gitSmell(t, "commit", "-q", "-m", "delete the test")
+
+	// Falls through to the --rev HEAD default instead of scanning the (clean) index.
+	code, stdout, _ := runSmell(t, "", "--staged=false")
+	require.Equal(t, 0, code)
+	require.Contains(t, stdout, "test_deleted")
+
+	// ...and does not count as a named source for mutual exclusion.
+	code, stdout, _ = runSmell(t, "", "--staged=false", "--rev", "HEAD")
+	require.Equal(t, 0, code)
+	require.Contains(t, stdout, "test_deleted")
+}
+
 func TestVerifyDiffCmd_StagedOnCleanIndexIsCleanWithNote(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
