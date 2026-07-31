@@ -103,6 +103,9 @@ func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 	// map, never an error, never a blocked caller.
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
 
 	assert.Empty(t, ResolveTrustPriors())
 }
@@ -110,6 +113,9 @@ func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 func TestResolveTrustPriors_ReadsTheDefaultStore(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
 
 	dir, err := DefaultDir()
 	require.NoError(t, err)
@@ -427,6 +433,9 @@ func TestTrustPriorsSince_NoWindowMatchesTrustPriors(t *testing.T) {
 func TestResolveTrustPriors_IsWindowed(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
 
 	dir, err := DefaultDir()
 	require.NoError(t, err)
@@ -493,6 +502,9 @@ func seedMonthlyStore(tb testing.TB, dir string, months, perMonth int, end time.
 func BenchmarkResolveTrustPriors(b *testing.B) {
 	b.Setenv("XDG_CONFIG_HOME", "")
 	b.Setenv("HOME", b.TempDir())
+	// See the AppData note on the tests above: Windows resolves the store
+	// through %AppData%, so the benchmark must redirect it too.
+	b.Setenv("AppData", b.TempDir())
 
 	dir, err := DefaultDir()
 	require.NoError(b, err)
