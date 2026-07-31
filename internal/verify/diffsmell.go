@@ -96,6 +96,15 @@ const (
 	maxSmellFeedbackRunes = maxSmellFeedbackItems * (maxSmellEvidenceRunes + maxSmellPathRunes + 64)
 )
 
+// maxSmells caps how many Smell structs one scan materializes. Each carries a
+// verbatim copy of an added line, so without a bound the result grows with the
+// input: a 1.9 MB diff of `+//nolint` lines produced 100,000 structs and ~15 MB
+// of rendered output. Only the array is bounded — see SmellSummary.Dropped.
+//
+// 1000 is far above any real diff (the analyzer's own corpus tops out in single
+// digits) and low enough that the rendered text stays readable.
+const maxSmells = 1000
+
 // Verdict values, mirroring upstream's summary.verdict.
 const (
 	VerdictClean    = "clean"
@@ -166,6 +175,14 @@ type SmellSummary struct {
 	Soft      int            `json:"soft"`
 	ByType    map[string]int `json:"by_type"`
 	Verdict   string         `json:"verdict"`
+	// Dropped is the number of smells detected but omitted from Smells because
+	// the scan hit maxSmells. Additive and omitempty: an untruncated result — the
+	// realistic case — carries no such key, so the documented JSON shape is
+	// unchanged for every consumer that never feeds a pathological diff.
+	//
+	// Hard, Soft, ByType and Verdict above are deliberately NOT capped: they count
+	// everything detected, so truncating the array can never soften a gate.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 // SmellResult is the full diff-smell output. AnalyzeDiff always materializes

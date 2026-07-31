@@ -827,3 +827,44 @@ func TestAnalyzeDiff_Corpus(t *testing.T) {
 		assert.True(t, seenTypes[ty], "smell type %q has no corpus entry", ty)
 	}
 }
+
+// TestAnalyzeDiff_SmellsAreCapped pins a bound on the number of Smell structs a
+// single scan materializes. Every added line matching a detector produces one
+// struct carrying a verbatim copy of that line, so an input of N suppression
+// lines yields N structs and a rendered output proportional to the input —
+// measured at 100,000 smells from a 1.9 MB diff of `+//nolint` lines.
+//
+// The counts must stay HONEST across the cap: only the smells ARRAY is bounded,
+// while Hard/Soft/ByType and the verdict continue to reflect everything detected.
+// A gate keying on the verdict must not be weakened by truncation, and a consumer
+// must be able to see that truncation happened rather than infer a short list.
+func TestAnalyzeDiff_SmellsAreCapped(t *testing.T) {
+	const n = 1500
+	var b strings.Builder
+	b.WriteString("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n")
+	fmt.Fprintf(&b, "@@ -1,1 +1,%d @@\n", n)
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "+\t//nolint:errcheck // %d\n", i)
+	}
+	res := AnalyzeDiff(b.String())
+
+	assert.Equal(t, maxSmells, len(res.Smells), "the smells array must be capped")
+	assert.Equal(t, n-maxSmells, res.Summary.Dropped, "the summary must report how many were dropped")
+
+	// Counts and verdict are derived from ALL detected smells, not the truncated
+	// array — otherwise truncation would silently soften the result.
+	assert.Equal(t, n, res.Summary.ByType[smellSuppression], "by_type must count every detected smell")
+	assert.Equal(t, n, res.Summary.Soft, "soft count must include dropped smells")
+	assert.Equal(t, VerdictSoftOnly, res.Summary.Verdict)
+}
+
+// TestAnalyzeDiff_UncappedResultReportsNoDrop is the negative control: an
+// ordinary scan must not gain a `dropped` field, so the JSON shape of every
+// realistic result is unchanged (omitempty keeps the key absent).
+func TestAnalyzeDiff_UncappedResultReportsNoDrop(t *testing.T) {
+	res := AnalyzeDiff("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n func F() {\n+\t//nolint:errcheck\n")
+	assert.Equal(t, 0, res.Summary.Dropped)
+	blob, err := json.Marshal(res)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(blob), "dropped", "an untruncated result must not carry the key at all")
+}

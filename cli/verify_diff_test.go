@@ -367,6 +367,71 @@ func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
 	require.Equal(t, 2, code, "--fail-on bogus must still be a usage error")
 }
 
+// --- input size cap -------------------------------------------------------
+
+// oversizeDiff builds a syntactically valid unified diff of at least n bytes.
+// The added/removed line mix is what makes it expensive: smellRelocated compares
+// every added line against every removed line in the same file, so scan cost is
+// O(added × removed) and grows quadratically with input size. Measured on the
+// unbounded reader: 1.46 MB took 1.82s, 0.72 MB took 0.55s — clean quadratic.
+func oversizeDiff(n int) string {
+	var b strings.Builder
+	b.WriteString("diff --git a/big_test.go b/big_test.go\n--- a/big_test.go\n+++ b/big_test.go\n@@ -1,1 +1,1 @@\n")
+	for b.Len() < n {
+		b.WriteString("-old line filler filler filler filler filler\n")
+		b.WriteString("+new line filler filler filler filler filler\n")
+	}
+	return b.String()
+}
+
+// TestVerifyDiffCmd_OversizeInputIsRefused pins a byte cap on all three diff
+// sources. The in-process caller of the SAME analyzer refuses input over
+// maxFixBytes (internal/verify/fixreview.go), so leaving this surface unbounded
+// reinstates exactly the exposure that cap exists to prevent — made worse by the
+// analyzer's quadratic relocation scan, which turns a large diff into minutes of
+// CPU rather than a large allocation.
+func TestVerifyDiffCmd_OversizeInputIsRefused(t *testing.T) {
+	big := oversizeDiff(3 << 20) // 3 MiB, comfortably over the cap
+
+	t.Run("stdin", func(t *testing.T) {
+		code, stdout, stderr := runSmell(t, big, "--diff", "-")
+		require.Equal(t, 2, code, "an oversize diff must be a usage error, not a multi-second scan")
+		require.Contains(t, stderr+stdout, "too large to scan")
+	})
+
+	t.Run("file", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "big.diff")
+		require.NoError(t, os.WriteFile(p, []byte(big), 0o644))
+		code, stdout, stderr := runSmell(t, "", "--diff", p)
+		require.Equal(t, 2, code)
+		require.Contains(t, stderr+stdout, "too large to scan")
+	})
+
+	t.Run("git", func(t *testing.T) {
+		isolate(t)
+		initGitRepo(t)
+		wd := requireTempWorkdir(t)
+		var b strings.Builder
+		for b.Len() < 3<<20 {
+			b.WriteString("// filler filler filler filler filler filler filler\n")
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(wd, "big.go"), []byte("package p\n"+b.String()), 0o644))
+		gitSmell(t, "add", "big.go")
+		code, stdout, stderr := runSmell(t, "", "--staged", "--repo", wd)
+		require.Equal(t, 2, code)
+		require.Contains(t, stderr+stdout, "too large to scan")
+	})
+}
+
+// TestVerifyDiffCmd_AtCapStillScans is the negative control: the cap must refuse
+// only what is genuinely oversize, not shrink the useful working range.
+func TestVerifyDiffCmd_AtCapStillScans(t *testing.T) {
+	code, stdout, _ := runSmell(t, oversizeDiff(256<<10), "--diff", "-")
+	require.Equal(t, 0, code, "a 256 KiB diff is an ordinary large commit and must still scan")
+	require.Contains(t, stdout, "verdict: ")
+}
+
 // AC3: an invalid --fail-on is rejected BEFORE any git process is spawned, so a
 // bad flag in a non-repo directory still exits 2 rather than failing on git.
 func TestVerifyDiffCmd_InvalidFailOnRejectedBeforeGit(t *testing.T) {
