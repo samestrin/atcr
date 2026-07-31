@@ -37,6 +37,81 @@ func TestConsensusLevel_OffKeepsEverySingleton(t *testing.T) {
 	isTrue(t, !inAmbiguousSingleton(res, "foo.go"), "off routes nothing to the consensus sidecar")
 }
 
+// sidecarPanel is a 3-reviewer panel that produces a genuine DBSCAN sidecar
+// before the consensus filter ever runs, which levelPanel deliberately does not:
+//
+//   - noise.go:1 — "a" and "b" report identical text (they merge into a dense
+//     cluster); "c" reports something unrelated at the same location, so DBSCAN
+//     isolates it as a true noise singleton.
+//   - gray.go:1 — "a" and "b" merge again; "c"'s text overlaps theirs at a
+//     Jaccard inside the gray band [0.4, 0.7), so the pair is recorded as an
+//     ambiguous gray pair rather than merged or isolated.
+//
+// Every finding is LOW/style so nothing is consensusExempt, and the two merged
+// pairs are ConfHigh so the level cannot touch them — the only level-dependent
+// entries in the sidecar are the consensus filter's own.
+func sidecarPanel() []Source {
+	return []Source{
+		{Name: "a", Findings: []Finding{
+			cf("LOW", "noise.go", 1, "token never expires unchecked here", "style", "a"),
+			cf("LOW", "gray.go", 1, "alpha beta gamma delta epsilon", "style", "a"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("LOW", "noise.go", 1, "token never expires unchecked here", "style", "b"),
+			cf("LOW", "gray.go", 1, "alpha beta gamma delta epsilon", "style", "b"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("LOW", "noise.go", 1, "completely different spurious claim", "style", "c"),
+			cf("LOW", "gray.go", 1, "alpha beta gamma zeta eta", "style", "c"),
+		}},
+	}
+}
+
+// TestConsensusLevel_OffPreservesDBSCANSidecar (AC1) pins the half of the off
+// contract that TestConsensusLevel_OffKeepsEverySingleton can only assert
+// vacuously: off stops consensus ROUTING, it does not empty the sidecar. Every
+// other fixture in this file yields zero DBSCAN output, so `!inAmbiguousSingleton`
+// there passes against an empty slice and a mutation wiping the sidecar under off
+// goes unnoticed. Here the sidecar is non-empty before the filter runs, and the
+// DBSCAN portion is asserted byte-for-byte identical to the strict run's.
+//
+// (Verified by mutation: injecting `if !filterEnabled { ambiguous = nil }` into
+// Reconcile fails this test on the gray-pair and noise assertions below.)
+func TestConsensusLevel_OffPreservesDBSCANSidecar(t *testing.T) {
+	strict := Reconcile(sidecarPanel(), Options{Consensus: ConsensusStrict})
+	off := Reconcile(sidecarPanel(), Options{Consensus: ConsensusOff})
+
+	// The consensus filter appends its own single-finding clusters AFTER every
+	// dedupe cluster's entries, so off's whole sidecar is exactly strict's
+	// DBSCAN-only prefix.
+	dbscanLen := len(off.Ambiguous)
+	isTrue(t, dbscanLen > 0, "the panel must produce a non-empty DBSCAN sidecar, or this test is vacuous")
+	isTrue(t, len(strict.Ambiguous) > dbscanLen, "strict must additionally sidecar its filtered singletons")
+	deepEq(t, off.Ambiguous, strict.Ambiguous[:dbscanLen],
+		"off must leave the DBSCAN portion of the sidecar untouched")
+
+	// Both DBSCAN shapes must actually be present — a gray pair (2 findings) and a
+	// true noise singleton (1 finding) — so neither can be wiped unnoticed.
+	grayPairs, noiseSingletons := 0, 0
+	for _, c := range off.Ambiguous {
+		switch len(c.Findings) {
+		case 1:
+			noiseSingletons++
+		case 2:
+			grayPairs++
+		}
+	}
+	isTrue(t, grayPairs > 0, "off keeps DBSCAN gray pairs in the sidecar")
+	isTrue(t, noiseSingletons > 0, "off keeps DBSCAN noise singletons in the sidecar")
+
+	eq(t, off.Summary.NoiseCount, strict.Summary.NoiseCount, "NoiseCount is level-independent")
+	isTrue(t, off.Summary.NoiseCount > 0, "the panel must produce real DBSCAN noise")
+	eq(t, off.Summary.AmbiguousCount, dbscanLen, "AmbiguousCount counts the surviving sidecar")
+	eq(t, off.Summary.AmbiguousHash, AmbiguousHash(strict.Ambiguous[:dbscanLen]),
+		"off's sidecar digest is the strict run's DBSCAN-only digest")
+	eq(t, off.Summary.ConsensusFiltered, 0, "off routes nothing to the sidecar itself")
+}
+
 // TestConsensusLevel_LenientKeepsMediumDropsLow (AC1): lenient raises the
 // kept-bar to MEDIUM — a MEDIUM singleton survives, a LOW one is still
 // sidecarred.
