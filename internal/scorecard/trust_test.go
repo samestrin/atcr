@@ -142,6 +142,22 @@ func TestTrustPriors_UnreadableDirYieldsEmptyMapNoError(t *testing.T) {
 	assert.Empty(t, rates)
 }
 
+func TestTrustPriors_PartialReadFailureYieldsEmptyMap(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: permission bits do not block root reads")
+	}
+	dir := t.TempDir()
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "bruce"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "greta"))
+	unreadable := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+
+	rates, err := TrustPriors(dir, 0)
+	require.NoError(t, err, "a best-effort read never returns an error, even on a mid-enumeration failure")
+	assert.Empty(t, rates, "a mid-enumeration read failure must not aggregate a truncated store")
+}
+
 func TestTrustPriors_ZeroDenominatorYieldsZeroNotNaN(t *testing.T) {
 	dir := t.TempDir()
 	appendN(t, dir, 1, "Ronin", "opus", 0, 0)
