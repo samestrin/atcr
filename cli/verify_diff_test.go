@@ -437,6 +437,17 @@ func TestVerifyDiffCmd_BadRepoIsUsageError(t *testing.T) {
 	require.Equal(t, 2, code)
 }
 
+// A nonexistent --repo must surface the SHARED normalizeRepoFlag wording that
+// `atcr verify` and `atcr reconcile` emit for the identical flag, not a raw git
+// message — one normalization, one error string (Epic 22.1).
+func TestVerifyDiffCmd_BadRepoUsesSharedMessage(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-a-repo")
+	code, _, stderr := runSmell(t, "", "--staged", "--repo", missing)
+	require.Equal(t, 2, code)
+	require.Contains(t, stderr, "does not exist or is not a directory")
+	require.Contains(t, stderr, missing)
+}
+
 // --- source conflicts (AC4) ----------------------------------------------
 
 func TestVerifyDiffCmd_SourcesAreMutuallyExclusive(t *testing.T) {
