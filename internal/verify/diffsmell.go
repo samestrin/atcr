@@ -497,9 +497,17 @@ func AnalyzeDiff(diff string) *SmellResult {
 		case strings.HasPrefix(line, "--- "):
 			lastOldPath = smellHeaderPath(line[4:])
 		case strings.HasPrefix(line, "@@"):
-			// hunk header — start line numbers are deliberately not tracked (no
-			// production consumer ever read them), but the declared LINE COUNTS are:
-			// they bound the body, so anything after it is trailer text, not content.
+			// Hunk header. BOTH halves are tracked, for different reasons:
+			//
+			//   - the declared LINE COUNTS bound the hunk body, so anything past it
+			//     is trailer text rather than content;
+			//   - the NEW-SIDE START seeds newLine, which becomes Smell.Line for the
+			//     added-line detectors. There is a production consumer:
+			//     `atcr verify diff` renders file:line, and a consuming gate pastes
+			//     that location straight into a technical-debt row.
+			//
+			// Line semantics are pinned in diffsmell_contract_test.go — see
+			// TestAnalyzeDiff_LineOnAddedLineSmellAcrossHunks and its siblings.
 			if m := smellHunkCountsRe.FindStringSubmatch(line); m != nil {
 				oldRemaining = smellHunkCount(m[1])
 				newRemaining = smellHunkCount(m[2])

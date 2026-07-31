@@ -230,8 +230,8 @@ func TestIsSmellTestPath(t *testing.T) {
 }
 
 // File attribution must survive parsing so a SOFT smell points at the right
-// file. (Line numbers are deliberately NOT tracked: no production consumer ever
-// read them — the quoted evidence line is sufficient to relocate a smell.)
+// file. Line numbers ARE tracked and are pinned separately — see
+// diffsmell_contract_test.go, which owns line semantics.
 func TestAnalyzeDiff_FileAttribution(t *testing.T) {
 	res := AnalyzeDiff(dsSuppression)
 	require.Len(t, res.Smells, 1)
