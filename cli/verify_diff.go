@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/verify"
@@ -62,6 +63,16 @@ func runVerifyDiff(cmd *cobra.Command, _ []string) error {
 	diff, source, err := readDiffInput(cmd)
 	if err != nil {
 		return err
+	}
+
+	// Evidence strings are built from raw diff bytes, and encoding/json
+	// silently substitutes U+FFFD for every invalid byte — a consumer keying on
+	// the evidence would not find the line in a latin-1 source file. Warn
+	// instead of corrupting silently (diagnostics stay on stderr, per the
+	// payload-only stdout guarantee).
+	if !utf8.ValidString(diff) {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %s contains invalid UTF-8; invalid bytes are replaced in the reported evidence\n", source)
 	}
 
 	// Two shapes are reported CLEAN rather than refused, both with a note on
