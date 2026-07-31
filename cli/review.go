@@ -322,7 +322,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 
 	// Resolve the gate threshold (--fail-on flag > project config > registry)
 	// before any review work; a bad configured value is a usage error (exit 2).
-	threshold, err := resolveGateThreshold(cmd)
+	// The consensus level rides the SAME tier load — `review` has no --consensus
+	// flag, so its value is purely configured — but comes back RAW: its enum
+	// check is deferred to the reconcile-only branch below, because a plain
+	// `atcr review` never reconciles and must not abort on a level it cannot
+	// use. A broken project config still fails here, via the gate.
+	threshold, rawConsensus, err := resolveGateAndRawConsensus(cmd)
 	if err != nil {
 		return err
 	}
@@ -394,7 +399,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// yet silently ignored on the one-shot path.
 	consensusLevel := ""
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
-		consensusLevel, err = resolveConsensusLevel("")
+		consensusLevel, err = validateConsensus(rawConsensus)
 		if err != nil {
 			return err
 		}

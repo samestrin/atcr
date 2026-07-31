@@ -507,6 +507,23 @@ func finishGate(raw string) (string, error) {
 	return validateGate(raw)
 }
 
+// resolveGateAndRawConsensus resolves both shared settings from a single tier
+// load for the surfaces that carry no --consensus flag (`review`), returning the
+// gate validated and the consensus level RAW. The enum check is left to the
+// caller because the consensus value is consumed only on a reconciling run: a
+// plain `atcr review` must not abort on a configured level it cannot influence,
+// while a broken project config still fails here through the gate.
+func resolveGateAndRawConsensus(cmd *cobra.Command) (threshold, rawConsensus string, err error) {
+	rawGate, rawConsensus, err := registry.ResolveSharedSettings(".", gateFlagValue(cmd), "")
+	if err != nil {
+		return "", "", usageError(err)
+	}
+	if threshold, err = finishGate(rawGate); err != nil {
+		return "", "", err
+	}
+	return threshold, rawConsensus, nil
+}
+
 // resolveGateAndConsensus resolves BOTH shared settings from a single load of
 // the config tiers, then applies each setting's own call-site validation in the
 // same order the two standalone resolvers would. A run that needs both — every
