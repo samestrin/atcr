@@ -380,6 +380,29 @@ func TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow(t *te
 	assert.Contains(t, rates, "lenny", "at minRuns=5 the 5 strict runs clear the floor")
 }
 
+// TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns constructs the
+// dangerous shape the epic's window discussion (trust.go, defaultTrustWindow)
+// names: a reviewer who clears the min-runs floor over ALL history but falls
+// below it inside the window — 25 strict runs eight months out, 5 inside — and
+// so silently loses trust exemption/demotion. The all-history read must keep
+// the reviewer while the windowed read drops it, proving the omission comes
+// from the window and not the floor.
+func TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	appendNAt(t, dir, 25, "Fading", "opus", 1, 1, now.AddDate(0, -8, 0)) // outside the 180d window
+	appendNAt(t, dir, 5, "Fading", "opus", 1, 1, now.AddDate(0, 0, -1))  // inside
+
+	allHistory, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, allHistory, "fading", "30 strict runs over all history clears the floor")
+
+	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.NotContains(t, windowed, "fading",
+		"only 5 strict runs inside the window — below DefaultTrustMinRuns, so the windowed read drops the reviewer")
+}
+
 // TestTrustPriorsSince_NoWindowMatchesTrustPriors pins the shared-code-path
 // guarantee: since<=0 is exactly the all-history read, so the two paths cannot
 // drift.
