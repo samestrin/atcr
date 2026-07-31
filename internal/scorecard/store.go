@@ -142,8 +142,15 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 	// drained and skipped rather than terminating the read: bufio.Scanner's
 	// ErrTooLong is terminal and cannot resume, so one oversized line in one month
 	// file would abort the whole leaderboard (ReadAll across every month). The
-	// buffer is sized to maxLineBytes so ReadSlice flags only a line past that cap.
-	br := bufio.NewReaderSize(f, maxLineBytes)
+	// buffer is capped at maxLineBytes so ReadSlice flags only a line past that
+	// cap, but sized to the file when the file is smaller: a line longer than the
+	// file cannot exist inside it, so the over-long-line semantics are unchanged
+	// while a ~KB-scale file no longer costs a flat 1 MiB allocation per read.
+	size := maxLineBytes
+	if st, serr := f.Stat(); serr == nil && st.Size()+1 < int64(size) {
+		size = int(st.Size()) + 1
+	}
+	br := bufio.NewReaderSize(f, size)
 	for {
 		frag, err := br.ReadSlice('\n')
 		if err == bufio.ErrBufferFull {
