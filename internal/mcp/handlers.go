@@ -287,24 +287,23 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// Gate precedence parity with the CLI: explicit fail_on argument > project
 	// config > user-global registry (no embedded default). Resolved and
 	// validated before any work (AC 04-03 Edge Case 5).
-	threshold := ""
-	if raw, err := registry.ResolveGateThreshold(e.root, in.FailOn); err != nil {
+	// Consensus precedence parity with the CLI: explicit consensus argument >
+	// project config > user-global registry, with "" mapping to strict. Both
+	// shared settings come from ONE tier load (the CLI does the same) so they can
+	// never be resolved from different tiers within a single reconcile.
+	rawGate, rawConsensus, err := registry.ResolveSharedSettings(e.root, in.FailOn, in.Consensus)
+	if err != nil {
 		return nil, ReconcileResult{}, err
-	} else if raw != "" {
-		t, err := reconcile.ParseSeverity(raw)
-		if err != nil {
-			return nil, ReconcileResult{}, err
+	}
+	threshold := ""
+	if rawGate != "" {
+		t, perr := reconcile.ParseSeverity(rawGate)
+		if perr != nil {
+			return nil, ReconcileResult{}, perr
 		}
 		threshold = t
 	}
 
-	// Consensus precedence parity with the CLI: explicit consensus argument >
-	// project config > user-global registry, with "" mapping to strict. Resolved
-	// and validated before any work, for the same fail-fast reason as the gate.
-	rawConsensus, err := registry.ResolveConsensus(e.root, in.Consensus)
-	if err != nil {
-		return nil, ReconcileResult{}, err
-	}
 	// Report the resolved raw value, not in.Consensus: an invalid level may have
 	// come from the config tier with no argument passed at all.
 	consensusLevel, ok := reclib.NormalizeConsensus(rawConsensus)

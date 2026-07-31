@@ -124,23 +124,20 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve the gate threshold (validated against the closed enum) BEFORE any
-	// I/O so a bad value fails fast as a usage error (exit 2). The --fail-on flag
-	// wins; absent it, the project config's fail_on is the default gate.
-	threshold, err := resolveGateThreshold(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Resolve the consensus filter level BEFORE any I/O for the same reason as
-	// the gate above: a bad --consensus (or a bad config consensus, which is not
-	// validated at load time) must fail fast as a usage error (exit 2) rather
-	// than after a reconcile has already written artifacts.
+	// The --consensus flag's own shape is validated first: it is pure argument
+	// checking with no I/O, and argument errors precede config errors.
 	explicitConsensus, err := consensusFlagValue(cmd)
 	if err != nil {
 		return err
 	}
-	consensusLevel, err := resolveConsensusLevel(explicitConsensus)
+
+	// Resolve the gate threshold and the consensus filter level (both validated
+	// against their closed enums) BEFORE any I/O so a bad value fails fast as a
+	// usage error (exit 2) rather than after a reconcile has already written
+	// artifacts. The --fail-on/--consensus flags win; absent them the project
+	// config, then the user-global registry, decide. Resolved together from ONE
+	// tier load so the two settings can never come from different tiers.
+	threshold, consensusLevel, err := resolveGateAndConsensus(gateFlagValue(cmd), explicitConsensus)
 	if err != nil {
 		return err
 	}
@@ -495,10 +492,41 @@ func resolveGateThreshold(cmd *cobra.Command) (string, error) {
 	if err != nil {
 		return "", usageError(err)
 	}
+	return finishGate(raw)
+}
+
+// finishGate applies the gate's call-site rules to an already-resolved raw
+// value: nothing configured is an opt-in no-op, anything else is enum-validated
+// here because config fail_on is not validated at load time. Shared by
+// resolveGateThreshold and resolveGateAndConsensus so the single-load path
+// cannot phrase the gate differently from the standalone one.
+func finishGate(raw string) (string, error) {
 	if raw == "" {
 		return "", nil // no configured gate → opt-in no-op
 	}
 	return validateGate(raw)
+}
+
+// resolveGateAndConsensus resolves BOTH shared settings from a single load of
+// the config tiers, then applies each setting's own call-site validation in the
+// same order the two standalone resolvers would. A run that needs both — every
+// reconcile write path does — must use this rather than calling the resolvers
+// back to back: two independent resolvers parse .atcr/config.yaml twice and,
+// under ATCR_REGISTRY_URL, issue two HTTP GETs, and since the registry tier is
+// swallowed best-effort one fetch can succeed while the other fails, resolving
+// the gate and the consensus level from different tiers within one run.
+func resolveGateAndConsensus(explicitGate, explicitConsensus string) (threshold, consensus string, err error) {
+	rawGate, rawConsensus, err := registry.ResolveSharedSettings(".", explicitGate, explicitConsensus)
+	if err != nil {
+		return "", "", usageError(err)
+	}
+	if threshold, err = finishGate(rawGate); err != nil {
+		return "", "", err
+	}
+	if consensus, err = validateConsensus(rawConsensus); err != nil {
+		return "", "", err
+	}
+	return threshold, consensus, nil
 }
 
 // consensusFlagValue reads the --consensus flag and trims it. An ABSENT flag is
