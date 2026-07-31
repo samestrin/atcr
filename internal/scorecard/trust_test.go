@@ -440,7 +440,21 @@ func TestResolveTrustPriors_IsWindowed(t *testing.T) {
 	dir, err := DefaultDir()
 	require.NoError(t, err)
 	outside := time.Now().Add(-defaultTrustWindow).AddDate(0, -2, 0)
+	// "Midwindow" sits 150 days back — inside the 180d window by roughly one
+	// month. It is the LOWER bound arm: "Recent" alone lands in the current month
+	// file, which overlaps any positive window, so without this reviewer the test
+	// passes for every window from 1ns to ~208d and pins only that SOME window
+	// exists. Narrowing defaultTrustWindow drops this reviewer's month file and
+	// fails the Contains below — the epic's stated HIGH risk (AC3) made
+	// executable.
+	//
+	// 150 days is a LITERAL, deliberately not derived from defaultTrustWindow: an
+	// anchor written as now-defaultTrustWindow+1mo moves with the constant, so
+	// halving the window would move the seed along with it and the test would
+	// stay green. The literal is what makes this a magnitude pin.
+	inside := time.Now().AddDate(0, 0, -150)
 	appendNAt(t, dir, DefaultTrustMinRuns, "Ancient", "opus", 1, 1, outside)
+	appendNAt(t, dir, DefaultTrustMinRuns, "Midwindow", "opus", 1, 1, inside)
 	appendNAt(t, dir, DefaultTrustMinRuns, "Recent", "opus", 1, 1, time.Now())
 
 	allHistory, err := TrustPriors(dir, DefaultTrustMinRuns)
@@ -449,6 +463,8 @@ func TestResolveTrustPriors_IsWindowed(t *testing.T) {
 
 	rates := ResolveTrustPriors()
 	assert.Contains(t, rates, "recent")
+	assert.Contains(t, rates, "midwindow",
+		"a reviewer one month inside defaultTrustWindow must survive the windowed read — this pins the window's MAGNITUDE, not just its existence")
 	assert.NotContains(t, rates, "ancient", "ResolveTrustPriors must not read month files outside defaultTrustWindow")
 }
 
