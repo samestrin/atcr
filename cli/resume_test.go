@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -492,6 +493,100 @@ func TestResume_ArgErrorsPrecedeConsensusConfigError(t *testing.T) {
 	require.Equal(t, 2, code)
 	require.Contains(t, out, "does not support --fresh",
 		"the flag misuse must be reported before the config-tier consensus error")
+}
+
+// appendProjectConfig appends extra YAML to the project config liveReviewConfig
+// already wrote, so a resume test can add a `consensus:` key without disturbing
+// the agent roster the resumed manifest must match.
+func appendProjectConfig(t *testing.T, extra string) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(".atcr", "config.yaml"), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
+	_, err = f.WriteString(extra)
+	require.NoError(t, err)
+}
+
+// countingMockProvider is liveMockProvider plus a request counter, so a test can
+// assert a resume failed BEFORE any agent was dispatched rather than merely that
+// it failed.
+func countingMockProvider(t *testing.T) (*httptest.Server, *int32) {
+	t.Helper()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = io.ReadAll(r.Body)
+		content := "CRITICAL|a.txt:1|Unchecked call|Guard it|security|15|evidence"
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// seedPanelSources writes a findings fixture into an existing review directory,
+// so a resumed re-reconcile has a real multi-reviewer panel to filter.
+func seedPanelSources(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, body := range files {
+		full := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte("# atcr-findings/v1\n"+body), 0o644))
+	}
+}
+
+// TestResume_HonorsConfiguredConsensusOff drives runResume end-to-end (not
+// resumeReconcile directly) so the resume path's OWN resolveConsensusLevel("")
+// call is exercised: with `consensus: off` in .atcr/config.yaml every
+// uncorroborated singleton on a 3-reviewer panel must survive the resumed
+// re-reconcile at consensus_filtered 0. Passing "" through to resumeReconcile
+// instead of the resolved level filters all three and fails this test.
+func TestResume_HonorsConfiguredConsensusOff(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// Every roster agent is already complete, so the resume performs no review
+	// work and the only observable is the re-reconcile it runs.
+	dir := writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce"}, []string{"bruce"})
+	seedPanelSources(t, dir, trustPanelSources())
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+
+	require.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"}, reconciledFiles(t, dir),
+		"off keeps every uncorroborated singleton on the resumed re-reconcile")
+	require.Equal(t, 0, consensusSummary(t, "2026-06-18_demo"),
+		"off must leave consensus_filtered at 0")
+}
+
+// TestResume_InvalidConfiguredConsensusFailsBeforeFanout pins the ORDERING the
+// resolve site's placement exists for: a bad configured level is a usage error
+// (exit 2) raised before the resumed fan-out dispatches its pending agent, not
+// after the agent has burned a provider call. Resolving inside resumeReconcile
+// instead would surface the same error only once the fan-out had completed.
+func TestResume_InvalidConfiguredConsensusFailsBeforeFanout(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv, calls := countingMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	appendProjectConfig(t, "consensus: bogus\n")
+
+	// robin is pending, so a resume that got past the consensus check WOULD
+	// dispatch it and hit the provider.
+	writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "bogus", "the usage error must echo the rejected value")
+	require.Zero(t, atomic.LoadInt32(calls),
+		"the invalid level must be rejected before the resumed fan-out dispatches an agent")
 }
 
 // TestResume_ChainedStageFlagsAreExit2 pins the fail-closed contract for the
