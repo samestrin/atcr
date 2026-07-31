@@ -208,6 +208,36 @@ func TestRunReconcile_ConsensusLevelLoggedOnFailure(t *testing.T) {
 		"the log must name the level that was in effect")
 }
 
+// TestRunReconcile_NonStrictScorecardWarn verifies the docs/scorecard.md
+// caution is surfaced in-run: a non-strict consensus level with scorecard
+// emission enabled warns naming --no-scorecard, because the relaxed run's
+// records durably depress the reviewer trust priors later strict runs read.
+// Strict runs and runs already passing --no-scorecard stay silent.
+func TestRunReconcile_NonStrictScorecardWarn(t *testing.T) {
+	t.Run("lenient warns", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "r")
+		assert.Contains(t, logBuf.String(), "--no-scorecard",
+			"a non-strict run with scorecard emission must name the documented mitigation")
+	})
+	t.Run("strict is silent", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "strict", "r")
+		assert.NotContains(t, logBuf.String(), "--no-scorecard")
+	})
+	t.Run("no-scorecard is silent", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", trustPanelSources())
+		var logBuf, errBuf bytes.Buffer
+		runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "--no-scorecard", "r")
+		assert.NotContains(t, logBuf.String(), "--no-scorecard")
+	})
+}
+
 // TestReconcileCmd_InProgressReviewRejected verifies a fan-out-managed review
 // (manifest.json present) without its completion signal (summary.json) is a
 // usage error rather than a silent partial reconcile.
