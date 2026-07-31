@@ -61,9 +61,9 @@ cannot feed the parser something that is not a plain unified diff.
 | `empty_catch` | soft | an empty or swallowing exception handler was added |
 | `stub_body` | soft | a stub / not-implemented / standalone TODO-or-FIXME body was added |
 
-`test_skipped` recognizes `t.Skip(`, `@pytest.mark.skip`, `it.skip(`,
-`test.skip(`, `describe.skip(`, `xit(`, `xdescribe(`, `@Ignore`, `@Disabled`, and
-`#[ignore]`. `suppression` recognizes `//nolint`, `@ts-ignore`,
+`test_skipped` recognizes `t.Skip(`, `t.Skipf(`, `@pytest.mark.skip`, `it.skip(`,
+`test.skip(`, `describe.skip(`, `context.skip(`, `xit(`, `xdescribe(`, `@Ignore`,
+`@Disabled`, and `#[ignore]`. `suppression` recognizes `//nolint`, `@ts-ignore`,
 `@ts-expect-error`, `eslint-disable`, `# type: ignore`, `# noqa`,
 `# pylint: disable`, `# pragma: no cover`, `# nosec`, `@SuppressWarnings`,
 `# rubocop:disable`, and `@phpstan-ignore`.
