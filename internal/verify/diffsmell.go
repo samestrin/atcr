@@ -529,8 +529,15 @@ func AnalyzeDiff(diff string) *SmellResult {
 	res.Summary.TestFiles = testCount
 	res.Summary.ImplFiles = implCount
 
+	// The single funnel every detector emits through, so the cap cannot be
+	// bypassed by adding a detector later. Counts are tallied BEFORE the cap is
+	// consulted: truncation bounds the reported array, never the verdict.
 	add := func(s Smell) {
-		res.Smells = append(res.Smells, s)
+		if len(res.Smells) < maxSmells {
+			res.Smells = append(res.Smells, s)
+		} else {
+			res.Summary.Dropped++
+		}
 		res.Summary.ByType[s.Type]++
 		if s.Severity == SeverityHard {
 			res.Summary.Hard++

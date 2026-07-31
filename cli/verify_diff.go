@@ -168,6 +168,38 @@ func smellGateError(res *verify.SmellResult, gate string) error {
 // a conflict message can name both offenders (AC4).
 var diffSourceFlags = []string{"diff", "staged", "rev"}
 
+// maxDiffBytes caps every diff source. Two reasons, and the second is the one
+// that bites:
+//
+//   - Memory. The in-process caller of the same analyzer refuses input over
+//     maxFixBytes = 256 KiB (internal/verify/fixreview.go); leaving this surface
+//     unbounded reinstated exactly the exposure that cap exists to prevent.
+//   - CPU. smellRelocated compares every added line against every removed line in
+//     the same file, so scan cost is O(added × removed). Measured: 0.72 MB → 0.55 s,
+//     1.46 MB → 1.82 s — clean quadratic. Unbounded input therefore buys minutes
+//     of CPU, not just a large allocation.
+//
+// The cap is 8× the in-process one because the inputs differ in kind: that one
+// bounds a MODEL-authored fix for a single finding, while this command scans
+// human-authored commits, where a large refactor is legitimate. 2 MiB clears any
+// realistic commit diff and bounds the worst-case scan to a few seconds.
+const maxDiffBytes = 2 << 20
+
+// readCapped reads at most maxDiffBytes from r, returning a usage error naming
+// source when the input is larger. It reads one byte past the cap rather than
+// stat-ing, so a stream (stdin, a pipe, a growing file) is bounded by the same
+// rule as a regular file and no size is trusted before the read.
+func readCapped(r io.Reader, source string) (string, error) {
+	b, err := io.ReadAll(io.LimitReader(r, maxDiffBytes+1))
+	if err != nil {
+		return "", usageError(fmt.Errorf("read diff from %s: %w", source, err))
+	}
+	if len(b) > maxDiffBytes {
+		return "", usageError(fmt.Errorf("%s is too large to scan: over the %d-byte cap", source, maxDiffBytes))
+	}
+	return string(b), nil
+}
+
 // readDiffInput resolves the single diff source and returns its text plus a
 // human label for the stderr notes. At most one source may be NAMED; naming none
 // falls through to --rev's HEAD default, so a bare `atcr verify diff` scans the
@@ -197,20 +229,23 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 	case cmd.Flags().Changed("diff"):
 		path, _ := cmd.Flags().GetString("diff")
 		if path == "-" {
-			b, rerr := io.ReadAll(cmd.InOrStdin())
-			if rerr != nil {
-				return "", "", usageError(fmt.Errorf("read diff from stdin: %w", rerr))
-			}
-			return string(b), "stdin", nil
+			text, rerr := readCapped(cmd.InOrStdin(), "stdin")
+			return text, "stdin", rerr
 		}
 		if strings.TrimSpace(path) == "" {
 			return "", "", usageError(errors.New("--diff must name a file, or \"-\" for stdin"))
 		}
-		b, rerr := os.ReadFile(path)
+		f, rerr := os.Open(path)
 		if rerr != nil {
 			return "", "", usageError(fmt.Errorf("read diff file: %w", rerr))
 		}
-		return string(b), path, nil
+		defer func() { _ = f.Close() }()
+		// Opened and read through the same capped reader as stdin rather than
+		// stat-ed: a size read before the read is both racy and wrong for anything
+		// that is not a regular file (a fifo or /dev/zero stats as 0 bytes and
+		// would then read forever).
+		text, rerr := readCapped(f, path)
+		return text, path, rerr
 
 	case staged:
 		out, gerr := gitText(cmd, "diff", "--cached")
@@ -265,7 +300,8 @@ func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	}
 	argv := append([]string{"-C", repo, sub, "--no-ext-diff", "--no-color"}, extra...)
 
-	var stdout, stderr bytes.Buffer
+	var stdout cappedBuffer
+	var stderr bytes.Buffer
 	gc := gitexec.CommandContextFn(cmd.Context(), argv...)
 	gc.Stdout = &stdout
 	gc.Stderr = &stderr
@@ -282,8 +318,40 @@ func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 		}
 		return "", usageError(fmt.Errorf("git %s in %s: %w", sub, repo, err))
 	}
+	if stdout.overflowed {
+		return "", usageError(fmt.Errorf("git %s in %s produced a diff too large to scan: over the %d-byte cap",
+			sub, repo, maxDiffBytes))
+	}
 	return stdout.String(), nil
 }
+
+// cappedBuffer is a bytes.Buffer that stops accumulating past maxDiffBytes and
+// records that it did. git's stdout is bounded as it ARRIVES rather than checked
+// afterwards, so an enormous diff never has to fit in memory first — the same
+// rule the file and stdin readers apply, enforced at the same point.
+//
+// Writes past the cap are discarded rather than erroring, so git is allowed to
+// finish and exit cleanly; reporting a truncated scan would be worse than
+// refusing, so the caller turns overflowed into a usage error.
+type cappedBuffer struct {
+	buf        bytes.Buffer
+	overflowed bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := maxDiffBytes - c.buf.Len(); room > 0 {
+		if len(p) <= room {
+			return c.buf.Write(p)
+		}
+		if _, err := c.buf.Write(p[:room]); err != nil {
+			return 0, err
+		}
+	}
+	c.overflowed = true
+	return len(p), nil // report a full write so git is not killed by EPIPE
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
 
 // renderSmellJSON writes the scan as the sole content of stdout, so a consumer
 // can pipe the stream straight into a parser. Diagnostics and the clean-input

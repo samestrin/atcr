@@ -46,6 +46,13 @@ than a silent precedence win. Git is always invoked with `--no-ext-diff` and
 `--no-color`, so a repo-local `diff.external` or a `color.ui = always` config
 cannot feed the parser something that is not a plain unified diff.
 
+**Size cap.** Every source refuses input over **2 MiB** with a "too large to
+scan" usage error (exit `2`). The relocation check compares each added line
+against each removed line in the same file, so scan cost grows quadratically with
+input size — an unbounded diff costs minutes of CPU, not just memory. The cap
+clears any realistic commit diff; split a larger one, or scan its commits
+individually with `--rev`.
+
 ## Smells
 
 | Smell | Severity | What it catches |
