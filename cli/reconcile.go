@@ -498,13 +498,27 @@ func resolveGateThreshold(cmd *cobra.Command) (string, error) {
 	return validateGate(raw)
 }
 
-// consensusFlagValue reads the --consensus flag and trims it, mirroring
-// gateFlagValue's semantic exactly: a whitespace-only value is unset (it falls
-// through to the config chain), never a usage error on one surface and a config
-// fallback on another.
+// consensusFlagValue reads the --consensus flag and trims it. An ABSENT flag is
+// unset — it falls through to the config chain — but an explicitly set empty or
+// whitespace-only value is a usage error (exit 2) naming the valid levels,
+// mirroring outputDirFromFlags' "--output-dir must not be empty".
+//
+// This deliberately does NOT mirror gateFlagValue, because the two are not
+// symmetric: an empty --fail-on inherits a gate that can only be stricter,
+// whereas an empty --consensus can inherit a WEAKER filter (a checked-in
+// .atcr/config.yaml or a machine-wide ~/.config/atcr/registry.yaml may say
+// off). Treating it as unset would let `atcr reconcile --consensus "$LEVEL"`
+// with an unset shell variable silently disable corroboration.
 func consensusFlagValue(cmd *cobra.Command) (string, error) {
-	v, _ := cmd.Flags().GetString("consensus") // STUB (RED)
-	return strings.TrimSpace(v), nil
+	if !cmd.Flags().Changed("consensus") {
+		return "", nil
+	}
+	v, _ := cmd.Flags().GetString("consensus")
+	if v = strings.TrimSpace(v); v == "" {
+		return "", usageError(fmt.Errorf("--consensus must not be empty: must be one of %s",
+			strings.Join(reclib.ConsensusLevels, ", ")))
+	}
+	return v, nil
 }
 
 // resolveConsensusLevel resolves the consensus filter level via the shared
