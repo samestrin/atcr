@@ -156,11 +156,20 @@ var diffSourceFlags = []string{"diff", "staged", "range", "rev"}
 // falls through to --rev's HEAD default, so a bare `atcr verify diff` scans the
 // last commit (upstream `diff-smell`'s own default shape).
 func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
+	// --staged is a bool: cobra marks it Changed on ANY assignment, so
+	// `--staged=false` (a scripted `--staged=$FLAG` with FLAG off) would read as
+	// naming the source. The parsed value, not Changed, decides both the
+	// mutual-exclusion roll call and the source switch below.
+	staged, _ := cmd.Flags().GetBool("staged")
 	var named []string
 	for _, f := range diffSourceFlags {
-		if cmd.Flags().Changed(f) {
-			named = append(named, "--"+f)
+		if !cmd.Flags().Changed(f) {
+			continue
 		}
+		if f == "staged" && !staged {
+			continue
+		}
+		named = append(named, "--"+f)
 	}
 	if len(named) > 1 {
 		return "", "", usageError(fmt.Errorf("%s and %s are mutually exclusive: name exactly one diff source",
@@ -186,7 +195,7 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 		}
 		return string(b), path, nil
 
-	case cmd.Flags().Changed("staged"):
+	case staged:
 		out, gerr := gitText(cmd, "diff", "--cached")
 		return out, "the staged changes", gerr
 
