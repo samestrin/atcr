@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,6 +135,9 @@ func TestDefaultProjectConfigYAML_SeedsConsensus(t *testing.T) {
 	out := DefaultProjectConfigYAML([]string{"a"})
 	assert.Contains(t, out, "consensus: "+DefaultConsensus)
 	assert.Equal(t, "strict", DefaultConsensus)
+	// The template default and the effective runtime default must be the same
+	// value — pinned against drift, not just both happening to read "strict".
+	assert.Equal(t, reclib.ConsensusStrict, DefaultConsensus)
 	assert.Contains(t, out, "# consensus:", "the levels-comment must document the knob")
 	assert.Contains(t, out, "lenient")
 	assert.Contains(t, out, "off")
