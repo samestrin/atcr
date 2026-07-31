@@ -33,17 +33,17 @@ package verify
 // and docs/diff-smell.md is its contract. A downstream tool that needs
 // diff-smell should call that command rather than copying this file a third
 // time — the header below is the standing evidence of what keeping two copies
-// aligned already costs. The exported result types are that surface's wire
+// aligned already costs. The result types (Smell, SmellFiles, SmellSummary,
+// SmellResult) and entry points (AnalyzeDiff, LooksLikeUnifiedDiff) carry
+// upstream's own names and snake_case json tags, so output from
+// `atcr verify diff --json` parses with a consumer written against upstream's
+// `diff-smell --json`. The exported result types are that surface's wire
 // format; changing their json tags is a breaking change (see the contract note
 // on SmellResult and TestSmellResult_GoldenJSON).
 //
 // Divergences from upstream, all deliberate:
 //
 //   - Detector HELPERS are unexported and prefixed `smell*` to fit this package.
-//     The result types (Smell, SmellFiles, SmellSummary, SmellResult) and entry
-//     points (AnalyzeDiff, LooksLikeUnifiedDiff) carry upstream's own names and
-//     snake_case json tags, so output from `atcr verify diff --json` parses with
-//     a consumer written against upstream's `diff-smell --json`.
 //   - Callers must pre-filter with LooksLikeUnifiedDiff. Upstream is always fed a
 //     real diff (a file path or a git rev); here a Finding.Fix is free-form, so
 //     non-diff content must be classified clean rather than parsed as one.
