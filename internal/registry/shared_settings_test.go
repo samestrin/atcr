@@ -138,3 +138,55 @@ func TestResolveSharedSettings_BrokenUserRegistrySkipped(t *testing.T) {
 	assert.Equal(t, "", failOn)
 	assert.Equal(t, "", consensus)
 }
+
+// TestLoadSharedTiers_UnreadableProjectConfigIsFatal pins the distinction an
+// os.Stat pre-check cannot make: "absent" and "unreachable" are different
+// answers. With .atcr/ permission-denied the stat itself fails, so the project
+// tier silently disappears and control passes to the user-global registry —
+// precisely the weakening path a consensus resolver must be most careful about.
+// Reaching the read instead surfaces the permission error as the failure it is.
+func TestLoadSharedTiers_UnreadableProjectConfigIsFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	root := t.TempDir()
+	dir := filepath.Join(root, ".atcr")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\nconsensus: lenient\n"), 0o644))
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	_, _, err := ResolveSharedSettings(root, "", "")
+	require.Error(t, err, "an unreadable project config must not be mistaken for an absent one")
+
+	_, err = ResolveConsensus(root, "")
+	require.Error(t, err, "the standalone consensus resolver must agree")
+	_, err = ResolveGateThreshold(root, "")
+	require.Error(t, err, "the standalone gate resolver must agree")
+}
+
+// TestLoadProjectConfig_MissingWrapsErrNotExist is what lets callers skip the
+// project tier on absence alone instead of pre-checking with os.Stat. The
+// message text is unchanged (AC 01-01 Error Scenario 1); only the sentinel is
+// now recoverable.
+func TestLoadProjectConfig_MissingWrapsErrNotExist(t *testing.T) {
+	_, err := LoadProjectConfig(filepath.Join(t.TempDir(), ".atcr", "config.yaml"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrNotExist, "absence must be recoverable via errors.Is")
+	assert.Contains(t, err.Error(), "no roster found", "the mandated message text must be preserved")
+}
+
+// TestLoadSharedTiers_MissingProjectConfigStillSkipped is the control for the
+// two tests above: absence stays a silent skip, so an unconfigured repo keeps
+// falling through to the user-global registry.
+func TestLoadSharedTiers_MissingProjectConfigStillSkipped(t *testing.T) {
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", failOn)
+	assert.Equal(t, "off", consensus)
+}
