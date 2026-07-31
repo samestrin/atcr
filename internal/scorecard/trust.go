@@ -52,7 +52,9 @@ const DefaultTrustMinRuns = 20
 // fire for a single dormant reviewer.
 //
 // Narrowing this value requires redoing the min-runs measurement above
-// (TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor guards the floor).
+// (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
+// against its own literal, so it can only catch a deliberate narrowing — it
+// cannot detect that 180d stopped being generous as the store ages).
 const defaultTrustWindow = 180 * 24 * time.Hour
 
 // TrustPriors reads the scorecard store at dir and returns each reviewer's

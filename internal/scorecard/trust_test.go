@@ -372,14 +372,14 @@ func TestResolveTrustPriors_IsWindowed(t *testing.T) {
 	assert.NotContains(t, rates, "ancient", "ResolveTrustPriors must not read month files outside defaultTrustWindow")
 }
 
-// TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor guards the epic's
+// TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement guards the epic's
 // highest risk (AC3): too narrow a window pushes a real reviewer below
 // DefaultTrustMinRuns, silently disabling trust exemption/demotion on four hot
 // paths. 180d was measured against the live store (2026-07-31: all 11 reviewers
 // clearing the floor held 113-120 strict runs at every window from 30d to 365d).
 // Narrowing this constant without redoing that measurement is the failure mode
 // this test exists to catch.
-func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
+func TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement(t *testing.T) {
 	assert.GreaterOrEqual(t, defaultTrustWindow, 180*24*time.Hour,
 		"defaultTrustWindow must stay >= 180d unless re-measured against a real store (epic 35.11 AC3)")
 }
