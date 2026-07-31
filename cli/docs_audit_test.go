@@ -878,6 +878,31 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 	}
 }
 
+// TestDiffSubcommandShadowingIsDocumented asserts the docs state the one
+// behaviour change adding `diff` under `verify` caused: cobra resolves a matching
+// child before positional args, so a review id or path literally named `diff` is
+// shadowed and reachable only as `atcr verify -- diff`.
+//
+// Verified: `atcr verify -- diff` reaches the parent and resolves
+// .atcr/reviews/diff, while `atcr verify diff` reaches the scanner. The trade-off
+// is recorded in CHANGELOG.md and in a code comment at cli/verify.go, but a user
+// whose review id happens to be `diff` reads the docs, not the source — and got a
+// diff scan with no hint why.
+func TestDiffSubcommandShadowingIsDocumented(t *testing.T) {
+	root := repoRootDir(t)
+	for _, name := range []string{"diff-smell.md", "verification.md"} {
+		b, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatalf("read docs/%s: %v", name, err)
+		}
+		if !strings.Contains(string(b), "atcr verify -- diff") {
+			t.Errorf("docs/%s does not document the `atcr verify -- diff` escape hatch; "+
+				"adding `diff` as a child of `verify` shadows a review id named `diff`, and that is "+
+				"reachable no other way", name)
+		}
+	}
+}
+
 // TestVerifyDiffOwnsFailOnAlone backs the probe above: it is only a valid version
 // discriminator while `--fail-on` is reachable on `verify diff` and NOT on its
 // parent. If a later change adds --fail-on to `verify`, the documented recipe
