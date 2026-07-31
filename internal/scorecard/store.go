@@ -393,12 +393,20 @@ func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([
 // (YYYY-MM) intersects the window [cutoff, now]. The month is treated as the
 // half-open instant range [first-of-month, first-of-next-month), so a month
 // ending exactly AT the cutoff holds no instant at or after it and is excluded,
-// while a month containing the cutoff (or now) overlaps. A month starting after
-// now is excluded — a future-stamped file cannot hold history inside the
-// window.
+// while a month containing the cutoff (or now) overlaps.
 //
-// An unparseable stem returns true: ReadSince fails open rather than dropping a
-// file it cannot place in time.
+// Both window edges are deliberately fail-CLOSED — this is a design decision,
+// not an oversight (epic 35.11 Risks accepted the clock-skew edge as LOW). A
+// month starting after now is excluded even though a future-stamped file (an
+// NTP-corrected clock) could cost the freshest month for the duration of the
+// skew. And a month is included only when its own instant range reaches the
+// cutoff, so a record stamped inside the window but filed one month early — the
+// split-write case monthsToScan exists for — is excluded with its file. Either
+// edge could be widened (fail-open) at the cost of reading more files; do so
+// only as an explicit re-decision, not by assuming this function is fail-open.
+//
+// An unparseable stem returns true: ONLY there does the window fail open — a
+// file that cannot be placed in time must not be dropped silently.
 func monthOverlapsWindow(stem string, cutoff, now time.Time) bool {
 	start, err := time.Parse("2006-01", stem)
 	if err != nil {
