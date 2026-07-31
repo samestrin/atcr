@@ -5,6 +5,7 @@ Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scoreca
 ### Added
 
 - `scorecard.ReadSince(dir, since, now, opts)` — a windowed counterpart to `ReadAll` that reads only the month files whose calendar month overlaps `[now-since, now]`. A month file outside the window is never opened. An unparseable month stem is read fail-open, and `since <= 0` delegates to `ReadAll`, so the windowed and all-history paths share one enumeration.
+- `reconcile.Summary.TrustPriorsResolved` (`trust_priors_resolved` in `summary.json`) records how many reviewers' trust priors the caller attached — `len(Options.TrustPriors)`. Because that map now comes from a windowed read, a reviewer with no runs inside the window drops out of it and silently loses trust exemption/demotion, while `atcr personas list --scores` still reads all history and reports that reviewer as healthy. This count is the only place that divergence is observable without an all-history read; a drop between runs is the signal. It is logged by `atcr reconcile`, `atcr review`, `atcr resume`, and the MCP `atcr_reconcile` handler. Observability only — it changes no finding, no confidence, and no exit code.
 
 ### Changed
 

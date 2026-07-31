@@ -210,6 +210,13 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// the level itself is recorded at resolve time above.
 	logger.Info("consensus filter applied", "filtered", res.Summary.ConsensusFiltered)
 
+	// The trust priors are read through a 180d window (scorecard.ResolveTrustPriors,
+	// epic 35.11), so a reviewer with no runs inside it silently drops out of the
+	// map and loses trust exemption/demotion. Nothing else surfaces that: the
+	// scorecard read discards its diagnostics and `atcr personas list --scores`
+	// still reads all history. A drop in this count between runs is the signal.
+	logger.Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved)
+
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))

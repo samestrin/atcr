@@ -280,6 +280,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			NoiseCount:            noiseCount,
 			ConsensusFiltered:     consensusFiltered,
 			ConsensusLevel:        consensusLevel,
+			TrustPriorsResolved:   len(opts.TrustPriors),
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
