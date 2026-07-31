@@ -612,6 +612,23 @@ func TestReadSince_MissingDirYieldsNilNoError(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// TestReadSince_ZeroNowDefaultsToNow pins the boundary defense: a zero now with
+// a positive window puts the whole window in year 1, so every real month file
+// is "after now" and the read silently comes back empty — indistinguishable
+// from an empty store, and routed through trustPriorsSince that is the epic's
+// own HIGH failure mode (trust silently disabled). A zero now is always a
+// caller mistake (time.Time{} zero value), so it defaults to time.Now() rather
+// than reading nothing.
+func TestReadSince_ZeroNowDefaultsToNow(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	writeMonthFile(t, dir, now.Format("2006-01"), recordLine(t, now.Format("2006-01-02T15:04:05Z")+"-now", "bruce"))
+
+	recs, err := ReadSince(dir, 180*24*time.Hour, time.Time{}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.NotEmpty(t, recs, "a zero now with a positive window must not silently read nothing")
+}
+
 func TestReadSince_IgnoresNonJSONLAndSubdirectories(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
