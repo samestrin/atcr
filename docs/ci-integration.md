@@ -34,7 +34,9 @@ Notes:
 | Scan completed, no `--fail-on` given (any verdict, including `hard`) | 0 |
 | Scan completed, verdict below the `--fail-on` level | 0 |
 | Verdict at/above the `--fail-on` level | 1 (gate failure) |
-| Usage error (invalid `--fail-on`, unreadable file, git failure, two named diff sources) | 2 |
+| Usage error (see the full list below) | 2 |
+
+Exit `2` covers: an invalid `--fail-on` value (an empty one is *unset*, not an error); an unreadable `--diff` file; a git failure; two named diff sources; input over the size cap ("too large to scan"); an explicitly empty `--rev` or `--diff` value; and a `--rev` value that starts with `-` — a deliberate argument-injection guard, since `--rev --output=/tmp/pwn` would otherwise make the scan write a file of the caller's choosing.
 
 Its `--fail-on` takes **verdicts** (`hard`, `soft`, `none`), not the severities `atcr review` and `atcr reconcile` take — disjoint value sets, so a severity passed here is a usage error rather than a silent misread. An empty diff and non-diff input both report `clean` and exit `0` with a note on stderr, so a pre-commit hook on a nothing-staged commit is a no-op rather than a spurious block. See [diff-smell.md](diff-smell.md).
 

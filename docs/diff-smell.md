@@ -142,7 +142,22 @@ exits `0` for every verdict — preserving drop-in parity with upstream
 |------|---------|
 | `0` | scan completed (any verdict, unless `--fail-on` tripped) |
 | `1` | the `--fail-on` gate tripped |
-| `2` | usage error: bad `--fail-on` value, unreadable file, git failure, or two named sources |
+| `2` | usage error — see the full list below |
+
+Exit `2` covers every one of:
+
+- a bad `--fail-on` value (an empty one is *unset*, not an error)
+- an unreadable `--diff` file, or a git failure
+- two named diff sources
+- input over the size cap ("too large to scan")
+- an explicitly empty `--rev` or `--diff` value
+- a `--rev` value that starts with `-`
+
+That last rule is a deliberate argument-injection guard: without it, `--rev
+--output=/tmp/pwn` alone would be enough to make the scan write a file of the
+caller's choosing. `--rev` is additionally passed after git's `--end-of-options`
+and before a `--` separator, so a path-shaped value such as `--rev foo.go` is
+refused rather than silently reinterpreted as a pathspec.
 
 An invalid `--fail-on` value is rejected **before any git process is spawned**. A
 tripped gate still prints the full report, so one run tells you both that it
