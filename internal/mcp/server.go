@@ -120,7 +120,12 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
 	r := &registrar{server: s, seen: map[string]bool{}}
 
 	registerTool(r, &mcpsdk.Tool{Name: ToolReview, Description: descReview}, e.handleReview)
-	registerTool(r, &mcpsdk.Tool{Name: ToolReconcile, Description: descReconcile}, e.handleReconcile)
+
+	reconcileSchema, err := reconcileInputSchema()
+	if err != nil {
+		return nil, nil, fmt.Errorf("building %s schema: %w", ToolReconcile, err)
+	}
+	registerTool(r, &mcpsdk.Tool{Name: ToolReconcile, Description: descReconcile, InputSchema: reconcileSchema}, e.handleReconcile)
 	registerTool(r, &mcpsdk.Tool{Name: ToolVerify, Description: descVerify}, e.handleVerify)
 	registerTool(r, &mcpsdk.Tool{Name: ToolDebate, Description: descDebate}, e.handleDebate)
 

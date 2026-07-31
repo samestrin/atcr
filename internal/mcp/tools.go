@@ -9,6 +9,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/verify"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // mcpAllowedFormats is the explicit allow list of report formats surfaced through
@@ -231,7 +232,7 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict)."
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."
@@ -276,6 +277,29 @@ func reportInputSchema() (*jsonschema.Schema, error) {
 			p.Enum[i] = f
 		}
 		p.Description = "output format (default " + report.FormatMarkdown + "): " + mcpReportFormatsText()
+	}
+	return s, nil
+}
+
+// reconcileInputSchema builds the atcr_reconcile input schema with the consensus
+// property constrained to the closed level vocabulary from reclib.ConsensusLevels
+// — the same source the CLI usage error and the handler's defense-in-depth check
+// read, so the three can never drift — so an invalid value is rejected by JSON
+// Schema validation before the handler runs. The handler check stays: it covers
+// the config/registry tiers, which no argument schema can see.
+func reconcileInputSchema() (*jsonschema.Schema, error) {
+	s, err := jsonschema.For[ReconcileArgs](nil)
+	if err != nil {
+		// Coverage exclusion: same unreachable-defense rationale as
+		// reportInputSchema above — jsonschema.For cannot fail for the
+		// statically-known ReconcileArgs struct.
+		return nil, fmt.Errorf("inferring atcr_reconcile schema: %w", err)
+	}
+	if p := s.Properties["consensus"]; p != nil {
+		p.Enum = make([]any, len(reclib.ConsensusLevels))
+		for i, l := range reclib.ConsensusLevels {
+			p.Enum[i] = l
+		}
 	}
 	return s, nil
 }

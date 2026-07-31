@@ -943,7 +943,6 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 	}{
 		{"", 3, "strict"},         // unset → strict
 		{"strict", 3, "strict"},   // explicit strict is identical
-		{"STRICT", 3, "strict"},   // case-insensitive, like fail_on
 		{"lenient", 0, "lenient"}, // MEDIUM singletons survive
 		{"off", 0, "off"},         // filter inert
 	}
@@ -967,21 +966,47 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 				"the result must echo the resolved consensus level")
 		})
 	}
+
+	// A case-variant is rejected by the input schema's enum — JSON Schema enums
+	// are exact-match, so the rejection fires before the handler's
+	// case-insensitive normalization can run. The MCP surface is stricter than
+	// the CLI flag here, and the description documents the lowercase vocabulary.
+	t.Run("level=STRICT rejected by schema enum", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+		msg := callErr(t, cs, ToolReconcile, map[string]any{"consensus": "STRICT"})
+		assert.Contains(t, msg, "enum",
+			"a case-variant must be rejected by the schema enum before the handler runs")
+	})
 }
 
 // TestReconcileHandler_InvalidConsensus (AC2): an out-of-vocabulary consensus
-// argument is a tool error naming the valid levels — the MCP analogue of the
-// CLI's exit-2 usage error.
+// value is a tool error naming the valid levels — the MCP analogue of the
+// CLI's exit-2 usage error. An explicit argument is rejected by the input
+// schema's enum before the handler runs; a bad config-tier value (which no
+// argument schema can see) still hits the handler's own check.
 func TestReconcileHandler_InvalidConsensus(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
 	reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
 
+	// Explicit argument: rejected by JSON Schema validation up front.
 	msg := callErr(t, cs, ToolReconcile, map[string]any{"consensus": "bogus"})
+	for _, level := range reclib.ConsensusLevels {
+		assert.Contains(t, msg, level, "the schema rejection must name every valid level")
+	}
+
+	// Config tier: the argument schema cannot see it, so the handler's
+	// defense-in-depth check fires with its own message.
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
+		[]byte("agents:\n  - greta\nconsensus: bogus\n"), 0o644))
+	msg = callErr(t, cs, ToolReconcile, map[string]any{})
 	assert.Contains(t, msg, "invalid consensus level")
 	for _, level := range reclib.ConsensusLevels {
-		assert.Contains(t, msg, level, "the tool error must name every valid level")
+		assert.Contains(t, msg, level, "the handler error must name every valid level")
 	}
 }
 
