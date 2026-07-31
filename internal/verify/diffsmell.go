@@ -652,11 +652,29 @@ func AnalyzeDiff(diff string) *SmellResult {
 			// joined: formatters emit `catch (e) {` and `}` on separate lines,
 			// and Go's \s matches the newline, so the pair reveals what a
 			// strictly per-line scan cannot.
-			pair := a.text
-			if i+1 < len(fc.added) {
-				pair = a.text + "\n" + fc.added[i+1].text
-			}
-			if smellEmptyCatchRe.MatchString(pair) {
+			//
+			// Two constraints keep the join from reporting a location that does not
+			// exist, both of which matter now that Line is a reported field:
+			//
+			//   - ADJACENCY. fc.added spans hunks, so an unguarded join splices
+			//     lines arbitrarily far apart — a `} catch (e) {` at new line 2 was
+			//     joined with a `}` from a hunk starting at new line 500, inventing
+			//     a smell for code that never existed.
+			//   - NO DOUBLE REPORT. The join must not re-report what the next
+			//     iteration will report on its own. When the NEXT line matches
+			//     unaided, it owns the finding; emitting here as well produced two
+			//     smells, the first citing a line containing no `catch` at all.
+			//
+			// What remains is the split-handler shape, where `catch` is on THIS
+			// line and only the closing brace is on the next — so a.line is the
+			// line that actually carries the keyword.
+			switch {
+			case smellEmptyCatchRe.MatchString(a.text):
+				add(Smell{Type: smellEmptyCatch, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
+			case i+1 < len(fc.added) &&
+				fc.added[i+1].line == a.line+1 &&
+				!smellEmptyCatchRe.MatchString(fc.added[i+1].text) &&
+				smellEmptyCatchRe.MatchString(a.text+"\n"+fc.added[i+1].text):
 				add(Smell{Type: smellEmptyCatch, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
 			}
 			if smellStubBodyRe.MatchString(a.text) {
