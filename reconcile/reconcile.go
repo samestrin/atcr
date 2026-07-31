@@ -99,8 +99,6 @@ type Summary struct {
 	// "strict with nothing to filter"). Always one of the canonical levels: an
 	// unset or unrecognized Options.Consensus is recorded as the strict the
 	// filter failed safe to, never echoed back raw.
-	//
-	// STUB (RED): never stamped. Populated in the next commit.
 	ConsensusLevel string `json:"consensus_level"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
@@ -228,7 +226,8 @@ func Reconcile(sources []Source, opts Options) Result {
 	// dropping it while restructuring this block is the regression this epic guards
 	// against explicitly (AC5).
 	consensusFiltered := 0
-	floor, filterEnabled := consensusFloor(opts.Consensus)
+	consensusLevel := effectiveConsensus(opts.Consensus)
+	floor, filterEnabled := consensusFloor(consensusLevel)
 	if filterEnabled && panel >= consensusMinReviewers {
 		kept := merged[:0]
 		for _, m := range merged {
@@ -265,6 +264,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			AmbiguousCount:        len(ambiguous),
 			NoiseCount:            noiseCount,
 			ConsensusFiltered:     consensusFiltered,
+			ConsensusLevel:        consensusLevel,
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),

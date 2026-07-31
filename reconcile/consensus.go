@@ -78,6 +78,19 @@ func NormalizeConsensus(v string) (string, bool) {
 	}
 }
 
+// effectiveConsensus canonicalizes a configured level to the one the filter will
+// actually run at, collapsing the unset and unrecognized cases to the strict
+// that consensusFloor fails safe to. Feeding its result into consensusFloor
+// makes that fail-safe structural instead of a fact restated in two switches,
+// and gives Summary.ConsensusLevel a value that always names the real behavior
+// rather than echoing back an invalid token.
+func effectiveConsensus(level string) string {
+	if c, ok := NormalizeConsensus(level); ok {
+		return c
+	}
+	return ConsensusStrict
+}
+
 // consensusFloor maps an effective level to the confidence floor
 // consensusSingletonAt tests against, and reports whether the filter runs at
 // all. An unrecognized level fails SAFE — it is treated as strict rather than
