@@ -327,18 +327,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
-	// Resolve the consensus level here too — beside the gate, before any review
-	// work — rather than at the in-process reconcile below. A bad configured
-	// value is a usage error (exit 2), and resolving it late would burn a full
-	// (paid) fan-out before failing. There is deliberately no --consensus flag on
-	// `review` (epic 35.9.1 scope), so this reads the config/registry tiers only;
-	// threading it at all is what keeps `consensus:` from being honored by
-	// `atcr reconcile` yet silently ignored on the one-shot path.
-	consensusLevel, err := resolveConsensusLevel("")
-	if err != nil {
-		return err
-	}
-
 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
 	// --min-severity here too, before any API calls, so a bad value fails fast.
 	verifyFlag, _ := cmd.Flags().GetBool("verify")
@@ -393,6 +381,24 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// resolved backend forward to the post-reconcile orchestration.
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
+
+	// Resolve the consensus level only when this run will actually reconcile —
+	// the one-shot in-process reconcile below is its only consumer, and a plain
+	// `atcr review` never reaches it, so a bad config-tier value must not abort
+	// a run the setting cannot influence. On a reconciling run it is still
+	// resolved before any review work: a bad configured value is a usage error
+	// (exit 2), and resolving it late would burn a full (paid) fan-out before
+	// failing. There is deliberately no --consensus flag on `review` (epic
+	// 35.9.1 scope), so this reads the config/registry tiers only; threading it
+	// at all is what keeps `consensus:` from being honored by `atcr reconcile`
+	// yet silently ignored on the one-shot path.
+	consensusLevel := ""
+	if threshold != "" || verifyFlag || debateFlag || autoFix {
+		consensusLevel, err = resolveConsensusLevel("")
+		if err != nil {
+			return err
+		}
+	}
 
 	// --dir (Sprint 35.0, Story 2) scopes a baseline scan to a subtree. Validate
 	// the path against the repo root here — before any payload work — so a bad path
