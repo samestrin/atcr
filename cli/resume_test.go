@@ -671,3 +671,28 @@ func TestResume_PrintsReviewSummary(t *testing.T) {
 	require.Contains(t, out, "Total elapsed:", "resume completion must print the end-of-review summary")
 	require.Contains(t, out, "Agents:", "resume summary includes the per-attempt agent line")
 }
+
+// TestResume_LogsResolvedConsensusLevel is the resume half of the resolve-time
+// consensus log cli/reconcile.go already emits: a resumed re-reconcile persists
+// reconciled artifacts under a level that can come entirely from config, and
+// consensus_filtered == 0 alone cannot distinguish "off" from "strict with
+// nothing to filter". Without the log the resumed run leaves no trace of which
+// configuration produced its artifacts.
+func TestResume_LogsResolvedConsensusLevel(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	appendProjectConfig(t, "consensus: off\n")
+
+	dir := writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce"}, []string{"bruce"})
+	seedPanelSources(t, dir, trustPanelSources())
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "consensus filter level resolved",
+		"the resume path must record the level it resolved")
+	require.Contains(t, out, "off", "the log must name the level that was in effect")
+}

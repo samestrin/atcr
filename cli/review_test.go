@@ -951,3 +951,31 @@ func TestRunReview_InvalidConsensusIgnoredWhenNoReconcile(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid consensus level",
 		"a reconciling run must fail fast on the bad config-tier value")
 }
+
+// TestReviewCmd_LogsResolvedConsensusLevel is the one-shot-review half of the
+// resolve-time consensus log that cli/reconcile.go already emits. The level can
+// come from ~/.config/atcr/registry.yaml with nothing local naming it, and
+// consensus_filtered == 0 cannot distinguish "off" from "strict with nothing to
+// filter" — so a review that reconciles under a non-default level must say so.
+// Logged at resolve time, not post-reconcile, so the record survives a run that
+// fails after the level was resolved.
+func TestReviewCmd_LogsResolvedConsensusLevel(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one")
+	appendProjectConfig(t, "consensus: off\n")
+
+	// --fail-on is what routes the run into the one-shot reconcile block (the
+	// only path that resolves a consensus level at all); CRITICAL keeps the
+	// MEDIUM-only finding from tripping the gate, so exit stays 0.
+	code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, stderr, "consensus filter level resolved",
+		"the one-shot review path must record the level it resolved")
+	require.Contains(t, stderr, "off", "the log must name the level that was in effect")
+}

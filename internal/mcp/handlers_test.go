@@ -1108,3 +1108,28 @@ func TestReconcileHandler_InvalidConsensusInConfig(t *testing.T) {
 	msg := callErr(t, cs, ToolReconcile, map[string]any{})
 	assert.Contains(t, msg, "bogus", "the error must echo the resolved value, not the empty argument")
 }
+
+// TestReconcileHandler_LogsResolvedConsensusLevel is the MCP half of the
+// resolve-time consensus log the CLI emits on every reconcile write path. The
+// level reaches an MCP-driven reconcile from .atcr/config.yaml or the
+// machine-wide registry with no argument passed at all, and the persisted
+// summary.json records only consensus_filtered (0 under both "off" and "strict
+// with nothing to filter") — so without this line a serve-mode operator cannot
+// tell which configuration produced the artifacts on disk.
+func TestReconcileHandler_LogsResolvedConsensusLevel(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	consensusPanelFixture(t, root)
+
+	var buf bytes.Buffer
+	logger, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger, root: root}
+
+	_, _, err = e.handleReconcile(context.Background(), nil, ReconcileArgs{Consensus: "off"})
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "consensus filter level resolved",
+		"the MCP reconcile path must record the level it resolved")
+	assert.Contains(t, buf.String(), "off", "the log must name the level that was in effect")
+}
