@@ -1,6 +1,8 @@
 package scorecard
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -380,4 +382,67 @@ func TestResolveTrustPriors_IsWindowed(t *testing.T) {
 func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
 	assert.GreaterOrEqual(t, defaultTrustWindow, 180*24*time.Hour,
 		"defaultTrustWindow must stay >= 180d unless re-measured against a real store (epic 35.11 AC3)")
+}
+
+// --- Windowed-read benchmark (epic 35.11 T3) ---
+
+// seedMonthlyStore writes perMonth reviewer records into each of the `months`
+// consecutive month files ending with the month of `end`, bypassing Append so
+// seeding is one write per month rather than one open per record.
+func seedMonthlyStore(tb testing.TB, dir string, months, perMonth int, end time.Time) {
+	tb.Helper()
+	require.NoError(tb, os.MkdirAll(dir, 0o700))
+	reviewers := []string{"archer", "brad", "dax", "greta", "kai", "mira", "otto", "pace", "ronin", "vera"}
+	for m := 0; m < months; m++ {
+		monthStart := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -m, 0)
+		var buf bytes.Buffer
+		for i := 0; i < perMonth; i++ {
+			// i%27 keeps every timestamp inside its own month, so each record lands
+			// in the file its stem names.
+			ts := monthStart.Add(time.Duration(i%27) * 24 * time.Hour)
+			rec := reviewer_(runIDAt(ts, fmt.Sprintf("bench-%d-%d", m, i)), reviewers[i%len(reviewers)], "opus", 3, 2)
+			line, err := json.Marshal(rec)
+			require.NoError(tb, err)
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
+		path := filepath.Join(dir, monthStart.Format("2006-01")+".jsonl")
+		require.NoError(tb, os.WriteFile(path, buf.Bytes(), 0o600))
+	}
+}
+
+// BenchmarkResolveTrustPriors measures the epic-35.11 win on a 24-month store:
+// `windowed_180d` is the shipped ResolveTrustPriors (reads ~7 month files),
+// `all_history_pre_35_11` is the pre-epic cost of the same call (TrustPriors at
+// DefaultTrustMinRuns, reading all 24). The store is pointed at a temp HOME via
+// os.UserConfigDir, the seam TestResolveTrustPriors_ReadsTheDefaultStore already
+// uses — so the literal exported call is benchmarked with no production-side
+// test hook. CI never passes -bench, so this costs nothing on a routine
+// `go test` run; it exists as a regression guard on the cost this epic bounds.
+func BenchmarkResolveTrustPriors(b *testing.B) {
+	b.Setenv("XDG_CONFIG_HOME", "")
+	b.Setenv("HOME", b.TempDir())
+
+	dir, err := DefaultDir()
+	require.NoError(b, err)
+	seedMonthlyStore(b, dir, 24, 500, time.Now())
+
+	b.Run("windowed_180d", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if len(ResolveTrustPriors()) == 0 {
+				b.Fatal("benchmark store must yield priors")
+			}
+		}
+	})
+
+	b.Run("all_history_pre_35_11", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			priors, _ := TrustPriors(dir, DefaultTrustMinRuns)
+			if len(priors) == 0 {
+				b.Fatal("benchmark store must yield priors")
+			}
+		}
+	})
 }
