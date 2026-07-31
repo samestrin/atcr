@@ -163,21 +163,20 @@ func panelReviewers(sources []Source) int {
 	return len(seen)
 }
 
-// consensusSingleton reports whether a reconciled finding is an uncorroborated
-// singleton — the drop candidate for the consensus filter. "Uncorroborated" is
-// confidence below HIGH: ConfidenceFor gives MEDIUM to a finding with fewer than two
-// distinct reviewers, and any finding the authority graph (epic 13.3) or the verify
-// stage promoted to HIGH/VERIFIED is corroborated and never dropped. Keying on
-// confidence rather than len(Reviewers) preserves authority promotion for free and
-// also drops a ConfLow untrusted-source singleton (reachable since epic 35.9's
-// demoteByTrust demotes low-trust ConfMedium singletons to ConfLow).
-func consensusSingleton(m Merged) bool {
-	return consensusSingletonAt(m, ConfHigh)
-}
-
-// consensusSingletonAt is consensusSingleton with the corroboration bar
-// parameterized (epic 35.9.1): a finding is a drop candidate when its
-// confidence is BELOW floor. ConfHigh reproduces the strict/pre-35.9.1
+// consensusSingletonAt reports whether a reconciled finding is an
+// uncorroborated singleton — the drop candidate for the consensus filter — with
+// the corroboration bar parameterized (epic 35.9.1): a finding is a drop
+// candidate when its confidence is BELOW floor.
+//
+// "Uncorroborated" is confidence below the floor rather than len(Reviewers):
+// ConfidenceFor gives MEDIUM to a finding with fewer than two distinct
+// reviewers, so keying on confidence preserves authority promotion (epic 13.3)
+// and verify promotion for free — anything raised to HIGH/VERIFIED is
+// corroborated and never dropped — and also drops a ConfLow untrusted-source
+// singleton (reachable since epic 35.9's demoteByTrust demotes low-trust
+// ConfMedium singletons to ConfLow).
+//
+// ConfHigh reproduces the strict/pre-35.9.1
 // predicate exactly; ConfMedium is the lenient bar, under which an
 // uncorroborated ConfMedium singleton is kept and only ConfLow is droppable.
 // The floor is the only thing a level moves — every exemption predicate is
