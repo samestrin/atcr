@@ -306,6 +306,15 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 // enumeration both ReadAll and ReadSince run on, so the all-history and
 // windowed paths cannot drift in how they treat a missing directory,
 // non-.jsonl entries, subdirectories, or a file that vanishes mid-read.
+//
+// A per-file read error (other than a file vanishing mid-enumeration, which is
+// skipped silently) is diagnosed and SKIPPED, not aborted: os.ReadDir returns
+// entries sorted ascending — chronological for YYYY-MM stems — so aborting
+// would silently discard every NEWER month, exactly the data the trust prior
+// depends on. The first such error is still returned alongside the surviving
+// records, so ReadAll callers that surface errors (cli/leaderboard.go) see the
+// failure while error-discarding callers (trustPriorsSince) get the fullest
+// possible record set.
 func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -315,6 +324,7 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 		return nil, fmt.Errorf("reading scorecard dir: %w", err)
 	}
 	var all []Record
+	var firstErr error
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
@@ -327,11 +337,15 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 			if os.IsNotExist(err) {
 				continue
 			}
-			return all, err
+			_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: skipping unreadable month file %s: %v\n", e.Name(), err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		all = append(all, recs...)
 	}
-	return all, nil
+	return all, firstErr
 }
 
 // ReadSince is the windowed counterpart to ReadAll: it reads only the month
