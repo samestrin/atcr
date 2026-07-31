@@ -415,6 +415,86 @@ func TestSubcommandValidationStopsAtInvocationEnd(t *testing.T) {
 	}
 }
 
+// TestPlaceholderRelaxationIsScopedToGroupAndLeaf asserts that stopping the
+// subcommand scan at a positional placeholder applies ONLY to a command that is
+// both a group and a leaf.
+//
+// `verify [id-or-path]` is the only such command in the tree: there a placeholder
+// IS the documented leaf usage, so nothing after it can be a subcommand. Every
+// other group (`debt`, `benchmark`, `config`, `models`, `personas`, `skill`) takes
+// no positional of its own, so a placeholder in its subcommand slot is the author
+// eliding the subcommand — and the next bare word must still be validated.
+// Applying the relaxation to all eight silently disarmed the auditor for seven of
+// them.
+func TestPlaceholderRelaxationIsScopedToGroupAndLeaf(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+
+	// The group-and-leaf case must stay relaxed (this is what the stop exists for).
+	for _, tokens := range [][]string{
+		{"verify", "[id-or-path]", "#", "verify", "a", "review"},
+		{"verify", "<review-id>", "--exec"},
+	} {
+		if errs := validateInvocationTokens(tokens, "fixture", cmds, groups); len(errs) != 0 {
+			t.Errorf("expected `atcr %s` to pass (verify is a group AND a leaf), got errors: %v",
+				strings.Join(tokens, " "), errs)
+		}
+	}
+
+	// A pure group must still catch a bogus subcommand after a placeholder.
+	for _, tokens := range [][]string{
+		{"debt", "<file>", "frobnicate"},
+		{"benchmark", "<sub>", "frobnicate"},
+	} {
+		errs := validateInvocationTokens(tokens, "fixture", cmds, groups)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err, "frobnicate") && strings.Contains(err, "not a subcommand") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected `atcr %s` to be rejected (%q takes no positional of its own, so the placeholder is its subcommand slot), got errors: %v",
+				strings.Join(tokens, " "), tokens[0], errs)
+		}
+	}
+}
+
+// TestFlagValidationHonorsInvocationEnd asserts the two halves of the auditor
+// agree about where an invocation ends. The subcommand scan stops at a shell
+// terminator; the flag loop must too, or a flag named inside a trailing comment
+// or belonging to a second command on the same line is attributed to the first
+// command and reported as a nonexistent flag.
+func TestFlagValidationHonorsInvocationEnd(t *testing.T) {
+	cmds := canonicalCommands()
+	groups := commandGroups()
+	for _, tokens := range [][]string{
+		// --checkpoint is real, but on `benchmark run`; here it is inside a comment.
+		{"verify", "<review-id>", "--exec", "#", "then", "run", "--checkpoint"},
+		// --checkpoint belongs to the SECOND invocation on the line, not to review.
+		{"review", "&&", "atcr", "benchmark", "run", "--checkpoint"},
+	} {
+		if errs := validateInvocationTokens(tokens, "fixture", cmds, groups); len(errs) != 0 {
+			t.Errorf("expected `atcr %s` to pass (flags past a shell terminator are not this command's), got errors: %v",
+				strings.Join(tokens, " "), errs)
+		}
+	}
+
+	// The truncation must not disarm flag validation before the terminator.
+	errs := validateInvocationTokens([]string{"review", "--checkpoint", "#", "note"}, "fixture", cmds, groups)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err, "checkpoint") && strings.Contains(err, "no such flag") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected `atcr review --checkpoint` to still be rejected before the comment, got errors: %v", errs)
+	}
+}
+
 // TestFlagValidationIsPerCommand asserts that a documented --flag is validated
 // against the flags reachable on the *specific* command it is attached to, not
 // the global union of every flag in the tree. `--checkpoint` is a `benchmark run`
