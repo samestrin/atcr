@@ -480,6 +480,20 @@ func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
 	}
 }
 
+// TestResume_ArgErrorsPrecedeConsensusConfigError: argument errors must precede
+// config errors. With a broken consensus value in .atcr/config.yaml, a flag
+// misuse like --fresh must be reported first — the user cannot act on the
+// config-tier consensus problem until the flag error is fixed.
+func TestResume_ArgErrorsPrecedeConsensusConfigError(t *testing.T) {
+	isolate(t)
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	code, out := execResume(t, "review", "--resume", "latest", "--fresh")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "does not support --fresh",
+		"the flag misuse must be reported before the config-tier consensus error")
+}
+
 // TestResume_ChainedStageFlagsAreExit2 pins the fail-closed contract for the
 // flags that parse on the shared review command but are read only by runReview's
 // fresh path: with --resume they must be rejected (exit 2) pointing at the
