@@ -428,6 +428,17 @@ func TestVerifyDiffCmd_SourcesAgreeByteForByte(t *testing.T) {
 // An interrupted scan is not a usage error: runMain cancels the root context
 // on SIGINT/SIGTERM, the git child dies, and the command must not report
 // exit 2 ("usage or configuration error") for what was simply a cancelled job.
+// Evidence text comes from string(b) of raw diff bytes; encoding/json silently
+// substitutes U+FFFD for invalid bytes, so an invalid-UTF-8 input would corrupt
+// the reported evidence with no diagnostic. The run must warn instead.
+func TestVerifyDiffCmd_InvalidUTF8InputWarnsOnStderr(t *testing.T) {
+	in := "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go\n" +
+		"@@ -1,1 +1,2 @@\n func Foo() int {\n+\t//nolint:errcheck caf\xff\xfe\n"
+	code, _, stderr := runSmell(t, in, "--diff", "-")
+	require.Equal(t, 0, code)
+	require.Contains(t, stderr, "UTF-8")
+}
+
 func TestVerifyDiffCmd_CancelledContextIsNotUsageError(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
