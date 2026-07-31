@@ -36,6 +36,14 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
 	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
+	// `diff` is a SUBCOMMAND of a command that is also a leaf (verify takes an
+	// optional [id-or-path]). Cobra resolves a matching child before positional
+	// args, so a review id or path literally named "diff" is shadowed here and
+	// must be passed as `atcr verify -- diff` (stripFlags terminates the child
+	// search at "--"). Accepted deliberately: no real review id is "diff", and
+	// grouping the diff scanner under `verify` keeps every adversarial surface
+	// under one noun.
+	cmd.AddCommand(newVerifyDiffCmd())
 	return cmd
 }
 

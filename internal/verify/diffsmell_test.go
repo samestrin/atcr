@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,26 +156,26 @@ func TestAnalyzeDiff_Verdicts(t *testing.T) {
 		verdict string
 		types   []string
 	}{
-		{"impl only is clean", dsImplOnly, smellVerdictClean, nil},
-		{"test only is hard", dsTestOnlyClean, smellVerdictHard, []string{smellTestOnly}},
+		{"impl only is clean", dsImplOnly, VerdictClean, nil},
+		{"test only is hard", dsTestOnlyClean, VerdictHard, []string{smellTestOnly}},
 		// dsTestOnly both touches only tests AND drops an assertion, so it trips both
 		// HARD detectors at once.
-		{"test only plus assertion loss trips both", dsTestOnly, smellVerdictHard,
+		{"test only plus assertion loss trips both", dsTestOnly, VerdictHard,
 			[]string{smellTestOnly, smellWeakenedAssertion}},
-		{"weakened assertion is hard", dsWeakenedAssertion, smellVerdictHard, []string{smellWeakenedAssertion}},
-		{"suppression is soft", dsSuppression, smellVerdictSoftOnly, []string{smellSuppression}},
-		{"stub body is soft", dsStubBody, smellVerdictSoftOnly, []string{smellStubBody}},
-		{"crypto panic is clean", dsCryptoPanic, smellVerdictClean, nil},
-		{"trailing TODO comment is clean", dsTrailingTODO, smellVerdictClean, nil},
-		{"not-implemented panic is soft", dsNotImplPanic, smellVerdictSoftOnly, []string{smellStubBody}},
-		{"empty catch is soft", dsEmptyCatch, smellVerdictSoftOnly, []string{smellEmptyCatch}},
-		{"multi-line empty catch is soft", dsEmptyCatchMultiline, smellVerdictSoftOnly, []string{smellEmptyCatch}},
-		{"empty diff is clean", "", smellVerdictClean, nil},
-		{"prose is clean", "just change the return value to 1", smellVerdictClean, nil},
+		{"weakened assertion is hard", dsWeakenedAssertion, VerdictHard, []string{smellWeakenedAssertion}},
+		{"suppression is soft", dsSuppression, VerdictSoftOnly, []string{smellSuppression}},
+		{"stub body is soft", dsStubBody, VerdictSoftOnly, []string{smellStubBody}},
+		{"crypto panic is clean", dsCryptoPanic, VerdictClean, nil},
+		{"trailing TODO comment is clean", dsTrailingTODO, VerdictClean, nil},
+		{"not-implemented panic is soft", dsNotImplPanic, VerdictSoftOnly, []string{smellStubBody}},
+		{"empty catch is soft", dsEmptyCatch, VerdictSoftOnly, []string{smellEmptyCatch}},
+		{"multi-line empty catch is soft", dsEmptyCatchMultiline, VerdictSoftOnly, []string{smellEmptyCatch}},
+		{"empty diff is clean", "", VerdictClean, nil},
+		{"prose is clean", "just change the return value to 1", VerdictClean, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := analyzeDiff(tc.diff)
+			res := AnalyzeDiff(tc.diff)
 			require.NotNil(t, res)
 			assert.Equal(t, tc.verdict, res.Summary.Verdict)
 			for _, want := range tc.types {
@@ -187,10 +188,10 @@ func TestAnalyzeDiff_Verdicts(t *testing.T) {
 // weakened_assertion must fire even though the impl file in the same diff keeps
 // test_only from firing — the two detectors are independent.
 func TestAnalyzeDiff_WeakenedAssertionIndependentOfTestOnly(t *testing.T) {
-	res := analyzeDiff(dsWeakenedAssertion)
+	res := AnalyzeDiff(dsWeakenedAssertion)
 	assert.NotContains(t, res.Summary.ByType, smellTestOnly, "impl file present, test_only must not fire")
 	assert.Equal(t, 1, res.Summary.ByType[smellWeakenedAssertion])
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 }
 
 // isTestPath must be precise: "contest.go" and "latest_results.go" are NOT tests.
@@ -229,10 +230,10 @@ func TestIsSmellTestPath(t *testing.T) {
 }
 
 // File attribution must survive parsing so a SOFT smell points at the right
-// file. (Line numbers are deliberately NOT tracked: no production consumer ever
-// read them — the quoted evidence line is sufficient to relocate a smell.)
+// file. Line numbers ARE tracked and are pinned separately — see
+// diffsmell_contract_test.go, which owns line semantics.
 func TestAnalyzeDiff_FileAttribution(t *testing.T) {
-	res := analyzeDiff(dsSuppression)
+	res := AnalyzeDiff(dsSuppression)
 	require.Len(t, res.Smells, 1)
 	assert.Equal(t, "internal/verify/select.go", res.Smells[0].File)
 	assert.Equal(t, []string{"internal/verify/select.go"}, res.Files.Impl)
@@ -244,13 +245,13 @@ func TestAnalyzeDiff_FileAttribution(t *testing.T) {
 // would also pass if the deletion detector were removed entirely (an ordinary
 // modification of the same file scores hard + test_only too).
 func TestAnalyzeDiff_TestFileDeletionIsHard(t *testing.T) {
-	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\ndeleted file mode 100644\n--- a/x_test.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	res := AnalyzeDiff("diff --git a/x_test.go b/x_test.go\ndeleted file mode 100644\n--- a/x_test.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
 
 	// Negative control: MODIFYING the same test file must not produce
 	// test_deleted — only an outright deletion may.
-	res = analyzeDiff(dsTestOnly)
+	res = AnalyzeDiff(dsTestOnly)
 	assert.NotContains(t, res.Summary.ByType, smellTestDeleted, "a modified test file is not a deletion")
 }
 
@@ -258,17 +259,17 @@ func TestAnalyzeDiff_TestFileDeletionIsHard(t *testing.T) {
 // parsed — an executor is free to emit either.
 func TestAnalyzeDiff_CRLFAndFencedDiffs(t *testing.T) {
 	crlf := "diff --git a/x.go b/x.go\r\n--- a/x.go\r\n+++ b/x.go\r\n@@ -1 +1,2 @@\r\n+\t// TODO: x\r\n"
-	assert.True(t, looksLikeUnifiedDiff(crlf))
-	assert.Equal(t, smellVerdictSoftOnly, analyzeDiff(crlf).Summary.Verdict)
+	assert.True(t, LooksLikeUnifiedDiff(crlf))
+	assert.Equal(t, VerdictSoftOnly, AnalyzeDiff(crlf).Summary.Verdict)
 
 	fenced := "```diff\n" + dsTestOnly + "```\n"
-	assert.True(t, looksLikeUnifiedDiff(fenced))
-	assert.Equal(t, smellVerdictHard, analyzeDiff(fenced).Summary.Verdict)
+	assert.True(t, LooksLikeUnifiedDiff(fenced))
+	assert.Equal(t, VerdictHard, AnalyzeDiff(fenced).Summary.Verdict)
 }
 
 // A rename-style header with no +++ line still attributes to the b/ path.
 func TestAnalyzeDiff_GitHeaderFallbackPath(t *testing.T) {
-	res := analyzeDiff("diff --git a/foo/bar.go b/foo/bar.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
+	res := AnalyzeDiff("diff --git a/foo/bar.go b/foo/bar.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
 	require.Len(t, res.Smells, 1)
 	assert.Equal(t, "foo/bar.go", res.Smells[0].File)
 }
@@ -277,17 +278,17 @@ func TestAnalyzeDiff_GitHeaderFallbackPath(t *testing.T) {
 // side is located by its separator, not by whitespace splitting, so the header
 // and the +++ line agree on ONE file entry instead of two.
 func TestAnalyzeDiff_GitHeaderSpacePath(t *testing.T) {
-	res := analyzeDiff("diff --git a/my test_helper.go b/my test_helper.go\n--- a/my test_helper.go\n+++ b/my test_helper.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
+	res := AnalyzeDiff("diff --git a/my test_helper.go b/my test_helper.go\n--- a/my test_helper.go\n+++ b/my test_helper.go\n@@ -1,1 +1,2 @@\n+\t// TODO: later\n")
 	assert.Len(t, res.Files.Impl, 1, "space path must yield exactly one file entry, got %v", res.Files.Impl)
 	assert.Equal(t, "my test_helper.go", res.Files.Impl[0])
 }
 
-// looksLikeUnifiedDiff is the gate's pre-filter: free-form fix prose must not be
+// LooksLikeUnifiedDiff is the gate's pre-filter: free-form fix prose must not be
 // mistaken for a diff (clarification Q1 — non-diff fixes pass through as clean).
 func TestLooksLikeUnifiedDiff(t *testing.T) {
 	for _, s := range []string{dsImplOnly, dsTestOnly, dsEmptyCatch,
 		"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-a\n+b\n"} {
-		assert.True(t, looksLikeUnifiedDiff(s), "expected diff: %.40s", s)
+		assert.True(t, LooksLikeUnifiedDiff(s), "expected diff: %.40s", s)
 	}
 	for _, s := range []string{
 		"",
@@ -297,19 +298,19 @@ func TestLooksLikeUnifiedDiff(t *testing.T) {
 		"func pick() int {\n\treturn 1\n}",
 		"+ add a nil check before the deref", // prose starting with '+', no headers
 	} {
-		assert.False(t, looksLikeUnifiedDiff(s), "expected NON-diff: %q", s)
+		assert.False(t, LooksLikeUnifiedDiff(s), "expected NON-diff: %q", s)
 	}
 }
 
 // The evidence string the gate feeds back to the executor must name every smell
 // type and stay single-line-safe for prompt interpolation.
 func TestSmellFeedback(t *testing.T) {
-	res := analyzeDiff(dsWeakenedAssertion)
+	res := AnalyzeDiff(dsWeakenedAssertion)
 	fb := smellFeedback(res)
 	assert.Contains(t, fb, smellWeakenedAssertion)
 	assert.NotContains(t, fb, "\n", "feedback must be flattened for prompt interpolation")
 
-	assert.Equal(t, "", smellFeedback(analyzeDiff(dsImplOnly)), "clean verdict yields no feedback")
+	assert.Equal(t, "", smellFeedback(AnalyzeDiff(dsImplOnly)), "clean verdict yields no feedback")
 	assert.Equal(t, "", smellFeedback(nil))
 }
 
@@ -318,7 +319,7 @@ func TestSmellFeedback(t *testing.T) {
 // otherwise a crafted fix inflates every retry's token cost.
 func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
 	long := strings.Repeat("x", maxSmellEvidenceRunes*3)
-	fb := smellFeedback(analyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +1,2 @@\n+//nolint " + long + "\n"))
+	fb := smellFeedback(AnalyzeDiff("diff --git a/x.go b/x.go\n@@ -1 +1,2 @@\n+//nolint " + long + "\n"))
 	assert.Contains(t, fb, smellSuppression, "the actionable type name is never truncated")
 	assert.Less(t, len(fb), maxSmellEvidenceRunes*2, "evidence must be truncated")
 	assert.Contains(t, fb, "...")
@@ -328,7 +329,7 @@ func TestSmellFeedback_BoundsEvidenceAndItemCount(t *testing.T) {
 	for i := 0; i < maxSmellFeedbackItems*3; i++ {
 		many.WriteString("+\t// TODO: item\n")
 	}
-	fb = smellFeedback(analyzeDiff(many.String()))
+	fb = smellFeedback(AnalyzeDiff(many.String()))
 	assert.Equal(t, maxSmellFeedbackItems, strings.Count(fb, smellStubBody), "listed items must be capped")
 	want := fmt.Sprintf("(+%d more)", maxSmellFeedbackItems*3-maxSmellFeedbackItems)
 	assert.Contains(t, fb, want, "the dropped remainder must be reported, never silently truncated")
@@ -353,8 +354,8 @@ func TestAnalyzeDiff_RelocatedLineIsClean(t *testing.T) {
  	return 2
  }
 `
-	res := analyzeDiff(relocated)
-	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
+	res := AnalyzeDiff(relocated)
+	assert.Equal(t, VerdictClean, res.Summary.Verdict)
 	assert.Empty(t, res.Smells)
 
 	reindented := `diff --git a/internal/verify/select.go b/internal/verify/select.go
@@ -367,15 +368,15 @@ func TestAnalyzeDiff_RelocatedLineIsClean(t *testing.T) {
  	return 1
  }
 `
-	res = analyzeDiff(reindented)
-	assert.Equal(t, smellVerdictClean, res.Summary.Verdict)
+	res = AnalyzeDiff(reindented)
+	assert.Equal(t, VerdictClean, res.Summary.Verdict)
 	assert.Empty(t, res.Smells)
 }
 
 // Relocation suppression must not hide a genuinely NEW shortcut added alongside
 // the moved line: only the line with no removed-lines twin is reported.
 func TestAnalyzeDiff_RelocationDoesNotHideNewSmell(t *testing.T) {
-	res := analyzeDiff(`diff --git a/internal/verify/select.go b/internal/verify/select.go
+	res := AnalyzeDiff(`diff --git a/internal/verify/select.go b/internal/verify/select.go
 --- a/internal/verify/select.go
 +++ b/internal/verify/select.go
 @@ -10,3 +10,4 @@
@@ -386,7 +387,7 @@ func TestAnalyzeDiff_RelocationDoesNotHideNewSmell(t *testing.T) {
  	return 1
  }
 `)
-	assert.Equal(t, smellVerdictSoftOnly, res.Summary.Verdict)
+	assert.Equal(t, VerdictSoftOnly, res.Summary.Verdict)
 	require.Len(t, res.Smells, 1)
 	assert.Equal(t, "//nolint:errcheck // new one", res.Smells[0].Evidence)
 }
@@ -394,9 +395,9 @@ func TestAnalyzeDiff_RelocationDoesNotHideNewSmell(t *testing.T) {
 // smellTypes returns the deterministic, sorted, deduplicated type list used for
 // the FixReview annotation.
 func TestSmellTypes(t *testing.T) {
-	res := analyzeDiff(dsSuppression + strings.ReplaceAll(dsStubBody, "select.go", "other.go"))
+	res := AnalyzeDiff(dsSuppression + strings.ReplaceAll(dsStubBody, "select.go", "other.go"))
 	assert.Equal(t, []string{smellStubBody, smellSuppression}, smellTypes(res))
-	assert.Empty(t, smellTypes(analyzeDiff(dsImplOnly)))
+	assert.Empty(t, smellTypes(AnalyzeDiff(dsImplOnly)))
 	assert.Empty(t, smellTypes(nil))
 }
 
@@ -455,9 +456,9 @@ func TestAnalyzeDiff_TestSkipIsHard(t *testing.T) {
 		{"rust ignore", "diff --git a/tests/it.rs b/tests/it.rs\n--- a/tests/it.rs\n+++ b/tests/it.rs\n@@ -1 +1,2 @@\n+#[ignore]\n" + dsImplOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := analyzeDiff(tc.diff)
+			res := AnalyzeDiff(tc.diff)
 			assert.Contains(t, res.Summary.ByType, smellTestSkipped, "skip must be detected in %v", res.Summary.ByType)
-			assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+			assert.Equal(t, VerdictHard, res.Summary.Verdict)
 		})
 	}
 }
@@ -476,7 +477,7 @@ func TestAnalyzeDiff_TestSkipNegativeControls(t *testing.T) {
 		{"identifier containing skip", "diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1 +1,2 @@\n+\trequire.Equal(t, 1, unit.skipped())\n" + dsImplOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := analyzeDiff(tc.diff)
+			res := AnalyzeDiff(tc.diff)
 			assert.NotContains(t, res.Summary.ByType, smellTestSkipped, "must not flag: %v", res.Summary.ByType)
 		})
 	}
@@ -503,9 +504,9 @@ func TestAnalyzeDiff_TestRenamedAwayIsHard(t *testing.T) {
 		{"rename alongside a real impl change", dsTestRenamedAway + dsImplOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := analyzeDiff(tc.diff)
+			res := AnalyzeDiff(tc.diff)
 			assert.Contains(t, res.Summary.ByType, smellTestRenamedAway, "got %v", res.Summary.ByType)
-			assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+			assert.Equal(t, VerdictHard, res.Summary.Verdict)
 		})
 	}
 }
@@ -523,7 +524,7 @@ func TestAnalyzeDiff_RenameNegativeControls(t *testing.T) {
 		{"ordinary edit, no rename", dsImplOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res := analyzeDiff(tc.diff)
+			res := AnalyzeDiff(tc.diff)
 			assert.NotContains(t, res.Summary.ByType, smellTestRenamedAway, "got %v", res.Summary.ByType)
 		})
 	}
@@ -546,12 +547,12 @@ const dsPlusPlusContentLine = `diff --git a/internal/verify/select_test.go b/int
 `
 
 func TestAnalyzeDiff_PlusPlusContentIsNotAHeader(t *testing.T) {
-	res := analyzeDiff(dsPlusPlusContentLine)
+	res := AnalyzeDiff(dsPlusPlusContentLine)
 	assert.Empty(t, res.Files.Impl, "a `+++ ` content line must not create a phantom impl file")
 	assert.Equal(t, []string{"internal/verify/select_test.go"}, res.Files.Test)
 	assert.Contains(t, res.Summary.ByType, smellTestOnly, "got %v", res.Summary.ByType)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion, "got %v", res.Summary.ByType)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 }
 
 // A hunk header declaring an absurd line count must not let the body escape the
@@ -559,14 +560,14 @@ func TestAnalyzeDiff_PlusPlusContentIsNotAHeader(t *testing.T) {
 // hand a crafted fix a one-line bypass of every detector.
 func TestAnalyzeDiff_OverflowingHunkCountFailsOpen(t *testing.T) {
 	huge := strings.Repeat("9", 25)
-	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1," + huge +
+	res := AnalyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n@@ -1," + huge +
 		" +1,2 @@\n+\tt.Skip(\"gone\")\n-\trequire.Equal(t, 1, 2)\n")
 	assert.Contains(t, res.Summary.ByType, smellTestSkipped, "got %v", res.Summary.ByType)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 }
 
-// looksLikeUnifiedDiff explicitly accepts a HEADERLESS diff (old-file/new-file
-// header pairs with no `diff --git` lines), so analyzeDiff must handle one. In
+// LooksLikeUnifiedDiff explicitly accepts a HEADERLESS diff (old-file/new-file
+// header pairs with no `diff --git` lines), so AnalyzeDiff must handle one. In
 // that shape `cur` still points at the PREVIOUS file when a `+++ /dev/null`
 // deletion arrives, so binding the deletion only when cur == nil stamps it on the
 // wrong file and the deleted test never enters `files` at all.
@@ -585,16 +586,16 @@ const dsHeaderlessDeletion = `--- a/internal/verify/impl.go
 `
 
 func TestAnalyzeDiff_HeaderlessDeletionBindsToOldPath(t *testing.T) {
-	res := analyzeDiff(dsHeaderlessDeletion)
+	res := AnalyzeDiff(dsHeaderlessDeletion)
 	assert.Equal(t, []string{"internal/verify/select_test.go"}, res.Files.Test,
 		"the deleted test must be recorded, got test=%v impl=%v", res.Files.Test, res.Files.Impl)
 	assert.Equal(t, []string{"internal/verify/impl.go"}, res.Files.Impl)
 	assert.Contains(t, res.Summary.ByType, smellTestDeleted, "got %v", res.Summary.ByType)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 
 	// The same diff WITH `diff --git` headers already scored hard; the headerless
 	// shape must not be the weaker path.
-	withHeaders := analyzeDiff("diff --git a/internal/verify/impl.go b/internal/verify/impl.go\n" +
+	withHeaders := AnalyzeDiff("diff --git a/internal/verify/impl.go b/internal/verify/impl.go\n" +
 		strings.Replace(dsHeaderlessDeletion, "--- a/internal/verify/select_test.go",
 			"diff --git a/internal/verify/select_test.go b/internal/verify/select_test.go\n--- a/internal/verify/select_test.go", 1))
 	assert.Equal(t, res.Summary.Verdict, withHeaders.Summary.Verdict)
@@ -619,7 +620,7 @@ func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
 			// The hunk's declared counts are exhausted by its two body lines, so the
 			// malformed header lands OUTSIDE the hunk and reaches the header branch —
 			// where the empty-path-means-deleted test lives.
-			res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n" +
+			res := AnalyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ b/x_test.go\n" +
 				"@@ -1,1 +1,1 @@\n-\trequire.Equal(t, 1, 2)\n+\trequire.Equal(t, 1, 3)\n" + tc.tail)
 			assert.NotContains(t, res.Summary.ByType, smellTestDeleted,
 				"nothing was deleted; got %v", res.Summary.ByType)
@@ -627,7 +628,7 @@ func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
 	}
 
 	// Control: an explicit /dev/null IS still a deletion.
-	res := analyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
+	res := AnalyzeDiff("diff --git a/x_test.go b/x_test.go\n--- a/x_test.go\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-\trequire.Equal(t, 1, 2)\n")
 	assert.Contains(t, res.Summary.ByType, smellTestDeleted)
 }
 
@@ -635,7 +636,7 @@ func TestAnalyzeDiff_WhitespaceOnlyPlusHeaderIsNotADeletion(t *testing.T) {
 // comment) is content, not an old-file header. Swallowing it drops the removed
 // line from the file's tally AND clobbers lastOldPath with garbage.
 func TestAnalyzeDiff_RemovedDashDashLineIsContent(t *testing.T) {
-	res := analyzeDiff("diff --git a/tests/schema.sql b/tests/schema.sql\n" +
+	res := AnalyzeDiff("diff --git a/tests/schema.sql b/tests/schema.sql\n" +
 		"--- a/tests/schema.sql\n+++ b/tests/schema.sql\n@@ -1,2 +1,1 @@\n" +
 		// Diff line = the `-` removal prefix + the SQL comment `-- assert row count`.
 		// The `-- assert row count` comment is the ONLY removed line carrying an
@@ -645,7 +646,7 @@ func TestAnalyzeDiff_RemovedDashDashLineIsContent(t *testing.T) {
 	require.Len(t, res.Files.Test, 1, "test=%v impl=%v", res.Files.Test, res.Files.Impl)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
 		"the removed `-- assert` line must be counted, got %v", res.Summary.ByType)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 }
 
 // Fix-generating models append explanatory prose after the diff constantly, and
@@ -659,8 +660,8 @@ func TestAnalyzeDiff_TrailingProseIsNotDiffContent(t *testing.T) {
 		"- expect no regression in the caller\n" +
 		"+ follow-up: extend to the batch path\n"
 
-	withProse := analyzeDiff(dsImplOnly + dsTestOnlyClean + prose)
-	clean := analyzeDiff(dsImplOnly + dsTestOnlyClean)
+	withProse := AnalyzeDiff(dsImplOnly + dsTestOnlyClean + prose)
+	clean := AnalyzeDiff(dsImplOnly + dsTestOnlyClean)
 
 	assert.Equal(t, clean.Summary.Verdict, withProse.Summary.Verdict,
 		"trailing prose must not change the verdict; got %v vs %v",
@@ -680,7 +681,7 @@ func TestAnalyzeDiff_TrailingProseIsNotDiffContent(t *testing.T) {
 // path is bounded too.
 func TestSmellFeedback_BoundsModelControlledFilePath(t *testing.T) {
 	huge := strings.Repeat("p", 60_000)
-	fb := smellFeedback(analyzeDiff(
+	fb := smellFeedback(AnalyzeDiff(
 		"diff --git a/" + huge + " b/" + huge + "\n--- a/" + huge + "\n+++ b/" + huge +
 			"\n@@ -1 +1,2 @@\n+\t//nolint:gosec\n"))
 
@@ -696,7 +697,7 @@ func TestSmellFeedback_BoundsModelControlledFilePath(t *testing.T) {
 		many.WriteString("diff --git a/" + p + " b/" + p + "\n--- a/" + p + "\n+++ b/" + p +
 			"\n@@ -1 +1,2 @@\n+\t//nolint:gosec\n")
 	}
-	fb = smellFeedback(analyzeDiff(many.String()))
+	fb = smellFeedback(AnalyzeDiff(many.String()))
 	assert.Less(t, len(fb), maxSmellFeedbackItems*4*maxSmellEvidenceRunes,
 		"total feedback must stay bounded across items (got %d bytes)", len(fb))
 }
@@ -749,7 +750,7 @@ index 293485d..11315e7 100644
 // the trailing text on the `@@` header must not break the count parse, and the
 // assertion loss in the test file must still be caught.
 func TestAnalyzeDiff_RealCapturedGitDiff(t *testing.T) {
-	res := analyzeDiff(dsRealGitDiff)
+	res := AnalyzeDiff(dsRealGitDiff)
 
 	assert.ElementsMatch(t, []string{"helper.go", "select.go"}, res.Files.Impl,
 		"index/mode/dev-null lines must not become files; got %v", res.Files.Impl)
@@ -758,11 +759,11 @@ func TestAnalyzeDiff_RealCapturedGitDiff(t *testing.T) {
 		"a `--- /dev/null` NEW-file header is a creation, not a deletion; got %v", res.Summary.ByType)
 	assert.Contains(t, res.Summary.ByType, smellWeakenedAssertion,
 		"the removed t.Fatalf assertion must still be caught; got %v", res.Summary.ByType)
-	assert.Equal(t, smellVerdictHard, res.Summary.Verdict)
+	assert.Equal(t, VerdictHard, res.Summary.Verdict)
 
 	// `git diff` hunk counts are ACCURATE, so the body ends exactly where the
 	// header says — appending prose must change nothing.
-	withProse := analyzeDiff(dsRealGitDiff + "\nNotes:\n- assert the new value\n- expect no regression\n")
+	withProse := AnalyzeDiff(dsRealGitDiff + "\nNotes:\n- assert the new value\n- expect no regression\n")
 	assert.Equal(t, res.Summary.ByType, withProse.Summary.ByType)
 	assert.Equal(t, res.Files.Impl, withProse.Files.Impl)
 }
@@ -770,16 +771,26 @@ func TestAnalyzeDiff_RealCapturedGitDiff(t *testing.T) {
 // --- one-way drift corpus (TD: diffsmell.go:3) ---
 
 // corpusCase is one entry in testdata/diffsmell/corpus.json: a diff file plus the
-// verdict and smell types atcr's OWN analyzeDiff must produce for it.
+// verdict and smell types atcr's OWN AnalyzeDiff must produce for it.
 type corpusCase struct {
 	File    string   `json:"file"`
 	Verdict string   `json:"verdict"`
 	Types   []string `json:"types"`
 	Note    string   `json:"note"`
+	// Lines maps a smell type to the new-file line numbers it must report, for
+	// the added-line detectors that HAVE a line (suppression, empty_catch,
+	// stub_body, test_skipped). Optional: the file-level and count-derived smells
+	// carry no line, so their entries omit it.
+	//
+	// It exists because the corpus is THE replay artifact for this port — the
+	// diffsmell.go header instructs a future realignment to replay it by hand —
+	// and recording only verdict + types left the whole Line output with no
+	// corpus coverage at all, so a line-numbering regression would replay clean.
+	Lines map[string][]int `json:"lines,omitempty"`
 }
 
 // The corpus is the drift-detection artifact for this port. It is ONE-WAY by
-// deliberate choice (see the header comment): it pins atcr's own analyzeDiff and
+// deliberate choice (see the header comment): it pins atcr's own AnalyzeDiff and
 // is NOT automatically verified against llm-tools. A two-way corpus would have to
 // vendor the upstream analyzer or shell out to an installed llm-support binary,
 // reintroducing exactly the cross-module coupling this port exists to avoid.
@@ -802,7 +813,7 @@ func TestAnalyzeDiff_Corpus(t *testing.T) {
 			diff, err := os.ReadFile(filepath.Join("testdata", "diffsmell", tc.File))
 			require.NoError(t, err, "corpus.json names a diff that does not exist")
 
-			res := analyzeDiff(string(diff))
+			res := AnalyzeDiff(string(diff))
 			require.NotNil(t, res)
 			assert.Equal(t, tc.Verdict, res.Summary.Verdict, "%s: %s", tc.File, tc.Note)
 
@@ -811,6 +822,25 @@ func TestAnalyzeDiff_Corpus(t *testing.T) {
 				got = append(got, k)
 			}
 			assert.ElementsMatch(t, tc.Types, got, "%s: %s", tc.File, tc.Note)
+
+			// Replay the recorded line numbers when the entry pins them, so the
+			// corpus guards the Line output too and not just the verdict.
+			if tc.Lines != nil {
+				gotLines := map[string][]int{}
+				for _, s := range res.Smells {
+					if s.Line > 0 {
+						gotLines[s.Type] = append(gotLines[s.Type], s.Line)
+					}
+				}
+				for ty, want := range tc.Lines {
+					assert.ElementsMatch(t, want, gotLines[ty],
+						"%s: %s reported the wrong new-file line(s)", tc.File, ty)
+				}
+				for ty, have := range gotLines {
+					assert.Containsf(t, tc.Lines, ty,
+						"%s: %s reports line(s) %v that the corpus does not record; add them", tc.File, ty, have)
+				}
+			}
 		})
 		for _, ty := range tc.Types {
 			seenTypes[ty] = true
@@ -826,4 +856,80 @@ func TestAnalyzeDiff_Corpus(t *testing.T) {
 	} {
 		assert.True(t, seenTypes[ty], "smell type %q has no corpus entry", ty)
 	}
+}
+
+// TestAnalyzeDiff_SmellsAreCapped pins a bound on the number of Smell structs a
+// single scan materializes. Every added line matching a detector produces one
+// struct carrying a verbatim copy of that line, so an input of N suppression
+// lines yields N structs and a rendered output proportional to the input —
+// measured at 100,000 smells from a 1.9 MB diff of `+//nolint` lines.
+//
+// The counts must stay HONEST across the cap: only the smells ARRAY is bounded,
+// while Hard/Soft/ByType and the verdict continue to reflect everything detected.
+// A gate keying on the verdict must not be weakened by truncation, and a consumer
+// must be able to see that truncation happened rather than infer a short list.
+func TestAnalyzeDiff_SmellsAreCapped(t *testing.T) {
+	const n = 1500
+	var b strings.Builder
+	b.WriteString("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n")
+	fmt.Fprintf(&b, "@@ -1,1 +1,%d @@\n", n)
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "+\t//nolint:errcheck // %d\n", i)
+	}
+	res := AnalyzeDiff(b.String())
+
+	assert.Equal(t, maxSmells, len(res.Smells), "the smells array must be capped")
+	assert.Equal(t, n-maxSmells, res.Summary.Dropped, "the summary must report how many were dropped")
+
+	// Counts and verdict are derived from ALL detected smells, not the truncated
+	// array — otherwise truncation would silently soften the result.
+	assert.Equal(t, n, res.Summary.ByType[smellSuppression], "by_type must count every detected smell")
+	assert.Equal(t, n, res.Summary.Soft, "soft count must include dropped smells")
+	assert.Equal(t, VerdictSoftOnly, res.Summary.Verdict)
+}
+
+// TestAnalyzeDiff_UncappedResultReportsNoDrop is the negative control: an
+// ordinary scan must not gain a `dropped` field, so the JSON shape of every
+// realistic result is unchanged (omitempty keeps the key absent).
+func TestAnalyzeDiff_UncappedResultReportsNoDrop(t *testing.T) {
+	res := AnalyzeDiff("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n func F() {\n+\t//nolint:errcheck\n")
+	assert.Equal(t, 0, res.Summary.Dropped)
+	blob, err := json.Marshal(res)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(blob), "dropped", "an untruncated result must not carry the key at all")
+}
+
+// TestAnalyzeDiff_SmellFieldsAreSanitizedAtStamp asserts the two verbatim,
+// attacker-controlled fields are bounded and control-free the moment a Smell is
+// created — not at one renderer's call site. Evidence is an added diff line and
+// File comes from `+++ b/<anything>`, so every consumer (the text renderer, the
+// JSON payload, and the retry prompt) inherits whatever the diff contained.
+func TestAnalyzeDiff_SmellFieldsAreSanitizedAtStamp(t *testing.T) {
+	longPath := strings.Repeat("d/", 400) + "x.go"
+	diff := "diff --git a/x.go b/" + longPath + "\n" +
+		"--- a/x.go\n" +
+		"+++ b/" + longPath + "\n" +
+		"@@ -1,1 +1,2 @@\n" +
+		" func F() {\n" +
+		"+\t//nolint:errcheck \x1b[2K\x1b[1A\x1b[32mALL CHECKS PASSED\x1b[0m " + strings.Repeat("pad ", 200) + "\n"
+
+	res := AnalyzeDiff(diff)
+	require.NotEmpty(t, res.Smells, "the suppression must still be detected")
+	for _, s := range res.Smells {
+		assert.NotContains(t, s.Evidence, "\x1b", "evidence must carry no ESC byte")
+		assert.NotContains(t, s.File, "\x1b", "file must carry no ESC byte")
+		assert.LessOrEqual(t, utf8.RuneCountInString(s.Evidence), maxSmellEvidenceRunes+3,
+			"evidence must be bounded (+3 for the ellipsis)")
+		assert.LessOrEqual(t, utf8.RuneCountInString(s.File), maxSmellPathRunes+3,
+			"file path must be bounded (+3 for the ellipsis); it comes from `+++ b/<anything>` uncapped")
+	}
+}
+
+// TestAnalyzeDiff_OrdinaryFieldsAreUnchanged is the negative control: sanitizing
+// must not alter ordinary evidence, or the golden JSON contract would drift.
+func TestAnalyzeDiff_OrdinaryFieldsAreUnchanged(t *testing.T) {
+	res := AnalyzeDiff("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n func F() {\n+\t//nolint:errcheck\n")
+	require.Len(t, res.Smells, 1)
+	assert.Equal(t, "//nolint:errcheck", res.Smells[0].Evidence)
+	assert.Equal(t, "x.go", res.Smells[0].File)
 }

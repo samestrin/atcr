@@ -15,7 +15,7 @@ package verify
 // version of it.
 //
 // Drift is tracked ONE-WAY, by deliberate choice: testdata/diffsmell/ holds a
-// corpus of .diff files with the verdicts atcr's OWN analyzeDiff must produce
+// corpus of .diff files with the verdicts atcr's OWN AnalyzeDiff must produce
 // (TestAnalyzeDiff_Corpus). It is NOT automatically verified against upstream —
 // a two-way check would have to vendor the upstream analyzer or shell out to an
 // installed llm-support binary, reintroducing exactly the cross-module coupling
@@ -28,10 +28,23 @@ package verify
 // suppressing it. generateFixes uses it as a pre-write gate on executor-produced
 // fixes.
 //
+// A PUBLIC CLI SURFACE EXISTS: `atcr verify diff` (cli/verify_diff.go, epic
+// 35.10) exposes this analyzer to any consumer that can exec the atcr binary,
+// and docs/diff-smell.md is its contract. A downstream tool that needs
+// diff-smell should call that command rather than copying this file a third
+// time — the header below is the standing evidence of what keeping two copies
+// aligned already costs. The result types (Smell, SmellFiles, SmellSummary,
+// SmellResult) and entry points (AnalyzeDiff, LooksLikeUnifiedDiff) carry
+// upstream's own names and snake_case json tags, so output from
+// `atcr verify diff --json` parses with a consumer written against upstream's
+// `diff-smell --json`. The exported result types are that surface's wire
+// format; changing their json tags is a breaking change (see the contract note
+// on SmellResult and TestSmellResult_GoldenJSON).
+//
 // Divergences from upstream, all deliberate:
 //
-//   - Types and helpers are unexported and prefixed `smell*` to fit this package.
-//   - Callers must pre-filter with looksLikeUnifiedDiff. Upstream is always fed a
+//   - Detector HELPERS are unexported and prefixed `smell*` to fit this package.
+//   - Callers must pre-filter with LooksLikeUnifiedDiff. Upstream is always fed a
 //     real diff (a file path or a git rev); here a Finding.Fix is free-form, so
 //     non-diff content must be classified clean rather than parsed as one.
 //   - A `+++ /dev/null` deletion hunk stays bound to its file instead of unbinding
@@ -63,19 +76,28 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Bounds on the rejection feedback fed back into the retry prompt. Every smell's
-// Evidence is a verbatim added line from the MODEL's own diff, so without these a
-// crafted fix (up to maxFixBytes) could balloon the retry prompt by orders of
-// magnitude — paid for in tokens on every rejected fix. The type and severity
-// names, which carry the actionable signal, are a closed vocabulary and are never
-// truncated; only the quoted evidence and the item count are bounded.
-// The FILE PATH is model-controlled too — it comes verbatim from
-// `+++ b/<anything>` via smellHeaderPath, which caps nothing — so it is bounded
-// on the same footing as the evidence, and the whole rendered string is capped as
-// a backstop.
+// Bounds on the two DIFF-CONTROLLED Smell fields, Evidence (a verbatim added
+// line) and File (verbatim from `+++ b/<anything>` via smellHeaderPath, which
+// caps nothing). Both are applied where the Smell is stamped — see
+// smellSanitizeField and the add() funnel in AnalyzeDiff — so they hold for every
+// consumer: the retry prompt, `atcr verify diff`'s text output, and the JSON
+// payload alike.
+//
+// They serve two purposes at once, and the second is not merely cosmetic:
+//
+//   - Size. Without a bound, a crafted fix (up to maxFixBytes) balloons the retry
+//     prompt by orders of magnitude — paid for in tokens on every rejected fix.
+//   - Safety. The same fields are written to a terminal, so control bytes are
+//     stripped as well as truncated; an added line carrying `\x1b[2K\x1b[1A…`
+//     would otherwise erase and rewrite the verdict the operator just read.
+//
+// The type and severity names, which carry the actionable signal, are a closed
+// vocabulary and are never truncated. The whole rendered feedback string is
+// capped as a backstop.
 const (
 	maxSmellEvidenceRunes = 200
 	maxSmellFeedbackItems = 10
@@ -83,11 +105,20 @@ const (
 	maxSmellFeedbackRunes = maxSmellFeedbackItems * (maxSmellEvidenceRunes + maxSmellPathRunes + 64)
 )
 
+// maxSmells caps how many Smell structs one scan materializes. Each carries a
+// verbatim copy of an added line, so without a bound the result grows with the
+// input: a 1.9 MB diff of `+//nolint` lines produced 100,000 structs and ~15 MB
+// of rendered output. Only the array is bounded — see SmellSummary.Dropped.
+//
+// 1000 is far above any real diff (the analyzer's own corpus tops out in single
+// digits) and low enough that the rendered text stays readable.
+const maxSmells = 1000
+
 // Verdict values, mirroring upstream's summary.verdict.
 const (
-	smellVerdictClean    = "clean"
-	smellVerdictSoftOnly = "soft_only"
-	smellVerdictHard     = "hard"
+	VerdictClean    = "clean"
+	VerdictSoftOnly = "soft_only"
+	VerdictHard     = "hard"
 )
 
 // Smell type names, mirroring upstream's smell.type.
@@ -95,10 +126,10 @@ const (
 	smellTestOnly          = "test_only"
 	smellWeakenedAssertion = "weakened_assertion"
 	// smellTestDeleted is an atcr addition, not an upstream type: upstream has no
-	// deletion detector at all. See the deletion branch in analyzeDiff.
+	// deletion detector at all. See the deletion branch in AnalyzeDiff.
 	smellTestDeleted = "test_deleted"
 	// smellTestSkipped is an atcr addition, not an upstream type: upstream has no
-	// skip detector. See the skip branch in analyzeDiff.
+	// skip detector. See the skip branch in AnalyzeDiff.
 	smellTestSkipped = "test_skipped"
 	// smellTestRenamedAway is an atcr addition, not an upstream type: renaming a
 	// test file to a non-test path disables it as effectively as deleting it.
@@ -111,39 +142,65 @@ const (
 // Severity values, mirroring upstream's smell.severity. HARD smells reject a
 // fix; SOFT smells accept it with a NEEDS_REVIEW annotation.
 const (
-	smellSeverityHard = "hard"
-	smellSeveritySoft = "soft"
+	SeverityHard = "hard"
+	SeveritySoft = "soft"
 )
 
-// smell is one over-simplification fingerprint found in a diff.
-type smell struct {
-	Type     string
-	Severity string
-	File     string
-	Evidence string
+// The json tags below are upstream's, and they are a PUBLIC CONTRACT: the
+// moment a consumer pins to `atcr verify diff --json`, this shape is its API.
+// Committed: the three top-level keys, the smell object's field names, and the
+// closed verdict set. Adding a new smell TYPE is additive and non-breaking — a
+// consumer keys on Severity and Summary.Verdict, both closed sets — but renaming
+// a key, removing a field, or changing the verdict vocabulary is breaking and
+// earns a CHANGELOG "Breaking" entry. TestSmellResult_GoldenJSON is the
+// mechanical guard; see docs/diff-smell.md.
+
+// Smell is one over-simplification fingerprint found in a diff.
+type Smell struct {
+	Type     string `json:"type"`
+	Severity string `json:"severity"`
+	File     string `json:"file"`
+	// Line is the NEW-file line number of the offending added line, so a
+	// consuming gate can cite file:line in the same vocabulary its technical-debt
+	// rows already use. Only the added-line detectors (suppression, empty_catch,
+	// stub_body, test_skipped) can name a line; the file-level and count-derived
+	// smells (test_only, test_deleted, test_renamed_away, weakened_assertion)
+	// leave it zero and omitempty drops the key — upstream's own behavior.
+	Line     int    `json:"line,omitempty"`
+	Evidence string `json:"evidence"`
 }
 
-// smellFiles lists the changed files split by role.
-type smellFiles struct {
-	Test []string
-	Impl []string
+// SmellFiles lists the changed files split by role.
+type SmellFiles struct {
+	Test []string `json:"test"`
+	Impl []string `json:"impl"`
 }
 
-// smellSummary aggregates the scan.
-type smellSummary struct {
-	TestFiles int
-	ImplFiles int
-	Hard      int
-	Soft      int
-	ByType    map[string]int
-	Verdict   string
+// SmellSummary aggregates the scan.
+type SmellSummary struct {
+	TestFiles int            `json:"test_files"`
+	ImplFiles int            `json:"impl_files"`
+	Hard      int            `json:"hard"`
+	Soft      int            `json:"soft"`
+	ByType    map[string]int `json:"by_type"`
+	Verdict   string         `json:"verdict"`
+	// Dropped is the number of smells detected but omitted from Smells because
+	// the scan hit maxSmells. Additive and omitempty: an untruncated result — the
+	// realistic case — carries no such key, so the documented JSON shape is
+	// unchanged for every consumer that never feeds a pathological diff.
+	//
+	// Hard, Soft, ByType and Verdict above are deliberately NOT capped: they count
+	// everything detected, so truncating the array can never soften a gate.
+	Dropped int `json:"dropped,omitempty"`
 }
 
-// smellResult is the full diff-smell output.
-type smellResult struct {
-	Files   smellFiles
-	Smells  []smell
-	Summary smellSummary
+// SmellResult is the full diff-smell output. AnalyzeDiff always materializes
+// every slice and map, so the JSON form carries [] / {} rather than null and a
+// consumer indexing a field never has to nil-check one that is merely empty.
+type SmellResult struct {
+	Files   SmellFiles   `json:"files"`
+	Smells  []Smell      `json:"smells"`
+	Summary SmellSummary `json:"summary"`
 }
 
 // --- detectors ---
@@ -182,7 +239,7 @@ var (
 	smellHunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)
 
 	// The declared line counts of a hunk: `@@ -<start>[,<oldCount>] +<start>[,<newCount>] @@`.
-	// An omitted count means 1. analyzeDiff uses them to know where the hunk BODY
+	// An omitted count means 1. AnalyzeDiff uses them to know where the hunk BODY
 	// ends, so trailing prose is not parsed as diff content.
 	smellHunkCountsRe = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
 )
@@ -204,13 +261,13 @@ func isSmellTestPath(p string) bool {
 		smellRbTestRe.MatchString(p) || smellJVMTestRe.MatchString(p) || smellCSTestRe.MatchString(p)
 }
 
-// looksLikeUnifiedDiff reports whether text is plausibly a unified diff, so the
+// LooksLikeUnifiedDiff reports whether text is plausibly a unified diff, so the
 // gate can pass free-form fix content (prose change-instructions, bare code, a
 // fenced snippet) through as clean instead of feeding it to a parser that would
 // mis-attribute it. Requiring a real header — `diff --git`, a `--- `/`+++ ` pair,
 // or a hunk header — rather than merely a leading `+`/`-` keeps prose like
 // "+ add a nil check" from being read as a diff.
-func looksLikeUnifiedDiff(text string) bool {
+func LooksLikeUnifiedDiff(text string) bool {
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
@@ -246,7 +303,7 @@ var goLeadInKeywords = []string{"package ", "import ", "func ", "type ", "const 
 
 // startsWithDiffHeader reports whether text LEADS with a unified diff, allowing at
 // most maxDiffProseLeadIn plainly-prose lines ahead of it. It is the strict
-// counterpart to looksLikeUnifiedDiff: where that one scans the whole input
+// counterpart to LooksLikeUnifiedDiff: where that one scans the whole input
 // (correct for the gate, which loses nothing on a false positive), this one demands
 // the diff lead the content, so a Go file that merely embeds a diff fixture in a
 // raw string cannot claim the exemption.
@@ -284,6 +341,12 @@ func startsWithDiffHeader(text string) bool {
 
 type smellAddedLine struct {
 	text string
+	// line is the added line's position in the NEW file, derived from the hunk
+	// header's new-side start and advanced across the hunk body. Zero when the
+	// header's start digits overflowed an int — the only way the parse can fail
+	// once the strict hunk-counts shape matched — which omitempty then drops
+	// rather than reporting a wrong line.
+	line int
 }
 
 type smellFileChange struct {
@@ -294,13 +357,13 @@ type smellFileChange struct {
 	removed []string
 }
 
-// analyzeDiff scans a unified diff for over-simplification fingerprints. It
+// AnalyzeDiff scans a unified diff for over-simplification fingerprints. It
 // never returns nil.
-func analyzeDiff(diff string) *smellResult {
-	res := &smellResult{
-		Files:   smellFiles{Test: []string{}, Impl: []string{}},
-		Smells:  []smell{},
-		Summary: smellSummary{ByType: map[string]int{}},
+func AnalyzeDiff(diff string) *SmellResult {
+	res := &SmellResult{
+		Files:   SmellFiles{Test: []string{}, Impl: []string{}},
+		Smells:  []Smell{},
+		Summary: SmellSummary{ByType: map[string]int{}},
 	}
 
 	files := []*smellFileChange{}
@@ -335,6 +398,11 @@ func analyzeDiff(diff string) *smellResult {
 	// constantly). Tracking the hunk's declared line counts resolves both.
 	inHunk := false
 	oldRemaining, newRemaining := 0, 0
+	// newLine is the NEW-file line number the next body line occupies. Seeded
+	// from the hunk header's `+<start>` and advanced by added and context lines
+	// (a removed line consumes no new-file position), which is exactly the
+	// unified-diff definition. Zero means the header carried no parseable start.
+	newLine := 0
 
 	for _, line := range strings.Split(diff, "\n") {
 		if inHunk {
@@ -348,9 +416,10 @@ func analyzeDiff(diff string) *smellResult {
 					// "\ No newline at end of file" — metadata, consumes no declared line
 				case strings.HasPrefix(line, "+"):
 					if cur != nil {
-						cur.added = append(cur.added, smellAddedLine{text: line[1:]})
+						cur.added = append(cur.added, smellAddedLine{text: line[1:], line: newLine})
 					}
 					newRemaining--
+					newLine++
 				case strings.HasPrefix(line, "-"):
 					if cur != nil {
 						cur.removed = append(cur.removed, line[1:])
@@ -360,6 +429,7 @@ func analyzeDiff(diff string) *smellResult {
 					// context line (leading space, or an empty line) — counts on both sides
 					oldRemaining--
 					newRemaining--
+					newLine++
 				}
 				if oldRemaining <= 0 && newRemaining <= 0 {
 					inHunk = false
@@ -407,7 +477,7 @@ func analyzeDiff(diff string) *smellResult {
 			case "/dev/null":
 				// Bind to the `--- a/<path>` line this deletion is paired with whenever
 				// it names a DIFFERENT file than the one currently bound — not merely
-				// when nothing is bound. looksLikeUnifiedDiff accepts a HEADERLESS diff
+				// when nothing is bound. LooksLikeUnifiedDiff accepts a HEADERLESS diff
 				// (old/new header pairs, no `diff --git` lines), and in that shape cur
 				// still points at the PREVIOUS file when the deletion arrives: the
 				// `cur == nil` guard stamped `deleted` on that innocent file and the
@@ -427,13 +497,34 @@ func analyzeDiff(diff string) *smellResult {
 		case strings.HasPrefix(line, "--- "):
 			lastOldPath = smellHeaderPath(line[4:])
 		case strings.HasPrefix(line, "@@"):
-			// hunk header — start line numbers are deliberately not tracked (no
-			// production consumer ever read them), but the declared LINE COUNTS are:
-			// they bound the body, so anything after it is trailer text, not content.
+			// Hunk header. BOTH halves are tracked, for different reasons:
+			//
+			//   - the declared LINE COUNTS bound the hunk body, so anything past it
+			//     is trailer text rather than content;
+			//   - the NEW-SIDE START seeds newLine, which becomes Smell.Line for the
+			//     added-line detectors. There is a production consumer:
+			//     `atcr verify diff` renders file:line, and a consuming gate pastes
+			//     that location straight into a technical-debt row.
+			//
+			// Line semantics are pinned in diffsmell_contract_test.go — see
+			// TestAnalyzeDiff_LineOnAddedLineSmellAcrossHunks and its siblings.
 			if m := smellHunkCountsRe.FindStringSubmatch(line); m != nil {
 				oldRemaining = smellHunkCount(m[1])
 				newRemaining = smellHunkCount(m[2])
 				inHunk = oldRemaining > 0 || newRemaining > 0
+				// Seed the new-file position from `+<start>`. Reset to 0 rather than
+				// carried over when the start digits overflow an int — the ONLY way
+				// strconv.Atoi can fail here, since smellHunkCountsRe matching
+				// strictly implies smellHunkRe matches — so an overflowing header
+				// yields no line (omitempty drops it) instead of numbering this
+				// hunk's additions from the PREVIOUS hunk's position: a
+				// confidently wrong file:line is worse than none.
+				newLine = 0
+				if hm := smellHunkRe.FindStringSubmatch(line); hm != nil {
+					if n, err := strconv.Atoi(hm[1]); err == nil {
+						newLine = n
+					}
+				}
 			}
 		default:
 			// Outside a hunk body: a file-mode / index / rename / similarity line, a
@@ -455,10 +546,22 @@ func analyzeDiff(diff string) *smellResult {
 	res.Summary.TestFiles = testCount
 	res.Summary.ImplFiles = implCount
 
-	add := func(s smell) {
-		res.Smells = append(res.Smells, s)
+	// The single funnel every detector emits through, so the cap cannot be
+	// bypassed by adding a detector later. Counts are tallied BEFORE the cap is
+	// consulted: truncation bounds the reported array, never the verdict.
+	add := func(s Smell) {
+		// Bound and clean the two verbatim, diff-controlled fields HERE, where the
+		// Smell is stamped, so every consumer inherits the guarantee rather than
+		// each renderer having to remember it.
+		s.File = smellSanitizeField(s.File, maxSmellPathRunes)
+		s.Evidence = smellSanitizeField(s.Evidence, maxSmellEvidenceRunes)
+		if len(res.Smells) < maxSmells {
+			res.Smells = append(res.Smells, s)
+		} else {
+			res.Summary.Dropped++
+		}
 		res.Summary.ByType[s.Type]++
-		if s.Severity == smellSeverityHard {
+		if s.Severity == SeverityHard {
 			res.Summary.Hard++
 		} else {
 			res.Summary.Soft++
@@ -467,13 +570,13 @@ func analyzeDiff(diff string) *smellResult {
 
 	// HARD: a test file was renamed out of the test namespace.
 	for _, p := range renamedAwayTests {
-		add(smell{Type: smellTestRenamedAway, Severity: smellSeverityHard, File: p,
+		add(Smell{Type: smellTestRenamedAway, Severity: SeverityHard, File: p,
 			Evidence: "fix renamed a test file to a non-test path, disabling it"})
 	}
 
 	// HARD: the fix touched only tests.
 	if testCount > 0 && implCount == 0 {
-		add(smell{Type: smellTestOnly, Severity: smellSeverityHard, File: res.Files.Test[0],
+		add(Smell{Type: smellTestOnly, Severity: SeverityHard, File: res.Files.Test[0],
 			Evidence: "fix changed only test file(s); no implementation change"})
 	}
 
@@ -486,7 +589,7 @@ func analyzeDiff(diff string) *smellResult {
 			// weakened_assertion it does not depend on the deleted lines happening to
 			// match the assertion regex.
 			if fc.deleted {
-				add(smell{Type: smellTestDeleted, Severity: smellSeverityHard, File: fc.path,
+				add(Smell{Type: smellTestDeleted, Severity: SeverityHard, File: fc.path,
 					Evidence: "fix deleted a test file outright"})
 			}
 			// HARD: disabling a test. Like test_deleted this is an atcr addition —
@@ -500,8 +603,8 @@ func analyzeDiff(diff string) *smellResult {
 					continue
 				}
 				if smellTestSkipRe.MatchString(a.text) {
-					add(smell{Type: smellTestSkipped, Severity: smellSeverityHard, File: fc.path,
-						Evidence: strings.TrimSpace(a.text)})
+					add(Smell{Type: smellTestSkipped, Severity: SeverityHard, File: fc.path,
+						Line: a.line, Evidence: strings.TrimSpace(a.text)})
 				}
 			}
 			removedAsserts, addedAsserts := 0, 0
@@ -518,7 +621,7 @@ func analyzeDiff(diff string) *smellResult {
 			switch {
 			case removedAsserts > addedAsserts:
 				// HARD: a net loss of assertions is unambiguous.
-				add(smell{Type: smellWeakenedAssertion, Severity: smellSeverityHard, File: fc.path,
+				add(Smell{Type: smellWeakenedAssertion, Severity: SeverityHard, File: fc.path,
 					Evidence: "test removed assertion(s) without replacing them"})
 			case removedAsserts > 0 && removedAsserts == addedAsserts:
 				// SOFT: assertions replaced one-for-one. DIVERGENCE from upstream, which
@@ -529,7 +632,7 @@ func analyzeDiff(diff string) *smellResult {
 				// blocks: SOFT is exactly the "a human should glance at this" tier. This
 				// is also the backstop that survives evaluateFixSmell's test_only
 				// suppression for test-path findings.
-				add(smell{Type: smellWeakenedAssertion, Severity: smellSeveritySoft, File: fc.path,
+				add(Smell{Type: smellWeakenedAssertion, Severity: SeveritySoft, File: fc.path,
 					Evidence: "test replaced assertion(s) one-for-one; verify they were not weakened"})
 			}
 		}
@@ -543,32 +646,50 @@ func analyzeDiff(diff string) *smellResult {
 				continue
 			}
 			if smellSuppressionRe.MatchString(a.text) {
-				add(smell{Type: smellSuppression, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
+				add(Smell{Type: smellSuppression, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
 			}
 			// The empty-catch pattern must also see consecutive added lines
 			// joined: formatters emit `catch (e) {` and `}` on separate lines,
 			// and Go's \s matches the newline, so the pair reveals what a
 			// strictly per-line scan cannot.
-			pair := a.text
-			if i+1 < len(fc.added) {
-				pair = a.text + "\n" + fc.added[i+1].text
-			}
-			if smellEmptyCatchRe.MatchString(pair) {
-				add(smell{Type: smellEmptyCatch, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
+			//
+			// Two constraints keep the join from reporting a location that does not
+			// exist, both of which matter now that Line is a reported field:
+			//
+			//   - ADJACENCY. fc.added spans hunks, so an unguarded join splices
+			//     lines arbitrarily far apart — a `} catch (e) {` at new line 2 was
+			//     joined with a `}` from a hunk starting at new line 500, inventing
+			//     a smell for code that never existed.
+			//   - NO DOUBLE REPORT. The join must not re-report what the next
+			//     iteration will report on its own. When the NEXT line matches
+			//     unaided, it owns the finding; emitting here as well produced two
+			//     smells, the first citing a line containing no `catch` at all.
+			//
+			// What remains is the split-handler shape, where `catch` is on THIS
+			// line and only the closing brace is on the next — so a.line is the
+			// line that actually carries the keyword.
+			switch {
+			case smellEmptyCatchRe.MatchString(a.text):
+				add(Smell{Type: smellEmptyCatch, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
+			case i+1 < len(fc.added) &&
+				fc.added[i+1].line == a.line+1 &&
+				!smellEmptyCatchRe.MatchString(fc.added[i+1].text) &&
+				smellEmptyCatchRe.MatchString(a.text+"\n"+fc.added[i+1].text):
+				add(Smell{Type: smellEmptyCatch, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
 			}
 			if smellStubBodyRe.MatchString(a.text) {
-				add(smell{Type: smellStubBody, Severity: smellSeveritySoft, File: fc.path, Evidence: strings.TrimSpace(a.text)})
+				add(Smell{Type: smellStubBody, Severity: SeveritySoft, File: fc.path, Line: a.line, Evidence: strings.TrimSpace(a.text)})
 			}
 		}
 	}
 
 	switch {
 	case res.Summary.Hard > 0:
-		res.Summary.Verdict = smellVerdictHard
+		res.Summary.Verdict = VerdictHard
 	case res.Summary.Soft > 0:
-		res.Summary.Verdict = smellVerdictSoftOnly
+		res.Summary.Verdict = VerdictSoftOnly
 	default:
-		res.Summary.Verdict = smellVerdictClean
+		res.Summary.Verdict = VerdictClean
 	}
 	return res
 }
@@ -672,7 +793,7 @@ func smellAPathFromGitHeader(line string) string {
 
 // smellTypes returns the distinct smell types in res, sorted, for a stable
 // annotation string. Returns nil for a nil or clean result.
-func smellTypes(res *smellResult) []string {
+func smellTypes(res *SmellResult) []string {
 	if res == nil || len(res.Smells) == 0 {
 		return nil
 	}
@@ -693,7 +814,7 @@ func smellTypes(res *smellResult) []string {
 // with no role separation, so an embedded newline could forge a prompt line
 // (the same CR/LF hazard buildFixPrompt's sanitized persona/rules guard against).
 // Returns "" for a nil or clean result.
-func smellFeedback(res *smellResult) string {
+func smellFeedback(res *SmellResult) string {
 	if res == nil || len(res.Smells) == 0 {
 		return ""
 	}
@@ -731,10 +852,36 @@ func truncateRunes(s string, n int) string {
 	return string([]rune(s)[:n]) + "..."
 }
 
-// smellFlatten collapses CR/LF to spaces so evidence text is safe to interpolate
-// into a single prompt line, mirroring sanitizeDeclineReason's flattening.
+// smellFlatten collapses CR/LF to spaces and drops every other control
+// character, so the text is safe both to interpolate into a single prompt line
+// and to write to a terminal. Mirrors sanitizeDeclineReason's flattening and
+// internal/report/render.go's isTOONControl stripping.
+//
+// The escape bytes are the point: a Smell's Evidence is a verbatim added line and
+// its File comes verbatim from `+++ b/<anything>`, so without this an added line
+// carrying `\x1b[2K\x1b[1A…` can erase the verdict the operator just read and
+// print a forged all-clear in its place. For a command whose whole purpose is
+// judging an adversarial patch, letting the adversary write the human-visible
+// verdict defeats it. U+2028/U+2029 are dropped on the same footing — they are
+// line separators to some consumers.
 func smellFlatten(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+		return r
+	}, s)
 	return strings.TrimSpace(s)
+}
+
+// smellSanitizeField bounds and cleans one of the two verbatim,
+// diff-controlled Smell fields. Applied where the Smell is STAMPED rather than at
+// a renderer's call site, so every consumer — the text output, the JSON payload,
+// and the retry prompt — inherits the same guarantee instead of each having to
+// remember. The path needs it as much as the evidence: smellHeaderPath caps
+// nothing, so `+++ b/<10MB>` becomes a 10MB field.
+func smellSanitizeField(s string, max int) string {
+	return truncateRunes(smellFlatten(s), max)
 }
