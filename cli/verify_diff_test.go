@@ -113,6 +113,32 @@ func stageTestDeletion(t *testing.T) {
 	gitSmell(t, "add", "foo.go")
 }
 
+// TestStageTestDeletion_GuardsBeforeWriting runs stageTestDeletion in a
+// subprocess whose cwd is NOT a temp dir (the forget-isolate(t) case): the
+// requireTempWorkdir guard must fire before anything is written, so no
+// foo.go/foo_test.go appears and the helper fails.
+func TestStageTestDeletion_GuardsBeforeWriting(t *testing.T) {
+	if os.Getenv("ATCR_STAGE_GUARD_HELPER") == "1" {
+		stageTestDeletion(t)
+		return
+	}
+	// A scratch dir inside the repo (NOT under os.TempDir()) so the guard
+	// fires; any pre-guard writes land here and are removed with it.
+	dir := filepath.Join("..", ".planning", ".temp", "stage-guard")
+	abs, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(abs, 0o755))
+	defer os.RemoveAll(abs)
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStageTestDeletion_GuardsBeforeWriting$")
+	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1")
+	cmd.Dir = abs
+	out, runErr := cmd.CombinedOutput()
+	require.Error(t, runErr, "the helper must fail outside a temp workdir, got: %s", out)
+	require.NoFileExists(t, filepath.Join(abs, "foo.go"), "guard must fire before any write")
+	require.NoFileExists(t, filepath.Join(abs, "foo_test.go"), "guard must fire before any write")
+}
+
 // --- verdict reporting ----------------------------------------------------
 
 func TestVerifyDiffCmd_CleanDiffReportsClean(t *testing.T) {
