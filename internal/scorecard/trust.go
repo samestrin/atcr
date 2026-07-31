@@ -38,8 +38,29 @@ const DefaultTrustMinRuns = 20
 // A missing or unreadable store directory yields an empty map and a nil
 // error — this is a best-effort read, matching ReadAll's "no data yet"
 // contract; it never returns an error or panics.
+// This function reads ALL HISTORY and always will: cli/personas.go calls it
+// directly to render per-persona rates over the whole store. The reconcile-side
+// window added in epic 35.11 attaches to ResolveTrustPriors, not here.
 func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
-	records, _ := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	// since=0 is "no window", which trustPriorsSince degrades to a plain ReadAll
+	// — so this is byte-identical to the pre-35.11 body, and now is unused on
+	// that path.
+	return trustPriorsSince(dir, minRuns, 0, time.Time{})
+}
+
+// trustPriorsSince is TrustPriors' body with the read bounded to the month files
+// overlapping [now-since, now]. The window is applied at FILE SELECTION (via
+// ReadSince), not as a post-read filter, so month files outside it are never
+// opened or parsed — that I/O and parse cost is the whole point. since <= 0
+// means "no window" and reads all history, which is how TrustPriors keeps its
+// original semantics through this one shared body.
+//
+// CAUTION when choosing a window: a reviewer whose summed runs inside the window
+// fall below minRuns is omitted from the result entirely, so too narrow a window
+// silently stops trust exemption and demotion rather than merely speeding up the
+// read. See defaultTrustWindow.
+func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time) (map[string]float64, error) {
+	records, _ := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
@@ -104,10 +125,20 @@ func strictRuns(records []Record) []Record {
 }
 
 // ResolveTrustPriors resolves the default scorecard store directory and reads
-// TrustPriors from it at DefaultTrustMinRuns, degrading to a nil map on any
-// failure (an unresolvable user config dir, or TrustPriors' own best-effort
+// the priors from it at DefaultTrustMinRuns, degrading to a nil map on any
+// failure (an unresolvable user config dir, or the read's own best-effort
 // "missing/unreadable store" case) — never an error, never a blocker for the
-// caller (epic 35.9 AC5). This is the single helper every reconcile.RunReconcile
+// caller (epic 35.9 AC5).
+//
+// Unlike TrustPriors, this read is WINDOWED to defaultTrustWindow (epic 35.11):
+// epic 35.9 put it on the primary path of every review and reconcile, so its
+// cost is unconditional and grows with the store, which has no rotation. The two
+// differ deliberately — TrustPriors serves cli/personas.go, which reports on the
+// whole store, while this serves reconcile, which needs a bounded read of recent
+// behavior. See defaultTrustWindow for why the window is 180d and what a
+// narrower one would silently break.
+//
+// This is the single helper every reconcile.RunReconcile
 // call site (cli/reconcile.go, cli/resume.go, cli/review.go,
 // internal/mcp/handlers.go) uses to attach the reviewer trust prior to
 // reclib.Options.TrustPriors before calling RunReconcile — NOT called from
@@ -119,16 +150,36 @@ func ResolveTrustPriors() map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	// TrustPriors is documented best-effort and never returns a non-nil error,
-	// so the error is discarded (matching cli/personas.go's convention).
+	// The read is documented best-effort and never returns a non-nil error, so
+	// the error is discarded (matching cli/personas.go's convention).
 	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now())
 	return priors
 }
 
-// defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11 T2).
+// defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11).
+// It is deliberately NOT caller-configurable: epic 35.6 restrained exposing
+// internal filter constants and epic 35.9 hardcoded trustHighThreshold /
+// trustLowThreshold for the same reason, so a --trust-since flag would reopen
+// exactly that surface.
+//
+// 180d is set from measurement, not intuition. The window interacts with
+// DefaultTrustMinRuns: a reviewer whose runs INSIDE the window fall below that
+// floor is dropped from the priors map, which would silently disable trust
+// exemption and demotion on all four RunReconcile paths — a behavior change, not
+// a speedup. Against the live store on 2026-07-31 (span 2026-06-26 to
+// 2026-07-31, 1260 reviewer records) every one of the 11 reviewers clearing the
+// floor held 113-120 strict runs at every candidate window from 30d to 365d, so
+// 180d strands nobody with a wide margin. The leaderboard's 30d display default
+// is far too aggressive for this purpose and is unrelated.
+//
+// KNOWN LIMITATION (accepted): a reviewer with no runs in the last 180d drops
+// out of the priors map and reverts to the neutral no-history state — the same
+// state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
+// lookup with no distinct "dormant" handling). Re-widening this constant, not an
+// empty-map fallback, is the fix if that ever bites: the map stays non-empty
+// while any reviewer is active, so a fallback keyed on emptiness would never
+// fire for a single dormant reviewer.
+//
+// Narrowing this value requires redoing the min-runs measurement above
+// (TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor guards the floor).
 const defaultTrustWindow = 180 * 24 * time.Hour
-
-// trustPriorsSince is the windowed aggregation. RED stub: ignores the window.
-func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Time) (map[string]float64, error) {
-	return TrustPriors(dir, minRuns)
-}
