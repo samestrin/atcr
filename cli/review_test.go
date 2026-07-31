@@ -884,3 +884,38 @@ func TestVerifyFreshFlag_UsageUnchangedAndDistinct(t *testing.T) {
 	assert.NotSame(t, verifyFresh, newReviewCmd().Flags().Lookup("fresh"),
 		"review and verify --fresh are separate flag instances")
 }
+
+// TestRunReview_InvalidConsensusIgnoredWhenNoReconcile: the config-tier
+// consensus value is consumed only by the one-shot in-process reconcile, so a
+// plain `atcr review` (no --fail-on/--verify/--debate/--auto-fix) must not
+// abort on a bad value — the setting cannot influence that run. A reconciling
+// run must still fail fast on it, before any paid fan-out. (Errors are
+// asserted on the ExecuteContext return value: the root command silences
+// error output and main() does the printing.)
+func TestRunReview_InvalidConsensusIgnoredWhenNoReconcile(t *testing.T) {
+	isolate(t)
+	writeProjectConfig(t, "consensus: bogus\n")
+
+	exec := func(args ...string) error {
+		root := NewRootCmd()
+		root.SetArgs(args)
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		return root.ExecuteContext(context.Background())
+	}
+
+	// No reconcile-triggering flag: the run fails later for other reasons in
+	// this bare fixture (no git range), but never with the consensus error.
+	err := exec("review", "--base", "HEAD^")
+	require.Error(t, err, "the bare fixture cannot complete a review")
+	require.NotContains(t, err.Error(), "invalid consensus level",
+		"a run that never reconciles must not be aborted by the consensus value")
+
+	// A reconciling run (--verify) still fails fast on the bad value, before
+	// any review work.
+	err = exec("review", "--base", "HEAD^", "--verify")
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "invalid consensus level",
+		"a reconciling run must fail fast on the bad config-tier value")
+}
