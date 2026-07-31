@@ -57,9 +57,12 @@ filtered finding is always recoverable from the sidecar. Below the panel floor
 the filter is inert regardless of level.
 
 The level also resolves from a consensus: key in .atcr/config.yaml or
-~/.config/atcr/registry.yaml; the flag overrides both. Note that --consensus is
-a flag on this command only — atcr review and atcr review --resume honor the
-config/registry tiers but take no flag.`,
+~/.config/atcr/registry.yaml; the flag overrides both. Passing the flag with an
+empty value is a usage error rather than a fallback to those tiers — unlike
+--fail-on, an inherited consensus level can be WEAKER than the flag's default,
+so --consensus "$LEVEL" with an unset shell variable must not silently disable
+the filter. Note that --consensus is a flag on this command only — atcr review
+and atcr review --resume honor the config/registry tiers but take no flag.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runReconcile,
 	}
