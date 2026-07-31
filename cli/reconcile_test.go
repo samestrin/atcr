@@ -187,6 +187,27 @@ func TestRunReconcile_NoSlogDefault(t *testing.T) {
 	require.NotPanics(t, func() { _ = runReconcile(cmd, cmd.Flags().Args()) })
 }
 
+// TestRunReconcile_ConsensusLevelLoggedOnFailure verifies the resolved consensus
+// level is logged even when RunReconcile itself fails — the failed run is exactly
+// where an operator most needs to know which configuration was in effect, and a
+// post-run-only log line never fires on that path.
+func TestRunReconcile_ConsensusLevelLoggedOnFailure(t *testing.T) {
+	isolate(t)
+	// A review dir with no sources/ makes RunReconcile fail at Discover, after
+	// the consensus level has been resolved.
+	base := filepath.Join(".atcr", "reviews", "r")
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte("r\n"), 0o644))
+
+	var logBuf, errBuf bytes.Buffer
+	runReconcileWithLogger(t, &logBuf, &errBuf, "--consensus", "lenient", "r")
+
+	assert.Contains(t, logBuf.String(), "consensus filter level resolved",
+		"the resolved level must be logged even when the reconcile fails")
+	assert.Contains(t, logBuf.String(), "lenient",
+		"the log must name the level that was in effect")
+}
+
 // TestReconcileCmd_InProgressReviewRejected verifies a fan-out-managed review
 // (manifest.json present) without its completion signal (summary.json) is a
 // usage error rather than a silent partial reconcile.
