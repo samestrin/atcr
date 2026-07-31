@@ -472,7 +472,7 @@ func gateFlagValue(cmd *cobra.Command) string {
 // failOnThreshold reads and validates the --fail-on flag, returning the
 // canonical threshold ("" when the flag is unset). An invalid value is a usage
 // error (exit 2). Delegates validation to validateGate to share one code path
-// with resolveGateThreshold and prevent semantic drift.
+// with the tiered gate readers and prevent semantic drift.
 func failOnThreshold(cmd *cobra.Command) (string, error) {
 	v := gateFlagValue(cmd)
 	if v == "" {
@@ -481,25 +481,10 @@ func failOnThreshold(cmd *cobra.Command) (string, error) {
 	return validateGate(v)
 }
 
-// resolveGateThreshold resolves the reconcile gate severity via the shared
-// registry.ResolveGateThreshold precedence chain (--fail-on flag > project
-// config > registry; no embedded default), then enum-validates the chosen
-// value here because config fail_on is not validated at load time. A broken
-// project config is a usage error (exit 2, the repo's own config). The same
-// resolver backs the MCP atcr_reconcile handler so the two layers cannot fork.
-func resolveGateThreshold(cmd *cobra.Command) (string, error) {
-	raw, err := registry.ResolveGateThreshold(".", gateFlagValue(cmd))
-	if err != nil {
-		return "", usageError(err)
-	}
-	return finishGate(raw)
-}
-
 // finishGate applies the gate's call-site rules to an already-resolved raw
 // value: nothing configured is an opt-in no-op, anything else is enum-validated
-// here because config fail_on is not validated at load time. Shared by
-// resolveGateThreshold and resolveGateAndConsensus so the single-load path
-// cannot phrase the gate differently from the standalone one.
+// here because config fail_on is not validated at load time. Shared by both
+// tiered readers below so neither can phrase the gate differently.
 func finishGate(raw string) (string, error) {
 	if raw == "" {
 		return "", nil // no configured gate → opt-in no-op

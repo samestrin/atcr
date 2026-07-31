@@ -844,15 +844,22 @@ func TestRunReconcile_PathWarnedFindingSkipped(t *testing.T) {
 	require.Equal(t, "real.go", recs[0].File)
 }
 
-// TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
-// readers (failOnThreshold on the one-shot review path, resolveGateThreshold on
-// the reconcile path) share one semantic: a whitespace-only flag value is unset
+// TestGateThresholdReaders_OneWhitespaceSemantic verifies the --fail-on readers
+// (failOnThreshold, flag-only; and the tiered readers that back the review and
+// reconcile paths) share one semantic: a whitespace-only flag value is unset
 // (no gate), not a usage error, and a real value canonicalizes identically.
 func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
 	isolate(t)
 	readers := map[string]func(*cobra.Command) (string, error){
-		"failOnThreshold":      failOnThreshold,
-		"resolveGateThreshold": resolveGateThreshold,
+		"failOnThreshold": failOnThreshold,
+		"resolveGateAndRawConsensus": func(cmd *cobra.Command) (string, error) {
+			gate, _, err := resolveGateAndRawConsensus(cmd)
+			return gate, err
+		},
+		"resolveGateAndConsensus": func(cmd *cobra.Command) (string, error) {
+			gate, _, err := resolveGateAndConsensus(gateFlagValue(cmd), "")
+			return gate, err
+		},
 	}
 	cases := []struct {
 		flag string
