@@ -47,8 +47,10 @@ than one reviewer. --consensus selects how tolerant that filter is:
   strict   (default) sidecar every singleton below HIGH confidence — the
            behavior shipped in epic 14.2
   lenient  keep MEDIUM-confidence singletons; sidecar only LOW-confidence ones
-  off      filter inert; every singleton reaches findings.json, restoring
-           pre-14.2 behavior
+  off      consensus filter inert; every singleton reaches findings.json. This
+           is not a return to pre-14.2 output: epic 35.9's trust demotion still
+           applies, so off output can contain LOW-confidence findings pre-14.2
+           output never did
 
 Only the corroboration bar moves. The 3-reviewer panel floor and every
 exemption (security-related, HIGH/CRITICAL severity, out-of-scope, and

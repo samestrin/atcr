@@ -25,7 +25,10 @@ const consensusMinReviewers = 3
 //     behavior exactly: every singleton below ConfHigh is sidecarred.
 //   - ConsensusLenient raises the kept-bar to ConfMedium, so an uncorroborated
 //     MEDIUM singleton survives and only a ConfLow one is sidecarred.
-//   - ConsensusOff makes the filter inert, restoring pre-14.2 behavior.
+//   - ConsensusOff makes the consensus filter inert. Note that epic 35.9's trust
+//     demotion still applies (it is gated only by the panel floor), so off output
+//     can contain ConfLow findings pre-14.2 output never did — see
+//     TestDemoteByTrust_ObservableViaConsensusLevel.
 const (
 	ConsensusOff     = "off"
 	ConsensusLenient = "lenient"
