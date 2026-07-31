@@ -220,13 +220,21 @@ func TestConsensusLevel_TrustExemptSurvivesStrict(t *testing.T) {
 	isTrue(t, hasFinding(res, "foo.go"), "a high-trust singleton survives strict via trustExempt")
 	isTrue(t, !hasFinding(res, "bar.go"), "an untrusted singleton is still filtered under strict")
 
-	// The same term must still be in the predicate at lenient. It is mostly
-	// redundant there (a ConfMedium singleton is kept by the bar anyway), so pin
-	// it with a low-trust-demoted ConfLow finding whose reviewer is ALSO
-	// high-trust — impossible in practice, but it isolates the term: only
-	// trustExempt can spare a ConfLow singleton under lenient.
-	isTrue(t, trustExempt(Finding{Reviewers: []string{"a"}}, priors),
-		"trustExempt still recognizes a high-trust sole reviewer")
+	// Scope note — strict is the ONLY level at which this term is observable, so
+	// this test deliberately asserts nothing at lenient. Sparing a singleton via
+	// trustExempt under lenient would require a ConfLow finding whose sole
+	// reviewer is high-trust, and that pairing is unreachable at reconcile time
+	// by construction: demoteByTrust is the only path to ConfLow here and it
+	// fires only at/below trustLowThreshold (0.3), while trustExempt requires
+	// at/above trustHighThreshold (0.7). Every reachable lenient singleton is
+	// ConfMedium, which the lenient bar keeps on its own.
+	//
+	// The term is therefore retained defensively rather than covered: a mutation
+	// narrowing the predicate to `floor == ConfHigh && trustExempt(...)` is
+	// behaviour-preserving today and no test can catch it. The strict assertions
+	// above are the real AC5b guard — they fail the moment the term is dropped
+	// outright. Do not add a direct trustExempt(...) unit call back here: it
+	// reads as lenient coverage while exercising none of the filter block.
 }
 
 // TestConsensusSingletonAt_Bar pins the parameterized predicate directly against
