@@ -55,13 +55,20 @@ const smellCleanDiff = `diff --git a/foo.go b/foo.go
 // stdout must stay payload-only, with the clean-input notes on stderr.
 func runSmell(t *testing.T, in string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
+	return runSmellContext(context.Background(), t, in, args...)
+}
+
+// runSmellContext is runSmell with an explicit context, so a test can cancel
+// the scan the way runMain's SIGINT/SIGTERM handler cancels the root context.
+func runSmellContext(ctx context.Context, t *testing.T, in string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRootCmd()
 	root.SetArgs(append([]string{"verify", "diff"}, args...))
 	root.SetIn(strings.NewReader(in))
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)
-	err := root.ExecuteContext(context.Background())
+	err := root.ExecuteContext(ctx)
 	if err != nil {
 		errBuf.WriteString(err.Error())
 	}
@@ -416,6 +423,18 @@ func TestVerifyDiffCmd_SourcesAgreeByteForByte(t *testing.T) {
 
 	_, viaFile, _ := runSmell(t, "", "--diff", path, "--json")
 	require.Equal(t, viaStaged, viaFile, "the same diff through two sources must yield identical JSON")
+}
+
+// An interrupted scan is not a usage error: runMain cancels the root context
+// on SIGINT/SIGTERM, the git child dies, and the command must not report
+// exit 2 ("usage or configuration error") for what was simply a cancelled job.
+func TestVerifyDiffCmd_CancelledContextIsNotUsageError(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled when git starts, deterministically
+	code, _, _ := runSmellContext(ctx, t, "", "--staged")
+	require.NotEqual(t, 2, code, "an interrupted scan must not report a usage error")
 }
 
 func TestVerifyDiffCmd_RepoFlagTargetsAnotherTree(t *testing.T) {
