@@ -214,6 +214,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
 	// (Story 5); Emit gates on it before any I/O.
 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
+	// docs/scorecard.md caution: a non-strict run's scorecard records are computed
+	// from the post-filter finding set, durably depressing the reviewer trust
+	// priors that later strict runs read. Surface the documented mitigation
+	// in-run when the user hasn't already taken it.
+	if consensusLevel != reclib.ConsensusStrict && !noScorecard {
+		logger.Warn("non-strict consensus run depresses reviewer trust priors for later strict runs; pass --no-scorecard to keep it out of scorecard history",
+			"consensus", consensusLevel)
+	}
 	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
 
 	// Persist the run's reconciled findings into the .atcr/-scoped local TD store
