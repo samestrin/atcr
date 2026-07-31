@@ -40,11 +40,16 @@ func loadSharedTiers(root string) (*sharedTiers, error) {
 		return nil, err
 	}
 
+	// No os.Stat gate on the local registry path either: LoadRegistry delegates
+	// to loadRegistryBytes, which reads from ATCR_REGISTRY_URL and ignores the
+	// local path entirely when that env var is set. Gating on the local file
+	// skipped the whole tier without attempting a fetch, so an Epic 19.2 shared
+	// team registry (remote URL, no local file) was silently ignored. The load's
+	// own error — missing file, unreachable URL, broken YAML — stays swallowed
+	// best-effort, which is what kept the absent-file case quiet before.
 	if regPath, err := DefaultRegistryPath(); err == nil {
-		if _, serr := os.Stat(regPath); serr == nil {
-			if reg, err := LoadRegistry(regPath); err == nil {
-				t.reg = reg
-			}
+		if reg, err := LoadRegistry(regPath); err == nil {
+			t.reg = reg
 		}
 	}
 	return &t, nil
