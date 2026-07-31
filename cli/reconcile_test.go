@@ -1337,9 +1337,16 @@ func TestReconcileCmd_ConsensusConfigPrecedence(t *testing.T) {
 }
 
 // TestReconcileCmd_LongHelpDocumentsConsensus (T3): the command's long help must
-// document --consensus, every level, that strict is the default, and that off
-// restores pre-14.2 behavior — a flag whose only documentation is a one-line
-// usage string is not discoverable.
+// document --consensus, every level, that strict is the default, and what off
+// actually does — a flag whose only documentation is a one-line usage string is
+// not discoverable.
+//
+// "off restores pre-14.2 behavior" is specifically NOT what the help may say:
+// epic 35.9's trust demotion is gated only by the panel floor, so it still runs
+// under off and its ConfLow findings reach findings.json — a confidence tier
+// unreachable at reconcile time before 35.9, let alone before 14.2 (asserted in
+// TestDemoteByTrust_ObservableViaConsensusLevel). A user who sets off expecting
+// the old artifact shape must be told about that caveat here.
 func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
 	long := newReconcileCmd().Long
 
@@ -1348,8 +1355,11 @@ func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
 		assert.Contains(t, long, level, "long help must name the %s level", level)
 	}
 	assert.Contains(t, long, "default", "long help must say which level is the default")
-	assert.Regexp(t, `(?s)off.*pre-14\.2|pre-14\.2.*off`, long,
-		"long help must say off restores pre-14.2 behavior")
+	assert.Contains(t, long, "pre-14.2", "long help must situate off against the pre-14.2 baseline")
+	assert.NotRegexp(t, `(?i)restor\w*\s+pre-14\.2`, long,
+		"off does NOT restore pre-14.2 behavior — the trust demotion still runs")
+	assert.Regexp(t, `(?is)off.*(LOW-confidence|LOW confidence)`, long,
+		"long help must warn that off output can still carry LOW-confidence findings")
 	assert.Contains(t, long, "consensus:", "long help must point at the config key too")
 }
 
