@@ -770,6 +770,61 @@ func TestVerifyDiffCmd_RevArgsRejectLeadingDash(t *testing.T) {
 	}
 }
 
+// TestVerifyDiffCmd_RevIsNotAPathspec pins the rev/pathspec boundary. Without a
+// `--` separator git happily reads a path-shaped --rev as a PATHSPEC — `--rev
+// foo.go` became `git show HEAD -- foo.go`, which silently narrowed the scan to
+// one file and exited 0. A typo'd or stale rev in a CI gate must fail loudly, not
+// quietly reduce coverage.
+func TestVerifyDiffCmd_RevIsNotAPathspec(t *testing.T) {
+	wd := mergeWithTestDeletion(t)
+	code, _, stderr := runSmell(t, "", "--rev", "foo.go", "--repo", wd)
+	require.Equal(t, 2, code, "a path-shaped --rev must be refused, not reinterpreted as a pathspec")
+	require.Contains(t, strings.ToLower(stderr), "revision", "the error must say the value is not a revision")
+}
+
+// TestVerifyDiffCmd_RevUsesEndOfOptions pins the hardening at the argv seam. The
+// repo standardized on git's own --end-of-options for option injection
+// (internal/gitrange/resolver.go, internal/fanout/review.go); the hand-rolled
+// leading-dash check stays as defense in depth, but it cannot close rev/pathspec
+// ambiguity — only `--` does — so both must be on the wire.
+func TestVerifyDiffCmd_RevUsesEndOfOptions(t *testing.T) {
+	if os.Getenv("ATCR_GIT_STUB_HELPER") == "1" {
+		fmt.Print(smellHardDiff)
+		os.Exit(0)
+	}
+	var captured [][]string
+	stub := gitexec.CommandContextFn
+	gitexec.CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
+		captured = append(captured, append([]string(nil), arg...))
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVerifyDiffCmd_RevUsesEndOfOptions$")
+		cmd.Env = append(os.Environ(), "ATCR_GIT_STUB_HELPER=1")
+		return cmd
+	}
+	defer func() { gitexec.CommandContextFn = stub }()
+
+	_, _, _ = runSmell(t, "", "--rev", "HEAD")
+	require.NotEmpty(t, captured, "the --rev path must shell out to git")
+	show := captured[len(captured)-1]
+
+	eoo := indexOf(show, "--end-of-options")
+	rev := indexOf(show, "HEAD")
+	sep := indexOf(show, "--")
+	require.GreaterOrEqual(t, eoo, 0, "argv must pass --end-of-options: %v", show)
+	require.GreaterOrEqual(t, sep, 0, "argv must pass a `--` separator so a rev is never read as a pathspec: %v", show)
+	require.Less(t, eoo, rev, "--end-of-options must precede the revision: %v", show)
+	require.Less(t, rev, sep, "the `--` separator must follow the revision: %v", show)
+}
+
+// indexOf returns the position of want in argv, or -1.
+func indexOf(argv []string, want string) int {
+	for i, a := range argv {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestVerifyDiffCmd_EmptyRevArgsAreUsageErrors(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)
