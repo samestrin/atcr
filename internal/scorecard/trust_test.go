@@ -348,6 +348,38 @@ func TestTrustPriorsSince_ExcludesMonthsOutsideTheWindow(t *testing.T) {
 	assert.Contains(t, rates, "recent")
 }
 
+// TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow covers
+// the strictRuns x window compounding trust.go's window comment flags: a
+// reviewer used mostly under --consensus lenient/off can hold fewer than
+// DefaultTrustMinRuns STRICT runs inside the window even while running
+// constantly. The windowed read must count only strict runs toward the floor:
+// 25 lenient + 5 strict runs inside the window omits the reviewer at
+// DefaultTrustMinRuns but includes it at minRuns=5.
+func TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	at := now.AddDate(0, 0, -10) // inside defaultTrustWindow
+	for i := 0; i < 25; i++ {
+		rec := reviewer_(runIDAt(at, fmt.Sprintf("lenient-%d", i)), "Lenny", "opus", 3, 3)
+		rec.ConsensusLevel = reclib.ConsensusLenient
+		require.NoError(t, Append(dir, rec))
+	}
+	for i := 0; i < 5; i++ {
+		rec := reviewer_(runIDAt(at, fmt.Sprintf("strict-%d", i)), "Lenny", "opus", 3, 3)
+		rec.ConsensusLevel = reclib.ConsensusStrict
+		require.NoError(t, Append(dir, rec))
+	}
+
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "lenny",
+		"only 5 strict runs inside the window — lenient runs must not top the floor up to DefaultTrustMinRuns")
+
+	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "lenny", "at minRuns=5 the 5 strict runs clear the floor")
+}
+
 // TestTrustPriorsSince_NoWindowMatchesTrustPriors pins the shared-code-path
 // guarantee: since<=0 is exactly the all-history read, so the two paths cannot
 // drift.
