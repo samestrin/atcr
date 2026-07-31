@@ -688,6 +688,55 @@ func TestDocsClaimedFlagsAreReal(t *testing.T) {
 	}
 }
 
+// TestDiffSmellVersionProbeInspectsHelpText pins the documented "is this atcr new
+// enough?" probe against the shape that actually discriminates.
+//
+// `verify` is both a group and a leaf (it takes an optional [id-or-path]), so on
+// an atcr that predates `verify diff` cobra reads "diff" as a POSITIONAL and
+// --help short-circuits to verify's own help — exit 0. A probe keying on the exit
+// status therefore reports "new enough" on every binary ever shipped, and the
+// guarded call then dies with `unknown flag: --staged`. Under the documented
+// pre-commit hook's `set -euo pipefail` that blocks every commit — the exact
+// failure the probe exists to prevent.
+//
+// The probe must inspect the help TEXT instead. `--fail-on` is registered only on
+// `verify diff`, never on `verify`, so grepping for it separates the two.
+func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "diff-smell.md"))
+	if err != nil {
+		t.Fatalf("read docs/diff-smell.md: %v", err)
+	}
+	probed := 0
+	for i, ln := range strings.Split(string(b), "\n") {
+		if !strings.Contains(ln, "atcr verify diff --help") {
+			continue
+		}
+		probed++
+		if !strings.Contains(ln, "grep") || !strings.Contains(ln, "--fail-on") {
+			t.Errorf("docs/diff-smell.md:%d probes with %q, which exits 0 on an atcr that predates `verify diff`; "+
+				"the probe must inspect the help text, e.g. `atcr verify diff --help 2>&1 | grep -q -- '--fail-on'`",
+				i+1, strings.TrimSpace(ln))
+		}
+	}
+	if probed == 0 {
+		t.Fatal("docs/diff-smell.md documents no `atcr verify diff --help` version probe; the version-discoverability recipe is the consumer-adoption path and must stay documented")
+	}
+}
+
+// TestVerifyDiffOwnsFailOnAlone backs the probe above: it is only a valid version
+// discriminator while `--fail-on` is reachable on `verify diff` and NOT on its
+// parent. If a later change adds --fail-on to `verify`, the documented recipe
+// silently starts reporting "new enough" on old binaries again.
+func TestVerifyDiffOwnsFailOnAlone(t *testing.T) {
+	if !reachableFlags([]string{"verify", "diff"})["fail-on"] {
+		t.Error("`atcr verify diff` must own --fail-on; the documented version probe greps its help text for that flag")
+	}
+	if reachableFlags([]string{"verify"})["fail-on"] {
+		t.Error("`atcr verify` must NOT expose --fail-on: the documented version probe greps for it to tell a new atcr from an old one, and an inherited/duplicated flag would make an old binary indistinguishable")
+	}
+}
+
 // configSetLong walks the compiled command tree to the `config set` subcommand
 // and returns its Long help text, so the coverage checks below assert on the
 // real, self-documenting CLI surface rather than a hardcoded copy.
