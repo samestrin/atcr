@@ -148,9 +148,20 @@ func TestDefaultProjectConfigYAML_SeedsConsensus(t *testing.T) {
 	assert.Equal(t, DefaultConsensus, cfg.Consensus)
 }
 
-// TestSharedSettingsKeys_IncludesConsensus pins the misplaced-key hint: a
-// consensus key in .atcr/registry.yaml must be told where it belongs, exactly
-// as fail_on is.
+// TestSharedSettingsKeys_IncludesConsensus pins the misplaced-key hint
+// behaviorally: a consensus key in .atcr/registry.yaml must be told where it
+// belongs, exactly as fail_on is. (Asserts the user-facing contract, not the
+// private sharedSettingsKeys slice that merely implements it.)
 func TestSharedSettingsKeys_IncludesConsensus(t *testing.T) {
-	assert.Contains(t, sharedSettingsKeys, "consensus")
+	root := t.TempDir()
+	atcrDir := filepath.Join(root, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	overlayYAML := "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\nagents:\n  a:\n    provider: p\n    model: m\nconsensus: off\n"
+	overlayPath := filepath.Join(atcrDir, "registry.yaml")
+	require.NoError(t, os.WriteFile(overlayPath, []byte(overlayYAML), 0o644))
+
+	_, err := LoadProjectRegistry(overlayPath)
+	require.Error(t, err, "a consensus key in the project overlay must be rejected")
+	assert.Contains(t, err.Error(), "consensus")
+	assert.Contains(t, err.Error(), ".atcr/config.yaml", "the hint must redirect the key to the project config")
 }
