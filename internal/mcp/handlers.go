@@ -311,6 +311,13 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	if !ok {
 		return nil, ReconcileResult{}, reclib.InvalidConsensusError(rawConsensus)
 	}
+	// Record the effective level for the same reason the CLI does: it reaches an
+	// MCP-driven reconcile from .atcr/config.yaml or the machine-wide registry
+	// with no argument passed at all, and the persisted summary.json records only
+	// ConsensusFiltered (0 under both "off" and "strict with nothing to filter").
+	// Logged at resolve time, not post-run, so the level is still recorded when
+	// the reconcile below fails.
+	e.logger().Info("consensus filter level resolved", "consensus", consensusLevel)
 
 	// --require-verified is meaningless without a gate (the same fail-fast rule as
 	// the CLI, AC 05-01 EC3): a strict gate that never runs gives false confidence.

@@ -123,6 +123,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	if err != nil {
 		return err
 	}
+	// Record the effective level for the same reason cli/reconcile.go does: it
+	// can come from ~/.config/atcr/registry.yaml with nothing local naming it,
+	// and ConsensusFiltered == 0 alone cannot distinguish "off" from "strict with
+	// nothing to filter". Logged at resolve time, not post-run, so the level is
+	// still recorded when the resumed fan-out or re-reconcile below fails.
+	log.FromContext(cmd.Context()).Info("consensus filter level resolved", "consensus", consensusLevel)
 
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
