@@ -133,7 +133,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// the gate above: a bad --consensus (or a bad config consensus, which is not
 	// validated at load time) must fail fast as a usage error (exit 2) rather
 	// than after a reconcile has already written artifacts.
-	consensusLevel, err := resolveConsensusLevel(consensusFlagValue(cmd))
+	explicitConsensus, err := consensusFlagValue(cmd)
+	if err != nil {
+		return err
+	}
+	consensusLevel, err := resolveConsensusLevel(explicitConsensus)
 	if err != nil {
 		return err
 	}
@@ -498,9 +502,9 @@ func resolveGateThreshold(cmd *cobra.Command) (string, error) {
 // gateFlagValue's semantic exactly: a whitespace-only value is unset (it falls
 // through to the config chain), never a usage error on one surface and a config
 // fallback on another.
-func consensusFlagValue(cmd *cobra.Command) string {
-	v, _ := cmd.Flags().GetString("consensus")
-	return strings.TrimSpace(v)
+func consensusFlagValue(cmd *cobra.Command) (string, error) {
+	v, _ := cmd.Flags().GetString("consensus") // STUB (RED)
+	return strings.TrimSpace(v), nil
 }
 
 // resolveConsensusLevel resolves the consensus filter level via the shared

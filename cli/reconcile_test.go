@@ -1151,13 +1151,44 @@ func TestResolveConsensusLevel_Precedence(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestConsensusFlagValue_WhitespaceIsUnset mirrors gateFlagValue's semantic: a
-// whitespace-only --consensus is unset (falls through to the config chain), not
-// a usage error.
-func TestConsensusFlagValue_WhitespaceIsUnset(t *testing.T) {
-	cmd := newReconcileCmd()
-	require.NoError(t, cmd.Flags().Set("consensus", "   "))
-	assert.Equal(t, "", consensusFlagValue(cmd))
+// TestConsensusFlagValue_ExplicitEmptyIsUsageError pins the deliberate
+// asymmetry with gateFlagValue: an ABSENT --consensus is unset (the config
+// chain decides), but an explicitly set empty or whitespace-only value is a
+// usage error. An empty --fail-on can only inherit a STRICTER gate, whereas an
+// empty --consensus can inherit a WEAKER one, so `atcr reconcile --consensus
+// "$LEVEL"` with an unset shell variable must not silently disable the
+// corroboration filter. Mirrors outputDirFromFlags' "--output-dir must not be
+// empty" rejection (cli/review.go:115-117).
+func TestConsensusFlagValue_ExplicitEmptyIsUsageError(t *testing.T) {
+	// Absent flag → unset, no error: the config/registry chain still decides.
+	got, err := consensusFlagValue(newReconcileCmd())
+	require.NoError(t, err)
+	assert.Equal(t, "", got)
+
+	for _, raw := range []string{"", "   "} {
+		cmd := newReconcileCmd()
+		require.NoError(t, cmd.Flags().Set("consensus", raw))
+
+		_, err := consensusFlagValue(cmd)
+		require.Error(t, err, "explicit %q must be rejected, not treated as unset", raw)
+		for _, level := range reclib.ConsensusLevels {
+			assert.Contains(t, err.Error(), level,
+				"the usage error must name every valid level")
+		}
+	}
+}
+
+// TestReconcileCmd_ExplicitEmptyConsensusExitsTwo drives the same rejection
+// end-to-end, so the call-site wiring is locked too: without it runReconcile
+// would swallow the error and inherit whatever ~/.config/atcr/registry.yaml
+// says. The config tier here says off — the weaker level the empty flag would
+// otherwise silently pick up.
+func TestReconcileCmd_ExplicitEmptyConsensusExitsTwo(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+	writeProjectConfig(t, "consensus: off\n")
+
+	require.Equal(t, 2, execCmd(t, "reconcile", "--consensus", "", "r"))
 }
 
 // consensusSummary reads a reconciled run's summary.json and returns the
