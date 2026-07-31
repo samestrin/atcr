@@ -587,7 +587,10 @@ func TestReadSince_IgnoresNonJSONLAndSubdirectories(t *testing.T) {
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "2026-07.jsonl.d"), 0o700))
+	// Named with a .jsonl suffix on purpose: the suffix check alone must NOT be
+	// what excludes this entry — e.IsDir() has to be the discriminating guard,
+	// or the "directories are ignored" claim is unproven.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "2026-08.jsonl"), 0o700))
 
 	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: io.Discard})
 	require.NoError(t, err)
