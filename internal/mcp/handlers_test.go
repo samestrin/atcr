@@ -982,6 +982,48 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 	})
 }
 
+// TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton (AC1) is the
+// assertion that separates lenient from off on the MCP surface.
+// TestReconcileHandler_ConsensusLevels above cannot: every finding in
+// consensusPanelFixture resolves to ConfMedium, so lenient's ConfMedium floor
+// filters nothing and off's inert filter filters nothing — an identical
+// observable, which a wiring bug mapping lenient to off would pass. Seeding
+// greta (bar.go's reviewer) as low-trust makes demoteByTrust demote its
+// singleton to ConfLow, the only ConfLow-producing path at this layer, so
+// lenient must now sidecar exactly one finding. Mirrors the CLI-layer
+// TestReconcileCmd_ConsensusLenientKeepsMediumSingletons.
+func TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := consensusPanelFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	callOK[map[string]any](t, cs, ToolReconcile, map[string]any{"consensus": "lenient"})
+
+	assert.ElementsMatch(t, []string{"foo.go", "baz.go"}, reconciledFiles(t, root, id),
+		"lenient keeps the two ConfMedium singletons")
+	assert.Equal(t, 1, mcpConsensusFiltered(t, root, id),
+		"and sidecars exactly the demoted ConfLow one — the assertion that separates lenient from off")
+}
+
+// TestReconcileHandler_ConsensusOffKeepsDemotedSingleton (AC6, MCP layer) is the
+// other half of the pair: the same low-trust panel under off keeps ALL three
+// findings, proving off is not merely an alias for lenient. The two tests share
+// a fixture and disagree on the count by construction, so no implementation can
+// satisfy both while treating the levels as equivalent.
+func TestReconcileHandler_ConsensusOffKeepsDemotedSingleton(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := consensusPanelFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	callOK[map[string]any](t, cs, ToolReconcile, map[string]any{"consensus": "off"})
+
+	assert.ElementsMatch(t, []string{"foo.go", "bar.go", "baz.go"}, reconciledFiles(t, root, id),
+		"off keeps the demoted ConfLow singleton that lenient sidecars")
+	assert.Equal(t, 0, mcpConsensusFiltered(t, root, id))
+}
+
 // TestReconcileHandler_InvalidConsensus (AC2): an out-of-vocabulary consensus
 // value is a tool error naming the valid levels — the MCP analogue of the
 // CLI's exit-2 usage error. An explicit argument is rejected by the input
