@@ -6,22 +6,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // Embedded defaults for project-level settings (the lowest precedence tier).
 // DefaultFailOn seeds ONLY the config template `atcr init` generates — it
 // never participates in gate resolution, which is opt-in (see
-// ResolveGateThreshold and the reconcile gate).
+// ResolveGateThreshold and the reconcile gate). DefaultConsensus, by contrast,
+// aliases the reconcile package's canonical level so the template seed and the
+// effective runtime default are one value, not two literals that can drift.
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
 	// DefaultConsensus is the embedded consensus-filter level (epic 35.9.1):
 	// "strict" reproduces the hardcoded epic-14.2 behavior, so an unconfigured
-	// project sees no change. Unlike DefaultFailOn it is a real default rather
-	// than template-only seeding — ResolveConsensus returns "" when nothing is
-	// configured and each call site maps "" to this value, because an
-	// unresolvable level must never silently disable the filter.
-	DefaultConsensus = "strict"
+	// project sees no change. ResolveConsensus returns "" when nothing is
+	// configured and each call site normalizes through
+	// reclib.NormalizeConsensus (whose "" maps to reclib.ConsensusStrict),
+	// because an unresolvable level must never silently disable the filter.
+	// Deriving this const from reclib.ConsensusStrict keeps the template seed
+	// and that effective default structurally identical.
+	DefaultConsensus = reclib.ConsensusStrict
 	// DefaultReviewStrategy is the embedded fan-out strategy (Epic 14.3). "bulk"
 	// sends the whole diff in one prompt per persona, keeping API cost strictly
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
