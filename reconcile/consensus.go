@@ -44,11 +44,12 @@ const (
 var consensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
 
 // ConsensusLevels returns the valid consensus levels in documentation order
-// (default first).
-//
-// STUB (RED): returns the package slice itself, so a caller can still write
-// through it. Replaced by a copy-returning implementation in the next commit.
-func ConsensusLevels() []string { return consensusLevels }
+// (default first) — a FRESH slice per call, so a consumer of this module cannot
+// write through the returned value and corrupt the vocabulary every CLI usage
+// error and MCP tool-error string is built from.
+func ConsensusLevels() []string {
+	return append([]string(nil), consensusLevels...)
+}
 
 // InvalidConsensusError builds the one invalid-level error sentence every
 // surface renders — wrapped in a CLI usage error (exit 2) or returned raw as
