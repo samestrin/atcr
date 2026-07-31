@@ -878,6 +878,52 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 	}
 }
 
+// TestDiffSmellExitTwoCausesAreDocumented asserts BOTH exit tables enumerate
+// every real cause of exit 2, and stay in sync with each other.
+//
+// They previously listed exactly four ("bad --fail-on value, unreadable file, git
+// failure, or two named sources") while the command refused more than that. Each
+// omission below is verified against the binary:
+//
+//	--rev --output=/tmp/pwn  -> 2   (a revision-shaped value starting with '-')
+//	--rev ""                 -> 2   (an explicitly empty revision)
+//	--diff ""                -> 2   (an explicitly empty diff path)
+//	a source over the size cap -> 2
+//
+// The '-' rule in particular is a deliberate argument-injection guard, worth
+// documenting rather than leaving as a surprise.
+func TestDiffSmellExitTwoCausesAreDocumented(t *testing.T) {
+	root := repoRootDir(t)
+	// Each cause is a set of alternatives; the doc must express it somehow.
+	causes := []struct {
+		label string
+		anyOf []string
+	}{
+		{"a revision-shaped value starting with '-'", []string{"start with '-'", "starts with `-`", "leading `-`", "`-`-leading", "begins with `-`"}},
+		{"an explicitly empty --rev/--diff value", []string{"empty `--rev`", "empty value", "an empty ", "explicitly empty"}},
+		{"input over the size cap", []string{"too large", "size cap", "over the cap"}},
+	}
+	for _, name := range []string{"diff-smell.md", "ci-integration.md"} {
+		b, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatalf("read docs/%s: %v", name, err)
+		}
+		doc := string(b)
+		for _, c := range causes {
+			ok := false
+			for _, alt := range c.anyOf {
+				if strings.Contains(doc, alt) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				t.Errorf("docs/%s does not document exit 2 for %s; both exit tables must enumerate every cause", name, c.label)
+			}
+		}
+	}
+}
+
 // TestDiffSubcommandShadowingIsDocumented asserts the docs state the one
 // behaviour change adding `diff` under `verify` caused: cobra resolves a matching
 // child before positional args, so a review id or path literally named `diff` is
