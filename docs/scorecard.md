@@ -340,7 +340,8 @@ than growing a third aggregation.
   See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
-  (20) summed `strict` runs before its prior applies at all — every reviewer on a fresh
+  (20) summed `strict` runs **inside the 180-day window** before its prior
+  applies at all — every reviewer on a fresh
   install, and any reviewer below that floor, is simply absent from the map,
   so reconcile behaves byte-identically to pre-35.9 until history accumulates.
   This resolver is intentionally not called from inside
