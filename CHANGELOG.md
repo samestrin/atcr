@@ -11,6 +11,8 @@ Makes the epic-14.2 consensus filter's corroboration bar configurable via `--con
 
 - `reconcile.Summary.ConsensusLevel` (`consensus_level` in `summary.json`) records the level the filter actually ran at, and `report.md` names it unconditionally. `consensus_filtered: 0` alone is ambiguous between `off` and `strict with nothing to filter`, and `off` is reachable with no flag at all, so the artifacts previously carried no trace of the configuration that produced them. An unset or unrecognized level is recorded as the `strict` the filter fails safe to, never echoed back raw.
 
+- `scorecard.Record.ConsensusLevel` (`consensus_level`, omitted when empty) records the consensus level a run's reviewer counts were measured under, and `TrustPriors` now aggregates **only `strict` runs**. Reviewer counts come from the post-consensus-filter finding set, so a `lenient`/`off` run inflated `findings_raised` without `findings_corroborated` and durably depressed the trust priors `trustExempt`/`demoteByTrust` applied on later `strict` runs — a cross-run feedback loop. A record with no `consensus_level` counts as `strict` (every pre-35.9.1 run was strict by construction), so existing stores are unaffected. The leaderboard is deliberately not filtered.
+
 ### Changed
 
 - Only the singleton corroboration bar is configurable. The 3-distinct-reviewer panel floor (`consensusMinReviewers`) and every exemption (`consensusExempt`: security-related, `HIGH`/`CRITICAL`, out-of-scope, confirmed; and `trustExempt`: high-trust sole reviewer) behave identically at all three levels — the internal confidence ladder and exemption rules stay out of the public API.

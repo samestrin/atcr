@@ -301,21 +301,36 @@ than growing a third aggregation.
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
-  > **Caution — a non-`strict` run skews the scorecard it later reads.** Reviewer
+  > **Scorecard rates are not comparable across consensus levels.** Reviewer
   > records are computed from the **post-filter** finding set (`res.Findings`), so
   > under `lenient` or `off` the extra surviving singletons each increment
   > `findings_raised` without incrementing `findings_corroborated`, lowering that
-  > reviewer's corroboration rate. Because `ResolveTrustPriors` reads those same
-  > records, a run at a relaxed level durably depresses the priors that
-  > `trustExempt` and `demoteByTrust` apply on **later `strict` runs** — a
-  > cross-run feedback loop, not a per-run effect. Scorecard history is therefore
-  > not directly comparable across levels. If you are exploring the sidecar with
-  > `--consensus off` or `lenient`, pass `--no-scorecard` so the exploratory run
-  > does not enter reviewer history.
+  > reviewer's corroboration rate for that run.
+  >
+  > **The trust-prior feedback loop this used to create is now closed.** Every
+  > record carries the level it was measured under (`consensus_level`), and
+  > `TrustPriors` counts **only `strict` runs**, so a relaxed run can no longer
+  > depress the priors `trustExempt` and `demoteByTrust` apply on later `strict`
+  > runs. A record with no `consensus_level` (any run written before epic 35.9.1)
+  > counts as `strict` — those runs were strict by construction. This applies to
+  > every surface, CLI and MCP alike, because the filter lives in `TrustPriors`
+  > rather than at the emission site.
+  >
+  > Two consequences worth knowing:
+  > - `minRuns` is a floor on **strict** runs. A reviewer with 15 `strict` and 10
+  >   `lenient` runs has 15 trusted measurements, not 25, so a long run of relaxed
+  >   reconciles contributes no new trust data (by design — those counts are not
+  >   comparable).
+  > - The **leaderboard** (`atcr scorecard`, `atcr leaderboard`) is deliberately
+  >   NOT filtered: it reports what actually happened across all runs. Its
+  >   corroboration column still mixes levels, so read it with that in mind.
+  >
+  > `--no-scorecard` is still useful for keeping a throwaway run out of history
+  > entirely, but it is no longer required to protect the trust priors.
   See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
-  (20) summed runs before its prior applies at all — every reviewer on a fresh
+  (20) summed `strict` runs before its prior applies at all — every reviewer on a fresh
   install, and any reviewer below that floor, is simply absent from the map,
   so reconcile behaves byte-identically to pre-35.9 until history accumulates.
   This resolver is intentionally not called from inside

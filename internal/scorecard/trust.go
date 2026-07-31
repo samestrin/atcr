@@ -3,6 +3,8 @@ package scorecard
 import (
 	"io"
 	"strings"
+
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // DefaultTrustMinRuns is the conservative minimum-run floor a reviewer must
@@ -20,6 +22,12 @@ const DefaultTrustMinRuns = 20
 // the minRuns floor and recomputing the ratio, so the result is a true
 // per-reviewer aggregate rather than whichever model's row sorted last.
 //
+// Only runs measured under the STRICT consensus level are counted (see
+// strictRuns) — including runs at other levels would let one exploratory
+// `--consensus off` reconcile durably depress the priors every later strict run
+// reads. This also means minRuns is a floor on STRICT runs: a reviewer with 15
+// strict and 10 lenient runs has 15 trusted measurements, not 25.
+//
 // A reviewer whose summed Runs is below minRuns is OMITTED from the map, not
 // present with a zero value — callers can distinguish "no history" from
 // "measured zero" (a reviewer that cleared the floor but has never raised a
@@ -34,7 +42,7 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
-	for _, row := range Aggregate(records) {
+	for _, row := range Aggregate(strictRuns(records)) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -54,6 +62,44 @@ func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 		rates[name] = ratio(t.corroborated, t.raised)
 	}
 	return rates, nil
+}
+
+// strictRuns keeps only the records measured under the strict consensus level —
+// the semantics a corroboration rate has always carried.
+//
+// FindingsRaised and FindingsCorroborated are computed from the POST-consensus-
+// filter finding set (see reviewerCounts), so the same review yields a different
+// rate at each level: under lenient or off the uncorroborated singletons strict
+// would have sidecarred stay in the set, inflating raised without raising
+// corroborated. Mixing those runs in would let one exploratory `--consensus off`
+// run durably depress the priors demoteByTrust and trustExempt apply on every
+// LATER strict run — a cross-run feedback loop, since a depressed prior demotes
+// more findings, which depresses the rate further.
+//
+// An EMPTY level counts as strict: a store written before epic 35.9.1 has no
+// consensus_level, and every one of those runs was strict by construction (the
+// levels did not exist). Reading empty as non-strict would strand every existing
+// reviewer history in the field.
+//
+// An UNRECOGNIZED level (only reachable from a hand-edited or corrupted store —
+// the emitter always stamps a canonical value) is EXCLUDED rather than read as
+// strict. This deliberately inverts consensusFloor's reconcile-time fail-safe,
+// because the risk is inverted: there, mistaking a level for non-strict would
+// disable the filter, while here, admitting an uninterpretable label could let a
+// mislabeled non-strict run depress the priors. Excluding it only forgoes data.
+//
+// This filter is deliberately scoped to TrustPriors and NOT applied to Aggregate
+// itself: the `atcr scorecard` leaderboard reports what actually happened across
+// all runs, while the trust prior is a behavioral measurement that is only
+// comparable at a fixed level.
+func strictRuns(records []Record) []Record {
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		if c, ok := reclib.NormalizeConsensus(r.ConsensusLevel); ok && c == reclib.ConsensusStrict {
+			kept = append(kept, r)
+		}
+	}
+	return kept
 }
 
 // ResolveTrustPriors resolves the default scorecard store directory and reads

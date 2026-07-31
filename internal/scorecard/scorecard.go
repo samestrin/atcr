@@ -73,8 +73,6 @@ type Record struct {
 	// Recording it lets TrustPriors count only the strict runs its historical
 	// semantics assume. Omitted when empty: a store written before 35.9.1 has no
 	// level, and every one of those runs was strict by construction.
-	//
-	// STUB (RED): declared but never stamped. Populated in the next commit.
 	ConsensusLevel string `json:"consensus_level,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
@@ -133,9 +131,14 @@ type EmitOpts struct {
 // non-empty and pointing at a readable, well-formed verification.json, adds the
 // conditional skeptic fields.
 type EmitInput struct {
-	RunID            string
-	Findings         []Finding
-	Reviewers        map[string]ReviewerMeta
+	RunID     string
+	Findings  []Finding
+	Reviewers map[string]ReviewerMeta
+	// ConsensusLevel is the reconcile consensus level Findings were measured
+	// under; it is stamped onto every emitted record (see Record.ConsensusLevel).
+	// Empty means "not recorded" and is read as strict downstream, matching a
+	// pre-35.9.1 store.
+	ConsensusLevel   string
 	VerificationPath string
 }
 
@@ -173,6 +176,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	agg.SchemaVersion = SchemaVersion
 	agg.RecordType = RecordTypeAggregate
 	agg.RunID = in.RunID
+	agg.ConsensusLevel = in.ConsensusLevel
 	var aggVerified, aggRefuted int
 
 	for _, name := range names {
@@ -182,6 +186,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,
 			RunID:                in.RunID,
+			ConsensusLevel:       in.ConsensusLevel,
 			Reviewer:             name,
 			Model:                meta.Model,
 			Role:                 defaultRole,

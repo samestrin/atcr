@@ -254,3 +254,32 @@ func TestTrustPriors_AllNonStrictYieldsNoPrior(t *testing.T) {
 	assert.NotContains(t, priors, "robin",
 		"a reviewer with only non-strict history has no trusted measurement")
 }
+
+// TestTrustPriors_UnrecognizedConsensusLevelExcluded pins the fail-safe
+// direction for a record whose level is not in the vocabulary — only reachable
+// via a hand-edited or corrupted store, since the emitter always stamps a
+// canonical level. It is EXCLUDED rather than read as strict: admitting an
+// uninterpretable label could let a mislabeled non-strict run depress the priors,
+// which is the exact harm this filter exists to prevent, whereas excluding it
+// only forgoes some data. (This deliberately differs from consensusFloor, which
+// fails safe to strict at reconcile time — there the risk is inverted.)
+func TestTrustPriors_UnrecognizedConsensusLevelExcluded(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-04T00:00:00Z-x%02d", i),
+			Reviewer:             "alfred",
+			Model:                "m",
+			ConsensusLevel:       "corrupted",
+			FindingsRaised:       2,
+			FindingsCorroborated: 2,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "alfred",
+		"a record with an uninterpretable level must not count toward a trust prior")
+}
