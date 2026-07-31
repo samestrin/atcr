@@ -588,12 +588,24 @@ func TestVerifyDiffCmd_SourcesAreMutuallyExclusive(t *testing.T) {
 		{"--staged", "--range", "HEAD~1..HEAD"},
 		{"--diff", "-", "--rev", "HEAD"},
 		{"--range", "a..b", "--rev", "HEAD"},
+		// Reversed argv order: the message follows diffSourceFlags order, so
+		// the first argv flag is NOT necessarily the first flag named.
+		{"--rev", "HEAD", "--staged"},
 	} {
 		code, _, stderr := runSmell(t, "", args...)
 		require.Equal(t, 2, code, "args %v must be a usage error", args)
 		require.Contains(t, stderr, "mutually exclusive")
-		// AC4: the message names BOTH offending flags.
-		require.Contains(t, stderr, args[0])
+		// AC4: the message names BOTH offending flags — derived from the row,
+		// not from args[0] (which coincides with diffSourceFlags order in the
+		// forward rows and so cannot catch a dropped second name).
+		for _, f := range diffSourceFlags {
+			for _, a := range args {
+				if a == "--"+f {
+					require.Contains(t, stderr, a, "args %v: message must name %s", args, a)
+					break
+				}
+			}
+		}
 	}
 }
 
