@@ -366,8 +366,10 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 //
 // now must be a real timestamp when since > 0: a zero time.Time puts the whole
 // window in year 1, so every real month file is "after now" and the result is
-// empty. Callers wanting all history should pass since <= 0 rather than relying
-// on now.
+// empty — indistinguishable from an empty store. Because a zero now is always
+// a caller mistake (the time.Time{} zero value), it defaults to time.Now()
+// rather than silently reading nothing. Callers wanting all history should
+// pass since <= 0 rather than relying on now.
 //
 // The window is compared against the month stem, not against each record's
 // run_id, so a record whose run_id disagrees with the file it landed in (clock
@@ -377,6 +379,9 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([]Record, error) {
 	if since <= 0 {
 		return ReadAll(dir, opts)
+	}
+	if now.IsZero() {
+		now = time.Now()
 	}
 	cutoff := now.Add(-since)
 	return readMonthFiles(dir, func(stem string) bool {
