@@ -798,17 +798,41 @@ func TestVerifyDiffCmd_SourcesAgreeByteForByte(t *testing.T) {
 	initGitRepo(t)
 	stageTestDeletion(t)
 
-	_, viaStaged, _ := runSmell(t, "", "--staged", "--json")
+	codeStaged, viaStaged, _ := runSmell(t, "", "--staged", "--json")
 
 	// Capture the same diff to a file and feed it back through --diff. The raw
-	// git call runs under the SAME hardened env as the CLI path (gitexec), so
-	// the byte-for-byte comparison never reads the runner's global git config
-	// on one side only.
+	// git call runs under the SAME hardened env AND the same argv hardening as the
+	// CLI path (gitexec), so the byte-for-byte comparison never reads the runner's
+	// global git config — or applies a diff driver — on one side only.
 	path := filepath.Join(t.TempDir(), "staged.diff")
-	out := gitSmellOutput(t, "diff", "--no-ext-diff", "--no-color", "--cached")
+	out := gitSmellOutput(t, "diff", "--no-ext-diff", "--no-color", "--no-textconv", "--cached")
 	require.NoError(t, os.WriteFile(path, []byte(out), 0o644))
 
-	_, viaFile, _ := runSmell(t, "", "--diff", path, "--json")
+	codeFile, viaFile, _ := runSmell(t, "", "--diff", path, "--json")
+
+	// ANCHOR the equality before asserting it. Without these, the assertion is a
+	// tautology — two empty strings are equal — and AC2's only guard survives any
+	// regression that silently empties --json stdout on BOTH paths.
+	// Mutation-proved: replacing renderSmellJSON's body with `return nil` left the
+	// unanchored version PASSING.
+	require.Equal(t, 0, codeStaged)
+	require.Equal(t, 0, codeFile)
+	require.NotEmpty(t, viaStaged, "--staged --json must emit a document")
+	require.NotEmpty(t, viaFile, "--diff --json must emit a document")
+
+	// And anchor the CONTENT: the fixture stages a test deletion, so both sides
+	// must actually have found it. An equality between two well-formed but empty
+	// results would otherwise still pass.
+	var parsed struct {
+		Summary struct {
+			Verdict string `json:"verdict"`
+			Hard    int    `json:"hard"`
+		} `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(viaStaged), &parsed))
+	require.Equal(t, "hard", parsed.Summary.Verdict, "the fixture stages a test deletion")
+	require.Positive(t, parsed.Summary.Hard)
+
 	require.Equal(t, viaStaged, viaFile, "the same diff through two sources must yield identical JSON")
 }
 
