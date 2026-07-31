@@ -94,6 +94,14 @@ type Summary struct {
 	// "strict with nothing to filter". Observability only — the dropped findings
 	// live in the sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
+	// ConsensusLevel records the level the filter actually ran at, which
+	// ConsensusFiltered alone cannot convey (0 is ambiguous between "off" and
+	// "strict with nothing to filter"). Always one of the canonical levels: an
+	// unset or unrecognized Options.Consensus is recorded as the strict the
+	// filter failed safe to, never echoed back raw.
+	//
+	// STUB (RED): never stamped. Populated in the next commit.
+	ConsensusLevel string `json:"consensus_level"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`

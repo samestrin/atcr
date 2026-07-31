@@ -428,3 +428,29 @@ func TestConsensusLevels_ReturnsIndependentSlice(t *testing.T) {
 	isTrue(t, !strings.Contains(InvalidConsensusError("x").Error(), "corrupted"),
 		"the invalid-level error must not echo a caller's mutation")
 }
+
+// TestSummary_RecordsResolvedConsensusLevel closes the observability gap
+// ConsensusFiltered alone cannot: a 0 is ambiguous between "the filter was
+// disabled" and "the filter ran and dropped nothing", and off is reachable with
+// no flag at all (a checked-in .atcr/config.yaml or a machine-wide
+// ~/.config/atcr/registry.yaml). Without the level on the Summary, nothing in
+// findings.json, summary.json, or report.md records which configuration
+// produced the artifacts.
+func TestSummary_RecordsResolvedConsensusLevel(t *testing.T) {
+	sources := levelPanel()
+
+	for _, tc := range []struct {
+		in   string
+		want string
+	}{
+		{"", ConsensusStrict}, // unset resolves to the default
+		{ConsensusStrict, ConsensusStrict},
+		{ConsensusLenient, ConsensusLenient},
+		{ConsensusOff, ConsensusOff},
+		{"  OFF  ", ConsensusOff},  // canonicalized, like every other surface
+		{"bogus", ConsensusStrict}, // fails safe to strict, and SAYS so
+	} {
+		got := Reconcile(sources, Options{Consensus: tc.in}).Summary.ConsensusLevel
+		eq(t, got, tc.want, "Consensus="+tc.in+" must be recorded as "+tc.want)
+	}
+}
