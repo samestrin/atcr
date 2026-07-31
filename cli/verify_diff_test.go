@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -441,16 +443,46 @@ func TestVerifyDiffCmd_RevIsDefaultSourceAndScansHEAD(t *testing.T) {
 }
 
 // `git show --format=` must suppress the commit header, or the subject and
-// author lines would reach the parser as content.
+// author lines would reach the parser as content. Asserted against the captured
+// ARGV — the analyzer ignores header lines outside any @@ hunk, so an
+// output-only assertion cannot observe the flag's removal (mutation-proved).
+// The gitexec.CommandContextFn package var is the seam, the same pattern as
+// verifyRun/newRedactor in cli/verify.go.
 func TestVerifyDiffCmd_RevSuppressesCommitHeader(t *testing.T) {
-	isolate(t)
-	initGitRepo(t)
-	stageTestDeletion(t)
-	gitSmell(t, "commit", "-q", "-m", "//nolint:sneaky subject line")
+	if os.Getenv("ATCR_GIT_STUB_HELPER") == "1" {
+		// Simulate git: with --format= only the diff body is printed; without
+		// it the commit header (carrying the "sneaky" canary) precedes it.
+		withHeader := true
+		for _, a := range os.Args {
+			if a == "--format=" {
+				withHeader = false
+			}
+		}
+		if withHeader {
+			fmt.Print("commit abc123\nAuthor: t <t@t.invalid>\n\n    //nolint:sneaky subject line\n\n")
+		}
+		fmt.Print(smellHardDiff)
+		os.Exit(0)
+	}
+
+	var captured [][]string
+	stub := gitexec.CommandContextFn
+	gitexec.CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
+		captured = append(captured, append([]string(nil), arg...))
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVerifyDiffCmd_RevSuppressesCommitHeader$")
+		cmd.Env = append(os.Environ(), "ATCR_GIT_STUB_HELPER=1")
+		return cmd
+	}
+	defer func() { gitexec.CommandContextFn = stub }()
 
 	_, stdout, _ := runSmell(t, "", "--rev", "HEAD", "--json")
 	require.NotContains(t, stdout, "sneaky",
 		"the commit subject must not be scanned as diff content")
+
+	require.NotEmpty(t, captured, "the --rev path must shell out to git")
+	show := captured[len(captured)-1]
+	require.Contains(t, show, "show")
+	require.Contains(t, show, "--format=", "git show must suppress the commit header")
 }
 
 // AC2: the same diff through two different sources yields identical JSON.
