@@ -982,6 +982,30 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 	})
 }
 
+// seedUntrustedReviewer is seedTrustedReviewer's counterpart: it appends
+// DefaultTrustMinRuns scorecard records at a 0.0 corroboration rate, so
+// scorecard.ResolveTrustPriors() resolves the reviewer at or below the
+// reconcile-time LOW-trust threshold and demoteByTrust demotes its singleton to
+// ConfLow. That is the only way to produce a ConfLow finding at this layer,
+// which is what makes lenient distinguishable from off end-to-end.
+func seedUntrustedReviewer(t *testing.T, reviewer string) {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
+		require.NoError(t, scorecard.Append(dir, scorecard.Record{
+			SchemaVersion:        1,
+			RecordType:           scorecard.RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-u%02d", i),
+			Reviewer:             reviewer,
+			Model:                "m",
+			Role:                 "reviewer",
+			FindingsRaised:       1,
+			FindingsCorroborated: 0,
+		}))
+	}
+}
+
 // TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton (AC1) is the
 // assertion that separates lenient from off on the MCP surface.
 // TestReconcileHandler_ConsensusLevels above cannot: every finding in
@@ -995,6 +1019,7 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 func TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
+	seedUntrustedReviewer(t, "greta") // owns bar.go in consensusPanelFixture
 	id := consensusPanelFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
 
@@ -1014,6 +1039,7 @@ func TestReconcileHandler_ConsensusLenientSidecarsDemotedSingleton(t *testing.T)
 func TestReconcileHandler_ConsensusOffKeepsDemotedSingleton(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
+	seedUntrustedReviewer(t, "greta")
 	id := consensusPanelFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
 
