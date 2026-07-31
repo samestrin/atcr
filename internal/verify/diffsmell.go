@@ -76,19 +76,28 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
-// Bounds on the rejection feedback fed back into the retry prompt. Every smell's
-// Evidence is a verbatim added line from the MODEL's own diff, so without these a
-// crafted fix (up to maxFixBytes) could balloon the retry prompt by orders of
-// magnitude — paid for in tokens on every rejected fix. The type and severity
-// names, which carry the actionable signal, are a closed vocabulary and are never
-// truncated; only the quoted evidence and the item count are bounded.
-// The FILE PATH is model-controlled too — it comes verbatim from
-// `+++ b/<anything>` via smellHeaderPath, which caps nothing — so it is bounded
-// on the same footing as the evidence, and the whole rendered string is capped as
-// a backstop.
+// Bounds on the two DIFF-CONTROLLED Smell fields, Evidence (a verbatim added
+// line) and File (verbatim from `+++ b/<anything>` via smellHeaderPath, which
+// caps nothing). Both are applied where the Smell is stamped — see
+// smellSanitizeField and the add() funnel in AnalyzeDiff — so they hold for every
+// consumer: the retry prompt, `atcr verify diff`'s text output, and the JSON
+// payload alike.
+//
+// They serve two purposes at once, and the second is not merely cosmetic:
+//
+//   - Size. Without a bound, a crafted fix (up to maxFixBytes) balloons the retry
+//     prompt by orders of magnitude — paid for in tokens on every rejected fix.
+//   - Safety. The same fields are written to a terminal, so control bytes are
+//     stripped as well as truncated; an added line carrying `\x1b[2K\x1b[1A…`
+//     would otherwise erase and rewrite the verdict the operator just read.
+//
+// The type and severity names, which carry the actionable signal, are a closed
+// vocabulary and are never truncated. The whole rendered feedback string is
+// capped as a backstop.
 const (
 	maxSmellEvidenceRunes = 200
 	maxSmellFeedbackItems = 10
@@ -533,6 +542,11 @@ func AnalyzeDiff(diff string) *SmellResult {
 	// bypassed by adding a detector later. Counts are tallied BEFORE the cap is
 	// consulted: truncation bounds the reported array, never the verdict.
 	add := func(s Smell) {
+		// Bound and clean the two verbatim, diff-controlled fields HERE, where the
+		// Smell is stamped, so every consumer inherits the guarantee rather than
+		// each renderer having to remember it.
+		s.File = smellSanitizeField(s.File, maxSmellPathRunes)
+		s.Evidence = smellSanitizeField(s.Evidence, maxSmellEvidenceRunes)
 		if len(res.Smells) < maxSmells {
 			res.Smells = append(res.Smells, s)
 		} else {
@@ -812,10 +826,36 @@ func truncateRunes(s string, n int) string {
 	return string([]rune(s)[:n]) + "..."
 }
 
-// smellFlatten collapses CR/LF to spaces so evidence text is safe to interpolate
-// into a single prompt line, mirroring sanitizeDeclineReason's flattening.
+// smellFlatten collapses CR/LF to spaces and drops every other control
+// character, so the text is safe both to interpolate into a single prompt line
+// and to write to a terminal. Mirrors sanitizeDeclineReason's flattening and
+// internal/report/render.go's isTOONControl stripping.
+//
+// The escape bytes are the point: a Smell's Evidence is a verbatim added line and
+// its File comes verbatim from `+++ b/<anything>`, so without this an added line
+// carrying `\x1b[2K\x1b[1A…` can erase the verdict the operator just read and
+// print a forged all-clear in its place. For a command whose whole purpose is
+// judging an adversarial patch, letting the adversary write the human-visible
+// verdict defeats it. U+2028/U+2029 are dropped on the same footing — they are
+// line separators to some consumers.
 func smellFlatten(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+		return r
+	}, s)
 	return strings.TrimSpace(s)
+}
+
+// smellSanitizeField bounds and cleans one of the two verbatim,
+// diff-controlled Smell fields. Applied where the Smell is STAMPED rather than at
+// a renderer's call site, so every consumer — the text output, the JSON payload,
+// and the retry prompt — inherits the same guarantee instead of each having to
+// remember. The path needs it as much as the evidence: smellHeaderPath caps
+// nothing, so `+++ b/<10MB>` becomes a 10MB field.
+func smellSanitizeField(s string, max int) string {
+	return truncateRunes(smellFlatten(s), max)
 }
