@@ -242,7 +242,9 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // repo-local diff.external (see internal/gitexec's package doc), and --no-color
 // defeats a `color.ui = always` config that would otherwise feed ANSI escapes to
 // a parser expecting a plain unified diff. Any git failure is a usage error
-// (exit 2), so exit 1 keeps meaning "the gate tripped" and nothing else.
+// (exit 2), so exit 1 keeps meaning "the gate tripped" and nothing else — with
+// one exception: a cancelled context propagates as a plain error, because an
+// interrupt is not a bad invocation.
 func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	// Shared with `atcr verify` and `atcr reconcile` so the three commands
 	// normalize --repo identically — including the existence check, which turns
@@ -259,6 +261,13 @@ func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	gc.Stdout = &stdout
 	gc.Stderr = &stderr
 	if err := gc.Run(); err != nil {
+		// A cancelled context (SIGINT/SIGTERM via runMain's handler) killed the
+		// git child: propagate the interruption as a plain error, never a usage
+		// error — exit 2 must keep meaning "bad invocation", and a CI wrapper
+		// keying on it must not report a cancelled job as one.
+		if ctxErr := cmd.Context().Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return "", usageError(fmt.Errorf("git %s in %s: %s", sub, repo, msg))
 		}
