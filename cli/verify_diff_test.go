@@ -103,13 +103,18 @@ func gitSmell(t *testing.T, args ...string) {
 // real git rather than a literal diff string.
 func stageTestDeletion(t *testing.T) {
 	t.Helper()
-	require.NoError(t, os.WriteFile("foo.go", []byte("package p\n\nfunc Foo() int { return 0 }\n"), 0o644))
-	require.NoError(t, os.WriteFile("foo_test.go", []byte("package p\n\nfunc TestFoo(t *testing.T) { _ = Foo() }\n"), 0o644))
+	// Guard BEFORE writing anything: the writes below are joined against this
+	// dir, so a caller that forgot isolate(t) fails here instead of littering
+	// foo.go/foo_test.go into the package directory and breaking go vet for
+	// every session sharing the working tree.
+	wd := requireTempWorkdir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo.go"), []byte("package p\n\nfunc Foo() int { return 0 }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo_test.go"), []byte("package p\n\nfunc TestFoo(t *testing.T) { _ = Foo() }\n"), 0o644))
 	gitSmell(t, "add", "foo.go", "foo_test.go")
 	gitSmell(t, "commit", "-q", "-m", "add foo")
 
 	gitSmell(t, "rm", "-q", "foo_test.go")
-	require.NoError(t, os.WriteFile("foo.go", []byte("package p\n\nfunc Foo() int { return 1 }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "foo.go"), []byte("package p\n\nfunc Foo() int { return 1 }\n"), 0o644))
 	gitSmell(t, "add", "foo.go")
 }
 
