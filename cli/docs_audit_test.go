@@ -232,7 +232,7 @@ func reachableFlags(tokens []string) map[string]bool {
 // validateSubcommandChain recursively validates that bare-word tokens following
 // a command group are real subcommands, skipping any --flags that appear before
 // the next subcommand. It reports at most one error per level.
-func validateSubcommandChain(tokens []string, idx int, groups map[string]map[string]bool, isWord func(string) bool, reFlag *regexp.Regexp, path string, errs *[]string) {
+func validateSubcommandChain(tokens []string, idx int, groups map[string]map[string]bool, leaves map[string]bool, isWord func(string) bool, reFlag *regexp.Regexp, path string, errs *[]string) {
 	name := tokens[idx]
 	children, isGroup := groups[name]
 	if !isGroup || len(tokens) <= idx+1 {
@@ -240,7 +240,7 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 	}
 	nextIdx := -1
 	for i := idx + 1; i < len(tokens); i++ {
-		if endsInvocation(tokens[i]) {
+		if endsInvocation(tokens[i], leaves[name]) {
 			return
 		}
 		if reFlag.MatchString(tokens[i]) {
@@ -259,36 +259,24 @@ func validateSubcommandChain(tokens []string, idx int, groups map[string]map[str
 		*errs = append(*errs, fmt.Sprintf("%s references `atcr %s %s` but %q is not a subcommand of %q", path, name, next, next, name))
 		return
 	}
-	validateSubcommandChain(tokens, nextIdx, groups, isWord, reFlag, path, errs)
+	validateSubcommandChain(tokens, nextIdx, groups, leaves, isWord, reFlag, path, errs)
 }
 
-// endsInvocation reports whether a token terminates the argv of the command
-// currently being validated, so the subcommand scan must stop rather than read
-// the next bare word as a subcommand name.
-//
-// It exists because a command can be BOTH a group and a leaf: `atcr verify`
-// takes an optional [id-or-path] AND owns the `diff` subcommand. Before that was
-// true, every group had no positional args, so "the next bare word must be a
-// subcommand" always held and these three shapes were never exercised:
+// endsLine reports whether a token ends the current command's argv for SHELL
+// reasons — the rest of the line is a comment, a redirect, or a different
+// command. This holds for every command, group or leaf, and so is applied
+// unconditionally:
 //
 //   - a trailing shell comment — `atcr verify <id> --exec  # standalone verify`
 //     read "standalone" as a subcommand of verify
 //   - a second invocation on one line — `atcr verify → atcr debate` (a pipeline
 //     diagram) read "atcr" as a subcommand of verify
-//   - a positional placeholder — `atcr verify [id-or-path]  # verify a review`
-//     is precisely the leaf usage, so nothing after it can be a subcommand
-//
-// Stopping at a placeholder does mean a doc that writes `atcr benchmark <sub>`
-// where a real subcommand belongs is no longer flagged. That is the intended
-// trade: a placeholder is the author saying "an argument goes here", and
-// treating it as a subcommand slot is what produced the false failures above.
-func endsInvocation(tok string) bool {
+//   - a pipe, operator, or redirect — everything after belongs to another process
+func endsLine(tok string) bool {
 	switch {
 	case strings.HasPrefix(tok, "#"): // trailing shell comment
 		return true
 	case tok == "atcr": // a second invocation on the same line
-		return true
-	case strings.HasPrefix(tok, "<"), strings.HasPrefix(tok, "["): // positional placeholder
 		return true
 	case tok == "|", tok == "&&", tok == "||", tok == ";":
 		return true
@@ -296,6 +284,63 @@ func endsInvocation(tok string) bool {
 		return true
 	}
 	return false
+}
+
+// isPositionalPlaceholder reports whether a token is a documentation placeholder
+// standing in for an argument value (`<file>`, `[id-or-path]`).
+func isPositionalPlaceholder(tok string) bool {
+	return strings.HasPrefix(tok, "<") || strings.HasPrefix(tok, "[")
+}
+
+// endsInvocation reports whether a token terminates the argv of the command
+// currently being validated, so the subcommand scan must stop rather than read
+// the next bare word as a subcommand name.
+//
+// The placeholder half is scoped by groupTakesPositional, and that scoping is the
+// whole point. A command can be BOTH a group and a leaf: `atcr verify` takes an
+// optional [id-or-path] AND owns the `diff` subcommand. There a placeholder is
+// precisely the leaf usage, so nothing after it can be a subcommand and stopping
+// is correct.
+//
+// For a PURE group — `debt`, `benchmark`, `config`, `models`, `personas`, `skill`
+// — there is no positional to stand in for, so a placeholder occupies the
+// SUBCOMMAND slot and the next bare word must still be validated. Applying the
+// relaxation to every group (as this did when it was introduced for verify) left
+// seven of the eight groups unvalidated: `atcr benchmark <sub> frobnicate` and
+// `atcr debt <file> frobnicate` both scored clean.
+func endsInvocation(tok string, groupTakesPositional bool) bool {
+	if endsLine(tok) {
+		return true
+	}
+	return groupTakesPositional && isPositionalPlaceholder(tok)
+}
+
+// groupLeafCommands returns the group commands that ALSO accept a positional
+// argument of their own — the group-and-leaf commands whose placeholder stop is
+// legitimate. Derived from the compiled command's Use string ("verify
+// [id-or-path]"), so the compiled tree stays the source of truth: a command that
+// gains or loses a positional needs no edit here.
+func groupLeafCommands() map[string]bool {
+	out := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		children := c.Commands()
+		if len(children) > 0 {
+			if fields := strings.Fields(c.Use); len(fields) > 1 {
+				for _, f := range fields[1:] {
+					if isPositionalPlaceholder(f) {
+						out[c.Name()] = true
+						break
+					}
+				}
+			}
+		}
+		for _, sub := range children {
+			walk(sub)
+		}
+	}
+	walk(NewRootCmd())
+	return out
 }
 
 // validateInvocationTokens checks a single `atcr ...` token sequence against the
@@ -311,15 +356,27 @@ func validateInvocationTokens(tokens []string, path string, cmds map[string]bool
 	case !cmds[name0]:
 		errs = append(errs, fmt.Sprintf("%s references `atcr %s` but %q is not a real command", path, name0, name0))
 	default:
-		validateSubcommandChain(tokens, 0, groups, isWord, reFlag, path, &errs)
+		validateSubcommandChain(tokens, 0, groups, groupLeafCommands(), isWord, reFlag, path, &errs)
+	}
+	// Both halves of the auditor must agree about where the invocation ends.
+	// Truncate at the first shell terminator so a flag named inside a trailing
+	// comment, or belonging to a second command on the same line, is not
+	// attributed to this one — the subcommand scan already stops there, and
+	// leaving the flag loop unbounded made the two halves disagree.
+	argv := tokens
+	for i, tok := range tokens {
+		if endsLine(tok) {
+			argv = tokens[:i]
+			break
+		}
 	}
 	// Validate each --flag against the flags reachable on the *specific* command
 	// this invocation addresses (per-command inheritance), not the global union of
 	// every flag in the tree. This rejects e.g. `atcr review --checkpoint`, where
 	// --checkpoint is real but belongs to `benchmark run`, matching the per-command
 	// scope the error message claims.
-	flags := reachableFlags(tokens)
-	for _, tok := range tokens {
+	flags := reachableFlags(argv)
+	for _, tok := range argv {
 		if m := reFlag.FindStringSubmatch(tok); m != nil && !flags[m[1]] {
 			errs = append(errs, fmt.Sprintf("%s references `--%s` on an `atcr %s` command, but no such flag exists", path, m[1], name0))
 		}
@@ -380,7 +437,13 @@ func TestSubcommandValidationStopsAtInvocationEnd(t *testing.T) {
 		{"placeholder then comment", []string{"verify", "[id-or-path]", "#", "verify", "a", "review"}},
 		{"second invocation on one line", []string{"verify", "→", "atcr", "debate"}},
 		{"pipe", []string{"verify", "|", "jq"}},
-		{"angle placeholder", []string{"debt", "<file>", "frobnicate"}},
+		// Anchored on `verify`, the one group that is ALSO a leaf. This case used
+		// to read {"debt", "<file>", "frobnicate"} and pass, which was the defect
+		// rather than the contract: `debt` takes no positional, so the placeholder
+		// sat in its subcommand slot and the bogus word went unchecked. That
+		// shape is now asserted to be REJECTED, in
+		// TestPlaceholderRelaxationIsScopedToGroupAndLeaf.
+		{"angle placeholder", []string{"verify", "<review-id>", "frobnicate"}},
 		{"double ampersand", []string{"debt", "&&", "frobnicate"}},
 		{"double pipe", []string{"debt", "||", "frobnicate"}},
 		{"semicolon", []string{"debt", ";", "frobnicate"}},
