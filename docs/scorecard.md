@@ -354,7 +354,10 @@ writes records by default.
 > Scorecard emission fires from both the CLI (`atcr reconcile`) and the MCP
 > `atcr_reconcile` handler, via a single shared bridge — the two entry points
 > emit identical records, so MCP-driven runs are never silently omitted from the
-> store. `--no-scorecard` suppression is a CLI flag.
+> store. `--no-scorecard` suppression is a CLI-only flag. Because non-strict runs
+> (`lenient`/`off`) are automatically excluded from trust-prior calculations on
+> all entry points, MCP-driven exploratory runs cannot depress or corrupt trust
+> priors, making `--no-scorecard` unnecessary on the MCP surface.
 
 ---
 
