@@ -190,3 +190,65 @@ func TestLoadSharedTiers_MissingProjectConfigStillSkipped(t *testing.T) {
 	assert.Equal(t, "HIGH", failOn)
 	assert.Equal(t, "off", consensus)
 }
+
+// TestLoadSharedTiers_RemoteRegistryWithoutLocalFile is the Epic 19.2
+// shared-team-registry shape: ATCR_REGISTRY_URL set, no local
+// ~/.config/atcr/registry.yaml at all. Gating the tier on an os.Stat of the
+// local path skips it without attempting a fetch, so a team's shared fail_on
+// and consensus are silently ignored — even though LoadRegistry reads from the
+// URL and ignores the local path entirely when the env var is set.
+func TestLoadSharedTiers_RemoteRegistryWithoutLocalFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(sharedTierRegistryYAML))
+	}))
+	t.Cleanup(srv.Close)
+
+	// A HOME with NO registry file: the only source is the URL.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", failOn, "a shared remote registry's fail_on must be honored with no local file")
+	assert.Equal(t, "off", consensus, "a shared remote registry's consensus must be honored with no local file")
+
+	// Both standalone resolvers must agree, or the two chains have forked again.
+	v, err := ResolveConsensus(root, "")
+	require.NoError(t, err)
+	assert.Equal(t, "off", v)
+	v, err = ResolveGateThreshold(root, "")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", v)
+}
+
+// TestLoadSharedTiers_UnreachableRemoteRegistryStillSkipped keeps the
+// best-effort half intact once the stat gate is gone: a set-but-unreachable URL
+// must not block a run that does not otherwise need the registry.
+func TestLoadSharedTiers_UnreachableRemoteRegistryStillSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err, "an unreachable user registry must never block the resolve")
+	assert.Equal(t, "", failOn)
+	assert.Equal(t, "", consensus)
+}
+
+// TestLoadSharedTiers_NoRegistryAnywhereIsSilent is the control: with neither a
+// local file nor a URL, the tier is simply absent.
+func TestLoadSharedTiers_NoRegistryAnywhereIsSilent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "", failOn)
+	assert.Equal(t, "", consensus)
+}
