@@ -271,3 +271,68 @@ func TestLooksLikeUnifiedDiff_Exported(t *testing.T) {
 		})
 	}
 }
+
+// TestAnalyzeDiff_EmptyCatchReportsTheCatchLineOnce pins the two defects the
+// consecutive-line join introduced once Line became a reported field.
+//
+// The join exists because formatters split `catch (e) {` and `}` across two added
+// lines, and Go's \s matches the newline — so the pair reveals what a per-line
+// scan cannot. But it reported a.line, the FIRST line of the pair, even when the
+// match came entirely from the second: measured on the fixture below, two smells
+// were emitted, one at a.js:10 with evidence "doSomething();" (a line containing
+// no catch at all) and a duplicate at a.js:11.
+//
+// The evidence mismatch predates the Line field, but reporting Line turned it into
+// a confident, WRONG file:line on a documented public contract that downstream
+// gates are told to paste into technical-debt rows.
+func TestAnalyzeDiff_EmptyCatchReportsTheCatchLineOnce(t *testing.T) {
+	diff := "diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -10,0 +10,2 @@\n" +
+		"+  doSomething();\n" +
+		"+  try { risky(); } catch (e) {}\n"
+
+	var catches []Smell
+	for _, s := range AnalyzeDiff(diff).Smells {
+		if s.Type == smellEmptyCatch {
+			catches = append(catches, s)
+		}
+	}
+	require.Len(t, catches, 1, "exactly one empty_catch, not one per line of the joined pair: %+v", catches)
+	require.Equal(t, 11, catches[0].Line, "the line reported must be the one that contains `catch`")
+	require.Contains(t, catches[0].Evidence, "catch", "the evidence must be the offending line, not its predecessor")
+}
+
+// TestAnalyzeDiff_EmptyCatchJoinRequiresAdjacency pins that the pair join only
+// applies to genuinely consecutive lines. fc.added spans HUNKS, so without an
+// adjacency check the join can splice lines hundreds apart: a `} catch (e) {` at
+// new line 2 joined with a `}` from a hunk starting at new line 500 matched the
+// regex and produced a smell for code that never existed.
+func TestAnalyzeDiff_EmptyCatchJoinRequiresAdjacency(t *testing.T) {
+	diff := "diff --git a/b.js b/b.js\n--- a/b.js\n+++ b/b.js\n@@ -1,0 +2,1 @@\n" +
+		"+  } catch (e) {\n" +
+		"@@ -500,0 +500,1 @@\n" +
+		"+  }\n"
+
+	for _, s := range AnalyzeDiff(diff).Smells {
+		require.NotEqual(t, smellEmptyCatch, s.Type,
+			"lines %d apart must not be joined into an empty-catch pair", 498)
+	}
+}
+
+// TestAnalyzeDiff_EmptyCatchSplitAcrossAdjacentLines is the negative control: the
+// formatter-produced split shape — the reason the join exists — must still fire,
+// and must report the line carrying `catch`.
+func TestAnalyzeDiff_EmptyCatchSplitAcrossAdjacentLines(t *testing.T) {
+	diff := "diff --git a/c.js b/c.js\n--- a/c.js\n+++ b/c.js\n@@ -10,0 +10,2 @@\n" +
+		"+  } catch (e) {\n" +
+		"+  }\n"
+
+	var catches []Smell
+	for _, s := range AnalyzeDiff(diff).Smells {
+		if s.Type == smellEmptyCatch {
+			catches = append(catches, s)
+		}
+	}
+	require.Len(t, catches, 1, "the split empty catch must still be detected exactly once")
+	require.Equal(t, 10, catches[0].Line, "the `catch` keyword is on the first line of this pair")
+	require.Contains(t, catches[0].Evidence, "catch")
+}
