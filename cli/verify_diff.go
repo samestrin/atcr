@@ -244,9 +244,13 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // a parser expecting a plain unified diff. Any git failure is a usage error
 // (exit 2), so exit 1 keeps meaning "the gate tripped" and nothing else.
 func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
-	repo, _ := cmd.Flags().GetString("repo")
-	if strings.TrimSpace(repo) == "" {
-		repo = "."
+	// Shared with `atcr verify` and `atcr reconcile` so the three commands
+	// normalize --repo identically — including the existence check, which turns
+	// a nonexistent root into the shared usage-error wording instead of a raw
+	// git message.
+	repo, err := normalizeRepoFlag(cmd)
+	if err != nil {
+		return "", err
 	}
 	argv := append([]string{"-C", repo, sub, "--no-ext-diff", "--no-color"}, extra...)
 
