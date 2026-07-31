@@ -287,9 +287,19 @@ than growing a third aggregation.
   reviewer with any history at all, so it opts out of the default floor rather
   than inheriting it.
 - **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
-  `DefaultDir()` + `TrustPriors(dir, DefaultTrustMinRuns)` in one best-effort
-  call, degrading to a nil map on any failure (an unresolvable config dir, a
-  missing/unreadable store) rather than erroring. Every `atcr reconcile` /
+  `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
+  degrading to a nil map on any failure (an unresolvable config dir, a
+  missing/unreadable store) rather than erroring. Unlike `TrustPriors`, that
+  read is **windowed to the last 180 days** (epic 35.11): because epic 35.9 put
+  this call on the primary path of every review and reconcile, its cost is
+  unconditional and would otherwise grow without bound as the store accumulates
+  months. The window selects whole month **files** before they are opened, so
+  history outside it is never read or parsed. Two consequences: a reviewer with
+  no runs in the last 180 days falls back to the neutral "no history" state
+  (absent from the map — the same state a brand-new reviewer occupies), and
+  `TrustPriors(dir, minRuns)` itself is **unchanged and still all-history**, so
+  `atcr personas list --scores` keeps reporting on the whole store. Every
+  `atcr reconcile` /
   `atcr review --resume` / `atcr review` (one-shot mode) / MCP
   `atcr_reconcile` call site resolves it and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
