@@ -168,8 +168,12 @@ diff --git a/pkg/auth.go b/pkg/auth.go
 ```json
 {
   "files": {
-    "test": ["pkg/auth_test.go"],
-    "impl": ["pkg/auth.go"]
+    "test": [
+      "pkg/auth_test.go"
+    ],
+    "impl": [
+      "pkg/auth.go"
+    ]
   },
   "smells": [
     {
