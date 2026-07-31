@@ -649,6 +649,12 @@ func TestVerifyDiffCmd_RevSuppressesCommitHeader(t *testing.T) {
 	show := captured[len(captured)-1]
 	require.Contains(t, show, "show")
 	require.Contains(t, show, "--format=", "git show must suppress the commit header")
+	// Pinned at the same seam: without these, `git show <merge>` prints nothing
+	// and the gate reports clean on every merge commit. The behavioural guard is
+	// TestVerifyDiffCmd_MergeCommitIsScanned; this catches a "tidy up the argv"
+	// edit directly.
+	require.Contains(t, show, "--first-parent", "git show must diff a merge against its first parent")
+	require.Contains(t, show, "-m", "git show must emit a diff for merge commits")
 }
 
 // AC2: the same diff through two different sources yields identical JSON.

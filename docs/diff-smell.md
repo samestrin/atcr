@@ -41,6 +41,13 @@ default, so a bare `atcr verify diff` scans the last commit.
 `--repo <path>` sets the repository root for the two git-backed sources
 (default: the current directory).
 
+**Merge commits** are diffed against their **first parent** (`--first-parent -m`),
+so `--rev <merge>` reports what the merge introduces to the branch it lands on. A
+plain `git show` prints nothing for a merge, which would make the gate a silent
+no-op precisely where CI runs it — `--rev` defaults to `HEAD`, and both
+`refs/pull/N/merge` checkouts and post-merge branches have a merge there.
+Single-parent commits are unaffected.
+
 Naming two sources is a usage error (exit `2`) that names both offenders, rather
 than a silent precedence win. Git is always invoked with `--no-ext-diff` and
 `--no-color`, so a repo-local `diff.external` or a `color.ui = always` config

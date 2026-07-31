@@ -259,7 +259,20 @@ func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 		// --format= suppresses the commit header so only the diff body reaches the
 		// parser; without it the subject and author lines would be scanned as
 		// content.
-		out, gerr := gitText(cmd, "show", "--format=", spec)
+		//
+		// --first-parent -m is what makes a MERGE commit scannable. Plain
+		// `git show <merge>` prints no diff at all, so the empty-input branch above
+		// reported `verdict: clean`, exit 0 — and since --rev defaults to HEAD and
+		// CI checkouts (refs/pull/N/merge) and post-merge branches routinely have a
+		// merge at HEAD, the gate was a silent no-op exactly where it is meant to
+		// run. --cc is not the answer: it shows only what differs from ALL parents,
+		// which for an ordinary merge is empty, so the hack carried in from the
+		// feature side stays invisible.
+		//
+		// First-parent is also the right QUESTION for a gate: "what is this merge
+		// introducing to the branch it lands on?" For a single-parent commit the
+		// flags are a no-op, so the ordinary case is unchanged.
+		out, gerr := gitText(cmd, "show", "--format=", "--first-parent", "-m", spec)
 		return out, spec, gerr
 	}
 }

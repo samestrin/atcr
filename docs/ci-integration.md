@@ -38,6 +38,8 @@ Notes:
 
 Its `--fail-on` takes **verdicts** (`hard`, `soft`, `none`), not the severities `atcr review` and `atcr reconcile` take — disjoint value sets, so a severity passed here is a usage error rather than a silent misread. An empty diff and non-diff input both report `clean` and exit `0` with a note on stderr, so a pre-commit hook on a nothing-staged commit is a no-op rather than a spurious block. See [diff-smell.md](diff-smell.md).
 
+**Merge commits are scanned against their first parent.** `--rev` defaults to `HEAD`, and CI checkouts (`refs/pull/N/merge`) and post-merge branches routinely have a merge there. A plain `git show` prints no diff for a merge, so the gate would report `clean` and exit `0` exactly where it is meant to run; atcr passes `--first-parent -m` instead, which asks what the merge introduces to the branch it lands on. Single-parent commits are unaffected.
+
 ### `--axi` mode reuses this exact contract
 
 The `--axi` (Agent eXperience Interface) output mode changes only the *shape* of stdout (a token-dense TOON payload), never the exit code. `atcr review --axi`, `atcr review --resume <id> --axi`, and `atcr report --format axi` return **0/1/2/3 identically** to their non-`--axi` counterparts for the same inputs — cross-validated by `atcr verify`'s independently-derived 0/1/2 mapping. New AXI-introduced errors classify into the existing contract: an unsupported `--axi` flag combination (e.g. `--axi --auto-fix`) is a usage error (**2**), and an internal AXI rendering fault is a generic failure (**1**). For the `--auto-fix` flow itself — its sandboxed-by-default validation and the `--no-sandbox` opt-out's host-execution risk — see [Auto-fix sandboxed validation](auto-fix.md).
