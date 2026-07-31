@@ -777,6 +777,16 @@ type corpusCase struct {
 	Verdict string   `json:"verdict"`
 	Types   []string `json:"types"`
 	Note    string   `json:"note"`
+	// Lines maps a smell type to the new-file line numbers it must report, for
+	// the added-line detectors that HAVE a line (suppression, empty_catch,
+	// stub_body, test_skipped). Optional: the file-level and count-derived smells
+	// carry no line, so their entries omit it.
+	//
+	// It exists because the corpus is THE replay artifact for this port — the
+	// diffsmell.go header instructs a future realignment to replay it by hand —
+	// and recording only verdict + types left the whole Line output with no
+	// corpus coverage at all, so a line-numbering regression would replay clean.
+	Lines map[string][]int `json:"lines,omitempty"`
 }
 
 // The corpus is the drift-detection artifact for this port. It is ONE-WAY by
@@ -812,6 +822,25 @@ func TestAnalyzeDiff_Corpus(t *testing.T) {
 				got = append(got, k)
 			}
 			assert.ElementsMatch(t, tc.Types, got, "%s: %s", tc.File, tc.Note)
+
+			// Replay the recorded line numbers when the entry pins them, so the
+			// corpus guards the Line output too and not just the verdict.
+			if tc.Lines != nil {
+				gotLines := map[string][]int{}
+				for _, s := range res.Smells {
+					if s.Line > 0 {
+						gotLines[s.Type] = append(gotLines[s.Type], s.Line)
+					}
+				}
+				for ty, want := range tc.Lines {
+					assert.ElementsMatch(t, want, gotLines[ty],
+						"%s: %s reported the wrong new-file line(s)", tc.File, ty)
+				}
+				for ty, have := range gotLines {
+					assert.Containsf(t, tc.Lines, ty,
+						"%s: %s reports line(s) %v that the corpus does not record; add them", tc.File, ty, have)
+				}
+			}
 		})
 		for _, ty := range tc.Types {
 			seenTypes[ty] = true
