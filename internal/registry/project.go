@@ -199,8 +199,11 @@ func DefaultProjectConfigYAML(roster []string) string {
 func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		// Message text mandated by AC 01-01 (Error Scenario 1).
-		return nil, fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init'", path)
+		// Message text mandated by AC 01-01 (Error Scenario 1). os.ErrNotExist is
+		// WRAPPED rather than replaced so a tiered resolver can skip this tier on
+		// absence alone (errors.Is) instead of pre-checking with os.Stat — a
+		// pre-check cannot tell "absent" from "unreachable", and races the read.
+		return nil, fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init': %w", path, os.ErrNotExist)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading project config: %w", err)

@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"os"
 	"strings"
 )
@@ -24,13 +25,19 @@ type sharedTiers struct {
 func loadSharedTiers(root string) (*sharedTiers, error) {
 	var t sharedTiers
 
-	projPath := DefaultProjectConfigPath(root)
-	if _, err := os.Stat(projPath); err == nil {
-		proj, err := LoadProjectConfig(projPath)
-		if err != nil {
-			return nil, err
-		}
+	// No os.Stat pre-check: it cannot distinguish "absent" (skip this tier) from
+	// "unreachable" (a permission-denied .atcr/ would silently drop the project
+	// tier and hand control to the weaker user-global one), and it races the read
+	// — a config deleted in between would flip a benign skip into a fatal "no
+	// roster found". LoadProjectConfig wraps os.ErrNotExist, so absence is the
+	// only condition skipped here; every other error, permission denied included,
+	// is fatal.
+	proj, err := LoadProjectConfig(DefaultProjectConfigPath(root))
+	switch {
+	case err == nil:
 		t.proj = proj
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, err
 	}
 
 	if regPath, err := DefaultRegistryPath(); err == nil {
