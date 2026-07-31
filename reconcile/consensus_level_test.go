@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Epic 35.9.1: the consensus filter's corroboration bar is configurable via
 // Options.Consensus — strict (default, epic-14.2 behavior), lenient (keep
@@ -309,7 +312,7 @@ func TestNormalizeConsensus_Vocabulary(t *testing.T) {
 	}
 
 	// ConsensusLevels is the single list every surface names in its error text.
-	deepEq(t, ConsensusLevels, []string{ConsensusStrict, ConsensusLenient, ConsensusOff},
+	deepEq(t, ConsensusLevels(), []string{ConsensusStrict, ConsensusLenient, ConsensusOff},
 		"documentation order: default first")
 }
 
@@ -325,7 +328,7 @@ func TestConsensusFloor_LevelsDistinct(t *testing.T) {
 		enabled bool
 	}
 	seen := map[pair]string{}
-	for _, level := range ConsensusLevels {
+	for _, level := range ConsensusLevels() {
 		floor, enabled := consensusFloor(level)
 		p := pair{floor, enabled}
 		if prev, dup := seen[p]; dup {
@@ -409,4 +412,19 @@ func TestDemoteByTrust_ObservableViaConsensusLevel(t *testing.T) {
 	conf, survived := findConfidence(noPriors, "foo.go")
 	isTrue(t, survived, "off keeps the singleton with no priors too")
 	eq(t, conf, ConfMedium, "without the low-trust prior the same finding is ConfMedium")
+}
+
+// TestConsensusLevels_ReturnsIndependentSlice pins that the exported vocabulary
+// cannot be corrupted by a consumer. This package is published as its own Go
+// module, so an exported slice would be shared mutable state: a single
+// assignment through it silently rewrites every CLI usage error and MCP
+// tool-error string built from the list, in a process the writer does not own.
+func TestConsensusLevels_ReturnsIndependentSlice(t *testing.T) {
+	got := ConsensusLevels()
+	got[0] = "corrupted"
+
+	deepEq(t, ConsensusLevels(), []string{ConsensusStrict, ConsensusLenient, ConsensusOff},
+		"a caller writing through the returned slice must not corrupt the vocabulary")
+	isTrue(t, !strings.Contains(InvalidConsensusError("x").Error(), "corrupted"),
+		"the invalid-level error must not echo a caller's mutation")
 }

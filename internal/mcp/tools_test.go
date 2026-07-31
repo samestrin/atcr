@@ -184,8 +184,8 @@ func TestReconcileInputSchema_ConsensusEnum(t *testing.T) {
 	props := schemaProperties(t, tools[ToolReconcile])
 	consensus, ok := props["consensus"].(map[string]any)
 	require.True(t, ok, "atcr_reconcile must expose a consensus property")
-	want := make([]any, len(reclib.ConsensusLevels))
-	for i, l := range reclib.ConsensusLevels {
+	want := make([]any, len(reclib.ConsensusLevels()))
+	for i, l := range reclib.ConsensusLevels() {
 		want[i] = l
 	}
 	enum, _ := consensus["enum"].([]any)
@@ -199,7 +199,7 @@ func TestReconcileInputSchema_ConsensusEnum(t *testing.T) {
 // levels it accepts.
 func TestDescReconcile_DocumentsConsensus(t *testing.T) {
 	assert.Contains(t, descReconcile, "consensus")
-	for _, level := range reclib.ConsensusLevels {
+	for _, level := range reclib.ConsensusLevels() {
 		assert.Contains(t, descReconcile, level, "descReconcile must name the %s level", level)
 	}
 }

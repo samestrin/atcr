@@ -35,10 +35,20 @@ const (
 	ConsensusStrict  = "strict"
 )
 
-// ConsensusLevels lists the valid levels in documentation order (default
+// consensusLevels lists the valid levels in documentation order (default
 // first), so every surface that must name them in an error or a help string
-// reads them from one place instead of re-listing them.
-var ConsensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
+// reads them from one place instead of re-listing them. Unexported: an exported
+// slice in a separately published module is shared mutable state, and any
+// consumer assigning to an element would corrupt every CLI usage error and MCP
+// tool-error string built from it. ConsensusLevels() is the accessor.
+var consensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
+
+// ConsensusLevels returns the valid consensus levels in documentation order
+// (default first).
+//
+// STUB (RED): returns the package slice itself, so a caller can still write
+// through it. Replaced by a copy-returning implementation in the next commit.
+func ConsensusLevels() []string { return consensusLevels }
 
 // InvalidConsensusError builds the one invalid-level error sentence every
 // surface renders — wrapped in a CLI usage error (exit 2) or returned raw as
@@ -46,7 +56,7 @@ var ConsensusLevels = []string{ConsensusStrict, ConsensusLenient, ConsensusOff}
 // exactly one place and cannot fork. The rejected value is echoed trimmed.
 func InvalidConsensusError(v string) error {
 	return fmt.Errorf("invalid consensus level %q: must be one of %s",
-		strings.TrimSpace(v), strings.Join(ConsensusLevels, ", "))
+		strings.TrimSpace(v), strings.Join(consensusLevels, ", "))
 }
 
 // NormalizeConsensus canonicalizes a consensus level token and reports whether

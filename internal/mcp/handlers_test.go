@@ -1063,7 +1063,7 @@ func TestReconcileHandler_InvalidConsensus(t *testing.T) {
 
 	// Explicit argument: rejected by JSON Schema validation up front.
 	msg := callErr(t, cs, ToolReconcile, map[string]any{"consensus": "bogus"})
-	for _, level := range reclib.ConsensusLevels {
+	for _, level := range reclib.ConsensusLevels() {
 		assert.Contains(t, msg, level, "the schema rejection must name every valid level")
 	}
 
@@ -1073,7 +1073,7 @@ func TestReconcileHandler_InvalidConsensus(t *testing.T) {
 		[]byte("agents:\n  - greta\nconsensus: bogus\n"), 0o644))
 	msg = callErr(t, cs, ToolReconcile, map[string]any{})
 	assert.Contains(t, msg, "invalid consensus level")
-	for _, level := range reclib.ConsensusLevels {
+	for _, level := range reclib.ConsensusLevels() {
 		assert.Contains(t, msg, level, "the handler error must name every valid level")
 	}
 }

@@ -551,7 +551,7 @@ func consensusFlagValue(cmd *cobra.Command) (string, error) {
 	v, _ := cmd.Flags().GetString("consensus")
 	if v = strings.TrimSpace(v); v == "" {
 		return "", usageError(fmt.Errorf("--consensus must not be empty: must be one of %s",
-			strings.Join(reclib.ConsensusLevels, ", ")))
+			strings.Join(reclib.ConsensusLevels(), ", ")))
 	}
 	return v, nil
 }

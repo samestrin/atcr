@@ -296,8 +296,8 @@ func reconcileInputSchema() (*jsonschema.Schema, error) {
 		return nil, fmt.Errorf("inferring atcr_reconcile schema: %w", err)
 	}
 	if p := s.Properties["consensus"]; p != nil {
-		p.Enum = make([]any, len(reclib.ConsensusLevels))
-		for i, l := range reclib.ConsensusLevels {
+		p.Enum = make([]any, len(reclib.ConsensusLevels()))
+		for i, l := range reclib.ConsensusLevels() {
 			p.Enum[i] = l
 		}
 	}

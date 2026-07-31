@@ -1107,7 +1107,7 @@ func TestReconcileCmd_InvalidConsensusExitsTwo(t *testing.T) {
 	// cmd.ErrOrStderr(), so assert the message at its source.
 	_, err := resolveConsensusLevel("bogus")
 	require.Error(t, err)
-	for _, level := range reclib.ConsensusLevels {
+	for _, level := range reclib.ConsensusLevels() {
 		assert.Contains(t, err.Error(), level, "the usage error must name every valid level")
 	}
 	assert.Contains(t, err.Error(), "bogus", "the usage error must echo the rejected value")
@@ -1179,7 +1179,7 @@ func TestConsensusFlagValue_ExplicitEmptyIsUsageError(t *testing.T) {
 
 		_, err := consensusFlagValue(cmd)
 		require.Error(t, err, "explicit %q must be rejected, not treated as unset", raw)
-		for _, level := range reclib.ConsensusLevels {
+		for _, level := range reclib.ConsensusLevels() {
 			assert.Contains(t, err.Error(), level,
 				"the usage error must name every valid level")
 		}
@@ -1351,7 +1351,7 @@ func TestReconcileCmd_LongHelpDocumentsConsensus(t *testing.T) {
 	long := newReconcileCmd().Long
 
 	assert.Contains(t, long, "--consensus")
-	for _, level := range reclib.ConsensusLevels {
+	for _, level := range reclib.ConsensusLevels() {
 		assert.Contains(t, long, level, "long help must name the %s level", level)
 	}
 	assert.Contains(t, long, "default", "long help must say which level is the default")
