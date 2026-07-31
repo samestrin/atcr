@@ -343,6 +343,11 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 // subdirectories are ignored, and a missing directory is (nil, nil) — both
 // matching ReadAll's contract.
 //
+// now must be a real timestamp when since > 0: a zero time.Time puts the whole
+// window in year 1, so every real month file is "after now" and the result is
+// empty. Callers wanting all history should pass since <= 0 rather than relying
+// on now.
+//
 // The window is compared against the month stem, not against each record's
 // run_id, so a record whose run_id disagrees with the file it landed in (clock
 // skew, a late write) is included or excluded with its file. Callers needing

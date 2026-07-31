@@ -31,6 +31,18 @@ const DefaultTrustMinRuns = 20
 // 180d strands nobody with a wide margin. The leaderboard's 30d display default
 // is far too aggressive for this purpose and is unrelated.
 //
+// WHAT THAT MEASUREMENT CANNOT YET SHOW: the store was only ~35 days old, i.e.
+// younger than every candidate window, so every window trivially covered all of
+// it. The numbers prove 180d is safe TODAY; they do not discriminate between
+// window sizes, and no reviewer has yet been observed aging out of one. The
+// measurement is worth redoing once the store spans more than 180 days — and
+// again once it holds post-35.9.1 history, since strictRuns drops non-strict
+// runs and a reviewer used mostly under `--consensus lenient/off` could hold
+// fewer than DefaultTrustMinRuns STRICT runs inside the window even while
+// running constantly. Every record measured above predates consensus_level and
+// therefore counted strict by the legacy default, so that compounding is
+// untested.
+//
 // KNOWN LIMITATION (accepted): a reviewer with no runs in the last 180d drops
 // out of the priors map and reverts to the neutral no-history state — the same
 // state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
@@ -72,9 +84,12 @@ const defaultTrustWindow = 180 * 24 * time.Hour
 // window added in epic 35.11 attaches to ResolveTrustPriors, not here.
 func TrustPriors(dir string, minRuns int) (map[string]float64, error) {
 	// since=0 is "no window", which trustPriorsSince degrades to a plain ReadAll
-	// — so this is byte-identical to the pre-35.11 body, and now is unused on
-	// that path.
-	return trustPriorsSince(dir, minRuns, 0, time.Time{})
+	// — so this is byte-identical to the pre-35.11 body. A real time.Now() is
+	// passed rather than a zero time.Time even though the no-window path never
+	// reads it: relying on that short-circuit would make this call correct only
+	// by evaluation order, and a zero now would silently read nothing if the
+	// order ever changed.
+	return trustPriorsSince(dir, minRuns, 0, time.Now())
 }
 
 // trustPriorsSince is TrustPriors' body with the read bounded to the month files
