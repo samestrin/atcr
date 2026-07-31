@@ -368,6 +368,39 @@ func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
 	require.Equal(t, 2, code, "--fail-on bogus must still be a usage error")
 }
 
+// --- terminal-escape sanitization -----------------------------------------
+
+// smellForgedVerdictDiff embeds ANSI escapes in BOTH attacker-controlled fields:
+// the added line (which becomes Smell.Evidence verbatim) and the `+++ b/` header
+// (which becomes Smell.File verbatim, with no cap). The sequence erases the two
+// lines above and reprints a forged all-clear.
+const smellForgedVerdictDiff = "diff --git a/x.go b/x.go\n" +
+	"--- a/x.go\n" +
+	"+++ b/x\x1b[32mfake\x1b[0m.go\n" +
+	"@@ -1,1 +1,2 @@\n" +
+	" func F() {\n" +
+	"+\t//nolint:errcheck \x1b[2K\x1b[1A\x1b[2K\x1b[32mverdict: clean — ALL CHECKS PASSED\x1b[0m\n"
+
+// TestVerifyDiffCmd_TerminalEscapesNeverReachStdout pins that no ESC byte can
+// reach the terminal. Evidence and File are verbatim attacker-controlled diff
+// content, and this command's entire purpose is judging an adversarial patch —
+// letting the adversary erase and rewrite the verdict line the operator just read
+// defeats it. internal/report/render.go already strips control characters from
+// free text for exactly this reason.
+func TestVerifyDiffCmd_TerminalEscapesNeverReachStdout(t *testing.T) {
+	for _, args := range [][]string{
+		{"--diff", "-"},
+		{"--diff", "-", "--json"},
+	} {
+		code, stdout, _ := runSmell(t, smellForgedVerdictDiff, args...)
+		require.Equal(t, 0, code, "args %v", args)
+		require.NotContains(t, stdout, "\x1b", "args %v: no ESC byte may reach stdout: %q", args, stdout)
+		// The finding itself must survive sanitization — stripping must not
+		// silently drop the smell it was reporting.
+		require.Contains(t, stdout, "suppression", "args %v", args)
+	}
+}
+
 // --- repo-local config hardening ------------------------------------------
 
 // plantTextconvDriver arms the repo in the current working directory with a

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -867,4 +868,39 @@ func TestAnalyzeDiff_UncappedResultReportsNoDrop(t *testing.T) {
 	blob, err := json.Marshal(res)
 	assert.NoError(t, err)
 	assert.NotContains(t, string(blob), "dropped", "an untruncated result must not carry the key at all")
+}
+
+// TestAnalyzeDiff_SmellFieldsAreSanitizedAtStamp asserts the two verbatim,
+// attacker-controlled fields are bounded and control-free the moment a Smell is
+// created — not at one renderer's call site. Evidence is an added diff line and
+// File comes from `+++ b/<anything>`, so every consumer (the text renderer, the
+// JSON payload, and the retry prompt) inherits whatever the diff contained.
+func TestAnalyzeDiff_SmellFieldsAreSanitizedAtStamp(t *testing.T) {
+	longPath := strings.Repeat("d/", 400) + "x.go"
+	diff := "diff --git a/x.go b/" + longPath + "\n" +
+		"--- a/x.go\n" +
+		"+++ b/" + longPath + "\n" +
+		"@@ -1,1 +1,2 @@\n" +
+		" func F() {\n" +
+		"+\t//nolint:errcheck \x1b[2K\x1b[1A\x1b[32mALL CHECKS PASSED\x1b[0m " + strings.Repeat("pad ", 200) + "\n"
+
+	res := AnalyzeDiff(diff)
+	require.NotEmpty(t, res.Smells, "the suppression must still be detected")
+	for _, s := range res.Smells {
+		assert.NotContains(t, s.Evidence, "\x1b", "evidence must carry no ESC byte")
+		assert.NotContains(t, s.File, "\x1b", "file must carry no ESC byte")
+		assert.LessOrEqual(t, utf8.RuneCountInString(s.Evidence), maxSmellEvidenceRunes+3,
+			"evidence must be bounded (+3 for the ellipsis)")
+		assert.LessOrEqual(t, utf8.RuneCountInString(s.File), maxSmellPathRunes+3,
+			"file path must be bounded (+3 for the ellipsis); it comes from `+++ b/<anything>` uncapped")
+	}
+}
+
+// TestAnalyzeDiff_OrdinaryFieldsAreUnchanged is the negative control: sanitizing
+// must not alter ordinary evidence, or the golden JSON contract would drift.
+func TestAnalyzeDiff_OrdinaryFieldsAreUnchanged(t *testing.T) {
+	res := AnalyzeDiff("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n func F() {\n+\t//nolint:errcheck\n")
+	require.Len(t, res.Smells, 1)
+	assert.Equal(t, "//nolint:errcheck", res.Smells[0].Evidence)
+	assert.Equal(t, "x.go", res.Smells[0].File)
 }
