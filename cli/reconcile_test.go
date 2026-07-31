@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
@@ -1358,4 +1359,36 @@ func TestResolveConsensusLevel_BrokenProjectConfigIsUsageError(t *testing.T) {
 	_, err := resolveConsensusLevel("")
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "a broken project config is a usage error")
+}
+
+// TestRunReconcile_ResolvesSharedSettingsInOneLoad pins the call-site half of
+// the shared-settings single load: runReconcile needs both fail_on and
+// consensus, and resolving them through two independent resolvers costs two
+// parses of .atcr/config.yaml and — under ATCR_REGISTRY_URL — two separate HTTP
+// GETs of the user registry. Because the registry tier is swallowed best-effort,
+// one fetch can succeed while the other fails, leaving the gate and the
+// consensus level resolved from DIFFERENT tiers inside one run.
+func TestRunReconcile_ResolvesSharedSettingsInOneLoad(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", trustPanelSources())
+
+	const remote = "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\n" +
+		"agents:\n  a:\n    provider: p\n    model: m\nfail_on: CRITICAL\nconsensus: off\n"
+	var fetches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(remote))
+	}))
+	t.Cleanup(srv.Close)
+
+	// The tier is consulted only when the local registry file exists; its bytes
+	// come from the URL (see registry.loadRegistryBytes).
+	regDir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(remote), 0o644))
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
+		"one reconcile must load the user registry once for both shared settings")
 }
