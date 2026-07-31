@@ -69,7 +69,11 @@ cannot feed the parser something that is not a plain unified diff.
 `# rubocop:disable`, and `@phpstan-ignore`.
 
 A line that also appears verbatim among the same file's removed lines is treated
-as **relocated, not introduced**, so moving or reindenting code raises nothing.
+as **relocated, not introduced**, so the per-added-line smells (`test_skipped`,
+`suppression`, `empty_catch`, `stub_body`) do not fire on moved or reindented
+code. The guard does not extend to `weakened_assertion`, which counts assertions
+per file: a relocated assertion still reads as a one-for-one replacement and
+raises the SOFT verdict.
 
 ### The three atcr-only HARD smells
 
