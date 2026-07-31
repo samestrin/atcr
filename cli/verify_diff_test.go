@@ -157,7 +157,7 @@ func TestStageTestDeletion_GuardsBeforeWriting(t *testing.T) {
 	abs, err := filepath.Abs(dir)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(abs, 0o755))
-	defer os.RemoveAll(abs)
+	defer func() { _ = os.RemoveAll(abs) }()
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStageTestDeletion_GuardsBeforeWriting$")
 	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1")
