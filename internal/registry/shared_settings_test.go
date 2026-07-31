@@ -1,0 +1,140 @@
+package registry
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// sharedTierRegistryYAML is a valid user-global registry that sets BOTH shared
+// settings, so a single load is enough to answer both questions.
+const sharedTierRegistryYAML = "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\n" +
+	"agents:\n  a:\n    provider: p\n    model: m\nfail_on: HIGH\nconsensus: off\n"
+
+// seedUserRegistry writes content to the user-global registry path under a temp
+// HOME and returns that HOME.
+func seedUserRegistry(t *testing.T, content string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(content), 0o644))
+	return home
+}
+
+// TestResolveSharedSettings_LoadsUserRegistryOnce pins the single-load contract
+// that makes the two shared-setting resolvers cheap and self-consistent. Under
+// ATCR_REGISTRY_URL each independent resolver costs its own HTTP GET, and
+// because the registry tier is swallowed best-effort one fetch can succeed while
+// the other fails — leaving fail_on and consensus resolved from DIFFERENT tiers
+// inside one run. Resolving both from one load makes that impossible.
+func TestResolveSharedSettings_LoadsUserRegistryOnce(t *testing.T) {
+	var fetches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&fetches, 1)
+		_, _ = w.Write([]byte(sharedTierRegistryYAML))
+	}))
+	t.Cleanup(srv.Close)
+
+	// A local registry file must exist for the tier to be consulted at all; the
+	// bytes come from the URL (see loadRegistryBytes).
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	t.Setenv("ATCR_REGISTRY_URL", srv.URL+"/registry.yaml")
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", failOn)
+	assert.Equal(t, "off", consensus)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
+		"both shared settings must resolve from ONE user-registry load, not one per setting")
+}
+
+// TestResolveSharedSettings_ProjectTierWinsForBothSettings is the project-tier
+// half: one .atcr/config.yaml parse must answer both settings, with the project
+// tier outranking the registry tier for each of them independently.
+func TestResolveSharedSettings_ProjectTierWinsForBothSettings(t *testing.T) {
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root),
+		[]byte("agents:\n  - a\nfail_on: LOW\nconsensus: lenient\n"), 0o644))
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "LOW", failOn)
+	assert.Equal(t, "lenient", consensus)
+}
+
+// TestResolveSharedSettings_MatchesIndividualResolvers is the anti-divergence
+// guard the duplication created: ResolveGateThreshold and ResolveConsensus must
+// stay byte-identical to the combined resolver across every tier combination, so
+// a future change to tier semantics cannot be applied to one chain and missed on
+// the other.
+func TestResolveSharedSettings_MatchesIndividualResolvers(t *testing.T) {
+	cases := []struct {
+		name              string
+		projectYAML       string // "" = no project config at all
+		explicitFailOn    string
+		explicitConsensus string
+	}{
+		{name: "nothing configured"},
+		{name: "project sets both", projectYAML: "agents:\n  - a\nfail_on: LOW\nconsensus: lenient\n"},
+		{name: "project sets neither", projectYAML: "agents:\n  - a\n"},
+		{name: "project sets only consensus", projectYAML: "agents:\n  - a\nconsensus: lenient\n"},
+		{name: "explicit beats every file tier", projectYAML: "agents:\n  - a\nfail_on: LOW\nconsensus: lenient\n",
+			explicitFailOn: "CRITICAL", explicitConsensus: "strict"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seedUserRegistry(t, sharedTierRegistryYAML)
+			root := t.TempDir()
+			if tc.projectYAML != "" {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+				require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root), []byte(tc.projectYAML), 0o644))
+			}
+
+			wantFailOn, err := ResolveGateThreshold(root, tc.explicitFailOn)
+			require.NoError(t, err)
+			wantConsensus, err := ResolveConsensus(root, tc.explicitConsensus)
+			require.NoError(t, err)
+
+			gotFailOn, gotConsensus, err := ResolveSharedSettings(root, tc.explicitFailOn, tc.explicitConsensus)
+			require.NoError(t, err)
+			assert.Equal(t, wantFailOn, gotFailOn, "fail_on must match the standalone resolver")
+			assert.Equal(t, wantConsensus, gotConsensus, "consensus must match the standalone resolver")
+		})
+	}
+}
+
+// TestResolveSharedSettings_BrokenProjectConfigIsAnError preserves the tier
+// asymmetry both standalone resolvers document: the repo's own config is an
+// error when present-but-broken, never a silent skip.
+func TestResolveSharedSettings_BrokenProjectConfigIsAnError(t *testing.T) {
+	seedUserRegistry(t, sharedTierRegistryYAML)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(DefaultProjectConfigPath(root), []byte("agents: []\n"), 0o644))
+
+	_, _, err := ResolveSharedSettings(root, "", "")
+	require.Error(t, err)
+}
+
+// TestResolveSharedSettings_BrokenUserRegistrySkipped preserves the other half
+// of the asymmetry: a broken user-global registry never blocks a run.
+func TestResolveSharedSettings_BrokenUserRegistrySkipped(t *testing.T) {
+	seedUserRegistry(t, "providers: [this is not a map\n")
+	root := t.TempDir()
+
+	failOn, consensus, err := ResolveSharedSettings(root, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "", failOn)
+	assert.Equal(t, "", consensus)
+}
