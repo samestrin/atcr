@@ -15,6 +15,34 @@ import (
 // run 100+ runs, so this floor does not strand real reviewers.
 const DefaultTrustMinRuns = 20
 
+// defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11).
+// It is deliberately NOT caller-configurable: epic 35.6 restrained exposing
+// internal filter constants and epic 35.9 hardcoded trustHighThreshold /
+// trustLowThreshold for the same reason, so a --trust-since flag would reopen
+// exactly that surface.
+//
+// 180d is set from measurement, not intuition. The window interacts with
+// DefaultTrustMinRuns: a reviewer whose runs INSIDE the window fall below that
+// floor is dropped from the priors map, which would silently disable trust
+// exemption and demotion on all four RunReconcile paths — a behavior change, not
+// a speedup. Against the live store on 2026-07-31 (span 2026-06-26 to
+// 2026-07-31, 1260 reviewer records) every one of the 11 reviewers clearing the
+// floor held 113-120 strict runs at every candidate window from 30d to 365d, so
+// 180d strands nobody with a wide margin. The leaderboard's 30d display default
+// is far too aggressive for this purpose and is unrelated.
+//
+// KNOWN LIMITATION (accepted): a reviewer with no runs in the last 180d drops
+// out of the priors map and reverts to the neutral no-history state — the same
+// state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
+// lookup with no distinct "dormant" handling). Re-widening this constant, not an
+// empty-map fallback, is the fix if that ever bites: the map stays non-empty
+// while any reviewer is active, so a fallback keyed on emptiness would never
+// fire for a single dormant reviewer.
+//
+// Narrowing this value requires redoing the min-runs measurement above
+// (TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor guards the floor).
+const defaultTrustWindow = 180 * 24 * time.Hour
+
 // TrustPriors reads the scorecard store at dir and returns each reviewer's
 // corroboration rate (findings corroborated / findings raised), keyed by
 // lowercase reviewer name. Aggregate groups by (Reviewer, Model), so a
@@ -38,6 +66,7 @@ const DefaultTrustMinRuns = 20
 // A missing or unreadable store directory yields an empty map and a nil
 // error — this is a best-effort read, matching ReadAll's "no data yet"
 // contract; it never returns an error or panics.
+//
 // This function reads ALL HISTORY and always will: cli/personas.go calls it
 // directly to render per-persona rates over the whole store. The reconcile-side
 // window added in epic 35.11 attaches to ResolveTrustPriors, not here.
@@ -155,31 +184,3 @@ func ResolveTrustPriors() map[string]float64 {
 	priors, _ := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, time.Now())
 	return priors
 }
-
-// defaultTrustWindow bounds the reconcile-side trust-prior read (epic 35.11).
-// It is deliberately NOT caller-configurable: epic 35.6 restrained exposing
-// internal filter constants and epic 35.9 hardcoded trustHighThreshold /
-// trustLowThreshold for the same reason, so a --trust-since flag would reopen
-// exactly that surface.
-//
-// 180d is set from measurement, not intuition. The window interacts with
-// DefaultTrustMinRuns: a reviewer whose runs INSIDE the window fall below that
-// floor is dropped from the priors map, which would silently disable trust
-// exemption and demotion on all four RunReconcile paths — a behavior change, not
-// a speedup. Against the live store on 2026-07-31 (span 2026-06-26 to
-// 2026-07-31, 1260 reviewer records) every one of the 11 reviewers clearing the
-// floor held 113-120 strict runs at every candidate window from 30d to 365d, so
-// 180d strands nobody with a wide margin. The leaderboard's 30d display default
-// is far too aggressive for this purpose and is unrelated.
-//
-// KNOWN LIMITATION (accepted): a reviewer with no runs in the last 180d drops
-// out of the priors map and reverts to the neutral no-history state — the same
-// state a brand-new reviewer occupies (reconcile/consensus.go does a plain map
-// lookup with no distinct "dormant" handling). Re-widening this constant, not an
-// empty-map fallback, is the fix if that ever bites: the map stays non-empty
-// while any reviewer is active, so a fallback keyed on emptiness would never
-// fire for a single dormant reviewer.
-//
-// Narrowing this value requires redoing the min-runs measurement above
-// (TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor guards the floor).
-const defaultTrustWindow = 180 * 24 * time.Hour
