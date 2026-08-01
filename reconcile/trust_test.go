@@ -207,6 +207,53 @@ func TestTrustPriors_NilOrEmptyOptionsIsCompleteNoOp(t *testing.T) {
 	deepEq(t, withEmpty, baseline, "empty TrustPriors is byte-identical to the zero-value Options")
 }
 
+// TestSummary_TrustPriorsResolvedCountsTheAttachedPriors pins the epic-35.11
+// observability gap: ResolveTrustPriors reads a 180d window, so a reviewer with
+// no runs inside it drops out of the map and silently loses trust
+// exemption/demotion — while the scorecard read discards its diagnostics and
+// `atcr personas list --scores` still reads all history, reporting that reviewer
+// as healthy. Summary.TrustPriorsResolved is the only signal that divergence
+// produces, so it must track len(opts.TrustPriors) exactly: the SIZE of the
+// attached map, not how many findings the priors happened to affect.
+func TestSummary_TrustPriorsResolvedCountsTheAttachedPriors(t *testing.T) {
+	sources := []Source{
+		{Name: "a", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "possible nil deref on this path", "correctness", "trusted"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "bar.go", 20, "unused import lingers in this file", "style", "stranger"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("MEDIUM", "baz.go", 30, "request body is not validated", "correctness", "third"),
+		}},
+	}
+
+	// Three priors, only one of which matches a reviewer in this run: the count
+	// is the map size, so the two non-participating entries still count. A
+	// findings-derived count would report 1 here and would not drop when a
+	// dormant reviewer ages out of the window — the exact signal this exists for.
+	priors := map[string]float64{
+		"trusted": trustHighThreshold,
+		"dormant": trustHighThreshold,
+		"retired": trustLowThreshold,
+	}
+	eq(t, Reconcile(sources, Options{TrustPriors: priors}).Summary.TrustPriorsResolved, 3,
+		"TrustPriorsResolved is len(opts.TrustPriors), including reviewers absent from this run")
+
+	// A reviewer aging out of the window shows up as a smaller count — the drop
+	// between runs is the signal.
+	aged := map[string]float64{"trusted": trustHighThreshold}
+	eq(t, Reconcile(sources, Options{TrustPriors: aged}).Summary.TrustPriorsResolved, 1,
+		"a reviewer dropped by the window lowers the count")
+
+	// Nil and empty are both 0: a fresh install, an unresolvable config dir, and
+	// an unreadable store all degrade to a nil map by design.
+	eq(t, Reconcile(sources, Options{TrustPriors: nil}).Summary.TrustPriorsResolved, 0,
+		"nil priors resolve to 0")
+	eq(t, Reconcile(sources, Options{TrustPriors: map[string]float64{}}).Summary.TrustPriorsResolved, 0,
+		"empty priors resolve to 0")
+}
+
 func TestDemoteByTrust_NeverFiresOnAuthorityPromotedFinding(t *testing.T) {
 	// Same 3-source shape as TestConsensusFilter_AuthorityPromotedSingletonSurvives:
 	// alice earns run-global PageRank authority via two corroborations and her

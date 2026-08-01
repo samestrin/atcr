@@ -287,9 +287,23 @@ than growing a third aggregation.
   reviewer with any history at all, so it opts out of the default floor rather
   than inheriting it.
 - **`scorecard.ResolveTrustPriors()` (epic 35.9)** is the third consumer —
-  `DefaultDir()` + `TrustPriors(dir, DefaultTrustMinRuns)` in one best-effort
-  call, degrading to a nil map on any failure (an unresolvable config dir, a
-  missing/unreadable store) rather than erroring. Every `atcr reconcile` /
+  `DefaultDir()` plus a read at `DefaultTrustMinRuns` in one best-effort call,
+  degrading to a nil map on any failure (an unresolvable config dir, a
+  missing/unreadable store) rather than erroring. Unlike `TrustPriors`, that
+  read is **windowed to the last 180 days** (epic 35.11): because epic 35.9 put
+  this call on the primary path of every review and reconcile, its cost is
+  unconditional and would otherwise grow without bound as the store accumulates
+  months. The window selects whole month **files** before they are opened, so
+  history outside it is never read or parsed. Because selection is per **month
+  file**, the whole calendar month containing the 180-day cutoff is included, so
+  effective retention is 180 days plus however far into that month the cutoff
+  falls — up to roughly 210 days, i.e. as many as 7 month files. Two
+  consequences: a reviewer with no runs in any month file overlapping the last
+  180 days falls back to the neutral "no history" state
+  (absent from the map — the same state a brand-new reviewer occupies), and
+  `TrustPriors(dir, minRuns)` itself is **unchanged and still all-history**, so
+  `atcr personas list --scores` keeps reporting on the whole store. Every
+  `atcr reconcile` /
   `atcr review --resume` / `atcr review` (one-shot mode) / MCP
   `atcr_reconcile` call site resolves it and threads the result into
   `reconcile.Options.TrustPriors`, which the epic-14.2 consensus filter
@@ -330,7 +344,9 @@ than growing a third aggregation.
   See
   [`reconcile/README.md`](../reconcile/README.md#behavior) for the filter-side
   mechanics. **Cold-start contract:** a reviewer needs `DefaultTrustMinRuns`
-  (20) summed `strict` runs before its prior applies at all — every reviewer on a fresh
+  (20) summed `strict` runs **inside the windowed read** — the month files
+  overlapping the last 180 days, per the month-granularity note above — before
+  its prior applies at all. Every reviewer on a fresh
   install, and any reviewer below that floor, is simply absent from the map,
   so reconcile behaves byte-identically to pre-35.9 until history accumulates.
   This resolver is intentionally not called from inside
@@ -354,7 +370,10 @@ writes records by default.
 > Scorecard emission fires from both the CLI (`atcr reconcile`) and the MCP
 > `atcr_reconcile` handler, via a single shared bridge — the two entry points
 > emit identical records, so MCP-driven runs are never silently omitted from the
-> store. `--no-scorecard` suppression is a CLI flag.
+> store. `--no-scorecard` suppression is a CLI-only flag. Because non-strict runs
+> (`lenient`/`off`) are automatically excluded from trust-prior calculations on
+> all entry points, MCP-driven exploratory runs cannot depress or corrupt trust
+> priors, making `--no-scorecard` unnecessary on the MCP surface.
 
 ---
 

@@ -363,6 +363,12 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// Same signal the CLI reconcile logs: the priors come from a 180d windowed
+	// store read (epic 35.11), so a reviewer with no runs inside the window drops
+	// out of the map and silently loses trust exemption/demotion. A drop in this
+	// count between runs is the only observable trace without an all-history read.
+	e.logger().Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved)
+
 	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
 	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
 	// scorecard records (TD-005 — no entry-point divergence). The MCP path has no

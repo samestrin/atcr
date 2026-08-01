@@ -395,6 +395,12 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	if err != nil {
 		return 0, usageError(fmt.Errorf("resume failed: %w", err))
 	}
+	// Mirrors the `atcr reconcile` line: the priors come from a 180d windowed
+	// store read (epic 35.11), so a reviewer with no runs inside the window drops
+	// out of the map and silently loses trust exemption/demotion. A drop in this
+	// count between runs is the signal. Logged (not printed) so the --axi
+	// stdout contract is untouched.
+	log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
 	// Shared by the AllComplete and pending paths; gated under --axi (read from the
 	// same context value) so both resume routes keep stdout payload-only (AC 01-04).
 	if !axiFromContext(ctx) {

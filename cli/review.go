@@ -745,6 +745,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
+		// Mirrors the `atcr reconcile` line: the priors come from a 180d windowed
+		// store read (epic 35.11), so a reviewer with no runs inside the window
+		// drops out of the map and silently loses trust exemption/demotion. A drop
+		// in this count between runs is the signal. Logged (not printed) so the
+		// --axi stdout contract is untouched.
+		log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
 		// Gated under --axi. The axi run-summary payload carries findings_total (the
 		// raw per-agent fanout metric, mirroring writeReviewSummary's "Findings:"
 		// line); the deduplicated reconciled count and the verify/debate verdict

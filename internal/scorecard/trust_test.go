@@ -1,6 +1,8 @@
 package scorecard
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -101,6 +103,9 @@ func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 	// map, never an error, never a blocked caller.
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
 
 	assert.Empty(t, ResolveTrustPriors())
 }
@@ -108,6 +113,9 @@ func TestResolveTrustPriors_MissingStoreDegradesToEmptyMap(t *testing.T) {
 func TestResolveTrustPriors_ReadsTheDefaultStore(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
 
 	dir, err := DefaultDir()
 	require.NoError(t, err)
@@ -138,6 +146,22 @@ func TestTrustPriors_UnreadableDirYieldsEmptyMapNoError(t *testing.T) {
 	rates, err := TrustPriors(unreadable, 0)
 	require.NoError(t, err)
 	assert.Empty(t, rates)
+}
+
+func TestTrustPriors_PartialReadFailureYieldsEmptyMap(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: permission bits do not block root reads")
+	}
+	dir := t.TempDir()
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "bruce"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "greta"))
+	unreadable := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+
+	rates, err := TrustPriors(dir, 0)
+	require.NoError(t, err, "a best-effort read never returns an error, even on a mid-enumeration failure")
+	assert.Empty(t, rates, "a mid-enumeration read failure must not aggregate a truncated store")
 }
 
 func TestTrustPriors_ZeroDenominatorYieldsZeroNotNaN(t *testing.T) {
@@ -282,4 +306,284 @@ func TestTrustPriors_UnrecognizedConsensusLevelExcluded(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, priors, "alfred",
 		"a record with an uninterpretable level must not count toward a trust prior")
+}
+
+// --- Windowed resolver (epic 35.11 T2) ---
+
+// appendNAt writes n records for reviewer/model into dir stamped at `at`, so the
+// records land in the month file `at` names — letting a test place history
+// inside or outside a trust window deterministically.
+func appendNAt(t *testing.T, dir string, n int, reviewer, model string, raisedEach, corroboratedEach int, at time.Time) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		runID := runIDAt(at, fmt.Sprintf("%s-%s-%d", reviewer, model, i))
+		require.NoError(t, Append(dir, reviewer_(runID, reviewer, model, raisedEach, corroboratedEach)))
+	}
+}
+
+// TestTrustPriors_AllHistoryUnchangedAcrossMonths is the compatibility pin for
+// cli/personas.go:44, which calls TrustPriors(dir, 0) directly and must keep
+// seeing the WHOLE store. A reviewer whose entire history sits years outside any
+// window must still be counted here — TrustPriors is all-history by contract, and
+// epic 35.11 windows only ResolveTrustPriors.
+func TestTrustPriors_AllHistoryUnchangedAcrossMonths(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	appendNAt(t, dir, 4, "Ancient", "opus", 1, 1, now.AddDate(-2, 0, 0))
+	appendNAt(t, dir, 4, "Recent", "opus", 1, 0, now.AddDate(0, 0, -1))
+
+	rates, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "ancient", "TrustPriors stays all-history: a years-old reviewer is still counted")
+	assert.Contains(t, rates, "recent")
+	assert.InDelta(t, 1.0, rates["ancient"], 1e-9)
+}
+
+// TestTrustPriorsSince_ExcludesMonthsOutsideTheWindow is the core T2 behavior:
+// the window drops whole month files before aggregation, so a reviewer active
+// only outside it is absent from the priors map.
+func TestTrustPriorsSince_ExcludesMonthsOutsideTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	appendNAt(t, dir, 4, "Ancient", "opus", 1, 1, now.AddDate(-2, 0, 0))
+	appendNAt(t, dir, 4, "Recent", "opus", 1, 1, now.AddDate(0, 0, -1))
+
+	rates, err := trustPriorsSince(dir, 0, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "ancient", "a reviewer whose only runs predate the window is absent")
+	assert.Contains(t, rates, "recent")
+}
+
+// TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow covers
+// the strictRuns x window compounding trust.go's window comment flags: a
+// reviewer used mostly under --consensus lenient/off can hold fewer than
+// DefaultTrustMinRuns STRICT runs inside the window even while running
+// constantly. The windowed read must count only strict runs toward the floor:
+// 25 lenient + 5 strict runs inside the window omits the reviewer at
+// DefaultTrustMinRuns but includes it at minRuns=5.
+func TestTrustPriorsSince_StrictRunsFloorIgnoresLenientRunsInsideTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	at := now.AddDate(0, 0, -10) // inside defaultTrustWindow
+	for i := 0; i < 25; i++ {
+		rec := reviewer_(runIDAt(at, fmt.Sprintf("lenient-%d", i)), "Lenny", "opus", 3, 3)
+		rec.ConsensusLevel = reclib.ConsensusLenient
+		require.NoError(t, Append(dir, rec))
+	}
+	for i := 0; i < 5; i++ {
+		rec := reviewer_(runIDAt(at, fmt.Sprintf("strict-%d", i)), "Lenny", "opus", 3, 3)
+		rec.ConsensusLevel = reclib.ConsensusStrict
+		require.NoError(t, Append(dir, rec))
+	}
+
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.NotContains(t, rates, "lenny",
+		"only 5 strict runs inside the window — lenient runs must not top the floor up to DefaultTrustMinRuns")
+
+	rates, err = trustPriorsSince(dir, 5, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "lenny", "at minRuns=5 the 5 strict runs clear the floor")
+}
+
+// TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns constructs the
+// dangerous shape the epic's window discussion (trust.go, defaultTrustWindow)
+// names: a reviewer who clears the min-runs floor over ALL history but falls
+// below it inside the window — 25 strict runs eight months out, 5 inside — and
+// so silently loses trust exemption/demotion. The all-history read must keep
+// the reviewer while the windowed read drops it, proving the omission comes
+// from the window and not the floor.
+func TestTrustPriorsSince_WindowCanPushAReviewerBelowMinRuns(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	appendNAt(t, dir, 25, "Fading", "opus", 1, 1, now.AddDate(0, -8, 0)) // outside the 180d window
+	appendNAt(t, dir, 5, "Fading", "opus", 1, 1, now.AddDate(0, 0, -1))  // inside
+
+	allHistory, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, allHistory, "fading", "30 strict runs over all history clears the floor")
+
+	windowed, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.NotContains(t, windowed, "fading",
+		"only 5 strict runs inside the window — below DefaultTrustMinRuns, so the windowed read drops the reviewer")
+}
+
+// TestTrustPriorsSince_NoWindowMatchesTrustPriors pins the shared-code-path
+// guarantee: since<=0 is exactly the all-history read, so the two paths cannot
+// drift.
+func TestTrustPriorsSince_NoWindowMatchesTrustPriors(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	appendNAt(t, dir, 4, "Ancient", "opus", 3, 1, now.AddDate(-2, 0, 0))
+	appendNAt(t, dir, 4, "Recent", "sonnet", 2, 2, now.AddDate(0, 0, -1))
+
+	windowed, err := trustPriorsSince(dir, 0, 0, now)
+	require.NoError(t, err)
+	all, err := TrustPriors(dir, 0)
+	require.NoError(t, err)
+	assert.Equal(t, all, windowed, "since<=0 must equal TrustPriors' all-history result")
+}
+
+// TestResolveTrustPriors_IsWindowed is the reconcile-side contract: the four
+// epic-35.9 RunReconcile call sites read priors through ResolveTrustPriors, and
+// that read is bounded by defaultTrustWindow. The same store read all-history
+// (TrustPriors) still surfaces the ancient reviewer, which proves the omission
+// comes from the WINDOW and not from the DefaultTrustMinRuns floor.
+func TestResolveTrustPriors_IsWindowed(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+	// os.UserConfigDir() reads %AppData% on Windows and ignores HOME/XDG, so
+	// redirect it too or the test store lands in the developer's real atcr dir.
+	t.Setenv("AppData", t.TempDir())
+
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	outside := time.Now().Add(-defaultTrustWindow).AddDate(0, -2, 0)
+	// "Midwindow" sits 150 days back — inside the 180d window by roughly one
+	// month. It is the LOWER bound arm: "Recent" alone lands in the current month
+	// file, which overlaps any positive window, so without this reviewer the test
+	// passes for every window from 1ns to ~208d and pins only that SOME window
+	// exists. Narrowing defaultTrustWindow drops this reviewer's month file and
+	// fails the Contains below — the epic's stated HIGH risk (AC3) made
+	// executable.
+	//
+	// 150 days is a LITERAL, deliberately not derived from defaultTrustWindow: an
+	// anchor written as now-defaultTrustWindow+1mo moves with the constant, so
+	// halving the window would move the seed along with it and the test would
+	// stay green. The literal is what makes this a magnitude pin.
+	inside := time.Now().AddDate(0, 0, -150)
+	appendNAt(t, dir, DefaultTrustMinRuns, "Ancient", "opus", 1, 1, outside)
+	appendNAt(t, dir, DefaultTrustMinRuns, "Midwindow", "opus", 1, 1, inside)
+	appendNAt(t, dir, DefaultTrustMinRuns, "Recent", "opus", 1, 1, time.Now())
+
+	allHistory, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, allHistory, "ancient", "the ancient reviewer clears the min-runs floor over all history")
+
+	rates := ResolveTrustPriors()
+	assert.Contains(t, rates, "recent")
+	assert.Contains(t, rates, "midwindow",
+		"a reviewer one month inside defaultTrustWindow must survive the windowed read — this pins the window's MAGNITUDE, not just its existence")
+	assert.NotContains(t, rates, "ancient", "ResolveTrustPriors must not read month files outside defaultTrustWindow")
+}
+
+// TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement guards the epic's
+// highest risk (AC3): too narrow a window pushes a real reviewer below
+// DefaultTrustMinRuns, silently disabling trust exemption/demotion on four hot
+// paths. 180d was measured against the live store (2026-07-31: all 11 reviewers
+// clearing the floor held 113-120 strict runs at every window from 30d to 365d).
+// Narrowing this constant without redoing that measurement is the failure mode
+// this test exists to catch.
+func TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement(t *testing.T) {
+	assert.GreaterOrEqual(t, defaultTrustWindow, 180*24*time.Hour,
+		"defaultTrustWindow must stay >= 180d unless re-measured against a real store (epic 35.11 AC3)")
+}
+
+// TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor is the BEHAVIORAL
+// half of the guard above. That one compares a constant against its own literal
+// and so can only catch a deliberate narrowing of the WINDOW; it says nothing
+// about the other half of the interaction, DefaultTrustMinRuns. This one seeds a
+// reviewer at a steady low run rate spread across the window and asserts the
+// windowed read still returns it, so BOTH failure directions fail here: raising
+// DefaultTrustMinRuns above the seeded run count, or narrowing the window until
+// fewer of those runs remain inside it. That pairing is what trust.go's
+// defaultTrustWindow comment claims is protected.
+func TestDefaultTrustWindow_IsGenerousEnoughForTheMinRunsFloor(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	// steadyRuns is a LITERAL 20 — the run count DefaultTrustMinRuns was measured
+	// at (trust.go), deliberately NOT written as DefaultTrustMinRuns. Seeding
+	// `DefaultTrustMinRuns` records and then asserting against the same constant
+	// is `n >= n`: it passes at any value, which is the very tautology this test
+	// exists to replace. The literal is what makes raising the floor fail here.
+	const steadyRuns = 20
+	// stride is likewise a LITERAL 9 days (180d / 20 runs), for the same reason:
+	// written as defaultTrustWindow/steadyRuns it would CONTRACT with the window,
+	// re-bunching every run inside whatever window remains and passing at 60d.
+	// Held fixed, the runs stay spread over ~171 real days, so narrowing the
+	// window leaves fewer than the floor inside it and this test fails. Spreading
+	// them at all — rather than bunching them into one month file — is also the
+	// shape the floor actually endangers: a reviewer active at a steady low rate.
+	// The +24h keeps the newest stride at `now` rather than one day past it.
+	const stride = 9 * 24 * time.Hour
+	for i := 0; i < steadyRuns; i++ {
+		at := now.Add(-time.Duration(i) * stride).Add(24 * time.Hour)
+		if at.After(now) {
+			at = now
+		}
+		appendNAt(t, dir, 1, "Steady", "opus", 1, 1, at)
+	}
+
+	rates, err := trustPriorsSince(dir, DefaultTrustMinRuns, defaultTrustWindow, now)
+	require.NoError(t, err)
+	assert.Contains(t, rates, "steady",
+		"a reviewer holding 20 strict runs spread across defaultTrustWindow must clear the floor — if this fails, the window and the floor have drifted apart and both need re-measuring (epic 35.11 AC3)")
+}
+
+// --- Windowed-read benchmark (epic 35.11 T3) ---
+
+// seedMonthlyStore writes perMonth reviewer records into each of the `months`
+// consecutive month files ending with the month of `end`, bypassing Append so
+// seeding is one write per month rather than one open per record.
+func seedMonthlyStore(tb testing.TB, dir string, months, perMonth int, end time.Time) {
+	tb.Helper()
+	require.NoError(tb, os.MkdirAll(dir, 0o700))
+	reviewers := []string{"archer", "brad", "dax", "greta", "kai", "mira", "otto", "pace", "ronin", "vera"}
+	for m := 0; m < months; m++ {
+		monthStart := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -m, 0)
+		var buf bytes.Buffer
+		for i := 0; i < perMonth; i++ {
+			// i%27 keeps every timestamp inside its own month, so each record lands
+			// in the file its stem names.
+			ts := monthStart.Add(time.Duration(i%27) * 24 * time.Hour)
+			rec := reviewer_(runIDAt(ts, fmt.Sprintf("bench-%d-%d", m, i)), reviewers[i%len(reviewers)], "opus", 3, 2)
+			line, err := json.Marshal(rec)
+			require.NoError(tb, err)
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
+		path := filepath.Join(dir, monthStart.Format("2006-01")+".jsonl")
+		require.NoError(tb, os.WriteFile(path, buf.Bytes(), 0o600))
+	}
+}
+
+// BenchmarkResolveTrustPriors measures the epic-35.11 win on a 24-month store:
+// `windowed_180d` is the shipped ResolveTrustPriors (reads ~7 month files),
+// `all_history_pre_35_11` is the pre-epic cost of the same call (TrustPriors at
+// DefaultTrustMinRuns, reading all 24). The store is pointed at a temp HOME via
+// os.UserConfigDir, the seam TestResolveTrustPriors_ReadsTheDefaultStore already
+// uses — so the literal exported call is benchmarked with no production-side
+// test hook. CI never passes -bench, so this costs nothing on a routine
+// `go test` run; it exists as a regression guard on the cost this epic bounds.
+func BenchmarkResolveTrustPriors(b *testing.B) {
+	b.Setenv("XDG_CONFIG_HOME", "")
+	b.Setenv("HOME", b.TempDir())
+	// See the AppData note on the tests above: Windows resolves the store
+	// through %AppData%, so the benchmark must redirect it too.
+	b.Setenv("AppData", b.TempDir())
+
+	dir, err := DefaultDir()
+	require.NoError(b, err)
+	seedMonthlyStore(b, dir, 24, 500, time.Now())
+
+	b.Run("windowed_180d", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if len(ResolveTrustPriors()) == 0 {
+				b.Fatal("benchmark store must yield priors")
+			}
+		}
+	})
+
+	b.Run("all_history_pre_35_11", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			priors, _ := TrustPriors(dir, DefaultTrustMinRuns)
+			if len(priors) == 0 {
+				b.Fatal("benchmark store must yield priors")
+			}
+		}
+	})
 }
