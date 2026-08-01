@@ -35,4 +35,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/samestrin/atcr/reconcile v0.3.0
+require github.com/samestrin/atcr/reconcile v0.4.0

@@ -1,3 +1,19 @@
+## [35.11.0] - 2026-07-31
+
+Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scorecard.ResolveTrustPriors()` into all four `RunReconcile` call sites, which turned an on-demand cost — previously reachable only via `atcr scorecard leaderboard` — into an unconditional read of *every* month file the scorecard store has ever written, on every review and reconcile, with no time window and no record cap. The store has no rotation, so that cost grew without bound. Reads are now windowed to the last 180 days by selecting which month files to open, rather than filtering records after the whole store has already been read and parsed.
+
+### Added
+
+- `scorecard.ReadSince(dir, since, now, opts)` — a windowed counterpart to `ReadAll` that reads only the month files whose calendar month overlaps `[now-since, now]`. A month file outside the window is never opened. An unparseable month stem is read fail-open, and `since <= 0` delegates to `ReadAll`, so the windowed and all-history paths share one enumeration.
+- `reconcile.Summary.TrustPriorsResolved` (`trust_priors_resolved` in `summary.json`) records how many reviewers' trust priors the caller attached — `len(Options.TrustPriors)`. Because that map now comes from a windowed read, a reviewer with no runs inside the window drops out of it and silently loses trust exemption/demotion, while `atcr personas list --scores` still reads all history and reports that reviewer as healthy. This count is the only place that divergence is observable without an all-history read; a drop between runs is the signal. It is logged by `atcr reconcile`, `atcr review`, `atcr resume`, and the MCP `atcr_reconcile` handler. Observability only — it changes no finding, no confidence, and no exit code.
+
+### Changed
+
+- `scorecard.ResolveTrustPriors()` now reads a 180-day window instead of all history — roughly 4x faster and 4x less allocated against a 24-month store (5.9ms vs 24.2ms, 11.5MB vs 51.0MB). One consequence: a reviewer with no runs in any month file overlapping the last 180 days falls back to the neutral "no history" state, the same state a brand-new reviewer occupies. Selection is per month file, so the whole calendar month containing the cutoff is included and effective retention is 180 days plus however far into that month the cutoff falls — up to roughly 210 days. The window is an internal constant; no new flag or config key.
+- `scorecard.TrustPriors(dir, minRuns)` is unchanged — same signature, same all-history semantics — so `atcr personas list --scores` still reports on the whole store.
+
+*Shipped via /execute-epic (epic 35.11)*
+
 ## [35.10] - 2026-07-30
 
 Exposes the diff-smell analyzer as `atcr verify diff`. Epic 35.3 ported the analyzer into `internal/verify/diffsmell.go` and wired it into the auto-fix fix-selection gate, but explicitly scoped out "any subprocess or CLI shell-out" — so the detection logic was reachable only from inside this binary, and a consumer's only alternatives were a second dependency or a third copy of the analyzer. This adds the surface and no new analysis: no new smells, no threshold changes, and no change to which verdict a given diff earns.

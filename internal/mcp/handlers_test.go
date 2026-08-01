@@ -457,11 +457,18 @@ func seedTrustedReviewer(t *testing.T, reviewer string) {
 	t.Helper()
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
+	// The run_id timestamp decides which month file the record lands in, and
+	// scorecard.ResolveTrustPriors reads only the month files inside
+	// defaultTrustWindow (epic 35.11). A hardcoded date would silently fall out
+	// of that window as it aged, disabling the prior this fixture exists to
+	// exercise — so stamp "now" and take it once so a loop crossing midnight on
+	// the 1st cannot split the fixture across two month files.
+	stamp := time.Now().UTC().Format(time.RFC3339)
 	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
 			SchemaVersion:        1,
 			RecordType:           scorecard.RecordTypeReviewer,
-			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-r%02d", i),
+			RunID:                fmt.Sprintf("%s-r%02d", stamp, i),
 			Reviewer:             reviewer,
 			Model:                "m",
 			Role:                 "reviewer",
@@ -992,11 +999,18 @@ func seedUntrustedReviewer(t *testing.T, reviewer string) {
 	t.Helper()
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
+	// The run_id timestamp decides which month file the record lands in, and
+	// scorecard.ResolveTrustPriors reads only the month files inside
+	// defaultTrustWindow (epic 35.11). A hardcoded date would silently fall out
+	// of that window as it aged, disabling the prior this fixture exists to
+	// exercise — so stamp "now" and take it once so a loop crossing midnight on
+	// the 1st cannot split the fixture across two month files.
+	stamp := time.Now().UTC().Format(time.RFC3339)
 	for i := 0; i < scorecard.DefaultTrustMinRuns; i++ {
 		require.NoError(t, scorecard.Append(dir, scorecard.Record{
 			SchemaVersion:        1,
 			RecordType:           scorecard.RecordTypeReviewer,
-			RunID:                fmt.Sprintf("2026-07-02T00:00:00Z-u%02d", i),
+			RunID:                fmt.Sprintf("%s-u%02d", stamp, i),
 			Reviewer:             reviewer,
 			Model:                "m",
 			Role:                 "reviewer",

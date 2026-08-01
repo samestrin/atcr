@@ -142,8 +142,15 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 	// drained and skipped rather than terminating the read: bufio.Scanner's
 	// ErrTooLong is terminal and cannot resume, so one oversized line in one month
 	// file would abort the whole leaderboard (ReadAll across every month). The
-	// buffer is sized to maxLineBytes so ReadSlice flags only a line past that cap.
-	br := bufio.NewReaderSize(f, maxLineBytes)
+	// buffer is capped at maxLineBytes so ReadSlice flags only a line past that
+	// cap, but sized to the file when the file is smaller: a line longer than the
+	// file cannot exist inside it, so the over-long-line semantics are unchanged
+	// while a ~KB-scale file no longer costs a flat 1 MiB allocation per read.
+	size := maxLineBytes
+	if st, serr := f.Stat(); serr == nil && st.Size()+1 < int64(size) {
+		size = int(st.Size()) + 1
+	}
+	br := bufio.NewReaderSize(f, size)
 	for {
 		frag, err := br.ReadSlice('\n')
 		if err == bufio.ErrBufferFull {
@@ -240,7 +247,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, err
+			return nil, basePathErr(err)
 		}
 		for _, r := range recs {
 			if r.RunID == runID {
@@ -290,16 +297,39 @@ func monthsToScan(runID, month string) []string {
 // is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
 // Non-.jsonl files are ignored.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
+	return readMonthFiles(dir, nil, opts)
+}
+
+// readMonthFiles enumerates dir's *.jsonl month files and concatenates the
+// records of the ones keep accepts, where keep is passed the file's stem
+// (the name minus ".jsonl") and a nil keep reads every file. It is the single
+// enumeration both ReadAll and ReadSince run on, so the all-history and
+// windowed paths cannot drift in how they treat a missing directory,
+// non-.jsonl entries, subdirectories, or a file that vanishes mid-read.
+//
+// A per-file read error (other than a file vanishing mid-enumeration, which is
+// skipped silently) is diagnosed and SKIPPED, not aborted: os.ReadDir returns
+// entries sorted ascending — chronological for YYYY-MM stems — so aborting
+// would silently discard every NEWER month, exactly the data the trust prior
+// depends on. The first such error is still returned alongside the surviving
+// records, so ReadAll callers that surface errors (cli/leaderboard.go) see the
+// failure while error-discarding callers (trustPriorsSince) get the fullest
+// possible record set.
+func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading scorecard dir: %w", err)
+		return nil, fmt.Errorf("reading scorecard dir: %w", basePathErr(err))
 	}
 	var all []Record
+	var firstErr error
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		if keep != nil && !keep(strings.TrimSuffix(e.Name(), ".jsonl")) {
 			continue
 		}
 		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
@@ -307,11 +337,92 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return all, err
+			_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: skipping unreadable month file %s: %v\n", e.Name(), err)
+			if firstErr == nil {
+				firstErr = basePathErr(err)
+			}
+			continue
 		}
 		all = append(all, recs...)
 	}
-	return all, nil
+	return all, firstErr
+}
+
+// ReadSince is the windowed counterpart to ReadAll: it reads only the month
+// files under dir whose calendar month overlaps [now-since, now], so records
+// outside the window are never opened, read, or parsed. This bounds the read at
+// FILE SELECTION — the cost an in-memory post-read filter (ApplyFilters) cannot
+// touch, because that filter runs after every month file has already been read.
+//
+// since <= 0 means "no window" and delegates to ReadAll verbatim, so the
+// windowed and all-history paths share one enumeration at the boundary rather
+// than drifting apart.
+//
+// WHY EXPORTED with only one in-package caller (trustPriorsSince): the epic
+// 35.11 plan specified a store-level windowed read as the deliverable, paired
+// with the exported ReadAll it bounds — an unexported readSince would leave
+// ReadAll as the only public way to read the store, i.e. the unbounded one. The
+// asymmetry, not the caller count, is what earns the export. The known external
+// consumer is cli/leaderboard.go, which still runs ReadAll plus an in-memory
+// ApplyFilters against a 30d default and was explicitly out of scope for the
+// epic; moving it onto this function is the tracked follow-up.
+//
+// A month file whose stem is not a parseable YYYY-MM is READ (fail-open): an
+// odd filename cannot prove its contents fall outside the window, and silently
+// dropping history is worse than reading one extra file. Non-.jsonl entries and
+// subdirectories are ignored, and a missing directory is (nil, nil) — both
+// matching ReadAll's contract.
+//
+// now must be a real timestamp when since > 0: a zero time.Time puts the whole
+// window in year 1, so every real month file is "after now" and the result is
+// empty — indistinguishable from an empty store. Because a zero now is always
+// a caller mistake (the time.Time{} zero value), it defaults to time.Now()
+// rather than silently reading nothing. Callers wanting all history should
+// pass since <= 0 rather than relying on now.
+//
+// The window is compared against the month stem, not against each record's
+// run_id, so a record whose run_id disagrees with the file it landed in (clock
+// skew, a late write) is included or excluded with its file. Callers needing
+// record-level precision should filter the result (see ApplyFilters); for a
+// window measured in months that off-by-one-month edge is immaterial.
+func ReadSince(dir string, since time.Duration, now time.Time, opts ReadOpts) ([]Record, error) {
+	if since <= 0 {
+		return ReadAll(dir, opts)
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-since)
+	return readMonthFiles(dir, func(stem string) bool {
+		return monthOverlapsWindow(stem, cutoff, now)
+	}, opts)
+}
+
+// monthOverlapsWindow reports whether the calendar month named by stem
+// (YYYY-MM) intersects the window [cutoff, now]. The month is treated as the
+// half-open instant range [first-of-month, first-of-next-month), so a month
+// ending exactly AT the cutoff holds no instant at or after it and is excluded,
+// while a month containing the cutoff (or now) overlaps.
+//
+// Both window edges are deliberately fail-CLOSED — this is a design decision,
+// not an oversight (epic 35.11 Risks accepted the clock-skew edge as LOW). A
+// month starting after now is excluded even though a future-stamped file (an
+// NTP-corrected clock) could cost the freshest month for the duration of the
+// skew. And a month is included only when its own instant range reaches the
+// cutoff, so a record stamped inside the window but filed one month early — the
+// split-write case monthsToScan exists for — is excluded with its file. Either
+// edge could be widened (fail-open) at the cost of reading more files; do so
+// only as an explicit re-decision, not by assuming this function is fail-open.
+//
+// An unparseable stem returns true: ONLY there does the window fail open — a
+// file that cannot be placed in time must not be dropped silently.
+func monthOverlapsWindow(stem string, cutoff, now time.Time) bool {
+	start, err := time.Parse("2006-01", stem)
+	if err != nil {
+		return true
+	}
+	end := start.AddDate(0, 1, 0)
+	return !start.After(now) && end.After(cutoff)
 }
 
 // adjacentMonths returns the YYYY-MM stems on either side of month. ok is false

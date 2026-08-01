@@ -3,10 +3,13 @@ package scorecard
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -268,6 +271,35 @@ func TestStore_ReadAll_MissingDir(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// TestStore_ReadAll_UnreadableMonthFileSkipsAndContinues locks the
+// abort-vs-continue decision for readMonthFiles: os.ReadDir returns entries
+// sorted ascending — chronological for YYYY-MM stems — so aborting the
+// enumeration on one unreadable month file would silently discard every NEWER
+// month (exactly the data the trust prior depends on). One bad file must cost
+// one file: the remaining months are returned, a diagnostic is emitted, and the
+// error is still propagated for ReadAll callers that surface it.
+func TestStore_ReadAll_UnreadableMonthFileSkipsAndContinues(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	writeMonthFile(t, dir, "2026-03", recordLine(t, "2026-03-10T10:00:00Z-mar", "bruce"))
+	writeMonthFile(t, dir, "2026-04", recordLine(t, "2026-04-10T10:00:00Z-apr", "greta"))
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "dax"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "ingrid"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "vera"))
+	require.NoError(t, os.Chmod(filepath.Join(dir, "2026-03.jsonl"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-03.jsonl"), 0o600) })
+
+	var diag bytes.Buffer
+	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
+	require.Error(t, err, "the read failure is still propagated for callers that surface it")
+	require.Len(t, recs, 4, "one unreadable month file must not discard the newer months")
+	assert.Equal(t, "greta", recs[0].Reviewer, "April is the first readable month")
+	assert.Equal(t, "vera", recs[3].Reviewer, "July — the newest month — still comes back")
+	assert.Contains(t, diag.String(), "2026-03.jsonl", "the skipped file is named in a diagnostic")
+}
+
 // TestStore_monthsToScan_InvalidDayNoBoundaryScan locks the fix: the day that
 // drives boundary scanning must come from a real parsed timestamp, not fixed
 // offset slicing. An impossible calendar day (Feb 30) must not be read off as a
@@ -427,5 +459,300 @@ func TestStore_DiagWriter_TypedNilFallsBackToStderr(t *testing.T) {
 	var typedNil *bytes.Buffer // nil pointer, but a non-nil io.Writer interface
 	if got := diagWriter(typedNil); got != os.Stderr {
 		t.Fatalf("typed-nil writer must fall back to os.Stderr, got %T", got)
+	}
+}
+
+// TestReadRecords_BufferSizesToFileNotMaxLineBytes locks the allocation bound:
+// reading a small month file must not allocate the flat 1 MiB maxLineBytes
+// buffer — the buffer sizes to the file (maxLineBytes is only the cap), so a
+// ~KB-scale file costs ~KB-scale allocations. Measured via TotalAlloc around a
+// single read: 1 MiB before the fix, a few KB after; the 256 KiB threshold sits
+// far from both signals.
+func TestReadRecords_BufferSizesToFileNotMaxLineBytes(t *testing.T) {
+	dir := t.TempDir()
+	var content string
+	for i := 0; i < 5; i++ {
+		content += recordLine(t, "2026-06-14T10:00:00Z-a", "bruce")
+	}
+	path := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	recs, err := ReadRecords(path, ReadOpts{Writer: io.Discard})
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Len(t, recs, 5)
+	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256<<10),
+		"reading a %d-byte file must not allocate the flat %d-byte maxLineBytes buffer", len(content), maxLineBytes)
+}
+
+// --- ReadSince: windowed, file-selecting read (epic 35.11 T1) ---
+
+// writeMonthFile writes raw content as dir/<stem>.jsonl. Tests use it (rather
+// than Append) when the month stem must be controlled independently of any
+// run_id — including stems Append could never produce.
+func writeMonthFile(t *testing.T, dir, stem, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, stem+".jsonl"), []byte(content), 0o600))
+}
+
+// recordLine marshals a reviewer record to one JSONL line.
+func recordLine(t *testing.T, runID, reviewer string) string {
+	t.Helper()
+	b, err := json.Marshal(sampleRecord(runID, reviewer))
+	require.NoError(t, err)
+	return string(b) + "\n"
+}
+
+// poisonMonth seeds a month file whose ONLY line is malformed JSON. Reading it
+// emits a "malformed record" diagnostic, so an empty diagnostics buffer proves
+// the file was never opened — the by-construction evidence AC1 needs. Asserting
+// on the returned records alone could not distinguish "read and filtered out"
+// from "never read".
+func poisonMonth(t *testing.T, dir, stem string) {
+	t.Helper()
+	writeMonthFile(t, dir, stem, "{not json\n")
+}
+
+func TestReadSince_WindowCoveringAllMonthsReadsEverything(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "bruce"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	assert.Len(t, recs, 3, "a window spanning every month file must read them all")
+	assert.Empty(t, diag.String(), "every month file parses cleanly, so the read-everything case emits no diagnostic")
+}
+
+func TestReadSince_WindowCoveringSubsetSkipsOlderFilesEntirely(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	// Both are entirely before the cutoff of a 10-day window ending 2026-07-15
+	// (2026-07-05), and both are unreadable if opened.
+	poisonMonth(t, dir, "2026-06")
+	poisonMonth(t, dir, "2026-01")
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 10*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "only the month files overlapping the window are read")
+	assert.Equal(t, "dax", recs[0].Reviewer)
+	assert.Empty(t, diag.String(), "an out-of-window month file must never be opened (no diagnostic emitted)")
+}
+
+// TestReadSince_OverlappingMonthIsReadWhole pins the file-level granularity: the
+// window selects FILES, not records, so a month that overlaps the window is read
+// in full — including records stamped before the cutoff. Trimming to the exact
+// cutoff is a record-level concern (ApplyFilters), deliberately not duplicated
+// here.
+func TestReadSince_OverlappingMonthIsReadWhole(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	// A 20-day window cuts off at 2026-06-25, which falls inside 2026-06, so the
+	// whole June file is in play even though this record predates the cutoff.
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-02T10:00:00Z-early-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	recs, err := ReadSince(dir, 20*24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 2, "a month overlapping the window is read whole, pre-cutoff records included")
+}
+
+func TestReadSince_WindowCoveringNoMonthsIsEmptyNotError(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	poisonMonth(t, dir, "2020-01")
+	poisonMonth(t, dir, "2019-11")
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.NoError(t, err, "a window matching no month file is empty, not an error")
+	assert.Empty(t, recs)
+	assert.Empty(t, diag.String(), "no month file overlaps the window, so none may be opened")
+}
+
+// TestReadSince_UnreadableInWindowFileReturnsPartialAndError pins the windowed
+// half of the readMonthFiles skip-and-continue contract: an in-window month
+// file that fails to open costs that ONE file — the surviving in-window months
+// are returned, and the error is still propagated so error-discarding callers
+// (trustPriorsSince) fail neutral while surfacing callers see the failure.
+func TestReadSince_UnreadableInWindowFileReturnsPartialAndError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-05", recordLine(t, "2026-05-10T10:00:00Z-may", "bruce"))
+	writeMonthFile(t, dir, "2026-06", recordLine(t, "2026-06-10T10:00:00Z-jun", "greta"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	require.NoError(t, os.Chmod(filepath.Join(dir, "2026-05.jsonl"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-05.jsonl"), 0o600) })
+
+	var diag bytes.Buffer
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: &diag})
+	require.Error(t, err, "an in-window read failure is still propagated")
+	require.Len(t, recs, 2, "the unreadable in-window file costs one file, not the window")
+	assert.Equal(t, "greta", recs[0].Reviewer)
+	assert.Equal(t, "dax", recs[1].Reviewer)
+	assert.Contains(t, diag.String(), "2026-05.jsonl", "the skipped file is named in a diagnostic")
+}
+
+// TestStore_ReadAll_UnreadableDirReturnsError pins the non-IsNotExist
+// os.ReadDir failure path: unlike a MISSING directory (empty, nil), an
+// unreadable one is a real error on ReadAll and — through the shared
+// readMonthFiles enumeration — on ReadSince too.
+func TestStore_ReadAll_UnreadableDirReturnsError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	require.NoError(t, os.Mkdir(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	_, err := ReadAll(locked, ReadOpts{Writer: io.Discard})
+	require.Error(t, err, "an unreadable store directory is an error, not 'no data yet'")
+	assert.Contains(t, err.Error(), "reading scorecard dir")
+
+	_, err = ReadSince(locked, 180*24*time.Hour, time.Now(), ReadOpts{Writer: io.Discard})
+	require.Error(t, err, "ReadSince shares the same enumeration error path")
+}
+
+// TestReadPaths_ErrorsDoNotLeakAbsoluteStorePath is the read-path sibling of
+// TestAppend_ErrorDoesNotLeakAbsoluteStorePath. Every error the read paths
+// RETURN must carry the base name only: the absolute store path is
+// username-bearing (~/.config/atcr/scorecard) and these errors surface through
+// cli/leaderboard.go, so the read paths owe the same redaction Append applies.
+func TestReadPaths_ErrorsDoNotLeakAbsoluteStorePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+
+	t.Run("unreadable dir", func(t *testing.T) {
+		dir := t.TempDir()
+		locked := filepath.Join(dir, "locked")
+		require.NoError(t, os.Mkdir(locked, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+		_, err := ReadAll(locked, ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "ReadAll must not embed the absolute store path")
+
+		_, err = ReadSince(locked, 180*24*time.Hour, time.Now(), ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "ReadSince shares the enumeration, so it shares the redaction")
+	})
+
+	t.Run("unreadable month file", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+		require.NoError(t, os.Chmod(filepath.Join(dir, "2026-07.jsonl"), 0o000))
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "2026-07.jsonl"), 0o600) })
+
+		_, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.Error(t, err, "the first per-file read error is propagated alongside the surviving records")
+		assert.NotContains(t, err.Error(), dir, "the propagated per-file error must be redacted too")
+
+		_, err = FindByRunID(dir, "2026-07-10T10:00:00Z-jul", ReadOpts{Writer: io.Discard})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), dir, "FindByRunID must not embed the absolute store path")
+	})
+}
+
+func TestReadSince_UnparseableMonthStemIsReadFailOpen(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	// A stem that is not YYYY-MM cannot be proven outside the window, so it is
+	// read rather than silently dropping whatever history it holds.
+	writeMonthFile(t, dir, "backup", recordLine(t, "2026-07-10T10:00:00Z-odd", "vera"))
+
+	recs, err := ReadSince(dir, 24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "an unparseable month stem is read fail-open, never dropped")
+	assert.Equal(t, "vera", recs[0].Reviewer)
+}
+
+func TestReadSince_NonPositiveWindowDelegatesToReadAll(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2019-01", recordLine(t, "2019-01-10T10:00:00Z-old", "archer"))
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+
+	for _, since := range []time.Duration{0, -1 * time.Hour} {
+		recs, err := ReadSince(dir, since, now, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		all, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, all, recs, "since=%v must be identical to ReadAll", since)
+	}
+}
+
+func TestReadSince_MissingDirYieldsNilNoError(t *testing.T) {
+	recs, err := ReadSince(filepath.Join(t.TempDir(), "does-not-exist"), 180*24*time.Hour, time.Now(), ReadOpts{})
+	require.NoError(t, err, "a missing store directory is 'no data yet', matching ReadAll")
+	assert.Empty(t, recs)
+}
+
+// TestReadSince_ZeroNowDefaultsToNow pins the boundary defense: a zero now with
+// a positive window puts the whole window in year 1, so every real month file
+// is "after now" and the read silently comes back empty — indistinguishable
+// from an empty store, and routed through trustPriorsSince that is the epic's
+// own HIGH failure mode (trust silently disabled). A zero now is always a
+// caller mistake (time.Time{} zero value), so it defaults to time.Now() rather
+// than reading nothing.
+func TestReadSince_ZeroNowDefaultsToNow(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	writeMonthFile(t, dir, now.Format("2006-01"), recordLine(t, now.Format("2006-01-02T15:04:05Z")+"-now", "bruce"))
+
+	recs, err := ReadSince(dir, 180*24*time.Hour, time.Time{}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.NotEmpty(t, recs, "a zero now with a positive window must not silently read nothing")
+}
+
+func TestReadSince_IgnoresNonJSONLAndSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	writeMonthFile(t, dir, "2026-07", recordLine(t, "2026-07-10T10:00:00Z-jul", "dax"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
+	// Named with a .jsonl suffix AND inside the window on purpose: neither the
+	// suffix check nor the window's keep filter may be what excludes this entry
+	// — e.IsDir() has to be the discriminating guard, or the "directories are
+	// ignored" claim is unproven. (An out-of-window stem would be dropped by
+	// keep even with the guard deleted, leaving the mutation uncaught.)
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "2026-06.jsonl"), 0o700))
+
+	recs, err := ReadSince(dir, 180*24*time.Hour, now, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "non-.jsonl entries and directories are ignored, as in ReadAll")
+}
+
+func TestReadSince_MonthOverlapBoundaries(t *testing.T) {
+	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		stem  string
+		since time.Duration
+		want  bool
+	}{
+		{"current month always overlaps", "2026-07", time.Hour, true},
+		{"month ending exactly at the cutoff is excluded", "2026-06", 15*24*time.Hour - 12*time.Hour, false},
+		{"month containing the cutoff overlaps", "2026-06", 20 * 24 * time.Hour, true},
+		{"month entirely before the cutoff is excluded", "2026-05", 20 * 24 * time.Hour, false},
+		{"month entirely after now is excluded", "2026-09", 365 * 24 * time.Hour, false},
+		{"month containing now overlaps even from the future edge", "2026-07", time.Nanosecond, true},
+		{"unparseable stem overlaps (fail-open)", "not-a-month", time.Hour, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, monthOverlapsWindow(tc.stem, now.Add(-tc.since), now))
+		})
 	}
 }
