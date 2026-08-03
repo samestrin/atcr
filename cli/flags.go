@@ -83,7 +83,7 @@ const defaultCloudEndpoint = ""
 // overwritten, hooks fire in installation order (earlier-installed first), and a
 // future --sync-cloud precondition can slot in without clobbering it.
 func addSyncCloudFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires ATCR_API_KEY)")
+	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires --cloud-endpoint and ATCR_API_KEY)")
 	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "override the --sync-cloud destination (https://, or loopback http:// for local testing)")
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
