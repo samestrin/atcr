@@ -1,9 +1,11 @@
 // Package telemetry provides a fire-and-forget, panic-safe HTTP client for
-// anonymous usage pings. It is opt-in and fails open: a network failure, a hung
-// endpoint, a non-2xx response, or an internal panic never blocks, crashes, or
-// changes the exit code of the CLI command that emitted the ping. An empty (or
-// non-HTTPS) endpoint makes every Send a no-op — the seam the opt-out gate
-// (Story 2) reuses.
+// anonymous usage pings. The ping is default-enabled and opt-out (ATCR_TELEMETRY
+// or `atcr config set telemetry false` disables it) and fails open: a network
+// failure, a hung endpoint, a non-2xx response, or an internal panic never
+// blocks, crashes, or changes the exit code of the CLI command that emitted the
+// ping. An empty (or non-HTTPS) endpoint makes every Send a no-op — the seam the
+// opt-out gate (Story 2) reuses. (The community quality signal is the inverse:
+// opt-in and off by default — see cli/telemetry.go.)
 package telemetry
 
 import (
@@ -126,7 +128,7 @@ func isHTTPS(endpoint string) bool {
 // It is a no-op when the client is nil, the endpoint is empty, or the endpoint is
 // not HTTPS. Every failure mode — non-2xx, network error, marshal error, or an
 // internal panic — is logged at debug level (never a level that alarms an end
-// user about an opt-in background feature) and swallowed: Send has no error
+// user about a default-on, opt-out background feature) and swallowed: Send has no error
 // return and never affects the caller's outcome or exit code. The usage Event is
 // marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
