@@ -28,8 +28,19 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // TestMain zeroes the per-comment fallback pause so the suite never waits on the
 // real secondary-rate-limit delay; the pacing itself is covered explicitly in
 // TestPostInlineComments_FallbackPacesSequentialPosts.
+//
+// It also defaults ATCR_TELEMETRY=0 for the whole package. The usage ping is
+// default-ON (an unset ATCR_TELEMETRY means enabled), and defaultTelemetryEndpoint
+// now names a live production host — so without this, any test that drives a
+// review or reconcile to completion through the real command tree (execCmd and
+// friends, which stub neither the transport nor the env var) would POST a genuine
+// usage ping at atcr.dev from CI and from every developer's machine. This is a
+// DEFAULT, not an override: every test that cares about the gate sets the var
+// itself via t.Setenv/os.Setenv and is restored automatically, so the tests that
+// exercise the enabled path are unaffected.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
+	_ = os.Setenv("ATCR_TELEMETRY", "0")
 	os.Exit(m.Run())
 }
 

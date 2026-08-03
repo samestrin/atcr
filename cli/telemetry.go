@@ -11,16 +11,26 @@ import (
 	"github.com/samestrin/atcr/internal/telemetry"
 )
 
-// defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL. It is
-// intentionally empty for now: the external ingestion backend is owned outside
-// this repository, and an empty endpoint makes every telemetry Send a safe no-op
-// (zero network in dev, CI, and production alike). When a real endpoint is wired
-// it MUST be an https:// URL — telemetry.Client refuses plaintext http.
-const defaultTelemetryEndpoint = ""
-
-// defaultQualitySignalEndpoint is the compiled-in quality-signal ingestion URL.
-// RED stub — deliberately unset until the GREEN stage.
-const defaultQualitySignalEndpoint = ""
+// defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL, and
+// defaultQualitySignalEndpoint its quality-signal sibling. Both are live: the
+// atcr.dev backend serves them as SEPARATE handlers behind the /api/v1/* rewrite,
+// each validating against its own closed key allowlist (strict set equality — an
+// extra or missing key is a 400, not a warning). They are therefore never
+// interchangeable: the usage ping is a single JSON object, the quality signal a
+// JSON array, and posting either at the other's handler is rejected and then
+// dropped silently by the fail-open send path.
+//
+// Both MUST stay https:// — telemetry.Client refuses plaintext http and would
+// no-op instead. An empty value is a silent per-path no-op, which is what allows
+// either constant to be deactivated independently without disturbing the other.
+//
+// Transmission is still governed entirely by the consent gates, which these
+// constants do not touch: the usage ping by telemetryGate (default-on, opt-out via
+// ATCR_TELEMETRY / config) and the quality signal by its own opt-IN gate.
+const (
+	defaultTelemetryEndpoint     = "https://atcr.dev/api/v1/telemetry"
+	defaultQualitySignalEndpoint = "https://atcr.dev/api/v1/quality-signal"
+)
 
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
 // anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env

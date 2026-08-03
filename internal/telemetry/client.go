@@ -64,36 +64,54 @@ func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, e
 }
 
 // Client sends anonymous usage events to a configured HTTPS endpoint. Construct
-// one per process via New and inject it (it is deliberately not a package-level
-// singleton); a nil Client or an empty/non-HTTPS endpoint makes Send a no-op.
+// one per process via New or NewWithQualitySignal and inject it (it is
+// deliberately not a package-level singleton); a nil Client or an empty/non-HTTPS
+// endpoint makes the corresponding Send a no-op.
+//
+// The two payload surfaces carry SEPARATE destinations because the backend serves
+// them as separate handlers with separate closed key allowlists: the usage ping is
+// a single JSON object, the quality signal a JSON array. Routing the array at the
+// object handler earns a 400, and the fail-open path drops it silently — a loss
+// nothing surfaces. Each destination is independently empty-able, which is what
+// lets the two constants be activated on independent schedules.
 type Client struct {
-	endpoint       string
-	httpClient     *http.Client
-	wg             sync.WaitGroup
-	sem            chan struct{} // bounds concurrent send goroutines (see maxInFlightSends)
-	requestTimeout time.Duration
+	endpoint        string
+	qualityEndpoint string
+	httpClient      *http.Client
+	wg              sync.WaitGroup
+	sem             chan struct{} // bounds concurrent send goroutines (see maxInFlightSends)
+	requestTimeout  time.Duration
 }
 
-// New returns a Client that POSTs events to endpoint. An empty endpoint yields a
-// no-op client (Send never spawns a goroutine or touches the network) — the
-// documented Phase-2 default until a real ingestion backend is configured. A
-// configured endpoint MUST be an https:// URL; plaintext http is refused (no-op).
+// New returns a single-destination Client: BOTH the usage ping and the quality
+// signal POST to endpoint. That shared meaning is deliberate and load-bearing, not
+// a legacy accident — the test suite discriminates the two surfaces by body shape
+// at the transport rather than by URL, and several tests deliberately run both
+// surfaces through one client. Production uses NewWithQualitySignal instead, because
+// the real backend serves the two payloads at different paths.
+//
+// An empty endpoint yields a no-op client (Send never spawns a goroutine or touches
+// the network). A configured endpoint MUST be an https:// URL; plaintext http is
+// refused (no-op).
 func New(endpoint string) *Client {
+	return NewWithQualitySignal(endpoint, endpoint)
+}
+
+// NewWithQualitySignal returns a Client that POSTs the usage ping to usage and the
+// quality signal to quality. The two are independent: either may be empty, and an
+// empty one makes only its own surface a no-op — the property that allows the two
+// compiled-in endpoint constants to be activated on separate schedules. Both must
+// be https:// to send at all; plaintext http is refused on each path alike.
+func NewWithQualitySignal(usage, quality string) *Client {
 	// A dedicated client (not http.DefaultClient) so telemetry's connection pool
 	// and Transport are isolated from the rest of the process.
 	return &Client{
-		endpoint:       endpoint,
-		httpClient:     &http.Client{},
-		sem:            make(chan struct{}, maxInFlightSends),
-		requestTimeout: defaultRequestTimeout,
+		endpoint:        usage,
+		qualityEndpoint: quality,
+		httpClient:      &http.Client{},
+		sem:             make(chan struct{}, maxInFlightSends),
+		requestTimeout:  defaultRequestTimeout,
 	}
-}
-
-// NewWithQualitySignal is the two-destination constructor (RED stub — deliberately
-// wrong until the GREEN stage): it currently collapses both payloads onto the
-// usage endpoint, which is the very regression the new routing test asserts against.
-func NewWithQualitySignal(usage, quality string) *Client {
-	return New(usage)
 }
 
 // isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
@@ -112,7 +130,25 @@ func isHTTPS(endpoint string) bool {
 // return and never affects the caller's outcome or exit code. The usage Event is
 // marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
-	c.dispatch(ctx, func() ([]byte, error) { return json.Marshal(ev) })
+	c.dispatch(ctx, c.usageEndpoint(), func() ([]byte, error) { return json.Marshal(ev) })
+}
+
+// usageEndpoint returns the usage-ping destination, nil-safe so Send can read it
+// before dispatch's own nil-receiver guard runs.
+func (c *Client) usageEndpoint() string {
+	if c == nil {
+		return ""
+	}
+	return c.endpoint
+}
+
+// qualitySignalEndpoint returns the quality-signal destination, nil-safe for the
+// same reason as usageEndpoint.
+func (c *Client) qualitySignalEndpoint() string {
+	if c == nil {
+		return ""
+	}
+	return c.qualityEndpoint
 }
 
 // SendQualitySignal fires the community prompt quality-signal payload (Sprint 30.0)
@@ -129,16 +165,21 @@ func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal)
 	if len(payload) == 0 {
 		return
 	}
-	c.dispatch(ctx, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
+	c.dispatch(ctx, c.qualitySignalEndpoint(), func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
 }
 
 // dispatch is the shared fail-open send core: it no-ops on a nil client or a
 // non-HTTPS/empty endpoint, bounds concurrent goroutines via the in-flight
 // semaphore, and hands the marshal closure to the detached send goroutine. Both
 // Send and SendQualitySignal funnel through it so the goroutine/timeout/recover
-// contract has a single implementation; only the marshaling differs per payload.
-func (c *Client) dispatch(ctx context.Context, marshal func() ([]byte, error)) {
-	if c == nil || !isHTTPS(c.endpoint) {
+// contract has a single implementation; only the destination and the marshaling
+// differ per payload.
+//
+// endpoint is passed in rather than read off c so each surface is gated by ITS OWN
+// destination: an empty or non-HTTPS endpoint silences only the payload aimed at
+// it, never the sibling surface.
+func (c *Client) dispatch(ctx context.Context, endpoint string, marshal func() ([]byte, error)) {
+	if c == nil || !isHTTPS(endpoint) {
 		return
 	}
 	// Non-blocking acquire: if maxInFlightSends are already running, drop this ping
@@ -150,10 +191,10 @@ func (c *Client) dispatch(ctx context.Context, marshal func() ([]byte, error)) {
 		return
 	}
 	c.wg.Add(1)
-	go c.send(ctx, marshal)
+	go c.send(ctx, endpoint, marshal)
 }
 
-func (c *Client) send(ctx context.Context, marshal func() ([]byte, error)) {
+func (c *Client) send(ctx context.Context, endpoint string, marshal func() ([]byte, error)) {
 	defer c.wg.Done()
 	defer func() { <-c.sem }() // release the in-flight slot acquired in dispatch
 	defer func() {
@@ -171,7 +212,7 @@ func (c *Client) send(ctx context.Context, marshal func() ([]byte, error)) {
 	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		log.FromContext(ctx).Debug("telemetry: build request failed", "error", err)
 		return

@@ -118,7 +118,7 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 		cancel()
 	}, stderr)
 
-	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+	telemetryClient := telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
 	root := NewRootCmdWithClient(telemetryClient)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -239,16 +239,18 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // NewRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
 func NewRootCmd() *cobra.Command {
-	return NewRootCmdWithClient(telemetry.New(defaultTelemetryEndpoint))
+	return NewRootCmdWithClient(telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint))
 }
 
 // NewRootCmdWithClient is NewRootCmd with the single opt-in process telemetry
 // client supplied by the caller, so main() keeps a handle on the same client
 // the root PersistentPreRunE injects into every subcommand's context and can
 // drain it before exit. The client is constructed once per process and injected
-// via PersistentPreRunE (deliberately not a package-level singleton). The
-// compiled-in endpoint is empty until a real ingestion backend lands, so Send
-// is a no-op in dev, CI, and production for now (see defaultTelemetryEndpoint).
+// via PersistentPreRunE (deliberately not a package-level singleton). The client
+// carries SEPARATE compiled-in destinations for the usage ping and the quality
+// signal (see defaultTelemetryEndpoint), both live — so whether anything is
+// transmitted is decided by the consent gates at the call sites, never by the
+// transport.
 func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
