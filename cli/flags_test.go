@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,16 +77,18 @@ func TestAddSyncCloudFlags_RefusalPrecedesAPIKeyCheck(t *testing.T) {
 // passed --cloud-endpoint "" must not be told to pass --cloud-endpoint.
 func TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag(t *testing.T) {
 	for _, empty := range []string{"", "   "} {
-		cmd := newReviewCmd()
-		require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", empty}))
-		require.NotNil(t, cmd.PreRunE)
+		t.Run(fmt.Sprintf("%q", empty), func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", empty}))
+			require.NotNil(t, cmd.PreRunE)
 
-		err := cmd.PreRunE(cmd, nil)
-		require.Error(t, err)
-		assert.Equal(t, exitUsage, exitCode(err))
-		assert.Contains(t, err.Error(), "--cloud-endpoint was supplied but is empty after trimming whitespace")
-		assert.NotContains(t, err.Error(), "no default destination",
-			"an explicitly-supplied empty value is not the absent-default case")
+			err := cmd.PreRunE(cmd, nil)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Contains(t, err.Error(), "--cloud-endpoint was supplied but is empty after trimming whitespace")
+			assert.NotContains(t, err.Error(), "no default destination",
+				"an explicitly-supplied empty value is not the absent-default case")
+		})
 	}
 }
 
@@ -95,10 +98,12 @@ func TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag(t *testing.T) {
 // must pass PreRunE untouched.
 func TestAddSyncCloudFlags_ExplicitEndpointBypassesRefusal(t *testing.T) {
 	for _, endpoint := range []string{"https://ingest.example.com", "http://127.0.0.1:8080/ingest"} {
-		cmd := newReviewCmd()
-		require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", endpoint}))
-		require.NotNil(t, cmd.PreRunE)
-		assert.NoError(t, cmd.PreRunE(cmd, nil), "explicit --cloud-endpoint %q must bypass the refusal", endpoint)
+		t.Run(fmt.Sprintf("%q", endpoint), func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", endpoint}))
+			require.NotNil(t, cmd.PreRunE)
+			assert.NoError(t, cmd.PreRunE(cmd, nil), "explicit --cloud-endpoint %q must bypass the refusal", endpoint)
+		})
 	}
 }
 
