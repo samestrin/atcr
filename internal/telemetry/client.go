@@ -149,8 +149,8 @@ func isHTTPS(endpoint string) bool {
 // It is a no-op when the client is nil, the endpoint is empty, or the endpoint is
 // not HTTPS. Every failure mode — non-2xx, network error, marshal error, or an
 // internal panic — is logged at debug level (never a level that alarms an end
-// user about a default-on, opt-out background feature) and swallowed: Send has no error
-// return and never affects the caller's outcome or exit code. The usage Event is
+// user about a default-on, opt-out background feature) and swallowed: Send has
+// no error return and never affects the caller's outcome or exit code. The usage Event is
 // marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
 	if c == nil {
