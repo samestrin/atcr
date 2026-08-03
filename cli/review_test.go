@@ -776,10 +776,14 @@ func TestRunReview_AllAgentsFailedAppendsNoAudit(t *testing.T) {
 // TestReviewCmd_SyncCloud_MissingKey_FailFast covers AC 04-03: `review
 // --sync-cloud` with an unset ATCR_API_KEY exits exitAuth (3) — and fails fast,
 // before any review work, so the check needs no git range or roster.
+//
+// The explicit --cloud-endpoint is load-bearing (Epic 35.12): there is no default
+// destination any more, and leaving it off would make the absent-destination
+// refusal (exit 2) fire first, testing that instead of this test's actual subject.
 func TestReviewCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_API_KEY", "")
-	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud"))
+	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"))
 }
 
 // TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage covers AC 04-02 EC4: a
@@ -837,7 +841,10 @@ func TestReviewCmd_SyncCloud_WarnsWhenNoResult(t *testing.T) {
 	var stderr bytes.Buffer
 	root.SetOut(io.Discard)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{"review", "--sync-cloud", "--require-verified"})
+	// Explicit --cloud-endpoint (Epic 35.12): without it the absent-destination
+	// refusal aborts in PreRunE and RunE never runs, so the notice under test
+	// would never be emitted.
+	root.SetArgs([]string{"review", "--sync-cloud", "--cloud-endpoint", "https://ingest.example.com", "--require-verified"})
 	_ = root.ExecuteContext(context.Background())
 	require.Contains(t, stderr.String(), "--sync-cloud push skipped because the run did not produce a result")
 }

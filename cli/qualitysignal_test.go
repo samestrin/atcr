@@ -312,7 +312,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 		out, errOut, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
+		assert.NotContains(t, errOut, "no default destination", "the sync-cloud absent-destination refusal must be suppressed on the preview path")
 	})
 	t.Run("reconcile --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
 		isolate(t)
@@ -321,7 +321,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 		out, errOut, code := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "reconcile --preview must take precedence over --sync-cloud through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
+		assert.NotContains(t, errOut, "no default destination", "the sync-cloud absent-destination refusal must be suppressed on the preview path")
 	})
 }
 
