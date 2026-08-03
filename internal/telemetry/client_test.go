@@ -15,12 +15,14 @@ import (
 )
 
 // newTestClient points a Client at an httptest TLS server, wiring the server's
-// trusted client so the HTTPS-only send path succeeds against the self-signed
-// cert. Same-package (white-box) access to the unexported httpClient field is the
+// trusted Transport so the HTTPS-only send path succeeds against the self-signed
+// cert. Only the Transport is swapped — the production CheckRedirect policy stays
+// in force, so tests exercise redirect handling exactly as production runs it.
+// Same-package (white-box) access to the unexported httpClient field is the
 // injection seam; production callers only ever see New(endpoint).
 func newTestClient(ts *httptest.Server) *Client {
 	c := New(ts.URL)
-	c.httpClient = ts.Client()
+	c.httpClient.Transport = ts.Client().Transport
 	return c
 }
 
@@ -426,6 +428,38 @@ func TestClient_Send_PerDestinationSemaphoreIndependence(t *testing.T) {
 
 	if n := atomic.LoadInt32(&qualityHits); n != 1 {
 		t.Fatalf("quality signal dispatches = %d, want 1 — a saturated usage-ping semaphore must not starve the sibling surface", n)
+	}
+}
+
+// TestClient_Send_RefusesHTTPSDowngradeRedirect proves the client never follows a
+// redirect to a plaintext-http target: a 308 (which replays the POST body via
+// GetBody) must be refused rather than transmit the payload in the clear. isHTTPS
+// vets only the INITIAL URL; the CheckRedirect policy vets every hop.
+func TestClient_Send_RefusesHTTPSDowngradeRedirect(t *testing.T) {
+	var plaintextHits int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&plaintextHits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer plain.Close()
+
+	var tlsHits int32
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tlsHits, 1)
+		w.Header().Set("Location", plain.URL+"/downgrade")
+		w.WriteHeader(http.StatusPermanentRedirect) // 308 replays the POST body
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&tlsHits); n != 1 {
+		t.Fatalf("expected 1 request to the TLS redirector, got %d", n)
+	}
+	if n := atomic.LoadInt32(&plaintextHits); n != 0 {
+		t.Fatalf("telemetry payload followed an https->http downgrade: %d plaintext request(s), want 0", n)
 	}
 }
 
