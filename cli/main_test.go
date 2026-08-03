@@ -244,18 +244,43 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 }
 
 // unsetEnvForTest removes key for the duration of the test, restoring the prior
-// state on cleanup (t.Setenv cannot express "unset").
+// state on cleanup (t.Setenv alone cannot express "unset"). It is the ONE helper
+// for this in package cli — a bare os.Unsetenv is never correct here, and the
+// consent-surface variables are the reason why: TestMain pins ATCR_TELEMETRY=0,
+// ATCR_QUALITY_SIGNAL=0, and ATCR_API_KEY="" precisely so no test can transmit at
+// the now-live production endpoints, and an unrestored unset silently discards
+// that pin for every test ordered after it. Today's leak direction happens to be
+// safe, which is exactly why an inverted default would go unnoticed.
+//
+// The t.Setenv call is load-bearing twice over and is not redundant with the
+// os.Unsetenv that follows it: Go records the prior state and restores it in its
+// own cleanup (so no hand-rolled save/restore can drift out of sync), and it
+// PANICS when the test has called t.Parallel — turning package cli's no-parallel
+// precondition from a comment into an enforced check. The explicit unset then
+// reaches the genuinely-absent state these tests are actually about.
 func unsetEnvForTest(t *testing.T, key string) {
 	t.Helper()
-	orig, had := os.LookupEnv(key)
+	t.Setenv(key, "")
 	require.NoError(t, os.Unsetenv(key))
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv(key, orig)
-		} else {
-			_ = os.Unsetenv(key)
-		}
+}
+
+// TestUnsetEnvForTest_RestoresPriorValue pins the property every bare os.Unsetenv
+// in this package used to violate: the variable is genuinely absent inside the
+// test and its prior value is back afterwards, so a later test still observes
+// TestMain's consent-surface pins.
+func TestUnsetEnvForTest_RestoresPriorValue(t *testing.T) {
+	const key = "ATCR_TEST_UNSET_PROBE"
+	t.Setenv(key, "sentinel")
+
+	t.Run("absent inside", func(t *testing.T) {
+		unsetEnvForTest(t, key)
+		_, ok := os.LookupEnv(key)
+		require.False(t, ok, "the variable must be genuinely unset, not set to empty")
 	})
+
+	got, ok := os.LookupEnv(key)
+	require.True(t, ok, "the prior value must be restored once the inner test ends")
+	require.Equal(t, "sentinel", got)
 }
 
 // TestAXIMaxLinesFromEnv is AC 03-03: ATCR_AXI_MAX_LINES resolution mirrors the

@@ -78,7 +78,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 			if tc.set {
 				t.Setenv("ATCR_QUALITY_SIGNAL", tc.val)
 			} else {
-				_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+				unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 			}
 			assert.Equal(t, tc.want, qualitySignalEnabledFromEnv(io.Discard))
 		})
@@ -90,7 +90,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 // no persisted config key, the gate resolves disabled.
 func TestQualitySignalGate_DisabledWithNoEnvNoConfig(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	assert.False(t, qualitySignalGate(io.Discard), "quality signal must be disabled with no env var and no config")
 }
 
@@ -99,7 +99,7 @@ func TestQualitySignalGate_DisabledWithNoEnvNoConfig(t *testing.T) {
 // unrelated keys (and even telemetry: true) still resolves the gate disabled.
 func TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\npayload_mode: blocks\n")
 	assert.False(t, qualitySignalGate(io.Discard), "an absent quality_signal key must be neutral, not an implicit opt-in")
 }
@@ -111,16 +111,16 @@ func TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly(t *testing.T) {
 func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 	t.Run("quality on, telemetry off", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\nquality_signal: true\n")
 		assert.True(t, qualitySignalGate(io.Discard), "quality_signal: true must enable the quality gate")
 		assert.False(t, telemetryGate(io.Discard), "telemetry: false must keep the telemetry gate disabled — independently")
 	})
 	t.Run("quality off, telemetry on", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\nquality_signal: false\n")
 		assert.False(t, qualitySignalGate(io.Discard), "quality_signal: false must keep the quality gate disabled")
 		assert.True(t, telemetryGate(io.Discard), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
@@ -141,7 +141,7 @@ func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
 	subdir := filepath.Join(repo, "subdir")
 	require.NoError(t, os.MkdirAll(subdir, 0o755))
 	t.Chdir(subdir)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 
 	assert.True(t, qualitySignalGate(io.Discard),
 		"a persisted opt-in at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
@@ -152,7 +152,7 @@ func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
 // key present but no quality_signal opt-in, the gate still resolves disabled.
 func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_API_KEY", "a-valid-looking-key")
 	assert.False(t, qualitySignalGate(io.Discard), "a valid ATCR_API_KEY must not enable the quality-signal gate")
 }
@@ -166,7 +166,7 @@ func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 	t.Run("malformed config, no env -> disabled", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
 		assert.False(t, qualitySignalGate(io.Discard), "a corrupt quality_signal value must never be interpreted as consent to transmit")
 	})
@@ -183,7 +183,7 @@ func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 // either surface between calls flips the result.
 func TestQualitySignalGate_ReEvaluatedFreshPerInvocation(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	assert.False(t, qualitySignalGate(io.Discard), "first call: disabled by default")
 	assert.False(t, qualitySignalGate(io.Discard), "repeated call with no change: still disabled")
 
@@ -307,7 +307,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	})
 	t.Run("review --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_API_KEY")
+		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 		out, errOut, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
@@ -316,7 +316,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	})
 	t.Run("reconcile --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_API_KEY")
+		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 		out, errOut, code := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "reconcile --preview must take precedence over --sync-cloud through the real Execute() path")
@@ -403,7 +403,7 @@ func TestPreview_EmptyAggregationPrintsEmptyPayloadNotError(t *testing.T) {
 // EC2).
 func TestPreview_TakesPrecedenceOverSyncCloud(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_API_KEY")
+	unsetEnvForTest(t, "ATCR_API_KEY")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
 	out, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"),
@@ -417,7 +417,7 @@ func TestPreview_TakesPrecedenceOverSyncCloud(t *testing.T) {
 // opt-in gate disabled (the default) (AC 03-02 Scenario 1).
 func TestPreview_ZeroHTTPCalls_GateDisabled(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
 	_, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"), "--preview")
@@ -441,7 +441,7 @@ func TestPreview_ZeroHTTPCalls_GateEnabled(t *testing.T) {
 // it short-circuits before any credential resolution (AC 03-02 EC1).
 func TestPreview_WorksWithNoAPIKey(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_API_KEY")
+	unsetEnvForTest(t, "ATCR_API_KEY")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	out, err := runPreview(t, newReviewCmd(), nil, "--preview")
 	require.NoError(t, err)
@@ -453,7 +453,7 @@ func TestPreview_WorksWithNoAPIKey(t *testing.T) {
 // on this path (AC 03-02 EC2).
 func TestPreview_UnaffectedByMalformedConfig(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	out, err := runPreview(t, newReviewCmd(), nil, "--preview")

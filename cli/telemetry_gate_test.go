@@ -53,7 +53,7 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 			if tc.set {
 				t.Setenv("ATCR_TELEMETRY", tc.val)
 			} else {
-				unsetTelemetryEnv(t)
+				unsetEnvForTest(t, "ATCR_TELEMETRY")
 			}
 			assert.Equal(t, tc.want, telemetryEnabledFromEnv(io.Discard))
 		})
@@ -114,7 +114,7 @@ func writeAtcrConfig(t *testing.T, content string) {
 func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	t.Run("no env, no config -> enabled", func(t *testing.T) {
 		isolate(t)
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		assert.True(t, telemetryGate(io.Discard))
 	})
 	t.Run("env=0 alone disables", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	})
 	t.Run("config false alone disables (no env)", func(t *testing.T) {
 		isolate(t)
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		assert.False(t, telemetryGate(io.Discard))
 	})
@@ -142,7 +142,7 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	})
 	t.Run("malformed config value fails safe to disabled", func(t *testing.T) {
 		isolate(t)
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: maybe\n")
 		assert.False(t, telemetryGate(io.Discard), "a corrupt telemetry value must never re-enable telemetry")
 	})
@@ -162,38 +162,18 @@ func TestTelemetryGate_ResolvesRepoRoot(t *testing.T) {
 	subdir := filepath.Join(repo, "subdir")
 	require.NoError(t, os.MkdirAll(subdir, 0o755))
 	t.Chdir(subdir)
-	unsetTelemetryEnv(t)
+	unsetEnvForTest(t, "ATCR_TELEMETRY")
 
 	assert.False(t, telemetryGate(io.Discard),
 		"a persisted opt-out at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
 }
 
-// unsetTelemetryEnv removes ATCR_TELEMETRY for the duration of t and restores the
-// prior value on cleanup.
-//
-// A bare os.Unsetenv would not just affect this test: package cli's TestMain
-// defaults ATCR_TELEMETRY=0 precisely so no test can emit a real usage ping at the
-// now-live defaultTelemetryEndpoint, and an unrestored unset silently discards that
-// default for every test ordered after it — re-enabling the default-on ping for
-// the rest of the run. t.Setenv cannot express this: the subject of these tests is
-// the genuinely-UNSET state, not an empty value.
-//
-// PRECONDITION: no test in package cli may call t.Parallel while the production
-// endpoint constants are live. This mutates process-global env state, so a
-// parallel test would observe another test's telemetry gate — and the direction
-// of that leak is toward ENABLED against a real host.
-func unsetTelemetryEnv(t *testing.T) {
-	t.Helper()
-	prev, had := os.LookupEnv("ATCR_TELEMETRY")
-	_ = os.Unsetenv("ATCR_TELEMETRY")
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv("ATCR_TELEMETRY", prev)
-			return
-		}
-		_ = os.Unsetenv("ATCR_TELEMETRY")
-	})
-}
+// The ATCR_TELEMETRY-specific unset helper that used to live here is gone: it was
+// a second implementation of unsetEnvForTest (cli/main_test.go), and two of them
+// meant the sibling consent variables — ATCR_QUALITY_SIGNAL, ATCR_API_KEY — kept
+// using a bare os.Unsetenv that restored nothing. Use unsetEnvForTest for all
+// three. Its doc comment carries the no-t.Parallel precondition, now enforced
+// rather than merely documented.
 
 // countingDoRequest installs a doRequest seam that counts outbound sends without
 // touching the network (bypassing TLS), and returns the counter + a restore.
@@ -249,7 +229,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 
 	t.Run("config telemetry:false -> zero requests (no env)", func(t *testing.T) {
 		isolate(t)
-		unsetTelemetryEnv(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
