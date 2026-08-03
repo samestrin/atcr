@@ -210,6 +210,15 @@ func TestQualitySignalSend_PreviewWinsOverGateDisabled(t *testing.T) {
 // fresh each run with no in-process cache (AC 06-01 Edge Case 3): a first disabled
 // run builds nothing; after quality_signal: true is persisted, the next run resolves
 // enabled and builds the payload — observed via the constructor seam.
+//
+// countingDoRequest is installed alongside the builder seam for two reasons. It
+// seals the test hermetically: without it the enabled run's dispatch falls through
+// to the production transport, and while TestMain's host guard lets a `.test` host
+// reach real networking (RFC 2606 makes it unresolvable, so nothing can leak), that
+// is still a genuine DNS lookup on every run and a stall of up to requestTimeout
+// inside Wait on a resolver that answers slowly. It also strengthens the assertion
+// from "a non-empty payload was BUILT" to "exactly one payload was TRANSMITTED" —
+// the property the AC is actually about.
 func TestQualitySignalSend_GateReEvaluatedFreshPerRun(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
@@ -217,14 +226,18 @@ func TestQualitySignalSend_GateReEvaluatedFreshPerRun(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	builds := countingQualityBuilder(t)
+	hits := countingDoRequest(t)
 
 	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
 	require.Equal(t, int32(0), atomic.LoadInt32(builds), "first run, no opt-in: no payload built")
+	require.Equal(t, int32(0), atomic.LoadInt32(hits), "first run, no opt-in: nothing transmitted")
 
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: true\n")
 	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
 	assert.Equal(t, int32(1), atomic.LoadInt32(builds),
 		"a freshly persisted opt-in must be observed on the next run — no stale gate cache")
+	assert.Equal(t, int32(1), atomic.LoadInt32(hits),
+		"the enabled run must transmit exactly one payload — not zero (built but never dispatched) and not two")
 }
 
 // TestQualitySignalSend_UnrecognizedEnvValueWarnsViaCmdStderr proves the send
