@@ -26,7 +26,19 @@ import (
 
 // defaultRequestTimeout bounds the background telemetry request's own lifetime — never
 // the caller's, which returns as soon as the goroutine is dispatched.
-const defaultRequestTimeout = 3 * time.Second
+//
+// It is deliberately equal to (never greater than) the drain bound the production
+// caller enforces at exit — cli's telemetryDrainTimeout, currently 2s. The two are
+// budgets for the same send viewed from opposite ends, so a per-request budget that
+// outlives the drain bound creates a dead window: at 3s against a 2s drain, a send
+// completing between 2s and 3s was guaranteed to be abandoned at exit even though
+// its own budget had not expired. The extra second could not produce a delivery; it
+// only widened the gap between what the request believed was still possible and what
+// the process had already given up on.
+//
+// Raising this above the caller's bound reopens that window.
+// TestDefaultRequestTimeout_FitsWithinCallerDrainBound is the tripwire.
+const defaultRequestTimeout = 2 * time.Second
 
 // maxInFlightSends caps the number of concurrent background send goroutines PER
 // destination: each surface (usage ping, quality signal) gets its own semaphore, so
