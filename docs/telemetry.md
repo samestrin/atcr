@@ -13,8 +13,19 @@ different guarantees; nothing here changes what `--export` does.
 
 The usage ping is wired to fire silently as a byproduct of a completed run, and
 it is **fail-open**: if the network is down, slow, or the endpoint is
-unreachable, the ping is dropped and the CLI exits exactly as it would have
-anyway. It never blocks, delays, or crashes the command.
+unreachable, the ping is dropped and the CLI exits with exactly the code it would
+have anyway. It never crashes the command, never changes its exit code, and never
+delays the work itself — the send runs on a detached goroutine, so nothing in the
+review or reconcile blocks on it.
+
+It can, however, delay process **exit** by a bounded amount. Before exiting,
+`atcr` waits up to **2 seconds** for an in-flight ping to finish, so a
+best-effort send usually lands rather than being killed mid-flight. When no ping
+was dispatched — you opted out, or the run emitted none — the wait returns
+immediately and costs nothing. The full 2 seconds is only ever paid when a send
+is genuinely in flight and the endpoint is unreachable in a way that hangs rather
+than refuses (a firewalled, air-gapped, or blackholed network). Opting out
+removes this entirely.
 
 > **Active in this build.** The compiled-in ingestion endpoint is
 > `https://atcr.dev/api/v1/telemetry`, so a completed `review` or `reconcile`
