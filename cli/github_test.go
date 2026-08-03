@@ -52,9 +52,19 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // leave silently. Per-test SetDoRequestForTest overrides sit above the guard
 // and their restore puts it back, so the guard only ever sees traffic no test
 // claimed.
+//
+// ATCR_QUALITY_SIGNAL gets the same unconditional pin as ATCR_TELEMETRY, and for
+// the same reason: the quality signal is opt-IN via that env var alone
+// (qualitySignalEnabledFromEnv) and defaultQualitySignalEndpoint is also a live
+// host, so an ambient ATCR_QUALITY_SIGNAL=1 turns every execCmd/NewRootCmd-driven
+// review or reconcile in this package into a consenting run against it.
+// ATCR_API_KEY is neutralized too: isolate() does not clear it, and the
+// --sync-cloud precondition tests depend on its absence.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
 	_ = os.Setenv("ATCR_TELEMETRY", "0")
+	_ = os.Setenv("ATCR_QUALITY_SIGNAL", "0")
+	_ = os.Setenv("ATCR_API_KEY", "")
 	telemetry.SetDoRequestForTest(guardTelemetryHosts) // installed for the whole run; never restored
 	code := m.Run()
 	if escapes := telemetryGuard.snapshot(); len(escapes) > 0 {
