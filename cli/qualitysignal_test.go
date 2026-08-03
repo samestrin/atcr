@@ -285,7 +285,7 @@ func splitPreview(out string) (jsonPart, marker string) {
 // bounds the blast radius, the counter turns "preview sent nothing" into an
 // asserted property of every caller rather than an unobserved hope. Sends are
 // fire-and-forget, so the client is drained before the count is read.
-func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int) {
+func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int, err error) {
 	t.Helper()
 	hits := countingDoRequest(t)
 	client := telemetry.New("https://telemetry.test/ingest")
@@ -294,11 +294,43 @@ func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code i
 	root.SetArgs(args)
 	root.SetOut(&out)
 	root.SetErr(&errBuf)
-	err := root.ExecuteContext(context.Background())
+	runErr := root.ExecuteContext(context.Background())
 	client.Wait()
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits),
 		"the --preview path must transmit nothing: preview is a pure local render")
-	return out.String(), errBuf.String(), exitCode(err)
+	return out.String(), errBuf.String(), exitCode(runErr), runErr
+}
+
+// syncCloudNoDestination is the distinctive fragment of the absent-destination
+// refusal addSyncCloudFlags' PreRunE returns. Naming it once keeps the preview
+// suppression assertions keyed to the message the code actually emits — the
+// previous literal ("no default destination") matched no message in the tree, so
+// the assertion using it could not have failed even had the refusal fired.
+const syncCloudNoDestination = "has no destination in this build"
+
+// errText renders err for a substring assertion, yielding "" for nil so the
+// caller needs no nil guard.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// TestRunRootPreview_SurfacesSyncCloudRefusal is the anti-vacuity guard for the
+// suppression assertions below. Those assert a refusal does NOT happen, which is
+// only meaningful if this harness can observe one happening — and for a long time
+// it could not: the refusal is a usageError returned from PreRunE, the root sets
+// SilenceErrors, and runRootPreview drives ExecuteContext with no main() to print
+// it, so the message never reached the captured stderr no matter what. Drop
+// --preview and the refusal must become visible on the returned error.
+func TestRunRootPreview_SurfacesSyncCloudRefusal(t *testing.T) {
+	isolate(t)
+	_, _, code, err := runRootPreview(t, "review", "--sync-cloud")
+	require.Error(t, err, "without --preview the absent-destination refusal must fire")
+	assert.Equal(t, exitUsage, code, "an absent destination is a usage error")
+	assert.Contains(t, errText(err), syncCloudNoDestination,
+		"the refusal must be observable on the returned error — otherwise the suppression assertions prove nothing")
 }
 
 // TestPreview_EndToEndThroughExecute proves --preview works through the real
@@ -315,7 +347,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("review --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, _, code := runRootPreview(t, "review", "--preview")
+		out, _, code, _ := runRootPreview(t, "review", "--preview")
 		require.Equal(t, 0, code, "review --preview must pass PreRunE and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 		assert.Contains(t, out, "nothing was transmitted")
@@ -323,7 +355,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("reconcile --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, _, code := runRootPreview(t, "reconcile", "--preview")
+		out, _, code, _ := runRootPreview(t, "reconcile", "--preview")
 		require.Equal(t, 0, code, "reconcile --preview must short-circuit before review-dir resolution and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 	})
@@ -331,19 +363,23 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 		isolate(t)
 		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, errOut, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
+		out, _, code, err := runRootPreview(t, "review", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "no default destination", "the sync-cloud absent-destination refusal must be suppressed on the preview path")
+		require.NoError(t, err, "the sync-cloud absent-destination refusal must not fire on the preview path")
+		assert.NotContains(t, errText(err), syncCloudNoDestination,
+			"the absent-destination refusal must be suppressed on the preview path")
 	})
 	t.Run("reconcile --preview --sync-cloud with no key exits 0, refusal suppressed", func(t *testing.T) {
 		isolate(t)
 		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, errOut, code := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
+		out, _, code, err := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "reconcile --preview must take precedence over --sync-cloud through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "no default destination", "the sync-cloud absent-destination refusal must be suppressed on the preview path")
+		require.NoError(t, err, "the sync-cloud absent-destination refusal must not fire on the preview path")
+		assert.NotContains(t, errText(err), syncCloudNoDestination,
+			"the absent-destination refusal must be suppressed on the preview path")
 	})
 }
 
@@ -496,7 +532,7 @@ func TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
 	t.Setenv("ATCR_QUALITY_SIGNAL", "ture")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 
-	out, errOut, code := runRootPreview(t, "review", "--preview")
+	out, errOut, code, _ := runRootPreview(t, "review", "--preview")
 	require.Equal(t, 0, code, "an unrecognized env value must not break --preview")
 	assert.Contains(t, out, "persona_id_hash", "the preview must still render the payload")
 	assert.Contains(t, errOut, `unrecognized ATCR_QUALITY_SIGNAL value "ture"`,
@@ -516,7 +552,7 @@ func TestPreview_ReadErrorFailsOpen(t *testing.T) {
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "debt"), []byte("not a dir"), 0o644))
 
-	out, errOut, code := runRootPreview(t, "review", "--preview")
+	out, errOut, code, _ := runRootPreview(t, "review", "--preview")
 	require.Equal(t, 0, code, "a local-debt read failure must fail open on the preview path, not exit 2")
 	jsonPart, marker := splitPreview(out)
 	assert.Equal(t, "[]", strings.TrimSpace(jsonPart),
