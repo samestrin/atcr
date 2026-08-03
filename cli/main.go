@@ -313,6 +313,13 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			if err := setupLogger(cmd); err != nil {
 				return err
 			}
+			// Disclose the default-on usage ping once per repository, before any
+			// subcommand work and on this synchronous path — never from the async
+			// send path. Silent and non-fatal by construction; see
+			// maybeDiscloseTelemetry. Placed after the logger so its stderr writer
+			// is the one the caller wired, and before the client injection so the
+			// user is told before anything can transmit.
+			maybeDiscloseTelemetry(cmd)
 			// Inject the single process telemetry client into the command context
 			// alongside the logger, so runReview/runReconcile retrieve it via
 			// telemetry.FromContext without a signature change.

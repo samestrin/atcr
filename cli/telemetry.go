@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 // defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL, and
@@ -107,6 +109,56 @@ func telemetryGate(w io.Writer) bool {
 		return false
 	}
 	return telemetryEnabled(env, cfg)
+}
+
+// maybeDiscloseTelemetry prints the one-time, per-repository notice that this
+// build transmits an anonymous usage ping, then records that it has done so.
+//
+// WHY IT LIVES ON A SYNCHRONOUS PATH. The ping is default-ON against a live
+// endpoint, and the only places that said so were a comment inside a generated
+// config file and docs/telemetry.md — so an existing user upgrading began
+// transmitting without ever being told. The disclosure therefore runs in the root
+// PersistentPreRunE, before any subcommand work, and NEVER from inside the send
+// path: a notice emitted from the fire-and-forget goroutine could interleave
+// arbitrarily with command output, could be lost to the drain timeout, and would
+// print only when a send happened to fire rather than when the user first needs
+// to know.
+//
+// IT IS SCOPED TO PEOPLE ACTUALLY TRANSMITTING. A user who has already opted out
+// — by env var or persisted config — is told nothing, because there is nothing to
+// disclose and nagging an opt-out is the wrong end of the consent model. The gate
+// is consulted with io.Discard so its unrecognized-value warning stays one-time at
+// the real call site rather than being duplicated here.
+//
+// EVERY FAILURE IS SILENT AND NON-FATAL. This is disclosure bookkeeping attached
+// to every command in the tree; it must never turn a working invocation into an
+// error. A malformed config, an unwritable repo, or a failed persist simply means
+// no notice (or a repeated one) — never a broken command.
+func maybeDiscloseTelemetry(cmd *cobra.Command) {
+	if defaultTelemetryEndpoint == "" {
+		return // nothing can transmit in this build; there is nothing to disclose
+	}
+	root, err := repoRoot()
+	if err != nil {
+		root = "."
+	}
+	shown, lerr := registry.LoadTelemetryNoticeShown(root)
+	if lerr != nil || (shown != nil && *shown) {
+		return
+	}
+	if !telemetryGate(io.Discard) {
+		return
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+		"atcr sends an anonymous usage ping to %s when a review or reconcile completes.\n"+
+			"It carries no source code, file paths, or findings — see docs/telemetry.md.\n"+
+			"To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.\n"+
+			"(This notice is shown once per repository.)\n",
+		defaultTelemetryEndpoint)
+	// Best-effort: if this cannot be persisted the notice simply repeats next run,
+	// which is the safe direction — far better than suppressing a disclosure that
+	// was never recorded.
+	_ = registry.SetTelemetryNoticeShown(root, true)
 }
 
 // reviewTelemetryEvent builds the anonymous usage Event for a completed review

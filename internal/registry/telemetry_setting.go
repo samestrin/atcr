@@ -28,6 +28,36 @@ func LoadTelemetrySetting(root string) (*bool, error) {
 	return loadConfigBool(root, "telemetry")
 }
 
+// telemetryNoticeShownKey records that the one-time first-run telemetry
+// disclosure has already been printed for this repository. It is bookkeeping, NOT
+// a consent surface: it never influences whether the ping fires (that is
+// telemetry/ATCR_TELEMETRY alone), only whether the notice is repeated.
+const telemetryNoticeShownKey = "telemetry_notice_shown"
+
+// LoadTelemetryNoticeShown reports whether the first-run telemetry disclosure has
+// already been shown for the repository at root. Semantics match
+// LoadTelemetrySetting: (nil, nil) when absent — meaning "not yet shown" — so a
+// fresh repo discloses, and a malformed value surfaces as an error rather than
+// being coerced into "already shown" (which would suppress the notice forever).
+func LoadTelemetryNoticeShown(root string) (*bool, error) {
+	return loadConfigBool(root, telemetryNoticeShownKey)
+}
+
+// SetTelemetryNoticeShown records that the disclosure has been shown for the
+// repository at root, CREATING .atcr/config.yaml when it does not exist.
+//
+// The create-if-absent behavior is the whole point and is deliberately NOT shared
+// with SetTelemetrySetting. A repo with no config file is precisely where the
+// default-on ping already transmits, so it is exactly the population that needs
+// the notice — and if the write could not create the file there, the notice would
+// either error or re-fire on every single invocation forever. `atcr config set`
+// keeps the opposite contract: a missing config is a real usage problem worth
+// reporting, not something to paper over by materializing a file the user never
+// asked for.
+func SetTelemetryNoticeShown(root string, shown bool) error {
+	return setConfigBoolCreating(root, "set-telemetry-notice", telemetryNoticeShownKey, shown, true)
+}
+
 // loadConfigBool is the shared, key-agnostic implementation behind
 // LoadTelemetrySetting and LoadQualitySignalSetting: it resolves the persisted
 // boolean at key in .atcr/config.yaml under root, WITHOUT requiring a valid
@@ -87,6 +117,20 @@ func SetTelemetrySetting(root string, enabled bool) error {
 // must already exist — a missing file is returned as a wrapped I/O error (an
 // environment failure, not a usage mistake); this never creates the file.
 func setConfigBool(root, session, key string, enabled bool) error {
+	return setConfigBoolCreating(root, session, key, enabled, false)
+}
+
+// setConfigBoolCreating is setConfigBool with an explicit missing-file policy.
+// When createIfAbsent is false (the `atcr config set` contract) a missing config
+// is returned as a wrapped I/O error. When true, a missing config is materialized
+// with the key as its only entry — used solely by SetTelemetryNoticeShown, whose
+// callers are repos that legitimately have no config yet.
+//
+// The lock, the yaml.Node key-only edit, and the atomic temp+fsync+rename replace
+// are shared verbatim across both policies, so the created file gets the same
+// durability and TOCTOU guarantees as an updated one rather than a second,
+// weaker write path.
+func setConfigBoolCreating(root, session, key string, enabled, createIfAbsent bool) error {
 	path := DefaultProjectConfigPath(root)
 	dir := filepath.Dir(path)
 	return withConfigLock(dir, session, func() error {
@@ -99,12 +143,24 @@ func setConfigBool(root, session, key string, enabled bool) error {
 		if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("config %s: symlinked configs are unsupported — rename would sever the link; use a regular file", path)
 		}
+		// mode is the permission the replacement file is written with: the
+		// existing file's own mode when updating, or a conservative default when
+		// creating. Both flow through the same Chmod on the temp below.
+		mode := os.FileMode(0o644)
+		var data []byte
 		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
+		switch {
+		case err == nil:
+			mode = info.Mode().Perm()
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read %s: %w", path, err)
+			}
+		case createIfAbsent && errors.Is(err, os.ErrNotExist):
+			// Absent and allowed to create: proceed with an empty document.
+			// configMapping synthesizes the `{}` mapping the key is appended to.
+			data = nil
+		default:
 			return fmt.Errorf("read %s: %w", path, err)
 		}
 
@@ -135,7 +191,7 @@ func setConfigBool(root, session, key string, enabled bool) error {
 		}
 		tmpName := tmp.Name()
 		defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
-		if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		if err := tmp.Chmod(mode); err != nil {
 			_ = tmp.Close()
 			return fmt.Errorf("chmod %s temp: %w", filepath.Base(path), err)
 		}
