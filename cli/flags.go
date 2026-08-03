@@ -115,9 +115,9 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 				// explicitly" is advice they already followed, and blames the default
 				// for a value they chose.
 				if cmd.Flags().Changed("cloud-endpoint") {
-					return usageError(errors.New("--cloud-endpoint must not be empty"))
+					return usageError(errors.New("--cloud-endpoint was supplied but is empty after trimming whitespace; pass a non-empty endpoint only if you operate your own compatible ingest (the scorecard ingest endpoint is not yet available in this build)"))
 				}
-				return usageError(errors.New("--sync-cloud has no default destination in this build; pass --cloud-endpoint explicitly"))
+				return usageError(errors.New("--sync-cloud has no destination in this build (the scorecard ingest endpoint is not yet available); pass --cloud-endpoint only if you operate your own compatible ingest"))
 			}
 		}
 		return nil
