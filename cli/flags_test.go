@@ -52,7 +52,7 @@ func TestAddSyncCloudFlags_DefaultEndpointRefuses(t *testing.T) {
 	// Assert on literal text, never on defaultCloudEndpoint: that constant is now
 	// the empty string, and every string contains "" — an assertion against it
 	// would pass vacuously and stop guarding anything.
-	assert.Contains(t, err.Error(), "no default destination")
+	assert.Contains(t, err.Error(), "has no destination in this build")
 	assert.Contains(t, err.Error(), "--cloud-endpoint")
 }
 
@@ -83,7 +83,7 @@ func TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag(t *testing.T) {
 		err := cmd.PreRunE(cmd, nil)
 		require.Error(t, err)
 		assert.Equal(t, exitUsage, exitCode(err))
-		assert.Contains(t, err.Error(), "--cloud-endpoint must not be empty")
+		assert.Contains(t, err.Error(), "--cloud-endpoint was supplied but is empty after trimming whitespace")
 		assert.NotContains(t, err.Error(), "no default destination",
 			"an explicitly-supplied empty value is not the absent-default case")
 	}
