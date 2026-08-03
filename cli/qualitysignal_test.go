@@ -115,7 +115,7 @@ func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 		unsetTelemetryEnv(t)
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\nquality_signal: true\n")
 		assert.True(t, qualitySignalGate(io.Discard), "quality_signal: true must enable the quality gate")
-		assert.False(t, telemetryGate(), "telemetry: false must keep the telemetry gate disabled — independently")
+		assert.False(t, telemetryGate(io.Discard), "telemetry: false must keep the telemetry gate disabled — independently")
 	})
 	t.Run("quality off, telemetry on", func(t *testing.T) {
 		isolate(t)
@@ -123,7 +123,7 @@ func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 		unsetTelemetryEnv(t)
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\nquality_signal: false\n")
 		assert.False(t, qualitySignalGate(io.Discard), "quality_signal: false must keep the quality gate disabled")
-		assert.True(t, telemetryGate(), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
+		assert.True(t, telemetryGate(io.Discard), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
 	})
 }
 

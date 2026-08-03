@@ -55,7 +55,7 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 			} else {
 				unsetTelemetryEnv(t)
 			}
-			assert.Equal(t, tc.want, telemetryEnabledFromEnv())
+			assert.Equal(t, tc.want, telemetryEnabledFromEnv(io.Discard))
 		})
 	}
 }
@@ -65,26 +65,17 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 // neutral and can never out-rank a disabling env var (AC 02-03 EC1/EC2).
 // TestTelemetryEnabledFromEnv_UnparseableWarns proves that an unrecognized
 // ATCR_TELEMETRY value still fails open to enabled (the AC-mandated default)
-// but emits a one-time stderr warning so a misspelled opt-out is visible.
+// but emits a one-time warning on the injected writer so a misspelled opt-out
+// is visible.
 func TestTelemetryEnabledFromEnv_UnparseableWarns(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "maybe")
 
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-	defer func() { os.Stderr = oldStderr }()
-
-	got := telemetryEnabledFromEnv()
+	var buf bytes.Buffer
+	got := telemetryEnabledFromEnv(&buf)
 	assert.True(t, got, "unparseable value must still default to enabled")
-
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	stderr := string(out)
-	assert.Contains(t, stderr, "ATCR_TELEMETRY")
-	assert.Contains(t, stderr, "unrecognized")
+	assert.Contains(t, buf.String(), "ATCR_TELEMETRY")
+	assert.Contains(t, buf.String(), "unrecognized")
 }
 
 func TestTelemetryEnabled_FourWayMatrix(t *testing.T) {
@@ -124,36 +115,36 @@ func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	t.Run("no env, no config -> enabled", func(t *testing.T) {
 		isolate(t)
 		unsetTelemetryEnv(t)
-		assert.True(t, telemetryGate())
+		assert.True(t, telemetryGate(io.Discard))
 	})
 	t.Run("env=0 alone disables", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("config false alone disables (no env)", func(t *testing.T) {
 		isolate(t)
 		unsetTelemetryEnv(t)
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("env=0 beats config true (disabled wins)", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\n")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("both enabled -> enabled", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "1")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\n")
-		assert.True(t, telemetryGate())
+		assert.True(t, telemetryGate(io.Discard))
 	})
 	t.Run("malformed config value fails safe to disabled", func(t *testing.T) {
 		isolate(t)
 		unsetTelemetryEnv(t)
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: maybe\n")
-		assert.False(t, telemetryGate(), "a corrupt telemetry value must never re-enable telemetry")
+		assert.False(t, telemetryGate(io.Discard), "a corrupt telemetry value must never re-enable telemetry")
 	})
 }
 
@@ -173,7 +164,7 @@ func TestTelemetryGate_ResolvesRepoRoot(t *testing.T) {
 	t.Chdir(subdir)
 	unsetTelemetryEnv(t)
 
-	assert.False(t, telemetryGate(),
+	assert.False(t, telemetryGate(io.Discard),
 		"a persisted opt-out at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
 }
 

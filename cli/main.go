@@ -388,7 +388,7 @@ func logLevelFromEnv() string {
 // the documented default-on posture. Parsing is strict via strconv.ParseBool and
 // never errors: an invalid value is the "default enabled" case, not a usage
 // error. This footgun is called out in `atcr config set`'s help and docs/telemetry.md.
-func telemetryEnabledFromEnv() bool {
+func telemetryEnabledFromEnv(w io.Writer) bool {
 	v := strings.TrimSpace(os.Getenv("ATCR_TELEMETRY"))
 	if v == "" {
 		return true
@@ -398,8 +398,11 @@ func telemetryEnabledFromEnv() bool {
 		// Unparseable values fail open to the documented default (enabled), but
 		// warn once so a misspelled opt-out (e.g. "flase") is visible rather than
 		// silently ignored. This function is read once per run via telemetryGate,
-		// so the warning is inherently one-time.
-		_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
+		// so the warning is inherently one-time. The warning goes to the injected
+		// writer — cmd.ErrOrStderr() at the production call sites, matching
+		// axiMaxLinesFromEnv — so it routes through the same redirectable seam as
+		// the logger instead of escaping a caller-supplied stderr.
+		_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
 		return true
 	}
 	return enabled

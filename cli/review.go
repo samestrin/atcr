@@ -667,7 +667,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// is checked at fire time so a disabled run spawns no goroutine; a nil client
 		// no-ops. It never blocks or changes this command's outcome (Story 1).
 		defer func() {
-			if telemetryGate() {
+			if telemetryGate(cmd.ErrOrStderr()) {
 				status := "success"
 				if err != nil {
 					status = "failure"

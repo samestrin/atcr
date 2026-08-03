@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -74,8 +75,8 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // silently no-op something the user explicitly requested — the wrong consent
 // model. `--sync-cloud` gets its own opt-in surface (the presence of a valid
 // ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
-func telemetryGate() bool {
-	env := telemetryEnabledFromEnv()
+func telemetryGate(w io.Writer) bool {
+	env := telemetryEnabledFromEnv(w)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
