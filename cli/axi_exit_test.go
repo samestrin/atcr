@@ -178,14 +178,31 @@ func TestReviewCmd_AXIRenderFaultStillRecordsLedgers(t *testing.T) {
 	require.Len(t, recs, 1, "the audit ledger must record the run even when the axi payload write fails")
 }
 
-// TestReportCmd_AXIRenderFaultClassification pins that report's AXI render step
-// (report.Render into the buffer, distinct from the stdout write) classifies an
-// internal fault as exit 1, not the usage-error (2) the other formats' render step
-// keeps — AC 02-02 Error Scenario 3 names `atcr report --axi` specifically. Driven
-// at the classification layer since a valid-input axi encode cannot fault.
+// TestReportCmd_AXIRenderFaultClassification drives `atcr report --format axi`
+// through a real fault — a broken stdout makes the command's own payload write
+// fail — and pins the exit-1 (generic failure) classification, not usage (2) or
+// auth (3) (AC 02-02 Error Scenario 3, which names `atcr report --axi`
+// specifically). The render-into-buffer step cannot fault on valid input, so the
+// stdout write is report's reachable AXI failure path; asserting the error text
+// proves the failure came from report.go's write rather than any earlier
+// breakdown that would also default to exit 1.
 func TestReportCmd_AXIRenderFaultClassification(t *testing.T) {
-	// The report path wraps an axi render fault as an unwrapped generic error; assert
-	// that shape resolves to exit 1 (the code report.go now returns for axi).
-	err := fmt.Errorf("axi output rendering failed: %w", errors.New("encoder bug"))
-	require.Equal(t, exitFailure, exitCode(err))
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+	require.Equal(t, 0, execCmd(t, "reconcile"))
+
+	root := NewRootCmd()
+	root.SetArgs([]string{"report", "--format", "axi"})
+	root.SetOut(failWriter{})
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err, "a broken stdout must fault the report command, not pass silently")
+	require.Contains(t, err.Error(), "stdout broken",
+		"the error must come from report's own stdout write — any earlier failure means the AXI write path never executed")
+	require.Equal(t, exitFailure, exitCode(err),
+		"a broken-stdout AXI report write is a generic failure (exit 1), not usage/auth")
 }
