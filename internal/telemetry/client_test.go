@@ -386,3 +386,132 @@ func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 		t.Fatal("no sends reached the seam — test wiring is broken")
 	}
 }
+
+// --- Epic 35.12: two-destination routing ------------------------------------
+
+// captureRequestURLs installs a do-request seam recording the destination URL and
+// body of every outbound send, so a test can prove which payload went where. The
+// two surfaces are distinguishable at the wire by body shape: the usage ping is a
+// JSON object, the quality signal a JSON array.
+func captureRequestURLs(t *testing.T) func() []struct{ URL, Body string } {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		hits []struct{ URL, Body string }
+	)
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		hits = append(hits, struct{ URL, Body string }{req.URL.String(), string(b)})
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	t.Cleanup(restore)
+	return func() []struct{ URL, Body string } {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]struct{ URL, Body string }, len(hits))
+		copy(out, hits)
+		return out
+	}
+}
+
+const (
+	testUsageEndpoint   = "https://ingest.test/api/v1/telemetry"
+	testQualityEndpoint = "https://ingest.test/api/v1/quality-signal"
+)
+
+// TestClient_NewWithQualitySignal_RoutesToDistinctEndpoints is Epic 35.12 AC1b: the
+// quality signal must NOT share the usage-ping destination. A single shared
+// `endpoint` field silently reintroduces the bug — the quality signal's JSON array
+// lands on the usage handler, whose closed allowlist answers 400, and the fail-open
+// path drops it with nothing surfacing the loss. Asserting on req.URL per call is
+// what makes that regression impossible to reintroduce unnoticed.
+func TestClient_NewWithQualitySignal_RoutesToDistinctEndpoints(t *testing.T) {
+	hits := captureRequestURLs(t)
+
+	c := NewWithQualitySignal(testUsageEndpoint, testQualityEndpoint)
+	c.Send(context.Background(), Event{Event: "review_run", Lang: "go", Lines: 1, Status: "success"})
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+	c.Wait()
+
+	got := hits()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sends (one per surface), got %d: %+v", len(got), got)
+	}
+	for _, h := range got {
+		isArray := strings.HasPrefix(strings.TrimSpace(h.Body), "[")
+		want := testUsageEndpoint
+		surface := "usage ping"
+		if isArray {
+			want = testQualityEndpoint
+			surface = "quality signal"
+		}
+		if h.URL != want {
+			t.Errorf("%s posted to %q, want %q", surface, h.URL, want)
+		}
+	}
+}
+
+// TestClient_NewWithQualitySignal_PerPathEmptyEndpointNoOps is Epic 35.12 AC1c: an
+// empty endpoint is a silent no-op PER PATH — no request, no error, no panic — so
+// the two constants can be activated on independent schedules rather than as one
+// release. A shared field would make either empty value disable both surfaces.
+func TestClient_NewWithQualitySignal_PerPathEmptyEndpointNoOps(t *testing.T) {
+	t.Run("empty usage endpoint silences only the ping", func(t *testing.T) {
+		hits := captureRequestURLs(t)
+		c := NewWithQualitySignal("", testQualityEndpoint)
+		c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+		c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+		c.Wait()
+
+		got := hits()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly 1 send (quality signal only), got %d: %+v", len(got), got)
+		}
+		if got[0].URL != testQualityEndpoint {
+			t.Errorf("quality signal posted to %q, want %q", got[0].URL, testQualityEndpoint)
+		}
+	})
+
+	t.Run("empty quality endpoint silences only the quality signal", func(t *testing.T) {
+		hits := captureRequestURLs(t)
+		c := NewWithQualitySignal(testUsageEndpoint, "")
+		c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+		c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+		c.Wait()
+
+		got := hits()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly 1 send (usage ping only), got %d: %+v", len(got), got)
+		}
+		if got[0].URL != testUsageEndpoint {
+			t.Errorf("usage ping posted to %q, want %q", got[0].URL, testUsageEndpoint)
+		}
+	})
+}
+
+// TestNew_KeepsSharedDestinationForBothPayloads pins New's documented
+// single-destination meaning. It is NOT an accident of the two-destination
+// refactor: ~40 existing call sites (and every test that discriminates the two
+// surfaces by body shape rather than URL) depend on one client sending both
+// payloads to one place. Changing New to leave the quality destination unset would
+// silently zero out those tests.
+func TestNew_KeepsSharedDestinationForBothPayloads(t *testing.T) {
+	hits := captureRequestURLs(t)
+
+	c := New(testUsageEndpoint)
+	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+	c.Wait()
+
+	got := hits()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sends, got %d: %+v", len(got), got)
+	}
+	for _, h := range got {
+		if h.URL != testUsageEndpoint {
+			t.Errorf("New(endpoint) must send both payloads to %q, got %q", testUsageEndpoint, h.URL)
+		}
+	}
+}

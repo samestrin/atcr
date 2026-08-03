@@ -89,6 +89,13 @@ func New(endpoint string) *Client {
 	}
 }
 
+// NewWithQualitySignal is the two-destination constructor (RED stub — deliberately
+// wrong until the GREEN stage): it currently collapses both payloads onto the
+// usage endpoint, which is the very regression the new routing test asserts against.
+func NewWithQualitySignal(usage, quality string) *Client {
+	return New(usage)
+}
+
 // isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
 // scheme). An empty, malformed, or plaintext-http endpoint is refused, so Send
 // no-ops rather than ever sending in the clear.
