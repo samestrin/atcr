@@ -34,6 +34,25 @@ removes this entirely.
 > to disable it (see [Opt-out](#opt-out)); either surface alone is
 > sufficient and final.
 
+### First-run notice
+
+The first time you run `atcr` in a repository with the ping enabled, it prints a
+short notice on **stderr** naming the destination and the opt-out, so the
+default-on behavior is disclosed in the binary itself rather than only here:
+
+```
+atcr sends an anonymous usage ping to https://atcr.dev/api/v1/telemetry when a review or reconcile completes.
+It carries no source code, file paths, or findings — see docs/telemetry.md.
+To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.
+(This notice is shown once per repository.)
+```
+
+To record that it has been shown, atcr writes `telemetry_notice_shown: true` into
+`.atcr/config.yaml`, **creating that file if it does not exist**. This key is
+bookkeeping only — nothing reads it to decide whether to transmit, and deleting it
+simply makes the notice appear once more. If you have already opted out, the
+notice never prints: there is nothing to disclose.
+
 ---
 
 ## Usage ping schema
