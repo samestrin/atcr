@@ -76,9 +76,11 @@ func addBaselineFlags(cmd *cobra.Command) {
 const defaultCloudEndpoint = ""
 
 // addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
-// override (Story 4) on cmd. --cloud-endpoint's well-formedness and the presence
-// of ATCR_API_KEY are validated at run time (resolveSyncCloud), not at flag-parse
-// time, to keep this helper narrowly scoped to wiring (AC 04-01). The PreRunE is
+// override (Story 4) on cmd. An absent or explicitly empty --cloud-endpoint is
+// refused here at flag-parse time (PreRunE) — this build ships no default
+// destination, so there is nothing to fall back on; a supplied endpoint's
+// well-formedness and the presence of ATCR_API_KEY are validated at run time
+// (resolveSyncCloud) (AC 04-01). The PreRunE is
 // chained prev-first (not assigned), matching addRangeFlags, so a prior hook
 // (review and reconcile both also register range flags) is never silently
 // overwritten, hooks fire in installation order (earlier-installed first), and a
