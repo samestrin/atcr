@@ -613,3 +613,25 @@ func TestClient_SendQualitySignal_NilReceiverNoOps(t *testing.T) {
 	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}}) // must not panic
 	c.Wait()
 }
+
+// TestDefaultRequestTimeout_FitsWithinCallerDrainBound pins the coherence between
+// this package's per-request budget and the drain bound its only production caller
+// enforces. cli's drainTelemetry waits at most telemetryDrainTimeout (2s) for
+// in-flight sends before abandoning them and exiting. A defaultRequestTimeout
+// LARGER than that bound creates a dead window: a send whose own budget has not
+// expired is guaranteed to be abandoned anyway, so the extra budget buys nothing
+// and only widens the gap between "the request thinks it may still succeed" and
+// "the process already gave up on it".
+//
+// The two values must therefore agree. This test is the tripwire: raising
+// defaultRequestTimeout above the caller's bound — or lowering that bound without
+// revisiting this constant — fails here rather than silently re-opening the window.
+// cli/main.go's telemetryDrainTimeout is unexported and in a package this leaf
+// cannot import, so the bound is restated as a literal and named in both places.
+func TestDefaultRequestTimeout_FitsWithinCallerDrainBound(t *testing.T) {
+	const callerDrainBound = 2 * time.Second // cli.telemetryDrainTimeout
+	if defaultRequestTimeout > callerDrainBound {
+		t.Fatalf("defaultRequestTimeout (%v) exceeds the caller's drain bound (%v): a send finishing in between is abandoned despite its own budget not having expired",
+			defaultRequestTimeout, callerDrainBound)
+	}
+}
