@@ -66,8 +66,9 @@ func addBaselineFlags(cmd *cobra.Command) {
 // exported, a --sync-cloud run POSTed a scorecard at a web page.
 //
 // Tests point --cloud-endpoint at an httptest server instead (loopback http is
-// permitted for that; see scorecard.ValidateCloudEndpoint) — an explicit override
-// bypasses the refusal entirely.
+// permitted for that; see scorecard.ValidateCloudEndpoint) — a non-empty explicit
+// override bypasses the refusal; an explicitly empty one is refused with its own
+// message.
 //
 // Migration path unchanged: the URL is deliberately a compiled-in constant — when
 // the enterprise endpoint lands, set this constant and cut a release; already
