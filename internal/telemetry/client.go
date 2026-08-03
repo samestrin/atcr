@@ -109,8 +109,10 @@ func New(endpoint string) *Client {
 // compiled-in endpoint constants to be activated on separate schedules. Both must
 // be https:// to send at all; plaintext http is refused on each path alike.
 func NewWithQualitySignal(usage, quality string) *Client {
-	// A dedicated client (not http.DefaultClient) so telemetry's connection pool
-	// and Transport are isolated from the rest of the process.
+	// A dedicated client instance (not http.DefaultClient); its nil Transport
+	// reuses the shared http.DefaultTransport connection pool (same as
+	// internal/scorecard's cloudHTTPClient and llmclient's default client) —
+	// only per-instance policy is isolated, never the connection pool.
 	return &Client{
 		endpoint:        usage,
 		qualityEndpoint: quality,
