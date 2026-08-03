@@ -153,25 +153,10 @@ func isHTTPS(endpoint string) bool {
 // return and never affects the caller's outcome or exit code. The usage Event is
 // marshaled compactly, preserving its existing wire format.
 func (c *Client) Send(ctx context.Context, ev Event) {
-	c.dispatch(ctx, c.usageEndpoint(), func() ([]byte, error) { return json.Marshal(ev) })
-}
-
-// usageEndpoint returns the usage-ping destination, nil-safe so Send can read it
-// before dispatch's own nil-receiver guard runs.
-func (c *Client) usageEndpoint() string {
 	if c == nil {
-		return ""
+		return
 	}
-	return c.endpoint
-}
-
-// qualitySignalEndpoint returns the quality-signal destination, nil-safe for the
-// same reason as usageEndpoint.
-func (c *Client) qualitySignalEndpoint() string {
-	if c == nil {
-		return ""
-	}
-	return c.qualityEndpoint
+	c.dispatch(ctx, c.endpoint, func() ([]byte, error) { return json.Marshal(ev) })
 }
 
 // SendQualitySignal fires the community prompt quality-signal payload (Sprint 30.0)
@@ -185,10 +170,10 @@ func (c *Client) qualitySignalEndpoint() string {
 // API is self-defending (no semaphore slot, goroutine, or contentless beacon)
 // rather than depending on every caller pre-checking len(payload)==0.
 func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal) {
-	if len(payload) == 0 {
+	if c == nil || len(payload) == 0 {
 		return
 	}
-	c.dispatch(ctx, c.qualitySignalEndpoint(), func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
+	c.dispatch(ctx, c.qualityEndpoint, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
 }
 
 // dispatch is the shared fail-open send core: it no-ops on a nil client or a
