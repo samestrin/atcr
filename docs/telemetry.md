@@ -16,10 +16,12 @@ it is **fail-open**: if the network is down, slow, or the endpoint is
 unreachable, the ping is dropped and the CLI exits exactly as it would have
 anyway. It never blocks, delays, or crashes the command.
 
-> **Currently inactive.** The compiled-in ingestion endpoint is empty in this
-> build, so the ping is a wired **no-op** — nothing is transmitted until a real
-> backend endpoint is configured. The schema below describes the payload that
-> *would* be sent; the opt-out surfaces already suppress it regardless.
+> **Active in this build.** The compiled-in ingestion endpoint is
+> `https://atcr.dev/api/v1/telemetry`, so a completed `review` or `reconcile`
+> run transmits the ping described below unless you opt out. The ping is
+> **on by default** — set `ATCR_TELEMETRY=0` or `atcr config set telemetry false`
+> to disable it (see [Opt-out](#opt-out)); either surface alone is
+> sufficient and final.
 
 ---
 
@@ -157,10 +159,17 @@ rather than seeing a silent no-op. A non-auth failure (timeout, DNS, `5xx`) does
 **not** map to the auth code and never corrupts the already-finalized run
 outcome.
 
-**Endpoint.** The push targets a compiled-in `https://` dashboard endpoint. The
-destination is HTTPS-only so the Bearer key is never transmitted in the clear;
-the `` `--cloud-endpoint` `` flag can override it (for example, at a loopback
-`http://` address for local testing).
+**Endpoint.** This build ships **no default destination** — the scorecard ingest
+contract is owned by atcr-enterprise, and there is no API-key issuance flow for a
+community user. `` `--cloud-endpoint` `` is therefore **required** whenever
+`` `--sync-cloud` `` is used; a run that omits it refuses with a usage error
+(exit `2`) naming the absent destination, and pushes nothing. The destination is
+HTTPS-only so the Bearer key is never transmitted in the clear (a loopback
+`http://` address is permitted for local testing).
+
+Note the ordering: the destination is validated **before** `ATCR_API_KEY`, so a
+run missing both reports the missing destination (exit `2`), not the missing key
+(exit `3`).
 
 **What is pushed.** The payload is a dedicated allowlist — **not** a superset of
 the `--export` record, and it carries no source code, file paths, or raw
@@ -198,11 +207,12 @@ It is its **own path**, distinct from the usage ping and from `--sync-cloud`:
   timeout, or panic) is dropped and the `review`/`reconcile` run exits exactly as
   it would have anyway — the send never changes the exit code or stdout.
 
-> **Currently inactive.** Like the usage ping, the compiled-in ingestion endpoint
-> is empty in this build, so an opted-in send is a wired **no-op** — nothing is
-> transmitted until a real backend endpoint is configured. The schema below
-> describes the payload that *would* be sent; the opt-in is off by default
-> regardless.
+> **Active in this build.** The compiled-in ingestion endpoint is
+> `https://atcr.dev/api/v1/quality-signal` — a **separate** destination from the
+> usage ping, because the two payloads have different shapes and the backend
+> validates each against its own allowlist. Unlike the usage ping, this signal
+> remains **opt-in and off by default**: nothing is transmitted unless you
+> explicitly enable it.
 
 ### Quality-signal payload schema
 
