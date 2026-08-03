@@ -353,20 +353,20 @@ func TestClient_RequestTimeout_Race(t *testing.T) {
 // bound the number of concurrent background goroutines. A burst far larger than the
 // cap fired against a blocking send seam must never exceed maxInFlightSends
 // simultaneously in flight — excess pings are dropped, not spawned.
+//
+// Deterministic barrier instead of a fixed sleep: the seam signals an entry
+// channel, and the test waits for the (cap+1)'th entry. If the cap is enforced,
+// exactly maxInFlightSends entries ever occur and the wait ends on timeout — a
+// held cap; if the cap is broken, the burst floods the seam and the (cap+1)'th
+// entry arrives promptly — a proven breach. "The cap held" and "the test never
+// got there" are distinguishable (the count==0 wiring check below).
 func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 	const burst = 300
-	var cur, maxSeen int32
+	entered := make(chan struct{}, burst)
 	block := make(chan struct{})
 	restore := SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
-		n := atomic.AddInt32(&cur, 1)
-		for {
-			m := atomic.LoadInt32(&maxSeen)
-			if n <= m || atomic.CompareAndSwapInt32(&maxSeen, m, n) {
-				break
-			}
-		}
+		entered <- struct{}{}
 		<-block // hold the slot so concurrency accumulates
-		atomic.AddInt32(&cur, -1)
 		return nil, errors.New("blocked stub")
 	})
 	defer restore()
@@ -375,16 +375,28 @@ func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 	for i := 0; i < burst; i++ {
 		c.Send(context.Background(), Event{Event: "review_run"})
 	}
-	// Let the spawned goroutines reach the blocking seam before sampling the peak.
-	time.Sleep(150 * time.Millisecond)
-	peak := atomic.LoadInt32(&maxSeen)
+
+	count := 0
+	wait := time.NewTimer(2 * time.Second)
+	defer wait.Stop()
+barrier:
+	for count < maxInFlightSends+1 {
+		select {
+		case <-entered:
+			count++
+		case <-wait.C:
+			// No (cap+1)'th entry arrived: the cap held — every beyond-cap send was
+			// dropped in dispatch before reaching the seam.
+			break barrier
+		}
+	}
 	close(block)
 	c.Wait()
 
-	if peak > int32(maxInFlightSends) {
-		t.Fatalf("peak concurrent in-flight sends = %d, want <= %d (Send must bound goroutines)", peak, maxInFlightSends)
+	if count > maxInFlightSends {
+		t.Fatalf("%d sends reached the seam concurrently, want <= %d (Send must bound goroutines)", count, maxInFlightSends)
 	}
-	if peak == 0 {
+	if count == 0 {
 		t.Fatal("no sends reached the seam — test wiring is broken")
 	}
 }
