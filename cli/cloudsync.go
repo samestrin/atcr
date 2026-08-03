@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -58,6 +59,17 @@ func runSyncCloud(ctx context.Context, w io.Writer, plan syncCloudPlan, reviewDi
 	if !plan.enabled {
 		return nil
 	}
+	// Print the resolved destination host before the push: the push sends
+	// Authorization: Bearer <ATCR_API_KEY> to whatever host --cloud-endpoint
+	// names, and ValidateCloudEndpoint vets the scheme only, so an unexpected
+	// target must be visible in CI output rather than silent. (The
+	// known-good-set warning half of the hardening is deliberately deferred
+	// until defaultCloudEndpoint is non-empty and there is a set to check against.)
+	host := plan.endpoint
+	if u, perr := url.Parse(plan.endpoint); perr == nil && u.Host != "" {
+		host = u.Host
+	}
+	_, _ = fmt.Fprintf(w, "syncing scorecard to %s\n", host)
 	rec := scorecard.NewCloudSyncRecord(reviewDir, outcome)
 	return finishCloudSync(w, scorecard.Push(ctx, plan.endpoint, plan.apiKey, rec))
 }
