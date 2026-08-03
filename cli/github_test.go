@@ -35,9 +35,11 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // review or reconcile to completion through the real command tree (execCmd and
 // friends, which stub neither the transport nor the env var) would POST a genuine
 // usage ping at atcr.dev from CI and from every developer's machine. This is a
-// DEFAULT, not an override: every test that cares about the gate sets the var
-// itself via t.Setenv/os.Setenv and is restored automatically, so the tests that
-// exercise the enabled path are unaffected.
+// baseline for the package, and deliberately an unconditional one: honouring an
+// ATCR_TELEMETRY already exported by a developer shell or CI job would re-open
+// exactly the hole this closes. Tests that need the ping enabled opt in per-test
+// via t.Setenv (auto-restored) or unsetTelemetryEnv, so overriding the ambient
+// value here costs them nothing.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
 	_ = os.Setenv("ATCR_TELEMETRY", "0")

@@ -71,6 +71,24 @@ func TestAddSyncCloudFlags_RefusalPrecedesAPIKeyCheck(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err), "a present API key must not make an absent destination acceptable")
 }
 
+// TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag pins the distinction
+// between "no destination was ever supplied" and "an empty one was": a user who
+// passed --cloud-endpoint "" must not be told to pass --cloud-endpoint.
+func TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag(t *testing.T) {
+	for _, empty := range []string{"", "   "} {
+		cmd := newReviewCmd()
+		require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", empty}))
+		require.NotNil(t, cmd.PreRunE)
+
+		err := cmd.PreRunE(cmd, nil)
+		require.Error(t, err)
+		assert.Equal(t, exitUsage, exitCode(err))
+		assert.Contains(t, err.Error(), "--cloud-endpoint must not be empty")
+		assert.NotContains(t, err.Error(), "no default destination",
+			"an explicitly-supplied empty value is not the absent-default case")
+	}
+}
+
 // TestAddSyncCloudFlags_ExplicitEndpointBypassesRefusal pins the other half of
 // AC1d: the refusal fires ONLY at the compiled-in default. An explicit
 // --cloud-endpoint — including the loopback http form the test suite depends on —

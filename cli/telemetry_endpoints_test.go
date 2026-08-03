@@ -84,9 +84,16 @@ func TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 		return len(hits) >= 2
 	}, 5*time.Second, 10*time.Millisecond, "expected both a usage ping and a quality signal")
 
+	// Settle before the cleanup restores the real transport: a straggler send
+	// arriving after the seam is uninstalled would POST at the live host from CI.
+	// Both expected sends have already passed the seam by the time Eventually
+	// returns, so this only guards an unexpected third.
+	time.Sleep(100 * time.Millisecond)
+
 	mu.Lock()
 	got := append([]struct{ URL, Body string }(nil), hits...)
 	mu.Unlock()
+	require.Len(t, got, 2, "exactly two sends expected; an extra one would escape the transport seam")
 
 	var sawPing, sawQuality bool
 	for _, h := range got {

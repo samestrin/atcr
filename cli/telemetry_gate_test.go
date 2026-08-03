@@ -186,6 +186,11 @@ func TestTelemetryGate_ResolvesRepoRoot(t *testing.T) {
 // default for every test ordered after it — re-enabling the default-on ping for
 // the rest of the run. t.Setenv cannot express this: the subject of these tests is
 // the genuinely-UNSET state, not an empty value.
+//
+// PRECONDITION: no test in package cli may call t.Parallel while the production
+// endpoint constants are live. This mutates process-global env state, so a
+// parallel test would observe another test's telemetry gate — and the direction
+// of that leak is toward ENABLED against a real host.
 func unsetTelemetryEnv(t *testing.T) {
 	t.Helper()
 	prev, had := os.LookupEnv("ATCR_TELEMETRY")

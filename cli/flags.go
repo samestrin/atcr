@@ -84,7 +84,7 @@ const defaultCloudEndpoint = ""
 // future --sync-cloud precondition can slot in without clobbering it.
 func addSyncCloudFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires --cloud-endpoint and ATCR_API_KEY)")
-	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "override the --sync-cloud destination (https://, or loopback http:// for local testing)")
+	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "the --sync-cloud destination (required — this build ships no default; https://, or loopback http:// for local testing)")
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		if prev != nil {
@@ -105,6 +105,13 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 			// ATCR_API_KEY earns. ATCR_API_KEY remains separately required once a
 			// destination IS supplied; resolveSyncCloud still enforces it.
 			if strings.TrimSpace(endpoint) == "" {
+				// Distinguish "never supplied" from "supplied empty": telling a user
+				// who just passed --cloud-endpoint "" to "pass --cloud-endpoint
+				// explicitly" is advice they already followed, and blames the default
+				// for a value they chose.
+				if cmd.Flags().Changed("cloud-endpoint") {
+					return usageError(errors.New("--cloud-endpoint must not be empty"))
+				}
 				return usageError(errors.New("--sync-cloud has no default destination in this build; pass --cloud-endpoint explicitly"))
 			}
 		}
