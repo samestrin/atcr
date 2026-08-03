@@ -288,7 +288,7 @@ func splitPreview(out string) (jsonPart, marker string) {
 func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int, err error) {
 	t.Helper()
 	hits := countingDoRequest(t)
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	root := NewRootCmdWithClient(client)
 	var out, errBuf bytes.Buffer
 	root.SetArgs(args)
@@ -464,7 +464,7 @@ func TestPreview_TakesPrecedenceOverSyncCloud(t *testing.T) {
 	unsetEnvForTest(t, "ATCR_API_KEY")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	out, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"),
+	out, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"),
 		"--preview", "--sync-cloud")
 	require.NoError(t, err, "--preview must take precedence over --sync-cloud, never exit 3 on a missing key")
 	assert.Contains(t, out, "persona_id_hash")
@@ -478,7 +478,7 @@ func TestPreview_ZeroHTTPCalls_GateDisabled(t *testing.T) {
 	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	_, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"), "--preview")
+	_, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"), "--preview")
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits))
 }
@@ -490,7 +490,7 @@ func TestPreview_ZeroHTTPCalls_GateEnabled(t *testing.T) {
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	_, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"), "--preview")
+	_, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"), "--preview")
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "gate enabled must not cause --preview to send")
 }

@@ -247,6 +247,20 @@ It is its **own path**, distinct from the usage ping and from `--sync-cloud`:
 > remains **opt-in and off by default**: nothing is transmitted unless you
 > explicitly enable it.
 
+**Why the two destinations must stay distinct.** The atcr.dev backend serves the
+usage ping and the quality signal as separate handlers behind the `/api/v1/*`
+rewrite, each validating against its own closed key allowlist by strict set
+equality — an extra or missing key is a `400`, not a warning. The usage ping is a
+single JSON object; the quality signal is a JSON array. Posting either at the
+other's handler is therefore rejected, and because the send path is fail-open the
+rejection is dropped silently: nothing surfaces the loss. Collapsing the two onto
+one URL is the regression `TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints`
+exists to catch.
+
+This section is the versioned home of that contract. It is deliberately **not**
+restated in `internal/telemetry`, which has no dependency on, test against, or
+visibility into the service — a copy there could never be detected going stale.
+
 ### Quality-signal payload schema
 
 The payload is a list of per-(persona, model) rows. Each row carries exactly four

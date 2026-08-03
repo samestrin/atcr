@@ -530,7 +530,7 @@ func TestDrainTelemetry_FlushesInFlightSend(t *testing.T) {
 	})
 	defer restore()
 
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	client.Send(context.Background(), telemetry.Event{Event: "review_run", Lang: "go", Lines: 1, Status: "success"})
 
 	drainTelemetry(client, 2*time.Second)
@@ -556,7 +556,7 @@ func TestDrainTelemetry_BoundedWhenSendHangs(t *testing.T) {
 		restore()
 	}()
 
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	client.Send(context.Background(), telemetry.Event{Event: "reconcile_run", Lang: "go", Lines: 1, Status: "success"})
 
 	start := time.Now()
@@ -577,7 +577,7 @@ func TestDrainTelemetry_NilClient(t *testing.T) {
 // the caller-supplied client into the command context via PersistentPreRunE.
 func TestNewRootCmdWithClient_InjectsProvidedClient(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "info")
-	client := telemetry.New("")
+	client := telemetry.NewSingleDestination("")
 	root := NewRootCmdWithClient(client)
 	root.SetContext(context.Background())
 	root.SetErr(io.Discard)

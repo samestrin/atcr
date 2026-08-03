@@ -223,7 +223,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		t.Setenv("ATCR_TELEMETRY", "0")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled by env: no telemetry request may fire")
 	})
 
@@ -233,7 +233,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled by persisted config: no telemetry request may fire")
 	})
 
@@ -242,7 +242,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		t.Setenv("ATCR_TELEMETRY", "1")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(1), atomic.LoadInt32(hits), "enabled: exactly one telemetry request fires")
 	})
 }
@@ -266,7 +266,7 @@ func TestReconcile_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	})
 	defer restore()
 
-	runReconcileGated(t, telemetry.New(endpoint), "r", "--fail-on", "LOW")
+	runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r", "--fail-on", "LOW")
 
 	require.Len(t, captured, 1)
 	assert.Equal(t, "reconcile_run", captured[0].Event)
@@ -295,7 +295,7 @@ func TestReview_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	})
 	defer restore()
 
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	logger, err := log.New("info", "text", io.Discard)
 	require.NoError(t, err)
 	cmd := newReviewCmd()

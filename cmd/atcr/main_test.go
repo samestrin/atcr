@@ -36,7 +36,7 @@ func TestTelemetryGuard_IsInstalledInThisPackage(t *testing.T) {
 	telemetrytest.ResetEscapes()
 	t.Cleanup(telemetrytest.ResetEscapes)
 
-	client := telemetry.New("https://atcr.dev/api/v1/telemetry")
+	client := telemetry.NewSingleDestination("https://atcr.dev/api/v1/telemetry")
 	client.Send(context.Background(), telemetry.Event{Event: "guard_probe"})
 	client.Wait()
 

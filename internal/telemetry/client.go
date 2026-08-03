@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/version"
 )
 
 // defaultRequestTimeout bounds the background telemetry request's own lifetime — never
@@ -82,16 +83,19 @@ func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, e
 }
 
 // Client sends anonymous usage events to a configured HTTPS endpoint. Construct
-// one per process via New or NewWithQualitySignal and inject it (it is
+// one per process via NewWithQualitySignal (or NewSingleDestination in tests) and inject it (it is
 // deliberately not a package-level singleton); a nil Client or an empty/non-HTTPS
 // endpoint makes the corresponding Send a no-op.
 //
-// The two payload surfaces carry SEPARATE destinations because the backend serves
-// them as separate handlers with separate closed key allowlists: the usage ping is
-// a single JSON object, the quality signal a JSON array. Routing the array at the
-// object handler earns a 400, and the fail-open path drops it silently — a loss
-// nothing surfaces. Each destination is independently empty-able, which is what
-// lets the two constants be activated on independent schedules.
+// The two payload surfaces carry SEPARATE, independently configurable
+// destinations, and each is a no-op when empty — which is what lets them be
+// activated or deactivated on independent schedules.
+//
+// The reasons the destinations must differ live with the service that imposes
+// them, in docs/telemetry.md. This package has no dependency on, test against, or
+// visibility into that service, so a contract restated here could never be
+// detected going stale — it would simply rot into a confident lie in a transport
+// leaf. What this package can state, and enforce, is the shape above.
 type Client struct {
 	endpoint        string
 	qualityEndpoint string
@@ -102,17 +106,22 @@ type Client struct {
 	requestTimeout  time.Duration
 }
 
-// New returns a single-destination Client: BOTH the usage ping and the quality
-// signal POST to endpoint. That shared meaning is deliberate and load-bearing, not
-// a legacy accident — the test suite discriminates the two surfaces by body shape
-// at the transport rather than by URL, and several tests deliberately run both
-// surfaces through one client. Production uses NewWithQualitySignal instead, because
-// the real backend serves the two payloads at different paths.
+// NewSingleDestination returns a Client that POSTs BOTH the usage ping and the
+// quality signal to one endpoint.
+//
+// THE NAME IS THE POINT. This has no production callers — every real site uses
+// NewWithQualitySignal — and it exists for tests, which discriminate the two
+// surfaces by body shape at the transport rather than by URL. It was called
+// `New`, which made the shortest-to-type, most-default-looking constructor in the
+// package the one that collapses two destinations into one: precisely the
+// misconfiguration the endpoint tests exist to catch, left sitting in the path of
+// anyone reaching for an obvious constructor. Naming it for what it does removes
+// that trap without costing the tests anything.
 //
 // An empty endpoint yields a no-op client (Send never spawns a goroutine or touches
 // the network). A configured endpoint MUST be an https:// URL; plaintext http is
 // refused (no-op).
-func New(endpoint string) *Client {
+func NewSingleDestination(endpoint string) *Client {
 	return NewWithQualitySignal(endpoint, endpoint)
 }
 
@@ -146,6 +155,13 @@ func NewWithQualitySignal(usage, quality string) *Client {
 		requestTimeout: defaultRequestTimeout,
 	}
 }
+
+// userAgent is the User-Agent every telemetry request carries: the client name
+// and its build version, e.g. "atcr/1.2.3" (or "atcr/0.0.0" for an unstamped dev
+// build). internal/version is a zero-dependency leaf holding an ldflags-stamped
+// var, so this stays a strictly downward dependency and a release build reports
+// its real version with no plumbing through the constructors.
+func userAgent() string { return "atcr/" + version.Version }
 
 // isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
 // scheme). An empty, malformed, or plaintext-http endpoint is refused, so Send
@@ -246,6 +262,14 @@ func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, m
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Identify the client and its build. Without this every ping arrives as the
+	// generic Go default UA, leaving the aggregate data with no client-version
+	// dimension: no way to tell a current build from a two-year-old one, to
+	// correlate a status distribution with a release, or to deprecate a
+	// misbehaving version server-side. The Event allowlist deliberately carries no
+	// version field, so the header is the only place for it — and a build version
+	// is not PII: it is already public in the shipped binary.
+	req.Header.Set("User-Agent", userAgent())
 
 	resp, err := currentDoRequest()(c.httpClient, req)
 	if err != nil {

@@ -200,7 +200,7 @@ func TestDrainTelemetry_NoSendOutlivesTheDrain(t *testing.T) {
 	})
 	t.Cleanup(restore)
 
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	client.Send(context.Background(), telemetry.Event{Event: "drain_probe"})
 
 	start := time.Now()

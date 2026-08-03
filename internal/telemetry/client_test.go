@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/samestrin/atcr/internal/version"
 )
 
 // newTestClient points a Client at an httptest TLS server, wiring the server's
@@ -21,7 +23,7 @@ import (
 // Same-package (white-box) access to the unexported httpClient field is the
 // injection seam; production callers only ever see New(endpoint).
 func newTestClient(ts *httptest.Server) *Client {
-	c := New(ts.URL)
+	c := NewSingleDestination(ts.URL)
 	c.httpClient.Transport = ts.Client().Transport
 	return c
 }
@@ -162,7 +164,7 @@ func TestClient_Send_EmptyEndpointNoOps(t *testing.T) {
 	}))
 	defer func() { doRequest.Store(orig) }()
 
-	c := New("") // empty endpoint
+	c := NewSingleDestination("") // empty endpoint
 	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
 	c.Wait()
 
@@ -260,7 +262,7 @@ func TestClient_Send_SurvivesCancelledContext(t *testing.T) {
 	})
 	defer restore()
 
-	c := New("https://example.com")
+	c := NewSingleDestination("https://example.com")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before the goroutine is scheduled
 	c.Send(ctx, Event{Event: "review_run", Status: "success"})
@@ -275,7 +277,7 @@ func TestClient_Send_SurvivesCancelledContext(t *testing.T) {
 // NewContext is returned by FromContext, and a bare context yields nil (whose
 // Send is a safe no-op).
 func TestContext_RoundTrip(t *testing.T) {
-	c := New("https://example.test")
+	c := NewSingleDestination("https://example.test")
 	got := FromContext(NewContext(context.Background(), c))
 	if got != c {
 		t.Fatalf("FromContext returned %p, want %p", got, c)
@@ -371,7 +373,7 @@ func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 	})
 	defer restore()
 
-	c := New("https://telemetry.test/ingest")
+	c := NewSingleDestination("https://telemetry.test/ingest")
 	for i := 0; i < burst; i++ {
 		c.Send(context.Background(), Event{Event: "review_run"})
 	}
@@ -588,7 +590,7 @@ func TestClient_NewWithQualitySignal_PerPathEmptyEndpointNoOps(t *testing.T) {
 func TestNew_KeepsSharedDestinationForBothPayloads(t *testing.T) {
 	hits := captureRequestURLs(t)
 
-	c := New(testUsageEndpoint)
+	c := NewSingleDestination(testUsageEndpoint)
 	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
 	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
 	c.Wait()
@@ -642,7 +644,7 @@ func TestDefaultRequestTimeout_FitsWithinCallerDrainBound(t *testing.T) {
 // dispatches a send. Registering at dispatch (a bare `go` calling Send at the end)
 // let Wait return while the work was still running.
 func TestClientGo_RegistersBeforeWork(t *testing.T) {
-	c := New("https://telemetry.test/ingest")
+	c := NewSingleDestination("https://telemetry.test/ingest")
 
 	var done int32
 	c.Go(context.Background(), func() {
@@ -665,7 +667,7 @@ func TestClientGo_RegistersBeforeWork(t *testing.T) {
 // exit. So this asserts Wait actually returns, and that a subsequent healthy unit
 // of work is still tracked, rather than only that the binary survived.
 func TestClientGo_RecoversPanic(t *testing.T) {
-	c := New("https://telemetry.test/ingest")
+	c := NewSingleDestination("https://telemetry.test/ingest")
 
 	c.Go(context.Background(), func() { panic("boom") })
 
@@ -695,5 +697,42 @@ func TestClientGo_NilClientStillRuns(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("a nil client must still run detached work")
+	}
+}
+
+// TestSend_SetsVersionedUserAgent covers the client-version dimension the live
+// endpoint has no other way to obtain. The Event allowlist deliberately excludes a
+// version field, so without a User-Agent every ping arrives as the generic Go
+// default UA and the aggregate data cannot distinguish a current build from a
+// two-year-old one, correlate a status distribution with a release, or let the
+// backend deprecate a misbehaving client version. A version string is not PII and
+// is already public in the binary.
+func TestSend_SetsVersionedUserAgent(t *testing.T) {
+	var mu sync.Mutex
+	var got string
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		got = req.Header.Get("User-Agent")
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	t.Cleanup(restore)
+
+	c := NewSingleDestination("https://telemetry.test/ingest")
+	c.Send(context.Background(), Event{Event: "review_run"})
+	c.Wait()
+
+	mu.Lock()
+	ua := got
+	mu.Unlock()
+
+	if !strings.HasPrefix(ua, "atcr/") {
+		t.Fatalf("User-Agent must identify the client and its version, got %q", ua)
+	}
+	if strings.TrimPrefix(ua, "atcr/") == "" {
+		t.Fatalf("User-Agent must carry a non-empty version, got %q", ua)
+	}
+	if strings.TrimPrefix(ua, "atcr/") != version.Version {
+		t.Fatalf("User-Agent version %q must track the build version %q", ua, version.Version)
 	}
 }

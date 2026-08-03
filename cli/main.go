@@ -277,7 +277,7 @@ func NewRootCmd() *cobra.Command {
 // The two used to construct the client independently, with the same expression
 // written twice — and only NewRootCmd was covered by a test. runMain is the entry
 // point every real atcr invocation takes via Main/MainWithHooks, so a revert there
-// to a single-destination client (telemetry.New(defaultTelemetryEndpoint)) would
+// to a single-destination client (telemetry.NewSingleDestination(defaultTelemetryEndpoint)) would
 // route the quality-signal ARRAY at the usage-ping handler, earning a 400 that the
 // fail-open send path drops silently — invisible in production and invisible to
 // the test that exists to catch exactly that. Collapsing the duplication means

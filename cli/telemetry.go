@@ -15,13 +15,13 @@ import (
 )
 
 // defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL, and
-// defaultQualitySignalEndpoint its quality-signal sibling. Both are live: the
-// atcr.dev backend serves them as SEPARATE handlers behind the /api/v1/* rewrite,
-// each validating against its own closed key allowlist (strict set equality — an
-// extra or missing key is a 400, not a warning). They are therefore never
-// interchangeable: the usage ping is a single JSON object, the quality signal a
-// JSON array, and posting either at the other's handler is rejected and then
-// dropped silently by the fail-open send path.
+// defaultQualitySignalEndpoint its quality-signal sibling. Both are live, and they
+// are NOT interchangeable: the two surfaces must each go to their own
+// destination. The backend-side reasons — separate handlers, per-surface key
+// validation, what happens to a misrouted payload — are documented in
+// docs/telemetry.md, which is where the external contract is versioned; repeating
+// them here would create a second copy that nothing in this repo can detect going
+// stale.
 //
 // Both MUST stay https:// — telemetry.Client refuses plaintext http and would
 // no-op instead. An empty value is a silent per-path no-op, which is what allows
