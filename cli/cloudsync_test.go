@@ -2,8 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -147,6 +152,28 @@ func TestFinishCloudSync_NilIsNoop(t *testing.T) {
 	var buf bytes.Buffer
 	assert.NoError(t, finishCloudSync(&buf, nil))
 	assert.Empty(t, buf.String())
+}
+
+// TestRunSyncCloud_PrintsDestinationHostBeforePush pins the Epic 35.12 TD
+// (cli/flags.go:87) security hardening: the push sends Authorization: Bearer
+// <ATCR_API_KEY> to whatever host --cloud-endpoint names, and
+// ValidateCloudEndpoint vets the scheme only — so the resolved destination host
+// must be printed to stderr BEFORE the push, where CI output makes an
+// unexpected target visible instead of silent.
+func TestRunSyncCloud_PrintsDestinationHostBeforePush(t *testing.T) {
+	var pushed atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushed.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	plan := syncCloudPlan{enabled: true, endpoint: srv.URL, apiKey: "valid-key"}
+	require.NoError(t, runSyncCloud(context.Background(), &buf, plan, t.TempDir(), "success"))
+	require.True(t, pushed.Load(), "the push must reach the endpoint")
+	assert.Contains(t, buf.String(), strings.TrimPrefix(srv.URL, "http://"),
+		"the resolved destination host must appear on stderr before the push")
 }
 
 // TestResolveSyncCloudOutcome covers the 4.LAST gate fix: an auth rejection
