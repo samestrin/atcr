@@ -101,7 +101,14 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 		// the --sync-cloud destination is irrelevant on that path (the preview
 		// short-circuit in RunE bypasses sync entirely). Suppress the refusal when
 		// --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
-		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) {
+		//
+		// --resume is the same shape and gets the same suppression: runReview
+		// returns via runResume BEFORE resolveSyncCloud is reached, so --sync-cloud
+		// is a documented no-op there. Refusing would break an invocation that
+		// previously worked, over a destination the resume path never consults. The
+		// no-op is not left silent — the resume branch in runReview says so on
+		// stderr, for the with-endpoint case as much as the absent-destination one.
+		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) && !resumeFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
 			// Refuse rather than warn-and-proceed: this build ships no default
 			// destination, so there is nothing to push to. Reported as a usageError
@@ -135,6 +142,18 @@ func previewFlagSet(cmd *cobra.Command) bool {
 	}
 	v, _ := cmd.Flags().GetBool("preview")
 	return v
+}
+
+// resumeFlagSet reports whether the --resume flag is registered on cmd AND
+// supplied. It keys on Changed (not the value) because `--resume ""` is still a
+// resume invocation, and it uses a nil-safe Lookup for the same reason
+// previewFlagSet does: reconcile hosts addSyncCloudFlags but registers no
+// --resume, and a panic here would abort an unrelated invocation.
+func resumeFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("resume") == nil {
+		return false
+	}
+	return cmd.Flags().Changed("resume")
 }
 
 // addQualitySignalFlags declares the --preview flag on cmd (the review and
