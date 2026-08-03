@@ -19,13 +19,20 @@ delays the work itself — the send runs on a detached goroutine, so nothing in 
 review or reconcile blocks on it.
 
 It can, however, delay process **exit** by a bounded amount. Before exiting,
-`atcr` waits up to **2 seconds** for an in-flight ping to finish, so a
-best-effort send usually lands rather than being killed mid-flight. When no ping
-was dispatched — you opted out, or the run emitted none — the wait returns
-immediately and costs nothing. The full 2 seconds is only ever paid when a send
-is genuinely in flight and the endpoint is unreachable in a way that hangs rather
+`atcr` waits up to **2 seconds** for in-flight telemetry work to finish, so a
+best-effort send usually lands rather than being killed mid-flight. When nothing
+was dispatched — you opted out, or the run emitted nothing — the wait returns
+immediately and costs nothing. The full 2 seconds is only ever paid when work is
+genuinely in flight and the endpoint is unreachable in a way that hangs rather
 than refuses (a firewalled, air-gapped, or blackholed network). Opting out
 removes this entirely.
+
+This drain covers **both** surfaces. If you have opted in to the quality signal,
+it also covers that payload's local aggregation over `.atcr/debt` — which
+previously escaped the drain entirely and was usually stranded at exit, meaning
+opted-in signals were frequently never delivered. Now that it is covered, an
+opted-in run with a large local debt store may spend measurably longer at exit
+than before, still bounded by the same 2 seconds.
 
 > **Active in this build.** The compiled-in ingestion endpoint is
 > `https://atcr.dev/api/v1/telemetry`, so a completed `review` or `reconcile`
