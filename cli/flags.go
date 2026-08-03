@@ -81,10 +81,12 @@ const defaultCloudEndpoint = ""
 // destination, so there is nothing to fall back on; a supplied endpoint's
 // well-formedness and the presence of ATCR_API_KEY are validated at run time
 // (resolveSyncCloud) (AC 04-01). The PreRunE is
-// chained prev-first (not assigned), matching addRangeFlags, so a prior hook
-// (review and reconcile both also register range flags) is never silently
-// overwritten, hooks fire in installation order (earlier-installed first), and a
-// future --sync-cloud precondition can slot in without clobbering it.
+// chained prev-first (not assigned), matching addRangeFlags, so a prior hook is
+// never silently overwritten, hooks fire in installation order
+// (earlier-installed first), and a future --sync-cloud precondition can slot in
+// without clobbering it. On review (and range) the prior hook is the
+// range-flag validation those commands register; reconcile registers no range
+// flags, so there prev is nil and this helper's hook is the only one.
 func addSyncCloudFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires --cloud-endpoint and ATCR_API_KEY)")
 	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "the --sync-cloud destination (required — this build ships no default; https://, or loopback http:// for local testing)")
@@ -245,8 +247,8 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 // validateBaselineFlags. Keying on Changed() (not GetBool/GetString) means an
 // explicit --all=false still counts as supplied, the presence idiom Story 1
 // mandates. Changed() on a flag a host command never registered (e.g. --all/--dir
-// on `reconcile`, which shares addRangeFlags) safely returns false, so the baseline
-// checks are inert there.
+// on `range`, which shares addRangeFlags but not review's baseline flags) safely
+// returns false, so the baseline checks are inert there.
 func validateRangeFlags(cmd *cobra.Command) error {
 	base := cmd.Flags().Changed("base")
 	head := cmd.Flags().Changed("head")
