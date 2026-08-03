@@ -78,7 +78,9 @@ const defaultCloudEndpoint = ""
 // addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
 // override (Story 4) on cmd. An absent or explicitly empty --cloud-endpoint is
 // refused here at flag-parse time (PreRunE) — this build ships no default
-// destination, so there is nothing to fall back on; a supplied endpoint's
+// destination, so there is nothing to fall back on — EXCEPT on the two paths
+// that never reach a push at all (--preview and --resume), where the refusal
+// would fail an invocation over a destination the path never consults; a supplied endpoint's
 // well-formedness and the presence of ATCR_API_KEY are validated at run time
 // (resolveSyncCloud) (AC 04-01). The PreRunE is chained prev-first (not
 // assigned), matching addRangeFlags, so a prior hook is
