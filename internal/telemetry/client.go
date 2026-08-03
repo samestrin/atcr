@@ -27,9 +27,12 @@ import (
 // the caller's, which returns as soon as the goroutine is dispatched.
 const defaultRequestTimeout = 3 * time.Second
 
-// maxInFlightSends caps the number of concurrent background send goroutines. Client
-// is an exported reusable type; a future caller invoking Send in a tight loop against
-// a slow/hung endpoint (each send lives up to requestTimeout) would otherwise
+// maxInFlightSends caps the number of concurrent background send goroutines PER
+// destination: each surface (usage ping, quality signal) gets its own semaphore, so
+// a slow/hung destination holding slots for up to requestTimeout can never starve
+// the sibling surface — the same independence the per-endpoint gate guarantees.
+// Client is an exported reusable type; a future caller invoking Send in a tight loop
+// against a slow/hung endpoint (each send lives up to requestTimeout) would otherwise
 // accumulate unbounded goroutines. The cap is well above any realistic legitimate
 // burst (review + reconcile fire a handful), so it never drops in normal use; it only
 // bounds a pathological caller. Excess sends are dropped — the ping is best-effort —
@@ -81,7 +84,8 @@ type Client struct {
 	qualityEndpoint string
 	httpClient      *http.Client
 	wg              sync.WaitGroup
-	sem             chan struct{} // bounds concurrent send goroutines (see maxInFlightSends)
+	sem             chan struct{} // bounds concurrent usage-ping sends (see maxInFlightSends)
+	qualitySem      chan struct{} // bounds concurrent quality-signal sends (see maxInFlightSends)
 	requestTimeout  time.Duration
 }
 
@@ -112,6 +116,7 @@ func NewWithQualitySignal(usage, quality string) *Client {
 		qualityEndpoint: quality,
 		httpClient:      &http.Client{},
 		sem:             make(chan struct{}, maxInFlightSends),
+		qualitySem:      make(chan struct{}, maxInFlightSends),
 		requestTimeout:  defaultRequestTimeout,
 	}
 }
@@ -184,21 +189,29 @@ func (c *Client) dispatch(ctx context.Context, endpoint string, marshal func() (
 	if c == nil || !isHTTPS(endpoint) {
 		return
 	}
+	// Bound per destination: a semaphore is keyed on the destination, not the
+	// payload type, so a hung endpoint can only ever starve payloads aimed at IT.
+	// When both surfaces share one destination (New), they share its semaphore —
+	// a single destination is a single surface for bounding purposes.
+	sem := c.sem
+	if endpoint == c.qualityEndpoint {
+		sem = c.qualitySem
+	}
 	// Non-blocking acquire: if maxInFlightSends are already running, drop this ping
 	// (best-effort) rather than block the caller or spawn an unbounded goroutine.
 	select {
-	case c.sem <- struct{}{}:
+	case sem <- struct{}{}:
 	default:
 		log.FromContext(ctx).Debug("telemetry: send dropped (in-flight cap reached)")
 		return
 	}
 	c.wg.Add(1)
-	go c.send(ctx, endpoint, marshal)
+	go c.send(ctx, endpoint, sem, marshal)
 }
 
-func (c *Client) send(ctx context.Context, endpoint string, marshal func() ([]byte, error)) {
+func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, marshal func() ([]byte, error)) {
 	defer c.wg.Done()
-	defer func() { <-c.sem }() // release the in-flight slot acquired in dispatch
+	defer func() { <-sem }() // release the in-flight slot acquired in dispatch
 	defer func() {
 		if r := recover(); r != nil {
 			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
