@@ -251,9 +251,10 @@ func NewRootCmd() *cobra.Command {
 // drain it before exit. The client is constructed once per process and injected
 // via PersistentPreRunE (deliberately not a package-level singleton). The client
 // carries SEPARATE compiled-in destinations for the usage ping and the quality
-// signal (see defaultTelemetryEndpoint), both live — so whether anything is
-// transmitted is decided by the consent gates at the call sites, never by the
-// transport.
+// signal (see defaultTelemetryEndpoint). Both constants are currently non-empty,
+// so the transport no longer suppresses either surface; whether anything is
+// transmitted is decided by the consent gates at the call sites plus the
+// per-path endpoint check (an empty endpoint is a silent no-op in dispatch).
 func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
