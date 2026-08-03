@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,10 +42,109 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // exactly the hole this closes. Tests that need the ping enabled opt in per-test
 // via t.Setenv (auto-restored) or unsetTelemetryEnv, so overriding the ambient
 // value here costs them nothing.
+//
+// The env var alone is an environmental guard, so TestMain additionally installs
+// guardTelemetryHosts on the telemetry transport seam as the STRUCTURAL half:
+// any send aimed outside the loopback allowlist — from a future test that
+// constructs the production client, a targeted `go test -run`, or a straggler
+// goroutine that outlives a per-test seam — is intercepted and recorded, and
+// TestMain exits non-zero naming every escape instead of letting a real ping
+// leave silently. Per-test SetDoRequestForTest overrides sit above the guard
+// and their restore puts it back, so the guard only ever sees traffic no test
+// claimed.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
 	_ = os.Setenv("ATCR_TELEMETRY", "0")
-	os.Exit(m.Run())
+	telemetry.SetDoRequestForTest(guardTelemetryHosts) // installed for the whole run; never restored
+	code := m.Run()
+	if escapes := telemetryGuard.snapshot(); len(escapes) > 0 {
+		fmt.Fprintf(os.Stderr, "\ntelemetry transport guard: %d send(s) escaped the test-host allowlist — a test reached a non-test telemetry host:\n", len(escapes))
+		for _, u := range escapes {
+			fmt.Fprintf(os.Stderr, "  - %s\n", u)
+		}
+		os.Exit(1)
+	}
+	os.Exit(code)
+}
+
+// telemetryEscapeLog records the URLs the transport guard intercepts. Sends are
+// fire-and-forget goroutines, so all access is mutex-guarded.
+type telemetryEscapeLog struct {
+	mu      sync.Mutex
+	escapes []string
+}
+
+func (l *telemetryEscapeLog) record(url string) {
+	l.mu.Lock()
+	l.escapes = append(l.escapes, url)
+	l.mu.Unlock()
+}
+
+func (l *telemetryEscapeLog) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.escapes...)
+}
+
+func (l *telemetryEscapeLog) reset() {
+	l.mu.Lock()
+	l.escapes = nil
+	l.mu.Unlock()
+}
+
+// telemetryGuard is the process-wide escape log for guardTelemetryHosts.
+var telemetryGuard telemetryEscapeLog
+
+// isAllowlistedTestHost classifies telemetry destinations the structural guard
+// lets through: loopback (httptest servers) and the .test TLD, which RFC 2606
+// reserves for documentation and testing so it can never resolve to a real
+// host — the repo's blackhole endpoints (telemetry.test) are therefore
+// structurally incapable of reaching a live destination, unlike a typo'd or
+// future production URL, which the guard exists to catch.
+func isAllowlistedTestHost(host string) bool {
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return strings.HasSuffix(host, ".test")
+}
+
+// guardTelemetryHosts is the structural hermeticity guard installed by TestMain
+// on the telemetry transport seam: allowlisted test hosts (see
+// isAllowlistedTestHost) pass through to real networking untouched; anything
+// else — above all the live atcr.dev endpoints the compiled-in production
+// client carries — is intercepted, recorded in telemetryGuard, and answered
+// with a synthetic 202 so the fail-open send path completes quietly and
+// TestMain's escape report is the single loud signal.
+func guardTelemetryHosts(client *http.Client, req *http.Request) (*http.Response, error) {
+	if isAllowlistedTestHost(req.URL.Hostname()) {
+		return client.Do(req)
+	}
+	telemetryGuard.record(req.URL.String())
+	return &http.Response{
+		StatusCode: http.StatusAccepted,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+// TestIsAllowlistedTestHost pins the guard's allowlist classification without
+// touching the network: loopback and the unroutable-by-construction .test TLD
+// pass; any routable host — the live endpoints above all — is intercepted.
+func TestIsAllowlistedTestHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"127.0.0.1":           true,
+		"::1":                 true,
+		"localhost":           true,
+		"telemetry.test":      true, // repo's blackhole convention (RFC 2606, never routable)
+		"ingest.test":         true,
+		"atcr.dev":            false,
+		"example.com":         false,
+		"telemetry.test.evil": false, // suffix match must be a full TLD, not a substring
+		"":                    false,
+	} {
+		assert.Equalf(t, want, isAllowlistedTestHost(host), "host %q", host)
+	}
 }
 
 // TestTelemetryTransportGuard_BlocksNonAllowlistedHosts is the assertion half of
