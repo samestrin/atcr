@@ -515,3 +515,13 @@ func TestNew_KeepsSharedDestinationForBothPayloads(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_SendQualitySignal_NilReceiverNoOps is the quality-signal twin of
+// TestClient_Send_NilReceiverNoOps. It guards a real panic path introduced with
+// the second destination: SendQualitySignal reads its endpoint off the receiver
+// BEFORE dispatch's own nil check runs, so the accessor must be nil-safe.
+func TestClient_SendQualitySignal_NilReceiverNoOps(t *testing.T) {
+	var c *Client
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}}) // must not panic
+	c.Wait()
+}

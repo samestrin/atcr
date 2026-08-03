@@ -214,7 +214,7 @@ func (c *Client) send(ctx context.Context, endpoint string, marshal func() ([]by
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		log.FromContext(ctx).Debug("telemetry: build request failed", "error", err)
+		log.FromContext(ctx).Debug("telemetry: build request failed", "error", err, "endpoint", endpoint)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
