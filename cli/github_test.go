@@ -46,6 +46,51 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// TestTelemetryTransportGuard_BlocksNonAllowlistedHosts is the assertion half of
+// the structural hermeticity guard: package cli's TestMain installs
+// guardTelemetryHosts on the telemetry transport seam, so any future test, a
+// targeted `go test -run`, or any construction of the production client that
+// emits toward a non-allowlisted host is intercepted and recorded — TestMain
+// then exits non-zero naming the escape. The guard intercepts (202) rather than
+// errors so the fail-open send path completes quietly and the escape report is
+// the only signal.
+func TestTelemetryTransportGuard_BlocksNonAllowlistedHosts(t *testing.T) {
+	telemetryGuard.reset()
+	t.Cleanup(telemetryGuard.reset)
+
+	req, err := http.NewRequest(http.MethodPost, "https://atcr.dev/api/v1/telemetry", strings.NewReader(`{}`))
+	require.NoError(t, err)
+	resp, err := guardTelemetryHosts(http.DefaultClient, req)
+	require.NoError(t, err, "the guard intercepts rather than errors, so the fail-open send path completes quietly")
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.Equal(t, []string{"https://atcr.dev/api/v1/telemetry"}, telemetryGuard.snapshot(),
+		"a send to the live host must be recorded as an escape for TestMain to report")
+}
+
+// TestTelemetryTransportGuard_AllowsLoopbackPassthrough pins the other half of
+// the allowlist contract: sends to loopback httptest servers pass through to
+// real networking untouched and are never recorded as escapes, so legitimate
+// per-test telemetry clients keep working exactly as before the guard.
+func TestTelemetryTransportGuard_AllowsLoopbackPassthrough(t *testing.T) {
+	telemetryGuard.reset()
+	t.Cleanup(telemetryGuard.reset)
+
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := guardTelemetryHosts(srv.Client(), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "loopback test servers must pass through to real networking")
+	assert.True(t, hit, "the loopback server must receive the passed-through request")
+	assert.Empty(t, telemetryGuard.snapshot(), "loopback sends are legitimate and must not be recorded as escapes")
+}
+
 // captureGitHub starts a fake GitHub REST server that records the body of the
 // check-run POST it receives.
 func captureGitHub(t *testing.T) (url string, body func() map[string]any) {
