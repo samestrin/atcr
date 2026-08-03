@@ -80,8 +80,8 @@ const defaultCloudEndpoint = ""
 // refused here at flag-parse time (PreRunE) — this build ships no default
 // destination, so there is nothing to fall back on; a supplied endpoint's
 // well-formedness and the presence of ATCR_API_KEY are validated at run time
-// (resolveSyncCloud) (AC 04-01). The PreRunE is
-// chained prev-first (not assigned), matching addRangeFlags, so a prior hook is
+// (resolveSyncCloud) (AC 04-01). The PreRunE is chained prev-first (not
+// assigned), matching addRangeFlags, so a prior hook is
 // never silently overwritten, hooks fire in installation order
 // (earlier-installed first), and a future --sync-cloud precondition can slot in
 // without clobbering it. On review (and range) the prior hook is the
@@ -111,9 +111,10 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 			// destination IS supplied; resolveSyncCloud still enforces it.
 			if strings.TrimSpace(endpoint) == "" {
 				// Distinguish "never supplied" from "supplied empty": telling a user
-				// who just passed --cloud-endpoint "" to "pass --cloud-endpoint
-				// explicitly" is advice they already followed, and blames the default
-				// for a value they chose.
+				// who just passed --cloud-endpoint "" that the build has no default
+				// destination blames the default for a value they chose, and a bare
+				// "must not be empty" misdescribes a whitespace-only value — the
+				// supplied-empty branch names the trim and states availability.
 				if cmd.Flags().Changed("cloud-endpoint") {
 					return usageError(errors.New("--cloud-endpoint was supplied but is empty after trimming whitespace; pass a non-empty endpoint only if you operate your own compatible ingest (the scorecard ingest endpoint is not yet available in this build)"))
 				}
