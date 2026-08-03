@@ -134,9 +134,13 @@ func TestFinishCloudSync_WrappedAuthRejectedMapsToExitAuth(t *testing.T) {
 
 func TestFinishCloudSync_GenericFailureIsNonFatalWarning(t *testing.T) {
 	var buf bytes.Buffer
-	err := finishCloudSync(&buf, errors.New("cloud sync failed: server returned 500"))
+	// The input error deliberately lacks the "warning: " label and the words the
+	// assertion searches for, so the match can only come from finishCloudSync's
+	// own formatting — the "clearly-labeled warning" contract the doc comment names.
+	err := finishCloudSync(&buf, errors.New("server returned 500"))
 	assert.NoError(t, err, "a non-auth push failure must not change the exit code")
-	assert.Contains(t, buf.String(), "cloud sync failed")
+	assert.Equal(t, "warning: server returned 500\n", buf.String(),
+		"a non-fatal push failure must surface with the warning: label the contract depends on")
 }
 
 func TestFinishCloudSync_NilIsNoop(t *testing.T) {
