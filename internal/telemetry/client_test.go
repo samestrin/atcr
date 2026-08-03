@@ -658,10 +658,32 @@ func TestClientGo_RegistersBeforeWork(t *testing.T) {
 
 // TestClientGo_RecoversPanic pins the fail-open contract: detached work that
 // panics must never escape, matching the send path.
+//
+// The sharper property is that the WaitGroup stays BALANCED across a panic. If the
+// recover sat outside the deferred Done — or if Done were skipped on the panic
+// path — Wait would block forever, turning a swallowed panic into a hung process
+// exit. So this asserts Wait actually returns, and that a subsequent healthy unit
+// of work is still tracked, rather than only that the binary survived.
 func TestClientGo_RecoversPanic(t *testing.T) {
 	c := New("https://telemetry.test/ingest")
+
 	c.Go(context.Background(), func() { panic("boom") })
-	c.Wait() // must not crash the test binary
+
+	returned := make(chan struct{})
+	go func() { c.Wait(); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait blocked after a panicking unit of work: the WaitGroup was left unbalanced")
+	}
+
+	// The client must still be usable and still tracked afterwards.
+	var ran int32
+	c.Go(context.Background(), func() { atomic.StoreInt32(&ran, 1) })
+	c.Wait()
+	if atomic.LoadInt32(&ran) != 1 {
+		t.Fatal("a panic in earlier work must not stop later work from being tracked by Wait")
+	}
 }
 
 // TestClientGo_NilClientStillRuns keeps Go on the same nil-safe footing as Send.
