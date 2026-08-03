@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -116,16 +117,29 @@ func NewWithQualitySignal(usage, quality string) *Client {
 	return &Client{
 		endpoint:        usage,
 		qualityEndpoint: quality,
-		httpClient:      &http.Client{},
-		sem:             make(chan struct{}, maxInFlightSends),
-		qualitySem:      make(chan struct{}, maxInFlightSends),
-		requestTimeout:  defaultRequestTimeout,
+		httpClient: &http.Client{
+			// isHTTPS vets only the INITIAL endpoint; re-vet every redirect hop so a
+			// 307/308 (which replays the POST body via GetBody) can never downgrade
+			// the payload to plaintext http. Mirrors checkRegistryRedirect
+			// (internal/registry) and noRedirect (internal/scorecard).
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				if !isHTTPS(req.URL.String()) {
+					return fmt.Errorf("telemetry: refusing redirect to non-HTTPS %q", req.URL.String())
+				}
+				return nil
+			},
+		},
+		sem:            make(chan struct{}, maxInFlightSends),
+		qualitySem:     make(chan struct{}, maxInFlightSends),
+		requestTimeout: defaultRequestTimeout,
 	}
 }
 
 // isHTTPS reports whether endpoint is a well-formed https URL (case-insensitive
 // scheme). An empty, malformed, or plaintext-http endpoint is refused, so Send
-// no-ops rather than ever sending in the clear.
+// no-ops rather than ever sending in the clear. The client's CheckRedirect
+// re-runs this same check on every redirect hop, so a 307/308 cannot downgrade
+// the payload to plaintext after the initial URL passed.
 func isHTTPS(endpoint string) bool {
 	u, err := url.Parse(endpoint)
 	return err == nil && strings.EqualFold(u.Scheme, "https") && u.Host != ""
