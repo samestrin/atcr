@@ -47,6 +47,16 @@ var forceExit = os.Exit
 // sends to flush before exiting. Hardcoded like gracefulShutdownTimeout (no
 // flag — an internal safety bound, not operator surface); a package var only so
 // tests can shrink it.
+//
+// PAIRED WITH internal/telemetry's defaultRequestTimeout, which must stay at or
+// below this value. The two bound the same send from opposite ends: this one is
+// how long the process will wait, that one is how long the request believes it
+// may run. When the request budget was the larger of the two (3s against this
+// 2s), every send slower than 2s was guaranteed to be abandoned here after the
+// user had already paid the full wait — the extra budget could not produce a
+// delivery. Change either constant and revisit the other;
+// TestDrainTelemetry_NoSendOutlivesTheDrain and
+// TestDefaultRequestTimeout_FitsWithinCallerDrainBound both fail if they diverge.
 var telemetryDrainTimeout = 2 * time.Second
 
 // drainTelemetry waits for the process telemetry client's in-flight sends to

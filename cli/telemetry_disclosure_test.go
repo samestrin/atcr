@@ -1,15 +1,21 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/telemetry"
 )
 
 // --- Epic 35.12 TD: first-run telemetry disclosure ---------------------------
@@ -165,4 +171,49 @@ func TestTelemetryDisclosure_DoesNotBreakStrictRosterLoad(t *testing.T) {
 	assert.NotContains(t, errOut2, "failed to parse config.yaml",
 		"the disclosure key must be a declared ProjectConfig field, or it breaks every later run")
 	assert.NotContains(t, errOut2, "not found in type registry.ProjectConfig")
+}
+
+// TestDrainTelemetry_NoSendOutlivesTheDrain is the cross-package verification the
+// timeout-coherence fix calls for: with the transport stubbed to sleep LONGER than
+// the drain bound, a dispatched send must either land or never start — it must not
+// sit half-finished past the drain, which is what a per-request budget exceeding
+// telemetryDrainTimeout produced (a send slower than the drain was guaranteed to be
+// abandoned after the user had already paid the full drain wait).
+//
+// The assertion is on the invariant rather than the constants: drainTelemetry must
+// return within its own bound, and by the time it does, the client's own request
+// budget must already have elapsed too — so no goroutine is left believing it may
+// still succeed.
+func TestDrainTelemetry_NoSendOutlivesTheDrain(t *testing.T) {
+	var started, finished int32
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&started, 1)
+		// Sleep past the drain bound; the request context must cancel us first.
+		select {
+		case <-req.Context().Done():
+			atomic.AddInt32(&finished, 1)
+			return nil, req.Context().Err()
+		case <-time.After(10 * time.Second):
+			atomic.AddInt32(&finished, 1)
+			return nil, errors.New("request outlived both budgets")
+		}
+	})
+	t.Cleanup(restore)
+
+	client := telemetry.New("https://telemetry.test/ingest")
+	client.Send(context.Background(), telemetry.Event{Event: "drain_probe"})
+
+	start := time.Now()
+	drainTelemetry(client, telemetryDrainTimeout)
+	elapsed := time.Since(start)
+
+	require.Equal(t, int32(1), atomic.LoadInt32(&started), "precondition: the send reached the transport")
+	assert.LessOrEqual(t, elapsed, telemetryDrainTimeout+500*time.Millisecond,
+		"drainTelemetry must return within its own bound")
+
+	// The send's own budget must not outlive the drain: once the drain has given
+	// up, the request must already be cancelled rather than still running.
+	assert.Eventually(t, func() bool { return atomic.LoadInt32(&finished) == 1 },
+		time.Second, 10*time.Millisecond,
+		"the per-request budget must expire no later than the drain bound, or a send is abandoned mid-flight")
 }
