@@ -18,6 +18,10 @@ import (
 // it MUST be an https:// URL — telemetry.Client refuses plaintext http.
 const defaultTelemetryEndpoint = ""
 
+// defaultQualitySignalEndpoint is the compiled-in quality-signal ingestion URL.
+// RED stub — deliberately unset until the GREEN stage.
+const defaultQualitySignalEndpoint = ""
+
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
 // anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env
 // var permits it AND the persisted config does not disable it. It is total and
