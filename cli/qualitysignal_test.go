@@ -305,9 +305,12 @@ func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code i
 // PreRunE→RunE path (not just a direct RunE call): review and reconcile each host
 // it, and --preview + --sync-cloud with no ATCR_API_KEY still exits 0 rather than
 // the exit-3 a real sync-cloud precondition would raise (AC 03-01 EC2, AC 03-02).
-// It also proves the sync-cloud placeholder warning is suppressed on the preview
-// path — preview is a pure, side-effect-free render that pushes nothing (Phase 3
-// gate finding).
+// It also proves --preview suppresses the absent-destination REFUSAL, so the run
+// exits 0 instead of 2 — preview is a pure, side-effect-free render that pushes
+// nothing, so a destination it never consults must not fail it (Phase 3 gate
+// finding). There is no warning involved on either count: defaultCloudEndpoint is
+// "" so no placeholder endpoint exists to warn about, and the suppressed behavior
+// is a hard usageError, never a stderr warning.
 func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("review --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
@@ -324,7 +327,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 		require.Equal(t, 0, code, "reconcile --preview must short-circuit before review-dir resolution and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 	})
-	t.Run("review --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
+	t.Run("review --preview --sync-cloud with no key exits 0, refusal suppressed", func(t *testing.T) {
 		isolate(t)
 		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
@@ -333,7 +336,7 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 		assert.Contains(t, out, "persona_id_hash")
 		assert.NotContains(t, errOut, "no default destination", "the sync-cloud absent-destination refusal must be suppressed on the preview path")
 	})
-	t.Run("reconcile --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
+	t.Run("reconcile --preview --sync-cloud with no key exits 0, refusal suppressed", func(t *testing.T) {
 		isolate(t)
 		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
