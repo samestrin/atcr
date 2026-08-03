@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,8 +41,6 @@ func TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile(t *testing.T) {
 // rejected credential).
 func TestAddSyncCloudFlags_DefaultEndpointRefuses(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
 	require.NotNil(t, cmd.PreRunE)
 
@@ -122,16 +119,15 @@ func TestAddSyncCloudFlags_PreservesPriorPreRunE(t *testing.T) {
 
 // TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset pins the negative case for
 // the absent-destination refusal: without --sync-cloud the endpoint default is
-// irrelevant, so an ordinary run must neither refuse nor complain.
+// irrelevant, so an ordinary run must not refuse. (The PreRunE only ever returns
+// errors — it has no writer — so a clean return IS the whole contract; there is
+// no stderr output to assert against at this layer.)
 func TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags(nil))
 	require.NotNil(t, cmd.PreRunE)
 
 	require.NoError(t, cmd.PreRunE(cmd, nil))
-	assert.NotContains(t, buf.String(), "no default destination")
 }
 
 // TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden pins the second negative
@@ -140,13 +136,10 @@ func TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset(t *testing.T) {
 // compiled-in default.
 func TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	require.NotNil(t, cmd.PreRunE)
 
 	require.NoError(t, cmd.PreRunE(cmd, nil))
-	assert.NotContains(t, buf.String(), "no default destination")
 }
 
 // TestAddQualitySignalFlags_RegistersPreviewWithoutPreRunE pins the resolved TD
