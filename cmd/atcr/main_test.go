@@ -7,9 +7,42 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/cli"
+	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/samestrin/atcr/internal/telemetrytest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain installs the same telemetry hermeticity guard package cli uses.
+//
+// This package calls cli.Main — the full production lifecycle, including the
+// telemetry client built from the live compiled-in endpoints — from OUTSIDE
+// package cli, so cli's own TestMain does not cover it. Today the only test that
+// drives the tree asks for `version`, which reaches neither Send call site, so
+// nothing leaks; the guard exists so the next test added here cannot quietly
+// change that. Keeping it in a shared importable package rather than duplicated
+// means the two suites cannot drift.
+func TestMain(m *testing.M) {
+	os.Exit(telemetrytest.Run(m))
+}
+
+// TestTelemetryGuard_IsInstalledInThisPackage proves the TestMain above is
+// genuinely in force here rather than merely written: a send aimed at the live
+// production host must be intercepted and recorded as an escape. Without the
+// guard this exact send leaves the machine, which is the condition this package
+// sat in before — cli's TestMain could never have covered it, since a _test.go
+// symbol cannot cross a package boundary.
+func TestTelemetryGuard_IsInstalledInThisPackage(t *testing.T) {
+	telemetrytest.ResetEscapes()
+	t.Cleanup(telemetrytest.ResetEscapes)
+
+	client := telemetry.New("https://atcr.dev/api/v1/telemetry")
+	client.Send(context.Background(), telemetry.Event{Event: "guard_probe"})
+	client.Wait()
+
+	require.Equal(t, []string{"https://atcr.dev/api/v1/telemetry"}, telemetrytest.Escapes(),
+		"cmd/atcr's TestMain must install the transport guard; this send would otherwise have reached the live host")
+}
 
 // The bulk of what was cmd/atcr's test suite relocated to the cli package alongside
 // the command tree (Sprint 34.0 Task 03). These two tests cover only the thin

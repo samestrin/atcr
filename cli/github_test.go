@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/samestrin/atcr/internal/telemetrytest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,111 +30,15 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // real secondary-rate-limit delay; the pacing itself is covered explicitly in
 // TestPostInlineComments_FallbackPacesSequentialPosts.
 //
-// It also defaults ATCR_TELEMETRY=0 for the whole package. The usage ping is
-// default-ON (an unset ATCR_TELEMETRY means enabled), and defaultTelemetryEndpoint
-// now names a live production host — so without this, any test that drives a
-// review or reconcile to completion through the real command tree (execCmd and
-// friends, which stub neither the transport nor the env var) would POST a genuine
-// usage ping at atcr.dev from CI and from every developer's machine. This is a
-// baseline for the package, and deliberately an unconditional one: honouring an
-// ATCR_TELEMETRY already exported by a developer shell or CI job would re-open
-// exactly the hole this closes. Tests that need the ping enabled opt in per-test
-// via t.Setenv (auto-restored) or unsetTelemetryEnv, so overriding the ambient
-// value here costs them nothing.
-//
-// The env var alone is an environmental guard, so TestMain additionally installs
-// guardTelemetryHosts on the telemetry transport seam as the STRUCTURAL half:
-// any send aimed outside the loopback allowlist — from a future test that
-// constructs the production client, a targeted `go test -run`, or a straggler
-// goroutine that outlives a per-test seam — is intercepted and recorded, and
-// TestMain exits non-zero naming every escape instead of letting a real ping
-// leave silently. Per-test SetDoRequestForTest overrides sit above the guard
-// and their restore puts it back, so the guard only ever sees traffic no test
-// claimed.
-//
-// ATCR_QUALITY_SIGNAL gets the same unconditional pin as ATCR_TELEMETRY, and for
-// the same reason: the quality signal is opt-IN via that env var alone
-// (qualitySignalEnabledFromEnv) and defaultQualitySignalEndpoint is also a live
-// host, so an ambient ATCR_QUALITY_SIGNAL=1 turns every execCmd/NewRootCmd-driven
-// review or reconcile in this package into a consenting run against it.
-// ATCR_API_KEY is neutralized too: isolate() does not clear it, and the
-// --sync-cloud precondition tests depend on its absence.
+// Everything telemetry-hermeticity related — pinning ATCR_TELEMETRY,
+// ATCR_QUALITY_SIGNAL and ATCR_API_KEY to their off state, installing the
+// transport guard, and failing the run with an escape report — now lives in
+// internal/telemetrytest. It moved out of this file because symbols declared in a
+// _test.go file cannot be imported by another package, which left cmd/atcr (a
+// different package that also calls cli.Main) with no guard at all.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
-	_ = os.Setenv("ATCR_TELEMETRY", "0")
-	_ = os.Setenv("ATCR_QUALITY_SIGNAL", "0")
-	_ = os.Setenv("ATCR_API_KEY", "")
-	telemetry.SetDoRequestForTest(guardTelemetryHosts) // installed for the whole run; never restored
-	code := m.Run()
-	if escapes := telemetryGuard.snapshot(); len(escapes) > 0 {
-		fmt.Fprintf(os.Stderr, "\ntelemetry transport guard: %d send(s) escaped the test-host allowlist — a test reached a non-test telemetry host:\n", len(escapes))
-		for _, u := range escapes {
-			fmt.Fprintf(os.Stderr, "  - %s\n", u)
-		}
-		os.Exit(1)
-	}
-	os.Exit(code)
-}
-
-// telemetryEscapeLog records the URLs the transport guard intercepts. Sends are
-// fire-and-forget goroutines, so all access is mutex-guarded.
-type telemetryEscapeLog struct {
-	mu      sync.Mutex
-	escapes []string
-}
-
-func (l *telemetryEscapeLog) record(url string) {
-	l.mu.Lock()
-	l.escapes = append(l.escapes, url)
-	l.mu.Unlock()
-}
-
-func (l *telemetryEscapeLog) snapshot() []string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return append([]string(nil), l.escapes...)
-}
-
-func (l *telemetryEscapeLog) reset() {
-	l.mu.Lock()
-	l.escapes = nil
-	l.mu.Unlock()
-}
-
-// telemetryGuard is the process-wide escape log for guardTelemetryHosts.
-var telemetryGuard telemetryEscapeLog
-
-// isAllowlistedTestHost classifies telemetry destinations the structural guard
-// lets through: loopback (httptest servers) and the .test TLD, which RFC 2606
-// reserves for documentation and testing so it can never resolve to a real
-// host — the repo's blackhole endpoints (telemetry.test) are therefore
-// structurally incapable of reaching a live destination, unlike a typo'd or
-// future production URL, which the guard exists to catch.
-func isAllowlistedTestHost(host string) bool {
-	switch host {
-	case "127.0.0.1", "::1", "localhost":
-		return true
-	}
-	return strings.HasSuffix(host, ".test")
-}
-
-// guardTelemetryHosts is the structural hermeticity guard installed by TestMain
-// on the telemetry transport seam: allowlisted test hosts (see
-// isAllowlistedTestHost) pass through to real networking untouched; anything
-// else — above all the live atcr.dev endpoints the compiled-in production
-// client carries — is intercepted, recorded in telemetryGuard, and answered
-// with a synthetic 202 so the fail-open send path completes quietly and
-// TestMain's escape report is the single loud signal.
-func guardTelemetryHosts(client *http.Client, req *http.Request) (*http.Response, error) {
-	if isAllowlistedTestHost(req.URL.Hostname()) {
-		return client.Do(req)
-	}
-	telemetryGuard.record(req.URL.String())
-	return &http.Response{
-		StatusCode: http.StatusAccepted,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader("")),
-	}, nil
+	os.Exit(telemetrytest.Run(m))
 }
 
 // TestIsAllowlistedTestHost pins the guard's allowlist classification without
@@ -153,28 +56,28 @@ func TestIsAllowlistedTestHost(t *testing.T) {
 		"telemetry.test.evil": false, // suffix match must be a full TLD, not a substring
 		"":                    false,
 	} {
-		assert.Equalf(t, want, isAllowlistedTestHost(host), "host %q", host)
+		assert.Equalf(t, want, telemetrytest.IsAllowlistedTestHost(host), "host %q", host)
 	}
 }
 
 // TestTelemetryTransportGuard_BlocksNonAllowlistedHosts is the assertion half of
 // the structural hermeticity guard: package cli's TestMain installs
-// guardTelemetryHosts on the telemetry transport seam, so any future test, a
+// telemetrytest.GuardHosts on the telemetry transport seam, so any future test, a
 // targeted `go test -run`, or any construction of the production client that
 // emits toward a non-allowlisted host is intercepted and recorded — TestMain
 // then exits non-zero naming the escape. The guard intercepts (202) rather than
 // errors so the fail-open send path completes quietly and the escape report is
 // the only signal.
 func TestTelemetryTransportGuard_BlocksNonAllowlistedHosts(t *testing.T) {
-	telemetryGuard.reset()
-	t.Cleanup(telemetryGuard.reset)
+	telemetrytest.ResetEscapes()
+	t.Cleanup(telemetrytest.ResetEscapes)
 
 	req, err := http.NewRequest(http.MethodPost, "https://atcr.dev/api/v1/telemetry", strings.NewReader(`{}`))
 	require.NoError(t, err)
-	resp, err := guardTelemetryHosts(http.DefaultClient, req)
+	resp, err := telemetrytest.GuardHosts(http.DefaultClient, req)
 	require.NoError(t, err, "the guard intercepts rather than errors, so the fail-open send path completes quietly")
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
-	assert.Equal(t, []string{"https://atcr.dev/api/v1/telemetry"}, telemetryGuard.snapshot(),
+	assert.Equal(t, []string{"https://atcr.dev/api/v1/telemetry"}, telemetrytest.Escapes(),
 		"a send to the live host must be recorded as an escape for TestMain to report")
 }
 
@@ -183,8 +86,8 @@ func TestTelemetryTransportGuard_BlocksNonAllowlistedHosts(t *testing.T) {
 // real networking untouched and are never recorded as escapes, so legitimate
 // per-test telemetry clients keep working exactly as before the guard.
 func TestTelemetryTransportGuard_AllowsLoopbackPassthrough(t *testing.T) {
-	telemetryGuard.reset()
-	t.Cleanup(telemetryGuard.reset)
+	telemetrytest.ResetEscapes()
+	t.Cleanup(telemetrytest.ResetEscapes)
 
 	hit := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -195,11 +98,11 @@ func TestTelemetryTransportGuard_AllowsLoopbackPassthrough(t *testing.T) {
 
 	req, err := http.NewRequest(http.MethodPost, srv.URL, nil)
 	require.NoError(t, err)
-	resp, err := guardTelemetryHosts(srv.Client(), req)
+	resp, err := telemetrytest.GuardHosts(srv.Client(), req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "loopback test servers must pass through to real networking")
 	assert.True(t, hit, "the loopback server must receive the passed-through request")
-	assert.Empty(t, telemetryGuard.snapshot(), "loopback sends are legitimate and must not be recorded as escapes")
+	assert.Empty(t, telemetrytest.Escapes(), "loopback sends are legitimate and must not be recorded as escapes")
 }
 
 // captureGitHub starts a fake GitHub REST server that records the body of the
