@@ -271,14 +271,33 @@ func splitPreview(out string) (jsonPart, marker string) {
 // then RunE — capturing stdout and returning the resolved exit code. Unlike
 // runPreview (which calls RunE directly), this exercises the real invocation path,
 // so a PreRunE-ordering regression is caught.
+//
+// It deliberately does NOT use NewRootCmd. That constructor builds its telemetry
+// client from the live compiled-in destinations, installs no transport seam, and
+// has no drain — so the only thing standing between the six tests that drive this
+// helper and a real POST at atcr.dev was the --preview short-circuit those very
+// tests exist to verify. A regression that made preview send would have been
+// executed by the test meant to catch it, landing after the test with nothing
+// observing it. NewRootCmdWithClient plus a `.test` endpoint makes that
+// structurally impossible instead of incidentally unreached.
+//
+// The counting seam is not redundant with the hermetic endpoint: the endpoint
+// bounds the blast radius, the counter turns "preview sent nothing" into an
+// asserted property of every caller rather than an unobserved hope. Sends are
+// fire-and-forget, so the client is drained before the count is read.
 func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	root := NewRootCmd()
+	hits := countingDoRequest(t)
+	client := telemetry.New("https://telemetry.test/ingest")
+	root := NewRootCmdWithClient(client)
 	var out, errBuf bytes.Buffer
 	root.SetArgs(args)
 	root.SetOut(&out)
 	root.SetErr(&errBuf)
 	err := root.ExecuteContext(context.Background())
+	client.Wait()
+	assert.Equal(t, int32(0), atomic.LoadInt32(hits),
+		"the --preview path must transmit nothing: preview is a pure local render")
 	return out.String(), errBuf.String(), exitCode(err)
 }
 
