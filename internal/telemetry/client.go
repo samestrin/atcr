@@ -266,6 +266,44 @@ func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, m
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 }
 
+// Go runs fn on a detached goroutine that is registered with the client's
+// WaitGroup BEFORE it starts, so a concurrent Wait cannot return while fn is
+// still running.
+//
+// It exists because registering at DISPATCH is too late for any caller that does
+// work before deciding to send. The quality-signal path is exactly that shape: it
+// spawns a goroutine, performs an O(n) debt-store read and aggregation, and only
+// then calls SendQualitySignal — so its wg.Add landed after the command had
+// returned and after main's bounded drain had already observed an empty
+// WaitGroup. In production that meant the drain systematically failed to cover
+// the quality signal, and the send was stranded at process exit far more often
+// than "best effort" implies. It is also a latent panic: sync.WaitGroup forbids
+// an Add that races a Wait when the counter is at zero ("WaitGroup misuse: Add
+// called concurrently with Wait").
+//
+// fn's panics are recovered here, matching the send path's fail-open contract, so
+// a caller's detached work can never crash the process. Nil-safe: a nil Client
+// runs fn on a plain goroutine with nothing to wait on.
+//
+// Callers must still obey Wait's precondition — no new Go/Send may start once a
+// drain has begun.
+func (c *Client) Go(ctx context.Context, fn func()) {
+	if c == nil {
+		go fn()
+		return
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.FromContext(ctx).Debug("telemetry: recovered from panic in detached work", "value", r)
+			}
+		}()
+		fn()
+	}()
+}
+
 // Wait blocks until all in-flight sends complete. Intended for deterministic
 // tests and graceful-shutdown drain; production callers fire-and-forget and
 // never call it. Safe on a nil Client.

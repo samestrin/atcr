@@ -128,7 +128,7 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 		cancel()
 	}, stderr)
 
-	telemetryClient := telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
+	telemetryClient := newProcessTelemetryClient()
 	root := NewRootCmdWithClient(telemetryClient)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -267,7 +267,23 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // NewRootCmdWithClient is the seam to prefer whenever the caller cares about
 // either property.
 func NewRootCmd() *cobra.Command {
-	return NewRootCmdWithClient(telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint))
+	return NewRootCmdWithClient(newProcessTelemetryClient())
+}
+
+// newProcessTelemetryClient builds the process telemetry client from the two
+// compiled-in destinations. It is the SINGLE construction site, shared by runMain
+// and NewRootCmd.
+//
+// The two used to construct the client independently, with the same expression
+// written twice — and only NewRootCmd was covered by a test. runMain is the entry
+// point every real atcr invocation takes via Main/MainWithHooks, so a revert there
+// to a single-destination client (telemetry.New(defaultTelemetryEndpoint)) would
+// route the quality-signal ARRAY at the usage-ping handler, earning a 400 that the
+// fail-open send path drops silently — invisible in production and invisible to
+// the test that exists to catch exactly that. Collapsing the duplication means
+// there is now one place to get it wrong, and it is covered.
+func newProcessTelemetryClient() *telemetry.Client {
+	return telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
 }
 
 // NewRootCmdWithClient is NewRootCmd with the single opt-in process telemetry

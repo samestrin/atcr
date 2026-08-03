@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -146,12 +147,66 @@ func TestNewRootCmd_HonorsOverriddenEndpoints(t *testing.T) {
 	}
 }
 
+// TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints covers the OTHER
+// entry point.
+//
+// cli/main.go has two paths that stand up the command tree: NewRootCmd (the
+// embedder seam, covered below) and runMain (what every real atcr invocation
+// reaches via Main/MainWithHooks). Only the first was ever tested, so a revert of
+// runMain's client to a single destination would route the quality-signal array at
+// the usage-ping handler for a 400 the fail-open path drops — the exact regression
+// the sibling test names, undetected on the path that actually ships.
+//
+// Both now build through newProcessTelemetryClient, so this is belt-and-braces
+// with that collapse: the structural fix removes the second place to get it wrong,
+// and this test proves the shipping path is the one that got fixed. runMain owns
+// its own drainTelemetry, so no test-side wait is needed.
+func TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	t.Setenv("ATCR_TELEMETRY", "1")
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	_, hits := recordingTransport(t)
+
+	// runMain takes its args from os.Args (it calls ExecuteContext without SetArgs).
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"atcr", "review", "--base", "HEAD^", "--head", "HEAD"}
+
+	_ = runMain(context.Background(), io.Discard, io.Discard)
+	waitQualitySignalInFlight() // the detached build+send goroutine may register after runMain's drain
+
+	var sawPing, sawQuality int
+	for _, h := range hits() {
+		if strings.HasPrefix(strings.TrimSpace(h.Body), "[") {
+			if h.URL == defaultQualitySignalEndpoint {
+				sawQuality++
+			}
+			assert.NotEqual(t, defaultTelemetryEndpoint, h.URL,
+				"the quality signal must never POST to the usage-ping handler on the runMain path")
+			continue
+		}
+		if h.URL == defaultTelemetryEndpoint {
+			sawPing++
+		}
+		assert.NotEqual(t, defaultQualitySignalEndpoint, h.URL,
+			"the usage ping must never POST to the quality-signal handler on the runMain path")
+	}
+	assert.Equal(t, 1, sawPing, "runMain must send exactly one usage ping to the usage-ping endpoint")
+	assert.Equal(t, 1, sawQuality, "runMain must send exactly one quality signal to the quality-signal endpoint")
+}
+
 // TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints is AC1b at the
 // production wiring, not just at the Client: it drives the REAL command tree built
 // by NewRootCmd — which constructs the process telemetry client itself — and proves
-// the usage ping and the quality signal leave for different URLs. This is the test
-// that catches cli/main.go's client construction being left single-destination;
-// because the send path is fail-open, that regression is otherwise silent.
+// the usage ping and the quality signal leave for different URLs. Its sibling above
+// covers the runMain entry point; this one covers the embedder seam.
 func TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")

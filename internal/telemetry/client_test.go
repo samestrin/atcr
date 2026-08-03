@@ -635,3 +635,43 @@ func TestDefaultRequestTimeout_FitsWithinCallerDrainBound(t *testing.T) {
 			defaultRequestTimeout, callerDrainBound)
 	}
 }
+
+// TestClientGo_RegistersBeforeWork is the regression guard for the drain gap that
+// made the quality signal effectively undeliverable: work spawned via Client.Go
+// must be covered by Wait even when it does a long stretch of work BEFORE it ever
+// dispatches a send. Registering at dispatch (a bare `go` calling Send at the end)
+// let Wait return while the work was still running.
+func TestClientGo_RegistersBeforeWork(t *testing.T) {
+	c := New("https://telemetry.test/ingest")
+
+	var done int32
+	c.Go(context.Background(), func() {
+		time.Sleep(50 * time.Millisecond) // stand-in for the O(n) store read
+		atomic.StoreInt32(&done, 1)
+	})
+
+	c.Wait()
+	if atomic.LoadInt32(&done) != 1 {
+		t.Fatal("Wait must cover work registered at spawn, not only sends registered at dispatch")
+	}
+}
+
+// TestClientGo_RecoversPanic pins the fail-open contract: detached work that
+// panics must never escape, matching the send path.
+func TestClientGo_RecoversPanic(t *testing.T) {
+	c := New("https://telemetry.test/ingest")
+	c.Go(context.Background(), func() { panic("boom") })
+	c.Wait() // must not crash the test binary
+}
+
+// TestClientGo_NilClientStillRuns keeps Go on the same nil-safe footing as Send.
+func TestClientGo_NilClientStillRuns(t *testing.T) {
+	var c *Client
+	done := make(chan struct{})
+	c.Go(context.Background(), func() { close(done) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a nil client must still run detached work")
+	}
+}
