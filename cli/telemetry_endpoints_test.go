@@ -17,27 +17,25 @@ import (
 
 // --- Epic 35.12: compiled-in endpoint activation -----------------------------
 
-// TestDefaultTelemetryEndpoints_DistinctAndHTTPS covers AC1: both compiled-in
-// telemetry constants name their real atcr.dev host, both are https:// (the
-// telemetry client refuses plaintext http, so a non-https value would silently
-// no-op every send), and — the load-bearing part — they are DISTINCT. The backend
-// serves the two payloads as separate handlers with separate closed key
-// allowlists; collapsing them back onto one URL is the regression that earns a 400
-// the fail-open path drops silently.
+// TestDefaultTelemetryEndpoints_DistinctAndHTTPS is a deliberate CHANGE-DETECTOR
+// on the two compiled-in destinations, and nothing more.
+//
+// That is the whole intent, so the test says so rather than dressing it up: these
+// are the addresses this binary transmits its users' telemetry to, and repointing
+// either one should require editing a test that spells out the old value. The
+// https:// and distinctness properties both matter — the client refuses plaintext
+// http and would silently no-op, and collapsing the two onto one URL routes the
+// quality-signal array at the usage-ping handler for a 400 the fail-open path
+// drops — but asserting them separately here would add no independent guard,
+// because the two equalities below already fix every property the strings have.
+// They are covered where they can actually fail: against values this test does not
+// choose, in TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints, which
+// compares the URLs sends actually left for.
 func TestDefaultTelemetryEndpoints_DistinctAndHTTPS(t *testing.T) {
-	assert.Equal(t, "https://atcr.dev/api/v1/telemetry", defaultTelemetryEndpoint)
-	assert.Equal(t, "https://atcr.dev/api/v1/quality-signal", defaultQualitySignalEndpoint)
-
-	for name, ep := range map[string]string{
-		"defaultTelemetryEndpoint":     defaultTelemetryEndpoint,
-		"defaultQualitySignalEndpoint": defaultQualitySignalEndpoint,
-	} {
-		assert.Truef(t, strings.HasPrefix(ep, "https://"),
-			"%s must be https:// — the telemetry client refuses plaintext http and would no-op", name)
-	}
-
-	assert.NotEqual(t, defaultTelemetryEndpoint, defaultQualitySignalEndpoint,
-		"the two surfaces must not share a destination")
+	assert.Equal(t, "https://atcr.dev/api/v1/telemetry", defaultTelemetryEndpoint,
+		"repointing the usage-ping destination is a deliberate act; update this literal to confirm it")
+	assert.Equal(t, "https://atcr.dev/api/v1/quality-signal", defaultQualitySignalEndpoint,
+		"repointing the quality-signal destination is a deliberate act; update this literal to confirm it")
 }
 
 // withTelemetryEndpoints redirects both compiled-in destinations for the duration
@@ -56,6 +54,40 @@ func withTelemetryEndpoints(t *testing.T, usage, quality string) {
 	t.Cleanup(func() {
 		defaultTelemetryEndpoint, defaultQualitySignalEndpoint = prevUsage, prevQuality
 	})
+}
+
+// telemetrySend is one intercepted outbound telemetry request: the URL it was
+// aimed at and the body it carried. Body shape discriminates the two surfaces at
+// the wire — the quality signal is a JSON array, the usage ping a JSON object.
+type telemetrySend struct{ URL, Body string }
+
+// recordingTransport installs a transport seam recording every outbound telemetry
+// request and returns a snapshot accessor. Sends are fire-and-forget goroutines,
+// so the slice is mutex-guarded and the accessor returns a copy.
+//
+// The seam is process-global (telemetry.doRequest is a package-level
+// atomic.Value), so the recorded set may include stragglers from earlier tests.
+// Callers must therefore assert SET MEMBERSHIP — "the send I care about went
+// where I expect" — never a raw total, which foreign traffic can break.
+func recordingTransport(t *testing.T) (func(), func() []telemetrySend) {
+	t.Helper()
+	var (
+		mu    sync.Mutex
+		sends []telemetrySend
+	)
+	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		sends = append(sends, telemetrySend{URL: req.URL.String(), Body: string(b)})
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	t.Cleanup(restore)
+	return restore, func() []telemetrySend {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]telemetrySend(nil), sends...)
+	}
 }
 
 // TestNewRootCmd_HonorsOverriddenEndpoints pins the embedder seam: NewRootCmd is
@@ -130,58 +162,58 @@ func TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 	writeBackendContractConfig(t, srv.URL)
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 
-	var (
-		mu   sync.Mutex
-		hits []struct{ URL, Body string }
-	)
-	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
-		b, _ := io.ReadAll(req.Body)
-		mu.Lock()
-		hits = append(hits, struct{ URL, Body string }{req.URL.String(), string(b)})
-		mu.Unlock()
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
-	})
-	t.Cleanup(restore)
+	// Retarget both destinations at unroutable .test hosts. The routing property
+	// under test is "the two surfaces go to DIFFERENT places", which is asserted
+	// against the variables — so it holds whatever their value — while removing any
+	// possibility that a send from this test reaches the production host.
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
 
-	root := NewRootCmd()
+	recorder, hits := recordingTransport(t)
+	_ = recorder
+
+	// Own the client rather than letting NewRootCmd build its own. Holding the
+	// handle is what makes the drain DETERMINISTIC: the previous shape had no
+	// handle, so it substituted require.Eventually plus a magic 100ms Sleep, and on
+	// any failure path — Eventually timing out on a loaded runner, or a require
+	// firing before the Sleep — t.Cleanup would reinstall the real transport while a
+	// dispatched goroutine had not yet reached currentDoRequest, which then POSTs at
+	// production. Wait() closes that window instead of narrowing it.
+	client := telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
+	root := NewRootCmdWithClient(client)
 	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	_ = root.ExecuteContext(context.Background())
 	waitQualitySignalInFlight() // the build+send goroutine registers on the client only at dispatch
+	client.Wait()               // deterministic: every dispatched send has now passed the seam
 
-	// The sends are fire-and-forget goroutines and this path has no drain hook
-	// (main() owns that), so wait for both to land rather than sampling once.
-	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(hits) >= 2
-	}, 5*time.Second, 10*time.Millisecond, "expected both a usage ping and a quality signal")
+	got := hits()
 
-	// Settle before the cleanup restores the real transport: a straggler send
-	// arriving after the seam is uninstalled would POST at the live host from CI.
-	// Both expected sends have already passed the seam by the time Eventually
-	// returns, so this only guards an unexpected third.
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	got := append([]struct{ URL, Body string }(nil), hits...)
-	mu.Unlock()
-	require.Len(t, got, 2, "exactly two sends expected; an extra one would escape the transport seam")
-
-	var sawPing, sawQuality bool
+	// Assert SET MEMBERSHIP, not a raw count. The transport seam is process-global
+	// (telemetry.doRequest is a package-level atomic.Value), so a fire-and-forget
+	// goroutine still alive from an earlier test resolves currentDoRequest at
+	// execution time and lands in this slice. A require.Len(got, 2) therefore fails
+	// on foreign traffic for reasons that have nothing to do with endpoint routing.
+	// What this test actually claims is that each surface went to its own
+	// destination — so count the two shapes at their two URLs and ignore the rest.
+	var sawPing, sawQuality int
 	for _, h := range got {
 		// Body shape tells the two surfaces apart at the wire: the quality signal
 		// is a JSON array, the usage ping a JSON object.
 		if strings.HasPrefix(strings.TrimSpace(h.Body), "[") {
-			sawQuality = true
-			assert.Equal(t, defaultQualitySignalEndpoint, h.URL,
-				"the quality signal must POST to the quality-signal endpoint, not the usage-ping handler")
+			if h.URL == defaultQualitySignalEndpoint {
+				sawQuality++
+			}
+			assert.NotEqual(t, defaultTelemetryEndpoint, h.URL,
+				"the quality signal must never POST to the usage-ping handler")
 			continue
 		}
-		sawPing = true
-		assert.Equal(t, defaultTelemetryEndpoint, h.URL, "the usage ping must POST to the usage-ping endpoint")
+		if h.URL == defaultTelemetryEndpoint {
+			sawPing++
+		}
+		assert.NotEqual(t, defaultQualitySignalEndpoint, h.URL,
+			"the usage ping must never POST to the quality-signal handler")
 	}
-	assert.True(t, sawPing, "expected a usage ping")
-	assert.True(t, sawQuality, "expected a quality signal")
+	assert.Equal(t, 1, sawPing, "exactly one usage ping must reach the usage-ping endpoint")
+	assert.Equal(t, 1, sawQuality, "exactly one quality signal must reach the quality-signal endpoint")
 }
