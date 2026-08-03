@@ -147,6 +147,9 @@ func TestReviewCmd_AXIRenderFaultExitsOne(t *testing.T) {
 	root.SetOut(failWriter{}) // the only stdout write under --axi is the summary payload
 	root.SetErr(io.Discard)
 	err := root.ExecuteContext(context.Background())
+	require.Error(t, err, "the render fault must surface as an error, not a silent nil")
+	require.Contains(t, err.Error(), "axi output rendering failed",
+		"the error must be the render fault itself — a run that broke earlier (mock, git range, config) must fail this test, not pass it")
 	require.Equal(t, exitFailure, exitCode(err),
 		"a broken-stdout AXI render fault is a generic failure (exit 1), not usage/auth")
 }
