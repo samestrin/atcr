@@ -171,6 +171,9 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // --fail-on threshold violations), 2 usage or configuration errors, 3 a
 // --sync-cloud authentication failure (missing/empty key or a remote 401/403),
 // distinct from exitUsage so scripts/CI can detect an auth failure specifically.
+// Ordering caveat: the --sync-cloud destination is validated in PreRunE before
+// the credential, so a run that omits --cloud-endpoint yields 2, not 3, even
+// when ATCR_API_KEY is also absent.
 //
 // --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 contract
 // UNCHANGED — it governs stdout payload shape only, never the exit code (there is
