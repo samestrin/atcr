@@ -44,10 +44,14 @@ func TestResolveSyncCloud_DisabledWhenFlagOmitted(t *testing.T) {
 	assert.False(t, plan.enabled)
 }
 
+// The explicit --cloud-endpoint in both API-key tests is load-bearing (Epic
+// 35.12): defaultCloudEndpoint is now empty, and resolveSyncCloud validates the
+// endpoint BEFORE reading the key, so without an endpoint these would exit 2 on
+// the destination and never reach the auth check they exist to cover.
 func TestResolveSyncCloud_MissingAPIKey_AuthError(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "")
 	cmd := newReconcileCmd()
-	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	_, err := resolveSyncCloud(cmd)
 	require.Error(t, err)
 	assert.Equal(t, exitAuth, exitCode(err))
@@ -56,10 +60,23 @@ func TestResolveSyncCloud_MissingAPIKey_AuthError(t *testing.T) {
 func TestResolveSyncCloud_WhitespaceAPIKey_AuthError(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "   ")
 	cmd := newReviewCmd()
-	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	_, err := resolveSyncCloud(cmd)
 	require.Error(t, err)
 	assert.Equal(t, exitAuth, exitCode(err))
+}
+
+// TestResolveSyncCloud_EmptyEndpoint_UsageError pins the defense-in-depth layer
+// behind the PreRunE refusal: a caller that reaches resolveSyncCloud with no
+// destination (bypassing the flag helper) still fails closed as a usage error
+// rather than attempting a push at an empty URL.
+func TestResolveSyncCloud_EmptyEndpoint_UsageError(t *testing.T) {
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	_, err := resolveSyncCloud(cmd)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
 }
 
 func TestResolveSyncCloud_InvalidEndpoint_UsageError(t *testing.T) {

@@ -49,19 +49,30 @@ func addBaselineFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("all", false, "review every non-ignored, git-tracked file as a full-repository baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit)")
 }
 
-// defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is a
-// placeholder URL only: the real production ingest contract is owned by the
-// atcr.dev backend and is not operational until ATCR_API_KEY issuance is live.
-// Tests point --cloud-endpoint at an httptest server instead (loopback http is
-// permitted for that; see scorecard.ValidateCloudEndpoint). When a user invokes
-// --sync-cloud without overriding the default, a warning is emitted so the
-// placeholder default is visible rather than silently POSTing to an inactive URL.
+// defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is
+// deliberately EMPTY: this build has no default destination at all.
 //
-// Migration path: the URL is deliberately a compiled-in constant — if the
-// backend endpoint ever moves, update this constant and cut a release; already
-// deployed binaries can be redirected to the new destination without a rebuild
-// via the --cloud-endpoint flag.
-const defaultCloudEndpoint = "https://atcr.dev/dashboard"
+// The scorecard ingest contract is owned by atcr-enterprise, NOT by the atcr.dev
+// backend. --sync-cloud authenticates with Authorization: Bearer <ATCR_API_KEY>,
+// and there is no API-key issuance flow for a community OSS user — no signup, no
+// billing account. The population that holds keys is the paid product, so the
+// endpoint answers to that repository on its own schedule.
+//
+// Empty is the honest value, but it cannot be left to fall through: an empty
+// endpoint reaching scorecard.ValidateCloudEndpoint fails with "--cloud-endpoint
+// must be a valid https:// URL", which blames the user for a flag they never set.
+// So addSyncCloudFlags' PreRunE refuses up front and names the real cause. The
+// previous value (a live atcr.dev HTML page) was worse still: with ATCR_API_KEY
+// exported, a --sync-cloud run POSTed a scorecard at a web page.
+//
+// Tests point --cloud-endpoint at an httptest server instead (loopback http is
+// permitted for that; see scorecard.ValidateCloudEndpoint) — an explicit override
+// bypasses the refusal entirely.
+//
+// Migration path unchanged: the URL is deliberately a compiled-in constant — when
+// the enterprise endpoint lands, set this constant and cut a release; already
+// deployed binaries can still be redirected via --cloud-endpoint without a rebuild.
+const defaultCloudEndpoint = ""
 
 // addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
 // override (Story 4) on cmd. --cloud-endpoint's well-formedness and the presence
@@ -82,13 +93,19 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 			}
 		}
 		// --preview is a pure, side-effect-free local render that pushes nothing, so
-		// the --sync-cloud placeholder warning is misleading noise on that path
-		// (the preview short-circuit in RunE bypasses sync entirely). Suppress it
-		// when --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		// the --sync-cloud destination is irrelevant on that path (the preview
+		// short-circuit in RunE bypasses sync entirely). Suppress the refusal when
+		// --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
 		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
-			if strings.TrimSpace(endpoint) == defaultCloudEndpoint {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: --cloud-endpoint default %q is a placeholder; --sync-cloud will not work until a real endpoint and ATCR_API_KEY are configured\n", defaultCloudEndpoint)
+			// Refuse rather than warn-and-proceed: this build ships no default
+			// destination, so there is nothing to push to. Reported as a usageError
+			// (exit 2), matching validateRangeFlags — an absent destination is a
+			// configuration fault, not the exit-3 auth rejection that a bad
+			// ATCR_API_KEY earns. ATCR_API_KEY remains separately required once a
+			// destination IS supplied; resolveSyncCloud still enforces it.
+			if strings.TrimSpace(endpoint) == "" {
+				return usageError(errors.New("--sync-cloud has no default destination in this build; pass --cloud-endpoint explicitly"))
 			}
 		}
 		return nil

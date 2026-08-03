@@ -85,11 +85,16 @@ func TestAXIExitParity_UsageErrorExitsTwo(t *testing.T) {
 // TestAXIExitParity_AuthErrorExitsThree: `--sync-cloud` with an unset ATCR_API_KEY
 // exits 3 (auth) under both modes (Error Scenario 2). The auth precondition is
 // resolved fail-fast before any review work or output formatting.
+//
+// The explicit --cloud-endpoint is load-bearing (Epic 35.12): this build has no
+// default destination, so omitting it would make both modes exit 2 on the absent
+// destination — parity would still hold, but on the wrong error, silently retiring
+// the auth-parity guarantee this test exists to protect.
 func TestAXIExitParity_AuthErrorExitsThree(t *testing.T) {
 	run := func(axi bool) int {
 		isolate(t)
 		t.Setenv("ATCR_API_KEY", "")
-		args := []string{"review", "--sync-cloud"}
+		args := []string{"review", "--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}
 		if axi {
 			args = append(args, "--axi")
 		}
