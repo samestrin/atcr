@@ -26,9 +26,26 @@ import (
 // either constant to be deactivated independently without disturbing the other.
 //
 // Transmission is still governed entirely by the consent gates, which these
-// constants do not touch: the usage ping by telemetryGate (default-on, opt-out via
+// values do not touch: the usage ping by telemetryGate (default-on, opt-out via
 // ATCR_TELEMETRY / config) and the quality signal by its own opt-IN gate.
-const (
+//
+// They are package VARS, not consts, and that is deliberate: NewRootCmd — the only
+// advertised zero-argument constructor, and the seam the private atcr-enterprise
+// module builds the same tree from — reads them at construction. As consts an
+// embedder, a fork, or an air-gapped deployment had no way to redirect telemetry
+// at all short of total disablement, and `-ldflags -X` could not touch them either
+// (it cannot set a const). As vars, a build can retarget either destination with
+//
+//	go build -ldflags "-X github.com/samestrin/atcr/cli.defaultTelemetryEndpoint=https://collector.internal/usage"
+//
+// and an in-process embedder can assign them before constructing the tree. Setting
+// one to "" deactivates only its own surface (dispatch no-ops on a non-HTTPS
+// endpoint), which is what allows the two to be turned off independently.
+//
+// Production code must never MUTATE these after startup: the client is constructed
+// once per process and reads them at that moment, so a later write is both a data
+// race and a no-op for the already-built client.
+var (
 	defaultTelemetryEndpoint     = "https://atcr.dev/api/v1/telemetry"
 	defaultQualitySignalEndpoint = "https://atcr.dev/api/v1/quality-signal"
 )

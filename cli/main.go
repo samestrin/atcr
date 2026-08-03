@@ -241,6 +241,21 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 
 // NewRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
+//
+// EMBEDDERS, READ THIS. NewRootCmd builds its own telemetry client from the
+// package-level defaultTelemetryEndpoint / defaultQualitySignalEndpoint, and it
+// has NO drain counterpart — runMain owns drainTelemetry, so on this path
+// in-flight sends are stranded when the process exits. Two consequences:
+//
+//   - The destinations are overridable (they are vars, not consts — assign them
+//     before calling, or set them with `-ldflags -X`; see cli/telemetry.go). An
+//     embedder that does neither transmits to the upstream atcr.dev host.
+//   - Nothing flushes. A caller that wants delivery must either use
+//     NewRootCmdWithClient with its own client and call Client.Wait itself, or
+//     call Main/MainWithHooks, which run the full lifecycle including the drain.
+//
+// NewRootCmdWithClient is the seam to prefer whenever the caller cares about
+// either property.
 func NewRootCmd() *cobra.Command {
 	return NewRootCmdWithClient(telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint))
 }
