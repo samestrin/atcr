@@ -126,7 +126,10 @@ the raw persona/reviewer string — never the raw string itself:
 This hashing path is **completely separate** from the `--export` /
 `PublicRecord` allowlist in [scorecard.md](scorecard.md): it lives in its own
 schema, and the leaderboard/cloud-sync payload is not a superset of the export
-record.
+record. The vocabularies differ too: telemetry, the quality signal, and
+`--sync-cloud` are persona-**pseudonymous** (hash only, never the raw name),
+whereas `--export` is submitter-**anonymized** and keeps the public persona
+catalog identity in the clear — see the `--export` section of scorecard.md.
 
 ---
 
