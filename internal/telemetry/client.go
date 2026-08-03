@@ -221,12 +221,15 @@ func (c *Client) send(ctx context.Context, endpoint string, marshal func() ([]by
 
 	resp, err := currentDoRequest()(c.httpClient, req)
 	if err != nil {
-		log.FromContext(ctx).Debug("telemetry: send failed", "error", err)
+		log.FromContext(ctx).Debug("telemetry: send failed", "error", err, "endpoint", endpoint)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.FromContext(ctx).Debug("telemetry: non-2xx response", "status", resp.StatusCode)
+		// Name the destination: with two endpoints serving two payload shapes behind
+		// closed key allowlists, a bare status is ambiguous about WHICH surface was
+		// rejected — and a mis-routed payload's 400 is otherwise dropped silently.
+		log.FromContext(ctx).Debug("telemetry: non-2xx response", "status", resp.StatusCode, "endpoint", endpoint)
 	}
 	// Drain up to 64KB so the keep-alive connection is reused for the small
 	// acks telemetry receives; a body larger than the cap is only partially

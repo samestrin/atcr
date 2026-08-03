@@ -167,7 +167,7 @@ func TestQualitySignalSend_ExplicitlyDisabledConfig_ZeroRequests(t *testing.T) {
 func TestQualitySignalSend_UnrelatedTelemetrySurfacesUnaffected(t *testing.T) {
 	isolate(t)
 	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	_ = os.Unsetenv("ATCR_TELEMETRY") // passive ping enabled by default
+	unsetTelemetryEnv(t) // passive ping enabled by default
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	bodies := captureSendBodies(t)
 	builds := countingQualityBuilder(t)
