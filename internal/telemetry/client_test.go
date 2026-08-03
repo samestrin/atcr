@@ -387,6 +387,48 @@ func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 	}
 }
 
+// TestClient_Send_PerDestinationSemaphoreIndependence proves the in-flight cap is
+// PER DESTINATION: with the usage-ping semaphore saturated by sends blocked inside
+// the transport seam, the quality-signal surface must still dispatch. A single
+// shared semaphore let a hung destination hold every slot and starve its sibling —
+// the coupling the per-endpoint gate explicitly eliminated.
+func TestClient_Send_PerDestinationSemaphoreIndependence(t *testing.T) {
+	release := make(chan struct{})
+	var qualityHits int32
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "quality-signal") {
+			atomic.AddInt32(&qualityHits, 1)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		<-release // usage-ping sends hold their in-flight slots
+		return nil, errors.New("blocked stub")
+	})
+	defer restore()
+
+	c := NewWithQualitySignal(testUsageEndpoint, testQualityEndpoint)
+	// Fire more usage pings than the cap: exactly maxInFlightSends acquire a slot
+	// synchronously inside dispatch (the rest are dropped), so the usage semaphore
+	// is deterministically full once these calls return.
+	for i := 0; i < maxInFlightSends*2; i++ {
+		c.Send(context.Background(), Event{Event: "review_run"})
+	}
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+
+	// The quality signal has its own semaphore, so it must reach the seam promptly
+	// even though every usage slot is held. Poll with a deadline rather than
+	// sleeping a fixed interval.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&qualityHits) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+	c.Wait()
+
+	if n := atomic.LoadInt32(&qualityHits); n != 1 {
+		t.Fatalf("quality signal dispatches = %d, want 1 — a saturated usage-ping semaphore must not starve the sibling surface", n)
+	}
+}
+
 // --- Epic 35.12: two-destination routing ------------------------------------
 
 // captureRequestURLs installs a do-request seam recording the destination URL and
