@@ -203,7 +203,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint string, marshal func() (
 	select {
 	case sem <- struct{}{}:
 	default:
-		log.FromContext(ctx).Debug("telemetry: send dropped (in-flight cap reached)")
+		log.FromContext(ctx).Debug("telemetry: send dropped (in-flight cap reached)", "endpoint", endpoint)
 		return
 	}
 	c.wg.Add(1)
@@ -215,13 +215,13 @@ func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, m
 	defer func() { <-sem }() // release the in-flight slot acquired in dispatch
 	defer func() {
 		if r := recover(); r != nil {
-			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r)
+			log.FromContext(ctx).Debug("telemetry: recovered from panic", "value", r, "endpoint", endpoint)
 		}
 	}()
 
 	body, err := marshal()
 	if err != nil {
-		log.FromContext(ctx).Debug("telemetry: marshal failed", "error", err)
+		log.FromContext(ctx).Debug("telemetry: marshal failed", "error", err, "endpoint", endpoint)
 		return
 	}
 
