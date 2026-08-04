@@ -134,9 +134,13 @@ func telemetryGate(w io.Writer) bool {
 // to every command in the tree; it must never turn a working invocation into an
 // error. A malformed config, an unwritable repo, or a failed persist simply means
 // no notice (or a repeated one) — never a broken command.
-func maybeDiscloseTelemetry(cmd *cobra.Command) {
-	if defaultTelemetryEndpoint == "" {
-		return // nothing can transmit in this build; there is nothing to disclose
+func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
+	// Key on the client this process was actually handed, not on the compiled-in
+	// constant. NewRootCmd hands the tree a no-destination client, and an embedder
+	// may inject its own — announcing transmission to a client that cannot transmit
+	// would be a false disclosure, which is worse than none.
+	if !client.HasUsageDestination() {
+		return
 	}
 	root, err := repoRoot()
 	if err != nil {

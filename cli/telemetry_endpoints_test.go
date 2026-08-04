@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,13 +92,74 @@ func recordingTransport(t *testing.T) (func(), func() []telemetrySend) {
 	}
 }
 
-// TestNewRootCmd_HonorsOverriddenEndpoints pins the embedder seam: NewRootCmd is
-// the only advertised zero-argument constructor, so an embedder that cannot
-// redirect its telemetry at construction has no escape short of total
-// disablement. Overriding the package-level destinations must reroute BOTH
-// surfaces of the client NewRootCmd builds — proving the values are a seam, not
-// sealed constants baked into the binary.
-func TestNewRootCmd_HonorsOverriddenEndpoints(t *testing.T) {
+// TestNewRootCmd_SendsNothingByDefault is the embedder-safety contract.
+//
+// NewRootCmd is an exported seam a downstream module builds the same tree from,
+// and on that path the telemetry had neither disclosure nor delivery: the
+// first-run notice and drainTelemetry both live on the runMain lifecycle, so an
+// embedder transmitted to a live host undisclosed, and its sends were stranded at
+// exit anyway. The zero-argument constructor therefore now carries NO
+// destinations; an embedder that wants telemetry opts in explicitly via
+// NewRootCmdWithClient.
+//
+// The destinations are overridden to test hosts here specifically so the
+// assertion cannot pass for the trivial reason that the compiled-in values were
+// unreachable — if NewRootCmd still built a live client, these overridden URLs
+// would be exactly what it aimed at, and the recorder would see them.
+func TestNewRootCmd_SendsNothingByDefault(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	t.Setenv("ATCR_TELEMETRY", "1")      // consent granted...
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1") // ...on both surfaces
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	_, hits := recordingTransport(t)
+
+	root := NewRootCmd()
+	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	_ = root.ExecuteContext(context.Background())
+	waitQualitySignalInFlight()
+
+	assert.Empty(t, hits(),
+		"the zero-argument NewRootCmd must transmit nothing even with both consent surfaces enabled: an embedder opts in via NewRootCmdWithClient")
+}
+
+// TestNewRootCmd_SuppressesTheDisclosure is the other half of the default-off
+// contract: a tree that cannot transmit must not announce that it does. Telling an
+// embedder's users "atcr sends an anonymous usage ping to ..." when the client has
+// no destination would be a false disclosure — worse than none, because it is
+// unfalsifiable from the outside.
+func TestNewRootCmd_SuppressesTheDisclosure(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+
+	var out, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"version"})
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+	_ = root.ExecuteContext(context.Background())
+
+	assert.NotContains(t, errBuf.String(), defaultTelemetryEndpoint,
+		"a no-destination tree must not print a disclosure for transmission it cannot perform")
+}
+
+// TestProcessTelemetryClient_HonorsOverriddenEndpoints is the former
+// TestNewRootCmd_HonorsOverriddenEndpoints, retargeted.
+//
+// The property it pins — that the compiled-in destinations are an OVERRIDABLE seam
+// (`-ldflags -X`, or in-process assignment before construction) rather than sealed
+// constants — is unchanged and still load-bearing for forks, enterprise builds,
+// and air-gapped deployments. What changed is WHERE it must hold: NewRootCmd no
+// longer builds a live client, so the seam now lives on newProcessTelemetryClient,
+// the single shared constructor that runMain uses and that still reads the vars.
+func TestProcessTelemetryClient_HonorsOverriddenEndpoints(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
 	t.Setenv("ATCR_TELEMETRY", "1")
@@ -109,40 +170,26 @@ func TestNewRootCmd_HonorsOverriddenEndpoints(t *testing.T) {
 	writeBackendContractConfig(t, srv.URL)
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 
-	var (
-		mu   sync.Mutex
-		urls []string
-	)
-	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
-		mu.Lock()
-		urls = append(urls, req.URL.String())
-		mu.Unlock()
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
-	})
-	t.Cleanup(restore)
+	_, hits := recordingTransport(t)
 
-	root := NewRootCmd()
+	client := newProcessTelemetryClient()
+	root := NewRootCmdWithClient(client)
 	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	_ = root.ExecuteContext(context.Background())
 	waitQualitySignalInFlight()
+	client.Wait()
 
-	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(urls) >= 2
-	}, 5*time.Second, 10*time.Millisecond, "expected both surfaces to send")
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	got := append([]string(nil), urls...)
-	mu.Unlock()
-	assert.Contains(t, got, "https://collector.internal/usage",
+	var urls []string
+	for _, h := range hits() {
+		urls = append(urls, h.URL)
+	}
+	assert.Contains(t, urls, "https://collector.internal/usage",
 		"the usage ping must follow the overridden destination, not the compiled-in default")
-	assert.Contains(t, got, "https://collector.internal/quality",
+	assert.Contains(t, urls, "https://collector.internal/quality",
 		"the quality signal must follow the overridden destination, not the compiled-in default")
-	for _, u := range got {
+	for _, u := range urls {
 		assert.NotContains(t, u, "atcr.dev",
 			"no send may reach the upstream host once the destinations are overridden")
 	}

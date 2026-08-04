@@ -290,6 +290,20 @@ func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, m
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 }
 
+// HasUsageDestination reports whether this client can actually transmit the usage
+// ping — i.e. its usage endpoint is a well-formed https URL rather than empty or
+// plaintext, the same condition dispatch applies.
+//
+// It exists so a caller can tell the user the truth. The first-run disclosure must
+// fire when a run will transmit and stay silent when it cannot, and that depends
+// on the client the process was actually handed, not on a compiled-in constant: an
+// embedder using NewRootCmd (no destinations) or injecting its own empty client
+// would otherwise be shown a banner announcing transmission that can never happen.
+// Nil-safe, matching the rest of the fail-open contract.
+func (c *Client) HasUsageDestination() bool {
+	return c != nil && isHTTPS(c.endpoint)
+}
+
 // Go runs fn on a detached goroutine that is registered with the client's
 // WaitGroup BEFORE it starts, so a concurrent Wait cannot return while fn is
 // still running.

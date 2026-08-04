@@ -252,22 +252,60 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // NewRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
 //
-// EMBEDDERS, READ THIS. NewRootCmd builds its own telemetry client from the
-// package-level defaultTelemetryEndpoint / defaultQualitySignalEndpoint, and it
-// has NO drain counterpart — runMain owns drainTelemetry, so on this path
-// in-flight sends are stranded when the process exits. Two consequences:
+// EMBEDDERS, READ THIS. This constructor emits NO TELEMETRY. It hands the tree a
+// client with no destinations (newNoTelemetryClient), so embedding the command
+// tree never transmits and never prints the first-run disclosure — there is
+// nothing to disclose.
 //
-//   - The destinations are overridable (they are vars, not consts — assign them
-//     before calling, or set them with `-ldflags -X`; see cli/telemetry.go). An
-//     embedder that does neither transmits to the upstream atcr.dev host.
-//   - Nothing flushes. A caller that wants delivery must either use
-//     NewRootCmdWithClient with its own client and call Client.Wait itself, or
-//     call Main/MainWithHooks, which run the full lifecycle including the drain.
+// That is deliberate. This path has no drainTelemetry counterpart (runMain owns
+// the drain), so a live client here would have been both undisclosed AND largely
+// undelivered — its sends stranded at process exit. Defaulting to silence is the
+// only posture that is honest in both directions.
 //
-// NewRootCmdWithClient is the seam to prefer whenever the caller cares about
-// either property.
+// To opt in, construct the client yourself:
+//
+//	cli.NewRootCmdWithClient(telemetry.NewWithQualitySignal(usageURL, qualityURL))
+//
+// and call Client.Wait before exiting, or use Main/MainWithHooks, which run the
+// full lifecycle — live client, disclosure, and drain — exactly as the shipped
+// `atcr` binary does. The compiled-in destinations remain overridable for that
+// case (they are vars, not consts — assign them before constructing, or set them
+// with `-ldflags -X`; see cli/telemetry.go).
 func NewRootCmd() *cobra.Command {
-	return NewRootCmdWithClient(newProcessTelemetryClient())
+	return NewRootCmdWithClient(newNoTelemetryClient())
+}
+
+// newNoTelemetryClient builds a client with NO destinations: every Send is a
+// silent per-path no-op. It is what the zero-argument NewRootCmd hands the tree,
+// so embedding the command tree never transmits unless the embedder asks for it.
+//
+// WHY THE DEFAULT IS OFF HERE BUT ON IN THE BINARY. runMain — the path every real
+// `atcr` invocation takes — still uses newProcessTelemetryClient, so the shipped
+// CLI keeps its documented default-on posture, its first-run disclosure, and its
+// drain. What changed is the LIBRARY default: NewRootCmd is an exported seam a
+// downstream module builds the same tree from, and on that path the telemetry was
+// undisclosed (the disclosure and the drain both live on the runMain lifecycle)
+// AND largely undelivered (nothing ever calls drainTelemetry there, so its sends
+// were stranded at exit). Emitting to a live host with neither disclosure nor
+// delivery is the worst of both worlds; an embedder that wants telemetry now says
+// so via NewRootCmdWithClient(newProcessTelemetryClient()) — or its own client.
+//
+// RECONCILIATION WITH EPIC 35.12's T2ab. That task required cli/main.go:121 AND
+// :242 to both construct the process client, because "missing :242 leaves
+// NewRootCmd() single-destination, and because the send path is fail-open that
+// failure is silent" — i.e. the hazard it names is a client that routes the
+// quality-signal ARRAY at the usage-ping handler for a silently-dropped 400. A
+// no-destination client cannot produce that failure: it sends nothing at all, so
+// there is no misroute to be silent about. The two-destination invariant T2ab
+// actually protects now lives on newProcessTelemetryClient, the single shared
+// constructor, and is covered on the shipping path by
+// TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints.
+//
+// It also supersedes (rather than contradicts) the earlier documentation-only
+// resolution of the same TD row: the doc warning stays true, and is now backed by
+// behavior instead of relying on an embedder reading it.
+func newNoTelemetryClient() *telemetry.Client {
+	return telemetry.NewWithQualitySignal("", "")
 }
 
 // newProcessTelemetryClient builds the process telemetry client from the two
@@ -345,7 +383,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			// maybeDiscloseTelemetry. Placed after the logger so its stderr writer
 			// is the one the caller wired, and before the client injection so the
 			// user is told before anything can transmit.
-			maybeDiscloseTelemetry(cmd)
+			maybeDiscloseTelemetry(cmd, telemetryClient)
 			// Inject the single process telemetry client into the command context
 			// alongside the logger, so runReview/runReconcile retrieve it via
 			// telemetry.FromContext without a signature change.

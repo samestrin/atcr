@@ -41,6 +41,25 @@ than before, still bounded by the same 2 seconds.
 > to disable it (see [Opt-out](#opt-out)); either surface alone is
 > sufficient and final.
 
+### Embedding atcr as a library
+
+The default-on posture described here applies to the **`atcr` binary**. If you
+embed the command tree in your own Go program via `cli.NewRootCmd()`, **no
+telemetry is sent at all** and no notice is printed — that constructor is wired to
+a client with no destinations, so your users are never enrolled in a collection
+they did not choose and you did not disclose.
+
+To opt in deliberately, build the client yourself and drain it before exiting:
+
+```go
+client := telemetry.NewWithQualitySignal(usageURL, qualityURL)
+root := cli.NewRootCmdWithClient(client)
+// ... run the tree ...
+client.Wait()
+```
+
+or call `cli.Main`, which runs the same full lifecycle the binary does.
+
 ### First-run notice
 
 The first time you run `atcr` in a repository with the ping enabled, it prints a

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -27,6 +28,27 @@ import (
 // it fires once per repo, synchronously, before any run — never from the async
 // send path, where nothing could observe or order it.
 
+// execTransmitting drives the command tree the way the shipped binary does: with
+// a LIVE process telemetry client, the same one runMain builds.
+//
+// The disclosure is deliberately keyed on the client the process actually holds,
+// so it is silent under the zero-argument NewRootCmd (which now carries no
+// destinations — an embedder must opt in). Testing the notice therefore has to use
+// the transmitting construction, or it would be asserting against a tree that has
+// nothing to disclose. This helper is that construction, and using it keeps these
+// tests aimed at the real user-facing path rather than at whichever constructor
+// happens to be convenient.
+func execTransmitting(t *testing.T, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmdWithClient(newProcessTelemetryClient())
+	root.SetArgs(args)
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	err := root.ExecuteContext(context.Background())
+	return exitCode(err), outBuf.String(), errBuf.String()
+}
+
 // TestTelemetryDisclosure_PrintsOnceThenPersists is the core contract: the first
 // command in a repo with telemetry enabled prints the notice on stderr, and the
 // second prints nothing because the first persisted the fact.
@@ -34,13 +56,13 @@ func TestTelemetryDisclosure_PrintsOnceThenPersists(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")
 
-	_, _, errOut := execCmdSplit(t, "version")
+	_, _, errOut := execTransmitting(t, "version")
 	assert.Contains(t, errOut, defaultTelemetryEndpoint,
 		"the first run must name the destination it transmits to")
 	assert.Contains(t, errOut, "ATCR_TELEMETRY=0",
 		"the notice must name the opt-out, not merely announce the collection")
 
-	_, _, errOut2 := execCmdSplit(t, "version")
+	_, _, errOut2 := execTransmitting(t, "version")
 	assert.NotContains(t, errOut2, defaultTelemetryEndpoint,
 		"the notice is one-time per repo: a second run must stay quiet")
 }
@@ -57,14 +79,14 @@ func TestTelemetryDisclosure_CreatesConfigWhenAbsent(t *testing.T) {
 	_, statErr := os.Stat(cfg)
 	require.True(t, os.IsNotExist(statErr), "precondition: this repo has no config file")
 
-	_, _, errOut := execCmdSplit(t, "version")
+	_, _, errOut := execTransmitting(t, "version")
 	require.Contains(t, errOut, defaultTelemetryEndpoint, "first run must disclose")
 
 	data, err := os.ReadFile(cfg)
 	require.NoError(t, err, "the disclosure must create .atcr/config.yaml, not skip persisting")
 	assert.Contains(t, string(data), "telemetry_notice_shown")
 
-	_, _, errOut2 := execCmdSplit(t, "version")
+	_, _, errOut2 := execTransmitting(t, "version")
 	assert.NotContains(t, errOut2, defaultTelemetryEndpoint,
 		"a created config must actually suppress the second notice")
 }
@@ -76,14 +98,14 @@ func TestTelemetryDisclosure_SilentWhenOptedOut(t *testing.T) {
 	t.Run("env opt-out", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
-		_, _, errOut := execCmdSplit(t, "version")
+		_, _, errOut := execTransmitting(t, "version")
 		assert.NotContains(t, errOut, defaultTelemetryEndpoint)
 	})
 	t.Run("config opt-out", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "1")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
-		_, _, errOut := execCmdSplit(t, "version")
+		_, _, errOut := execTransmitting(t, "version")
 		assert.NotContains(t, errOut, defaultTelemetryEndpoint)
 	})
 }
@@ -96,7 +118,7 @@ func TestTelemetryDisclosure_PreservesSiblingConfigKeys(t *testing.T) {
 	t.Setenv("ATCR_TELEMETRY", "1")
 	writeAtcrConfig(t, "agents: [bruce]\npayload_mode: blocks\n")
 
-	_, _, errOut := execCmdSplit(t, "version")
+	_, _, errOut := execTransmitting(t, "version")
 	require.Contains(t, errOut, defaultTelemetryEndpoint)
 
 	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
@@ -159,7 +181,7 @@ func TestTelemetryDisclosure_DoesNotBreakStrictRosterLoad(t *testing.T) {
 	writeBackendContractConfig(t, srv.URL)
 
 	// First run: emits the notice and persists the key.
-	_, _, errOut := execCmdSplit(t, "review", "--base", "HEAD^", "--head", "HEAD")
+	_, _, errOut := execTransmitting(t, "review", "--base", "HEAD^", "--head", "HEAD")
 	require.Contains(t, errOut, defaultTelemetryEndpoint, "precondition: the notice fired and wrote the key")
 
 	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
@@ -167,7 +189,7 @@ func TestTelemetryDisclosure_DoesNotBreakStrictRosterLoad(t *testing.T) {
 	require.Contains(t, string(data), "telemetry_notice_shown", "precondition: the key is on disk")
 
 	// Second run: the persisted key must parse cleanly through the strict roster load.
-	_, _, errOut2 := execCmdSplit(t, "review", "--base", "HEAD^", "--head", "HEAD")
+	_, _, errOut2 := execTransmitting(t, "review", "--base", "HEAD^", "--head", "HEAD")
 	assert.NotContains(t, errOut2, "failed to parse config.yaml",
 		"the disclosure key must be a declared ProjectConfig field, or it breaks every later run")
 	assert.NotContains(t, errOut2, "not found in type registry.ProjectConfig")
