@@ -133,6 +133,15 @@ var debtSeverityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 // debtAgeBands defines the live-backlog age profile, evaluated in order; the
 // first band whose max (inclusive, in days) is >= the item's age wins. The final
 // catch-all band uses a max of -1 to mean "no upper bound".
+//
+// Not currently rendered. debtSummary.ByAge has no production consumer: the only
+// caller of summarizeDebt is renderDebtDashboard, which passes a zero `now` and
+// renders the time-invariant debtMonthHistogram instead, because a
+// clock-dependent age band would make `dashboard --check` fail on the passage of
+// time rather than on content drift. This was equally true of the code it was
+// ported from, and is retained (with its ported tests) so a caller that supplies
+// a real `now` — an `--as-of` flag, or a report that is not drift-checked — gets
+// the bands rather than having to re-derive them.
 var debtAgeBands = []struct {
 	label string
 	max   int

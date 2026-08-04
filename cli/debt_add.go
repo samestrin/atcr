@@ -77,9 +77,19 @@ func normalizeStatus(s string) string   { return strings.ToLower(strings.TrimSpa
 // used to strip a line suffix — so a free-text value ("see docs: the thing"), a
 // line RANGE ("a.go:1-9", which is not a single line), or a bare path is kept
 // verbatim in File with Line 0.
+//
+// The split never yields an EMPTY File. ":42" is not a location, and a record
+// with no File is unreachable through `atcr debt resolve`, which skips records
+// it cannot act on (selectOpenDebt) — the item would list but never close. Such
+// a value is kept verbatim so the required-field check in finalizeDebtRecord
+// sees it and rejects the add outright.
 func parseDebtFileLine(v string) (string, int) {
+	// Trim first: surrounding whitespace on a flag value would otherwise make the
+	// numeric tail test fail ("a.go:1 " is not all digits), silently downgrading a
+	// real location to Line 0.
+	v = strings.TrimSpace(v)
 	i := strings.LastIndex(v, ":")
-	if i < 0 || i == len(v)-1 {
+	if i <= 0 || i == len(v)-1 {
 		return v, 0
 	}
 	tail := v[i+1:]
@@ -89,8 +99,8 @@ func parseDebtFileLine(v string) (string, int) {
 		}
 	}
 	n, err := strconv.Atoi(tail)
-	if err != nil || n < 0 {
-		return v, 0 // an overflowing digit run is not a usable line number
+	if err != nil {
+		return v, 0 // a digit run that overflows an int is not a usable line number
 	}
 	return v[:i], n
 }
@@ -174,6 +184,23 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	rec.Severity = normalizeSeverity(rec.Severity)
 	if !resolveSeverities[rec.Severity] {
 		return usageError(fmt.Errorf("invalid severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", rec.Severity))
+	}
+	// The required-field presence check the deleted tdmigrate.Item.Validate
+	// enforced on the way into the old store. The command's own gate is a bare
+	// != "" on the flag values, so a whitespace-only answer passes it; without
+	// this, `--file "   "` files an item that debt resolve can never act on.
+	// Trimming BEFORE StampID also keeps the content-hash id from being computed
+	// over incidental padding, so the same finding hashes the same either way.
+	rec.File = strings.TrimSpace(rec.File)
+	rec.Problem = strings.TrimSpace(rec.Problem)
+	rec.Fix = strings.TrimSpace(rec.Fix)
+	rec.Category = strings.TrimSpace(rec.Category)
+	for _, req := range []struct{ flag, val string }{
+		{"--file", rec.File}, {"--problem", rec.Problem}, {"--fix", rec.Fix}, {"--category", rec.Category},
+	} {
+		if req.val == "" {
+			return usageError(fmt.Errorf("%s is required and cannot be blank", req.flag))
+		}
 	}
 	status := normalizeStatus(rec.Status)
 	if status == "" {

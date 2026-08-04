@@ -195,6 +195,77 @@ func TestDebtAdd_NegativeEstIsUsageError(t *testing.T) {
 	assert.Empty(t, readDebtStore(t, dir))
 }
 
+// The deleted tdmigrate.Item.Validate also rejected blank required fields. The
+// command's own gate is a bare != "" on the flag values, so without the ported
+// trim-check a whitespace-only answer files an item that debt resolve can never
+// act on (selectOpenDebt skips records with no File).
+func TestDebtAdd_BlankRequiredFieldsAreUsageErrors(t *testing.T) {
+	base := []string{"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c"}
+	for _, blank := range []string{"--file", "--problem", "--fix", "--category"} {
+		t.Run(blank, func(t *testing.T) {
+			dir := emptyDebtStore(t)
+			args := append([]string{"add", "--dir", dir}, base...)
+			for i, a := range args {
+				if a == blank {
+					args[i+1] = "   "
+				}
+			}
+			_, err := runDebt(t, args...)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Empty(t, readDebtStore(t, dir), "a rejected add writes nothing")
+		})
+	}
+}
+
+// ":42" has no path before the colon. Splitting it would leave an EMPTY File,
+// and a record with no File is skipped by selectOpenDebt — it would list but
+// never be closeable, breaking the exact round trip this command tree exists to
+// provide. It is instead kept verbatim, the same treatment free text gets, so
+// the item stays resolvable.
+func TestDebtAdd_LocationWithoutAPathStaysResolvable(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--file", ":42",
+		"--severity", "HIGH", "--problem", "p", "--fix", "f", "--category", "c")
+	require.NoError(t, err)
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	require.NotEmpty(t, recs[0].File, "an empty File would make the item unresolvable")
+	assert.Equal(t, ":42", recs[0].File)
+
+	// The round trip must still close it.
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", debtIDFromListOutput(t, listed))
+	require.NoError(t, err)
+
+	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(open), "no matching")
+}
+
+// Padding must not change a finding's identity: the same finding filed with and
+// without surrounding whitespace is one id, not two.
+func TestDebtAdd_TrimsBeforeStampingTheID(t *testing.T) {
+	tight := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", tight,
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.NoError(t, err)
+
+	padded := emptyDebtStore(t)
+	_, err = runDebt(t, "add", "--dir", padded,
+		"--severity", "HIGH", "--file", "  a.go:1  ", "--problem", "  p  ", "--fix", " f ", "--category", " c ")
+	require.NoError(t, err)
+
+	a, b := readDebtStore(t, tight), readDebtStore(t, padded)
+	require.Len(t, a, 1)
+	require.Len(t, b, 1)
+	assert.Equal(t, a[0].ID, b[0].ID)
+	assert.Equal(t, "a.go", b[0].File)
+	assert.Equal(t, 1, b[0].Line)
+}
+
 func TestDebtAdd_CaseNormalizedEnums(t *testing.T) {
 	dir := emptyDebtStore(t)
 	_, err := runDebt(t, "add", "--dir", dir,
@@ -256,6 +327,12 @@ func TestParseDebtFileLine(t *testing.T) {
 		{"see docs: the thing", "see docs: the thing", 0},
 		// A trailing colon is not a line suffix.
 		{"a.go:", "a.go:", 0},
+		// A leading colon would split to an EMPTY File — a record `debt resolve`
+		// can never act on. It stays verbatim so the required-field check rejects
+		// the add instead of filing an unresolvable item.
+		{":42", ":42", 0},
+		// A digit run that overflows an int is not a usable line number.
+		{"a.go:99999999999999999999", "a.go:99999999999999999999", 0},
 		{"", "", 0},
 	}
 	for _, tc := range cases {

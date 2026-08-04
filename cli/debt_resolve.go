@@ -15,9 +15,10 @@ import (
 )
 
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
-// working directory (localdebt's Root: "." convention). Unlike list/add/dashboard,
-// resolve never reads the private .planning/-scoped store — it operates only on the
-// public store the reconcile persistence hook (Story 2) populates.
+// working directory (localdebt's Root: "." convention). Since Plan 35.13 it is the
+// shared --dir default for ALL FIVE debt subcommands, not just resolve: list, add,
+// and dashboard used to read a separate .planning/-scoped store, and no atcr code
+// reads that store any more.
 var defaultDebtResolveDir = localdebt.DefaultDir(".")
 
 // resolveSeverities is the validated --severity enum, matching the set used
@@ -40,11 +41,12 @@ var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
 func newDebtResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resolve",
-		Short: "List and mark-resolve items in the .atcr/-scoped local TD store (public store)",
-		Long: "atcr debt resolve reads the public, .atcr/-scoped local technical-debt store\n" +
-			"(.atcr/debt/, populated by atcr reconcile) and lists open items for the\n" +
-			"debt-resolve skill route to fix. Unlike list/add/dashboard, it never touches\n" +
-			"the private .planning/ store. Use --resolve <id> to record a resolution.",
+		Short: "List and mark-resolve items in the local TD store",
+		Long: "atcr debt resolve reads the local technical-debt store (.atcr/debt/,\n" +
+			"populated by atcr reconcile and atcr debt add) and lists open items for the\n" +
+			"debt-resolve skill route to fix — the same store list, add, dashboard, and\n" +
+			"compact read. Use --resolve <id> to record a resolution; the id is the\n" +
+			"leading column of `atcr debt list` and `atcr debt resolve --list`.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtResolve,
 	}
