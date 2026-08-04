@@ -3,6 +3,7 @@ package localdebt
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -81,6 +82,11 @@ func TestRecord_StampID_EmptyProblemDeterministic(t *testing.T) {
 // fields. This is the versioning half of the forward/backward-compat contract — v3
 // records become readable (r.SchemaVersion <= SchemaVersion), v4+ stay
 // forward-incompatible.
+//
+// The literal here is deliberate and is NOT the same defect as a pinned literal in
+// a behavioral test: this assertion IS the tripwire. Bumping the constant without
+// consciously updating this test — and with it the doc block's version history and
+// the downgrade-visibility note — is the mistake it exists to catch.
 func TestRecord_SchemaVersionIsThree(t *testing.T) {
 	assert.Equal(t, 3, SchemaVersion,
 		"SchemaVersion must be 3 after the origin/occurrences/first_seen bump")
@@ -113,20 +119,27 @@ func TestReadAll_SchemaV1RecordNoModelKey(t *testing.T) {
 	assert.Empty(t, diag.String(), "a valid v1 record must not emit any diagnostic")
 }
 
-// TestReadAll_SchemaV4ForwardIncompatibleSkip is a regression guard: a record
-// from a newer, forward-incompatible schema (v4) is still skipped with a warning
-// after the v2->v3 bump — the bump adds v3 comprehension without loosening the
-// forward-incompatible-skip contract on SchemaVersion.
-func TestReadAll_SchemaV4ForwardIncompatibleSkip(t *testing.T) {
+// TestReadAll_NextSchemaVersionForwardIncompatibleSkip is a regression guard: a
+// record from the next, forward-incompatible schema version is still skipped with
+// a warning after the v2->v3 bump — the bump adds v3 comprehension without
+// loosening the forward-incompatible-skip contract on SchemaVersion.
+//
+// The fixture is derived from SchemaVersion+1 rather than a hard-coded literal.
+// A pinned literal does not merely fail at the next bump, it INVERTS: the version
+// it names becomes supported, and the obvious "fix" of editing the number silently
+// re-scopes the guard. Deriving it keeps the guard aimed one version ahead forever.
+func TestReadAll_NextSchemaVersionForwardIncompatibleSkip(t *testing.T) {
 	dir := t.TempDir()
-	line := `{"schema_version":4,"id":"id4","run_id":"r4","ts":"2026-06-14T10:00:00Z","severity":"HIGH","file":"a.go","line":1,"problem":"p","reviewers":["security-reviewer"],"status":"wontfix"}`
+	next := SchemaVersion + 1
+	line := fmt.Sprintf(`{"schema_version":%d,"id":"idN","run_id":"rN","ts":"2026-06-14T10:00:00Z","severity":"HIGH","file":"a.go","line":1,"problem":"p","reviewers":["security-reviewer"],"status":"wontfix"}`, next)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"), []byte(line+"\n"), 0o644))
 
 	var diag bytes.Buffer
 	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
 	require.NoError(t, err)
-	assert.Empty(t, recs, "a forward-incompatible v4 record is skipped, not returned")
-	assert.Contains(t, diag.String(), "unsupported schema_version 4", "the skip must be logged")
+	assert.Empty(t, recs, "a forward-incompatible record is skipped, not returned")
+	assert.Contains(t, diag.String(), fmt.Sprintf("unsupported schema_version %d", next),
+		"the skip must be logged")
 }
 
 // --- Plan 35.13 T1: schema v3 — origin / occurrences / first_seen ----------

@@ -186,7 +186,8 @@ func TestStore_AppendReadAll_V3RoundTrip(t *testing.T) {
 	// constant is tautological because sampleRecord seeds it from that constant.
 	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"schema_version":3`, "the record is stamped v3 on disk")
+	assert.Contains(t, string(raw), fmt.Sprintf(`"schema_version":%d`, SchemaVersion),
+		"the record is stamped with the current schema version on disk")
 	assert.Contains(t, string(raw), `"origin":"manual"`)
 	assert.Contains(t, string(raw), `"occurrences":3`)
 	assert.Contains(t, string(raw), `"first_seen":"2026-01-02T03:04:05Z"`)
@@ -194,21 +195,23 @@ func TestStore_AppendReadAll_V3RoundTrip(t *testing.T) {
 
 // TestStore_ReadAll_MixedSchemaVersions proves the v2->v3 bump widened
 // comprehension without loosening the forward-incompatible gate: v1, v2, and v3
-// lines all decode, in file order, while the v4 line is skipped and warned about.
+// lines all decode, in file order, while the next-version line is skipped and
+// warned about. The future line is derived from SchemaVersion+1 so it stays one
+// version ahead across bumps instead of quietly becoming a supported version.
 func TestStore_ReadAll_MixedSchemaVersions(t *testing.T) {
 	dir := t.TempDir()
 	lines := strings.Join([]string{
 		`{"schema_version":1,"id":"v1","run_id":"2026-06-01T00:00:00Z-a","ts":"2026-06-01T00:00:00Z","severity":"HIGH","file":"a.go","line":1,"problem":"p1"}`,
 		`{"schema_version":2,"id":"v2","run_id":"2026-06-02T00:00:00Z-b","ts":"2026-06-02T00:00:00Z","severity":"HIGH","file":"b.go","line":2,"problem":"p2","model":"claude-sonnet-4-6"}`,
 		`{"schema_version":3,"id":"v3","run_id":"2026-06-03T00:00:00Z-c","ts":"2026-06-03T00:00:00Z","severity":"HIGH","file":"c.go","line":3,"problem":"p3","origin":"manual","occurrences":2,"first_seen":"2026-05-01T00:00:00Z"}`,
-		`{"schema_version":4,"id":"v4","run_id":"2026-06-04T00:00:00Z-d","ts":"2026-06-04T00:00:00Z","severity":"HIGH","file":"d.go","line":4,"problem":"p4"}`,
+		fmt.Sprintf(`{"schema_version":%d,"id":"vNext","run_id":"2026-06-04T00:00:00Z-d","ts":"2026-06-04T00:00:00Z","severity":"HIGH","file":"d.go","line":4,"problem":"p4"}`, SchemaVersion+1),
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"), []byte(lines+"\n"), 0o600))
 
 	var diag bytes.Buffer
 	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
 	require.NoError(t, err)
-	require.Len(t, recs, 3, "v1, v2 and v3 decode; v4 is skipped")
+	require.Len(t, recs, 3, "v1, v2 and v3 decode; the next-version line is skipped")
 	assert.Equal(t, []string{"v1", "v2", "v3"}, []string{recs[0].ID, recs[1].ID, recs[2].ID},
 		"records return in file order")
 
@@ -218,8 +221,8 @@ func TestStore_ReadAll_MixedSchemaVersions(t *testing.T) {
 	assert.Equal(t, 2, recs[2].Occurrences)
 	assert.Equal(t, "2026-05-01T00:00:00Z", recs[2].FirstSeen)
 
-	assert.Contains(t, diag.String(), "unsupported schema_version 4",
-		"the forward-incompatible v4 line is still skipped with a warning")
+	assert.Contains(t, diag.String(), fmt.Sprintf("unsupported schema_version %d", SchemaVersion+1),
+		"the forward-incompatible line is still skipped with a warning")
 }
 
 // TestStore_Append_InvalidRunID locks AC 01-01 Error Scenario 1.

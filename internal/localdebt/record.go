@@ -38,6 +38,18 @@ import (
 // after the bump are intentionally invisible to older binaries. This is the same
 // accepted loss the v1 -> v2 bump documented; the uniform forward-incompat-skip
 // model is preserved rather than special-casing additive bumps.
+//
+// Downgrade DESTRUCTION (not merely invisibility): skipping is not read-only in
+// its effects. Compact rebuilds each shard from exactly what ReadAll returned and
+// removes shards left with no live records (store.go), so an older binary running
+// `atcr debt compact` does not just fail to show newer records — it permanently
+// deletes them. This predates the v2 -> v3 bump (a v1-era binary destroys v2
+// records the same way) and Compact is deliberately unmodified here, but Plan
+// 35.13 raises the stakes: this store becomes the single system of record, so the
+// destroyed rows can include hand-filed items with no other copy, and T5 makes
+// compaction automatic rather than an explicit user action. Making Compact carry
+// forward-incompatible lines through verbatim is a prerequisite for T5's
+// auto-compaction (see tech-debt-captured.md TD-004), not an optional hardening.
 const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
@@ -61,9 +73,13 @@ const (
 	OriginManual = "manual"
 )
 
-// Record is one persisted technical-debt finding occurrence (the schema documented
-// in docs/technical-debt.md; v3 as of Plan 35.13, which added the optional Origin,
-// Occurrences and FirstSeen fields on top of v2's Model). The
+// Record is one persisted technical-debt finding occurrence. This struct and the
+// SchemaVersion doc block above are the authoritative specification of the JSONL
+// record until T7 writes a schema section into docs/technical-debt.md — that file
+// currently documents the .planning/-scoped store this plan replaces and says
+// nothing about schema_version, so it is deliberately not cited here. The schema is
+// v3 as of Plan 35.13, which added the optional Origin, Occurrences and FirstSeen
+// fields on top of v2's Model. The
 // required block is always present; the optional block
 // (omitempty) is present only when the reconciled finding carried the
 // corresponding enrichment (Epic 18.3 justification/source_report), a resolved
@@ -115,6 +131,13 @@ type Record struct {
 	// FoldRecords preserves only the selected record's value. omitempty keeps it
 	// absent from uncompacted records; readers treat an absent/zero value as one
 	// occurrence ("not yet aggregated").
+	//
+	// Hard prerequisite for T5: the count is unreachable under today's write path.
+	// persistLocalDebt seeds a dedup set from a full-store read and skips any id
+	// already present (cli/reconcile.go), so a re-detected finding is never
+	// appended and a fold group can never hold more than one review-origin record
+	// per id. T3 must relax that write-time dedup before T5 has anything to
+	// aggregate.
 	Occurrences int `json:"occurrences,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this
@@ -123,6 +146,14 @@ type Record struct {
 	// when superseded records are dropped; today FoldRecords preserves only the
 	// selected record's value. omitempty keeps it absent from uncompacted records,
 	// where the record's own Timestamp is the earliest known sighting.
+	//
+	// Invariant, shared with Timestamp: UTC-normalized RFC3339
+	// (time.Time.UTC().Format(time.RFC3339)). Both are compared LEXICOGRAPHICALLY,
+	// not parsed — FoldRecords already does r.Timestamp >= best.Timestamp, and T5's
+	// min() across a fold group will do the same. An offset-bearing value breaks
+	// that ordering: "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet
+	// sorts after "2026-01-01T00:00:00Z". Every producer normalizes today; a writer
+	// that does not is a silent ordering bug, so normalize at the write site.
 	FirstSeen string `json:"first_seen,omitempty"`
 
 	Justification string        `json:"justification,omitempty"`
