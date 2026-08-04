@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
 )
 
@@ -147,6 +148,82 @@ func TestNewRootCmd_HonorsOverriddenEndpoints(t *testing.T) {
 	}
 }
 
+// TestRootCmd_DefaultOnPostureSendsWithEnvUnset covers the posture the changelog
+// actually advertises, end to end.
+//
+// Every other test in this file sets ATCR_TELEMETRY=1, which exercises the
+// EXPLICIT OPT-IN branch of telemetryEnabledFromEnv — not the default-on branch,
+// where an unset or blank value returns true. That distinction is the whole point
+// of activating the endpoints: users who never set the variable are the population
+// that transmits. Because the package TestMain pins ATCR_TELEMETRY=0 for
+// hermeticity, no end-to-end test could reach the unset state, so the advertised
+// default was covered only at the pure-function level in telemetry_gate_test.go —
+// a real gap between "the gate function returns true" and "a run with no env var
+// actually sends".
+//
+// unsetEnvForTest is the established way to reach a genuinely-unset variable here:
+// it restores the pin on cleanup (and panics under t.Parallel), so relaxing it for
+// one test introduces no new risk. The destinations are retargeted at unroutable
+// .test hosts and the transport is stubbed, so exercising default-ON cannot reach
+// the production host.
+func TestRootCmd_DefaultOnPostureSendsWithEnvUnset(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	unsetEnvForTest(t, "ATCR_TELEMETRY") // the DEFAULT-ON branch: no value at all
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+
+	_, hits := recordingTransport(t)
+
+	client := telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
+	root := NewRootCmdWithClient(client)
+	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	_ = root.ExecuteContext(context.Background())
+	client.Wait()
+
+	var pings int
+	for _, h := range hits() {
+		if h.URL == defaultTelemetryEndpoint && !strings.HasPrefix(strings.TrimSpace(h.Body), "[") {
+			pings++
+		}
+	}
+	assert.Equal(t, 1, pings,
+		"a run with ATCR_TELEMETRY genuinely unset must send the usage ping — that is the default-on posture the endpoints were activated for")
+}
+
+// TestRootCmd_DefaultOnPostureIsStillRevocable is the other half: default-on must
+// remain an OPT-OUT, not a mandate. Same unset-env starting point, but with the
+// persisted config opt-out in place, nothing may leave.
+func TestRootCmd_DefaultOnPostureIsStillRevocable(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	unsetEnvForTest(t, "ATCR_TELEMETRY")
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+	require.NoError(t, registry.SetTelemetrySetting(".", false))
+
+	_, hits := recordingTransport(t)
+
+	client := telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
+	root := NewRootCmdWithClient(client)
+	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	_ = root.ExecuteContext(context.Background())
+	client.Wait()
+
+	for _, h := range hits() {
+		assert.NotEqual(t, defaultTelemetryEndpoint, h.URL,
+			"a persisted telemetry: false must suppress the ping even from the default-on starting state")
+	}
+}
+
 // TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints covers the OTHER
 // entry point.
 //
@@ -210,7 +287,7 @@ func TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 func TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
-	t.Setenv("ATCR_TELEMETRY", "1")      // usage ping on (default-on posture, pinned explicitly)
+	t.Setenv("ATCR_TELEMETRY", "1")      // usage ping on via EXPLICIT opt-in (not the default-on branch — see TestRootCmd_DefaultOnPostureSendsWithEnvUnset)
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1") // quality signal is opt-IN
 	initGitRepoWithChange(t)
 	srv := mockFindingsServer(t)
