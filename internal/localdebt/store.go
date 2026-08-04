@@ -104,14 +104,34 @@ func Append(dir string, rec Record) error {
 // one buffer). Parsed records are materialized into a returned slice; at the
 // documented scale (~500 bytes/record) that is trivially cheap and intentional.
 func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
+	recs, _, err := scanShard(path, opts, nil)
+	return recs, err
+}
+
+// scanShard is the shared line-scanning core of ReadRecords and the compaction
+// read path. When preserve is non-nil it is called with a copy of every line that
+// is well-formed but forward-incompatible, in file order, so compaction can carry
+// those lines through a rewrite instead of destroying them (see Compact). The copy
+// matters: frag aliases the bufio.Reader's internal buffer and is invalidated by
+// the next ReadSlice. Malformed lines are never handed to preserve — they are
+// corrupt, not merely unreadable by this version.
+//
+// The second return value reports that the shard contains a line this reader could
+// not represent at all: one longer than maxLineBytes, skipped by the buffer guard
+// before any decode happens, and therefore not capturable by preserve without
+// abandoning the memory bound the guard exists to enforce. Such a shard is not
+// safely rewritable — compaction must leave it alone rather than rebuild it from
+// the subset it managed to read.
+func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() { _ = f.Close() }()
 	w := diagWriter(opts.Writer)
 
 	var recs []Record
+	unrepresentable := false
 	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
 	// drained and skipped rather than terminating the read: bufio.Scanner's
 	// ErrTooLong is terminal and cannot resume, so one oversized line would abort the
@@ -122,52 +142,78 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 		frag, err := br.ReadSlice('\n')
 		if err == bufio.ErrBufferFull {
 			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
-			// without buffering it, warn, and continue with the next line.
+			// without buffering it, warn, and continue with the next line. The line is
+			// deliberately not captured — buffering it is exactly what the cap forbids
+			// — so the shard is flagged unrepresentable instead, and compaction leaves
+			// it whole rather than rewriting it without this line.
+			unrepresentable = true
 			_, _ = fmt.Fprintf(w, "localdebt: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
 				}
-				return recs, fmt.Errorf("reading localdebt file: %w", derr)
+				return recs, unrepresentable, fmt.Errorf("reading localdebt file: %w", derr)
 			}
 			continue
 		}
 		if line := bytes.TrimSpace(frag); len(line) > 0 {
-			if r, ok := decodeRecord(line, path, w); ok {
+			switch r, outcome := decodeRecord(line, path, w); outcome {
+			case decodeOK:
 				recs = append(recs, r)
+			case decodeForwardIncompatible:
+				if preserve != nil {
+					preserve(bytes.Clone(line))
+				}
 			}
 		}
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return recs, fmt.Errorf("reading localdebt file: %w", err)
+			return recs, unrepresentable, fmt.Errorf("reading localdebt file: %w", err)
 		}
 	}
-	return recs, nil
+	return recs, unrepresentable, nil
 }
 
+// decodeOutcome classifies what happened to one JSONL line on the read path. The
+// distinction matters to compaction: a forward-incompatible line is valid data this
+// binary cannot yet interpret and must survive a rewrite, whereas a malformed line
+// is corrupt and compaction is where it gets cleaned up.
+type decodeOutcome int
+
+const (
+	// decodeOK: the line parsed into a usable Record.
+	decodeOK decodeOutcome = iota
+	// decodeMalformed: the line is corrupt or missing a required field.
+	decodeMalformed
+	// decodeForwardIncompatible: the line is well-formed but carries a
+	// schema_version newer than this binary understands.
+	decodeForwardIncompatible
+)
+
 // decodeRecord parses one trimmed JSONL line into a Record, applying the
-// malformed-skip and schema-version-skip rules. ok is false (with a warning already
-// emitted to w) when the line must be skipped.
-func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
+// malformed-skip and schema-version-skip rules. The outcome is decodeOK when the
+// returned Record is usable; otherwise a warning has already been emitted to w and
+// the caller decides what to do with the raw line (see decodeOutcome).
+func decodeRecord(line []byte, path string, w io.Writer) (Record, decodeOutcome) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
 		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: %v\n", path, err)
-		return Record{}, false
+		return Record{}, decodeMalformed
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible schema
 	// must not be unmarshaled into this struct and treated as current — a field
 	// rename/semantic change would silently corrupt the backlog. Warn and skip.
 	if r.SchemaVersion > SchemaVersion {
 		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
-		return Record{}, false
+		return Record{}, decodeForwardIncompatible
 	}
 	if r.RunID == "" || r.ID == "" {
 		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", path)
-		return Record{}, false
+		return Record{}, decodeMalformed
 	}
-	return r, true
+	return r, decodeOK
 }
 
 // drainLine discards bytes from br up to and including the next '\n' (or EOF)
@@ -219,6 +265,77 @@ func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 		all = append(all, recs...)
 	}
 	return all, nil
+}
+
+// shardRead is readAllPreserving's result: every decodable record across the store,
+// plus the per-shard bookkeeping compaction needs to rewrite shards without losing
+// what it could not read.
+type shardRead struct {
+	// records is the concatenation of every decodable record, in shard order —
+	// identical to what ReadAll returns.
+	records []Record
+	// preserved maps a month shard to the forward-incompatible raw lines read from
+	// it, in file order, to be written back into that same shard.
+	preserved map[string][][]byte
+	// protected is the set of month shards holding a line this reader could not
+	// represent (over-long). They must be neither rewritten nor removed.
+	protected map[string]bool
+}
+
+// readAllPreserving is ReadAll for the compaction path: same records in the same
+// order, plus the per-shard detail Compact needs to avoid destroying anything it
+// could not read.
+//
+// The shard association is why compaction cannot reuse ReadAll. A preserved line's
+// schema is by definition unknown to this binary, so its run_id — and therefore the
+// month it belongs to — cannot be derived the way a decoded record's can. Writing it
+// back to the file it came from is the only placement that is correct without
+// understanding it.
+//
+// Only monthRe-matching shard names are tracked. A non-month .jsonl file is still
+// read for records (matching ReadAll), but Compact never rewrites or removes it, so
+// its contents are already safe. Note the pre-existing consequence, unchanged here:
+// records in such a file are read AND re-emitted into their run_id's month shard,
+// so they exist twice on disk afterwards and inflate the next run's RecordsBefore.
+// The duplicate is harmless — the fold collapses it on read.
+func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
+	out := shardRead{
+		preserved: map[string][][]byte{},
+		protected: map[string]bool{},
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return out, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		month := strings.TrimSuffix(e.Name(), ".jsonl")
+		isMonthShard := monthRe.MatchString(month)
+		var collect func([]byte)
+		if isMonthShard {
+			collect = func(line []byte) { out.preserved[month] = append(out.preserved[month], line) }
+		}
+
+		recs, unrepresentable, err := scanShard(filepath.Join(dir, e.Name()), opts, collect)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return out, basePathErr(err)
+		}
+		if unrepresentable && isMonthShard {
+			out.protected[month] = true
+		}
+		out.records = append(out.records, recs...)
+	}
+	return out, nil
 }
 
 // FoldRecords folds a stream of records by ID to their effective state. Callers
@@ -297,30 +414,72 @@ func sweepStaleTemps(dir string) {
 
 // CompactResult reports what a Compact call did so a caller can tell a real fold
 // from a no-op. StoreFound is false when there was nothing to compact (the store is
-// missing or holds no records). RecordsBefore is the total records read;
+// missing or holds no decodable records). RecordsBefore is the total records read;
 // RecordsAfter is the folded (live) count; Dropped is RecordsBefore-RecordsAfter,
-// the superseded records removed. All counts are zero on a no-op.
+// the superseded records removed. Preserved counts forward-incompatible lines
+// carried through untouched — they are not records this binary can fold, so they
+// are excluded from the other three counts and explain any gap between the reported
+// fold and the store's actual on-disk size. All counts are zero on a no-op except
+// Preserved, which is reported even then.
 type CompactResult struct {
 	StoreFound    bool
 	RecordsBefore int
 	RecordsAfter  int
 	Dropped       int
+	Preserved     int
 }
 
 // Compact reads all records in dir, folds them by ID to keep only the effective
 // records (dropping superseded ones), and rewrites the sharded monthly JSONL
 // files atomically. Shards that no longer have any active records are deleted.
 // Compact runs within a cross-process lock to prevent races with concurrent Appends.
+//
+// # Forward-incompatible records are preserved, never destroyed
+//
+// A rewrite-from-what-we-could-read is destructive by construction: every line the
+// read path skipped would vanish, so an older binary compacting a store written by
+// a newer one would permanently delete the newer records rather than merely failing
+// to display them — and would delete outright any shard holding only such records.
+// Compact therefore reads per shard, retaining forward-incompatible lines verbatim
+// (including keys this binary has no field for) and writing them back into the shard
+// they came from. A shard is removed only when it holds neither folded records nor
+// preserved lines.
+//
+// A shard containing a line too long to buffer (> maxLineBytes) is a third case:
+// the line cannot be captured without abandoning the memory bound that cap exists to
+// enforce, so instead the whole shard is left untouched — neither rewritten nor
+// removed. It simply goes uncompacted. That costs disk; rewriting it would cost
+// data, and a future schema embedding a blob, diff, or log makes oversized records
+// ordinary rather than exotic.
+//
+// Malformed lines are deliberately NOT preserved. A forward-incompatible or
+// over-long line is valid data this version cannot interpret or even buffer; a
+// corrupt line is corrupt, and compaction remains where it is cleaned up. Carrying
+// corrupt bytes forward would grow the store without bound.
+//
+// Preserved lines are appended after the folded records within their shard rather
+// than at their original offsets. Compaction already reorders records (the fold is
+// global while the write is per-month), so within-shard position is not a contract;
+// what is guaranteed is that the bytes survive and stay in their own relative order.
 func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	var result CompactResult
 	err := withLock(dir, "compact", func() error {
 		sweepStaleTemps(dir)
-		recs, err := ReadAll(dir, opts)
+		read, err := readAllPreserving(dir, opts)
 		if err != nil {
 			return err
 		}
+		recs, preservedByShard, protected := read.records, read.preserved, read.protected
+		preservedCount := 0
+		for _, lines := range preservedByShard {
+			preservedCount += len(lines)
+		}
 		if len(recs) == 0 {
-			return nil // result stays zero: StoreFound false (no-op)
+			// Nothing foldable. Report any preserved lines so the caller can explain
+			// the no-op, but touch no file: rewriting from an empty fold is exactly
+			// the destruction this guard exists to prevent.
+			result.Preserved = preservedCount
+			return nil // otherwise result stays zero: StoreFound false (no-op)
 		}
 
 		folded := FoldRecords(recs)
@@ -329,6 +488,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			RecordsBefore: len(recs),
 			RecordsAfter:  len(folded),
 			Dropped:       len(recs) - len(folded),
+			Preserved:     preservedCount,
 		}
 
 		byMonth := map[string][]Record{}
@@ -337,7 +497,24 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			if err != nil {
 				return err
 			}
+			if protected[month] {
+				// The shard is left whole, superseded records and all. Its records still
+				// took part in the global fold above, so any copy of this id living in
+				// another shard is folded correctly; the stale copy left here is
+				// collapsed by the fold on the next read.
+				continue
+			}
 			byMonth[month] = append(byMonth[month], r)
+		}
+		// A shard with only preserved lines still has to be rewritten (rather than
+		// skipped and later removed), so seed it with an empty record set.
+		for month := range preservedByShard {
+			if protected[month] {
+				continue
+			}
+			if _, ok := byMonth[month]; !ok {
+				byMonth[month] = nil
+			}
 		}
 
 		entries, err := os.ReadDir(dir)
@@ -348,7 +525,10 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
 				month := strings.TrimSuffix(e.Name(), ".jsonl")
-				if monthRe.MatchString(month) {
+				// A protected shard is never a removal candidate: it is excluded here
+				// rather than deleted from the set later, so no path can reach os.Remove
+				// for it.
+				if monthRe.MatchString(month) && !protected[month] {
 					existingMonths[month] = true
 				}
 			}
@@ -361,6 +541,14 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 				if err != nil {
 					return fmt.Errorf("marshaling localdebt record: %w", err)
 				}
+				buf.Write(line)
+				buf.WriteByte('\n')
+			}
+			// Carry forward-incompatible lines through byte-for-byte. They are never
+			// re-marshaled: this binary's Record cannot round-trip fields it does not
+			// declare, so marshaling a decoded copy is precisely how the data would be
+			// lost.
+			for _, line := range preservedByShard[month] {
 				buf.Write(line)
 				buf.WriteByte('\n')
 			}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -523,6 +524,283 @@ func TestCompact(t *testing.T) {
 	finalRecs, err := ReadAll(dir, ReadOpts{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, finalRecs)
+}
+
+// --- Plan 35.13 TD-004: compaction must not destroy newer-schema records ----
+
+// futureLine builds a raw JSONL line one schema version ahead of this binary —
+// structurally valid, but forward-incompatible, so decodeRecord skips it. Derived
+// from SchemaVersion so it stays one ahead across bumps.
+func futureLine(id, runID string) string {
+	return fmt.Sprintf(
+		`{"schema_version":%d,"id":%q,"run_id":%q,"ts":"2026-06-20T10:00:00Z","severity":"HIGH","file":"future.go","line":7,"problem":"written by a newer binary","unknown_future_key":"keep me"}`,
+		SchemaVersion+1, id, runID)
+}
+
+// writeShard writes lines verbatim as one shard file.
+func writeShard(t *testing.T, dir, month string, lines ...string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, month+".jsonl"),
+		[]byte(strings.Join(lines, "\n")+"\n"), 0o600))
+}
+
+// TestCompact_PreservesForwardIncompatibleRecords locks TD-004, the destructive
+// half of the downgrade contract. Compaction rebuilds each shard from the records
+// it could decode, so before this guard an older binary compacting a store written
+// by a newer one did not merely hide the newer records — it deleted them. A
+// forward-incompatible line must survive the rewrite byte-for-byte, including keys
+// this binary has no field for.
+func TestCompact_PreservesForwardIncompatibleRecords(t *testing.T) {
+	dir := t.TempDir()
+
+	// Two records sharing an id, so the fold genuinely rewrites the shard.
+	older := sampleRecord("2026-06-14T10:00:00Z-a")
+	older.Problem = "same finding"
+	older.Timestamp = "2026-06-14T10:00:00Z"
+	older.StampID()
+	newer := older
+	newer.Timestamp = "2026-06-15T10:00:00Z"
+	newer.EstMinutes = 99
+
+	oldJSON, err := json.Marshal(older)
+	require.NoError(t, err)
+	newJSON, err := json.Marshal(newer)
+	require.NoError(t, err)
+	future := futureLine("futureid", "2026-06-20T10:00:00Z-f")
+
+	writeShard(t, dir, "2026-06", string(oldJSON), string(newJSON), future)
+
+	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.RecordsBefore, "only decodable records are counted")
+	assert.Equal(t, 1, res.RecordsAfter, "the duplicate id folds to one")
+
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), future,
+		"the forward-incompatible line must survive compaction verbatim")
+	assert.Contains(t, string(raw), `"unknown_future_key":"keep me"`,
+		"keys this binary has no field for must not be dropped")
+	assert.Equal(t, 2, len(strings.Split(strings.TrimRight(string(raw), "\n"), "\n")),
+		"one folded record plus one preserved line")
+}
+
+// TestCompact_KeepsShardHoldingOnlyForwardIncompatibleRecords locks the second
+// destruction path: Compact removes shards left with no live records, so a shard
+// containing nothing this binary understands was deleted outright.
+func TestCompact_KeepsShardHoldingOnlyForwardIncompatibleRecords(t *testing.T) {
+	dir := t.TempDir()
+
+	rec := sampleRecord("2026-06-14T10:00:00Z-a")
+	recJSON, err := json.Marshal(rec)
+	require.NoError(t, err)
+	writeShard(t, dir, "2026-06", string(recJSON))
+
+	future := futureLine("futureid", "2026-07-20T10:00:00Z-f")
+	writeShard(t, dir, "2026-07", future)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	assert.FileExists(t, filepath.Join(dir, "2026-07.jsonl"),
+		"a shard holding only forward-incompatible records must not be removed")
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-07.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), future, "its contents must survive intact")
+}
+
+// TestCompact_ReportsPreservedCount locks the reporting half: a caller can tell
+// that compaction left records it could not fold, which explains why the store did
+// not shrink as far as the fold counts suggest.
+func TestCompact_ReportsPreservedCount(t *testing.T) {
+	dir := t.TempDir()
+
+	rec := sampleRecord("2026-06-14T10:00:00Z-a")
+	recJSON, err := json.Marshal(rec)
+	require.NoError(t, err)
+	writeShard(t, dir, "2026-06",
+		string(recJSON),
+		futureLine("f1", "2026-06-20T10:00:00Z-f"),
+		futureLine("f2", "2026-06-21T10:00:00Z-f"))
+
+	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Preserved, "both forward-incompatible lines are reported")
+	assert.Equal(t, 1, res.RecordsBefore, "preserved lines are not counted as records")
+}
+
+// TestCompact_PreservedOnlyStoreIsNotRewritten locks the no-op path: when this
+// binary can decode nothing, compaction must touch no file at all rather than
+// rewriting shards from an empty fold.
+func TestCompact_PreservedOnlyStoreIsNotRewritten(t *testing.T) {
+	dir := t.TempDir()
+	future := futureLine("futureid", "2026-06-20T10:00:00Z-f")
+	writeShard(t, dir, "2026-06", future)
+
+	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, res.StoreFound, "no foldable records is still a no-op")
+	assert.Equal(t, 1, res.Preserved, "but the caller is told why")
+
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, future+"\n", string(raw), "the shard is left byte-identical")
+}
+
+// TestCompact_MalformedLinesAreStillDropped pins the deliberate scope boundary of
+// the TD-004 fix: a forward-incompatible line is valid data this binary cannot yet
+// interpret and is preserved, whereas a malformed line is corrupt and compaction
+// remains the place it is cleaned up. Preserving corrupt bytes forever would grow
+// the store without bound and is a separate decision.
+func TestCompact_MalformedLinesAreStillDropped(t *testing.T) {
+	dir := t.TempDir()
+
+	older := sampleRecord("2026-06-14T10:00:00Z-a")
+	older.Problem = "same finding"
+	older.StampID()
+	newer := older
+	newer.Timestamp = "2026-06-15T10:00:00Z"
+
+	oldJSON, err := json.Marshal(older)
+	require.NoError(t, err)
+	newJSON, err := json.Marshal(newer)
+	require.NoError(t, err)
+	writeShard(t, dir, "2026-06", string(oldJSON), string(newJSON), `{"broken":`)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `{"broken":`,
+		"a corrupt line is still dropped by compaction (deliberate: only forward-incompatible lines are preserved)")
+}
+
+// overLongLine builds a single JSONL line larger than maxLineBytes, carrying a
+// forward-incompatible schema version. The read path cannot buffer it, so it is
+// skipped without ever reaching decodeRecord — the case a naive "preserve what
+// decodeRecord rejected" fix misses entirely.
+func overLongLine(id string) string {
+	return fmt.Sprintf(
+		`{"schema_version":%d,"id":%q,"run_id":"2026-07-02T10:00:00Z-r","ts":"2026-07-02T10:00:00Z","severity":"HIGH","problem":"newer schema with a blob","blob":%q}`,
+		SchemaVersion+1, id, strings.Repeat("X", maxLineBytes+1024))
+}
+
+// TestCompact_KeepsShardHoldingOnlyAnOverLongLine locks the second half of TD-004.
+// An over-long line is skipped by the buffer guard before any decode happens, so it
+// yields neither a record nor a preserved line — leaving its shard eligible for the
+// "no live records" removal. A future schema that embeds a blob, diff, or log makes
+// oversized records ordinary rather than exotic, and this binary cannot know how big
+// a future record is entitled to be.
+func TestCompact_KeepsShardHoldingOnlyAnOverLongLine(t *testing.T) {
+	dir := t.TempDir()
+
+	rec := sampleRecord("2026-06-14T10:00:00Z-a")
+	recJSON, err := json.Marshal(rec)
+	require.NoError(t, err)
+	writeShard(t, dir, "2026-06", string(recJSON))
+
+	big := overLongLine("bigfuture")
+	writeShard(t, dir, "2026-07", big)
+	before, err := os.ReadFile(filepath.Join(dir, "2026-07.jsonl"))
+	require.NoError(t, err)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	require.FileExists(t, filepath.Join(dir, "2026-07.jsonl"),
+		"a shard whose only line is over-long must not be removed")
+	after, err := os.ReadFile(filepath.Join(dir, "2026-07.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "its bytes must be untouched")
+}
+
+// TestCompact_LeavesShardWithOverLongLineUncompacted locks the conservative
+// degradation: a shard holding a line this binary cannot even buffer is left
+// entirely alone rather than rewritten from the subset it could read. Skipping the
+// fold for that one shard costs disk; rewriting it costs data.
+func TestCompact_LeavesShardWithOverLongLineUncompacted(t *testing.T) {
+	dir := t.TempDir()
+
+	older := sampleRecord("2026-07-14T10:00:00Z-a")
+	older.Problem = "same finding"
+	older.StampID()
+	newer := older
+	newer.Timestamp = "2026-07-15T10:00:00Z"
+	oldJSON, err := json.Marshal(older)
+	require.NoError(t, err)
+	newJSON, err := json.Marshal(newer)
+	require.NoError(t, err)
+
+	writeShard(t, dir, "2026-07", string(oldJSON), overLongLine("bigfuture"), string(newJSON))
+	before, err := os.ReadFile(filepath.Join(dir, "2026-07.jsonl"))
+	require.NoError(t, err)
+
+	// A second, clean shard so Compact takes the rewrite path rather than the
+	// nothing-to-do early return.
+	clean := sampleRecord("2026-06-14T10:00:00Z-b")
+	clean.Problem = "unrelated"
+	clean.StampID()
+	cleanJSON, err := json.Marshal(clean)
+	require.NoError(t, err)
+	writeShard(t, dir, "2026-06", string(cleanJSON))
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(filepath.Join(dir, "2026-07.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after,
+		"a shard containing an unbufferable line is left byte-identical, superseded records and all")
+}
+
+// TestCompact_PreservesAcrossBufferRefills is the guard for the single line the
+// whole preservation fix rests on: the retained line must be a COPY, because
+// bufio.Reader.ReadSlice returns a view into a buffer the next read overwrites.
+// Every other preservation test uses a shard far smaller than the 1 MiB buffer, so
+// the buffer never refills and an aliased slice stays valid by accident — they pass
+// with or without the copy. This one forces many refills, so a missing copy writes
+// fragments of unrelated records into the shard as invalid JSON: silent corruption
+// of the very data the fix exists to protect, which is worse than the deletion it
+// replaced.
+func TestCompact_PreservesAcrossBufferRefills(t *testing.T) {
+	dir := t.TempDir()
+
+	// ~2.5 MiB of decodable records, so the reader refills its buffer repeatedly,
+	// with forward-incompatible lines interleaved between them.
+	var lines []string
+	var futures []string
+	for i := 0; i < 6; i++ {
+		rec := sampleRecord("2026-06-14T10:00:00Z-a")
+		rec.Problem = strings.Repeat("P", 400*1024) + fmt.Sprintf("-%d", i)
+		rec.StampID()
+		recJSON, err := json.Marshal(rec)
+		require.NoError(t, err)
+		lines = append(lines, string(recJSON))
+
+		f := futureLine(fmt.Sprintf("future%d", i), "2026-06-20T10:00:00Z-f")
+		futures = append(futures, f)
+		lines = append(lines, f)
+	}
+	writeShard(t, dir, "2026-06", lines...)
+
+	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Equal(t, len(futures), res.Preserved)
+
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	for i, f := range futures {
+		assert.Contains(t, string(raw), f,
+			"preserved line %d must survive verbatim across buffer refills", i)
+	}
+	// Every line must still be parseable JSON — a truncated alias would not be.
+	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		var probe map[string]any
+		assert.NoError(t, json.Unmarshal([]byte(line), &probe),
+			"line %d must be intact JSON, not a fragment of a neighbouring record", i)
+	}
 }
 
 // TestCompact_SweepsStaleTempFiles locks the crash-reaping contract: temp files

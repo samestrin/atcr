@@ -31,11 +31,28 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("compact: %w", err)
 	}
 
+	// Records written by a newer atcr are kept verbatim rather than folded or
+	// dropped. Say so, or the store looks stubbornly larger than the fold counts
+	// imply and the natural next step is to go delete something.
 	if !res.StoreFound {
+		if res.Preserved > 0 {
+			// Reporting "no store" here would contradict the very next sentence and
+			// push the reader toward deleting the records by hand.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"Nothing to compact: all %d record(s) were written by a newer atcr version and were left untouched. Upgrade to fold them.\n",
+				res.Preserved)
+			return nil
+		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No local TD store to compact.")
 		return nil
 	}
+
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted %d records into %d (%d superseded dropped).\n",
 		res.RecordsBefore, res.RecordsAfter, res.Dropped)
+	if res.Preserved > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"Kept %d record(s) written by a newer atcr version untouched; upgrade to fold them.\n",
+			res.Preserved)
+	}
 	return nil
 }

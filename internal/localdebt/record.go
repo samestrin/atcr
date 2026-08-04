@@ -39,17 +39,16 @@ import (
 // accepted loss the v1 -> v2 bump documented; the uniform forward-incompat-skip
 // model is preserved rather than special-casing additive bumps.
 //
-// Downgrade DESTRUCTION (not merely invisibility): skipping is not read-only in
-// its effects. Compact rebuilds each shard from exactly what ReadAll returned and
-// removes shards left with no live records (store.go), so an older binary running
-// `atcr debt compact` does not just fail to show newer records — it permanently
-// deletes them. This predates the v2 -> v3 bump (a v1-era binary destroys v2
-// records the same way) and Compact is deliberately unmodified here, but Plan
-// 35.13 raises the stakes: this store becomes the single system of record, so the
-// destroyed rows can include hand-filed items with no other copy, and T5 makes
-// compaction automatic rather than an explicit user action. Making Compact carry
-// forward-incompatible lines through verbatim is a prerequisite for T5's
-// auto-compaction (see tech-debt-captured.md TD-004), not an optional hardening.
+// Downgrade is invisibility only, never destruction. Skipping a record on read
+// would otherwise not be read-only in its effects: Compact rebuilds each shard from
+// what the read path returned and removes shards left with no live records, so an
+// older binary running `atcr debt compact` would permanently delete every newer
+// record rather than merely failing to show it. Compact therefore carries
+// forward-incompatible lines through a rewrite verbatim and never removes a shard
+// that still holds one (store.go). That guard is what makes this uniform
+// forward-incompat-skip model safe to downgrade into, and it is a prerequisite for
+// T5's automatic compaction, which removes the "a human chose to run compact" step
+// that used to bound the exposure.
 const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,6 +51,53 @@ func TestDebtCompact_ErrorPathSurfacesWrappedError(t *testing.T) {
 	_, err := runDebt(t, "compact", "--dir", storePath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "compact:")
+}
+
+// newerSchemaLine builds a raw JSONL line one schema version ahead of this binary,
+// i.e. a record written by a newer atcr that this one preserves but cannot fold.
+func newerSchemaLine(id string) string {
+	return fmt.Sprintf(
+		`{"schema_version":%d,"id":%q,"run_id":"2026-06-20T10:00:00Z-r","ts":"2026-06-20T10:00:00Z","severity":"HIGH","file":"n.go","line":1,"problem":"from a newer atcr"}`,
+		localdebt.SchemaVersion+1, id)
+}
+
+// TestDebtCompact_ReportsPreservedNewerRecords locks the user-facing half of the
+// preservation contract for a store this binary can partly fold: the fold counts
+// alone would leave a user wondering why the store did not shrink as far as claimed,
+// and "go delete something" is the wrong next move.
+func TestDebtCompact_ReportsPreservedNewerRecords(t *testing.T) {
+	dir := t.TempDir()
+	rec := openRec("2026-06-14T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	require.NoError(t, localdebt.Append(dir, rec))
+
+	shard := filepath.Join(dir, "2026-06.jsonl")
+	existing, err := os.ReadFile(shard)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(shard,
+		append(existing, []byte(newerSchemaLine("future1")+"\n")...), 0o600))
+
+	out, err := runDebt(t, "compact", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Kept 1 record(s) written by a newer atcr version untouched",
+		"a preserved record must be reported, not silently absorbed into the fold counts")
+	assert.Contains(t, out, "Compacted 1 records into 1",
+		"preserved lines are excluded from the fold counts")
+}
+
+// TestDebtCompact_PreservedOnlyStoreReportsCoherently locks the case where the
+// binary can fold nothing at all. Reporting "No local TD store to compact." here
+// would flatly contradict the preserved-record notice printed beside it.
+func TestDebtCompact_PreservedOnlyStoreReportsCoherently(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"),
+		[]byte(newerSchemaLine("future1")+"\n"), 0o600))
+
+	out, err := runDebt(t, "compact", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "all 1 record(s) were written by a newer atcr version")
+	assert.NotContains(t, out, "No local TD store to compact.",
+		"claiming there is no store contradicts the records reported in the same breath")
+	assert.NotContains(t, out, "Compacted ", "nothing was folded")
 }
 
 func TestDebtCompact_PerformsCompaction(t *testing.T) {
