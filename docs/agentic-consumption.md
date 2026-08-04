@@ -126,7 +126,10 @@ it is not duplicated here. In short:
 - **0** — run completed, no findings at/above the `--fail-on` threshold.
 - **1** — gate failure: findings at/above threshold survived reconciliation.
 - **2** — usage or configuration error (bad flags, empty range, invalid config).
-- **3** — authentication failure (`--sync-cloud` with a missing/invalid key).
+- **3** — authentication failure (`--sync-cloud` with a missing/invalid key). A
+  `--sync-cloud` run that omits the required `--cloud-endpoint` exits **2**
+  instead: the destination is validated before the credential, and this build
+  compiles in no default destination.
 
 New AXI-introduced error paths classify into that existing contract rather than
 adding a code:
@@ -257,6 +260,8 @@ case $status in
     # ATCR_API_KEY or a remote 401/403). It is unreachable for the command above,
     # which does not push to the cloud — a missing provider key surfaces as exit 2.
     # Keep this branch as defensive handling for orchestrators that add --sync-cloud.
+    # Reaching it requires passing --cloud-endpoint too: with no destination the
+    # run exits 2 before the credential is ever read.
     echo "auth error: fix credentials (e.g. ATCR_API_KEY) before retrying" >&2
     exit 3
     ;;

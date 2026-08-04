@@ -12,15 +12,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/samestrin/atcr/internal/version"
 )
 
 // newTestClient points a Client at an httptest TLS server, wiring the server's
-// trusted client so the HTTPS-only send path succeeds against the self-signed
-// cert. Same-package (white-box) access to the unexported httpClient field is the
+// trusted Transport so the HTTPS-only send path succeeds against the self-signed
+// cert. Only the Transport is swapped — the production CheckRedirect policy stays
+// in force, so tests exercise redirect handling exactly as production runs it.
+// Same-package (white-box) access to the unexported httpClient field is the
 // injection seam; production callers only ever see New(endpoint).
 func newTestClient(ts *httptest.Server) *Client {
-	c := New(ts.URL)
-	c.httpClient = ts.Client()
+	c := NewSingleDestination(ts.URL)
+	c.httpClient.Transport = ts.Client().Transport
 	return c
 }
 
@@ -160,7 +164,7 @@ func TestClient_Send_EmptyEndpointNoOps(t *testing.T) {
 	}))
 	defer func() { doRequest.Store(orig) }()
 
-	c := New("") // empty endpoint
+	c := NewSingleDestination("") // empty endpoint
 	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
 	c.Wait()
 
@@ -258,7 +262,7 @@ func TestClient_Send_SurvivesCancelledContext(t *testing.T) {
 	})
 	defer restore()
 
-	c := New("https://example.com")
+	c := NewSingleDestination("https://example.com")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before the goroutine is scheduled
 	c.Send(ctx, Event{Event: "review_run", Status: "success"})
@@ -273,7 +277,7 @@ func TestClient_Send_SurvivesCancelledContext(t *testing.T) {
 // NewContext is returned by FromContext, and a bare context yields nil (whose
 // Send is a safe no-op).
 func TestContext_RoundTrip(t *testing.T) {
-	c := New("https://example.test")
+	c := NewSingleDestination("https://example.test")
 	got := FromContext(NewContext(context.Background(), c))
 	if got != c {
 		t.Fatalf("FromContext returned %p, want %p", got, c)
@@ -351,38 +355,384 @@ func TestClient_RequestTimeout_Race(t *testing.T) {
 // bound the number of concurrent background goroutines. A burst far larger than the
 // cap fired against a blocking send seam must never exceed maxInFlightSends
 // simultaneously in flight — excess pings are dropped, not spawned.
+//
+// Deterministic barrier instead of a fixed sleep: the seam signals an entry
+// channel, and the test waits for the (cap+1)'th entry. If the cap is enforced,
+// exactly maxInFlightSends entries ever occur and the wait ends on timeout — a
+// held cap; if the cap is broken, the burst floods the seam and the (cap+1)'th
+// entry arrives promptly — a proven breach. "The cap held" and "the test never
+// got there" are distinguishable (the count==0 wiring check below).
 func TestClient_Send_BoundsInFlightGoroutines(t *testing.T) {
 	const burst = 300
-	var cur, maxSeen int32
+	entered := make(chan struct{}, burst)
 	block := make(chan struct{})
 	restore := SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
-		n := atomic.AddInt32(&cur, 1)
-		for {
-			m := atomic.LoadInt32(&maxSeen)
-			if n <= m || atomic.CompareAndSwapInt32(&maxSeen, m, n) {
-				break
-			}
-		}
+		entered <- struct{}{}
 		<-block // hold the slot so concurrency accumulates
-		atomic.AddInt32(&cur, -1)
 		return nil, errors.New("blocked stub")
 	})
 	defer restore()
 
-	c := New("https://telemetry.test/ingest")
+	c := NewSingleDestination("https://telemetry.test/ingest")
 	for i := 0; i < burst; i++ {
 		c.Send(context.Background(), Event{Event: "review_run"})
 	}
-	// Let the spawned goroutines reach the blocking seam before sampling the peak.
-	time.Sleep(150 * time.Millisecond)
-	peak := atomic.LoadInt32(&maxSeen)
+
+	count := 0
+	wait := time.NewTimer(2 * time.Second)
+	defer wait.Stop()
+barrier:
+	for count < maxInFlightSends+1 {
+		select {
+		case <-entered:
+			count++
+		case <-wait.C:
+			// No (cap+1)'th entry arrived: the cap held — every beyond-cap send was
+			// dropped in dispatch before reaching the seam.
+			break barrier
+		}
+	}
 	close(block)
 	c.Wait()
 
-	if peak > int32(maxInFlightSends) {
-		t.Fatalf("peak concurrent in-flight sends = %d, want <= %d (Send must bound goroutines)", peak, maxInFlightSends)
+	if count > maxInFlightSends {
+		t.Fatalf("%d sends reached the seam concurrently, want <= %d (Send must bound goroutines)", count, maxInFlightSends)
 	}
-	if peak == 0 {
+	if count == 0 {
 		t.Fatal("no sends reached the seam — test wiring is broken")
+	}
+}
+
+// TestClient_Send_PerDestinationSemaphoreIndependence proves the in-flight cap is
+// PER DESTINATION: with the usage-ping semaphore saturated by sends blocked inside
+// the transport seam, the quality-signal surface must still dispatch. A single
+// shared semaphore let a hung destination hold every slot and starve its sibling —
+// the coupling the per-endpoint gate explicitly eliminated.
+func TestClient_Send_PerDestinationSemaphoreIndependence(t *testing.T) {
+	release := make(chan struct{})
+	var qualityHits int32
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "quality-signal") {
+			atomic.AddInt32(&qualityHits, 1)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		<-release // usage-ping sends hold their in-flight slots
+		return nil, errors.New("blocked stub")
+	})
+	defer restore()
+
+	c := NewWithQualitySignal(testUsageEndpoint, testQualityEndpoint)
+	// Fire more usage pings than the cap: exactly maxInFlightSends acquire a slot
+	// synchronously inside dispatch (the rest are dropped), so the usage semaphore
+	// is deterministically full once these calls return.
+	for i := 0; i < maxInFlightSends*2; i++ {
+		c.Send(context.Background(), Event{Event: "review_run"})
+	}
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+
+	// The quality signal has its own semaphore, so it must reach the seam promptly
+	// even though every usage slot is held. Poll with a deadline rather than
+	// sleeping a fixed interval.
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&qualityHits) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(release)
+	c.Wait()
+
+	if n := atomic.LoadInt32(&qualityHits); n != 1 {
+		t.Fatalf("quality signal dispatches = %d, want 1 — a saturated usage-ping semaphore must not starve the sibling surface", n)
+	}
+}
+
+// TestClient_Send_RefusesHTTPSDowngradeRedirect proves the client never follows a
+// redirect to a plaintext-http target: a 308 (which replays the POST body via
+// GetBody) must be refused rather than transmit the payload in the clear. isHTTPS
+// vets only the INITIAL URL; the CheckRedirect policy vets every hop.
+func TestClient_Send_RefusesHTTPSDowngradeRedirect(t *testing.T) {
+	var plaintextHits int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&plaintextHits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer plain.Close()
+
+	var tlsHits int32
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tlsHits, 1)
+		w.Header().Set("Location", plain.URL+"/downgrade")
+		w.WriteHeader(http.StatusPermanentRedirect) // 308 replays the POST body
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&tlsHits); n != 1 {
+		t.Fatalf("expected 1 request to the TLS redirector, got %d", n)
+	}
+	if n := atomic.LoadInt32(&plaintextHits); n != 0 {
+		t.Fatalf("telemetry payload followed an https->http downgrade: %d plaintext request(s), want 0", n)
+	}
+}
+
+// --- Epic 35.12: two-destination routing ------------------------------------
+
+// captureRequestURLs installs a do-request seam recording the destination URL and
+// body of every outbound send, so a test can prove which payload went where. The
+// two surfaces are distinguishable at the wire by body shape: the usage ping is a
+// JSON object, the quality signal a JSON array.
+func captureRequestURLs(t *testing.T) func() []struct{ URL, Body string } {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		hits []struct{ URL, Body string }
+	)
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		hits = append(hits, struct{ URL, Body string }{req.URL.String(), string(b)})
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	t.Cleanup(restore)
+	return func() []struct{ URL, Body string } {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]struct{ URL, Body string }, len(hits))
+		copy(out, hits)
+		return out
+	}
+}
+
+const (
+	testUsageEndpoint   = "https://ingest.test/api/v1/telemetry"
+	testQualityEndpoint = "https://ingest.test/api/v1/quality-signal"
+)
+
+// TestClient_NewWithQualitySignal_RoutesToDistinctEndpoints is Epic 35.12 AC1b: the
+// quality signal must NOT share the usage-ping destination. A single shared
+// `endpoint` field silently reintroduces the bug — the quality signal's JSON array
+// lands on the usage handler, whose closed allowlist answers 400, and the fail-open
+// path drops it with nothing surfacing the loss. Asserting on req.URL per call is
+// what makes that regression impossible to reintroduce unnoticed.
+func TestClient_NewWithQualitySignal_RoutesToDistinctEndpoints(t *testing.T) {
+	hits := captureRequestURLs(t)
+
+	c := NewWithQualitySignal(testUsageEndpoint, testQualityEndpoint)
+	c.Send(context.Background(), Event{Event: "review_run", Lang: "go", Lines: 1, Status: "success"})
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+	c.Wait()
+
+	got := hits()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sends (one per surface), got %d: %+v", len(got), got)
+	}
+	for _, h := range got {
+		isArray := strings.HasPrefix(strings.TrimSpace(h.Body), "[")
+		want := testUsageEndpoint
+		surface := "usage ping"
+		if isArray {
+			want = testQualityEndpoint
+			surface = "quality signal"
+		}
+		if h.URL != want {
+			t.Errorf("%s posted to %q, want %q", surface, h.URL, want)
+		}
+	}
+}
+
+// TestClient_NewWithQualitySignal_PerPathEmptyEndpointNoOps is Epic 35.12 AC1c: an
+// empty endpoint is a silent no-op PER PATH — no request, no error, no panic — so
+// the two constants can be activated on independent schedules rather than as one
+// release. A shared field would make either empty value disable both surfaces.
+func TestClient_NewWithQualitySignal_PerPathEmptyEndpointNoOps(t *testing.T) {
+	t.Run("empty usage endpoint silences only the ping", func(t *testing.T) {
+		hits := captureRequestURLs(t)
+		c := NewWithQualitySignal("", testQualityEndpoint)
+		c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+		c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+		c.Wait()
+
+		got := hits()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly 1 send (quality signal only), got %d: %+v", len(got), got)
+		}
+		if got[0].URL != testQualityEndpoint {
+			t.Errorf("quality signal posted to %q, want %q", got[0].URL, testQualityEndpoint)
+		}
+	})
+
+	t.Run("empty quality endpoint silences only the quality signal", func(t *testing.T) {
+		hits := captureRequestURLs(t)
+		c := NewWithQualitySignal(testUsageEndpoint, "")
+		c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+		c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+		c.Wait()
+
+		got := hits()
+		if len(got) != 1 {
+			t.Fatalf("expected exactly 1 send (usage ping only), got %d: %+v", len(got), got)
+		}
+		if got[0].URL != testUsageEndpoint {
+			t.Errorf("usage ping posted to %q, want %q", got[0].URL, testUsageEndpoint)
+		}
+	})
+}
+
+// TestNew_KeepsSharedDestinationForBothPayloads pins New's documented
+// single-destination meaning. It is NOT an accident of the two-destination
+// refactor: ~40 existing call sites (and every test that discriminates the two
+// surfaces by body shape rather than URL) depend on one client sending both
+// payloads to one place. Changing New to leave the quality destination unset would
+// silently zero out those tests.
+func TestNew_KeepsSharedDestinationForBothPayloads(t *testing.T) {
+	hits := captureRequestURLs(t)
+
+	c := NewSingleDestination(testUsageEndpoint)
+	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}})
+	c.Wait()
+
+	got := hits()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sends, got %d: %+v", len(got), got)
+	}
+	for _, h := range got {
+		if h.URL != testUsageEndpoint {
+			t.Errorf("New(endpoint) must send both payloads to %q, got %q", testUsageEndpoint, h.URL)
+		}
+	}
+}
+
+// TestClient_SendQualitySignal_NilReceiverNoOps is the quality-signal twin of
+// TestClient_Send_NilReceiverNoOps. It guards a real panic path introduced with
+// the second destination: SendQualitySignal reads its endpoint off the receiver
+// BEFORE dispatch's own nil check runs, so the accessor must be nil-safe.
+func TestClient_SendQualitySignal_NilReceiverNoOps(t *testing.T) {
+	var c *Client
+	c.SendQualitySignal(context.Background(), []QualitySignal{{PersonaIDHash: "h", Model: "m"}}) // must not panic
+	c.Wait()
+}
+
+// TestDefaultRequestTimeout_FitsWithinCallerDrainBound pins the coherence between
+// this package's per-request budget and the drain bound its only production caller
+// enforces. cli's drainTelemetry waits at most telemetryDrainTimeout (2s) for
+// in-flight sends before abandoning them and exiting. A defaultRequestTimeout
+// LARGER than that bound creates a dead window: a send whose own budget has not
+// expired is guaranteed to be abandoned anyway, so the extra budget buys nothing
+// and only widens the gap between "the request thinks it may still succeed" and
+// "the process already gave up on it".
+//
+// The two values must therefore agree. This test is the tripwire: raising
+// defaultRequestTimeout above the caller's bound — or lowering that bound without
+// revisiting this constant — fails here rather than silently re-opening the window.
+// cli/main.go's telemetryDrainTimeout is unexported and in a package this leaf
+// cannot import, so the bound is restated as a literal and named in both places.
+func TestDefaultRequestTimeout_FitsWithinCallerDrainBound(t *testing.T) {
+	const callerDrainBound = 2 * time.Second // cli.telemetryDrainTimeout
+	if defaultRequestTimeout > callerDrainBound {
+		t.Fatalf("defaultRequestTimeout (%v) exceeds the caller's drain bound (%v): a send finishing in between is abandoned despite its own budget not having expired",
+			defaultRequestTimeout, callerDrainBound)
+	}
+}
+
+// TestClientGo_RegistersBeforeWork is the regression guard for the drain gap that
+// made the quality signal effectively undeliverable: work spawned via Client.Go
+// must be covered by Wait even when it does a long stretch of work BEFORE it ever
+// dispatches a send. Registering at dispatch (a bare `go` calling Send at the end)
+// let Wait return while the work was still running.
+func TestClientGo_RegistersBeforeWork(t *testing.T) {
+	c := NewSingleDestination("https://telemetry.test/ingest")
+
+	var done int32
+	c.Go(context.Background(), func() {
+		time.Sleep(50 * time.Millisecond) // stand-in for the O(n) store read
+		atomic.StoreInt32(&done, 1)
+	})
+
+	c.Wait()
+	if atomic.LoadInt32(&done) != 1 {
+		t.Fatal("Wait must cover work registered at spawn, not only sends registered at dispatch")
+	}
+}
+
+// TestClientGo_RecoversPanic pins the fail-open contract: detached work that
+// panics must never escape, matching the send path.
+//
+// The sharper property is that the WaitGroup stays BALANCED across a panic. If the
+// recover sat outside the deferred Done — or if Done were skipped on the panic
+// path — Wait would block forever, turning a swallowed panic into a hung process
+// exit. So this asserts Wait actually returns, and that a subsequent healthy unit
+// of work is still tracked, rather than only that the binary survived.
+func TestClientGo_RecoversPanic(t *testing.T) {
+	c := NewSingleDestination("https://telemetry.test/ingest")
+
+	c.Go(context.Background(), func() { panic("boom") })
+
+	returned := make(chan struct{})
+	go func() { c.Wait(); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait blocked after a panicking unit of work: the WaitGroup was left unbalanced")
+	}
+
+	// The client must still be usable and still tracked afterwards.
+	var ran int32
+	c.Go(context.Background(), func() { atomic.StoreInt32(&ran, 1) })
+	c.Wait()
+	if atomic.LoadInt32(&ran) != 1 {
+		t.Fatal("a panic in earlier work must not stop later work from being tracked by Wait")
+	}
+}
+
+// TestClientGo_NilClientStillRuns keeps Go on the same nil-safe footing as Send.
+func TestClientGo_NilClientStillRuns(t *testing.T) {
+	var c *Client
+	done := make(chan struct{})
+	c.Go(context.Background(), func() { close(done) })
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a nil client must still run detached work")
+	}
+}
+
+// TestSend_SetsVersionedUserAgent covers the client-version dimension the live
+// endpoint has no other way to obtain. The Event allowlist deliberately excludes a
+// version field, so without a User-Agent every ping arrives as the generic Go
+// default UA and the aggregate data cannot distinguish a current build from a
+// two-year-old one, correlate a status distribution with a release, or let the
+// backend deprecate a misbehaving client version. A version string is not PII and
+// is already public in the binary.
+func TestSend_SetsVersionedUserAgent(t *testing.T) {
+	var mu sync.Mutex
+	var got string
+	restore := SetDoRequestForTest(func(_ *http.Client, req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		got = req.Header.Get("User-Agent")
+		mu.Unlock()
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	t.Cleanup(restore)
+
+	c := NewSingleDestination("https://telemetry.test/ingest")
+	c.Send(context.Background(), Event{Event: "review_run"})
+	c.Wait()
+
+	mu.Lock()
+	ua := got
+	mu.Unlock()
+
+	if !strings.HasPrefix(ua, "atcr/") {
+		t.Fatalf("User-Agent must identify the client and its version, got %q", ua)
+	}
+	if strings.TrimPrefix(ua, "atcr/") == "" {
+		t.Fatalf("User-Agent must carry a non-empty version, got %q", ua)
+	}
+	if strings.TrimPrefix(ua, "atcr/") != version.Version {
+		t.Fatalf("User-Agent version %q must track the build version %q", ua, version.Version)
 	}
 }

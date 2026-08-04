@@ -78,7 +78,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 			if tc.set {
 				t.Setenv("ATCR_QUALITY_SIGNAL", tc.val)
 			} else {
-				_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+				unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 			}
 			assert.Equal(t, tc.want, qualitySignalEnabledFromEnv(io.Discard))
 		})
@@ -90,7 +90,7 @@ func TestQualitySignalEnabledFromEnv(t *testing.T) {
 // no persisted config key, the gate resolves disabled.
 func TestQualitySignalGate_DisabledWithNoEnvNoConfig(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	assert.False(t, qualitySignalGate(io.Discard), "quality signal must be disabled with no env var and no config")
 }
 
@@ -99,7 +99,7 @@ func TestQualitySignalGate_DisabledWithNoEnvNoConfig(t *testing.T) {
 // unrelated keys (and even telemetry: true) still resolves the gate disabled.
 func TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\npayload_mode: blocks\n")
 	assert.False(t, qualitySignalGate(io.Discard), "an absent quality_signal key must be neutral, not an implicit opt-in")
 }
@@ -111,19 +111,19 @@ func TestQualitySignalGate_DisabledWithUnrelatedConfigKeysOnly(t *testing.T) {
 func TestQualitySignalGate_IndependentFromTelemetrySetting(t *testing.T) {
 	t.Run("quality on, telemetry off", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-		_ = os.Unsetenv("ATCR_TELEMETRY")
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\nquality_signal: true\n")
 		assert.True(t, qualitySignalGate(io.Discard), "quality_signal: true must enable the quality gate")
-		assert.False(t, telemetryGate(), "telemetry: false must keep the telemetry gate disabled — independently")
+		assert.False(t, telemetryGate(io.Discard), "telemetry: false must keep the telemetry gate disabled — independently")
 	})
 	t.Run("quality off, telemetry on", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-		_ = os.Unsetenv("ATCR_TELEMETRY")
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\nquality_signal: false\n")
 		assert.False(t, qualitySignalGate(io.Discard), "quality_signal: false must keep the quality gate disabled")
-		assert.True(t, telemetryGate(), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
+		assert.True(t, telemetryGate(io.Discard), "telemetry: true (no env opt-out) must keep the telemetry gate enabled — independently")
 	})
 }
 
@@ -141,7 +141,7 @@ func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
 	subdir := filepath.Join(repo, "subdir")
 	require.NoError(t, os.MkdirAll(subdir, 0o755))
 	t.Chdir(subdir)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 
 	assert.True(t, qualitySignalGate(io.Discard),
 		"a persisted opt-in at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
@@ -152,7 +152,7 @@ func TestQualitySignalGate_ResolvesRepoRoot(t *testing.T) {
 // key present but no quality_signal opt-in, the gate still resolves disabled.
 func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_API_KEY", "a-valid-looking-key")
 	assert.False(t, qualitySignalGate(io.Discard), "a valid ATCR_API_KEY must not enable the quality-signal gate")
 }
@@ -166,7 +166,7 @@ func TestQualitySignalGate_IndependentFromSyncCloud(t *testing.T) {
 func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 	t.Run("malformed config, no env -> disabled", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+		unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 		writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
 		assert.False(t, qualitySignalGate(io.Discard), "a corrupt quality_signal value must never be interpreted as consent to transmit")
 	})
@@ -183,7 +183,7 @@ func TestQualitySignalGate_MalformedConfigFailsSafeToDisabled(t *testing.T) {
 // either surface between calls flips the result.
 func TestQualitySignalGate_ReEvaluatedFreshPerInvocation(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	assert.False(t, qualitySignalGate(io.Discard), "first call: disabled by default")
 	assert.False(t, qualitySignalGate(io.Discard), "repeated call with no change: still disabled")
 
@@ -271,29 +271,83 @@ func splitPreview(out string) (jsonPart, marker string) {
 // then RunE — capturing stdout and returning the resolved exit code. Unlike
 // runPreview (which calls RunE directly), this exercises the real invocation path,
 // so a PreRunE-ordering regression is caught.
-func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int) {
+//
+// It deliberately does NOT use NewRootCmd. That constructor builds its telemetry
+// client from the live compiled-in destinations, installs no transport seam, and
+// has no drain — so the only thing standing between the six tests that drive this
+// helper and a real POST at atcr.dev was the --preview short-circuit those very
+// tests exist to verify. A regression that made preview send would have been
+// executed by the test meant to catch it, landing after the test with nothing
+// observing it. NewRootCmdWithClient plus a `.test` endpoint makes that
+// structurally impossible instead of incidentally unreached.
+//
+// The counting seam is not redundant with the hermetic endpoint: the endpoint
+// bounds the blast radius, the counter turns "preview sent nothing" into an
+// asserted property of every caller rather than an unobserved hope. Sends are
+// fire-and-forget, so the client is drained before the count is read.
+func runRootPreview(t *testing.T, args ...string) (stdout, stderr string, code int, err error) {
 	t.Helper()
-	root := NewRootCmd()
+	hits := countingDoRequest(t)
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
+	root := NewRootCmdWithClient(client)
 	var out, errBuf bytes.Buffer
 	root.SetArgs(args)
 	root.SetOut(&out)
 	root.SetErr(&errBuf)
-	err := root.ExecuteContext(context.Background())
-	return out.String(), errBuf.String(), exitCode(err)
+	runErr := root.ExecuteContext(context.Background())
+	client.Wait()
+	assert.Equal(t, int32(0), atomic.LoadInt32(hits),
+		"the --preview path must transmit nothing: preview is a pure local render")
+	return out.String(), errBuf.String(), exitCode(runErr), runErr
+}
+
+// syncCloudNoDestination is the distinctive fragment of the absent-destination
+// refusal addSyncCloudFlags' PreRunE returns. Naming it once keeps the preview
+// suppression assertions keyed to the message the code actually emits — the
+// previous literal ("no default destination") matched no message in the tree, so
+// the assertion using it could not have failed even had the refusal fired.
+const syncCloudNoDestination = "has no destination in this build"
+
+// errText renders err for a substring assertion, yielding "" for nil so the
+// caller needs no nil guard.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// TestRunRootPreview_SurfacesSyncCloudRefusal is the anti-vacuity guard for the
+// suppression assertions below. Those assert a refusal does NOT happen, which is
+// only meaningful if this harness can observe one happening — and for a long time
+// it could not: the refusal is a usageError returned from PreRunE, the root sets
+// SilenceErrors, and runRootPreview drives ExecuteContext with no main() to print
+// it, so the message never reached the captured stderr no matter what. Drop
+// --preview and the refusal must become visible on the returned error.
+func TestRunRootPreview_SurfacesSyncCloudRefusal(t *testing.T) {
+	isolate(t)
+	_, _, code, err := runRootPreview(t, "review", "--sync-cloud")
+	require.Error(t, err, "without --preview the absent-destination refusal must fire")
+	assert.Equal(t, exitUsage, code, "an absent destination is a usage error")
+	assert.Contains(t, errText(err), syncCloudNoDestination,
+		"the refusal must be observable on the returned error — otherwise the suppression assertions prove nothing")
 }
 
 // TestPreview_EndToEndThroughExecute proves --preview works through the real
 // PreRunE→RunE path (not just a direct RunE call): review and reconcile each host
 // it, and --preview + --sync-cloud with no ATCR_API_KEY still exits 0 rather than
 // the exit-3 a real sync-cloud precondition would raise (AC 03-01 EC2, AC 03-02).
-// It also proves the sync-cloud placeholder warning is suppressed on the preview
-// path — preview is a pure, side-effect-free render that pushes nothing (Phase 3
-// gate finding).
+// It also proves --preview suppresses the absent-destination REFUSAL, so the run
+// exits 0 instead of 2 — preview is a pure, side-effect-free render that pushes
+// nothing, so a destination it never consults must not fail it (Phase 3 gate
+// finding). There is no warning involved on either count: defaultCloudEndpoint is
+// "" so no placeholder endpoint exists to warn about, and the suppressed behavior
+// is a hard usageError, never a stderr warning.
 func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("review --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, _, code := runRootPreview(t, "review", "--preview")
+		out, _, code, _ := runRootPreview(t, "review", "--preview")
 		require.Equal(t, 0, code, "review --preview must pass PreRunE and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 		assert.Contains(t, out, "nothing was transmitted")
@@ -301,27 +355,31 @@ func TestPreview_EndToEndThroughExecute(t *testing.T) {
 	t.Run("reconcile --preview alone exits 0 with payload", func(t *testing.T) {
 		isolate(t)
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, _, code := runRootPreview(t, "reconcile", "--preview")
+		out, _, code, _ := runRootPreview(t, "reconcile", "--preview")
 		require.Equal(t, 0, code, "reconcile --preview must short-circuit before review-dir resolution and exit 0")
 		assert.Contains(t, out, "persona_id_hash")
 	})
-	t.Run("review --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
+	t.Run("review --preview --sync-cloud with no key exits 0, refusal suppressed", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_API_KEY")
+		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, errOut, code := runRootPreview(t, "review", "--preview", "--sync-cloud")
+		out, _, code, err := runRootPreview(t, "review", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "--preview must take precedence over --sync-cloud even through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
+		require.NoError(t, err, "the sync-cloud absent-destination refusal must not fire on the preview path")
+		assert.NotContains(t, errText(err), syncCloudNoDestination,
+			"the absent-destination refusal must be suppressed on the preview path")
 	})
-	t.Run("reconcile --preview --sync-cloud with no key exits 0, no sync warning", func(t *testing.T) {
+	t.Run("reconcile --preview --sync-cloud with no key exits 0, refusal suppressed", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_API_KEY")
+		unsetEnvForTest(t, "ATCR_API_KEY")
 		seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
-		out, errOut, code := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
+		out, _, code, err := runRootPreview(t, "reconcile", "--preview", "--sync-cloud")
 		require.Equal(t, 0, code, "reconcile --preview must take precedence over --sync-cloud through the real Execute() path")
 		assert.Contains(t, out, "persona_id_hash")
-		assert.NotContains(t, errOut, "placeholder", "the sync-cloud placeholder warning must be suppressed on the preview path")
+		require.NoError(t, err, "the sync-cloud absent-destination refusal must not fire on the preview path")
+		assert.NotContains(t, errText(err), syncCloudNoDestination,
+			"the absent-destination refusal must be suppressed on the preview path")
 	})
 }
 
@@ -403,10 +461,10 @@ func TestPreview_EmptyAggregationPrintsEmptyPayloadNotError(t *testing.T) {
 // EC2).
 func TestPreview_TakesPrecedenceOverSyncCloud(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_API_KEY")
+	unsetEnvForTest(t, "ATCR_API_KEY")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	out, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"),
+	out, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"),
 		"--preview", "--sync-cloud")
 	require.NoError(t, err, "--preview must take precedence over --sync-cloud, never exit 3 on a missing key")
 	assert.Contains(t, out, "persona_id_hash")
@@ -417,10 +475,10 @@ func TestPreview_TakesPrecedenceOverSyncCloud(t *testing.T) {
 // opt-in gate disabled (the default) (AC 03-02 Scenario 1).
 func TestPreview_ZeroHTTPCalls_GateDisabled(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	_, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"), "--preview")
+	_, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"), "--preview")
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits))
 }
@@ -432,7 +490,7 @@ func TestPreview_ZeroHTTPCalls_GateEnabled(t *testing.T) {
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
-	_, err := runPreview(t, newReviewCmd(), telemetry.New("https://telemetry.test/ingest"), "--preview")
+	_, err := runPreview(t, newReviewCmd(), telemetry.NewSingleDestination("https://telemetry.test/ingest"), "--preview")
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "gate enabled must not cause --preview to send")
 }
@@ -441,7 +499,7 @@ func TestPreview_ZeroHTTPCalls_GateEnabled(t *testing.T) {
 // it short-circuits before any credential resolution (AC 03-02 EC1).
 func TestPreview_WorksWithNoAPIKey(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_API_KEY")
+	unsetEnvForTest(t, "ATCR_API_KEY")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	out, err := runPreview(t, newReviewCmd(), nil, "--preview")
 	require.NoError(t, err)
@@ -453,7 +511,7 @@ func TestPreview_WorksWithNoAPIKey(t *testing.T) {
 // on this path (AC 03-02 EC2).
 func TestPreview_UnaffectedByMalformedConfig(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: maybe\n")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	out, err := runPreview(t, newReviewCmd(), nil, "--preview")
@@ -474,7 +532,7 @@ func TestPreview_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
 	t.Setenv("ATCR_QUALITY_SIGNAL", "ture")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 
-	out, errOut, code := runRootPreview(t, "review", "--preview")
+	out, errOut, code, _ := runRootPreview(t, "review", "--preview")
 	require.Equal(t, 0, code, "an unrecognized env value must not break --preview")
 	assert.Contains(t, out, "persona_id_hash", "the preview must still render the payload")
 	assert.Contains(t, errOut, `unrecognized ATCR_QUALITY_SIGNAL value "ture"`,
@@ -494,7 +552,7 @@ func TestPreview_ReadErrorFailsOpen(t *testing.T) {
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "debt"), []byte("not a dir"), 0o644))
 
-	out, errOut, code := runRootPreview(t, "review", "--preview")
+	out, errOut, code, _ := runRootPreview(t, "review", "--preview")
 	require.Equal(t, 0, code, "a local-debt read failure must fail open on the preview path, not exit 2")
 	jsonPart, marker := splitPreview(out)
 	assert.Equal(t, "[]", strings.TrimSpace(jsonPart),

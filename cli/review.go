@@ -280,6 +280,15 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if cmd.Flags().Changed("force") {
 			return usageError(errors.New("--resume and --force are mutually exclusive"))
 		}
+		// --sync-cloud is not wired into the resume recovery flow, and this return
+		// is upstream of both resolveSyncCloud and the result==nil warning below —
+		// so without this notice the flag is dropped in total silence, whether or
+		// not a --cloud-endpoint was supplied. Say it here rather than refusing in
+		// PreRunE (which addSyncCloudFlags deliberately suppresses for --resume):
+		// a documented no-op should be disclosed, not fatal.
+		if boolFlag(cmd, "sync-cloud") {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: --sync-cloud is ignored on --resume: the resume recovery flow pushes no scorecard")
+		}
 		anchor, _ := cmd.Flags().GetString("resume")
 		return runResume(cmd, anchor)
 	}
@@ -667,7 +676,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// is checked at fire time so a disabled run spawns no goroutine; a nil client
 		// no-ops. It never blocks or changes this command's outcome (Story 1).
 		defer func() {
-			if telemetryGate() {
+			if telemetryGate(cmd.ErrOrStderr()) {
 				status := "success"
 				if err != nil {
 					status = "failure"

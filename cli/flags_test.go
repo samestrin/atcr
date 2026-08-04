@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,24 +26,82 @@ func TestAddSyncCloudFlags_RegisteredOnReviewAndReconcile(t *testing.T) {
 		ce := cmd.Flags().Lookup("cloud-endpoint")
 		require.NotNil(t, ce, "cloud-endpoint must be registered on %q", cmd.Name())
 		assert.Equal(t, "string", ce.Value.Type())
-		assert.Equal(t, defaultCloudEndpoint, ce.DefValue)
+		assert.Equal(t, "", ce.DefValue, "there is no default --sync-cloud destination in this build")
 	}
 }
 
-// TestAddSyncCloudFlags_DefaultEndpointWarns verifies that using --sync-cloud
-// with the placeholder production default emits a visible stderr warning so users
-// know the endpoint is not operational until a real contract/key is live (TD-015).
-func TestAddSyncCloudFlags_DefaultEndpointWarns(t *testing.T) {
+// TestAddSyncCloudFlags_DefaultEndpointRefuses covers Epic 35.12 AC1d. The premise
+// is deliberately inverted from the old warn-and-proceed test: there is no longer a
+// default destination to warn ABOUT, so proceeding would either POST a scorecard at
+// whatever the placeholder happened to resolve to, or fail in
+// ValidateCloudEndpoint with "must be a valid https:// URL" — an error that blames
+// the user for a flag they never set. The run must instead refuse, name the absent
+// destination as the cause, and exit 2 (usage), matching validateRangeFlags rather
+// than the auth path (a missing destination is a configuration fault, not a
+// rejected credential).
+func TestAddSyncCloudFlags_DefaultEndpointRefuses(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
 	require.NotNil(t, cmd.PreRunE)
 
 	err := cmd.PreRunE(cmd, nil)
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "placeholder")
-	assert.Contains(t, buf.String(), defaultCloudEndpoint)
+	require.Error(t, err, "--sync-cloud with no destination must refuse, not proceed")
+	assert.Equal(t, exitUsage, exitCode(err))
+	// Assert on literal text, never on defaultCloudEndpoint: that constant is now
+	// the empty string, and every string contains "" — an assertion against it
+	// would pass vacuously and stop guarding anything.
+	assert.Contains(t, err.Error(), "has no destination in this build")
+	assert.Contains(t, err.Error(), "--cloud-endpoint")
+}
+
+// TestAddSyncCloudFlags_RefusalPrecedesAPIKeyCheck pins the deliberate ordering
+// decision: with BOTH the destination and ATCR_API_KEY absent, the refusal reports
+// the missing destination (exit 2) rather than the missing key (exit 3). Supplying
+// a key cannot rescue a run that has nowhere to push.
+func TestAddSyncCloudFlags_RefusalPrecedesAPIKeyCheck(t *testing.T) {
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NotNil(t, cmd.PreRunE)
+
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err), "a present API key must not make an absent destination acceptable")
+}
+
+// TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag pins the distinction
+// between "no destination was ever supplied" and "an empty one was": a user who
+// passed --cloud-endpoint "" must not be told to pass --cloud-endpoint.
+func TestAddSyncCloudFlags_ExplicitEmptyEndpointBlamesTheFlag(t *testing.T) {
+	for _, empty := range []string{"", "   "} {
+		t.Run(fmt.Sprintf("%q", empty), func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", empty}))
+			require.NotNil(t, cmd.PreRunE)
+
+			err := cmd.PreRunE(cmd, nil)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Contains(t, err.Error(), "--cloud-endpoint was supplied but is empty after trimming whitespace")
+			assert.NotContains(t, err.Error(), "no default destination",
+				"an explicitly-supplied empty value is not the absent-default case")
+		})
+	}
+}
+
+// TestAddSyncCloudFlags_ExplicitEndpointBypassesRefusal pins the other half of
+// AC1d: the refusal fires ONLY at the compiled-in default. An explicit
+// --cloud-endpoint — including the loopback http form the test suite depends on —
+// must pass PreRunE untouched.
+func TestAddSyncCloudFlags_ExplicitEndpointBypassesRefusal(t *testing.T) {
+	for _, endpoint := range []string{"https://ingest.example.com", "http://127.0.0.1:8080/ingest"} {
+		t.Run(fmt.Sprintf("%q", endpoint), func(t *testing.T) {
+			cmd := newReviewCmd()
+			require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", endpoint}))
+			require.NotNil(t, cmd.PreRunE)
+			assert.NoError(t, cmd.PreRunE(cmd, nil), "explicit --cloud-endpoint %q must bypass the refusal", endpoint)
+		})
+	}
 }
 
 // TestAddSyncCloudFlags_PreservesPriorPreRunE covers AC 04-01 EC2: review
@@ -60,32 +118,28 @@ func TestAddSyncCloudFlags_PreservesPriorPreRunE(t *testing.T) {
 }
 
 // TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset pins the negative case for
-// the placeholder warning (TD-015): without --sync-cloud the endpoint default is
-// irrelevant, so an ordinary run must not emit a false-positive warning.
+// the absent-destination refusal: without --sync-cloud the endpoint default is
+// irrelevant, so an ordinary run must not refuse. (The PreRunE only ever returns
+// errors — it has no writer — so a clean return IS the whole contract; there is
+// no stderr output to assert against at this layer.)
 func TestAddSyncCloudFlags_NoWarningWhenSyncCloudUnset(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags(nil))
 	require.NotNil(t, cmd.PreRunE)
 
 	require.NoError(t, cmd.PreRunE(cmd, nil))
-	assert.NotContains(t, buf.String(), "placeholder")
 }
 
 // TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden pins the second negative
 // case: with --sync-cloud set but --cloud-endpoint pointed at a real destination,
-// the placeholder warning must not fire — it exists only for the compiled-in
-// placeholder default.
+// the absent-destination refusal must not fire — it exists only for the
+// compiled-in default.
 func TestAddSyncCloudFlags_NoWarningWhenEndpointOverridden(t *testing.T) {
 	cmd := newReviewCmd()
-	var buf bytes.Buffer
-	cmd.SetErr(&buf)
 	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	require.NotNil(t, cmd.PreRunE)
 
 	require.NoError(t, cmd.PreRunE(cmd, nil))
-	assert.NotContains(t, buf.String(), "placeholder")
 }
 
 // TestAddQualitySignalFlags_RegistersPreviewWithoutPreRunE pins the resolved TD

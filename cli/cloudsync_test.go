@@ -2,8 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -44,10 +49,14 @@ func TestResolveSyncCloud_DisabledWhenFlagOmitted(t *testing.T) {
 	assert.False(t, plan.enabled)
 }
 
+// The explicit --cloud-endpoint in both API-key tests is load-bearing (Epic
+// 35.12): defaultCloudEndpoint is now empty, and resolveSyncCloud validates the
+// endpoint BEFORE reading the key, so without an endpoint these would exit 2 on
+// the destination and never reach the auth check they exist to cover.
 func TestResolveSyncCloud_MissingAPIKey_AuthError(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "")
 	cmd := newReconcileCmd()
-	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	_, err := resolveSyncCloud(cmd)
 	require.Error(t, err)
 	assert.Equal(t, exitAuth, exitCode(err))
@@ -56,10 +65,23 @@ func TestResolveSyncCloud_MissingAPIKey_AuthError(t *testing.T) {
 func TestResolveSyncCloud_WhitespaceAPIKey_AuthError(t *testing.T) {
 	t.Setenv("ATCR_API_KEY", "   ")
 	cmd := newReviewCmd()
-	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud", "--cloud-endpoint", "https://ingest.example.com"}))
 	_, err := resolveSyncCloud(cmd)
 	require.Error(t, err)
 	assert.Equal(t, exitAuth, exitCode(err))
+}
+
+// TestResolveSyncCloud_EmptyEndpoint_UsageError pins the defense-in-depth layer
+// behind the PreRunE refusal: a caller that reaches resolveSyncCloud with no
+// destination (bypassing the flag helper) still fails closed as a usage error
+// rather than attempting a push at an empty URL.
+func TestResolveSyncCloud_EmptyEndpoint_UsageError(t *testing.T) {
+	t.Setenv("ATCR_API_KEY", "valid-key")
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sync-cloud"}))
+	_, err := resolveSyncCloud(cmd)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
 }
 
 func TestResolveSyncCloud_InvalidEndpoint_UsageError(t *testing.T) {
@@ -117,15 +139,41 @@ func TestFinishCloudSync_WrappedAuthRejectedMapsToExitAuth(t *testing.T) {
 
 func TestFinishCloudSync_GenericFailureIsNonFatalWarning(t *testing.T) {
 	var buf bytes.Buffer
-	err := finishCloudSync(&buf, errors.New("cloud sync failed: server returned 500"))
+	// The input error deliberately lacks the "warning: " label and the words the
+	// assertion searches for, so the match can only come from finishCloudSync's
+	// own formatting — the "clearly-labeled warning" contract the doc comment names.
+	err := finishCloudSync(&buf, errors.New("server returned 500"))
 	assert.NoError(t, err, "a non-auth push failure must not change the exit code")
-	assert.Contains(t, buf.String(), "cloud sync failed")
+	assert.Equal(t, "warning: server returned 500\n", buf.String(),
+		"a non-fatal push failure must surface with the warning: label the contract depends on")
 }
 
 func TestFinishCloudSync_NilIsNoop(t *testing.T) {
 	var buf bytes.Buffer
 	assert.NoError(t, finishCloudSync(&buf, nil))
 	assert.Empty(t, buf.String())
+}
+
+// TestRunSyncCloud_PrintsDestinationHostBeforePush pins the Epic 35.12 TD
+// (cli/flags.go:87) security hardening: the push sends Authorization: Bearer
+// <ATCR_API_KEY> to whatever host --cloud-endpoint names, and
+// ValidateCloudEndpoint vets the scheme only — so the resolved destination host
+// must be printed to stderr BEFORE the push, where CI output makes an
+// unexpected target visible instead of silent.
+func TestRunSyncCloud_PrintsDestinationHostBeforePush(t *testing.T) {
+	var pushed atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushed.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	var buf bytes.Buffer
+	plan := syncCloudPlan{enabled: true, endpoint: srv.URL, apiKey: "valid-key"}
+	require.NoError(t, runSyncCloud(context.Background(), &buf, plan, t.TempDir(), "success"))
+	require.True(t, pushed.Load(), "the push must reach the endpoint")
+	assert.Contains(t, buf.String(), strings.TrimPrefix(srv.URL, "http://"),
+		"the resolved destination host must appear on stderr before the push")
 }
 
 // TestResolveSyncCloudOutcome covers the 4.LAST gate fix: an auth rejection

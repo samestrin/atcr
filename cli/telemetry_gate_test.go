@@ -53,9 +53,9 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 			if tc.set {
 				t.Setenv("ATCR_TELEMETRY", tc.val)
 			} else {
-				_ = os.Unsetenv("ATCR_TELEMETRY")
+				unsetEnvForTest(t, "ATCR_TELEMETRY")
 			}
-			assert.Equal(t, tc.want, telemetryEnabledFromEnv())
+			assert.Equal(t, tc.want, telemetryEnabledFromEnv(io.Discard))
 		})
 	}
 }
@@ -65,26 +65,17 @@ func TestTelemetryEnabledFromEnv(t *testing.T) {
 // neutral and can never out-rank a disabling env var (AC 02-03 EC1/EC2).
 // TestTelemetryEnabledFromEnv_UnparseableWarns proves that an unrecognized
 // ATCR_TELEMETRY value still fails open to enabled (the AC-mandated default)
-// but emits a one-time stderr warning so a misspelled opt-out is visible.
+// but emits a one-time warning on the injected writer so a misspelled opt-out
+// is visible.
 func TestTelemetryEnabledFromEnv_UnparseableWarns(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "maybe")
 
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stderr = w
-	defer func() { os.Stderr = oldStderr }()
-
-	got := telemetryEnabledFromEnv()
+	var buf bytes.Buffer
+	got := telemetryEnabledFromEnv(&buf)
 	assert.True(t, got, "unparseable value must still default to enabled")
-
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
-	stderr := string(out)
-	assert.Contains(t, stderr, "ATCR_TELEMETRY")
-	assert.Contains(t, stderr, "unrecognized")
+	assert.Contains(t, buf.String(), "ATCR_TELEMETRY")
+	assert.Contains(t, buf.String(), "unrecognized")
 }
 
 func TestTelemetryEnabled_FourWayMatrix(t *testing.T) {
@@ -123,37 +114,37 @@ func writeAtcrConfig(t *testing.T, content string) {
 func TestTelemetryGate_EnvAndConfig(t *testing.T) {
 	t.Run("no env, no config -> enabled", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_TELEMETRY")
-		assert.True(t, telemetryGate())
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
+		assert.True(t, telemetryGate(io.Discard))
 	})
 	t.Run("env=0 alone disables", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("config false alone disables (no env)", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_TELEMETRY")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("env=0 beats config true (disabled wins)", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\n")
-		assert.False(t, telemetryGate())
+		assert.False(t, telemetryGate(io.Discard))
 	})
 	t.Run("both enabled -> enabled", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "1")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\n")
-		assert.True(t, telemetryGate())
+		assert.True(t, telemetryGate(io.Discard))
 	})
 	t.Run("malformed config value fails safe to disabled", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_TELEMETRY")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: maybe\n")
-		assert.False(t, telemetryGate(), "a corrupt telemetry value must never re-enable telemetry")
+		assert.False(t, telemetryGate(io.Discard), "a corrupt telemetry value must never re-enable telemetry")
 	})
 }
 
@@ -171,11 +162,18 @@ func TestTelemetryGate_ResolvesRepoRoot(t *testing.T) {
 	subdir := filepath.Join(repo, "subdir")
 	require.NoError(t, os.MkdirAll(subdir, 0o755))
 	t.Chdir(subdir)
-	_ = os.Unsetenv("ATCR_TELEMETRY")
+	unsetEnvForTest(t, "ATCR_TELEMETRY")
 
-	assert.False(t, telemetryGate(),
+	assert.False(t, telemetryGate(io.Discard),
 		"a persisted opt-out at the repo root must be observed from a subdirectory — the gate and `config set` must agree on config location")
 }
+
+// The ATCR_TELEMETRY-specific unset helper that used to live here is gone: it was
+// a second implementation of unsetEnvForTest (cli/main_test.go), and two of them
+// meant the sibling consent variables — ATCR_QUALITY_SIGNAL, ATCR_API_KEY — kept
+// using a bare os.Unsetenv that restored nothing. Use unsetEnvForTest for all
+// three. Its doc comment carries the no-t.Parallel precondition, now enforced
+// rather than merely documented.
 
 // countingDoRequest installs a doRequest seam that counts outbound sends without
 // touching the network (bypassing TLS), and returns the counter + a restore.
@@ -225,17 +223,17 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		t.Setenv("ATCR_TELEMETRY", "0")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled by env: no telemetry request may fire")
 	})
 
 	t.Run("config telemetry:false -> zero requests (no env)", func(t *testing.T) {
 		isolate(t)
-		_ = os.Unsetenv("ATCR_TELEMETRY")
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled by persisted config: no telemetry request may fire")
 	})
 
@@ -244,7 +242,7 @@ func TestReconcile_TelemetryGate_EndToEnd(t *testing.T) {
 		t.Setenv("ATCR_TELEMETRY", "1")
 		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 		hits := countingDoRequest(t)
-		runReconcileGated(t, telemetry.New(endpoint), "r")
+		runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 		assert.Equal(t, int32(1), atomic.LoadInt32(hits), "enabled: exactly one telemetry request fires")
 	})
 }
@@ -268,7 +266,7 @@ func TestReconcile_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	})
 	defer restore()
 
-	runReconcileGated(t, telemetry.New(endpoint), "r", "--fail-on", "LOW")
+	runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r", "--fail-on", "LOW")
 
 	require.Len(t, captured, 1)
 	assert.Equal(t, "reconcile_run", captured[0].Event)
@@ -297,7 +295,7 @@ func TestReview_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	})
 	defer restore()
 
-	client := telemetry.New("https://telemetry.test/ingest")
+	client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
 	logger, err := log.New("info", "text", io.Discard)
 	require.NoError(t, err)
 	cmd := newReviewCmd()

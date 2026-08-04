@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -104,11 +103,11 @@ const qsEndpoint = "https://telemetry.test/ingest"
 // the passive ping so the request counter reflects the quality-signal path alone.
 func TestQualitySignalSend_GateDisabled_ZeroRequests_Review(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	hits := countingDoRequest(t)
 	builds := countingQualityBuilder(t)
-	runReviewSend(t, telemetry.New(qsEndpoint))
+	runReviewSend(t, telemetry.NewSingleDestination(qsEndpoint))
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled gate: no quality-signal request may fire on review")
 	assert.Equal(t, int32(0), atomic.LoadInt32(builds), "disabled gate: no payload may be constructed on review")
 }
@@ -117,12 +116,12 @@ func TestQualitySignalSend_GateDisabled_ZeroRequests_Review(t *testing.T) {
 // twin of the above (AC 06-01 Scenario 2).
 func TestQualitySignalSend_GateDisabled_ZeroRequests_Reconcile(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	hits := countingDoRequest(t)
 	builds := countingQualityBuilder(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "disabled gate: no quality-signal request may fire on reconcile")
 	assert.Equal(t, int32(0), atomic.LoadInt32(builds), "disabled gate: no payload may be constructed on reconcile")
 }
@@ -132,14 +131,14 @@ func TestQualitySignalSend_GateDisabled_ZeroRequests_Reconcile(t *testing.T) {
 // asserted via the constructor seam — not merely as an absent request.
 func TestQualitySignalSend_GateDisabled_NoPayloadConstruction(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	// Seed terminal records so that, were the gate wrongly consulted after building,
 	// the payload would be non-empty — making an ordering bug unmistakable.
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	builds := countingQualityBuilder(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(builds),
 		"the disabled gate must short-circuit before any payload is constructed")
 }
@@ -149,13 +148,13 @@ func TestQualitySignalSend_GateDisabled_NoPayloadConstruction(t *testing.T) {
 // Scenario 2 variant).
 func TestQualitySignalSend_ExplicitlyDisabledConfig_ZeroRequests(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: false\n")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	hits := countingDoRequest(t)
 	builds := countingQualityBuilder(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "quality_signal: false must attempt no request")
 	assert.Equal(t, int32(0), atomic.LoadInt32(builds), "quality_signal: false must build no payload")
 }
@@ -166,12 +165,12 @@ func TestQualitySignalSend_ExplicitlyDisabledConfig_ZeroRequests(t *testing.T) {
 // quality-signal path stays dark — neither a build nor a quality-signal request.
 func TestQualitySignalSend_UnrelatedTelemetrySurfacesUnaffected(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	_ = os.Unsetenv("ATCR_TELEMETRY") // passive ping enabled by default
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_TELEMETRY") // passive ping enabled by default
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	bodies := captureSendBodies(t)
 	builds := countingQualityBuilder(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(builds), "quality-signal path must stay dark while telemetry is enabled")
 	assert.Empty(t, qualitySendBodies(*bodies), "no quality-signal body may be transmitted")
 	assert.NotEmpty(t, *bodies, "the unrelated passive ping must still fire — independence, not suppression")
@@ -182,11 +181,11 @@ func TestQualitySignalSend_UnrelatedTelemetrySurfacesUnaffected(t *testing.T) {
 // disabled still transmits nothing (AC 06-01 Edge Case 1).
 func TestQualitySignalSend_EndpointReachableButGateDisabled_ZeroRequests(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	hits := countingDoRequest(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "a reachable endpoint must not bypass a disabled opt-in gate")
 }
 
@@ -195,11 +194,11 @@ func TestQualitySignalSend_EndpointReachableButGateDisabled_ZeroRequests(t *test
 // top of the run before the gated send is registered (AC 06-01 Edge Case 2).
 func TestQualitySignalSend_PreviewWinsOverGateDisabled(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	hits := countingDoRequest(t)
 	builds := countingQualityBuilder(t)
-	out, err := runPreview(t, newReconcileCmd(), telemetry.New(qsEndpoint), "--preview")
+	out, err := runPreview(t, newReconcileCmd(), telemetry.NewSingleDestination(qsEndpoint), "--preview")
 	require.NoError(t, err)
 	assert.Contains(t, out, "persona_id_hash", "preview must render the payload locally")
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "preview must reach no send call site")
@@ -210,21 +209,34 @@ func TestQualitySignalSend_PreviewWinsOverGateDisabled(t *testing.T) {
 // fresh each run with no in-process cache (AC 06-01 Edge Case 3): a first disabled
 // run builds nothing; after quality_signal: true is persisted, the next run resolves
 // enabled and builds the payload — observed via the constructor seam.
+//
+// countingDoRequest is installed alongside the builder seam for two reasons. It
+// seals the test hermetically: without it the enabled run's dispatch falls through
+// to the production transport, and while TestMain's host guard lets a `.test` host
+// reach real networking (RFC 2606 makes it unresolvable, so nothing can leak), that
+// is still a genuine DNS lookup on every run and a stall of up to requestTimeout
+// inside Wait on a resolver that answers slowly. It also strengthens the assertion
+// from "a non-empty payload was BUILT" to "exactly one payload was TRANSMITTED" —
+// the property the AC is actually about.
 func TestQualitySignalSend_GateReEvaluatedFreshPerRun(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n"})
 	builds := countingQualityBuilder(t)
+	hits := countingDoRequest(t)
 
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	require.Equal(t, int32(0), atomic.LoadInt32(builds), "first run, no opt-in: no payload built")
+	require.Equal(t, int32(0), atomic.LoadInt32(hits), "first run, no opt-in: nothing transmitted")
 
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: true\n")
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(1), atomic.LoadInt32(builds),
 		"a freshly persisted opt-in must be observed on the next run — no stale gate cache")
+	assert.Equal(t, int32(1), atomic.LoadInt32(hits),
+		"the enabled run must transmit exactly one payload — not zero (built but never dispatched) and not two")
 }
 
 // TestQualitySignalSend_UnrecognizedEnvValueWarnsViaCmdStderr proves the send
@@ -244,7 +256,7 @@ func TestQualitySignalSend_UnrecognizedEnvValueWarnsViaCmdStderr(t *testing.T) {
 
 	logger, err := log.New("info", "text", io.Discard)
 	require.NoError(t, err)
-	client := telemetry.New(qsEndpoint)
+	client := telemetry.NewSingleDestination(qsEndpoint)
 	cmd := newReconcileCmd()
 	cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
 	cmd.SetOut(io.Discard)
@@ -286,7 +298,7 @@ func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
 		}
 	}()
 
-	client := telemetry.New(qsEndpoint)
+	client := telemetry.NewSingleDestination(qsEndpoint)
 	logger, err := log.New("info", "text", io.Discard)
 	require.NoError(t, err)
 	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
@@ -349,7 +361,7 @@ func TestQualitySignalSend_EnabledViaEnv_ExactlyOneRequest_CorrectCounts(t *test
 	reconcileFixture(t)
 	bodies := captureSendBodies(t)
 
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	q := qualitySendBodies(*bodies)
 	require.Len(t, q, 1, "an opted-in run must transmit exactly one quality-signal request")
@@ -378,14 +390,14 @@ func TestQualitySignalSend_EnabledViaEnv_ExactlyOneRequest_CorrectCounts(t *test
 // 06-02 Scenario 3).
 func TestQualitySignalSend_EnabledViaConfig_SameSingleSendBehavior(t *testing.T) {
 	isolate(t)
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
 	t.Setenv("ATCR_TELEMETRY", "0")
 	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: true\n")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	reconcileFixture(t)
 	bodies := captureSendBodies(t)
 
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	assert.Len(t, qualitySendBodies(*bodies), 1, "config consent must transmit exactly one send")
 }
@@ -409,7 +421,7 @@ func TestQualitySignalSend_SentBytesEqualPreviewBytes(t *testing.T) {
 	previewJSON, _ := splitPreview(previewOut)
 
 	bodies := captureSendBodies(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	q := qualitySendBodies(*bodies)
 	require.Len(t, q, 1)
 	assert.Equal(t, strings.TrimSpace(previewJSON), strings.TrimSpace(q[0]),
@@ -428,7 +440,7 @@ func TestQualitySignalSend_PlaintextOrEmptyEndpointNoTransmission(t *testing.T) 
 			seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 			reconcileFixture(t)
 			hits := countingDoRequest(t)
-			runReconcileGated(t, telemetry.New(endpoint), "r")
+			runReconcileGated(t, telemetry.NewSingleDestination(endpoint), "r")
 			assert.Equal(t, int32(0), atomic.LoadInt32(hits), "a non-HTTPS/empty endpoint must never transmit")
 		})
 	}
@@ -444,7 +456,7 @@ func TestQualitySignalSend_EmptyAggregation_DefinedBehaviorNoError(t *testing.T)
 	// No terminal records seeded → aggregation is empty.
 	reconcileFixture(t)
 	hits := countingDoRequest(t)
-	code := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	code := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, int32(0), atomic.LoadInt32(hits), "an empty aggregation must transmit nothing")
 	assert.NotEqual(t, exitUsage, code, "an empty aggregation must not raise a usage error")
 }
@@ -473,12 +485,12 @@ func TestQualitySignalSend_500Response_RunOutcomeUnchanged(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	reconcileFixture(t)
 
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	baseline := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	baseline := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 	failingSeam(t, http.StatusInternalServerError, nil)
-	got := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	got := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, baseline, got, "a 500 on the quality-signal send must not change the run outcome")
 }
 
@@ -490,12 +502,12 @@ func TestQualitySignalSend_DNSFailure_RunOutcomeUnchanged(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	reconcileFixture(t)
 
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	baseline := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	baseline := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 	failingSeam(t, 0, errors.New("dns: no such host"))
-	got := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	got := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, baseline, got, "a DNS/connection failure must not change the run outcome")
 }
 
@@ -516,7 +528,7 @@ func TestQualitySignalSend_TimeoutDoesNotBlockRunCompletion(t *testing.T) {
 	})
 	defer restore()
 
-	client := telemetry.New(qsEndpoint)
+	client := telemetry.NewSingleDestination(qsEndpoint)
 	logger, err := log.New("info", "text", io.Discard)
 	require.NoError(t, err)
 	cmd := newReconcileCmd()
@@ -543,15 +555,15 @@ func TestQualitySignalSend_PanicInSendPathContained(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	reconcileFixture(t)
 
-	_ = os.Unsetenv("ATCR_QUALITY_SIGNAL")
-	baseline := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	baseline := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
 	restore := telemetry.SetDoRequestForTest(func(_ *http.Client, _ *http.Request) (*http.Response, error) {
 		panic("forced quality-signal panic")
 	})
 	defer restore()
-	got := runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	got := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Equal(t, baseline, got, "a panic in the send path must be contained, leaving the run outcome unchanged")
 }
 
@@ -567,11 +579,11 @@ func TestQualitySignalSend_FailureOnOneRunDoesNotAffectNext(t *testing.T) {
 
 	// First run: endpoint 500s.
 	failingSeam(t, http.StatusInternalServerError, nil)
-	runReconcileSend(t, telemetry.New(qsEndpoint), "r")
+	runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 
 	// Second run: healthy endpoint records exactly one send.
 	bodies := captureSendBodies(t)
-	runReconcileGated(t, telemetry.New(qsEndpoint), "r")
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
 	assert.Len(t, qualitySendBodies(*bodies), 1, "the second run must send exactly once — no carried failure state")
 }
 
@@ -589,7 +601,7 @@ func TestQualitySignalSend_FailureDiagnosticsNeverIncludePayloadBody(t *testing.
 	var logbuf bytes.Buffer
 	logger, err := log.New("debug", "text", &logbuf)
 	require.NoError(t, err)
-	client := telemetry.New(qsEndpoint)
+	client := telemetry.NewSingleDestination(qsEndpoint)
 	cmd := newReconcileCmd()
 	cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
 	cmd.SetOut(io.Discard)

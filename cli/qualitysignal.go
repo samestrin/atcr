@@ -176,12 +176,15 @@ func waitQualitySignalInFlight() { qualitySignalInFlight.Wait() }
 // non-2xx/DNS/timeout, or a panic inside the send path — is swallowed here or by
 // the transport: the send never changes the run's exit code or stdout (AC 06-03).
 //
-// DRAIN NOTE: the detached goroutine registers with the telemetry client's
-// WaitGroup only when it dispatches, so a process exiting in the narrow window
-// between spawn and dispatch (main's bounded drainTelemetry observes an empty
-// WaitGroup) can strand a just-spawned build — acceptable under the send's
-// best-effort, fail-open posture (AC 06-03); closing it fully would need a
-// builder-closure API on the telemetry client.
+// DRAIN NOTE: the detached goroutine is registered with the telemetry client's
+// WaitGroup at SPAWN, via Client.Go. It used to register only at dispatch, which
+// put the wg.Add after the O(n) store read — i.e. after the command had returned
+// and after main's bounded drainTelemetry had already observed an empty
+// WaitGroup. That was described as a "narrow window", but it was the normal case:
+// the drain almost never covered this surface, so an opted-in user's quality
+// signal was routinely stranded at process exit. It was also a latent panic
+// (sync.WaitGroup forbids an Add racing a Wait at zero). Registering at spawn is
+// the builder-closure API that note anticipated.
 //
 // errW receives the gate's unrecognized-env-value warning (the call sites pass
 // cmd.ErrOrStderr(), so a misspelled ATCR_QUALITY_SIGNAL is capturable in
@@ -206,7 +209,13 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 	}
 	client := telemetry.FromContext(ctx)
 	qualitySignalInFlight.Add(1)
-	go func() {
+	// Client.Go — not a bare `go` — so the goroutine is registered with the
+	// client's WaitGroup at SPAWN. Registering at dispatch (which is what calling
+	// SendQualitySignal from a bare goroutine did) put the wg.Add after the O(n)
+	// store read below, i.e. after the command had returned and after main's
+	// bounded drainTelemetry had already seen an empty WaitGroup — so the drain
+	// systematically did not cover this surface, and Add could race Wait at zero.
+	client.Go(ctx, func() {
 		defer qualitySignalInFlight.Done()
 		defer func() {
 			if r := recover(); r != nil {
@@ -226,7 +235,7 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 		// preview renders, so the sent bytes are byte-identical to the preview
 		// (AC 06-02). A nil client no-ops.
 		client.SendQualitySignal(ctx, payload)
-	}()
+	})
 }
 
 // maybePreviewQualitySignal implements the --preview short-circuit for the host

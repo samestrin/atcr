@@ -13,13 +13,71 @@ different guarantees; nothing here changes what `--export` does.
 
 The usage ping is wired to fire silently as a byproduct of a completed run, and
 it is **fail-open**: if the network is down, slow, or the endpoint is
-unreachable, the ping is dropped and the CLI exits exactly as it would have
-anyway. It never blocks, delays, or crashes the command.
+unreachable, the ping is dropped and the CLI exits with exactly the code it would
+have anyway. It never crashes the command, never changes its exit code, and never
+delays the work itself — the send runs on a detached goroutine, so nothing in the
+review or reconcile blocks on it.
 
-> **Currently inactive.** The compiled-in ingestion endpoint is empty in this
-> build, so the ping is a wired **no-op** — nothing is transmitted until a real
-> backend endpoint is configured. The schema below describes the payload that
-> *would* be sent; the opt-out surfaces already suppress it regardless.
+It can, however, delay process **exit** by a bounded amount. Before exiting,
+`atcr` waits up to **2 seconds** for in-flight telemetry work to finish, so a
+best-effort send usually lands rather than being killed mid-flight. When nothing
+was dispatched — you opted out, or the run emitted nothing — the wait returns
+immediately and costs nothing. The full 2 seconds is only ever paid when work is
+genuinely in flight and the endpoint is unreachable in a way that hangs rather
+than refuses (a firewalled, air-gapped, or blackholed network). Opting out
+removes this entirely.
+
+This drain covers **both** surfaces. If you have opted in to the quality signal,
+it also covers that payload's local aggregation over `.atcr/debt` — which
+previously escaped the drain entirely and was usually stranded at exit, meaning
+opted-in signals were frequently never delivered. Now that it is covered, an
+opted-in run with a large local debt store may spend measurably longer at exit
+than before, still bounded by the same 2 seconds.
+
+> **Active in this build.** The compiled-in ingestion endpoint is
+> `https://atcr.dev/api/v1/telemetry`, so a completed `review` or `reconcile`
+> run transmits the ping described below unless you opt out. The ping is
+> **on by default** — set `ATCR_TELEMETRY=0` or `atcr config set telemetry false`
+> to disable it (see [Opt-out](#opt-out)); either surface alone is
+> sufficient and final.
+
+### Embedding atcr as a library
+
+The default-on posture described here applies to the **`atcr` binary**. If you
+embed the command tree in your own Go program via `cli.NewRootCmd()`, **no
+telemetry is sent at all** and no notice is printed — that constructor is wired to
+a client with no destinations, so your users are never enrolled in a collection
+they did not choose and you did not disclose.
+
+To opt in deliberately, build the client yourself and drain it before exiting:
+
+```go
+client := telemetry.NewWithQualitySignal(usageURL, qualityURL)
+root := cli.NewRootCmdWithClient(client)
+// ... run the tree ...
+client.Wait()
+```
+
+or call `cli.Main`, which runs the same full lifecycle the binary does.
+
+### First-run notice
+
+The first time you run `atcr` in a repository with the ping enabled, it prints a
+short notice on **stderr** naming the destination and the opt-out, so the
+default-on behavior is disclosed in the binary itself rather than only here:
+
+```
+atcr sends an anonymous usage ping to https://atcr.dev/api/v1/telemetry when a review or reconcile completes.
+It carries no source code, file paths, or findings — see docs/telemetry.md.
+To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.
+(This notice is shown once per repository.)
+```
+
+To record that it has been shown, atcr writes `telemetry_notice_shown: true` into
+`.atcr/config.yaml`, **creating that file if it does not exist**. This key is
+bookkeeping only — nothing reads it to decide whether to transmit, and deleting it
+simply makes the notice appear once more. If you have already opted out, the
+notice never prints: there is nothing to disclose.
 
 ---
 
@@ -124,7 +182,10 @@ the raw persona/reviewer string — never the raw string itself:
 This hashing path is **completely separate** from the `--export` /
 `PublicRecord` allowlist in [scorecard.md](scorecard.md): it lives in its own
 schema, and the leaderboard/cloud-sync payload is not a superset of the export
-record.
+record. The vocabularies differ too: telemetry, the quality signal, and
+`--sync-cloud` are persona-**pseudonymous** (hash only, never the raw name),
+whereas `--export` is submitter-**anonymized** and keeps the public persona
+catalog identity in the clear — see the `--export` section of scorecard.md.
 
 ---
 
@@ -157,10 +218,17 @@ rather than seeing a silent no-op. A non-auth failure (timeout, DNS, `5xx`) does
 **not** map to the auth code and never corrupts the already-finalized run
 outcome.
 
-**Endpoint.** The push targets a compiled-in `https://` dashboard endpoint. The
-destination is HTTPS-only so the Bearer key is never transmitted in the clear;
-the `` `--cloud-endpoint` `` flag can override it (for example, at a loopback
-`http://` address for local testing).
+**Endpoint.** This build ships **no default destination** — the scorecard ingest
+contract is owned by atcr-enterprise, and there is no API-key issuance flow for a
+community user. `` `--cloud-endpoint` `` is therefore **required** whenever
+`` `--sync-cloud` `` is used; a run that omits it refuses with a usage error
+(exit `2`) naming the absent destination, and pushes nothing. The destination is
+HTTPS-only so the Bearer key is never transmitted in the clear (a loopback
+`http://` address is permitted for local testing).
+
+Note the ordering: the destination is validated **before** `ATCR_API_KEY`, so a
+run missing both reports the missing destination (exit `2`), not the missing key
+(exit `3`).
 
 **What is pushed.** The payload is a dedicated allowlist — **not** a superset of
 the `--export` record, and it carries no source code, file paths, or raw
@@ -198,11 +266,26 @@ It is its **own path**, distinct from the usage ping and from `--sync-cloud`:
   timeout, or panic) is dropped and the `review`/`reconcile` run exits exactly as
   it would have anyway — the send never changes the exit code or stdout.
 
-> **Currently inactive.** Like the usage ping, the compiled-in ingestion endpoint
-> is empty in this build, so an opted-in send is a wired **no-op** — nothing is
-> transmitted until a real backend endpoint is configured. The schema below
-> describes the payload that *would* be sent; the opt-in is off by default
-> regardless.
+> **Active in this build.** The compiled-in ingestion endpoint is
+> `https://atcr.dev/api/v1/quality-signal` — a **separate** destination from the
+> usage ping, because the two payloads have different shapes and the backend
+> validates each against its own allowlist. Unlike the usage ping, this signal
+> remains **opt-in and off by default**: nothing is transmitted unless you
+> explicitly enable it.
+
+**Why the two destinations must stay distinct.** The atcr.dev backend serves the
+usage ping and the quality signal as separate handlers behind the `/api/v1/*`
+rewrite, each validating against its own closed key allowlist by strict set
+equality — an extra or missing key is a `400`, not a warning. The usage ping is a
+single JSON object; the quality signal is a JSON array. Posting either at the
+other's handler is therefore rejected, and because the send path is fail-open the
+rejection is dropped silently: nothing surfaces the loss. Collapsing the two onto
+one URL is the regression `TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints`
+exists to catch.
+
+This section is the versioned home of that contract. It is deliberately **not**
+restated in `internal/telemetry`, which has no dependency on, test against, or
+visibility into the service — a copy there could never be detected going stale.
 
 ### Quality-signal payload schema
 

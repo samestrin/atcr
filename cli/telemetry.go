@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -9,14 +11,46 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
-// defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL. It is
-// intentionally empty for now: the external ingestion backend is owned outside
-// this repository, and an empty endpoint makes every telemetry Send a safe no-op
-// (zero network in dev, CI, and production alike). When a real endpoint is wired
-// it MUST be an https:// URL — telemetry.Client refuses plaintext http.
-const defaultTelemetryEndpoint = ""
+// defaultTelemetryEndpoint is the compiled-in usage-ping ingestion URL, and
+// defaultQualitySignalEndpoint its quality-signal sibling. Both are live, and they
+// are NOT interchangeable: the two surfaces must each go to their own
+// destination. The backend-side reasons — separate handlers, per-surface key
+// validation, what happens to a misrouted payload — are documented in
+// docs/telemetry.md, which is where the external contract is versioned; repeating
+// them here would create a second copy that nothing in this repo can detect going
+// stale.
+//
+// Both MUST stay https:// — telemetry.Client refuses plaintext http and would
+// no-op instead. An empty value is a silent per-path no-op, which is what allows
+// either constant to be deactivated independently without disturbing the other.
+//
+// Transmission is still governed entirely by the consent gates, which these
+// values do not touch: the usage ping by telemetryGate (default-on, opt-out via
+// ATCR_TELEMETRY / config) and the quality signal by its own opt-IN gate.
+//
+// They are package VARS, not consts, and that is deliberate: NewRootCmd — the only
+// advertised zero-argument constructor, and the seam the private atcr-enterprise
+// module builds the same tree from — reads them at construction. As consts an
+// embedder, a fork, or an air-gapped deployment had no way to redirect telemetry
+// at all short of total disablement, and `-ldflags -X` could not touch them either
+// (it cannot set a const). As vars, a build can retarget either destination with
+//
+//	go build -ldflags "-X github.com/samestrin/atcr/cli.defaultTelemetryEndpoint=https://collector.internal/usage"
+//
+// and an in-process embedder can assign them before constructing the tree. Setting
+// one to "" deactivates only its own surface (dispatch no-ops on a non-HTTPS
+// endpoint), which is what allows the two to be turned off independently.
+//
+// Production code must never MUTATE these after startup: the client is constructed
+// once per process and reads them at that moment, so a later write is both a data
+// race and a no-op for the already-built client.
+var (
+	defaultTelemetryEndpoint     = "https://atcr.dev/api/v1/telemetry"
+	defaultQualitySignalEndpoint = "https://atcr.dev/api/v1/quality-signal"
+)
 
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
 // anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env
@@ -60,8 +94,8 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // silently no-op something the user explicitly requested — the wrong consent
 // model. `--sync-cloud` gets its own opt-in surface (the presence of a valid
 // ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
-func telemetryGate() bool {
-	env := telemetryEnabledFromEnv()
+func telemetryGate(w io.Writer) bool {
+	env := telemetryEnabledFromEnv(w)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
@@ -75,6 +109,60 @@ func telemetryGate() bool {
 		return false
 	}
 	return telemetryEnabled(env, cfg)
+}
+
+// maybeDiscloseTelemetry prints the one-time, per-repository notice that this
+// build transmits an anonymous usage ping, then records that it has done so.
+//
+// WHY IT LIVES ON A SYNCHRONOUS PATH. The ping is default-ON against a live
+// endpoint, and the only places that said so were a comment inside a generated
+// config file and docs/telemetry.md — so an existing user upgrading began
+// transmitting without ever being told. The disclosure therefore runs in the root
+// PersistentPreRunE, before any subcommand work, and NEVER from inside the send
+// path: a notice emitted from the fire-and-forget goroutine could interleave
+// arbitrarily with command output, could be lost to the drain timeout, and would
+// print only when a send happened to fire rather than when the user first needs
+// to know.
+//
+// IT IS SCOPED TO PEOPLE ACTUALLY TRANSMITTING. A user who has already opted out
+// — by env var or persisted config — is told nothing, because there is nothing to
+// disclose and nagging an opt-out is the wrong end of the consent model. The gate
+// is consulted with io.Discard so its unrecognized-value warning stays one-time at
+// the real call site rather than being duplicated here.
+//
+// EVERY FAILURE IS SILENT AND NON-FATAL. This is disclosure bookkeeping attached
+// to every command in the tree; it must never turn a working invocation into an
+// error. A malformed config, an unwritable repo, or a failed persist simply means
+// no notice (or a repeated one) — never a broken command.
+func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
+	// Key on the client this process was actually handed, not on the compiled-in
+	// constant. NewRootCmd hands the tree a no-destination client, and an embedder
+	// may inject its own — announcing transmission to a client that cannot transmit
+	// would be a false disclosure, which is worse than none.
+	if !client.HasUsageDestination() {
+		return
+	}
+	root, err := repoRoot()
+	if err != nil {
+		root = "."
+	}
+	shown, lerr := registry.LoadTelemetryNoticeShown(root)
+	if lerr != nil || (shown != nil && *shown) {
+		return
+	}
+	if !telemetryGate(io.Discard) {
+		return
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+		"atcr sends an anonymous usage ping to %s when a review or reconcile completes.\n"+
+			"It carries no source code, file paths, or findings — see docs/telemetry.md.\n"+
+			"To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.\n"+
+			"(This notice is shown once per repository.)\n",
+		defaultTelemetryEndpoint)
+	// Best-effort: if this cannot be persisted the notice simply repeats next run,
+	// which is the safe direction — far better than suppressing a disclosure that
+	// was never recorded.
+	_ = registry.SetTelemetryNoticeShown(root, true)
 }
 
 // reviewTelemetryEvent builds the anonymous usage Event for a completed review
