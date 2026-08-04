@@ -597,8 +597,9 @@ func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 // TestPersistLocalDebt_PopulatesModelFromAgentStatus covers Sprint 30.0 AC
 // 01-02 Scenario 1: persistLocalDebt copies the model bound to a finding's
 // reviewer (from the fan-out pool summary's AgentStatus.Model) onto the persisted
-// record, and stamps it schema v2. The reviewer "host" is bound to
-// "claude-sonnet-4-6" in the pool summary, so the record's Model must carry it.
+// record, and stamps it with the current schema version. The reviewer "host" is
+// bound to "claude-sonnet-4-6" in the pool summary, so the record's Model must
+// carry it.
 func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
 	isolate(t)
 	touchFiles(t, "a.go")
@@ -619,7 +620,14 @@ func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
 	require.Len(t, recs, 1)
 	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
 		"persistLocalDebt must populate Model from the pool summary's AgentStatus.Model")
-	assert.Equal(t, 2, recs[0].SchemaVersion, "the persisted record is stamped schema v2")
+	// Version-relative, matching the writer (cli/reconcile.go's
+	// SchemaVersion: localdebt.SchemaVersion) and the sibling constructions in
+	// telemetry_report_test.go / qualitysignal_test.go. The assertion's intent is
+	// "the writer stamps the current schema version", not "the version is N" —
+	// pinning a literal here re-breaks this test on every additive bump, which is
+	// exactly what it did at the v2 -> v3 bump (Plan 35.13 T1).
+	assert.Equal(t, localdebt.SchemaVersion, recs[0].SchemaVersion,
+		"the persisted record is stamped with the current localdebt schema version")
 }
 
 // TestResolveRecordModel covers Sprint 30.0 AC 01-02/01-03 and the Phase 1 gate

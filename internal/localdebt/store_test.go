@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// sampleRecord builds a minimal valid v1 record for store tests, populating every
+// sampleRecord builds a minimal valid current-schema record for store tests
+// (SchemaVersion is taken from the constant, so it tracks the bump), populating every
 // required field with a plausible value plus the optional justification/source
 // block so round-trip equivalence exercises the optional fields too.
 func sampleRecord(runID string) Record {
@@ -123,6 +126,100 @@ func TestStore_MonthBoundaryNewFile(t *testing.T) {
 
 	assert.FileExists(t, filepath.Join(dir, "2026-06.jsonl"))
 	assert.FileExists(t, filepath.Join(dir, "2026-07.jsonl"))
+}
+
+// --- Plan 35.13 T1: ManualRunID + schema v3 round trips -------------------
+
+// TestManualRunID_HasResolvableMonthPrefix locks AC2 (shard half): a manual add's
+// synthetic run_id carries the YYYY-MM prefix monthFromRunID requires, so a
+// manually-filed item lands in the correct month shard rather than failing the
+// append outright. The second case pins the .UTC() normalization: a local instant
+// just past midnight on the 1st belongs to the PREVIOUS month once normalized.
+func TestManualRunID_HasResolvableMonthPrefix(t *testing.T) {
+	fixed := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	month, err := monthFromRunID(ManualRunID(fixed))
+	require.NoError(t, err, "a ManualRunID must always resolve to a month shard")
+	assert.Equal(t, "2026-06", month)
+
+	// 2026-07-01T00:30:00+02:00 is 2026-06-30T22:30:00Z — the June shard.
+	crossing := time.Date(2026, 7, 1, 0, 30, 0, 0, time.FixedZone("UTC+2", 2*60*60))
+	month, err = monthFromRunID(ManualRunID(crossing))
+	require.NoError(t, err)
+	assert.Equal(t, "2026-06", month,
+		"ManualRunID normalizes to UTC, so a local-time month boundary does not misfile the shard")
+}
+
+// TestManualRunID_SuffixDistinguishesManual locks the provenance-legibility half:
+// a manual entry's run_id is visibly distinct from a reconcile run_id
+// (<RFC3339>-<review-dir base>) in the raw JSONL, not only in the origin field.
+func TestManualRunID_SuffixDistinguishesManual(t *testing.T) {
+	id := ManualRunID(time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC))
+	assert.Equal(t, "2026-06-14T10:00:00Z-manual", id)
+	assert.True(t, strings.HasSuffix(id, "-manual"),
+		"the -manual suffix marks provenance in the raw JSONL")
+}
+
+// TestStore_AppendReadAll_V3RoundTrip locks AC2/AC4 end to end: a v3 record built
+// from ManualRunID survives an Append -> ReadAll cycle with all three new fields
+// intact, in the month shard ManualRunID implies.
+func TestStore_AppendReadAll_V3RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	fixed := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+
+	rec := sampleRecord(ManualRunID(fixed))
+	rec.Origin = OriginManual
+	rec.Occurrences = 3
+	rec.FirstSeen = "2026-01-02T03:04:05Z"
+
+	require.NoError(t, Append(dir, rec))
+	assert.FileExists(t, filepath.Join(dir, "2026-06.jsonl"),
+		"a ManualRunID lands in the month shard its UTC prefix implies")
+
+	recs, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, rec, recs[0], "every v3 field must survive the JSONL round trip")
+	assert.Equal(t, OriginManual, recs[0].EffectiveOrigin())
+
+	// Pin the wire format, not just the decoded struct: a struct-level compare
+	// cannot catch a tag rename, and comparing recs[0].SchemaVersion to the
+	// constant is tautological because sampleRecord seeds it from that constant.
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"schema_version":3`, "the record is stamped v3 on disk")
+	assert.Contains(t, string(raw), `"origin":"manual"`)
+	assert.Contains(t, string(raw), `"occurrences":3`)
+	assert.Contains(t, string(raw), `"first_seen":"2026-01-02T03:04:05Z"`)
+}
+
+// TestStore_ReadAll_MixedSchemaVersions proves the v2->v3 bump widened
+// comprehension without loosening the forward-incompatible gate: v1, v2, and v3
+// lines all decode, in file order, while the v4 line is skipped and warned about.
+func TestStore_ReadAll_MixedSchemaVersions(t *testing.T) {
+	dir := t.TempDir()
+	lines := strings.Join([]string{
+		`{"schema_version":1,"id":"v1","run_id":"2026-06-01T00:00:00Z-a","ts":"2026-06-01T00:00:00Z","severity":"HIGH","file":"a.go","line":1,"problem":"p1"}`,
+		`{"schema_version":2,"id":"v2","run_id":"2026-06-02T00:00:00Z-b","ts":"2026-06-02T00:00:00Z","severity":"HIGH","file":"b.go","line":2,"problem":"p2","model":"claude-sonnet-4-6"}`,
+		`{"schema_version":3,"id":"v3","run_id":"2026-06-03T00:00:00Z-c","ts":"2026-06-03T00:00:00Z","severity":"HIGH","file":"c.go","line":3,"problem":"p3","origin":"manual","occurrences":2,"first_seen":"2026-05-01T00:00:00Z"}`,
+		`{"schema_version":4,"id":"v4","run_id":"2026-06-04T00:00:00Z-d","ts":"2026-06-04T00:00:00Z","severity":"HIGH","file":"d.go","line":4,"problem":"p4"}`,
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"), []byte(lines+"\n"), 0o600))
+
+	var diag bytes.Buffer
+	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	require.Len(t, recs, 3, "v1, v2 and v3 decode; v4 is skipped")
+	assert.Equal(t, []string{"v1", "v2", "v3"}, []string{recs[0].ID, recs[1].ID, recs[2].ID},
+		"records return in file order")
+
+	assert.Equal(t, OriginReview, recs[0].EffectiveOrigin(), "a v1 record defaults to review")
+	assert.Equal(t, OriginReview, recs[1].EffectiveOrigin(), "a v2 record defaults to review")
+	assert.Equal(t, OriginManual, recs[2].Origin)
+	assert.Equal(t, 2, recs[2].Occurrences)
+	assert.Equal(t, "2026-05-01T00:00:00Z", recs[2].FirstSeen)
+
+	assert.Contains(t, diag.String(), "unsupported schema_version 4",
+		"the forward-incompatible v4 line is still skipped with a warning")
 }
 
 // TestStore_Append_InvalidRunID locks AC 01-01 Error Scenario 1.

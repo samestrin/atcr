@@ -23,7 +23,22 @@ import (
 // decode a v2 record and ignore the unknown model key, but the
 // forward-incompat-skip model treats every newer version uniformly rather than
 // special-casing additive bumps.
-const SchemaVersion = 2
+//
+// v2 -> v3 (Plan 35.13): adds the optional Origin provenance field and the
+// Occurrences / FirstSeen pair, as .atcr/debt/ becomes the single system of record
+// for every atcr debt subcommand — a manual `atcr debt add` will write here
+// alongside reconcile once T2 rewires it. The bump is backward-compatible on read —
+// a v1/v2 record has none of those keys and decodes with the Go zero values, which
+// EffectiveOrigin reports as "review" without mutating the record — and
+// forward-compatible in the same established sense: this reader accepts v1, v2 and
+// v3, while v4+ records stay forward-incompatible and are skipped with a warning.
+//
+// Downgrade visibility (accepted loss): a pre-35.13 binary (SchemaVersion == 2)
+// reads v3 records as forward-incompatible and skips them, so findings written
+// after the bump are intentionally invisible to older binaries. This is the same
+// accepted loss the v1 -> v2 bump documented; the uniform forward-incompat-skip
+// model is preserved rather than special-casing additive bumps.
+const SchemaVersion = 3
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
 // against the same literal the producer emits: a reword updates this one constant
@@ -33,9 +48,23 @@ const (
 	MsgMalformedSkip = "skipping malformed record"
 )
 
-// Record is one persisted technical-debt finding occurrence (the schema in
-// documentation/local-td-store-schema.md; v2 as of Sprint 30.0, which added the
-// optional Model field). The required block is always present; the optional block
+// Origin values are the closed set a v3 record's origin field may carry. They are
+// spelled once here so no call site writes a bare literal. An empty Origin on a
+// v1/v2 record means OriginReview: reconcile was the only writer before v3 (see
+// EffectiveOrigin).
+const (
+	// OriginReview marks a record produced by an `atcr reconcile` run
+	// (cli/reconcile.go's persistence hook).
+	OriginReview = "review"
+	// OriginManual marks a record filed by hand through `atcr debt add`, which has
+	// no reconcile run behind it and so carries a synthetic ManualRunID.
+	OriginManual = "manual"
+)
+
+// Record is one persisted technical-debt finding occurrence (the schema documented
+// in docs/technical-debt.md; v3 as of Plan 35.13, which added the optional Origin,
+// Occurrences and FirstSeen fields on top of v2's Model). The
+// required block is always present; the optional block
 // (omitempty) is present only when the reconciled finding carried the
 // corresponding enrichment (Epic 18.3 justification/source_report), a resolved
 // model attribution, or a recorded resolution.
@@ -66,6 +95,36 @@ type Record struct {
 	// never code/path/finding content.
 	Model string `json:"model,omitempty"`
 
+	// Origin is the provenance of this record — OriginReview for a finding produced
+	// by an `atcr reconcile` run, OriginManual for one filed by `atcr debt add` —
+	// added in schema v3 (Plan 35.13) when .atcr/debt/ became the single store for
+	// every debt subcommand and a manual entry stopped being distinguishable from a
+	// review finding. omitempty keeps it absent whenever no origin was recorded —
+	// on every v1/v2 record, and on any v3 record whose writer left it unset — and
+	// an absent origin means OriginReview on ANY schema version, because reconcile
+	// was the only writer before v3 and remains the only one until T2 rewires
+	// `atcr debt add`. Read it through EffectiveOrigin rather than defaulting at
+	// each call site.
+	Origin string `json:"origin,omitempty"`
+
+	// Occurrences is how many times this id has been observed across the store's
+	// history, added in schema v3 (Plan 35.13). It is reserved for compaction: T5
+	// will fold an id's records to the latest one and carry this count forward, so
+	// the regression signal that re-openable resolution creates survives at O(1)
+	// size instead of O(history). Until that lands, nothing populates it and
+	// FoldRecords preserves only the selected record's value. omitempty keeps it
+	// absent from uncompacted records; readers treat an absent/zero value as one
+	// occurrence ("not yet aggregated").
+	Occurrences int `json:"occurrences,omitempty"`
+
+	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this
+	// id, added in schema v3 (Plan 35.13). Like Occurrences it is reserved for
+	// compaction: T5 will carry it forward so the original sighting is not lost
+	// when superseded records are dropped; today FoldRecords preserves only the
+	// selected record's value. omitempty keeps it absent from uncompacted records,
+	// where the record's own Timestamp is the earliest known sighting.
+	FirstSeen string `json:"first_seen,omitempty"`
+
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`
 	Status        string        `json:"status,omitempty"`
@@ -89,6 +148,23 @@ type SourceReport struct {
 // empty problem string.
 func (r *Record) StampID() {
 	r.ID = history.FindingID(r.File, r.Line, r.Problem)
+}
+
+// EffectiveOrigin reports the record's provenance, resolving a v1/v2 record's
+// absent origin to OriginReview — reconcile was the only writer before schema v3.
+// The value is trimmed and lowercased, and a whitespace-only origin is treated as
+// absent rather than as a distinct value.
+//
+// The default is applied here, at the call site, and deliberately NOT on the read
+// path: Compact re-marshals exactly what ReadAll returned, so backfilling Origin
+// during decode would rewrite a v1/v2 record with an origin key while its
+// schema_version still reads 1 or 2 — an on-disk record matching no schema
+// version. EffectiveOrigin takes a value receiver and never mutates r.
+func (r Record) EffectiveOrigin() string {
+	if o := strings.ToLower(strings.TrimSpace(r.Origin)); o != "" {
+		return o
+	}
+	return OriginReview
 }
 
 // IsClosedStatus reports whether a record's status takes an item out of the open

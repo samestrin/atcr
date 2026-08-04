@@ -13,8 +13,9 @@
 // The append/tolerant-read mechanics are a direct structural copy of
 // internal/scorecard/store.go — a proven append-only ledger — differing only in
 // root-path resolution (per-repo .atcr/debt/ instead of the global
-// os.UserConfigDir()/atcr/scorecard/) and in the Record shape (the v1 TD schema in
-// record.go).
+// os.UserConfigDir()/atcr/scorecard/) and in the Record shape (the TD schema in
+// record.go, currently v3 — see the SchemaVersion doc block for the version
+// history and the tolerant-read contract).
 //
 // # Why .atcr/ and not .planning/
 //
