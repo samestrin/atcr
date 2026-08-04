@@ -11,8 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/samestrin/atcr/internal/debt"
-	"github.com/samestrin/atcr/internal/tdmigrate"
+	"github.com/samestrin/atcr/internal/localdebt"
 )
 
 // debtStdinIsTTY reports whether stdin is an interactive terminal. It is a
@@ -29,64 +28,71 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// wizardDefaults seeds the interactive prompts (and flag-mode section fields)
-// with sensible defaults that an empty answer falls back to.
+// debtAddStatuses is the accepted --status enum. It is validated here because
+// localdebt.Append performs no schema validation: the deleted .planning/-scoped
+// store enforced the enum inside tdmigrate.Item.Validate on the way in, and
+// dropping the check during the port would let `debt add --status typo` write an
+// unfilterable record.
+var debtAddStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true, "wontfix": true}
+
+// wizardDefaults seeds the interactive prompts with values already supplied as
+// flags, so partial flag input carries into the wizard instead of being
+// discarded.
 type wizardDefaults struct {
-	Date, SourceType, Label                string
-	Group, Status, Source                  string
-	Severity, File, Problem, Fix, Category string
-	Est                                    int
+	Severity, File, Problem, Fix, Category, Status string
+	Est                                            int
 }
 
 func newDebtAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a technical-debt item (flag-driven; interactive when run on a TTY)",
-		Long: "atcr debt add files a new item into the authoritative README table and\n" +
-			"regenerates the shard store so the item is immediately queryable.\n\n" +
+		Long: "atcr debt add files a new item into the local technical-debt store\n" +
+			"(.atcr/debt/), the same store list, dashboard, resolve, and compact read,\n" +
+			"so the item is immediately listable and closeable. The appended item's id\n" +
+			"is echoed on success for `atcr debt resolve <id>`.\n\n" +
 			"Provide all required fields as flags for a non-interactive, scriptable add:\n" +
-			"  --severity --file --problem --fix --category (\n--group/--status/--est/--source optional).\n" +
+			"  --severity --file --problem --fix --category (--status/--est optional).\n" +
 			"Omit them on an interactive terminal to be walked through a prompt instead.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtAdd,
 	}
-	cmd.Flags().String("items", defaultTDItems, "path to the sharded technical-debt store")
-	cmd.Flags().String("readme", defaultTDReadme, "path to the authoritative technical-debt README")
-	cmd.Flags().String("date", "", "section date YYYY-MM-DD (default: today, UTC)")
-	cmd.Flags().String("label", "manual", "section label")
-	cmd.Flags().String("source-type", "Sprint", "section source type: Sprint|Review")
-	cmd.Flags().String("group", "U", "group label")
-	cmd.Flags().String("status", "open", "status: open|deferred|resolved")
+	addDebtStoreFlag(cmd)
+	cmd.Flags().String("status", "open", "status: open|deferred|resolved|wontfix")
 	cmd.Flags().String("severity", "", "severity: CRITICAL|HIGH|MEDIUM|LOW (required in flag mode)")
 	cmd.Flags().String("file", "", "file:line location (required in flag mode)")
 	cmd.Flags().String("problem", "", "problem description (required in flag mode)")
 	cmd.Flags().String("fix", "", "recommended fix (required in flag mode)")
 	cmd.Flags().String("category", "", "category label (required in flag mode)")
 	cmd.Flags().Int("est", 0, "estimated minutes")
-	cmd.Flags().String("source", "manual", "capture source")
 	return cmd
 }
 
-func todayUTC() string { return time.Now().UTC().Format("2006-01-02") }
+func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
+func normalizeStatus(s string) string   { return strings.ToLower(strings.TrimSpace(s)) }
 
-func validateDate(date string) error {
-	if _, err := time.Parse("2006-01-02", date); err != nil {
-		return usageError(fmt.Errorf("invalid date %q: expected YYYY-MM-DD", date))
+// parseDebtFileLine splits a "path:line" location into the structured File and
+// Line that localdebt.Record carries. Only a purely-numeric trailing segment is
+// treated as a line number — the same trailing-digits rule the deleted store
+// used to strip a line suffix — so a free-text value ("see docs: the thing"), a
+// line RANGE ("a.go:1-9", which is not a single line), or a bare path is kept
+// verbatim in File with Line 0.
+func parseDebtFileLine(v string) (string, int) {
+	i := strings.LastIndex(v, ":")
+	if i < 0 || i == len(v)-1 {
+		return v, 0
 	}
-	return nil
-}
-
-func normalizeSeverity(s string) string { return strings.ToUpper(s) }
-func normalizeStatus(s string) string   { return strings.ToLower(s) }
-func normalizeSourceType(s string) string {
-	switch strings.ToLower(s) {
-	case "sprint":
-		return tdmigrate.SourceTypeSprint
-	case "review":
-		return tdmigrate.SourceTypeReview
-	default:
-		return s
+	tail := v[i+1:]
+	for _, r := range tail {
+		if r < '0' || r > '9' {
+			return v, 0 // not a line suffix; keep verbatim
+		}
 	}
+	n, err := strconv.Atoi(tail)
+	if err != nil || n < 0 {
+		return v, 0 // an overflowing digit run is not a usable line number
+	}
+	return v[:i], n
 }
 
 func missingRequiredFlags(sev, file, problem, fix, category string) []string {
@@ -110,15 +116,6 @@ func missingRequiredFlags(sev, file, problem, fix, category string) []string {
 }
 
 func runDebtAdd(cmd *cobra.Command, _ []string) error {
-	readme := mustFlag(cmd, "readme")
-	items := mustFlag(cmd, "items")
-	date := mustFlag(cmd, "date")
-	if date == "" {
-		date = todayUTC()
-	}
-	if err := validateDate(date); err != nil {
-		return err
-	}
 	est, _ := cmd.Flags().GetInt("est")
 	sev := mustFlag(cmd, "severity")
 	file := mustFlag(cmd, "file")
@@ -126,31 +123,25 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	fix := mustFlag(cmd, "fix")
 	category := mustFlag(cmd, "category")
 	def := wizardDefaults{
-		Date: date, SourceType: mustFlag(cmd, "source-type"), Label: mustFlag(cmd, "label"),
-		Group: mustFlag(cmd, "group"), Status: mustFlag(cmd, "status"), Source: mustFlag(cmd, "source"),
 		Severity: sev, File: file, Problem: problem, Fix: fix, Category: category,
-		Est: est,
+		Status: mustFlag(cmd, "status"), Est: est,
 	}
 
-	var (
-		sec debt.Section
-		it  tdmigrate.Item
-	)
+	var rec localdebt.Record
 	switch {
 	case sev != "" && file != "" && problem != "" && fix != "" && category != "":
 		// Flag mode — the scriptable, primary contract.
-		sec = debt.Section{Date: def.Date, SourceType: normalizeSourceType(def.SourceType), Label: def.Label}
-		it = tdmigrate.Item{
-			Group: def.Group, Status: normalizeStatus(def.Status), Severity: normalizeSeverity(sev),
-			File: file, Problem: problem, Fix: fix, Category: category,
-			EstMinutes: est, Source: def.Source,
+		rec = localdebt.Record{
+			Severity: sev, Problem: problem, Fix: fix, Category: category,
+			EstMinutes: est, Status: def.Status,
 		}
+		rec.File, rec.Line = parseDebtFileLine(file)
 	case debtStdinIsTTY(cmd.InOrStdin()):
 		// Interactive wizard — only when we can actually prompt a human. Any
 		// required flags already supplied were seeded into def above, so partial
 		// flag input carries into the prompts instead of being discarded.
 		var err error
-		sec, it, err = promptEntry(cmd.InOrStdin(), cmd.OutOrStdout(), def)
+		rec, err = promptEntry(cmd.InOrStdin(), cmd.OutOrStdout(), def)
 		if err != nil {
 			return err
 		}
@@ -164,19 +155,63 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
 	}
 
-	if err := debt.AppendItem(readme, items, sec, it, cmd.ErrOrStderr()); err != nil {
+	if err := finalizeDebtRecord(&rec); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s item to %s under [%s] From %s: %s.\n",
-		it.Severity, readme, sec.Date, sec.SourceType, sec.Label)
+	dir := mustFlag(cmd, "dir")
+	if err := localdebt.Append(dir, rec); err != nil {
+		return fmt.Errorf("atcr debt add: failed to file the item: %w", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s item %s to %s.\n", rec.Severity, rec.ID, dir)
 	return nil
 }
 
-// promptEntry runs the interactive wizard against in/out, returning the Section
-// and Item to file. An empty answer takes the seeded default; required fields
-// (label, severity, file, problem, fix, category) are re-prompted when left
-// blank and error only if the input stream ends first.
-func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section, tdmigrate.Item, error) {
+// finalizeDebtRecord validates the user-supplied fields and stamps the
+// store-owned ones (schema version, synthetic run id, timestamp, origin, id).
+// It is shared by the flag and wizard paths so the wizard is never a validation
+// bypass, and it runs BEFORE the append so a rejected item writes nothing.
+func finalizeDebtRecord(rec *localdebt.Record) error {
+	rec.Severity = normalizeSeverity(rec.Severity)
+	if !resolveSeverities[rec.Severity] {
+		return usageError(fmt.Errorf("invalid severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", rec.Severity))
+	}
+	status := normalizeStatus(rec.Status)
+	if status == "" {
+		status = "open"
+	}
+	if !debtAddStatuses[status] {
+		return usageError(fmt.Errorf("invalid status %q: expected open|deferred|resolved|wontfix", rec.Status))
+	}
+	// "open" is spelled as the EMPTY status on disk — the same value the
+	// reconcile hook writes — so one finding never folds against two spellings of
+	// the same state.
+	if status == "open" {
+		status = ""
+	}
+	rec.Status = status
+	if rec.EstMinutes < 0 {
+		return usageError(fmt.Errorf("invalid --est %d: expected a non-negative number of minutes", rec.EstMinutes))
+	}
+
+	// A manual add has no reconcile run behind it, so it carries the synthetic
+	// run id whose YYYY-MM prefix resolves the month shard (localdebt.ManualRunID),
+	// mirroring the resolution path's construction. time.Now() is always inside
+	// ManualRunID's documented four-digit-year precondition.
+	ts := time.Now().UTC()
+	rec.SchemaVersion = localdebt.SchemaVersion
+	rec.RunID = localdebt.ManualRunID(ts)
+	rec.Timestamp = ts.Format(time.RFC3339)
+	rec.Origin = localdebt.OriginManual
+	rec.StampID()
+	return nil
+}
+
+// promptEntry runs the interactive wizard against in/out, returning the record
+// to file. An empty answer takes the seeded default; required fields (severity,
+// file, problem, fix, category) are re-prompted when left blank and error only
+// if the input stream ends first. The returned record carries only the
+// user-supplied fields — finalizeDebtRecord validates and stamps the rest.
+func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Record, error) {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -213,27 +248,19 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 		}
 	}
 
-	date := ask("Date (YYYY-MM-DD)", def.Date, false)
-	if err := validateDate(date); err != nil {
-		return debt.Section{}, tdmigrate.Item{}, err
-	}
-	stype := ask("Source type (Sprint|Review)", def.SourceType, false)
-	label := ask("Label", def.Label, true)
-	group := ask("Group", def.Group, false)
 	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", def.Severity, true)
 	file := ask("File (file:line)", def.File, true)
 	problem := ask("Problem", def.Problem, true)
 	fix := ask("Fix", def.Fix, true)
 	category := ask("Category", def.Category, true)
 	estStr := ask("Est minutes", strconv.Itoa(def.Est), false)
-	status := ask("Status (open|deferred|resolved)", def.Status, false)
-	source := ask("Source", def.Source, false)
+	status := ask("Status (open|deferred|resolved|wontfix)", def.Status, false)
 
 	if perr != nil {
-		return debt.Section{}, tdmigrate.Item{}, perr
+		return localdebt.Record{}, perr
 	}
 	if err := sc.Err(); err != nil {
-		return debt.Section{}, tdmigrate.Item{}, fmt.Errorf("input read error: %w", err)
+		return localdebt.Record{}, fmt.Errorf("input read error: %w", err)
 	}
 
 	est := def.Est
@@ -243,11 +270,10 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (debt.Section,
 		_, _ = fmt.Fprintf(out, "  est %q is not an integer; using %d\n", estStr, def.Est)
 	}
 
-	sec := debt.Section{Date: date, SourceType: normalizeSourceType(stype), Label: label}
-	it := tdmigrate.Item{
-		Group: group, Status: normalizeStatus(status), Severity: normalizeSeverity(sev),
-		File: file, Problem: problem, Fix: fix, Category: category,
-		EstMinutes: est, Source: source,
+	rec := localdebt.Record{
+		Severity: sev, Problem: problem, Fix: fix, Category: category,
+		EstMinutes: est, Status: status,
 	}
-	return sec, it, nil
+	rec.File, rec.Line = parseDebtFileLine(file)
+	return rec, nil
 }

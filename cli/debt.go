@@ -3,35 +3,31 @@ package cli
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
-	"github.com/samestrin/atcr/internal/debt"
+	"github.com/samestrin/atcr/internal/localdebt"
 )
 
-// Default locations of the technical-debt store, relative to the repo root.
-// Both are overridable via flags so the commands can run against a fixture tree
-// in tests or a non-standard checkout.
-const (
-	defaultTDReadme = ".planning/technical-debt/README.md"
-	defaultTDItems  = ".planning/technical-debt/items"
-)
-
-// newDebtCmd builds `atcr debt`: query, aggregate, and report on the Epic-12.1
-// sharded technical-debt store. It is a thin CLI over internal/debt (which in
-// turn reuses internal/tdmigrate), so the whole surface is unit-testable without
-// spawning a process. Subcommands: list, add, dashboard.
+// newDebtCmd builds `atcr debt`: query, capture, aggregate, resolve, and compact
+// the local technical-debt store. As of Plan 35.13 all five subcommands read and
+// write ONE store — the .atcr/-scoped, month-sharded JSONL backlog under
+// .atcr/debt/ that `atcr reconcile` populates — resolved through a --dir flag
+// with a shared default. The previous .planning/-scoped README+shard store that
+// list/add/dashboard used is no longer read or written by any atcr code.
 func newDebtCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "debt",
-		Short: "Query and report on technical debt",
-		Long: "atcr debt reads the sharded technical-debt store under\n" +
-			".planning/technical-debt/items/ (Epic 12.1 format) and provides\n" +
-			"list/add/dashboard subcommands for querying, capturing, and reporting debt.\n" +
-			"The resolve subcommand instead operates on the public, .atcr/-scoped local\n" +
-			"TD store (.atcr/debt/) that atcr reconcile populates.",
+		Short: "Query, capture, and report on technical debt",
+		Long: "atcr debt reads and writes the local technical-debt store under\n" +
+			".atcr/debt/ (month-sharded, append-only JSONL) that atcr reconcile\n" +
+			"populates. All five subcommands — list, add, dashboard, resolve, and\n" +
+			"compact — operate on that one store, so an item filed by add is visible\n" +
+			"to list and closeable by resolve. Use --dir to point them at a store\n" +
+			"other than the current repo's.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
@@ -39,35 +35,26 @@ func newDebtCmd() *cobra.Command {
 	return cmd
 }
 
-// addSourceFlags registers the shared --items/--readme/--sync flags used by the
-// shard-reading subcommands so list and dashboard resolve their inputs
-// identically.
-func addSourceFlags(cmd *cobra.Command) {
-	cmd.Flags().String("items", defaultTDItems, "path to the sharded technical-debt store")
-	cmd.Flags().String("readme", defaultTDReadme, "path to the authoritative technical-debt README")
-	cmd.Flags().Bool("sync", false, "regenerate shards from the authoritative README before reading")
+// addDebtStoreFlag registers the --dir flag every debt subcommand shares, with
+// the one default that makes them a single namespace over a single store.
+func addDebtStoreFlag(cmd *cobra.Command) {
+	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store (.atcr/debt)")
 }
 
-// loadRecords resolves --items/--readme/--sync and returns the flattened Records.
-// When --sync is set it first regenerates the shards from the authoritative
-// README (the shards are additive and can lag the table); otherwise it reads the
-// shards as-is for speed.
-func loadRecords(cmd *cobra.Command) ([]debt.Record, error) {
-	items, _ := cmd.Flags().GetString("items")
-	readme, _ := cmd.Flags().GetString("readme")
-	sync, _ := cmd.Flags().GetBool("sync")
-
-	if sync {
-		// --check is a read-only verification mode; combining it with --sync
-		// would mutate the working tree while claiming to only verify drift.
-		check, _ := cmd.Flags().GetBool("check")
-		if !check {
-			if err := debt.SyncShards(readme, items, cmd.ErrOrStderr()); err != nil {
-				return nil, err
-			}
-		}
+// loadLocalDebt reads the store named by --dir and folds it by id, so list and
+// dashboard see one effective record per finding — the same precedence rule
+// selectOpenDebt, Compact, and AggregateQualitySignal share. Without the fold a
+// re-raised finding would render once per append.
+//
+// A missing store is not an error: localdebt.ReadAll reports the "no backlog
+// yet" state as an empty result, which renders as the empty-result message.
+func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
+	dir := mustFlag(cmd, "dir")
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
+	if err != nil {
+		return nil, fmt.Errorf("read local debt store: %w", err)
 	}
-	return debt.Load(items)
+	return localdebt.FoldRecords(recs), nil
 }
 
 func newDebtListCmd() *cobra.Command {
@@ -77,33 +64,29 @@ func newDebtListCmd() *cobra.Command {
 		Args:  usageArgs(cobra.NoArgs),
 		RunE:  runDebtList,
 	}
-	addSourceFlags(cmd)
+	addDebtStoreFlag(cmd)
 	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
-	cmd.Flags().String("status", "", "filter by status (open|deferred|resolved)")
+	cmd.Flags().String("status", "", "filter by status (open|deferred|resolved|wontfix)")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
-	cmd.Flags().String("group", "", "filter by group label")
-	cmd.Flags().String("sort", debt.SortSeverity, "sort key: severity|age|est|file")
+	cmd.Flags().String("sort", sortKeySeverity, "sort key: severity|age|est|file")
 	return cmd
 }
 
 func runDebtList(cmd *cobra.Command, _ []string) error {
-	recs, err := loadRecords(cmd)
+	recs, err := loadLocalDebt(cmd)
 	if err != nil {
 		return err
 	}
 
-	f := debt.Filter{
+	recs = applyDebtFilter(recs, debtFilter{
 		Severity:  mustFlag(cmd, "severity"),
 		Status:    mustFlag(cmd, "status"),
 		Category:  mustFlag(cmd, "category"),
 		Component: mustFlag(cmd, "component"),
-		Group:     mustFlag(cmd, "group"),
-	}
-	recs = debt.Apply(recs, f)
+	})
 
-	sortKey := mustFlag(cmd, "sort")
-	if err := debt.Sort(recs, sortKey); err != nil {
+	if err := sortDebt(recs, mustFlag(cmd, "sort")); err != nil {
 		return usageError(err) // a bad --sort value is a usage error (exit 2)
 	}
 
@@ -124,30 +107,157 @@ func mustFlag(cmd *cobra.Command, name string) string {
 	return v
 }
 
-// renderDebtTable writes an aligned, tab-separated table of records. Problem
-// text is truncated so a long finding never wraps the terminal into an
-// unreadable block; the full text lives in the shard/README. Every cell passes
-// through cell so a stray tab or newline in a README-parsed field cannot tear
-// a row or misalign the tabwriter block.
-func renderDebtTable(w io.Writer, recs []debt.Record) error {
+// debtFilter selects records by exact/substring field matches. A zero-value
+// field (empty string) matches anything, so a zero debtFilter is a pass-through.
+//
+// There is deliberately no Group field: group is cadence workflow vocabulary,
+// excluded from the record schema by the atcr<->cadence seam.
+type debtFilter struct {
+	Severity  string // exact, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW)
+	Status    string // exact (open|deferred|resolved|wontfix); "open" matches an empty status
+	Category  string // substring, case-insensitive
+	Component string // path-prefix match against the record's File
+}
+
+// match reports whether r satisfies every non-empty field of f.
+func (f debtFilter) match(r localdebt.Record) bool {
+	if f.Severity != "" && !strings.EqualFold(r.Severity, f.Severity) {
+		return false
+	}
+	// The store's canonical open record carries an EMPTY status, so a literal
+	// --status open must match it; comparing the raw fields would silently return
+	// nothing for the most common query in the namespace. The comparison is
+	// bucket-vs-LITERAL, not bucket-vs-bucket: bucketing the filter value too
+	// would map an unrecognized --status onto "open" and quietly return the open
+	// backlog instead of nothing. It also keeps the filter agreeing with the
+	// STATUS column the table just rendered.
+	if f.Status != "" && debtStatusBucket(r.Status) != strings.ToLower(strings.TrimSpace(f.Status)) {
+		return false
+	}
+	if f.Category != "" && !strings.Contains(strings.ToLower(r.Category), strings.ToLower(f.Category)) {
+		return false
+	}
+	if f.Component != "" {
+		// Require an exact component match or a path-segment prefix so that
+		// "cmd" does not also match "cmder/...".
+		if r.File != f.Component && !strings.HasPrefix(r.File, f.Component+"/") {
+			return false
+		}
+	}
+	return true
+}
+
+// applyDebtFilter returns the subset of recs matching f, preserving order. It
+// always returns a non-nil slice so callers can range/marshal without nil checks.
+func applyDebtFilter(recs []localdebt.Record, f debtFilter) []localdebt.Record {
+	out := make([]localdebt.Record, 0, len(recs))
+	for _, r := range recs {
+		if f.match(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// Sort keys accepted by sortDebt.
+const (
+	sortKeySeverity = "severity" // CRITICAL first, then age within a severity
+	sortKeyAge      = "age"      // oldest first
+	sortKeyEst      = "est"      // largest est_minutes first
+	sortKeyFile     = "file"     // lexicographic by file:line
+)
+
+// sortDebt orders recs in place by the given key. An unknown key is a hard error
+// so a typo'd --sort flag fails loudly instead of silently returning unsorted
+// data. Every ordering is total so output is deterministic across runs; the
+// tiebreak chain is key-specific: severity breaks ties by date then location,
+// age by date then location, est by location, and file by location then date.
+//
+// Location (file, then line) rather than file alone is what keeps the orderings
+// total now that the line number is a separate field — two findings in one file
+// would otherwise tie.
+func sortDebt(recs []localdebt.Record, key string) error {
+	byLocation := func(a, b localdebt.Record) (bool, bool) {
+		if a.File != b.File {
+			return a.File < b.File, true
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line, true
+		}
+		return false, false
+	}
+
+	var less func(a, b localdebt.Record) bool
+	switch key {
+	case sortKeySeverity:
+		less = func(a, b localdebt.Record) bool {
+			// severityRank is most-severe-HIGHEST (cli/debt_resolve.go), so the
+			// most-severe-first ordering is a descending compare.
+			if ra, rb := severityRank(a.Severity), severityRank(b.Severity); ra != rb {
+				return ra > rb
+			}
+			if da, db := debtRecordDate(a), debtRecordDate(b); da != db {
+				return da < db // older first within a severity
+			}
+			ok, decided := byLocation(a, b)
+			return decided && ok
+		}
+	case sortKeyAge:
+		less = func(a, b localdebt.Record) bool {
+			if da, db := debtRecordDate(a), debtRecordDate(b); da != db {
+				return da < db // older first
+			}
+			ok, decided := byLocation(a, b)
+			return decided && ok
+		}
+	case sortKeyEst:
+		less = func(a, b localdebt.Record) bool {
+			if a.EstMinutes != b.EstMinutes {
+				return a.EstMinutes > b.EstMinutes // largest first
+			}
+			ok, decided := byLocation(a, b)
+			return decided && ok
+		}
+	case sortKeyFile:
+		less = func(a, b localdebt.Record) bool {
+			if ok, decided := byLocation(a, b); decided {
+				return ok
+			}
+			return debtRecordDate(a) < debtRecordDate(b)
+		}
+	default:
+		return fmt.Errorf("unknown sort key %q (want severity|age|est|file)", key)
+	}
+	sort.SliceStable(recs, func(i, j int) bool { return less(recs[i], recs[j]) })
+	return nil
+}
+
+// renderDebtTable writes an aligned, tab-separated table of records. The id is
+// the leading column and is never truncated, so a listed item is directly
+// copy-pasteable into `atcr debt resolve <id>` — the visible half of "an item
+// filed by add is closeable by resolve". Problem text is truncated so a long
+// finding never wraps the terminal into an unreadable block; the full text lives
+// in the store. Every cell passes through cell so a stray tab or newline in a
+// free-text field cannot tear a row or misalign the tabwriter block.
+func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SEVERITY\tSTATUS\tGROUP\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tSTATUS\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
 		return err
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			cell(r.Severity), cell(r.Status), cell(r.Group), r.EstMinutes,
-			cell(r.File), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
+			cell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), r.EstMinutes,
+			cell(debtLocation(r)), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
 }
 
-// cell makes a raw README-parsed field safe to interpolate into the
-// tab-separated table: a literal newline would break the row and a literal tab
-// would tear a column, so both collapse to spaces. The render layer enforces
-// this structurally — the same line escapeMarkdownCell holds for the telemetry
+// cell makes a raw store field safe to interpolate into the tab-separated
+// table: a literal newline would break the row and a literal tab would tear a
+// column, so both collapse to spaces. The render layer enforces this
+// structurally — the same line escapeMarkdownCell holds for the telemetry
 // report — rather than trusting the fields to be single-line.
 func cell(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")

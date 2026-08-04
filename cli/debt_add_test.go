@@ -5,24 +5,31 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/samestrin/atcr/internal/debt"
+	"github.com/samestrin/atcr/internal/history"
+	"github.com/samestrin/atcr/internal/localdebt"
 )
 
-// emptyTDRepo writes a minimal authoritative README and returns its path plus
-// the (not-yet-created) items dir.
-func emptyTDRepo(t *testing.T) (readme, items string) {
+// emptyDebtStore returns a not-yet-created .atcr/debt directory. localdebt.Append
+// creates it lazily on first write, so nothing is pre-seeded.
+func emptyDebtStore(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	readme = filepath.Join(dir, "README.md")
-	items = filepath.Join(dir, "items")
-	require.NoError(t, os.WriteFile(readme, []byte("# Technical Debt\n\nstaging area\n"), 0o644))
-	return readme, items
+	return filepath.Join(t.TempDir(), ".atcr", "debt")
+}
+
+// readDebtStore reads every record back out of dir.
+func readDebtStore(t *testing.T, dir string) []localdebt.Record {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	return recs
 }
 
 func TestDebtAdd_Wiring(t *testing.T) {
@@ -37,41 +44,114 @@ func TestDebtAdd_Wiring(t *testing.T) {
 }
 
 func TestDebtAdd_FlagMode(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	_, err := runDebt(t, "add",
-		"--readme", readme, "--items", items,
-		"--date", "2026-07-03", "--label", "manual", "--source-type", "Sprint",
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
 		"--severity", "HIGH", "--file", "internal/x/y.go:12",
 		"--problem", "boom", "--fix", "guard it", "--category", "correctness",
-		"--est", "30", "--group", "1", "--source", "manual",
+		"--est", "30",
 	)
 	require.NoError(t, err)
 
-	got, err := os.ReadFile(readme)
-	require.NoError(t, err)
-	assert.Contains(t, string(got), "internal/x/y.go:12")
-
-	recs, err := debt.Load(items)
-	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
 	require.Len(t, recs, 1)
-	assert.Equal(t, "HIGH", recs[0].Severity)
-	assert.Equal(t, "boom", recs[0].Problem)
+	r := recs[0]
+	assert.Equal(t, "HIGH", r.Severity)
+	assert.Equal(t, "boom", r.Problem)
+	assert.Equal(t, "guard it", r.Fix)
+	assert.Equal(t, "correctness", r.Category)
+	assert.Equal(t, 30, r.EstMinutes)
+	assert.Equal(t, "internal/x/y.go", r.File, "file:line is parsed into structured File + Line")
+	assert.Equal(t, 12, r.Line)
+	assert.Equal(t, localdebt.SchemaVersion, r.SchemaVersion)
+	assert.Equal(t, localdebt.OriginManual, r.Origin, "a hand-filed item is origin=manual, not review")
+	assert.Equal(t, history.FindingID(r.File, r.Line, r.Problem), r.ID, "the id is the standard content hash")
+	assert.Empty(t, r.Status, "the canonical on-disk spelling of open is the empty status")
+}
+
+// The synthetic run_id must satisfy monthFromRunID so the append lands in a real
+// month shard rather than failing outright.
+func TestDebtAdd_LandsInTheRunIDMonthShard(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Regexp(t, regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])\.jsonl$`), entries[0].Name())
+	assert.Equal(t, time.Now().UTC().Format("2006-01")+".jsonl", entries[0].Name())
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.True(t, strings.HasSuffix(recs[0].RunID, "-manual"), "run_id records the manual provenance: %q", recs[0].RunID)
+}
+
+// The id must be echoed so the manual add -> resolve round trip is usable
+// straight from the terminal.
+func TestDebtAdd_EchoesTheAppendedID(t *testing.T) {
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.NoError(t, err)
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Contains(t, out, recs[0].ID, "the appended id is echoed for copy-paste into `debt resolve`")
+}
+
+// AC1 round trip: an item filed by add is visible to list and closeable by
+// resolve, with the id copy-pasted out of list's rendered output. Both halves are
+// asserted — the open-filtered disappearance is the closure proof, the unfiltered
+// row is the proof that list and resolve read ONE store.
+func TestDebtNamespace_AddListResolveRoundTrip(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:3",
+		"--problem", "P", "--fix", "F", "--category", "correctness")
+	require.NoError(t, err)
+
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	id := debtIDFromListOutput(t, listed)
+
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	require.NoError(t, err, "the id read out of `debt list` closes through `debt resolve`")
+
+	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
+	require.NoError(t, err)
+	assert.NotContains(t, open, id, "the resolved id leaves the open backlog")
+
+	all, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, all, id, "a bare list still shows the folded terminal record")
+	assert.Contains(t, all, "resolved")
+}
+
+// debtIDFromListOutput parses the id out of the FIRST data row of a rendered
+// `debt list` table — the same copy-paste a human performs. Reading it from the
+// rendered text rather than from the record struct is the point: it proves the id
+// survives rendering intact (untruncated).
+func debtIDFromListOutput(t *testing.T, out string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "table has a header and at least one row:\n%s", out)
+	fields := strings.Fields(lines[1])
+	require.NotEmpty(t, fields)
+	return fields[0]
 }
 
 func TestDebtAdd_MissingRequiredNonTTYIsUsageError(t *testing.T) {
-	readme, items := emptyTDRepo(t)
+	dir := emptyDebtStore(t)
 	// Missing --severity/--file/etc. and stdin is not a TTY (bytes buffer).
-	_, err := runDebt(t, "add", "--readme", readme, "--items", items, "--problem", "only this")
+	_, err := runDebt(t, "add", "--dir", dir, "--problem", "only this")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
 func TestDebtAdd_MissingRequiredNamesSpecificFlags(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	out, err := runDebt(t, "add",
-		"--readme", readme, "--items", items,
-		"--severity", "HIGH",
-	)
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir, "--severity", "HIGH")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 	lines := strings.Split(out, "\n")
@@ -84,49 +164,67 @@ func TestDebtAdd_MissingRequiredNamesSpecificFlags(t *testing.T) {
 	assert.NotContains(t, errLine, "--severity")
 }
 
-func TestDebtAdd_InvalidSeverityIsError(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	_, err := runDebt(t, "add",
-		"--readme", readme, "--items", items, "--date", "2026-07-03",
-		"--severity", "URGENT", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
-	)
-	require.Error(t, err)
-}
-
-func TestDebtAdd_InvalidDateIsUsageError(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	_, err := runDebt(t, "add",
-		"--readme", readme, "--items", items,
-		"--date", "07-03-2026",
-		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
-	)
+// The deleted tdmigrate.Item.Validate enforced the severity/status enums and a
+// non-negative estimate on the way into the .planning/ store. localdebt.Append
+// has no schema validation, so the command must carry those checks itself or the
+// port silently drops them.
+func TestDebtAdd_InvalidSeverityIsUsageError(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "URGENT", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Empty(t, readDebtStore(t, dir), "a rejected add writes nothing")
+}
+
+func TestDebtAdd_InvalidStatusIsUsageError(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "bogus",
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Empty(t, readDebtStore(t, dir))
+}
+
+func TestDebtAdd_NegativeEstIsUsageError(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--est", "-1",
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Empty(t, readDebtStore(t, dir))
 }
 
 func TestDebtAdd_CaseNormalizedEnums(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	_, err := runDebt(t, "add",
-		"--readme", readme, "--items", items,
-		"--date", "2026-07-03",
-		"--severity", "high", "--status", "Open", "--source-type", "sprint",
-		"--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
-	)
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "high", "--status", "Open",
+		"--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
 	require.NoError(t, err)
 
-	recs, err := debt.Load(items)
-	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "HIGH", recs[0].Severity)
-	assert.Equal(t, "open", recs[0].Status)
+	// "open" normalizes to the store's canonical empty status rather than being
+	// written as a distinct literal, so one id never folds against two spellings
+	// of the same state.
+	assert.Empty(t, recs[0].Status)
+}
+
+func TestDebtAdd_TerminalStatusIsWrittenVerbatim(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "deferred",
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.NoError(t, err)
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "deferred", recs[0].Status)
 }
 
 func TestDebtAdd_PartialFlagsIsUsageError(t *testing.T) {
-	readme, items := emptyTDRepo(t)
-	out, err := runDebt(t, "add",
-		"--readme", readme, "--items", items,
-		"--severity", "HIGH", "--file", "x.go",
-	)
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir, "--severity", "HIGH", "--file", "x.go")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 	// The error line must name only the missing flags, not the ones provided.
@@ -140,15 +238,39 @@ func TestDebtAdd_PartialFlagsIsUsageError(t *testing.T) {
 	assert.NotContains(t, errLine, "--file")
 }
 
+// Ported from the deleted filePath test, inverted: the old code STRIPPED a line
+// suffix off a free-text File; the new code PARSES it into Line. The trailing-
+// all-digits rule is the same, so a non-numeric tail is still kept verbatim.
+func TestParseDebtFileLine(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantFile string
+		wantLine int
+	}{
+		{"internal/x/y.go:108", "internal/x/y.go", 108},
+		{"cmd/atcr/review.go", "cmd/atcr/review.go", 0},
+		{"main.go:3", "main.go", 3},
+		// A range is not a single line; the whole value stays in File.
+		{"cmd/atcr/autofix.go:248-260", "cmd/atcr/autofix.go:248-260", 0},
+		// A colon with a non-numeric tail (free text) is left untouched.
+		{"see docs: the thing", "see docs: the thing", 0},
+		// A trailing colon is not a line suffix.
+		{"a.go:", "a.go:", 0},
+		{"", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			file, line := parseDebtFileLine(tc.in)
+			assert.Equal(t, tc.wantFile, file)
+			assert.Equal(t, tc.wantLine, line)
+		})
+	}
+}
+
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
-	// Answers, in order: date (default), source-type (default), label,
-	// group (default), severity, file, problem, fix, category, est, status
-	// (default), source (default). Empty lines take the default.
+	// Answers, in order: severity, file, problem, fix, category, est, status.
+	// Empty lines take the seeded default.
 	answers := strings.Join([]string{
-		"",            // date -> default
-		"",            // source-type -> default
-		"my-label",    // label
-		"",            // group -> default
 		"MEDIUM",      // severity
 		"pkg/a.go:9",  // file
 		"leaky",       // problem
@@ -156,81 +278,77 @@ func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 		"correctness", // category
 		"15",          // est
 		"",            // status -> default
-		"",            // source -> default
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
-	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual",
-		Group: "U", Status: "open", Source: "manual", Est: 0}
-	sec, it, err := promptEntry(strings.NewReader(answers), &out, def)
+	def := wizardDefaults{Status: "open"}
+	rec, err := promptEntry(strings.NewReader(answers), &out, def)
 	require.NoError(t, err)
 
-	assert.Equal(t, "2026-07-03", sec.Date)
-	assert.Equal(t, "Sprint", sec.SourceType)
-	assert.Equal(t, "my-label", sec.Label)
-	assert.Equal(t, "MEDIUM", it.Severity)
-	assert.Equal(t, "pkg/a.go:9", it.File)
-	assert.Equal(t, "leaky", it.Problem)
-	assert.Equal(t, 15, it.EstMinutes)
-	assert.Equal(t, "open", it.Status)   // default
-	assert.Equal(t, "manual", it.Source) // default
-	assert.Equal(t, "U", it.Group)       // default
+	assert.Equal(t, "MEDIUM", rec.Severity)
+	assert.Equal(t, "pkg/a.go", rec.File)
+	assert.Equal(t, 9, rec.Line)
+	assert.Equal(t, "leaky", rec.Problem)
+	assert.Equal(t, "close it", rec.Fix)
+	assert.Equal(t, "correctness", rec.Category)
+	assert.Equal(t, 15, rec.EstMinutes)
+	assert.Equal(t, "open", rec.Status, "the wizard returns the raw answer; runDebtAdd normalizes it")
+}
+
+func TestPromptEntry_BlankRequiredFieldRePrompts(t *testing.T) {
+	answers := strings.Join([]string{
+		"",            // severity -> blank, no default: re-prompt
+		"HIGH",        // severity
+		"a.go:1",      // file
+		"p",           // problem
+		"f",           // fix
+		"correctness", // category
+		"5",           // est
+		"open",        // status
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	rec, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{Status: "open"})
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", rec.Severity)
+	assert.Contains(t, out.String(), "is required")
 }
 
 func TestPromptEntry_RequiredFieldMissingAtEOFErrors(t *testing.T) {
-	// Provide date/source-type/label then EOF before severity (required).
-	answers := "\n\nlbl\n\n" // date, source-type, label, group -> then EOF
+	// EOF before severity (required, and with no seeded default to fall back to).
 	var out bytes.Buffer
-	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
-	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	_, err := promptEntry(strings.NewReader(""), &out, wizardDefaults{Status: "open"})
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input ended")
 }
 
-func TestPromptEntry_InvalidDateErrors(t *testing.T) {
+func TestPromptEntry_NonIntegerEstFallsBackWithWarning(t *testing.T) {
 	answers := strings.Join([]string{
-		"07-03-2026", // invalid date
-		"Sprint",
-		"lbl",
-		"",
-		"MEDIUM",
-		"a.go:1",
-		"p",
-		"f",
-		"c",
-		"5",
+		"HIGH", "a.go:1", "p", "f", "c",
+		"soon", // est -> not an integer
 		"open",
-		"manual",
 	}, "\n") + "\n"
+
 	var out bytes.Buffer
-	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
-	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
-	require.Error(t, err)
+	rec, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{Status: "open", Est: 7})
+	require.NoError(t, err)
+	assert.Equal(t, 7, rec.EstMinutes, "a non-integer est falls back to the seeded default")
+	assert.Contains(t, out.String(), "is not an integer")
 }
 
 func TestPromptEntry_InputTooLongErrors(t *testing.T) {
 	answers := strings.Join([]string{
-		"2026-07-03",
-		"Sprint",
-		"lbl",
-		"",
-		"MEDIUM",
-		"a.go:1",
-		"p",
-		"f",
-		"c",
-		"5",
-		"open",
+		"MEDIUM", "a.go:1", "p", "f", "c", "5",
 		strings.Repeat("a", 2*1024*1024), // too-long final answer triggers bufio.ErrTooLong
 	}, "\n") + "\n"
 	var out bytes.Buffer
-	def := wizardDefaults{Date: "2026-07-03", SourceType: "Sprint", Label: "manual", Group: "U", Status: "open", Source: "manual"}
-	_, _, err := promptEntry(strings.NewReader(answers), &out, def)
+	_, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{Status: "open"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "input read error")
 }
 
 func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
-	readme, items := emptyTDRepo(t)
+	dir := emptyDebtStore(t)
 
 	// Force the interactive path without a real TTY.
 	orig := debtStdinIsTTY
@@ -242,10 +360,6 @@ func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
 	// Empty answers for severity/file take the seeded flag values; the user
 	// only types the still-missing fields.
 	answers := strings.Join([]string{
-		"2026-07-03",  // date
-		"Sprint",      // source-type
-		"wizard",      // label
-		"2",           // group
 		"",            // severity -> seeded default from --severity
 		"",            // file -> seeded default from --file
 		"leaky",       // problem
@@ -253,7 +367,6 @@ func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
 		"correctness", // category
 		"5",           // est
 		"open",        // status
-		"manual",      // source
 	}, "\n") + "\n"
 
 	cmd := newDebtCmd()
@@ -261,20 +374,19 @@ func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetIn(strings.NewReader(answers))
-	cmd.SetArgs([]string{"add", "--readme", readme, "--items", items,
-		"--severity", "HIGH", "--file", "pkg/z.go:5"})
+	cmd.SetArgs([]string{"add", "--dir", dir, "--severity", "HIGH", "--file", "pkg/z.go:5"})
 	require.NoError(t, cmd.Execute())
 
-	recs, err := debt.Load(items)
-	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
 	require.Len(t, recs, 1)
-	assert.Equal(t, "HIGH", recs[0].Severity)   // carried from --severity flag
-	assert.Equal(t, "pkg/z.go:5", recs[0].File) // carried from --file flag
-	assert.Equal(t, "leaky", recs[0].Problem)   // typed into the wizard
+	assert.Equal(t, "HIGH", recs[0].Severity) // carried from --severity flag
+	assert.Equal(t, "pkg/z.go", recs[0].File) // carried from --file flag
+	assert.Equal(t, 5, recs[0].Line)          //
+	assert.Equal(t, "leaky", recs[0].Problem) // typed into the wizard
 }
 
 func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {
-	readme, items := emptyTDRepo(t)
+	dir := emptyDebtStore(t)
 
 	// Force the interactive path without a real TTY.
 	orig := debtStdinIsTTY
@@ -282,18 +394,13 @@ func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {
 	t.Cleanup(func() { debtStdinIsTTY = orig })
 
 	answers := strings.Join([]string{
-		"2026-07-03", // date
-		"Sprint",     // source-type
-		"wizard",     // label
-		"2",          // group
-		"LOW",        // severity
-		"z.go:3",     // file
-		"typo",       // problem
-		"fix typo",   // fix
-		"docs",       // category
-		"5",          // est
-		"open",       // status
-		"manual",     // source
+		"LOW",      // severity
+		"z.go:3",   // file
+		"typo",     // problem
+		"fix typo", // fix
+		"docs",     // category
+		"5",        // est
+		"open",     // status
 	}, "\n") + "\n"
 
 	cmd := newDebtCmd()
@@ -301,12 +408,36 @@ func TestDebtAdd_InteractiveEndToEnd(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetIn(strings.NewReader(answers))
-	cmd.SetArgs([]string{"add", "--readme", readme, "--items", items})
+	cmd.SetArgs([]string{"add", "--dir", dir})
 	require.NoError(t, cmd.Execute())
 
-	recs, err := debt.Load(items)
-	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "LOW", recs[0].Severity)
-	assert.Equal(t, "z.go:3", recs[0].File)
+	assert.Equal(t, "z.go", recs[0].File)
+	assert.Equal(t, 3, recs[0].Line)
+	assert.Equal(t, localdebt.OriginManual, recs[0].Origin)
+}
+
+// An invalid severity typed into the wizard is caught by the same validation the
+// flag path uses — the wizard is not a validation bypass.
+func TestDebtAdd_InteractiveInvalidSeverityIsUsageError(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	answers := strings.Join([]string{"URGENT", "z.go:3", "p", "f", "docs", "5", "open"}, "\n") + "\n"
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(answers))
+	cmd.SetArgs([]string{"add", "--dir", dir})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Empty(t, readDebtStore(t, dir))
 }
