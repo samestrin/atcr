@@ -912,13 +912,19 @@ func TestFoldRecords_DivergentTerminalsPreferWontfixEitherOrder(t *testing.T) {
 	}
 }
 
-// Compaction consumes FoldRecords, so a regressed id must compact to its
-// re-opened record and a wontfix id to its suppressing record.
-func TestCompact_KeepsTheReopenedRecordForARegressedID(t *testing.T) {
+// Compaction must fold a regressed id to its re-opened record WITHOUT destroying
+// the superseded resolution: that record holds the ResolvedAt and the human-typed
+// --reason justification, which exist nowhere else. Retention is bounded at two
+// records per id, and the fold over what survives still yields the same effective
+// record every reader saw before compaction.
+func TestCompact_RegressedIDKeepsItsResolutionTrail(t *testing.T) {
 	dir := t.TempDir()
+	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")
+	resolved.ResolvedAt = "2026-07-02T00:00:00Z"
+	resolved.Justification = "closed after the retry cap landed"
 	regressed := []Record{
 		foldRec("a", "2026-07-01T00:00:00Z", ""),
-		foldRec("a", "2026-07-02T00:00:00Z", "resolved"),
+		resolved,
 		foldRec("a", "2026-07-03T00:00:00Z", ""),
 	}
 	dismissed := []Record{
@@ -930,17 +936,105 @@ func TestCompact_KeepsTheReopenedRecordForARegressedID(t *testing.T) {
 		require.NoError(t, Append(dir, r))
 	}
 
+	res, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, 6, res.RecordsBefore)
+	assert.Equal(t, 3, res.RecordsAfter, "the regressed id keeps 2 records, the dismissed id 1")
+
+	after, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, after, 3)
+
+	// The resolution trail survived, justification and all.
+	var trail *Record
+	for i := range after {
+		if after[i].ID == "a" && after[i].Status == "resolved" {
+			trail = &after[i]
+		}
+	}
+	require.NotNil(t, trail, "the superseded resolution must not be destroyed")
+	assert.Equal(t, "closed after the retry cap landed", trail.Justification)
+	assert.Equal(t, "2026-07-02T00:00:00Z", trail.ResolvedAt)
+
+	// Readers still see exactly what they saw before compaction.
+	byID := map[string]Record{}
+	for _, r := range FoldRecords(after) {
+		byID[r.ID] = r
+	}
+	require.Len(t, byID, 2)
+	assert.Equal(t, "", byID["a"].Status, "the regressed id is still effectively open")
+	assert.Equal(t, "2026-07-03T00:00:00Z", byID["a"].Timestamp)
+	assert.Equal(t, "wontfix", byID["b"].Status, "the dismissed id compacts to its suppressing record")
+}
+
+// Compaction is idempotent under the retention rule: a second pass over an
+// already-compacted store drops nothing further.
+func TestCompact_RetentionIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		foldRec("a", "2026-07-02T00:00:00Z", "resolved"),
+		foldRec("a", "2026-07-03T00:00:00Z", ""),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	first, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Equal(t, 2, first.RecordsAfter)
+
+	second, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, second.RecordsBefore)
+	assert.Equal(t, 2, second.RecordsAfter)
+	assert.Equal(t, 0, second.Dropped, "a second pass has nothing left to drop")
+}
+
+// A still-open id with no terminal record keeps exactly one record: retention
+// adds a second record only where a resolution trail actually exists.
+func TestCompact_OpenOnlyIDKeepsOneRecord(t *testing.T) {
+	dir := t.TempDir()
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		foldRec("a", "2026-07-02T00:00:00Z", ""),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	res, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.RecordsAfter)
+	assert.Equal(t, 1, res.Dropped)
+}
+
+// A later `deferred` must not displace an earlier `resolved` as the retained
+// trail: only the resolution can carry a human-typed --reason.
+func TestCompact_RetainsTheHighestRankedTerminal(t *testing.T) {
+	dir := t.TempDir()
+	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")
+	resolved.Justification = "why it was closed"
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		resolved,
+		foldRec("a", "2026-07-03T00:00:00Z", "deferred"),
+		foldRec("a", "2026-07-04T00:00:00Z", ""),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
 	_, err := Compact(dir, ReadOpts{})
 	require.NoError(t, err)
 
 	after, err := ReadAll(dir, ReadOpts{})
 	require.NoError(t, err)
-	byID := map[string]Record{}
-	for _, r := range after {
-		byID[r.ID] = r
+	require.Len(t, after, 2)
+	var trail *Record
+	for i := range after {
+		if IsClosedStatus(after[i].Status) {
+			trail = &after[i]
+		}
 	}
-	require.Len(t, after, 2, "one live record per id survives compaction")
-	assert.Equal(t, "", byID["a"].Status, "the regressed id compacts to its re-opened record")
-	assert.Equal(t, "2026-07-03T00:00:00Z", byID["a"].Timestamp)
-	assert.Equal(t, "wontfix", byID["b"].Status, "the dismissed id compacts to its suppressing record")
+	require.NotNil(t, trail)
+	assert.Equal(t, "resolved", trail.Status, "rank outranks recency when choosing the retained trail")
+	assert.Equal(t, "why it was closed", trail.Justification)
 }

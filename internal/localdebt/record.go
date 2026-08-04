@@ -131,12 +131,12 @@ type Record struct {
 	// absent from uncompacted records; readers treat an absent/zero value as one
 	// occurrence ("not yet aggregated").
 	//
-	// Hard prerequisite for T5: the count is unreachable under today's write path.
-	// persistLocalDebt seeds a dedup set from a full-store read and skips any id
-	// already present (cli/reconcile.go), so a re-detected finding is never
-	// appended and a fold group can never hold more than one review-origin record
-	// per id. T3 must relax that write-time dedup before T5 has anything to
-	// aggregate.
+	// The T5 prerequisite is satisfied: persistLocalDebt's dedup seed used to cover
+	// every id in the store, so a re-detected finding was never appended and a fold
+	// group could never hold more than one review-origin record per id. T3 narrowed
+	// the seed to suppressing-or-open ids, so a resolved/deferred id that is
+	// detected again now appends a fresh occurrence and multi-record fold groups
+	// exist — which is what makes a regression count meaningful to aggregate.
 	Occurrences int `json:"occurrences,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this
@@ -148,11 +148,12 @@ type Record struct {
 	//
 	// Invariant, shared with Timestamp: UTC-normalized RFC3339
 	// (time.Time.UTC().Format(time.RFC3339)). Both are compared LEXICOGRAPHICALLY,
-	// not parsed — FoldRecords already does r.Timestamp >= best.Timestamp, and T5's
-	// min() across a fold group will do the same. An offset-bearing value breaks
-	// that ordering: "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet
-	// sorts after "2026-01-01T00:00:00Z". Every producer normalizes today; a writer
-	// that does not is a silent ordering bug, so normalize at the write site.
+	// not parsed — FoldRecords selects the effective record by comparing Timestamp
+	// strings directly (store.go, latestRecord), and T5's min() across a fold group
+	// will do the same. An offset-bearing value breaks that ordering:
+	// "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet sorts after
+	// "2026-01-01T00:00:00Z". Every producer normalizes today; a writer that does
+	// not is a silent ordering bug, so normalize at the write site.
 	FirstSeen string `json:"first_seen,omitempty"`
 
 	Justification string        `json:"justification,omitempty"`

@@ -409,24 +409,92 @@ func FoldRecords(recs []Record) []Record {
 			}
 		}
 		if len(suppressing) > 0 {
-			folded = append(folded, bestByRankThenRecency(suppressing))
+			folded = append(folded, latestRecord(suppressing))
 			continue
 		}
 
 		// Rule 2: recency across open and non-suppressing-terminal records alike,
 		// so a re-detection newer than a resolution re-opens the id.
 		if len(group) > 0 {
-			folded = append(folded, bestByRankThenRecency(group))
+			folded = append(folded, latestRecord(group))
 		}
 	}
 	return folded
 }
 
-// bestByRankThenRecency picks the effective record from a non-empty fold group:
-// latest timestamp wins; an equal timestamp is broken by ClosedStatusRank so a
-// terminal record outranks an open one (rank 0), and a full tie by append order
-// (>= keeps the last).
-func bestByRankThenRecency(group []Record) Record {
+// retainForCompaction is what compaction folds to: the effective record for each
+// id, PLUS that id's highest-ranked terminal record whenever the effective record
+// is open.
+//
+// The second half exists because resolution became re-openable. Before that a
+// terminal record always won its fold group, so compaction could keep the fold
+// alone and lose nothing. Now a regressed id folds to the newer OPEN record, and
+// keeping only that would permanently delete the superseded resolution — along
+// with its ResolvedAt and, decisively, the Justification holding the human-typed
+// `--resolve --reason` text, which exists nowhere else in the tree. Compaction is
+// meant to bound growth by dropping SUPERSEDED occurrences, not to erase the
+// record that a human once closed this finding and why.
+//
+// Retention is bounded at two records per id, so growth stays O(live findings):
+// the effective record, and at most one terminal record. It is also fold-stable
+// and idempotent — FoldRecords over {open(t3), resolved(t2)} still selects
+// open(t3), so every reader sees exactly what it saw before compaction, and a
+// second Compact retains the same pair.
+//
+// A suppressing (wontfix) id never reaches the second half: rule 1 makes the
+// wontfix record itself the effective one, so its justification is retained by
+// the first half.
+func retainForCompaction(recs []Record) []Record {
+	byID := map[string][]Record{}
+	for _, r := range recs {
+		byID[r.ID] = append(byID[r.ID], r)
+	}
+
+	effective := FoldRecords(recs)
+	out := make([]Record, 0, len(effective))
+	for _, eff := range effective {
+		out = append(out, eff)
+		if IsClosedStatus(eff.Status) {
+			continue // the effective record IS the resolution; nothing to preserve
+		}
+		var terminals []Record
+		for _, r := range byID[eff.ID] {
+			if IsClosedStatus(r.Status) {
+				terminals = append(terminals, r)
+			}
+		}
+		if len(terminals) > 0 {
+			out = append(out, highestRankedTerminal(terminals))
+		}
+	}
+	return out
+}
+
+// highestRankedTerminal picks which terminal record to retain for an id whose
+// effective record is open: rank first, recency only as a tiebreak — the inverse
+// of latestRecord's ordering, and deliberately so. The point of retention is the
+// resolution trail, and a `resolved` record can carry a human-typed --reason
+// while a `deferred` one cannot (nothing writes a justification with it), so a
+// later deferral must not displace an earlier resolution and its rationale.
+func highestRankedTerminal(terminals []Record) Record {
+	best := terminals[0]
+	for _, r := range terminals[1:] {
+		switch {
+		case ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status):
+			best = r
+		case ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status) && r.Timestamp >= best.Timestamp:
+			best = r
+		}
+	}
+	return best
+}
+
+// latestRecord picks the effective record from a non-empty fold group: the latest
+// timestamp wins; an equal timestamp is broken by ClosedStatusRank so a terminal
+// record outranks an open one (rank 0), and a full tie by append order (the last
+// wins). Recency first, rank only as a tiebreak — the inverse of
+// highestRankedTerminal.
+func latestRecord(group []Record) Record {
 	best := group[0]
 	for _, r := range group[1:] {
 		switch {
@@ -533,7 +601,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			return nil // otherwise result stays zero: StoreFound false (no-op)
 		}
 
-		folded := FoldRecords(recs)
+		folded := retainForCompaction(recs)
 		result = CompactResult{
 			StoreFound:    true,
 			RecordsBefore: len(recs),

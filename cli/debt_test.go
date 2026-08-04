@@ -370,3 +370,56 @@ func TestTruncate_GuardNonPositiveN(t *testing.T) {
 	assert.Equal(t, "", truncate("abc", 0), "n==0 must not panic")
 	assert.Equal(t, "", truncate("abc", -1), "negative n must not panic")
 }
+
+// --- Plan 35.13 T3 ripple: list and dashboard share the fold ----------------
+
+// list and dashboard are the third consumer of FoldRecords, so the resolution
+// lifetimes reach them too: a regressed id renders as open, not resolved, and the
+// dashboard counts it in the live backlog.
+func TestDebtList_RegressedIDRendersAsOpenNotResolved(t *testing.T) {
+	base := debtSampleRecords()[0]
+	resolved := base
+	resolved.Timestamp = "2026-07-02T09:00:00Z"
+	resolved.Status = "resolved"
+	resolved.ResolvedAt = resolved.Timestamp
+	regressed := base
+	regressed.Timestamp = "2026-07-03T09:00:00Z"
+	dir := writeLocalDebt(t, base, resolved, regressed)
+
+	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
+	require.NoError(t, err)
+	assert.Contains(t, open, base.ID, "the regressed id is open again")
+
+	closed, err := runDebt(t, "list", "--dir", dir, "--status", "resolved")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(closed), "no matching",
+		"the superseded resolution is no longer the effective record")
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, dash, "**Total:** 1")
+	assert.Contains(t, dash, "**Open:** 1")
+	assert.Contains(t, dash, "**Resolved:** 0")
+}
+
+// A wontfix id is the exception at every consumer: it stays dismissed in the
+// table and in the dashboard's counts no matter how often it is re-detected.
+func TestDebtList_WontfixIDStaysDismissedAfterRedetection(t *testing.T) {
+	base := debtSampleRecords()[0]
+	dismissed := base
+	dismissed.Timestamp = "2026-07-02T09:00:00Z"
+	dismissed.Status = "wontfix"
+	dismissed.Justification = "accepted pattern"
+	regressed := base
+	regressed.Timestamp = "2026-07-03T09:00:00Z"
+	dir := writeLocalDebt(t, base, dismissed, regressed)
+
+	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(open), "no matching")
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, dash, "**Wontfix:** 1")
+	assert.Contains(t, dash, "**Open:** 0")
+}

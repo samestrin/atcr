@@ -46,6 +46,13 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 // selectOpenDebt, Compact, and AggregateQualitySignal share. Without the fold a
 // re-raised finding would render once per append.
 //
+// Sharing that rule means sharing its lifetimes: only `wontfix` survives a
+// re-detection. An id that was resolved or deferred and has since been detected
+// again folds to the newer open record, so it renders here as open (and counts as
+// open in the dashboard) rather than staying in the terminal bucket. That is the
+// point — a re-detection at the same file, line, and problem text is a
+// regression, because the line number is part of the finding id.
+//
 // A missing store is not an error: localdebt.ReadAll reports the "no backlog
 // yet" state as an empty result, which renders as the empty-result message.
 func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {

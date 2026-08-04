@@ -273,20 +273,38 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// to close a regressed id a second time — permanently, since a resolution
 	// record for it always exists — so a finding that came back could never be
 	// closed again.
-	var alreadyClosed bool
-	var closedStatus string
+	// FoldRecords emits exactly one record per id, so this both decides the guard
+	// and supplies the record to copy. Divergent terminal records can coexist for
+	// one id (the no-lock TD-004 window below); the fold already resolves them by
+	// precedence rather than shard read order, so the reported status is
+	// deterministic — wontfix outranks resolved/deferred.
+	var effective *localdebt.Record
 	for _, f := range localdebt.FoldRecords(recs) {
-		if f.ID == id && isClosedStatus(f.Status) {
-			alreadyClosed = true
-			// Divergent terminal records can coexist for one id (the no-lock TD-004
-			// window below); FoldRecords already resolves them by precedence rather
-			// than shard read order, so the reported status is deterministic —
-			// wontfix outranks resolved/deferred.
-			closedStatus = higherClosedStatus(closedStatus, f.Status)
+		if f.ID == id {
+			r := f
+			effective = &r
+			break
 		}
 	}
+	var alreadyClosed bool
+	var closedStatus string
+	if effective != nil && isClosedStatus(effective.Status) {
+		alreadyClosed = true
+		closedStatus = effective.Status
+	}
 
+	// The resolution copies the EFFECTIVE record — the same one `--list` rendered
+	// and the user acted on — not the first open record in read order. After a
+	// regression those differ: StampID excludes severity so a re-settled severity
+	// keeps the id, and copying the original would stamp the resolution with the
+	// superseded severity, fix, estimate and evidence. Compaction then makes that
+	// stale record the id's live one.
 	var orig *localdebt.Record
+	if effective != nil && !isClosedStatus(effective.Status) && effective.File != "" {
+		r := *effective
+		orig = &r
+	}
+
 	var reviewers []string
 	seenReviewer := make(map[string]bool)
 	var model string
@@ -296,10 +314,6 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		}
 		if isClosedStatus(recs[i].Status) {
 			continue
-		}
-		if orig == nil && recs[i].File != "" {
-			r := recs[i]
-			orig = &r
 		}
 		// Union attribution across every open record for the id: the same finding can
 		// be re-raised by later reconcile runs as distinct open records under one

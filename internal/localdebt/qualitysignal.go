@@ -12,14 +12,20 @@ import (
 // incapable of carrying finding content.
 
 // foldTerminalByID folds the append-only record stream by ID down to at most one
-// TERMINAL record per id, discarding ids that never reached a terminal
-// (resolved/wontfix/deferred) status. It reuses FoldRecords for the precedence
-// logic — terminal wins over open, higher-precedence terminal wins over lower
-// (wontfix > resolved > deferred), later timestamp breaks a same-rank tie — and
-// then keeps only the ids whose effective record is terminal, because an
-// unresolved (still-open) finding is not yet a quality signal. The fold is O(n):
-// FoldRecords does a single keyed pass and this adds one linear filter, with no
-// per-id rescan of the whole stream.
+// TERMINAL record per id, discarding ids whose effective record is not terminal.
+// It reuses FoldRecords for the precedence logic — a suppressing (wontfix) record
+// wins unconditionally, otherwise the latest timestamp wins with rank breaking a
+// tie (see FoldRecords) — and then keeps only the ids whose effective record is
+// terminal, because an unsettled finding is not yet a quality signal.
+//
+// Since resolution became re-openable, "not terminal" covers two cases, and both
+// are correctly excluded: an id that never closed, and an id that closed and then
+// REGRESSED. A regressed id folds to its newer open record, so it contributes
+// neither a confirmation nor a dismissal until it is settled again. Only a
+// wontfix id is immune, because only wontfix survives re-detection.
+//
+// The fold is O(n): FoldRecords does a single keyed pass and this adds one linear
+// filter, with no per-id rescan of the whole stream.
 func foldTerminalByID(records []Record) []Record {
 	effective := FoldRecords(records)
 	terminal := make([]Record, 0, len(effective))
@@ -27,12 +33,14 @@ func foldTerminalByID(records []Record) []Record {
 		if !IsClosedStatus(r.Status) {
 			continue
 		}
-		// FoldRecords keeps the highest-precedence terminal (wontfix > resolved >
-		// deferred), which can be a later attribution-less record even when an earlier
-		// same-id terminal carried a real Model. AggregateQualitySignal excludes empty
-		// Model, so without this the whole finding — a genuine outcome that DID have
-		// model attribution — would be silently dropped. Recover the model from the
-		// most recent same-id terminal that carries one before excluding.
+		// The effective terminal record can be an attribution-less one even when an
+		// earlier same-id terminal carried a real Model — a wontfix that outranks an
+		// earlier resolved, or simply a later resolution. AggregateQualitySignal
+		// excludes an empty Model, so without this the whole finding — a genuine
+		// outcome that DID have model attribution — would be silently dropped.
+		// Recover the model from the most recent same-id terminal that carries one
+		// before excluding. (Unreachable for a regressed id: that folds to an open
+		// record and is filtered out above.)
 		if strings.TrimSpace(r.Model) == "" {
 			r.Model = latestTerminalModel(records, r.ID)
 		}
