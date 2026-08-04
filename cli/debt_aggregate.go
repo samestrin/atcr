@@ -169,16 +169,13 @@ func debtStatusBucket(status string) string {
 	}
 }
 
-// debtIsLive reports whether an item is still work to do. resolved and wontfix
-// are both terminal-and-done; deferred is "not now", which is still live debt
-// (and, after the resolution-semantics split, re-surfaces on re-detection).
+// debtIsLive reports whether an item is still work to do. It delegates to
+// localdebt.IsSettledStatus so the aggregation, the rendered views, and
+// markDebtResolved's closability guard all answer this question the same way — a
+// disagreement here is what would let the dashboard rank an item as top-priority
+// work that `debt resolve` refuses to touch.
 func debtIsLive(r localdebt.Record) bool {
-	switch debtStatusBucket(r.Status) {
-	case "resolved", "wontfix":
-		return false
-	default:
-		return true
-	}
+	return !localdebt.IsSettledStatus(r.Status)
 }
 
 // debtAgeDays returns the item's age in whole days relative to now, and whether

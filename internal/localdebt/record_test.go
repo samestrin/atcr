@@ -292,3 +292,20 @@ func TestClosedStatusRank_UnchangedByTheSuppressionSplit(t *testing.T) {
 	assert.Equal(t, "wontfix", HigherClosedStatus("resolved", "wontfix"))
 	assert.Equal(t, "wontfix", HigherClosedStatus("wontfix", "resolved"))
 }
+
+// IsSettledStatus is the third predicate: it answers "is this item DONE?", which
+// `deferred` is not. Gating closability on IsClosedStatus instead would leave a
+// deferred item permanently unactionable — refused as already closed while every
+// other view still showed it as outstanding work.
+func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
+	for _, s := range []string{"resolved", "wontfix", "RESOLVED", " wontfix "} {
+		assert.True(t, IsSettledStatus(s), "%q is settled", s)
+	}
+	for _, s := range []string{"deferred", "DEFERRED", "open", "", "bogus"} {
+		assert.False(t, IsSettledStatus(s), "%q is not settled", s)
+	}
+	// The three predicates differ on exactly one status, and that is the point.
+	assert.True(t, IsClosedStatus("deferred"), "deferred carries a terminal marker")
+	assert.False(t, IsSettledStatus("deferred"), "...but it is not done")
+	assert.False(t, IsSuppressingStatus("deferred"), "...and it does not survive re-detection")
+}

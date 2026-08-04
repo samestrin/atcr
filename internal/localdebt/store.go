@@ -464,7 +464,16 @@ func retainForCompaction(recs []Record) []Record {
 			}
 		}
 		if len(terminals) > 0 {
-			out = append(out, highestRankedTerminal(terminals))
+			trail := highestRankedTerminal(terminals)
+			// The retained record is a TRAIL entry, not an occurrence: the id's
+			// aggregate counters live solely on the effective record. Zeroing them
+			// here keeps compaction idempotent once T5 carries Occurrences/FirstSeen
+			// through the fold — otherwise the next Compact would re-fold a 2-record
+			// group and either inflate the count (summing the pair) or decay it
+			// (recomputing from group length).
+			trail.Occurrences = 0
+			trail.FirstSeen = ""
+			out = append(out, trail)
 		}
 	}
 	return out

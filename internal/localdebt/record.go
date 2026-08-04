@@ -74,11 +74,10 @@ const (
 
 // Record is one persisted technical-debt finding occurrence. This struct and the
 // SchemaVersion doc block above are the authoritative specification of the JSONL
-// record until T7 writes a schema section into docs/technical-debt.md — that file
-// currently documents the .planning/-scoped store this plan replaces and says
-// nothing about schema_version, so it is deliberately not cited here. The schema is
-// v3 as of Plan 35.13, which added the optional Origin, Occurrences and FirstSeen
-// fields on top of v2's Model. The
+// record. docs/technical-debt.md documents the .atcr/debt/ store's command surface
+// as of T2 but not yet its wire schema; T7 adds that section, at which point the
+// two must be kept in step. The schema is v3 as of Plan 35.13, which added the
+// optional Origin, Occurrences and FirstSeen fields on top of v2's Model. The
 // required block is always present; the optional block
 // (omitempty) is present only when the reconciled finding carried the
 // corresponding enrichment (Epic 18.3 justification/source_report), a resolved
@@ -116,9 +115,10 @@ type Record struct {
 	// every debt subcommand and a manual entry stopped being distinguishable from a
 	// review finding. omitempty keeps it absent whenever no origin was recorded —
 	// on every v1/v2 record, and on any v3 record whose writer left it unset — and
-	// an absent origin means OriginReview on ANY schema version, because reconcile
-	// was the only writer before v3 and remains the only one until T2 rewires
-	// `atcr debt add`. Read it through EffectiveOrigin rather than defaulting at
+	// an absent origin means OriginReview on ANY schema version. Reconcile was the
+	// only writer before v3; since T2, `atcr debt add` stamps OriginManual
+	// explicitly, while the reconcile hook still leaves the field unset and relies
+	// on this default. Read it through EffectiveOrigin rather than defaulting at
 	// each call site.
 	Origin string `json:"origin,omitempty"`
 
@@ -236,6 +236,30 @@ func IsClosedStatus(status string) bool {
 // not "never".
 func IsSuppressingStatus(status string) bool {
 	return strings.ToLower(strings.TrimSpace(status)) == "wontfix"
+}
+
+// IsSettledStatus reports whether an item needs no further action: it was fixed
+// (resolved) or dismissed (wontfix). It is the third of the three status
+// predicates, and the distinction from IsClosedStatus is `deferred`.
+//
+// `deferred` carries a terminal status marker, so IsClosedStatus is true for it —
+// but "not now" is not "done". A deferred item is still live debt: it counts in
+// the backlog, it appears in the rendered views, and crucially it must remain
+// CLOSEABLE, because deciding to fix or dismiss it later is the whole point of
+// deferring. Gating closability on IsClosedStatus instead would make a deferred
+// item permanently unactionable — refused by `debt resolve` as already closed,
+// while every other view still showed it as outstanding work.
+//
+// Use IsSettledStatus for "is this item done?", IsClosedStatus for "does this
+// record carry a terminal marker?", and IsSuppressingStatus for "does this
+// terminal state survive re-detection?".
+func IsSettledStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "resolved", "wontfix":
+		return true
+	default:
+		return false
+	}
 }
 
 // ClosedStatusRank orders terminal statuses so a deterministic effective status can

@@ -137,14 +137,6 @@ func isClosedStatus(status string) bool {
 	return localdebt.IsClosedStatus(status)
 }
 
-func closedStatusRank(status string) int {
-	return localdebt.ClosedStatusRank(status)
-}
-
-func higherClosedStatus(current, candidate string) string {
-	return localdebt.HigherClosedStatus(current, candidate)
-}
-
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
 // An id is open unless its effective record carries a terminal status; the displayed
 // record is the effective occurrence FoldRecords keeps. It reuses
@@ -286,9 +278,15 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 			break
 		}
 	}
+	// Refusal is gated on SETTLED, not merely closed. `deferred` carries a terminal
+	// marker but means "not now", and every other view treats it as live debt — so
+	// gating on isClosedStatus would leave a deferred item permanently unactionable:
+	// refused here as already closed, while `debt list` and the dashboard kept
+	// showing it as outstanding work. Deciding to fix or dismiss a deferred item
+	// later is exactly what deferring is for.
 	var alreadyClosed bool
 	var closedStatus string
-	if effective != nil && isClosedStatus(effective.Status) {
+	if effective != nil && localdebt.IsSettledStatus(effective.Status) {
 		alreadyClosed = true
 		closedStatus = effective.Status
 	}
@@ -300,7 +298,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// superseded severity, fix, estimate and evidence. Compaction then makes that
 	// stale record the id's live one.
 	var orig *localdebt.Record
-	if effective != nil && !isClosedStatus(effective.Status) && effective.File != "" {
+	if effective != nil && !localdebt.IsSettledStatus(effective.Status) && effective.File != "" {
 		r := *effective
 		orig = &r
 	}
@@ -337,16 +335,15 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 			model = recs[i].Model
 		}
 	}
-	// Concurrency-tolerant, not lock-protected: a terminal record for this id already
-	// exists, so this invocation reports and no-ops instead of appending another
-	// terminal record. Two concurrent invocations can each pass this check before
-	// either appends (the accepted TD-004 no-lock stance). Since epic 24.0 those two
-	// records need not be identical duplicates: one may be --status resolved and the
-	// other --status wontfix, so the durable trail can carry divergent terminal claims
-	// for one id. selectOpenDebt folds the item out either way (any terminal status
-	// closes it), and closedStatus above is chosen deterministically by precedence
-	// (higherClosedStatus: wontfix outranks resolved) rather than by shard read order —
-	// so the effective terminal status is well-defined, not order-dependent.
+	// Concurrency-tolerant, not lock-protected: the item is already settled, so this
+	// invocation reports and no-ops instead of appending another terminal record.
+	// Two concurrent invocations can each pass this check before either appends (the
+	// accepted TD-004 no-lock stance). Since epic 24.0 those two records need not be
+	// identical duplicates: one may be --status resolved and the other --status
+	// wontfix, so the durable trail can carry divergent terminal claims for one id.
+	// The reported status comes from localdebt.FoldRecords, which resolves divergent
+	// terminals by precedence (wontfix outranks resolved) rather than by shard read
+	// order — so it is well-defined, not order-dependent.
 	if alreadyClosed {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
 		return nil

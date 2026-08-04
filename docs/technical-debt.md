@@ -87,6 +87,50 @@ atcr debt dashboard --output DASHBOARD.md --check   # exit non-zero if that file
 `--check` compares against the file named by `--output`, so the two are used
 together; `--check` without `--output` is a usage error.
 
+### `atcr debt resolve`
+
+Lists the open backlog for a fix cycle and records resolutions as append-only
+status records.
+
+```bash
+atcr debt resolve --list                       # open items, most severe first
+atcr debt resolve --json --max 5               # the same, as JSON, capped
+atcr debt resolve --resolve <id>               # mark it fixed
+atcr debt resolve --resolve <id> --status wontfix --reason "accepted pattern"
+```
+
+Flags: `--dir`, `--list`, `--json`, `--severity`, `--max`, `--resolve <id>`,
+`--status` (`resolved|wontfix`), `--reason`. `--status wontfix` requires a
+`--reason` — it is a permanent dismissal, so the rationale is recorded with it.
+
+### `atcr debt compact`
+
+Folds the append-only store to its live records, dropping superseded
+occurrences. The resolution trail is kept: when an item was closed and has since
+regressed, compaction retains both the current record and the resolution that
+closed it, so the `--reason` text is never destroyed.
+
+```bash
+atcr debt compact          # reports records before/after and how many were dropped
+```
+
+## Status lifetimes
+
+A finding's id is a hash of its **file, line, and problem text**. A genuine fix
+shifts surrounding lines, so the id changes and the finding returns as a fresh
+item regardless. The only thing a terminal record can suppress is a re-detection
+at the *same* file, line, and text — which after a real fix means a regression.
+Resolution lifetime follows from that:
+
+| Status | Lifetime | Why |
+|--------|----------|-----|
+| `wontfix` | Permanent | Suppression is the point. A false positive is stable at a stable location, so its id is stable. Requires a `--reason`. |
+| `resolved` | Re-opens on re-detection | The same id after a fix means the fix regressed or never landed — the thing most worth surfacing. |
+| `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item stays in the backlog and stays closeable. |
+
+So `atcr debt list` can show an item as `resolved` today and as open again after
+a later `atcr reconcile` re-detects it. Only `wontfix` is final.
+
 The render is **deterministic** — no generation timestamp, age grouped by
 calendar month — so `--check` flags real content drift, not clock movement.
 Secret-shaped tokens (bearer / `sk-` API keys) accidentally pasted into finding

@@ -518,3 +518,55 @@ func TestDebtAdd_InteractiveInvalidSeverityIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 	assert.Empty(t, readDebtStore(t, dir))
 }
+
+// wontfix is the one permanently-suppressing status, and `debt resolve` requires
+// a --reason for it. `debt add` has no --reason, so admitting wontfix here would
+// allow a permanent suppression with no recorded rationale — and, since resolve
+// then treats the id as settled, no way to attach one afterwards.
+func TestDebtAdd_WontfixIsNotAnAddStatus(t *testing.T) {
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir, "--status", "wontfix",
+		"--severity", "HIGH", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Empty(t, readDebtStore(t, dir))
+	assert.Contains(t, out+err.Error(), "debt resolve", "the error points at the command that can dismiss a finding")
+}
+
+// A deferred item is live debt, so every surface must agree it is actionable:
+// list and the dashboard show it, and `debt resolve` can close it. Before this
+// was unified on IsSettledStatus, the dashboard ranked it top-priority while
+// resolve refused it as "already closed" — and because a manual item is never
+// re-detected by reconcile, nothing could ever un-stick it.
+func TestDebtNamespace_DeferredItemIsStillCloseable(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "deferred",
+		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "correctness")
+	require.NoError(t, err)
+
+	filed := readDebtStore(t, dir)
+	require.Len(t, filed, 1)
+	id := filed[0].ID
+
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	require.Contains(t, listed, id, "a deferred item is visible")
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	require.Contains(t, dash, "**Deferred:** 1", "the dashboard counts it as live debt")
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	require.NoError(t, err)
+	assert.NotContains(t, strings.ToLower(out), "already closed",
+		"deferred means not now, not done — it must stay closeable")
+	assert.Contains(t, strings.ToLower(out), "marked")
+
+	after := readDebtStore(t, dir)
+	require.Len(t, after, 2, "the resolution is appended")
+
+	// And now it IS settled, so a second attempt no-ops.
+	out, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
+}

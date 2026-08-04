@@ -28,12 +28,21 @@ var debtStdinIsTTY = func(in io.Reader) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// debtAddStatuses is the accepted --status enum. It is validated here because
-// localdebt.Append performs no schema validation: the deleted .planning/-scoped
-// store enforced the enum inside tdmigrate.Item.Validate on the way in, and
-// dropping the check during the port would let `debt add --status typo` write an
-// unfilterable record.
-var debtAddStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true, "wontfix": true}
+// debtAddStatuses is the accepted --status enum, matching the three values the
+// deleted .planning/-scoped store accepted. It is validated here because
+// localdebt.Append performs no schema validation: that store enforced the enum
+// inside tdmigrate.Item.Validate on the way in, and dropping the check during the
+// port would let `debt add --status typo` write an unfilterable record.
+//
+// `wontfix` is deliberately NOT admitted, even though the store carries it.
+// Dismissing a false positive is `atcr debt resolve --status wontfix --reason
+// <why>`, which requires a justification precisely because wontfix is the one
+// permanently-suppressing status: it silences every future re-detection of the
+// same file/line/problem. Admitting it here would allow a permanent suppression
+// with no recorded rationale, and — since resolve then treats the id as settled —
+// no way to attach one afterwards. Filing a finding and dismissing it are also
+// not the same act.
+var debtAddStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true}
 
 // wizardDefaults seeds the interactive prompts with values already supplied as
 // flags, so partial flag input carries into the wizard instead of being
@@ -58,7 +67,7 @@ func newDebtAddCmd() *cobra.Command {
 		RunE: runDebtAdd,
 	}
 	addDebtStoreFlag(cmd)
-	cmd.Flags().String("status", "open", "status: open|deferred|resolved|wontfix")
+	cmd.Flags().String("status", "open", "status: open|deferred|resolved (dismiss a false positive with `debt resolve --status wontfix --reason`)")
 	cmd.Flags().String("severity", "", "severity: CRITICAL|HIGH|MEDIUM|LOW (required in flag mode)")
 	cmd.Flags().String("file", "", "file:line location (required in flag mode)")
 	cmd.Flags().String("problem", "", "problem description (required in flag mode)")
@@ -207,7 +216,7 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 		status = "open"
 	}
 	if !debtAddStatuses[status] {
-		return usageError(fmt.Errorf("invalid status %q: expected open|deferred|resolved|wontfix", rec.Status))
+		return usageError(fmt.Errorf("invalid status %q: expected open|deferred|resolved (use `debt resolve --status wontfix --reason <why>` to dismiss a finding)", rec.Status))
 	}
 	// "open" is spelled as the EMPTY status on disk — the same value the
 	// reconcile hook writes — so one finding never folds against two spellings of
@@ -281,7 +290,7 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 	fix := ask("Fix", def.Fix, true)
 	category := ask("Category", def.Category, true)
 	estStr := ask("Est minutes", strconv.Itoa(def.Est), false)
-	status := ask("Status (open|deferred|resolved|wontfix)", def.Status, false)
+	status := ask("Status (open|deferred|resolved)", def.Status, false)
 
 	if perr != nil {
 		return localdebt.Record{}, perr

@@ -1038,3 +1038,33 @@ func TestCompact_RetainsTheHighestRankedTerminal(t *testing.T) {
 	assert.Equal(t, "resolved", trail.Status, "rank outranks recency when choosing the retained trail")
 	assert.Equal(t, "why it was closed", trail.Justification)
 }
+
+// The retained trail record must not carry the id's aggregate counters: those
+// live on the effective record only, so a second compaction cannot double-count
+// them once T5 carries Occurrences/FirstSeen through the fold.
+func TestCompact_RetainedTrailCarriesNoAggregateCounters(t *testing.T) {
+	dir := t.TempDir()
+	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")
+	resolved.Occurrences = 5
+	resolved.FirstSeen = "2026-07-01T00:00:00Z"
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		resolved,
+		foldRec("a", "2026-07-03T00:00:00Z", ""),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	_, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+
+	after, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, after, 2)
+	for _, r := range after {
+		if IsClosedStatus(r.Status) {
+			assert.Zero(t, r.Occurrences, "the trail entry carries no occurrence count")
+			assert.Empty(t, r.FirstSeen, "the trail entry carries no first-seen stamp")
+		}
+	}
+}
