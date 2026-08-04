@@ -776,10 +776,37 @@ func TestRunReview_AllAgentsFailedAppendsNoAudit(t *testing.T) {
 // TestReviewCmd_SyncCloud_MissingKey_FailFast covers AC 04-03: `review
 // --sync-cloud` with an unset ATCR_API_KEY exits exitAuth (3) — and fails fast,
 // before any review work, so the check needs no git range or roster.
+//
+// The explicit --cloud-endpoint is load-bearing (Epic 35.12): there is no default
+// destination any more, and leaving it off would make the absent-destination
+// refusal (exit 2) fire first, testing that instead of this test's actual subject.
+// It points at a local httptest server rather than a public hostname: the only
+// thing keeping this off the network was the incidental ordering of the key check
+// ahead of the push, and the server turns that from unreached into provably
+// not-reached.
 func TestReviewCmd_SyncCloud_MissingKey_FailFast(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_API_KEY", "")
-	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud"))
+	srv, pushed := recordingCloudEndpoint(t)
+	require.Equal(t, exitAuth, execCmd(t, "review", "--sync-cloud", "--cloud-endpoint", srv.URL))
+	assert.Zero(t, atomic.LoadInt32(pushed), "a missing key must fail before any scorecard leaves the machine")
+}
+
+// recordingCloudEndpoint returns a hermetic --sync-cloud destination plus a
+// counter of the pushes it received, so a test can assert that a run which must
+// NOT push genuinely did not. Loopback http is deliberate and permitted:
+// scorecard.ValidateCloudEndpoint exempts loopback hosts from the https-only rule
+// precisely so tests need not hand a real hostname to a code path that carries an
+// Authorization: Bearer header.
+func recordingCloudEndpoint(t *testing.T) (*httptest.Server, *int32) {
+	t.Helper()
+	var n int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&n, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &n
 }
 
 // TestReviewCmd_SyncCloud_InvalidEndpoint_ExitsUsage covers AC 04-02 EC4: a
@@ -837,9 +864,16 @@ func TestReviewCmd_SyncCloud_WarnsWhenNoResult(t *testing.T) {
 	var stderr bytes.Buffer
 	root.SetOut(io.Discard)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{"review", "--sync-cloud", "--require-verified"})
+	// Explicit --cloud-endpoint (Epic 35.12): without it the absent-destination
+	// refusal aborts in PreRunE and RunE never runs, so the notice under test
+	// would never be emitted. A local httptest server rather than a public
+	// hostname — this run carries a plausible ATCR_API_KEY through a code path
+	// whose only protection against a real POST is that it produces no result.
+	srv, pushed := recordingCloudEndpoint(t)
+	root.SetArgs([]string{"review", "--sync-cloud", "--cloud-endpoint", srv.URL, "--require-verified"})
 	_ = root.ExecuteContext(context.Background())
 	require.Contains(t, stderr.String(), "--sync-cloud push skipped because the run did not produce a result")
+	assert.Zero(t, atomic.LoadInt32(pushed), "a run with no result must push nothing, not merely warn about it")
 }
 
 func TestReviewCmd_SyncCloud_AuthRejectionOverridesExit(t *testing.T) {

@@ -263,7 +263,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// resolved so the event status reflects the run's actual outcome (TD-009).
 	// The opt-out gate (Story 2) is checked BEFORE Send so a disabled run spawns
 	// no goroutine; a nil client no-ops.
-	if telemetryGate() {
+	if telemetryGate(cmd.ErrOrStderr()) {
 		status := "success"
 		if gateErr != nil {
 			status = "failure"

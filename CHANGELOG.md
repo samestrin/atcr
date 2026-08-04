@@ -1,3 +1,28 @@
+## [35.12.0] - 2026-08-02
+
+Activates the compiled-in telemetry endpoints and removes the `--sync-cloud` placeholder destination. The anonymous usage ping and the community quality signal previously compiled in an empty endpoint, making every send a no-op; both now name their live `atcr.dev` host. **The usage ping is on by default** (opt out with `ATCR_TELEMETRY=0` or `atcr config set telemetry false`); the quality signal remains opt-in and off by default. Neither consent gate changed — only whether a permitted send has somewhere to go.
+
+### Added
+
+- `telemetry.NewWithQualitySignal(usage, quality)` — a two-destination client constructor. The backend serves the usage ping and the quality signal as separate handlers with separate closed key allowlists, so routing the quality signal's JSON array at the usage-ping handler earns a `400` that the fail-open path drops silently. Each destination is independently empty-able, and an empty one silences only its own surface.
+- `defaultQualitySignalEndpoint` — the compiled-in quality-signal destination, distinct from `defaultTelemetryEndpoint`.
+
+### Changed
+
+- `defaultTelemetryEndpoint` is now `https://atcr.dev/api/v1/telemetry` and `defaultQualitySignalEndpoint` is `https://atcr.dev/api/v1/quality-signal`. Both are HTTPS-only; plaintext http is refused per path.
+- `telemetry.New(endpoint)` keeps its signature and its documented single-destination meaning — both payloads share the given endpoint. Production uses the two-destination constructor.
+- `docs/telemetry.md` no longer states that nothing is transmitted; it now names each live endpoint and how to opt out.
+
+### Removed
+
+- The `--sync-cloud` placeholder default (`https://atcr.dev/dashboard`), which resolved to a live HTML page — a user with `ATCR_API_KEY` exported could POST a scorecard at a web page. `defaultCloudEndpoint` is now empty: the scorecard ingest contract is owned by atcr-enterprise, and no community API-key issuance flow exists.
+
+### Fixed
+
+- `--sync-cloud` without `--cloud-endpoint` now refuses with a usage error (exit `2`) naming the absent destination and pushes nothing, replacing a warning that let the run proceed. **Breaking for CI:** a `--sync-cloud` invocation relying on the compiled-in default must now pass `--cloud-endpoint` explicitly. Because the destination is validated before the credential, a run missing both now exits `2` (missing destination) rather than `3` (missing key); `docs/ci-integration.md` and `docs/agentic-consumption.md` record the ordering.
+
+*Shipped via /execute-epic (epic 35.12)*
+
 ## [35.11.0] - 2026-07-31
 
 Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scorecard.ResolveTrustPriors()` into all four `RunReconcile` call sites, which turned an on-demand cost — previously reachable only via `atcr scorecard leaderboard` — into an unconditional read of *every* month file the scorecard store has ever written, on every review and reconcile, with no time window and no record cap. The store has no rotation, so that cost grew without bound. Reads are now windowed to the last 180 days by selecting which month files to open, rather than filtering records after the whole store has already been read and parsed.

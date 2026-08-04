@@ -121,6 +121,17 @@ type ProjectConfig struct {
 	// LoadQualitySignalSetting, never coupling to telemetry (see cmd/atcr
 	// qualitySignalGate).
 	QualitySignal *bool `yaml:"quality_signal,omitempty"`
+	// TelemetryNoticeShown records that the one-time first-run telemetry
+	// disclosure has already been printed for this repository (Epic 35.12 TD).
+	//
+	// It is BOOKKEEPING, not a consent surface: nothing reads it to decide whether
+	// to transmit — that is Telemetry/ATCR_TELEMETRY alone — it only stops the
+	// notice repeating. Like its siblings it MUST be declared here, because the
+	// roster load is strict (KnownFields): an undeclared key makes every review in
+	// a repo that has been disclosed to fail with "field ... not found", turning a
+	// disclosure into a hard outage. TestProjectConfig_TelemetryNoticeShownIsKnownField
+	// pins that.
+	TelemetryNoticeShown *bool `yaml:"telemetry_notice_shown,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.

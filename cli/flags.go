@@ -49,31 +49,49 @@ func addBaselineFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("all", false, "review every non-ignored, git-tracked file as a full-repository baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit)")
 }
 
-// defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is a
-// placeholder URL only: the real production ingest contract is owned by the
-// atcr.dev backend and is not operational until ATCR_API_KEY issuance is live.
-// Tests point --cloud-endpoint at an httptest server instead (loopback http is
-// permitted for that; see scorecard.ValidateCloudEndpoint). When a user invokes
-// --sync-cloud without overriding the default, a warning is emitted so the
-// placeholder default is visible rather than silently POSTing to an inactive URL.
+// defaultCloudEndpoint is the compiled-in --sync-cloud destination. It is
+// deliberately EMPTY: this build has no default destination at all.
 //
-// Migration path: the URL is deliberately a compiled-in constant — if the
-// backend endpoint ever moves, update this constant and cut a release; already
-// deployed binaries can be redirected to the new destination without a rebuild
-// via the --cloud-endpoint flag.
-const defaultCloudEndpoint = "https://atcr.dev/dashboard"
+// The scorecard ingest contract is owned by atcr-enterprise, NOT by the atcr.dev
+// backend. --sync-cloud authenticates with Authorization: Bearer <ATCR_API_KEY>,
+// and there is no API-key issuance flow for a community OSS user — no signup, no
+// billing account. The population that holds keys is the paid product, so the
+// endpoint answers to that repository on its own schedule.
+//
+// Empty is the honest value, but it cannot be left to fall through: an empty
+// endpoint reaching scorecard.ValidateCloudEndpoint fails with "--cloud-endpoint
+// must be a valid https:// URL", which blames the user for a flag they never set.
+// So addSyncCloudFlags' PreRunE refuses up front and names the real cause. The
+// previous value (a live atcr.dev HTML page) was worse still: with ATCR_API_KEY
+// exported, a --sync-cloud run POSTed a scorecard at a web page.
+//
+// Tests point --cloud-endpoint at an httptest server instead (loopback http is
+// permitted for that; see scorecard.ValidateCloudEndpoint) — a non-empty explicit
+// override bypasses the refusal; an explicitly empty one is refused with its own
+// message.
+//
+// Migration path unchanged: the URL is deliberately a compiled-in constant — when
+// the enterprise endpoint lands, set this constant and cut a release; already
+// deployed binaries can still be redirected via --cloud-endpoint without a rebuild.
+const defaultCloudEndpoint = ""
 
 // addSyncCloudFlags declares the --sync-cloud opt-in and its --cloud-endpoint
-// override (Story 4) on cmd. --cloud-endpoint's well-formedness and the presence
-// of ATCR_API_KEY are validated at run time (resolveSyncCloud), not at flag-parse
-// time, to keep this helper narrowly scoped to wiring (AC 04-01). The PreRunE is
-// chained prev-first (not assigned), matching addRangeFlags, so a prior hook
-// (review and reconcile both also register range flags) is never silently
-// overwritten, hooks fire in installation order (earlier-installed first), and a
-// future --sync-cloud precondition can slot in without clobbering it.
+// override (Story 4) on cmd. An absent or explicitly empty --cloud-endpoint is
+// refused here at flag-parse time (PreRunE) — this build ships no default
+// destination, so there is nothing to fall back on — EXCEPT on the two paths
+// that never reach a push at all (--preview and --resume), where the refusal
+// would fail an invocation over a destination the path never consults; a supplied endpoint's
+// well-formedness and the presence of ATCR_API_KEY are validated at run time
+// (resolveSyncCloud) (AC 04-01). The PreRunE is chained prev-first (not
+// assigned), matching addRangeFlags, so a prior hook is
+// never silently overwritten, hooks fire in installation order
+// (earlier-installed first), and a future --sync-cloud precondition can slot in
+// without clobbering it. On review (and range) the prior hook is the
+// range-flag validation those commands register; reconcile registers no range
+// flags, so there prev is nil and this helper's hook is the only one.
 func addSyncCloudFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires ATCR_API_KEY)")
-	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "override the --sync-cloud destination (https://, or loopback http:// for local testing)")
+	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires --cloud-endpoint and ATCR_API_KEY)")
+	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "the --sync-cloud destination (required — this build ships no default; https://, or loopback http:// for local testing)")
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		if prev != nil {
@@ -82,13 +100,34 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 			}
 		}
 		// --preview is a pure, side-effect-free local render that pushes nothing, so
-		// the --sync-cloud placeholder warning is misleading noise on that path
-		// (the preview short-circuit in RunE bypasses sync entirely). Suppress it
-		// when --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
-		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) {
+		// the --sync-cloud destination is irrelevant on that path (the preview
+		// short-circuit in RunE bypasses sync entirely). Suppress the refusal when
+		// --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		//
+		// --resume is the same shape and gets the same suppression: runReview
+		// returns via runResume BEFORE resolveSyncCloud is reached, so --sync-cloud
+		// is a documented no-op there. Refusing would break an invocation that
+		// previously worked, over a destination the resume path never consults. The
+		// no-op is not left silent — the resume branch in runReview says so on
+		// stderr, for the with-endpoint case as much as the absent-destination one.
+		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) && !resumeFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
-			if strings.TrimSpace(endpoint) == defaultCloudEndpoint {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: --cloud-endpoint default %q is a placeholder; --sync-cloud will not work until a real endpoint and ATCR_API_KEY are configured\n", defaultCloudEndpoint)
+			// Refuse rather than warn-and-proceed: this build ships no default
+			// destination, so there is nothing to push to. Reported as a usageError
+			// (exit 2), matching validateRangeFlags — an absent destination is a
+			// configuration fault, not the exit-3 auth rejection that a bad
+			// ATCR_API_KEY earns. ATCR_API_KEY remains separately required once a
+			// destination IS supplied; resolveSyncCloud still enforces it.
+			if strings.TrimSpace(endpoint) == "" {
+				// Distinguish "never supplied" from "supplied empty": telling a user
+				// who just passed --cloud-endpoint "" that the build has no default
+				// destination blames the default for a value they chose, and a bare
+				// "must not be empty" misdescribes a whitespace-only value — the
+				// supplied-empty branch names the trim and states availability.
+				if cmd.Flags().Changed("cloud-endpoint") {
+					return usageError(errors.New("--cloud-endpoint was supplied but is empty after trimming whitespace; pass a non-empty endpoint only if you operate your own compatible ingest (the scorecard ingest endpoint is not yet available in this build)"))
+				}
+				return usageError(errors.New("--sync-cloud has no destination in this build (the scorecard ingest endpoint is not yet available); pass --cloud-endpoint only if you operate your own compatible ingest"))
 			}
 		}
 		return nil
@@ -105,6 +144,18 @@ func previewFlagSet(cmd *cobra.Command) bool {
 	}
 	v, _ := cmd.Flags().GetBool("preview")
 	return v
+}
+
+// resumeFlagSet reports whether the --resume flag is registered on cmd AND
+// supplied. It keys on Changed (not the value) because `--resume ""` is still a
+// resume invocation, and it uses a nil-safe Lookup for the same reason
+// previewFlagSet does: reconcile hosts addSyncCloudFlags but registers no
+// --resume, and a panic here would abort an unrelated invocation.
+func resumeFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("resume") == nil {
+		return false
+	}
+	return cmd.Flags().Changed("resume")
 }
 
 // addQualitySignalFlags declares the --preview flag on cmd (the review and
@@ -218,8 +269,8 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 // validateBaselineFlags. Keying on Changed() (not GetBool/GetString) means an
 // explicit --all=false still counts as supplied, the presence idiom Story 1
 // mandates. Changed() on a flag a host command never registered (e.g. --all/--dir
-// on `reconcile`, which shares addRangeFlags) safely returns false, so the baseline
-// checks are inert there.
+// on `range`, which shares addRangeFlags but not review's baseline flags) safely
+// returns false, so the baseline checks are inert there.
 func validateRangeFlags(cmd *cobra.Command) error {
 	base := cmd.Flags().Changed("base")
 	head := cmd.Flags().Changed("head")

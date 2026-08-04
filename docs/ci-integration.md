@@ -23,7 +23,7 @@ Notes:
 - **Partial success is not failure.** If some agents fail but at least one succeeds, the run completes with `partial: true` recorded in the summary — the gate judges the surviving findings.
 - **Empty range is a hard error**, never a silent zero-findings pass.
 - With roadmap stage 3 (adversarial verification), `--fail-on` counts only non-refuted findings, and `--require-verified` restricts the gate to skeptic-confirmed findings.
-- **A `--sync-cloud` authentication failure exits 3** (missing/empty `ATCR_API_KEY` or a remote 401/403), distinct from the usage/config code (2) so CI can detect an auth failure specifically.
+- **A `--sync-cloud` authentication failure exits 3** (missing/empty `ATCR_API_KEY` or a remote 401/403), distinct from the usage/config code (2) so CI can detect an auth failure specifically. Note the ordering: `--cloud-endpoint` is **required** (this build compiles in no default destination), and it is validated *before* the credential — so a `--sync-cloud` run that omits the endpoint exits **2**, not 3, even when `ATCR_API_KEY` is also absent.
 
 ### `atcr verify diff` — gating is opt-in
 

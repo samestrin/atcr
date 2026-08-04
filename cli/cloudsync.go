@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -26,10 +27,30 @@ type syncCloudPlan struct {
 // expensive run and any network call. When --sync-cloud is not set it returns a
 // disabled plan and never reads ATCR_API_KEY (AC 04-03 EC2). A missing, empty, or
 // whitespace-only ATCR_API_KEY is an authError (exit 3 — fail closed, never fall
-// through to a push); an empty or non-https (non-loopback) --cloud-endpoint is a
-// usageError (exit 2). It is deliberately NOT gated by telemetryGate: --sync-cloud
-// is an explicit, user-invoked action with its own opt-in surface (the flag plus a
-// valid ATCR_API_KEY), independent of the passive-ping opt-out.
+// through to a push); a malformed or non-https (non-loopback) --cloud-endpoint is
+// a usageError (exit 2). It is deliberately NOT gated by telemetryGate:
+// --sync-cloud is an explicit, user-invoked action with its own opt-in surface
+// (the flag plus a valid ATCR_API_KEY), independent of the passive-ping opt-out.
+//
+// ENDPOINT VALIDATION IS DELIBERATELY SPLIT ACROSS TWO LAYERS, and the split is
+// load-bearing rather than an oversight:
+//
+//   - EMPTINESS is normally handled UPSTREAM, at flag-parse time, by
+//     addSyncCloudFlags' PreRunE (cli/flags.go). It refuses there because it can
+//     name the real cause — this build ships no default destination, and it can
+//     further distinguish "never supplied" from "supplied empty". Reaching an
+//     empty endpoint here instead would surface "must be a valid https:// URL",
+//     blaming the user for a flag they never set.
+//   - SHAPE (parseability, scheme, loopback exemption) is checked here via
+//     scorecard.ValidateCloudEndpoint, which also re-rejects an empty value.
+//
+// That second emptiness check is NOT dead code: it is the defense-in-depth layer
+// for callers that reach this function without cobra running PreRunE — which the
+// package's own tests do routinely by invoking RunE directly (see runPreview and
+// runReviewSend). Folding the shape check up into PreRunE would consolidate the
+// message source but would leave those paths pushing at an unvalidated endpoint,
+// so the layering stays. See TestResolveSyncCloud_EmptyEndpoint_UsageError, which
+// pins it.
 func resolveSyncCloud(cmd *cobra.Command) (syncCloudPlan, error) {
 	if !boolFlag(cmd, "sync-cloud") {
 		return syncCloudPlan{}, nil
@@ -58,6 +79,17 @@ func runSyncCloud(ctx context.Context, w io.Writer, plan syncCloudPlan, reviewDi
 	if !plan.enabled {
 		return nil
 	}
+	// Print the resolved destination host before the push: the push sends
+	// Authorization: Bearer <ATCR_API_KEY> to whatever host --cloud-endpoint
+	// names, and ValidateCloudEndpoint vets the scheme only, so an unexpected
+	// target must be visible in CI output rather than silent. (The
+	// known-good-set warning half of the hardening is deliberately deferred
+	// until defaultCloudEndpoint is non-empty and there is a set to check against.)
+	host := plan.endpoint
+	if u, perr := url.Parse(plan.endpoint); perr == nil && u.Host != "" {
+		host = u.Host
+	}
+	_, _ = fmt.Fprintf(w, "syncing scorecard to %s\n", host)
 	rec := scorecard.NewCloudSyncRecord(reviewDir, outcome)
 	return finishCloudSync(w, scorecard.Push(ctx, plan.endpoint, plan.apiKey, rec))
 }

@@ -189,6 +189,15 @@ Emit the versioned, anonymized public submission document (the Epic 10.0
 format). Filters apply **before** anonymization. Output is deterministic
 (byte-identical for the same input + export time).
 
+**What "anonymized" means here:** `--export` anonymizes the *submitter* — run
+IDs, cost, token counts, and local paths are scrubbed or omitted — while
+deliberately keeping `(persona, model)` as the public leaderboard's aggregation
+dimensions (a persona is a public catalog identity, not a user identity). This
+is a different sense of the word from the telemetry surfaces
+([telemetry.md](telemetry.md)), where a persona identity is never transmitted
+raw and travels only as a pseudonymous `persona_id_hash`. Both usages are
+deliberate; they are not the same guarantee.
+
 ```bash
 # Anonymized JSON to stdout (pipe to jq, a file, etc.)
 atcr leaderboard --export

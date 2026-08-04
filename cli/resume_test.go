@@ -332,6 +332,49 @@ func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 	require.Contains(t, out, "reconciled")
 }
 
+// TestResume_SyncCloudIgnoredNotRefused pins that --sync-cloud is a documented
+// no-op on the resume path rather than a hard refusal. runReview returns via
+// runResume before resolveSyncCloud is ever reached, so the absent-destination
+// PreRunE refusal must be suppressed for --resume exactly as it is for --preview
+// — otherwise a previously working `review --resume <anchor> --sync-cloud` dies
+// with exit 2. The run exits 0 AND says the flag was ignored, so the no-op is
+// disclosed instead of silent.
+func TestResume_SyncCloudIgnoredNotRefused(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^", "--sync-cloud")
+	require.Equal(t, 0, code, "--sync-cloud must not turn a working resume into an exit-2 usage error")
+	require.Contains(t, out, "--sync-cloud is ignored on --resume",
+		"the resume path must disclose that --sync-cloud pushed nothing, not stay silent")
+}
+
+// TestResume_SyncCloudWithEndpointStillIgnored proves the disclosure is not
+// conditional on the absent-destination branch: supplying --cloud-endpoint gets a
+// resume that still pushes nothing, so it must carry the same notice rather than
+// proceeding silently as if a push had been arranged.
+func TestResume_SyncCloudWithEndpointStillIgnored(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	t.Setenv("ATCR_API_KEY", "a-valid-looking-key")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^",
+		"--sync-cloud", "--cloud-endpoint", "http://127.0.0.1:1/ingest")
+	require.Equal(t, 0, code, "a supplied endpoint must not change the resume outcome")
+	require.Contains(t, out, "--sync-cloud is ignored on --resume",
+		"a with-endpoint resume must disclose the no-op too, not push silently")
+}
+
 func TestResume_AppendsFindingHistory(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")

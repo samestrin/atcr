@@ -16,6 +16,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/telemetrytest"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,9 +29,80 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // TestMain zeroes the per-comment fallback pause so the suite never waits on the
 // real secondary-rate-limit delay; the pacing itself is covered explicitly in
 // TestPostInlineComments_FallbackPacesSequentialPosts.
+//
+// Everything telemetry-hermeticity related — pinning ATCR_TELEMETRY,
+// ATCR_QUALITY_SIGNAL and ATCR_API_KEY to their off state, installing the
+// transport guard, and failing the run with an escape report — now lives in
+// internal/telemetrytest. It moved out of this file because symbols declared in a
+// _test.go file cannot be imported by another package, which left cmd/atcr (a
+// different package that also calls cli.Main) with no guard at all.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
-	os.Exit(m.Run())
+	os.Exit(telemetrytest.Run(m))
+}
+
+// TestIsAllowlistedTestHost pins the guard's allowlist classification without
+// touching the network: loopback and the unroutable-by-construction .test TLD
+// pass; any routable host — the live endpoints above all — is intercepted.
+func TestIsAllowlistedTestHost(t *testing.T) {
+	for host, want := range map[string]bool{
+		"127.0.0.1":           true,
+		"::1":                 true,
+		"localhost":           true,
+		"telemetry.test":      true, // repo's blackhole convention (RFC 2606, never routable)
+		"ingest.test":         true,
+		"atcr.dev":            false,
+		"example.com":         false,
+		"telemetry.test.evil": false, // suffix match must be a full TLD, not a substring
+		"":                    false,
+	} {
+		assert.Equalf(t, want, telemetrytest.IsAllowlistedTestHost(host), "host %q", host)
+	}
+}
+
+// TestTelemetryTransportGuard_BlocksNonAllowlistedHosts is the assertion half of
+// the structural hermeticity guard: package cli's TestMain installs
+// telemetrytest.GuardHosts on the telemetry transport seam, so any future test, a
+// targeted `go test -run`, or any construction of the production client that
+// emits toward a non-allowlisted host is intercepted and recorded — TestMain
+// then exits non-zero naming the escape. The guard intercepts (202) rather than
+// errors so the fail-open send path completes quietly and the escape report is
+// the only signal.
+func TestTelemetryTransportGuard_BlocksNonAllowlistedHosts(t *testing.T) {
+	telemetrytest.ResetEscapes()
+	t.Cleanup(telemetrytest.ResetEscapes)
+
+	req, err := http.NewRequest(http.MethodPost, "https://atcr.dev/api/v1/telemetry", strings.NewReader(`{}`))
+	require.NoError(t, err)
+	resp, err := telemetrytest.GuardHosts(http.DefaultClient, req)
+	require.NoError(t, err, "the guard intercepts rather than errors, so the fail-open send path completes quietly")
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.Equal(t, []string{"https://atcr.dev/api/v1/telemetry"}, telemetrytest.Escapes(),
+		"a send to the live host must be recorded as an escape for TestMain to report")
+}
+
+// TestTelemetryTransportGuard_AllowsLoopbackPassthrough pins the other half of
+// the allowlist contract: sends to loopback httptest servers pass through to
+// real networking untouched and are never recorded as escapes, so legitimate
+// per-test telemetry clients keep working exactly as before the guard.
+func TestTelemetryTransportGuard_AllowsLoopbackPassthrough(t *testing.T) {
+	telemetrytest.ResetEscapes()
+	t.Cleanup(telemetrytest.ResetEscapes)
+
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := telemetrytest.GuardHosts(srv.Client(), req)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "loopback test servers must pass through to real networking")
+	assert.True(t, hit, "the loopback server must receive the passed-through request")
+	assert.Empty(t, telemetrytest.Escapes(), "loopback sends are legitimate and must not be recorded as escapes")
 }
 
 // captureGitHub starts a fake GitHub REST server that records the body of the

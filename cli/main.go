@@ -47,6 +47,16 @@ var forceExit = os.Exit
 // sends to flush before exiting. Hardcoded like gracefulShutdownTimeout (no
 // flag — an internal safety bound, not operator surface); a package var only so
 // tests can shrink it.
+//
+// PAIRED WITH internal/telemetry's defaultRequestTimeout, which must stay at or
+// below this value. The two bound the same send from opposite ends: this one is
+// how long the process will wait, that one is how long the request believes it
+// may run. When the request budget was the larger of the two (3s against this
+// 2s), every send slower than 2s was guaranteed to be abandoned here after the
+// user had already paid the full wait — the extra budget could not produce a
+// delivery. Change either constant and revisit the other;
+// TestDrainTelemetry_NoSendOutlivesTheDrain and
+// TestDefaultRequestTimeout_FitsWithinCallerDrainBound both fail if they diverge.
 var telemetryDrainTimeout = 2 * time.Second
 
 // drainTelemetry waits for the process telemetry client's in-flight sends to
@@ -118,7 +128,7 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 		cancel()
 	}, stderr)
 
-	telemetryClient := telemetry.New(defaultTelemetryEndpoint)
+	telemetryClient := newProcessTelemetryClient()
 	root := NewRootCmdWithClient(telemetryClient)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -171,6 +181,9 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // --fail-on threshold violations), 2 usage or configuration errors, 3 a
 // --sync-cloud authentication failure (missing/empty key or a remote 401/403),
 // distinct from exitUsage so scripts/CI can detect an auth failure specifically.
+// Ordering caveat: the --sync-cloud destination is validated in PreRunE before
+// the credential, so a run that omits --cloud-endpoint yields 2, not 3, even
+// when ATCR_API_KEY is also absent.
 //
 // --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 contract
 // UNCHANGED — it governs stdout payload shape only, never the exit code (there is
@@ -238,17 +251,89 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 
 // NewRootCmd constructs the atcr command tree. All subcommands use RunE so
 // errors bubble up to main() for centralized exit-code mapping.
+//
+// EMBEDDERS, READ THIS. This constructor emits NO TELEMETRY. It hands the tree a
+// client with no destinations (newNoTelemetryClient), so embedding the command
+// tree never transmits and never prints the first-run disclosure — there is
+// nothing to disclose.
+//
+// That is deliberate. This path has no drainTelemetry counterpart (runMain owns
+// the drain), so a live client here would have been both undisclosed AND largely
+// undelivered — its sends stranded at process exit. Defaulting to silence is the
+// only posture that is honest in both directions.
+//
+// To opt in, construct the client yourself:
+//
+//	cli.NewRootCmdWithClient(telemetry.NewWithQualitySignal(usageURL, qualityURL))
+//
+// and call Client.Wait before exiting, or use Main/MainWithHooks, which run the
+// full lifecycle — live client, disclosure, and drain — exactly as the shipped
+// `atcr` binary does. The compiled-in destinations remain overridable for that
+// case (they are vars, not consts — assign them before constructing, or set them
+// with `-ldflags -X`; see cli/telemetry.go).
 func NewRootCmd() *cobra.Command {
-	return NewRootCmdWithClient(telemetry.New(defaultTelemetryEndpoint))
+	return NewRootCmdWithClient(newNoTelemetryClient())
+}
+
+// newNoTelemetryClient builds a client with NO destinations: every Send is a
+// silent per-path no-op. It is what the zero-argument NewRootCmd hands the tree,
+// so embedding the command tree never transmits unless the embedder asks for it.
+//
+// WHY THE DEFAULT IS OFF HERE BUT ON IN THE BINARY. runMain — the path every real
+// `atcr` invocation takes — still uses newProcessTelemetryClient, so the shipped
+// CLI keeps its documented default-on posture, its first-run disclosure, and its
+// drain. What changed is the LIBRARY default: NewRootCmd is an exported seam a
+// downstream module builds the same tree from, and on that path the telemetry was
+// undisclosed (the disclosure and the drain both live on the runMain lifecycle)
+// AND largely undelivered (nothing ever calls drainTelemetry there, so its sends
+// were stranded at exit). Emitting to a live host with neither disclosure nor
+// delivery is the worst of both worlds; an embedder that wants telemetry now says
+// so via NewRootCmdWithClient(newProcessTelemetryClient()) — or its own client.
+//
+// RECONCILIATION WITH EPIC 35.12's T2ab. That task required cli/main.go:121 AND
+// :242 to both construct the process client, because "missing :242 leaves
+// NewRootCmd() single-destination, and because the send path is fail-open that
+// failure is silent" — i.e. the hazard it names is a client that routes the
+// quality-signal ARRAY at the usage-ping handler for a silently-dropped 400. A
+// no-destination client cannot produce that failure: it sends nothing at all, so
+// there is no misroute to be silent about. The two-destination invariant T2ab
+// actually protects now lives on newProcessTelemetryClient, the single shared
+// constructor, and is covered on the shipping path by
+// TestRunMain_RoutesPingAndQualitySignalToDistinctEndpoints.
+//
+// It also supersedes (rather than contradicts) the earlier documentation-only
+// resolution of the same TD row: the doc warning stays true, and is now backed by
+// behavior instead of relying on an embedder reading it.
+func newNoTelemetryClient() *telemetry.Client {
+	return telemetry.NewWithQualitySignal("", "")
+}
+
+// newProcessTelemetryClient builds the process telemetry client from the two
+// compiled-in destinations. It is the SINGLE construction site, shared by runMain
+// and NewRootCmd.
+//
+// The two used to construct the client independently, with the same expression
+// written twice — and only NewRootCmd was covered by a test. runMain is the entry
+// point every real atcr invocation takes via Main/MainWithHooks, so a revert there
+// to a single-destination client (telemetry.NewSingleDestination(defaultTelemetryEndpoint)) would
+// route the quality-signal ARRAY at the usage-ping handler, earning a 400 that the
+// fail-open send path drops silently — invisible in production and invisible to
+// the test that exists to catch exactly that. Collapsing the duplication means
+// there is now one place to get it wrong, and it is covered.
+func newProcessTelemetryClient() *telemetry.Client {
+	return telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
 }
 
 // NewRootCmdWithClient is NewRootCmd with the single opt-in process telemetry
 // client supplied by the caller, so main() keeps a handle on the same client
 // the root PersistentPreRunE injects into every subcommand's context and can
 // drain it before exit. The client is constructed once per process and injected
-// via PersistentPreRunE (deliberately not a package-level singleton). The
-// compiled-in endpoint is empty until a real ingestion backend lands, so Send
-// is a no-op in dev, CI, and production for now (see defaultTelemetryEndpoint).
+// via PersistentPreRunE (deliberately not a package-level singleton). The client
+// carries SEPARATE compiled-in destinations for the usage ping and the quality
+// signal (see defaultTelemetryEndpoint). Both constants are currently non-empty,
+// so the transport no longer suppresses either surface; whether anything is
+// transmitted is decided by the consent gates at the call sites plus the
+// per-path endpoint check (an empty endpoint is a silent no-op in dispatch).
 func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
@@ -292,6 +377,13 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			if err := setupLogger(cmd); err != nil {
 				return err
 			}
+			// Disclose the default-on usage ping once per repository, before any
+			// subcommand work and on this synchronous path — never from the async
+			// send path. Silent and non-fatal by construction; see
+			// maybeDiscloseTelemetry. Placed after the logger so its stderr writer
+			// is the one the caller wired, and before the client injection so the
+			// user is told before anything can transmit.
+			maybeDiscloseTelemetry(cmd, telemetryClient)
 			// Inject the single process telemetry client into the command context
 			// alongside the logger, so runReview/runReconcile retrieve it via
 			// telemetry.FromContext without a signature change.
@@ -382,7 +474,7 @@ func logLevelFromEnv() string {
 // the documented default-on posture. Parsing is strict via strconv.ParseBool and
 // never errors: an invalid value is the "default enabled" case, not a usage
 // error. This footgun is called out in `atcr config set`'s help and docs/telemetry.md.
-func telemetryEnabledFromEnv() bool {
+func telemetryEnabledFromEnv(w io.Writer) bool {
 	v := strings.TrimSpace(os.Getenv("ATCR_TELEMETRY"))
 	if v == "" {
 		return true
@@ -392,8 +484,11 @@ func telemetryEnabledFromEnv() bool {
 		// Unparseable values fail open to the documented default (enabled), but
 		// warn once so a misspelled opt-out (e.g. "flase") is visible rather than
 		// silently ignored. This function is read once per run via telemetryGate,
-		// so the warning is inherently one-time.
-		_, _ = fmt.Fprintf(os.Stderr, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
+		// so the warning is inherently one-time. The warning goes to the injected
+		// writer — cmd.ErrOrStderr() at the production call sites, matching
+		// axiMaxLinesFromEnv — so it routes through the same redirectable seam as
+		// the logger instead of escaping a caller-supplied stderr.
+		_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_TELEMETRY value %q; treating as enabled\n", v)
 		return true
 	}
 	return enabled
