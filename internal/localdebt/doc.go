@@ -82,9 +82,13 @@
 //	                                         terminal rule used to silence.
 //	deferred   Re-surfaces on re-detection   "Not now" is not "never".
 //
-// Two predicates express this. IsClosedStatus classifies a RECORD as terminal
-// (all three statuses); IsSuppressingStatus decides whether that terminal state
-// outlives a re-detection (wontfix only). FoldRecords implements the table: a
+// Three predicates express this, and `deferred` is the status that separates
+// them. IsClosedStatus classifies a RECORD as terminal (all three statuses);
+// IsSettledStatus asks whether the ITEM is done (resolved|wontfix), which gates
+// closability and the live-backlog count — a deferred item carries a terminal
+// marker but is still work, so it must stay closeable; IsSuppressingStatus
+// decides whether a terminal state outlives a re-detection (wontfix only).
+// FoldRecords implements the table: a
 // suppressing record wins unconditionally, otherwise the effective record is the
 // latest by timestamp, so a re-detection appended after a resolution is the
 // effective record and the id is open again.

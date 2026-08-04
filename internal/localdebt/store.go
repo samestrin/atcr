@@ -454,23 +454,35 @@ func retainForCompaction(recs []Record) []Record {
 	out := make([]Record, 0, len(effective))
 	for _, eff := range effective {
 		out = append(out, eff)
-		if IsClosedStatus(eff.Status) {
+		if IsSettledStatus(eff.Status) {
 			continue // the effective record IS the resolution; nothing to preserve
 		}
-		var terminals []Record
+		// SETTLED, not merely closed, on both sides. An effective `deferred` record
+		// is not a resolution — it carries no justification, and treating it as one
+		// would discard an earlier `resolved` record and the --reason text only that
+		// record holds. Selecting only settled candidates also excludes the effective
+		// record from its own trail without an identity comparison, since a record
+		// that reached this line is by definition not settled.
+		var resolutions []Record
 		for _, r := range byID[eff.ID] {
-			if IsClosedStatus(r.Status) {
-				terminals = append(terminals, r)
+			if IsSettledStatus(r.Status) {
+				resolutions = append(resolutions, r)
 			}
 		}
-		if len(terminals) > 0 {
-			trail := highestRankedTerminal(terminals)
+		if len(resolutions) > 0 {
+			trail := highestRankedTerminal(resolutions)
 			// The retained record is a TRAIL entry, not an occurrence: the id's
 			// aggregate counters live solely on the effective record. Zeroing them
 			// here keeps compaction idempotent once T5 carries Occurrences/FirstSeen
 			// through the fold — otherwise the next Compact would re-fold a 2-record
 			// group and either inflate the count (summing the pair) or decay it
 			// (recomputing from group length).
+			//
+			// Note for T5's other half: FirstSeen is compared LEXICOGRAPHICALLY
+			// (record.go), and "" sorts before every RFC3339 value — so a naive min()
+			// across the retained pair would return "" and lose the first sighting.
+			// The carry-forward must skip empty values and fall back to the record's
+			// own Timestamp.
 			trail.Occurrences = 0
 			trail.FirstSeen = ""
 			out = append(out, trail)

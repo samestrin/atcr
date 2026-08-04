@@ -1068,3 +1068,55 @@ func TestCompact_RetainedTrailCarriesNoAggregateCounters(t *testing.T) {
 		}
 	}
 }
+
+// A `deferred` effective record is not a resolution: it carries no justification,
+// so treating it as the trail would discard an earlier `resolved` record and the
+// --reason text only that record holds.
+func TestCompact_DeferredEffectiveRecordStillKeepsTheResolutionTrail(t *testing.T) {
+	dir := t.TempDir()
+	resolved := foldRec("a", "2026-07-02T00:00:00Z", "resolved")
+	resolved.Justification = "fixed by the retry cap"
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		resolved,
+		foldRec("a", "2026-07-03T00:00:00Z", "deferred"),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	_, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+
+	after, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, after, 2, "the deferred effective record plus its resolution trail")
+
+	var trail, eff *Record
+	for i := range after {
+		if after[i].Status == "resolved" {
+			trail = &after[i]
+		}
+		if after[i].Status == "deferred" {
+			eff = &after[i]
+		}
+	}
+	require.NotNil(t, eff, "the deferred record is still the effective one")
+	require.NotNil(t, trail, "the resolution must survive a later deferral")
+	assert.Equal(t, "fixed by the retry cap", trail.Justification)
+}
+
+// A deferred-only id has no resolution to preserve, so it keeps exactly one
+// record — the effective one must never be retained as its own trail.
+func TestCompact_DeferredOnlyIDKeepsOneRecord(t *testing.T) {
+	dir := t.TempDir()
+	for _, r := range []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		foldRec("a", "2026-07-02T00:00:00Z", "deferred"),
+	} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	res, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.RecordsAfter, "no duplicate of the effective record")
+}

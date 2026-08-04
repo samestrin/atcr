@@ -915,3 +915,34 @@ func TestDebtNamespace_AddedDeferredItemResurfacesOnRedetection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, list, "a.go", "the deferred item re-surfaces when it is detected again")
 }
+
+// Resolving a deferred item must carry its reviewer attribution onto the
+// resolution record. The union loop skips SETTLED records, not merely closed
+// ones — skipping the deferred record would resolve it with an empty union and
+// deny every persona that raised the finding its confirmed credit.
+func TestDebtResolve_ResolvingADeferredItemKeepsReviewerAttribution(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a-deferred"
+	deferred.Timestamp = deferred.RunID
+	deferred.Status = "deferred"
+	deferred.Reviewers = []string{"security", "performance"}
+	deferred.Model = "claude-sonnet-4-6"
+	dir := writeDebtStore(t, rec, deferred)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var resolution *localdebt.Record
+	for i := range recs {
+		if recs[i].Status == "resolved" {
+			resolution = &recs[i]
+		}
+	}
+	require.NotNil(t, resolution)
+	assert.ElementsMatch(t, []string{"claude", "security", "performance"}, resolution.Reviewers,
+		"attribution unions across every LIVE record, deferred included")
+	assert.Equal(t, "claude-sonnet-4-6", resolution.Model)
+}

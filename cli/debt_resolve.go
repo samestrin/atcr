@@ -310,10 +310,14 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		if recs[i].ID != id {
 			continue
 		}
-		if isClosedStatus(recs[i].Status) {
+		// SETTLED, not merely closed, matching the guard above: a `deferred` record is
+		// live debt and its attribution counts. Skipping it here would resolve a
+		// deferred item with an EMPTY reviewer union, denying every persona that
+		// raised the finding its confirmed credit in the quality signal.
+		if localdebt.IsSettledStatus(recs[i].Status) {
 			continue
 		}
-		// Union attribution across every open record for the id: the same finding can
+		// Union attribution across every live record for the id: the same finding can
 		// be re-raised by later reconcile runs as distinct open records under one
 		// stable id, and AggregateQualitySignal reads only the terminal record
 		// (foldTerminalByID) — stamping just the first open record's Reviewers would
@@ -357,7 +361,12 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := *orig
-	rec.Reviewers = reviewers
+	// Assign only a non-empty union, symmetric with Model below: an empty union
+	// means no live record carried attribution, and blanking the copied record's
+	// Reviewers would destroy credit rather than decline to add any.
+	if len(reviewers) > 0 {
+		rec.Reviewers = reviewers
+	}
 	if model != "" {
 		rec.Model = model
 	}

@@ -126,7 +126,7 @@ Resolution lifetime follows from that:
 |--------|----------|-----|
 | `wontfix` | Permanent | Suppression is the point. A false positive is stable at a stable location, so its id is stable. Requires a `--reason`. |
 | `resolved` | Re-opens on re-detection | The same id after a fix means the fix regressed or never landed — the thing most worth surfacing. |
-| `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item stays in the backlog and stays closeable. |
+| `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve --list` worklist while it stands, but it stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
 
 So `atcr debt list` can show an item as `resolved` today and as open again after
 a later `atcr reconcile` re-detects it. Only `wontfix` is final.
