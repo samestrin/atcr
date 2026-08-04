@@ -1425,3 +1425,137 @@ func TestRunReconcile_ResolvesSharedSettingsInOneLoad(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
 		"one reconcile must load the user registry once for both shared settings")
 }
+
+// --- Plan 35.13 T3: dedup seeding scoped to suppressing-or-open ids ---------
+
+// AC3(d), the write half of the coupled change: seeding the dedup set from EVERY
+// id in the store means a regressed finding is never re-appended, so the
+// recency-aware fold has nothing newer to select and the read-side change is a
+// no-op. The seed must therefore cover only ids whose effective record
+// suppresses (wontfix) or is still open.
+func TestPersistLocalDebt_ReappendsARegressedResolvedID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "leaks a file handle",
+	}
+	open.StampID()
+	resolved := open
+	resolved.RunID = "2026-07-13T00:30:00Z-resolved"
+	resolved.Timestamp = "2026-07-13T00:30:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, resolved))
+
+	// Reconcile re-detects the identical finding: same file/line/problem → same id.
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "leaks a file handle", Fix: "close it", Category: "resource", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 3, "the regression is appended as a fresh open record")
+	assert.Equal(t, "2026-07-14T00:00:00Z", recs[2].Timestamp)
+	assert.Empty(t, recs[2].Status)
+
+	// And the fold must return it to the open backlog.
+	out, err := runDebt(t, "resolve", "--list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.go", "a resolved-then-regressed id is open again")
+}
+
+// The mirror case, and the reason the seed is scoped rather than removed: a
+// wontfix id must still suppress the re-append entirely.
+func TestPersistLocalDebt_StillSuppressesAWontfixID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "flagged false positive",
+	}
+	open.StampID()
+	wontfix := open
+	wontfix.RunID = "2026-07-13T00:30:00Z-wontfix"
+	wontfix.Timestamp = "2026-07-13T00:30:00Z"
+	wontfix.Status = "wontfix"
+	wontfix.Justification = "accepted pattern"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, wontfix))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 2, "a dismissed finding is never re-appended")
+}
+
+// A deferred id re-surfaces too, so it must also be re-appended.
+func TestPersistLocalDebt_ReappendsADeferredID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "not now",
+	}
+	open.StampID()
+	deferred := open
+	deferred.RunID = "2026-07-13T00:30:00Z-deferred"
+	deferred.Timestamp = "2026-07-13T00:30:00Z"
+	deferred.Status = "deferred"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, deferred))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "not now", Fix: "later", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 3, "a deferred id re-surfaces, so re-detection appends")
+}
+
+// An id that is still OPEN must not be re-appended: the seed covers open ids so
+// an unchanged finding does not accumulate one record per reconcile run.
+func TestPersistLocalDebt_StillDedupsAnOpenID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "still open",
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "still open", Fix: "f", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 1, "an unchanged open finding is not duplicated per run")
+}

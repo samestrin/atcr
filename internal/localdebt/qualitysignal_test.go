@@ -234,3 +234,38 @@ func TestAggregateQualitySignal_Idempotent(t *testing.T) {
 	}
 	assert.Equal(t, AggregateQualitySignal(recs), AggregateQualitySignal(recs))
 }
+
+// --- Plan 35.13 T3 ripple: the quality signal reads FoldRecords -------------
+
+// A regressed id folds to an OPEN record, so it is no longer terminal and
+// contributes neither a confirmation nor a dismissal. That is the intended
+// reading — an unsettled finding is not yet an outcome — and it is pinned here
+// rather than left as incidental behavior of the fold change.
+func TestAggregateQualitySignal_ReopenedIDContributesNoRow(t *testing.T) {
+	open := Record{ID: "z", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+	resolved := Record{ID: "z", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "resolved"}
+	regressed := Record{ID: "z", RunID: "r3", Timestamp: "2026-07-03T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+
+	assert.NotEmpty(t, AggregateQualitySignal([]Record{open, resolved}),
+		"a settled resolution still emits its confirmed row")
+	assert.Empty(t, AggregateQualitySignal([]Record{open, resolved, regressed}),
+		"once the id re-opens it is unsettled again and emits no row until it closes")
+}
+
+// A wontfix id is never re-opened, so its dismissal row survives a later
+// re-detection.
+func TestAggregateQualitySignal_WontfixRowSurvivesRedetection(t *testing.T) {
+	open := Record{ID: "w", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+	wontfix := Record{ID: "w", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "wontfix"}
+	regressed := Record{ID: "w", RunID: "r3", Timestamp: "2026-07-03T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+
+	rows := AggregateQualitySignal([]Record{open, wontfix, regressed})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -764,4 +765,153 @@ func TestDebtResolve_TerminalRecordModelFallsBackToEarlierNonEmpty(t *testing.T)
 	assert.Equal(t, "claude-sonnet-4-6", terminal.Model,
 		"most recent NON-EMPTY model wins; a later attribution-less record must not blank it")
 	assert.Equal(t, []string{"bruce", "ingrid"}, terminal.Reviewers)
+}
+
+// --- Plan 35.13 T3: resolution semantics split by status --------------------
+
+// redetect appends a fresh open record for rec's id, timestamped AFTER every
+// parseable record already in the store — simulating a later reconcile run that
+// finds the same file/line/problem again. The timestamp is derived rather than
+// hard-coded because markDebtResolved stamps its resolution with the wall clock,
+// so a literal date would silently stop being "later" and the test would assert
+// nothing.
+func redetect(t *testing.T, dir string, rec localdebt.Record) {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var latest time.Time
+	for _, r := range recs {
+		if ts, err := time.Parse(time.RFC3339, r.Timestamp); err == nil && ts.After(latest) {
+			latest = ts
+		}
+	}
+	next := latest.Add(time.Hour).UTC().Format(time.RFC3339)
+
+	out := rec
+	out.Status = ""
+	out.ResolvedAt = ""
+	out.RunID = next + "-redetect"
+	out.Timestamp = next
+	require.NoError(t, localdebt.Append(dir, out))
+}
+
+// AC3(b): a resolved id re-detected at the same file/line/problem is a
+// REGRESSION (or a fix that never landed) — the case most worth surfacing — so
+// it returns to the open backlog.
+func TestDebtResolve_ResolvedThenRegressedReopens(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.NotContains(t, list, "internal/x/a.go", "the resolution closes it first")
+
+	// A later reconcile re-detects the identical finding.
+	redetect(t, dir, rec)
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "internal/x/a.go", "a regressed resolved id returns to the open backlog")
+}
+
+// AC3(a): wontfix is the mirror image — a stable id at a stable location is
+// exactly what makes permanent suppression work, so re-detection changes nothing.
+func TestDebtResolve_WontfixThenRegressedStaysClosed(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	redetect(t, dir, rec)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(list), "no items",
+		"a dismissed finding must stay dismissed when it is re-detected")
+}
+
+// AC3(c): "not now" is not "never" — a deferred id re-surfaces on re-detection.
+// The writer is `atcr debt add --status deferred` (see the doc.go sweep note).
+func TestDebtResolve_DeferredThenRegressedResurfaces(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a"
+	deferred.Timestamp = "2026-07-02T10:00:00Z"
+	deferred.Status = "deferred"
+	dir := writeDebtStore(t, rec, deferred)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(list), "no items", "a deferred item is out of the backlog while it stands")
+
+	redetect(t, dir, rec)
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "internal/x/a.go", "a re-detected deferred id re-surfaces")
+}
+
+// The already-closed guard must test the FOLDED effective status, not the mere
+// presence of a terminal record somewhere in history. Scanning all history would
+// refuse to close a regressed id a second time — permanently, since a resolution
+// record for it always exists.
+func TestDebtResolve_CanReResolveAfterARegression(t *testing.T) {
+	// Seeded with fixed past timestamps rather than driven through two `--resolve`
+	// calls: markDebtResolved stamps the wall clock, so two resolutions in one test
+	// share a timestamp and leave no room for a regression to fall between them.
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	resolved := rec
+	resolved.RunID = "2026-07-02T10:00:00Z-a-resolved"
+	resolved.Timestamp = resolved.RunID
+	resolved.Status = "resolved"
+	regressed := rec
+	regressed.RunID = "2026-07-03T10:00:00Z-a"
+	regressed.Timestamp = regressed.RunID
+	dir := writeDebtStore(t, rec, resolved, regressed)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, list, "internal/x/a.go", "the regression re-opened the id")
+
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.NotContains(t, strings.ToLower(out), "already closed",
+		"the regression re-opened the id, so it is closeable again")
+	assert.Contains(t, strings.ToLower(out), "marked")
+
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before)+1, "a second resolution record is appended")
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(list), "no items")
+}
+
+// An item filed as deferred through `atcr debt add` is the one live localdebt
+// writer of that status (T3 Step 1 sweep), so its re-surfacing is asserted
+// end-to-end through the command surface rather than only at the fold.
+func TestDebtNamespace_AddedDeferredItemResurfacesOnRedetection(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "deferred",
+		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "correctness")
+	require.NoError(t, err)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(list), "no items")
+
+	filed := readDebtStore(t, dir)
+	require.Len(t, filed, 1)
+	redetect(t, dir, filed[0])
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "a.go", "the deferred item re-surfaces when it is detected again")
 }

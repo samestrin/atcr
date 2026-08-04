@@ -314,6 +314,15 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // set also collapses in-run duplicates (two findings that hash to one id write
 // once). A dedup-read failure fails OPEN toward append (log + treat store as
 // empty) rather than silently dropping the whole run's backlog.
+//
+// The seed is SCOPED, not the whole store: only ids whose effective (folded)
+// record suppresses (wontfix) or is still open are seeded. A re-detected
+// resolved/deferred id is therefore appended as a fresh open record, and
+// localdebt.FoldRecords — which is recency-aware — returns it to the open
+// backlog. This is the write half of one coupled decision; the read half is
+// FoldRecords' precedence rule, and its doc comment carries the same warning.
+// Seeding every id instead would make a regression never re-append and silently
+// restore permanent closure with both sides' tests still green.
 func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, diag io.Writer) {
 	if noLocalDebt {
 		return
@@ -330,10 +339,17 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 		// run's findings from the backlog. The error is already path-scrubbed by
 		// ReadAll (basePathErr). Because this also loses the set of previously
 		// dismissed (wontfix) ids, warn loudly that those dismissals may resurface.
+		// Only wontfix is at risk — a resolved/deferred id is re-appended by design
+		// now, so the warning names the narrower set the seed actually protects.
 		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; previously dismissed/wontfix findings may be re-surfaced: %v\n", err)
 	} else {
-		for _, r := range existing {
-			seen[r.ID] = true
+		// Fold FIRST, then seed from the effective record. Seeding per-record would
+		// mark every id ever written, including the resolved/deferred ones that must
+		// re-open on re-detection.
+		for _, r := range localdebt.FoldRecords(existing) {
+			if localdebt.IsSuppressingStatus(r.Status) || !localdebt.IsClosedStatus(r.Status) {
+				seen[r.ID] = true
+			}
 		}
 	}
 

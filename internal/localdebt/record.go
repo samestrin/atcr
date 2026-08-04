@@ -197,8 +197,12 @@ func (r Record) EffectiveOrigin() string {
 	return OriginReview
 }
 
-// IsClosedStatus reports whether a record's status takes an item out of the open
-// backlog. Both resolved and wontfix/deferred terminal statuses are closed.
+// IsClosedStatus reports whether a record CARRIES a terminal status marker:
+// resolved, deferred, or wontfix. It classifies the record, not the id — a
+// terminal record does not mean the finding is closed forever, because a later
+// re-detection can supersede it (see IsSuppressingStatus and FoldRecords). Ask
+// this question of the record you are looking at; ask whether an ITEM is closed
+// of the record FoldRecords selected for its id.
 func IsClosedStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "resolved", "deferred", "wontfix":
@@ -206,6 +210,31 @@ func IsClosedStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// IsSuppressingStatus reports whether a terminal status SURVIVES a later
+// re-detection of the same id. Only wontfix does.
+//
+// It is deliberately separate from IsClosedStatus because the two answer
+// different questions, and conflating them is the defect this predicate exists
+// to fix. Closed classifies a record as terminal — the fold, the quality signal,
+// and the resolve guard all legitimately need that. Suppressing decides whether
+// that terminal state outlives a re-detection, and the answer differs by status
+// because the identity function decides it:
+//
+//	FindingID = SHA-256(file \x00 line \x00 problem)[:8] — LINE is part of the id.
+//
+// A genuine fix shifts surrounding lines, so the id changes and the finding
+// returns as a fresh item regardless of any suppression rule. The only case a
+// terminal `resolved` actually suppresses is same file, same line, same problem
+// text — which after a real fix means a REGRESSION, or a fix that never landed.
+// That is precisely the case most worth surfacing, so `resolved` must not
+// suppress. `wontfix` is the mirror image: a false positive is stable at its
+// location with stable text, so its id is stable and permanent suppression is
+// the entire point of the flag (Epic 24.0). `deferred` means "not now", which is
+// not "never".
+func IsSuppressingStatus(status string) bool {
+	return strings.ToLower(strings.TrimSpace(status)) == "wontfix"
 }
 
 // ClosedStatusRank orders terminal statuses so a deterministic effective status can

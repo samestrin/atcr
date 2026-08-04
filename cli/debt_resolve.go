@@ -127,11 +127,12 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	return renderResolveList(cmd.OutOrStdout(), open)
 }
 
-// isClosedStatus reports whether a record's status takes an item out of the open
-// backlog. The reconcile hook writes records with an empty status (open); a
+// isClosedStatus reports whether a record CARRIES a terminal status marker. The
+// reconcile hook writes records with an empty status (open); a
 // resolution/deferral/dismissal record carries an explicit terminal status.
-// wontfix (Epic 24.0) folds a finding out exactly like resolved — it marks a
-// false-positive/accepted pattern that agents must stop re-surfacing.
+// Applied to the record FoldRecords selected for an id, it answers whether the
+// ITEM is currently closed — which is not the same as closed forever, since only
+// wontfix survives a re-detection (localdebt.IsSuppressingStatus).
 func isClosedStatus(status string) bool {
 	return localdebt.IsClosedStatus(status)
 }
@@ -146,14 +147,23 @@ func higherClosedStatus(current, candidate string) string {
 
 // selectOpenDebt folds the append-only record stream by id into the open backlog.
 // An id is open unless its effective record carries a terminal status; the displayed
-// record is the effective open occurrence FoldRecords keeps (the LAST open record for
-// the id). It reuses localdebt.FoldRecords so this resolve list, Compact, and
-// AggregateQualitySignal share ONE precedence rule — a finding re-raised across runs
-// under the same id can no longer rank/filter on the first occurrence here while the
-// quality signal aggregates the last. Records whose effective occurrence has no File
-// are skipped (nothing to display/act on). Results are sorted severity DESC then ts
-// ASC (oldest first) and capped at max — the deterministic selection rule the skill
-// route documents.
+// record is the effective occurrence FoldRecords keeps. It reuses
+// localdebt.FoldRecords so this resolve list, Compact, and AggregateQualitySignal
+// share ONE precedence rule — a finding re-raised across runs under the same id can
+// no longer rank/filter on the first occurrence here while the quality signal
+// aggregates the last.
+//
+// Closure is NOT permanent, and this function needs no special case to express
+// that: FoldRecords is recency-aware, so a re-detection appended after a
+// `resolved` or `deferred` record IS the effective record and passes the filter
+// below as an ordinary open item. Only `wontfix` survives re-detection, because
+// only it suppresses. The behavior therefore lives entirely in the fold, and the
+// coupled write-side half is persistLocalDebt's dedup seed — without it no
+// re-detection is ever appended and this filter has nothing new to admit.
+//
+// Records whose effective occurrence has no File are skipped (nothing to
+// display/act on). Results are sorted severity DESC then ts ASC (oldest first) and
+// capped at max — the deterministic selection rule the skill route documents.
 func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []localdebt.Record {
 	folded := localdebt.FoldRecords(recs)
 	open := make([]localdebt.Record, 0, len(folded))
@@ -258,23 +268,33 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}
 
+	// The already-closed guard tests the FOLDED effective status, not the presence
+	// of a terminal record somewhere in history. Scanning all history would refuse
+	// to close a regressed id a second time — permanently, since a resolution
+	// record for it always exists — so a finding that came back could never be
+	// closed again.
+	var alreadyClosed bool
+	var closedStatus string
+	for _, f := range localdebt.FoldRecords(recs) {
+		if f.ID == id && isClosedStatus(f.Status) {
+			alreadyClosed = true
+			// Divergent terminal records can coexist for one id (the no-lock TD-004
+			// window below); FoldRecords already resolves them by precedence rather
+			// than shard read order, so the reported status is deterministic —
+			// wontfix outranks resolved/deferred.
+			closedStatus = higherClosedStatus(closedStatus, f.Status)
+		}
+	}
+
 	var orig *localdebt.Record
 	var reviewers []string
 	seenReviewer := make(map[string]bool)
 	var model string
-	var alreadyClosed bool
-	var closedStatus string
 	for i := range recs {
 		if recs[i].ID != id {
 			continue
 		}
 		if isClosedStatus(recs[i].Status) {
-			alreadyClosed = true
-			// Divergent terminal records can coexist for one id (the no-lock TD-004
-			// window below): pick the reported status by precedence, not shard read
-			// order, so the effective status is deterministic — wontfix outranks
-			// resolved/deferred.
-			closedStatus = higherClosedStatus(closedStatus, recs[i].Status)
 			continue
 		}
 		if orig == nil && recs[i].File != "" {

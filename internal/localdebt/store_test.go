@@ -832,3 +832,115 @@ func TestCompact_SweepsStaleTempFiles(t *testing.T) {
 	_, err := os.Stat(keepFile)
 	assert.NoError(t, err, "non-matching file must survive the sweep")
 }
+
+// --- Plan 35.13 T3: FoldRecords is recency-aware, wontfix is unconditional ---
+
+// foldRec builds a bare record for the fold tests: only id, timestamp, and
+// status matter to the precedence rule.
+func foldRec(id, ts, status string) Record {
+	return Record{SchemaVersion: SchemaVersion, ID: id, RunID: ts + "-r", Timestamp: ts,
+		File: "a.go", Line: 1, Problem: "p", Status: status}
+}
+
+func TestFoldRecords_RecencyByStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         []Record
+		wantStatus string
+		wantTS     string
+	}{
+		{
+			name:       "open then resolved folds to the resolution",
+			in:         []Record{foldRec("a", "2026-07-01T00:00:00Z", ""), foldRec("a", "2026-07-02T00:00:00Z", "resolved")},
+			wantStatus: "resolved", wantTS: "2026-07-02T00:00:00Z",
+		},
+		{
+			name:       "resolved then re-detected folds back to the open regression",
+			in:         []Record{foldRec("a", "2026-07-01T00:00:00Z", ""), foldRec("a", "2026-07-02T00:00:00Z", "resolved"), foldRec("a", "2026-07-03T00:00:00Z", "")},
+			wantStatus: "", wantTS: "2026-07-03T00:00:00Z",
+		},
+		{
+			name:       "deferred then re-detected re-surfaces",
+			in:         []Record{foldRec("a", "2026-07-01T00:00:00Z", ""), foldRec("a", "2026-07-02T00:00:00Z", "deferred"), foldRec("a", "2026-07-03T00:00:00Z", "")},
+			wantStatus: "", wantTS: "2026-07-03T00:00:00Z",
+		},
+		{
+			name:       "wontfix survives a later re-detection unconditionally",
+			in:         []Record{foldRec("a", "2026-07-01T00:00:00Z", ""), foldRec("a", "2026-07-02T00:00:00Z", "wontfix"), foldRec("a", "2026-07-03T00:00:00Z", "")},
+			wantStatus: "wontfix", wantTS: "2026-07-02T00:00:00Z",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FoldRecords(tc.in)
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.wantStatus, got[0].Status)
+			assert.Equal(t, tc.wantTS, got[0].Timestamp)
+		})
+	}
+}
+
+// A resolution appended in the same second as the finding must still close it:
+// at an equal timestamp the terminal record outranks the open one.
+func TestFoldRecords_EqualTimestampTerminalWins(t *testing.T) {
+	got := FoldRecords([]Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		foldRec("a", "2026-07-01T00:00:00Z", "resolved"),
+	})
+	require.Len(t, got, 1)
+	assert.Equal(t, "resolved", got[0].Status)
+
+	// ...and read order must not flip it.
+	got = FoldRecords([]Record{
+		foldRec("a", "2026-07-01T00:00:00Z", "resolved"),
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+	})
+	require.Len(t, got, 1)
+	assert.Equal(t, "resolved", got[0].Status)
+}
+
+// Divergent terminal records for one id (the no-lock window) still resolve by
+// precedence, not read order — wontfix outranks resolved either way.
+func TestFoldRecords_DivergentTerminalsPreferWontfixEitherOrder(t *testing.T) {
+	for _, order := range [][]Record{
+		{foldRec("a", "2026-07-01T00:00:00Z", "resolved"), foldRec("a", "2026-07-02T00:00:00Z", "wontfix")},
+		{foldRec("a", "2026-07-01T00:00:00Z", "wontfix"), foldRec("a", "2026-07-02T00:00:00Z", "resolved")},
+	} {
+		got := FoldRecords(order)
+		require.Len(t, got, 1)
+		assert.Equal(t, "wontfix", got[0].Status, "wontfix wins regardless of append order")
+	}
+}
+
+// Compaction consumes FoldRecords, so a regressed id must compact to its
+// re-opened record and a wontfix id to its suppressing record.
+func TestCompact_KeepsTheReopenedRecordForARegressedID(t *testing.T) {
+	dir := t.TempDir()
+	regressed := []Record{
+		foldRec("a", "2026-07-01T00:00:00Z", ""),
+		foldRec("a", "2026-07-02T00:00:00Z", "resolved"),
+		foldRec("a", "2026-07-03T00:00:00Z", ""),
+	}
+	dismissed := []Record{
+		foldRec("b", "2026-07-01T00:00:00Z", ""),
+		foldRec("b", "2026-07-02T00:00:00Z", "wontfix"),
+		foldRec("b", "2026-07-03T00:00:00Z", ""),
+	}
+	for _, r := range append(regressed, dismissed...) {
+		require.NoError(t, Append(dir, r))
+	}
+
+	_, err := Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+
+	after, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	byID := map[string]Record{}
+	for _, r := range after {
+		byID[r.ID] = r
+	}
+	require.Len(t, after, 2, "one live record per id survives compaction")
+	assert.Equal(t, "", byID["a"].Status, "the regressed id compacts to its re-opened record")
+	assert.Equal(t, "2026-07-03T00:00:00Z", byID["a"].Timestamp)
+	assert.Equal(t, "wontfix", byID["b"].Status, "the dismissed id compacts to its suppressing record")
+}

@@ -253,3 +253,42 @@ func TestReadAll_SchemaV2RecordNoV3Keys(t *testing.T) {
 	assert.Equal(t, "", recs[0].FirstSeen, `a v2 record decodes with FirstSeen==""`)
 	assert.Empty(t, diag.String(), "a valid v2 record must not emit any diagnostic")
 }
+
+// --- Plan 35.13 T3: resolution semantics split by status --------------------
+
+// IsSuppressingStatus is the narrower of the two terminal predicates: it decides
+// whether a terminal state SURVIVES a later re-detection of the same id. Only
+// wontfix does — suppressing a false positive is the entire point of the flag,
+// and its id is stable because the finding stays at a stable location with
+// stable text.
+func TestIsSuppressingStatus_OnlyWontfix(t *testing.T) {
+	for _, s := range []string{"wontfix", "WONTFIX", "  wontfix  ", "WontFix"} {
+		assert.True(t, IsSuppressingStatus(s), "%q suppresses", s)
+	}
+	for _, s := range []string{"resolved", "deferred", "open", "", "   ", "bogus", "RESOLVED"} {
+		assert.False(t, IsSuppressingStatus(s), "%q does not suppress", s)
+	}
+}
+
+// Regression guard on the split itself: adding IsSuppressingStatus must not have
+// redefined IsClosedStatus. All three terminal statuses still classify as closed
+// — the fold, the quality signal, and the resolve guard all need "is this record
+// terminal?" independently of whether that state survives re-detection.
+func TestIsClosedStatus_UnchangedByTheSuppressionSplit(t *testing.T) {
+	for _, s := range []string{"resolved", "deferred", "wontfix", "RESOLVED", " deferred "} {
+		assert.True(t, IsClosedStatus(s), "%q is terminal", s)
+	}
+	for _, s := range []string{"open", "", "bogus"} {
+		assert.False(t, IsClosedStatus(s), "%q is not terminal", s)
+	}
+}
+
+// The rank order is unchanged: it still picks deterministically among DIVERGENT
+// terminal records, which is a different question from suppression.
+func TestClosedStatusRank_UnchangedByTheSuppressionSplit(t *testing.T) {
+	assert.Greater(t, ClosedStatusRank("wontfix"), ClosedStatusRank("resolved"))
+	assert.Greater(t, ClosedStatusRank("resolved"), ClosedStatusRank("deferred"))
+	assert.Greater(t, ClosedStatusRank("deferred"), ClosedStatusRank("bogus"))
+	assert.Equal(t, "wontfix", HigherClosedStatus("resolved", "wontfix"))
+	assert.Equal(t, "wontfix", HigherClosedStatus("wontfix", "resolved"))
+}

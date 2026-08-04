@@ -63,21 +63,55 @@
 //
 // # Resolution contract
 //
-// Resolution is currently terminal. A `resolved` or `deferred` status record for
-// an id causes selectOpenDebt to fold that id out of the open backlog permanently,
-// regardless of recency. Re-detecting the same file/line/problem later will not
-// re-open the item; the id is considered closed forever. This is the deliberate
-// v1 design (TD-004); a re-openable resolution mode that re-appends regressed
-// findings as fresh open records is deferred to a follow-up epic.
+// Resolution lifetime depends on the status, because the identity function
+// decides it. FindingID hashes file, line, and problem — LINE is part of the id
+// — so a genuine fix shifts surrounding lines, the id changes, and the finding
+// returns as a fresh item regardless of any suppression rule. The only case a
+// terminal record actually suppresses is same file, same line, same problem
+// text: after a real fix that means a regression, or a fix that never landed.
 //
-// The append side respects the same terminal design. persistLocalDebt seeds its
-// write-time dedup set from a full-history ReadAll that includes terminal resolution
-// records, so a resolved-then-regressed finding (same id) is not re-appended and does
-// not re-enter the open backlog. Re-opening on regression is therefore a single
-// coupled decision spanning both the selectOpenDebt read-side fold and the
-// persistLocalDebt dedup seeding — the read-side fold alone is unconditional and
-// irreversible, so changing only the append side would be a no-op in observable
-// behavior — and both are deferred together as a unit.
+//	Status     Lifetime                      Rationale
+//	--------   ---------------------------   ------------------------------------
+//	wontfix    Terminal, permanent           Suppression is the feature; a false
+//	                                         positive is stable at a stable
+//	                                         location, so its id is stable
+//	                                         (Epic 24.0).
+//	resolved   Re-opens on re-detection      Same id after a fix means a
+//	                                         regression — the thing most worth
+//	                                         surfacing, and what the blanket
+//	                                         terminal rule used to silence.
+//	deferred   Re-surfaces on re-detection   "Not now" is not "never".
+//
+// Two predicates express this. IsClosedStatus classifies a RECORD as terminal
+// (all three statuses); IsSuppressingStatus decides whether that terminal state
+// outlives a re-detection (wontfix only). FoldRecords implements the table: a
+// suppressing record wins unconditionally, otherwise the effective record is the
+// latest by timestamp, so a re-detection appended after a resolution is the
+// effective record and the id is open again.
+//
+// # Maintenance invariant (coupling)
+//
+// The read-side fold and the write-side dedup seed are ONE decision in two
+// places, and the fold is unconditional — so changing only the append side is a
+// no-op in observable behavior, and widening the seed back to every id in the
+// store silently restores permanent closure with both sides' tests still green.
+// persistLocalDebt (cli/reconcile.go) therefore folds before seeding and seeds
+// only ids whose effective record suppresses or is still open. Change one, change
+// the other.
+//
+// # Which paths write `deferred` (swept 2026-08-04, Plan 35.13 T3)
+//
+// Exactly one live writer: `atcr debt add --status deferred` (cli/debt_add.go),
+// which files a manual record with that status. It is new — T2 created it when it
+// rewired `add` onto this store. `atcr debt resolve` cannot write `deferred`
+// (resolveStatuses admits resolved|wontfix only), and persistLocalDebt writes an
+// empty status (open). The historical `deferred` writers lived in the
+// .planning/-scoped store — internal/tdmigrate's Item.Status and
+// internal/debt's aggregate classification — and both packages were deleted by
+// T2. Everything else matching "deferred" in this package and in cli/ is
+// read-side classification (IsClosedStatus, ClosedStatusRank, the dashboard's
+// status bucketing) or an enum table, not a writer. Recorded here so the next
+// reader does not repeat the search.
 //
 // # Call-site scope
 //

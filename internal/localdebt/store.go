@@ -343,6 +343,45 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // enforces (decodeRecord rejects empty-id records as malformed, and StampID
 // always yields a non-empty content hash): records sharing an empty ID would
 // collapse into a single fold group and silently lose all but one.
+//
+// # Precedence
+//
+// The rule is RECENCY, with one unconditional exception:
+//
+//  1. If any record for the id suppresses (wontfix — see IsSuppressingStatus),
+//     the effective record is chosen among the SUPPRESSING records alone, by
+//     ClosedStatusRank then latest timestamp. A dismissal is permanent, so no
+//     later re-detection can displace it.
+//  2. Otherwise the effective record is the latest by timestamp across open and
+//     non-suppressing-terminal records alike. An equal timestamp is broken by
+//     ClosedStatusRank (a terminal record outranks an open one, so a resolution
+//     appended in the same second as the finding still closes it), and a full
+//     tie by append order (last wins).
+//
+// Rule 2 is what makes a resolved-or-deferred id RE-OPEN when it is detected
+// again: the fresh open record is newer than the resolution, so it wins. That is
+// deliberate and is the point of the split — because line number is part of the
+// finding id, a re-detection at the same file/line/problem after a fix means a
+// regression, not a duplicate.
+//
+// # Timestamp comparison
+//
+// Timestamps are compared LEXICOGRAPHICALLY, never parsed. That is sound only
+// because every producer writes UTC RFC3339: reconcile records use
+// res.Summary.ReconciledAt (reconcile/reconcile.go, .UTC().Format(time.RFC3339))
+// and resolution/manual records use time.Now().UTC().Format(time.RFC3339)
+// (cli/debt_resolve.go, cli/debt_add.go). An offset-bearing value would break the
+// ordering — "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet sorts
+// after "2026-01-01T00:00:00Z" — so a writer that does not normalize to UTC is a
+// silent ordering bug. Normalize at the write site.
+//
+// # Maintenance invariant
+//
+// This read-side fold and cli/reconcile.go's persistLocalDebt write-side dedup
+// seeding are ONE decision in two places. The fold is unconditional, so widening
+// the dedup seed back to every id in the store would make a regressed finding
+// never re-append and silently restore the old permanent-closure behavior with
+// every test here still passing. Change one, change the other.
 func FoldRecords(recs []Record) []Record {
 	order := []string{}
 	seen := map[string]bool{}
@@ -360,34 +399,46 @@ func FoldRecords(recs []Record) []Record {
 	for _, id := range order {
 		group := byID[id]
 
-		var openRecs []Record
-		var termRecs []Record
+		// Rule 1: a suppressing record wins unconditionally. Among several, rank
+		// then recency decides — preserving the read-order independence divergent
+		// terminal records already relied on.
+		var suppressing []Record
 		for _, r := range group {
-			if IsClosedStatus(r.Status) {
-				termRecs = append(termRecs, r)
-			} else {
-				openRecs = append(openRecs, r)
+			if IsSuppressingStatus(r.Status) {
+				suppressing = append(suppressing, r)
 			}
 		}
+		if len(suppressing) > 0 {
+			folded = append(folded, bestByRankThenRecency(suppressing))
+			continue
+		}
 
-		if len(termRecs) > 0 {
-			best := termRecs[0]
-			for _, r := range termRecs[1:] {
-				if ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status) {
-					best = r
-				} else if ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status) {
-					if r.Timestamp >= best.Timestamp {
-						best = r
-					}
-				}
-			}
-			folded = append(folded, best)
-		} else if len(openRecs) > 0 {
-			best := openRecs[len(openRecs)-1]
-			folded = append(folded, best)
+		// Rule 2: recency across open and non-suppressing-terminal records alike,
+		// so a re-detection newer than a resolution re-opens the id.
+		if len(group) > 0 {
+			folded = append(folded, bestByRankThenRecency(group))
 		}
 	}
 	return folded
+}
+
+// bestByRankThenRecency picks the effective record from a non-empty fold group:
+// latest timestamp wins; an equal timestamp is broken by ClosedStatusRank so a
+// terminal record outranks an open one (rank 0), and a full tie by append order
+// (>= keeps the last).
+func bestByRankThenRecency(group []Record) Record {
+	best := group[0]
+	for _, r := range group[1:] {
+		switch {
+		case r.Timestamp > best.Timestamp:
+			best = r
+		case r.Timestamp == best.Timestamp && ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status):
+			best = r
+		case r.Timestamp == best.Timestamp && ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status):
+			best = r // full tie: append order, last wins
+		}
+	}
+	return best
 }
 
 // sweepStaleTemps removes compaction temp files (.<month>.jsonl.tmp-*) leaked by a
