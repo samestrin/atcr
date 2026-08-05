@@ -391,7 +391,7 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	} else {
 		b.WriteString("| Component | Unresolved |\n|-----------|------------|\n")
 		for _, c := range sum.ByComponent {
-			fmt.Fprintf(&b, "| %s | %d |\n", debtMarkdownCell(c.Component), c.Total)
+			fmt.Fprintf(&b, "| %s | %d |\n", debtMarkdownCell(red.Redact(c.Component)), c.Total)
 		}
 		b.WriteString("\n")
 	}
@@ -422,10 +422,16 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 		// copy the `atcr debt resolve --resolve <id>` argument out of. It is NOT
 		// passed through the redactor — an id is a content hash, and scrubbing it
 		// would break the join contract this table exists to serve.
+		//
+		// EVERY other free-text cell is redacted. The location is store content
+		// too: `debt add --file` takes whatever the caller types, and this file is
+		// routinely written to a published docs path, so scrubbing only Problem
+		// left the --help promise ("secret-shaped tokens in finding text are
+		// scrubbed") true of one column out of three.
 		b.WriteString("| ID | Severity | File | Est | Problem |\n|----|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
 			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s |\n",
-				debtMarkdownCell(debtIDCell(r.ID)), r.Severity, debtMarkdownCell(debtLocation(r)),
+				debtMarkdownCell(debtIDCell(r.ID)), r.Severity, debtMarkdownCell(red.Redact(debtLocation(r))),
 				r.EstMinutes, debtMarkdownCell(red.Redact(r.Problem)))
 		}
 	}
