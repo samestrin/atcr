@@ -278,6 +278,7 @@ func newDebtListCmd() *cobra.Command {
 	cmd.Flags().String("status", "", "filter by status (open|deferred|resolved|wontfix)")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
+	cmd.Flags().String("origin", "", "filter by origin (review|manual)")
 	cmd.Flags().String("sort", sortKeySeverity, "sort key: severity|age|est|file")
 	// Same flag name, type, and help string as `debt resolve --json`, so the two
 	// machine-readable surfaces read identically to a caller.
@@ -308,6 +309,10 @@ func validateDebtListFilters(cmd *cobra.Command) error {
 	if st := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status"))); st != "" && !debtListStatuses[st] {
 		return usageError(fmt.Errorf("invalid --status %q: expected open|deferred|resolved|wontfix", mustFlag(cmd, "status")))
 	}
+	if o := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "origin"))); o != "" &&
+		o != localdebt.OriginReview && o != localdebt.OriginManual {
+		return usageError(fmt.Errorf("invalid --origin %q: expected review|manual", mustFlag(cmd, "origin")))
+	}
 	return nil
 }
 
@@ -321,6 +326,7 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		Status:    mustFlag(cmd, "status"),
 		Category:  mustFlag(cmd, "category"),
 		Component: mustFlag(cmd, "component"),
+		Origin:    mustFlag(cmd, "origin"),
 	}, mustFlag(cmd, "sort"))
 	if err != nil {
 		return err
@@ -377,6 +383,7 @@ type debtFilter struct {
 	Status    string // exact (open|deferred|resolved|wontfix); "open" matches an empty status
 	Category  string // substring, case-insensitive
 	Component string // path-prefix match against the record's File
+	Origin    string // exact, case-insensitive (review|manual); matches the EFFECTIVE origin
 }
 
 // debtView is the projection filtering and sorting act on. A full
@@ -393,12 +400,14 @@ type debtView struct {
 	Line       int
 	EstMinutes int
 	Date       string // YYYY-MM-DD, the sort key's date component
+	Origin     string // EFFECTIVE origin (localdebt.EffectiveOrigin normalization)
 }
 
 func viewOfRecord(r localdebt.Record) debtView {
 	return debtView{
 		Severity: r.Severity, Status: r.Status, Category: r.Category,
 		File: r.File, Line: r.Line, EstMinutes: r.EstMinutes, Date: debtRecordDate(r),
+		Origin: r.EffectiveOrigin(),
 	}
 }
 
@@ -410,6 +419,7 @@ func viewOfSummary(s localdebt.Summary) debtView {
 	return debtView{
 		Severity: s.Severity, Status: s.Status, Category: s.Category,
 		File: s.File, Line: s.Line, EstMinutes: s.EstMinutes, Date: date,
+		Origin: s.EffectiveOrigin(),
 	}
 }
 
@@ -431,6 +441,12 @@ func (f debtFilter) matchView(r debtView) bool {
 		return false
 	}
 	if f.Category != "" && !strings.Contains(strings.ToLower(r.Category), strings.ToLower(f.Category)) {
+		return false
+	}
+	// The view already carries the EFFECTIVE origin (absent/unrecognized means
+	// review), so the filter compares against exactly what the ORIGIN column
+	// renders — a v1/v2 record matches --origin review without carrying the key.
+	if f.Origin != "" && r.Origin != strings.ToLower(strings.TrimSpace(f.Origin)) {
 		return false
 	}
 	if f.Component != "" {
@@ -575,12 +591,12 @@ func debtLess(key string) (func(a, b debtView) bool, error) {
 // free-text field cannot tear a row or misalign the tabwriter block.
 func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tSTATUS\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tSTATUS\tORIGIN\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
 		return err
 	}
 	for _, r := range recs {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			debtIDCell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), r.EstMinutes,
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			debtIDCell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), cell(r.EffectiveOrigin()), r.EstMinutes,
 			cell(debtLocation(r)), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
 			return err
 		}

@@ -283,7 +283,14 @@ func (r *Record) StampID() {
 // schema_version still reads 1 or 2 — an on-disk record matching no schema
 // version. EffectiveOrigin takes a value receiver and never mutates r.
 func (r Record) EffectiveOrigin() string {
-	switch o := strings.ToLower(strings.TrimSpace(r.Origin)); o {
+	return effectiveOrigin(r.Origin)
+}
+
+// effectiveOrigin is the single normalization behind Record.EffectiveOrigin and
+// Summary.EffectiveOrigin, so the full-record and summary projections can never
+// disagree on a record's provenance.
+func effectiveOrigin(origin string) string {
+	switch o := strings.ToLower(strings.TrimSpace(origin)); o {
 	case OriginReview, OriginManual:
 		return o
 	default:

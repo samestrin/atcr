@@ -37,7 +37,8 @@ type Summary struct {
 
 	// The selection fields `atcr debt list` and `atcr debt dashboard` filter and
 	// sort on: File and Line for the --component filter and sortDebt's location
-	// tiebreak, Category for --category, EstMinutes for --sort=est. They are the
+	// tiebreak, Category for --category, EstMinutes for --sort=est, Origin for
+	// --origin. They are the
 	// difference between selecting on summaries and reading every record in full,
 	// and they are still a fraction of a record: the bulk (problem, fix, evidence,
 	// justification, reviewers, source_report) stays unprojected.
@@ -49,6 +50,14 @@ type Summary struct {
 	Line       int
 	Category   string
 	EstMinutes int
+	Origin     string
+}
+
+// EffectiveOrigin reports the summary's provenance with Record.EffectiveOrigin's
+// exact normalization (absent or unrecognized means review), so `debt list`'s
+// summary-stage --origin filter agrees with the record-stage render.
+func (s Summary) EffectiveOrigin() string {
+	return effectiveOrigin(s.Origin)
 }
 
 // summaryLine is the on-the-wire decode target. Its JSON tags MUST stay identical
@@ -89,6 +98,7 @@ type summaryLine struct {
 	Category      string `json:"category"`
 	Line          int    `json:"line"`
 	EstMinutes    int    `json:"est_minutes"`
+	Origin        string `json:"origin"`
 
 	// Declared for type-check parity only; never read. See the doc block above. The
 	// nested block is a VALUE, not a pointer, so it stays inline and allocation-free
@@ -146,6 +156,7 @@ func decodeSummary(line []byte, path string, w io.Writer) (Summary, bool) {
 		Line:       s.Line,
 		Category:   s.Category,
 		EstMinutes: s.EstMinutes,
+		Origin:     s.Origin,
 	}, true
 }
 

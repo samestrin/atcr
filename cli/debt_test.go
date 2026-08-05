@@ -288,6 +288,8 @@ func TestDebtList_UnrecognizedFilterValuesAreUsageErrors(t *testing.T) {
 		{"severity", "hgih"},
 		{"status", "opne"},
 		{"status", "closed"},
+		{"origin", "bogus"},
+		{"origin", "mnual"},
 	} {
 		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
 			_, err := runDebt(t, "list", "--dir", dir, "--"+tc.flag, tc.value)
@@ -310,6 +312,8 @@ func TestDebtList_RecognizedFilterValuesStillPass(t *testing.T) {
 		{"status", "deferred"},
 		{"status", "resolved"},
 		{"status", "wontfix"},
+		{"origin", "review"},
+		{"origin", "MANUAL"},
 	} {
 		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
 			_, err := runDebt(t, "list", "--dir", dir, "--"+tc.flag, tc.value)
@@ -339,6 +343,8 @@ func TestDebtList_SummarySelectionMatchesRecordSelection(t *testing.T) {
 		{"by status", debtFilter{Status: "deferred"}, sortKeyAge},
 		{"by category", debtFilter{Category: "docs"}, sortKeyEst},
 		{"by component", debtFilter{Component: "internal/autofix"}, sortKeyFile},
+		{"by origin", debtFilter{Origin: "manual"}, sortKeySeverity},
+		{"by effective origin", debtFilter{Origin: "review"}, sortKeyAge},
 		{"sorted by est", debtFilter{}, sortKeyEst},
 		{"sorted by file", debtFilter{}, sortKeyFile},
 		{"sorted by age", debtFilter{}, sortKeyAge},
@@ -1020,4 +1026,51 @@ func TestDebtList_WontfixIDStaysDismissedAfterRedetection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, dash, "**Wontfix:** 1")
 	assert.Contains(t, dash, "**Open:** 0")
+}
+
+// manualSampleRecord is a distinct hand-filed item (OriginManual), so origin
+// tests don't collide on an id with the review-sourced samples.
+func manualSampleRecord() localdebt.Record {
+	r := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-14T10:00:00Z-manual",
+		Timestamp: "2026-06-14T10:00:00Z",
+		Severity:  "MEDIUM", File: "cmd/atcr/manual.go", Line: 7,
+		Problem: "hand-filed item", Fix: "n/a", Category: "hygiene",
+		Origin: localdebt.OriginManual,
+	}
+	r.StampID()
+	return r
+}
+
+// TestDebtList_OriginFilter pins the --origin filter (TD internal/localdebt/
+// record.go:194): a hand-filed item is distinguishable from review findings on
+// the EFFECTIVE origin — an origin-less (v1/v2) record matches --origin review.
+func TestDebtList_OriginFilter(t *testing.T) {
+	manual := manualSampleRecord()
+	dir := writeLocalDebt(t, append(debtSampleRecords(), manual)...)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--origin", "manual")
+	require.NoError(t, err)
+	assert.Contains(t, out, manual.ID, "the manual record matches --origin manual")
+	assert.NotContains(t, out, "cmd/atcr/autofix.go:248", "review findings are excluded from --origin manual")
+
+	out, err = runDebt(t, "list", "--dir", dir, "--origin", "review")
+	require.NoError(t, err)
+	assert.NotContains(t, out, manual.ID, "the manual record is excluded from --origin review")
+	assert.Contains(t, out, "cmd/atcr/autofix.go:248", "origin-less records match --origin review via the effective default")
+}
+
+// TestDebtList_RendersOriginColumn exposes provenance in the table (TD
+// internal/localdebt/record.go:194): until now Origin was write-only — a user
+// could not tell a hand-filed item from a review finding.
+func TestDebtList_RendersOriginColumn(t *testing.T) {
+	manual := manualSampleRecord()
+	dir := writeLocalDebt(t, append(debtSampleRecords(), manual)...)
+	out, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+
+	header, _, _ := strings.Cut(out, "\n")
+	assert.Contains(t, header, "ORIGIN", "the header carries an ORIGIN column")
+	assert.Contains(t, out, "manual", "a hand-filed item renders its manual origin")
+	assert.Contains(t, out, "review", "origin-less records render their effective review origin")
 }

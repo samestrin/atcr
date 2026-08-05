@@ -91,6 +91,7 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 	dir := t.TempDir()
 	rec := idRecord("2026-06-14T10:00:00Z-a", "projected")
 	rec.Status = "deferred"
+	rec.Origin = OriginManual
 	fileless := idRecord("2026-06-14T10:00:00Z-b", "no file")
 	fileless.File = ""
 	fileless.StampID()
@@ -110,9 +111,13 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 		Line:       rec.Line,
 		Category:   rec.Category,
 		EstMinutes: rec.EstMinutes,
+		Origin:     OriginManual,
 	}, sums[0])
 	assert.False(t, sums[1].HasFile, "an empty File is projected as HasFile false")
 	assert.Empty(t, sums[1].File, "and the path itself is empty, not a stale value")
+	assert.Equal(t, OriginManual, sums[0].EffectiveOrigin())
+	assert.Equal(t, OriginReview, sums[1].EffectiveOrigin(),
+		"Summary.EffectiveOrigin applies Record's normalization: absent means review")
 }
 
 // TD: `debt list` and `debt dashboard` read every record in full (ReadAll +
