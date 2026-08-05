@@ -1872,6 +1872,43 @@ func TestCompact_FailedRewriteZeroesTheResultAndLeavesNoDebris(t *testing.T) {
 	}
 }
 
+// TestCompact_UnderivableRunIDIsSkippedNotFatal pins the read path's own rule on the
+// one loop that broke it (TD internal/localdebt/store.go:1023). Compact's bucketing
+// loop treated a monthFromRunID failure as fatal, but decodeRecord validates only
+// that run_id is NON-EMPTY — so a single hand-edited or bit-flipped `run_id:"bogus"`
+// record decoded cleanly, folded normally, rendered in every view, and then aborted
+// EVERY compaction forever. Since compaction became automatic that silently and
+// permanently disabled the store's only growth bound, with PersistForReconcile
+// swallowing the failure into a best-effort diagnostic line.
+//
+// The rest of the read path skips such a record with a warning; compaction is where
+// corrupt data is cleaned up, so it does the same rather than refusing to run.
+func TestCompact_UnderivableRunIDIsSkippedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	good := detection("a real finding", "2026-06-01T00:00:00Z")
+	superseded := good
+	superseded.Timestamp = "2026-06-02T00:00:00Z"
+	bogus := detection("carries an underivable run_id", "2026-06-03T00:00:00Z")
+	bogus.RunID = "bogus"
+	bogus.StampID()
+	writeShard(t, dir, "2026-06", recordLine(t, good), recordLine(t, superseded), recordLine(t, bogus))
+
+	var diag bytes.Buffer
+	res, err := Compact(dir, ReadOpts{Writer: &diag})
+
+	require.NoError(t, err, "one corrupt run_id must not abort compaction")
+	assert.True(t, res.StoreFound)
+	assert.Positive(t, res.Dropped, "the compactable records must still fold")
+	assert.Contains(t, diag.String(), "bogus", "the dropped record's run_id must be named in a warning")
+
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	for _, r := range recs {
+		assert.NotEqual(t, "bogus", r.RunID, "a record that cannot be filed into a shard is cleaned up, not carried")
+	}
+	require.NotEmpty(t, recs, "the valid records survive")
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
