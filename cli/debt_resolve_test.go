@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -1049,6 +1050,31 @@ func TestHydrateOpenDebt_RetainsOnlySelectedIDsInPassOneOrder(t *testing.T) {
 // convention rather than surfacing an error for a repo that never reconciled.
 func TestHydrateOpenDebt_MissingStoreIsEmpty(t *testing.T) {
 	got, err := hydrateOpenDebt(t.TempDir()+"/nope", []string{"deadbeef"}, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TD (pass-2 shortfall): an id pass 1 selected can vanish before pass 2 re-reads
+// the store — a concurrent `debt compact` renaming shards makes ReadRecords hit
+// os.IsNotExist and continue. Dropping it silently makes a short WORKLIST read
+// exactly like a short BACKLOG, with exit code 0 either way. Pass 2 must say on
+// stderr how many selected ids it could not hydrate.
+func TestHydrateOpenDebt_NotesSelectedIDsNotFoundOnReRead(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	dir := writeDebtStore(t, rec)
+
+	var stderr bytes.Buffer
+	got, err := hydrateOpenDebt(dir, []string{rec.ID, "deadbeef-gone"},
+		localdebt.ReadOpts{Writer: &stderr})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the surviving id is still hydrated")
+	assert.Equal(t, rec.ID, got[0].ID)
+	assert.Contains(t, stderr.String(), "1 selected item(s)",
+		"the note names how many selected ids were not hydrated")
+	assert.Contains(t, stderr.String(), "note:")
+
+	// A nil Writer must not panic: the note is best-effort, never a failure.
+	got, err = hydrateOpenDebt(dir, []string{"deadbeef-gone"}, localdebt.ReadOpts{})
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
