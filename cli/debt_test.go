@@ -352,6 +352,49 @@ func TestDebtFilter_ComponentBoundary(t *testing.T) {
 	assert.Equal(t, "cmd/atcr/review.go", got[0].File)
 }
 
+// The component match is normalized on BOTH sides: a trailing slash (the shape
+// shell tab-completion produces) or a leading ./ must match the plain spelling,
+// and a record file carrying a leading ./ must match a plain filter. Without
+// normalization "internal/" matches nothing with exit code 0 — indistinguishable
+// from an empty backlog. The boundary semantics are preserved: normalization
+// must not turn "cmd" into a match for "cmder/...".
+func TestDebtFilter_ComponentNormalized(t *testing.T) {
+	recs := []localdebt.Record{
+		{Severity: "HIGH", File: "internal/foo.go", Line: 1, Problem: "p"},
+		{Severity: "HIGH", File: "./internal/dot.go", Line: 2, Problem: "p"},
+		{Severity: "HIGH", File: "cmder/other.go", Line: 3, Problem: "p"},
+	}
+	for _, tc := range []struct {
+		name      string
+		component string
+		wantFiles []string
+	}{
+		{"plain", "internal", []string{"internal/foo.go", "./internal/dot.go"}},
+		{"trailing slash from tab-completion", "internal/", []string{"internal/foo.go", "./internal/dot.go"}},
+		{"leading dot slash", "./internal", []string{"internal/foo.go", "./internal/dot.go"}},
+		{"boundary preserved", "cmd", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := applyDebtFilter(recs, debtFilter{Component: tc.component})
+			var files []string
+			for _, r := range got {
+				files = append(files, r.File)
+			}
+			assert.Equal(t, tc.wantFiles, files)
+		})
+	}
+}
+
+// End-to-end: `debt list --component "internal/"` (the tab-completion shape)
+// returns the internal/... rows rather than an empty table with exit code 0.
+func TestDebtList_ComponentFilterNormalizesTrailingSlash(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out, err := runDebt(t, "list", "--dir", dir, "--component", "internal/")
+	require.NoError(t, err)
+	assert.Contains(t, out, "internal/autofix/apply.go:108")
+	assert.NotContains(t, out, "cmd/atcr")
+}
+
 func TestApplyDebtFilter_ReturnsNonNilEmpty(t *testing.T) {
 	got := applyDebtFilter(nil, debtFilter{Severity: "HIGH"})
 	assert.NotNil(t, got)
