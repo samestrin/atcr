@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -401,6 +402,19 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// count between runs is the signal. Logged (not printed) so the --axi
 	// stdout contract is untouched.
 	log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+	// Persist the resumed reconcile's findings to the local TD store, mirroring
+	// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
+	// cli/resume.go:382): this auto-reconcile used to persist nothing, so a
+	// resumed review's findings never reached the backlog through `atcr resume`
+	// at all — the resume-time root backfill's stated payoff was only reachable
+	// via a separate `atcr reconcile`. No suppression flag exists on this
+	// command (the same asymmetry as the MCP handler); AutoCompact stays zero.
+	// Best-effort: persistence never fails the resume or changes its exit code.
+	if root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
+		ReviewDir: dir, AllowCWD: true, Diag: cmd.ErrOrStderr(),
+	}); ok {
+		localdebt.PersistForReconcile(dir, rec, localdebt.PersistOpts{Root: root, Diag: cmd.ErrOrStderr()})
+	}
 	// Shared by the AllComplete and pending paths; gated under --axi (read from the
 	// same context value) so both resume routes keep stdout payload-only (AC 01-04).
 	if !axiFromContext(ctx) {

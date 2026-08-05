@@ -261,22 +261,28 @@
 // # Call-site scope
 //
 // TD-002 is CLOSED (Plan 35.13 T6). The reconcile persistence hook is
-// PersistForReconcile in this package, and BOTH entry points call it: the CLI
-// `atcr reconcile` path (cli/reconcile.go, via a thin resolve-and-delegate
-// persistLocalDebt wrapper) and the MCP `atcr_reconcile` handler
-// (internal/mcp/handlers.go, immediately after the scorecard emit). One
-// implementation is the contract, not an implementation detail — a second copy in
-// internal/mcp would satisfy parity on the day it shipped and then freeze at that
-// day's dedup, streaming, and compaction behavior while this one moved on.
-// localdebt is therefore no longer a CLI-side ledger.
+// PersistForReconcile in this package, and ALL FOUR reconcile call sites use
+// it: the CLI `atcr reconcile` path (cli/reconcile.go, via a thin
+// resolve-and-delegate persistLocalDebt wrapper), the MCP `atcr_reconcile`
+// handler (internal/mcp/handlers.go, immediately after the scorecard emit),
+// the one-shot `atcr review --fail-on/--verify/--debate/--auto-fix` inline
+// reconcile (cli/review.go), and `atcr resume`'s auto-reconcile
+// (cli/resume.go) — the latter two added when their "persists nothing" gap was
+// closed, since the one-shot review is the primary CI invocation. One
+// implementation is the contract, not an implementation detail — a second copy
+// in internal/mcp would satisfy parity on the day it shipped and then freeze
+// at that day's dedup, streaming, and compaction behavior while this one moved
+// on. localdebt is therefore no longer a CLI-side ledger.
 //
-// Shared code does NOT by itself make the two record sets identical, and claiming
-// otherwise would be the more dangerous error. The MCP handler calls RunReconcile
-// with an empty root, so finding-path validation is a no-op there and no finding is
-// PathWarning-stamped — which makes the bridge's path-warned exclusion unreachable
-// on that path. What the shared bridge guarantees is that record construction,
-// dedup seeding, and compaction cannot drift; the INPUT finding sets can still
-// differ where the callers differ upstream (TD-019).
+// Shared code does NOT by itself make the record sets identical, and claiming
+// otherwise would be the more dangerous error. Every entry point now resolves
+// the store root BEFORE RunReconcile and validates finding paths against it
+// (TD-019/TD-024), so the bridge's path-warned exclusion is reachable
+// everywhere — but the resolved roots themselves can still legitimately differ
+// across entry points (the CLI has a CWD tier and a --repo flag; the MCP path
+// trusts only repo > manifest), and the INPUT finding sets can differ where
+// the callers differ upstream. What the shared bridge guarantees is that
+// record construction, dedup seeding, and compaction cannot drift.
 //
 // The store's readers have since moved: `atcr debt list`/`add`/`dashboard`/
 // `resolve` resolve the store through debtStoreDir (cli/debt.go), which walks up
