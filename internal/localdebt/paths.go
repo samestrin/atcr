@@ -25,6 +25,39 @@ func DefaultDir(root string) string {
 	return filepath.Join(root, debtSubdir)
 }
 
+// ensureStoreDir creates the store directory without ever creating the REPO ROOT it
+// sits under, and reports an error when that root is gone.
+//
+// os.MkdirAll(dir) — what the write path used to call from both withLock and
+// appendLocked — creates every missing parent, including the root itself. Root
+// validation happens once per invocation and returns a string; everything after it
+// is path-based, so a root that passed validation and was then deleted, renamed, or
+// unmounted was silently RESURRECTED as an empty tree at that absolute path, with the
+// marker check never re-run (TD internal/localdebt/root.go:123). Recreating a
+// directory the operator removed is the opposite of what a stale-root stop signal is
+// for.
+//
+// The container (<root>/.atcr) is still created on demand — that is ordinary
+// first-write behavior — but only under a parent that already exists, so the chain
+// stops exactly one level below the root.
+func ensureStoreDir(dir string) error {
+	if info, err := os.Stat(dir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("localdebt store path %s is not a directory", filepath.Base(dir))
+		}
+		return nil
+	}
+	container := filepath.Dir(dir)    // <root>/.atcr
+	anchor := filepath.Dir(container) // <root>, or "." for the CWD-relative default
+	if info, err := os.Stat(anchor); err != nil || !info.IsDir() {
+		return fmt.Errorf("localdebt store root %s does not exist; refusing to recreate it", filepath.Base(anchor))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return basePathErr(err)
+	}
+	return nil
+}
+
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix is
 // an RFC3339 timestamp (e.g. "2026-06-14T10:00:00Z-abc123" -> "2026-06"). The month
 // drives monthly JSONL rotation, so all records from one run share a file. A run_id

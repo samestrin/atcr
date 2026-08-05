@@ -101,8 +101,8 @@ func appendLocked(dir string, rec Record) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating localdebt dir: %w", basePathErr(err))
+	if err := ensureStoreDir(dir); err != nil {
+		return fmt.Errorf("creating localdebt dir: %w", err)
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {

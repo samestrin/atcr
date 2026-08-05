@@ -3,6 +3,7 @@ package localdebt
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -236,6 +237,23 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 	// a fully-deduped, fully-excluded, or fully-failed reconcile pays ZERO extra
 	// I/O — not even the stat walk.
 	if len(batch) == 0 {
+		return
+	}
+	// Re-validate the ROOT immediately before the write. ResolveStoreRoot stats it
+	// once, at resolve time, and returns a string; a reconcile can run for minutes
+	// afterwards, and everything in between is path-based. A root deleted, renamed,
+	// or unmounted in that window used to be recreated as an empty tree by the write
+	// path's MkdirAll chain (TD internal/localdebt/root.go:123).
+	//
+	// The gate is EXISTENCE, not the repo-root MARKER, and deliberately so: the CLI's
+	// explicit tier admits a markerless root by design (an operator-named directory
+	// that will hold .atcr), and the CWD tier's no-marker fallback is the literal "."
+	// — re-checking the marker here would refuse both. What the marker check protects
+	// against is a write landing somewhere nobody validated, and that is closed
+	// structurally instead: ensureStoreDir never creates the root itself, so a
+	// vanished root is an error rather than a resurrection at either layer.
+	if info, err := os.Stat(opts.Root); err != nil || !info.IsDir() {
+		_, _ = fmt.Fprintf(diag, "localdebt: repo root %q no longer exists; skipping local debt persistence\n", filepath.Base(opts.Root))
 		return
 	}
 	// One lock cycle for the whole run (TD internal/localdebt/reconcile.go:204):
