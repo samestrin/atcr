@@ -737,7 +737,7 @@ func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	out := diag.String()
 	assert.Contains(t, strings.ToLower(out), "dismissed", "dedup-read failure warning must mention dismissed findings")
@@ -771,7 +771,7 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "a wontfix-marked finding must not be re-appended on re-detection")
@@ -804,7 +804,7 @@ func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
 	}
 
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "only the in-scope, non-refuted finding persists")
@@ -1433,7 +1433,7 @@ func TestPersistLocalDebt_ReappendsARegressedResolvedID(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 3, "the regression is appended as a fresh open record")
@@ -1473,7 +1473,7 @@ func TestPersistLocalDebt_StillSuppressesAWontfixID(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 2, "a dismissed finding is never re-appended")
@@ -1504,7 +1504,7 @@ func TestPersistLocalDebt_ReappendsADeferredID(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	require.Len(t, readLocalDebtRecords(t), 3, "a deferred id re-surfaces, so re-detection appends")
 }
@@ -1530,7 +1530,7 @@ func TestPersistLocalDebt_StillDedupsAnOpenID(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	require.Len(t, readLocalDebtRecords(t), 1, "an unchanged open finding is not duplicated per run")
 }
@@ -1606,7 +1606,7 @@ func TestPersistLocalDebt_StreamingSeedKeepsSuppressingScope(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	byID := map[string]int{}
@@ -1630,9 +1630,9 @@ func TestPersistLocalDebt_DedupParityWithStreamingSeed(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 	res.Summary.ReconciledAt = "2026-07-15T00:00:00Z"
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	require.Len(t, readLocalDebtRecords(t), 1,
 		"the streaming seed dedups across runs identically to the ReadAll seed")
@@ -1668,7 +1668,7 @@ func TestPersistLocalDebt_FailsOpenOnUnreadableStore(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	assert.Contains(t, diag.String(), "dedup read failed, appending without dedup",
 		"the fail-open warning text is unchanged")
@@ -1721,7 +1721,7 @@ func TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-08-01T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	require.NoError(t, os.Chmod(blocked, 0o600))
 	recs := readLocalDebtRecords(t)
@@ -1774,7 +1774,7 @@ func TestPersistLocalDebt_AutoCompactsAtThreshold(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	assert.Less(t, len(recs), 5, "compaction ran: the superseded churn was dropped")
@@ -1821,7 +1821,7 @@ func TestPersistLocalDebt_AutoCompactFailureIsNonFatal(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	assert.NotPanics(t, func() { persistLocalDebt("review", "", res, false, &diag) },
+	assert.NotPanics(t, func() { persistLocalDebt("review", res, ".", true, false, &diag) },
 		"a compaction failure is logged, never fatal")
 
 	assert.Contains(t, diag.String(), "localdebt: automatic compaction failed",
@@ -1865,7 +1865,7 @@ func TestPersistLocalDebt_NoAppendSkipsAutoCompact(t *testing.T) {
 		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", "", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
 	require.NoError(t, err)
@@ -1900,10 +1900,11 @@ func writeReviewManifestRoot(t *testing.T, id, root string) {
 // TestReconcile_PersistsToManifestRootNotCWD is the CLI half of AC7(c): reconciling
 // from a directory that is not the reviewed repo writes to the root the manifest
 // recorded, not to the CWD. Before the manifest tier existed, the CWD was the only
-// answer the CLI had.
+// answer the CLI had. Since TD-024, finding-path validation runs against that same
+// resolved root, so the finding's file must exist under it — the reviewed repo —
+// not under the CWD the operator happens to stand in.
 func TestReconcile_PersistsToManifestRootNotCWD(t *testing.T) {
 	isolate(t)
-	touchFiles(t, "a.go")
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
 	})
@@ -1911,6 +1912,7 @@ func TestReconcile_PersistsToManifestRootNotCWD(t *testing.T) {
 	// A separate, valid repo root: the recorded review root, distinct from the CWD.
 	manifestRoot := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(manifestRoot, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestRoot, "a.go"), []byte("package a\n"), 0o644))
 	writeReviewManifestRoot(t, "r", manifestRoot)
 
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
@@ -1994,4 +1996,31 @@ func TestReconcile_NoManifestRootUsesCWD(t *testing.T) {
 
 	assert.Len(t, readLocalDebtRecords(t), 1,
 		"with nothing recorded, the CWD convention still applies — a missing claim is not a stale one")
+}
+
+// TestReconcile_ValidatesAgainstResolvedStoreRoot pins the TD-024 fix: finding-path
+// validation runs against the SAME root the findings persist under, resolved
+// BEFORE RunReconcile. Before the fix, validation used the --repo value (default
+// ".", the CWD): reconciling from a directory that is not the reviewed repo
+// PathWarning-stamped every finding whose file lived only under the manifest's
+// recorded root, and the bridge dropped all of them — the correctly-resolved
+// store received ZERO records.
+func TestReconcile_ValidatesAgainstResolvedStoreRoot(t *testing.T) {
+	isolate(t)
+	// a.go exists ONLY under the manifest's recorded root, never under the CWD.
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	manifestRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(manifestRoot, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestRoot, "a.go"), []byte("package a\n"), 0o644))
+	writeReviewManifestRoot(t, "r", manifestRoot)
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir(manifestRoot), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1,
+		"a finding whose path exists under the resolved root must validate and persist, even though it is absent under the CWD")
+	assert.Equal(t, "a.go", recs[0].File)
 }

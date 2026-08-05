@@ -348,15 +348,36 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, fmt.Errorf("no agent results found in review %s; run atcr_review first", id)
 	}
 
+	// Resolve the store root BEFORE RunReconcile (TD-019): finding-path validation
+	// runs against the SAME root the findings persist under. When the root
+	// resolves (explicit repo or the review manifest's recorded root — never the
+	// server's CWD, which is whatever launched it and is exactly as CWD-fragile as
+	// e.root's hardcoded "."), a finding whose path does not exist in the reviewed
+	// repo is PathWarning-stamped and the persistence bridge drops it — closing
+	// the hole where an MCP store accumulated findings against paths a CLI run
+	// would have rejected as hallucinated. When the root does NOT resolve,
+	// validation stays a no-op (Root: "") and persistence is skipped — the
+	// pre-existing pair, never a fall-through to a guessed tree.
+	storeRoot, storeOK := localdebt.ResolveStoreRoot(localdebt.RootOpts{
+		Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, Diag: e.diagWriter(),
+	})
+	validationRoot := ""
+	if storeOK && storeRoot != "" {
+		validationRoot = storeRoot
+	}
+
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
-		// Empty root: the MCP server operates on a review-artifact dir, not a
-		// checked-out source tree, so it must NOT assume its cwd is the reviewed
-		// repo. An empty root hard-disables AST file reads (proximity fallback) and
-		// makes finding-path validation a no-op, rather than keying findings off
-		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
-		Root:        "",
+		// Empty root (unresolved store root): the MCP server operates on a
+		// review-artifact dir, not a checked-out source tree, so it must NOT
+		// assume its cwd is the reviewed repo. An empty root hard-disables AST
+		// file reads (proximity fallback) and makes finding-path validation a
+		// no-op, rather than keying findings off unrelated same-named files
+		// under the server's cwd (Epic 13.1 TD). A resolved root names the
+		// reviewed repo itself, so validation and AST grouping run against the
+		// right tree (TD-019).
+		Root:        validationRoot,
 		TrustPriors: scorecard.ResolveTrustPriors(),
 		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
@@ -382,28 +403,17 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// Persist the run's reconciled findings into the .atcr/-scoped local TD store
 	// through the same shared bridge the CLI reconcile calls, so the two entry points
 	// cannot drift in how a record is built, deduped, or compacted (closes TD-002).
-	// The store root comes from repo > the review manifest's recorded root; the MCP
-	// server's CWD is never a fallback (it is not the reviewed repo, and e.root is
-	// hardcoded to "." in serve mode, so it is exactly as CWD-fragile), which makes
-	// an unresolvable root a no-persist-with-warning. Best-effort and non-fatal,
-	// exactly like the scorecard emit above: it never fails the reconcile or changes
+	// The root was resolved BEFORE RunReconcile (above), so validation and
+	// persistence agree on which store this run's findings belong to: findings the
+	// resolved root PathWarning-stamped are dropped by the bridge here, matching
+	// the CLI's exclusion set (TD-019). Best-effort and non-fatal, exactly like
+	// the scorecard emit above: it never fails the reconcile or changes
 	// ReconcileResult.
-	//
-	// One record-set difference remains, and it is upstream of this call rather than
-	// inside the bridge: RunReconcile above runs with Root: "" (see its comment), so
-	// finding-path validation is a no-op and no finding is ever PathWarning-stamped.
-	// The bridge drops path-warned findings, so that exclusion is unreachable here
-	// and an MCP store can accumulate findings against paths a CLI run would have
-	// rejected as hallucinated. Threading the resolved root into RunReconcile would
-	// change which findings survive an MCP reconcile — a behavior change outside
-	// AC7/AC8 — so it is deliberately left alone; see TD-019.
-	if root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
-		Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, Diag: e.diagWriter(),
-	}); ok {
+	if storeOK {
 		// AutoCompact is left zero: the MCP path takes the production thresholds
 		// (100k records / 100 MiB). The cli-side autoCompactPolicy var is a test
 		// seam for cli tests only and deliberately does not reach here.
-		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: root, Diag: e.diagWriter()})
+		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: storeRoot, Diag: e.diagWriter()})
 	}
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.

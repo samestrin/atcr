@@ -193,10 +193,43 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
+
+	// Resolve the store root BEFORE RunReconcile (TD-024): finding-path
+	// validation must run against the SAME root the findings persist under.
+	// Validating against --repo (default ".", the CWD) while persistence
+	// independently resolved explicit > manifest > CWD meant a reconcile from a
+	// non-repo-root CWD stamped every finding PathWarning and the bridge dropped
+	// all of them — the manifest-resolved store received ZERO records. The
+	// explicit tier is keyed off the RAW --repo flag, not the normalized value:
+	// --repo carries a "." default, so the normalized value is non-empty on every
+	// run and using it here would make the explicit tier always win and the
+	// manifest tier dead code, with the whole feature inert and every test still
+	// green. The TrimSpace guard keeps `--repo ""`'s documented "normalizes to
+	// the default" behavior: a blank flag asserts nothing, so the manifest still
+	// speaks rather than the run being pinned to the CWD.
+	explicitRepo := ""
+	if raw, _ := cmd.Flags().GetString("repo"); cmd.Flags().Changed("repo") && strings.TrimSpace(raw) != "" {
+		explicitRepo = repoRoot // the normalizeRepoFlag-validated value
+	}
+	storeRoot, storeOK := localdebt.ResolveStoreRoot(localdebt.RootOpts{
+		Explicit:  explicitRepo,
+		ReviewDir: reviewDir,
+		AllowCWD:  true,
+		Diag:      cmd.ErrOrStderr(),
+	})
+	// An unresolved root (the stale-manifest stop signal) keeps validation on
+	// the --repo value: the reconcile still runs, persistence just stays off —
+	// never Root="", which would silently disable path validation AND AST
+	// grouping.
+	validationRoot := repoRoot
+	if storeOK && storeRoot != "" {
+		validationRoot = storeRoot
+	}
+
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
-		Root:         repoRoot, // validate finding file paths against --repo (Epic 22.1; default ".")
+		Root:         validationRoot, // validate finding paths against the store's root (TD-024)
 		TrustPriors:  scorecard.ResolveTrustPriors(),
 		Consensus:    consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
@@ -243,22 +276,10 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// mirroring the scorecard emit above: a persistence failure is logged to the
 	// diagnostics channel and never changes runReconcile's return value or the
 	// reconcile gate's exit code. --no-local-debt suppresses this for the run.
-	// The store root resolves explicit --repo > the review manifest's recorded root >
-	// CWD (Plan 35.13 AC7). The explicit tier must fire only when the user actually
-	// named a root, which is what Flags().Changed reports — GetString returns the
-	// flag's declared "." DEFAULT when it was never passed, so keying off its value
-	// (raw or normalized) makes the explicit tier win on every run and the manifest
-	// tier dead code, with the whole feature inert and every test still green.
-	//
-	// The TrimSpace guard keeps `--repo ""`'s documented "normalizes to the default"
-	// behavior: a blank flag asserts nothing, so the manifest still speaks rather
-	// than the run being pinned to the CWD.
-	explicitRepo := ""
-	if raw, _ := cmd.Flags().GetString("repo"); cmd.Flags().Changed("repo") && strings.TrimSpace(raw) != "" {
-		explicitRepo = repoRoot // the normalizeRepoFlag-validated value
-	}
+	// The root was resolved BEFORE RunReconcile (above) so validation and
+	// persistence agree on which store this run's findings belong to (TD-024).
 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
-	storeRoot := persistLocalDebt(reviewDir, explicitRepo, res, noLocalDebt, cmd.ErrOrStderr())
+	persistedRoot := persistLocalDebt(reviewDir, res, storeRoot, storeOK, noLocalDebt, cmd.ErrOrStderr())
 
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is
@@ -293,7 +314,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// reached on the preview path. The gate's unrecognized-env-value warning goes to
 	// this command's stderr. storeRoot threads the SAME root the persistence hook
 	// resolved, so the signal aggregates the store this run actually wrote.
-	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr(), storeRoot)
+	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr(), persistedRoot)
 
 	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
 	// reconcile outcome is finalized. An auth rejection overrides the outcome with
@@ -312,39 +333,25 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	return gateErr
 }
 
-// persistLocalDebt is the CLI half of the local-TD persistence hook: resolve the
-// store root, then delegate to the one shared implementation. All record-building,
+// persistLocalDebt is the CLI half of the local-TD persistence hook: delegate to
+// the one shared implementation with the store root the CALLER resolved.
+// runReconcile resolves that root BEFORE RunReconcile so finding-path
+// validation runs against the same root the findings persist under (TD-024);
+// ok=false (an unresolvable recorded root — the stale-manifest stop signal) and
+// --no-local-debt are both no-ops, and "" is returned in either case so the
+// quality-signal send falls back to repoRoot() discovery. All record-building,
 // dedup-seeding, appending, and compaction logic lives in
 // localdebt.PersistForReconcile, which the MCP atcr_reconcile handler calls too —
 // keeping the two entry points on one implementation is the whole point of the
 // split, so nothing that shapes a record belongs here (Plan 35.13 T6).
 //
-// It returns the store root it resolved ("" when persistence is suppressed or the
-// root failed to resolve) so runReconcile can thread the SAME root into the
-// quality-signal send: the signal must aggregate the store this run actually
-// wrote, not re-derive a possibly different one (TD cli/qualitysignal.go:90).
-//
-// Only two things are genuinely CLI-side. --no-local-debt is a cobra flag the MCP
-// path has no equivalent of (mirroring the scorecard emit's same asymmetry). And
-// the CWD tier is CLI-only: `atcr reconcile` running from the repo root is a
+// Only two things remain genuinely CLI-side. --no-local-debt is a cobra flag the
+// MCP path has no equivalent of (mirroring the scorecard emit's same asymmetry).
+// And the CWD tier is CLI-only: `atcr reconcile` running from the repo root is a
 // long-standing convention, whereas the MCP server's CWD is whatever launched it.
-//
-// explicitRepo must be derived from the RAW --repo flag, not the normalized one:
-// --repo carries a "." default, so the normalized value is non-empty on every run
-// and passing it here would make the explicit tier always win, the manifest tier
-// dead code, and the recorded-root feature inert with every test still green.
-func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLocalDebt bool, diag io.Writer) string {
-	if noLocalDebt {
+func persistLocalDebt(reviewDir string, res reconcile.Result, root string, ok bool, noLocalDebt bool, diag io.Writer) string {
+	if noLocalDebt || !ok {
 		return ""
-	}
-	root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
-		Explicit:  explicitRepo,
-		ReviewDir: reviewDir,
-		AllowCWD:  true,
-		Diag:      diag,
-	})
-	if !ok {
-		return "" // already warned; never a fall-through to a different store
 	}
 	// autoCompactPolicy is threaded through as a value rather than read inside the
 	// bridge: a cli package var is unreachable from internal/localdebt, so passing it

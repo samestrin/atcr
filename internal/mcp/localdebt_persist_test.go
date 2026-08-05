@@ -67,6 +67,9 @@ func TestReconcileHandler_PersistsToManifestRootWithCWDElsewhere(t *testing.T) {
 	root := t.TempDir()
 	id := reviewFixture(t, root)
 	recordRootInManifest(t, root, id, root)
+	// Finding-path validation now runs against the resolved root (TD-019), so the
+	// fixture's auth.go must exist there or the finding is path-warned and dropped.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
 
 	cwd := t.TempDir()
 	chdir(t, cwd)
@@ -99,6 +102,8 @@ func TestReconcileHandler_ExplicitRepoOverridesManifestRoot(t *testing.T) {
 	recordRootInManifest(t, root, id, root)
 
 	explicit := t.TempDir()
+	// Finding-path validation runs against the explicit root too (TD-019).
+	require.NoError(t, os.WriteFile(filepath.Join(explicit, "auth.go"), []byte("package auth\n"), 0o644))
 	chdir(t, t.TempDir())
 
 	e := &engine{root: root, diag: &bytes.Buffer{}}
@@ -192,4 +197,27 @@ func TestReconcileInputSchema_ExposesRepo(t *testing.T) {
 		"the atcr_reconcile schema must expose the repo argument")
 	assert.NotEmpty(t, schema.Properties["repo"].Description,
 		"repo must be self-describing: a client cannot guess that it selects the debt store root")
+}
+
+// TestReconcileHandler_DropsFindingsMissingUnderResolvedRoot pins the TD-019
+// behavior change: with finding-path validation now running against the
+// resolved store root (previously a no-op at Root: ""), a finding whose path
+// does NOT exist in the reviewed repo is PathWarning-stamped and the bridge
+// drops it — an MCP store can no longer accumulate the hallucinated paths a
+// CLI run would have rejected. The fixture's auth.go is deliberately absent.
+func TestReconcileHandler_DropsFindingsMissingUnderResolvedRoot(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root),
+		"a finding missing under the resolved root must be dropped, not persisted (diag: %s)", diag.String())
+	assert.True(t, out.Pass, "the drop is a persistence-scope change, not a reconcile failure")
 }
