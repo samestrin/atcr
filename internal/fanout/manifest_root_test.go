@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
 )
 
@@ -195,6 +197,78 @@ func TestPrepareResume_DoesNotOverwriteRecordedRoot(t *testing.T) {
 	require.NotNil(t, rprep.manifest)
 	assert.Equal(t, recorded, rprep.manifest.Root,
 		"a recorded root is the review's claim; the resuming machine must not replace it")
+}
+
+// TestExecuteReview_FinalizationPreservesRoot locks the second of the three
+// finalization writes the sprint design's risk list names (TD
+// internal/fanout/manifest_root_test.go:69): today every site copies the loaded
+// struct, so preservation is structural — exactly why it needs a test. A future
+// refactor that builds a fresh payload.Manifest literal at the success-path
+// stamp drops the root silently, and the only symptom is a reconcile that
+// quietly starts writing to the CWD again.
+func TestExecuteReview_FinalizationPreservesRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := mustAbs(t, t.TempDir())
+	names := []string{"greta", "kai"}
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: names, Root: root,
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
+		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	var slots []Slot
+	for _, n := range names {
+		slots = append(slots, Slot{Primary: Agent{
+			Name: n, Invocation: llmclient.Invocation{Model: n}, PayloadMode: "blocks",
+		}})
+	}
+	prep := &PreparedReview{ID: "2026-06-18_root", Dir: dir, Slots: slots, MaxParallel: 1, manifest: m}
+
+	_, err := ExecuteReview(context.Background(), okCompleter{}, prep)
+	require.NoError(t, err)
+
+	got, err := ReadManifest(dir)
+	require.NoError(t, err)
+	assert.Equal(t, root, got.Root, "ExecuteReview's finalization must preserve the recorded root")
+}
+
+// TestExecuteResume_FinalizationPreservesRoot locks the third finalization
+// write — the resumed run's completion stamp — under the same structural-risk
+// argument as the review path above.
+func TestExecuteResume_FinalizationPreservesRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := mustAbs(t, t.TempDir())
+	names := []string{"greta", "kai", "mira", "otto"}
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: names, Root: root,
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
+		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	// Pre-populate greta + kai as already completed on disk; resume runs only
+	// the pending slots (mira, otto) and then stamps finalization.
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Content: ""},
+	}, nil))
+
+	var slots []Slot
+	for _, n := range []string{"mira", "otto"} {
+		slots = append(slots, Slot{Primary: Agent{
+			Name: n, Invocation: llmclient.Invocation{Model: n}, PayloadMode: "blocks",
+		}})
+	}
+	prep := &PreparedReview{ID: "2026-06-18_x", Dir: dir, Slots: slots, MaxParallel: 1, manifest: m}
+
+	_, err := ExecuteResume(context.Background(), okCompleter{}, prep)
+	require.NoError(t, err)
+
+	got, err := ReadManifest(dir)
+	require.NoError(t, err)
+	assert.Equal(t, root, got.Root, "ExecuteResume's finalization must preserve the recorded root")
 }
 
 // writeManifestFixture writes a manifest.json directly, for cases that need an
