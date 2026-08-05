@@ -297,3 +297,32 @@ func seedQualityRecordAt(t *testing.T, dir, persona, model, status, file string)
 	rec.StampID()
 	require.NoError(t, localdebt.Append(dir, rec))
 }
+
+// TD (cli/telemetry_report.go:170): quality-report reads the shared public
+// .atcr/debt/ store — world-appendable via `debt add`, MCP, and third-party
+// tools — so Persona and Model are attacker-influenceable text, not
+// catalog-controlled slugs. escapeMarkdownCell flattens only newlines and
+// pipes; ESC/C0/C1 bytes pass through to the terminal verbatim (cursor control,
+// screen clear). The render layer must strip them structurally in BOTH
+// renderers: json.Marshal escapes the C0 range but emits C1 (U+0080–U+009F)
+// raw, so the json path needs the guard too.
+func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
+	isolate(t)
+
+	dir := filepath.Join(t.TempDir(), "debt")
+	seedQualityRecordAt(t, dir, "bruce\x1b[2J\x1b[H", "gpt-4\u0099", "wontfix", "a.go")
+
+	for _, format := range []string{"md", "json"} {
+		out, err := runQualityReportCmd(t, "--dir", dir, "--format", format)
+		require.NoError(t, err)
+		for i, r := range out {
+			if r < 0x20 && r != '\n' && r != '\t' && r != '\r' {
+				t.Fatalf("format %s: raw C0 control U+%04X at byte %d must never reach the terminal", format, r, i)
+			}
+			if r >= 0x80 && r <= 0x9f {
+				t.Fatalf("format %s: raw C1 control U+%04X at byte %d must never reach the terminal", format, r, i)
+			}
+		}
+		assert.Contains(t, out, "bruce", "the printable portion of the persona must survive sanitization")
+	}
+}
