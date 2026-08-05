@@ -200,7 +200,47 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("atcr debt add: failed to file the item: %w", err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Added %s item %s to %s.\n", rec.Severity, rec.ID, dir)
+	warnDebtAddSuperseded(cmd, dir, rec)
 	return nil
+}
+
+// warnDebtAddSuperseded reports, on stderr, that the record just appended is NOT
+// the effective one for its id.
+//
+// StampID hashes file+line+problem, so re-filing an identical finding reuses the
+// id of an existing record. When that id already carries a terminal status the
+// fold can keep the OLD record — always for `wontfix`, which survives
+// re-detection by design, and on a same-second timestamp tie where
+// ClosedStatusRank lets the terminal record win. Both cases printed
+// "Added <id>" and exited 0 while every reader still showed the terminal status:
+// a silent no-op wearing a success message.
+//
+// It is a warning, not an error, and the exit code is unchanged: the append
+// really did happen (the store is append-only) and a script that files findings
+// in bulk must not start failing. It reads SUMMARIES rather than full records —
+// the id and status are all it needs — so the check costs one streaming pass and
+// no record materialization. Any read failure is silently ignored: this is
+// advisory output on an already-successful write.
+func warnDebtAddSuperseded(cmd *cobra.Command, dir string, rec localdebt.Record) {
+	sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{})
+	if err != nil {
+		return
+	}
+	for _, s := range localdebt.FoldSummaries(sums) {
+		if s.ID != rec.ID {
+			continue
+		}
+		// Only a DIFFERENT effective status means the add was superseded. Filing
+		// `--status resolved` onto an already-resolved id changes nothing a reader
+		// can see, so there is nothing to warn about.
+		if !localdebt.IsClosedStatus(s.Status) || strings.EqualFold(s.Status, rec.Status) {
+			return
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: %s already carries status %q, which wins the fold — the item stays %s in `atcr debt list` and is not on the `atcr debt resolve` worklist\n",
+			rec.ID, s.Status, s.Status)
+		return
+	}
 }
 
 // finalizeDebtRecord validates the user-supplied fields and stamps the
