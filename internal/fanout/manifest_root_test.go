@@ -206,3 +206,30 @@ func writeManifestFixture(t *testing.T, dir string, m payload.Manifest) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
 }
+
+// TestBackfillReviewRoot_PreservesOnDiskFieldsAgainstStaleSnapshot pins the
+// narrow-write shape (TD internal/fanout/resume.go:271): PrepareResume reads the
+// manifest at the top of a long validation run and the backfill writes at the
+// end, so a finalization landing in between (Partial, Interrupted, CompletedAt,
+// Review) must survive. The backfill re-reads immediately before writing and
+// sets ONLY Root — the read-modify-write shape ClearInterrupted already uses —
+// rather than writing its stale snapshot back over the concurrent write.
+func TestBackfillReviewRoot_PreservesOnDiskFieldsAgainstStaleSnapshot(t *testing.T) {
+	repo := t.TempDir()
+	reviewDir := filepath.Join(repo, ".atcr", "reviews", "r1")
+
+	// On-disk state as a CONCURRENT finalization left it: Root still empty
+	// (pre-field review), but the interrupt marker already cleared.
+	writeManifestFixture(t, reviewDir, payload.Manifest{Base: "a", Head: "b", Interrupted: false})
+
+	// The backfill's caller holds a STALE snapshot from before that finalization.
+	stale := payload.Manifest{Base: "a", Head: "b", Interrupted: true}
+	backfillReviewRoot(reviewDir, &stale)
+
+	onDisk, err := ReadManifest(reviewDir)
+	require.NoError(t, err)
+	assert.False(t, onDisk.Interrupted,
+		"the backfill must not revert a concurrent finalization's fields")
+	assert.NotEmpty(t, onDisk.Root, "the backfill still stamps the derived root")
+	assert.Equal(t, onDisk.Root, stale.Root, "the caller's in-memory manifest tracks the stamped root")
+}
