@@ -124,7 +124,7 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 		return renderDebtJSON(cmd.OutOrStdout(), open)
 	}
-	return renderResolveList(cmd.OutOrStdout(), open)
+	return renderResolveList(cmd.OutOrStdout(), dir, open)
 }
 
 // isClosedStatus reports whether a record CARRIES a terminal status marker. The
@@ -310,10 +310,12 @@ func severityRank(s string) int {
 }
 
 // renderResolveList writes an aligned table of open items for the skill route to
-// select from. An empty selection prints a clear "no items" line and exits 0.
-func renderResolveList(w io.Writer, recs []localdebt.Record) error {
+// select from. An empty selection prints a clear "no items" line naming the
+// store dir it read — the same hint `debt add` prints on a write — so reading
+// the wrong store is distinguishable from an empty backlog. Exits 0 either way.
+func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
 	if len(recs) == 0 {
-		_, err := fmt.Fprintln(w, "No items to resolve (the local TD store has no open items).")
+		_, err := fmt.Fprintf(w, "No items to resolve (no open items in %s).\n", dir)
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)

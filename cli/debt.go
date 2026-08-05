@@ -181,7 +181,11 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		return renderDebtJSON(out, recs)
 	}
 	if len(recs) == 0 {
-		_, _ = fmt.Fprintln(out, "No matching technical-debt items.")
+		// Name the store the way `debt add` does ("Added ... to <dir>."): an
+		// undifferentiated "nothing here" from the WRONG store reads exactly like
+		// an empty backlog, with exit code 0 either way — the silent failure
+		// debtStoreDir exists to prevent.
+		_, _ = fmt.Fprintf(out, "No matching technical-debt items in %s.\n", debtStoreDir(cmd))
 		return nil
 	}
 
