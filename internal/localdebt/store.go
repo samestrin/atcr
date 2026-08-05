@@ -407,22 +407,64 @@ func (s shardRead) frozenIDs() map[string]bool {
 // A frozen id's history is preserved in full (the price of an unrewritable shard,
 // paid until the offending line leaves the store), while every other id folds to at
 // most two records as usual.
+// bucketByMonth files each planned record into the shard its run_id names, dropping
+// the ones no shard can hold and the ones whose destination shard is frozen.
+//
+// Compact and CompactPlan share it so the preview reports the same fold the real run
+// performs — including what it will drop, which is the number a user consults before
+// running the only irreversible operation in the debt namespace.
+func bucketByMonth(planned []Record, frozen func(string) bool, w io.Writer) map[string][]Record {
+	byMonth := map[string][]Record{}
+	for _, r := range planned {
+		month, err := monthFromRunID(r.RunID)
+		if err != nil {
+			// Skip-warn-continue, exactly like every other read-path defect
+			// (TD internal/localdebt/store.go:1023). decodeRecord validates only that
+			// run_id is non-empty, so one hand-edited or bit-flipped value decodes
+			// cleanly, folds, renders — and, when this was fatal, aborted EVERY
+			// compaction from then on, disabling the store's only growth bound
+			// silently and permanently now that compaction is automatic. A record
+			// that cannot be filed into any shard is corrupt, and compaction is where
+			// corrupt data is cleaned up.
+			_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" during compaction: %v\n", err)
+			continue
+		}
+		if frozen(month) {
+			// The shard is left whole, superseded records and all. Writing into it is
+			// the one thing that must not happen — it is not rewritten, so a record
+			// placed here would be a second copy beside a surviving original.
+			continue
+		}
+		byMonth[month] = append(byMonth[month], r)
+	}
+	return byMonth
+}
+
 // compactionCounts reports what a run reads, leaves behind, and drops.
 //
-// RecordsAfter counts what is ON DISK when the run finishes, which is the planned
-// writes PLUS the records sitting in frozen shards — those are never written by this
-// run precisely because they are already there. Counting only the writes would report
-// every frozen record as Dropped, i.e. as data this run removed, which is the one
-// thing compaction must never be wrong about.
-func compactionCounts(read shardRead, planned []Record) (before, after, dropped int) {
+// RecordsAfter counts what is ON DISK when the run finishes: the records actually
+// filed into a shard, PLUS the records sitting in frozen shards — those are never
+// written by this run precisely because they are already there. Counting the PLAN
+// instead would hide the records bucketing drops (an underivable run_id, a
+// destination shard left whole) behind a fold that never wrote them.
+func compactionCounts(read shardRead, filed int) (before, after, dropped int) {
 	before = len(read.records)
-	after = len(planned)
+	after = filed
 	for i := range read.records {
 		if read.frozen[read.shards[i]] {
 			after++
 		}
 	}
 	return before, after, before - after
+}
+
+// filedCount totals the records a bucketing produced.
+func filedCount(byMonth map[string][]Record) int {
+	n := 0
+	for _, recs := range byMonth {
+		n += len(recs)
+	}
+	return n
 }
 
 func planCompaction(read shardRead) []Record {
@@ -1139,7 +1181,9 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 		if len(read.records) == 0 {
 			return nil
 		}
-		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, planCompaction(read))
+		frozenMonth := func(month string) bool { return read.frozen[month+".jsonl"] }
+		filed := filedCount(bucketByMonth(planCompaction(read), frozenMonth, io.Discard))
+		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, filed)
 		return nil
 	})
 	if err != nil {
@@ -1260,27 +1304,13 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			return nil
 		}
 
-		planned := planCompaction(read)
+		byMonth := bucketByMonth(planCompaction(read), frozenMonth, diagWriter(opts.Writer))
 		result = CompactResult{
 			StoreFound: storeFound,
 			Preserved:  preservedCount,
 		}
-		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, planned)
+		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, filedCount(byMonth))
 
-		byMonth := map[string][]Record{}
-		for _, r := range planned {
-			month, err := monthFromRunID(r.RunID)
-			if err != nil {
-				return err
-			}
-			if frozenMonth(month) {
-				// The shard is left whole, superseded records and all. Writing into it
-				// is the one thing that must not happen — it is not rewritten, so a
-				// record placed here would be a second copy beside a surviving original.
-				continue
-			}
-			byMonth[month] = append(byMonth[month], r)
-		}
 		// A shard with only preserved lines still has to be rewritten (rather than
 		// skipped and later removed), so seed it with an empty record set.
 		for month := range preservedByShard {
