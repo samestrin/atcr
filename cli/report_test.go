@@ -361,6 +361,61 @@ func TestResolveOutputPath_FollowsARelativeDanglingLeafSymlink(t *testing.T) {
 	require.Equal(t, filepath.Join(realDir, "sibling.json"), got)
 }
 
+// The case the test above cannot reach, because it pre-resolves its directory:
+// the relative leaf link is arrived at THROUGH a symlinked ancestor. Joining the
+// target against the lexical parent then names a third location — neither the
+// link nor its target — and that is what would get created.
+func TestResolveOutputPath_RelativeLeafSymlinkUnderASymlinkedAncestor(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	linkDir := filepath.Join(realDir, "realdir")
+	require.NoError(t, os.MkdirAll(linkDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(realDir, "realsafe"), 0o755))
+	require.NoError(t, os.Symlink("../realsafe/out.json", filepath.Join(linkDir, "leaf.json")))
+
+	// Reach the same leaf through a symlink to its directory.
+	viaDir := filepath.Join(realDir, "other")
+	require.NoError(t, os.MkdirAll(viaDir, 0o755))
+	require.NoError(t, os.Symlink(linkDir, filepath.Join(viaDir, "dlink")))
+
+	got, err := resolveOutputPath(filepath.Join(viaDir, "dlink", "leaf.json"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realDir, "realsafe", "out.json"), got,
+		"the target resolves against the link's real directory, not the path used to reach it")
+}
+
+// The hop budget must admit a chain of exactly maxOutputLinkHops links and reject
+// one longer — an off-by-one here rejects a legitimate target.
+func TestResolveOutputPath_LinkChainBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		links   int
+		wantErr bool
+	}{
+		{maxOutputLinkHops - 1, false},
+		{maxOutputLinkHops, false},
+		{maxOutputLinkHops + 1, true},
+	} {
+		t.Run(fmt.Sprintf("links=%d", tc.links), func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			last := filepath.Join(dir, "real.json")
+			for i := 0; i < tc.links; i++ {
+				link := filepath.Join(dir, fmt.Sprintf("l%d", i))
+				require.NoError(t, os.Symlink(last, link))
+				last = link
+			}
+
+			got, err := resolveOutputPath(last)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, filepath.Join(dir, "real.json"), got)
+		})
+	}
+}
+
 // A link cycle must terminate, and it must FAIL rather than fall open: an
 // exhausted hop budget means the real destination is unknown, and handing an
 // unresolved link to the validator is a bypass with one extra link.

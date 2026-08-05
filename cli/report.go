@@ -151,11 +151,18 @@ func runReport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveOutputPath returns the --output target in absolute, symlink-resolved
-// form so validation and the subsequent write both act on the real on-disk
+// resolveOutputPath returns the --output target in absolute, SYMLINK-resolved
+// form so validation and the subsequent write both act on the same on-disk
 // location. Resolving symlinks first closes a bypass where --output is a symlink
 // into a system directory: filepath.Abs would validate the link path while
-// os.WriteFile follows the link to its target. A not-yet-created output file has
+// os.WriteFile follows the link to its target.
+//
+// The guarantee is scoped to symlinks by construction. A HARDLINK is a second
+// name for the same inode with nothing to resolve — no path-level check can see
+// it — so `--output` pointing at a hardlink writes through to the shared inode
+// wherever it also lives. That is not an escalation: writing still requires the
+// invoking user's own write permission on that inode, so protected files stay
+// unreachable, and rejecting multiply-linked targets would reject legitimate ones. A not-yet-created output file has
 // no on-disk form to resolve, so it falls open to the absolute path (mirrors
 // resolveRedactRoot's fail-open in review.go).
 func resolveOutputPath(output string) (string, error) {
@@ -204,22 +211,37 @@ const maxOutputLinkHops = 8
 // rest of the chain. Falling open here is a bypass with a chain one link longer
 // than the budget, so the budget must end in an error, not a guess.
 func followDanglingLinkLeaf(abs string) (string, error) {
-	for i := 0; i < maxOutputLinkHops; i++ {
+	for i := 0; i <= maxOutputLinkHops; i++ {
 		info, err := os.Lstat(abs)
 		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			// Not a link (or gone): this is the real destination. Checking at the
+			// TOP of each pass, including the pass after the last follow, is what
+			// makes a chain of exactly maxOutputLinkHops links resolve rather than
+			// trip the budget.
 			return abs, nil
+		}
+		if i == maxOutputLinkHops {
+			break
 		}
 		target, err := os.Readlink(abs)
 		if err != nil {
 			return "", fmt.Errorf("resolving --output: cannot read the symlink %q: %w", abs, err)
 		}
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(abs), target)
+			// A relative target resolves against the link's REAL directory, not the
+			// lexical one. When the link is reached through a symlinked ancestor
+			// those differ, and joining lexically would name a third location —
+			// neither the link nor its target — which is then what gets created.
+			parent, perr := evalSymlinksFn(filepath.Dir(abs))
+			if perr != nil {
+				return "", fmt.Errorf("resolving --output: cannot resolve the directory of the symlink %q: %w", abs, perr)
+			}
+			target = filepath.Join(parent, target)
 		}
 		abs = filepath.Clean(target)
 	}
-	return "", fmt.Errorf("resolving --output: more than %d chained symlinks at %q; refusing to write to an unresolvable target",
-		maxOutputLinkHops, abs)
+	return "", fmt.Errorf("resolving --output: more than %d chained symlinks; refusing to write to an unresolvable target",
+		maxOutputLinkHops)
 }
 
 // loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and

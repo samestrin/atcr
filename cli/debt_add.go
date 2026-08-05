@@ -67,7 +67,11 @@ func newDebtAddCmd() *cobra.Command {
 		RunE: runDebtAdd,
 	}
 	addDebtStoreFlag(cmd)
-	cmd.Flags().String("status", "open", "status: open|deferred|resolved (dismiss a false positive with `debt resolve --status wontfix --reason`)")
+	// No backticks in this usage string: cobra's UnquoteUsage reads the first
+	// backtick-quoted span as the flag's VALUE PLACEHOLDER, so `debt resolve
+	// --status wontfix --reason` rendered in --help as if --status took four
+	// arguments.
+	cmd.Flags().String("status", "open", "status: open|deferred|resolved (dismiss a false positive with 'debt resolve --status wontfix --reason')")
 	cmd.Flags().String("severity", "", "severity: CRITICAL|HIGH|MEDIUM|LOW (required in flag mode)")
 	cmd.Flags().String("file", "", "file:line location (required in flag mode)")
 	cmd.Flags().String("problem", "", "problem description (required in flag mode)")

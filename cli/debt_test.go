@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -155,6 +156,20 @@ func TestDebtList_RendersTable(t *testing.T) {
 	assert.Contains(t, out, "cmd/atcr/autofix.go:248")
 	// Default sort is severity: CRITICAL row appears before HIGH row.
 	assert.Less(t, strings.Index(out, "CRITICAL"), strings.Index(out, "HIGH"))
+}
+
+// Cobra's UnquoteUsage treats the first backtick-quoted span in a usage string
+// as the flag's VALUE PLACEHOLDER, so a backticked example command renders in
+// --help as if the flag took that many arguments.
+func TestDebt_FlagUsageStringsCarryNoBackticks(t *testing.T) {
+	cmd := newDebtCmd()
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+		sub := debtSubcommand(t, cmd, name)
+		sub.Flags().VisitAll(func(f *pflag.Flag) {
+			assert.NotContains(t, f.Usage, "`",
+				"debt %s --%s: a backtick makes cobra render the span as the value placeholder", name, f.Name)
+		})
+	}
 }
 
 // AC1/AC9 overlap: the id is the leading column so a listed item is directly
