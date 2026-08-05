@@ -253,13 +253,18 @@ func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]local
 	})
 }
 
-// hydrateDebtIDs is the shared pass 2 for every two-pass debt read: the resolve
-// worklist (hydrateOpenDebt) and `debt list` (selectDebtForList).
+// collectDebtIDRecords is the shared shard-walk behind the two-pass debt reads:
+// it streams every shard in dir one file at a time and retains the RAW
+// (unfolded) records for the wanted ids, so peak memory is one shard plus the
+// wanted ids' own history rather than the whole store. hydrateDebtIDs folds
+// this for the worklist; markDebtResolved calls it directly for its single
+// target id.
 //
-// keep re-asserts the caller's pass-1 predicate against pass 2's fold; nil keeps
-// every hydrated id, which is what `debt list` needs — it renders closed and
-// location-less records, so dropping them here would silently shorten the table.
-func hydrateDebtIDs(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+// Every error leaving this function is redacted, the way localdebt.ReadAll
+// redacts the read path this replaced: an EACCES here carries the absolute,
+// username-bearing shard path, and reaching the user unredacted would be a
+// regression against the store package's SECURITY contract.
+func collectDebtIDRecords(dir string, ids []string, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -268,10 +273,6 @@ func hydrateDebtIDs(dir string, ids []string, opts localdebt.ReadOpts, keep func
 		wanted[id] = true
 	}
 
-	// Every error leaving this function is redacted, the way localdebt.ReadAll
-	// redacts the read path this replaced: an EACCES here carries the absolute,
-	// username-bearing shard path, and reaching the user unredacted would be a
-	// regression against the store package's SECURITY contract.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -296,6 +297,20 @@ func hydrateDebtIDs(dir string, ids []string, opts localdebt.ReadOpts, keep func
 				retained = append(retained, r)
 			}
 		}
+	}
+	return retained, nil
+}
+
+// hydrateDebtIDs is the shared pass 2 for every two-pass debt read: the resolve
+// worklist (hydrateOpenDebt) and `debt list` (selectDebtForList).
+//
+// keep re-asserts the caller's pass-1 predicate against pass 2's fold; nil keeps
+// every hydrated id, which is what `debt list` needs — it renders closed and
+// location-less records, so dropping them here would silently shorten the table.
+func hydrateDebtIDs(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+	retained, err := collectDebtIDRecords(dir, ids, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	byID := make(map[string]localdebt.Record, len(ids))
@@ -390,11 +405,14 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	if len(reason) > maxReasonBytes {
 		return usageError(fmt.Errorf("--reason too long: %d bytes exceeds the %d-byte limit", len(reason), maxReasonBytes))
 	}
-	// ReadAll loads the full append-only store into memory and then scans for id.
-	// The linear-scan pattern is intentional and shared with selectOpenDebt and
-	// persistLocalDebt; indexed or streaming ID lookup is tracked separately by
-	// the compaction/GC TD item at internal/localdebt/store.go:67.
-	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
+	// Hydrate only the target id's own records: collectDebtIDRecords streams the
+	// shards one file at a time and retains just this id's history, so peak memory
+	// stays one shard plus one id — the same MEMORY ceiling selectOpenDebt's
+	// two-pass selection argues for — instead of ReadAll materializing the entire
+	// store to answer a single-id question. Indexed or streaming ID lookup is
+	// tracked separately by the compaction/GC work at localdebt.Compact
+	// (internal/localdebt/store.go:1066).
+	recs, err := collectDebtIDRecords(dir, []string{id}, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}

@@ -1353,3 +1353,34 @@ func readStoreRecords(t *testing.T, dir string) []localdebt.Record {
 	require.NoError(t, err)
 	return recs
 }
+
+// TestCollectDebtIDRecords_RetainsRawRecordsForWantedIDsOnly pins the shared
+// shard-walk markDebtResolved now uses instead of localdebt.ReadAll (TD
+// cli/debt_resolve.go:357): it returns the RAW, unfolded records — an open
+// record AND its terminal sibling for one id both come back, because the
+// caller folds locally — and only for the wanted ids, so peak memory is one
+// shard plus the wanted ids' history rather than the whole store.
+func TestCollectDebtIDRecords_RetainsRawRecordsForWantedIDsOnly(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	term := open
+	term.RunID = "2026-07-01T11:00:00Z-a-resolved"
+	term.Timestamp = term.RunID
+	term.Status = "resolved"
+	other := openRec("2026-07-01T12:00:00Z-b", "LOW", "b.go", 2, "leak")
+	dir := writeDebtStore(t, open, term, other)
+
+	retained, err := collectDebtIDRecords(dir, []string{open.ID}, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, retained, 2, "the open record AND its terminal sibling are both retained, unfolded")
+	for _, r := range retained {
+		assert.Equal(t, open.ID, r.ID, "only the wanted id's records are retained")
+	}
+
+	retained, err = collectDebtIDRecords(dir, []string{"no-such-id"}, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, retained)
+
+	retained, err = collectDebtIDRecords(dir, nil, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, retained, "no wanted ids is a no-op, not a full scan")
+}
