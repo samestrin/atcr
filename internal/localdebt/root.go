@@ -112,26 +112,47 @@ func existingDir(p string) (string, bool) {
 // repo-root definition already established at cli/root.go rather than inventing a
 // second one.
 //
-// The two markers are checked differently, and the asymmetry is deliberate. A .git
-// entry counts whether it is a directory or a FILE, because a linked worktree and a
-// submodule both record their root with a .git file — rejecting those would make the
-// resolver refuse to persist in exactly the setups where a developer is most likely
-// to be running from somewhere other than the main checkout. An .atcr marker must be
-// a DIRECTORY, because that is the only form atcr itself ever creates; accepting a
-// stray .atcr file would let an arbitrary directory pass as a repository root and
-// weaken the stale-claim re-validation this whole design rests on.
+// The marker test itself lives in HasRepoRootMarker, which the store's readers
+// (cli/debt.go's debtRepoRoot walk) call as well: one predicate, so writer and
+// reader cannot disagree about which directory is the repo root.
 func validateRepoRoot(path string) (string, bool) {
 	abs, ok := existingDir(path)
 	if !ok {
 		return "", false
 	}
-	// .git: directory or file.
-	if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
-		return abs, true
-	}
-	// .atcr: directory only.
-	if info, err := os.Stat(filepath.Join(abs, ".atcr")); err == nil && info.IsDir() {
+	if HasRepoRootMarker(abs) {
 		return abs, true
 	}
 	return "", false
+}
+
+// HasRepoRootMarker reports whether dir carries a repository-root marker. It is
+// the ONE definition of that question for the local debt store: the writer
+// re-validates a manifest-recorded root through it (validateRepoRoot) and the
+// CLI readers walk up the tree with it (cli/debt.go debtRepoRoot). Two
+// definitions is how a symlinked .git came to validate for the writer while
+// being invisible to the reader, sending `debt add` and a reconcile to different
+// stores in the same checkout.
+//
+// The two markers are checked differently, and the asymmetry is deliberate. A
+// .git entry counts whether it is a directory or a FILE, because a linked
+// worktree and a submodule both record their root with a .git file — rejecting
+// those would refuse to persist in exactly the setups where a developer is most
+// likely to be running from somewhere other than the main checkout. An .atcr
+// marker must be a DIRECTORY, because that is the only form atcr itself ever
+// creates; accepting a stray .atcr file would let an arbitrary directory pass as
+// a repository root and weaken the stale-claim re-validation this design rests on.
+//
+// Both use Lstat, so a SYMLINK is not a marker in either form: a link pointing at
+// an arbitrary directory must not pass as a repository root, and git never
+// creates one. That matches cli/root.go's hardening for the shared walk.
+func HasRepoRootMarker(dir string) bool {
+	if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil &&
+		(info.IsDir() || info.Mode().IsRegular()) {
+		return true
+	}
+	if info, err := os.Lstat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
+		return true
+	}
+	return false
 }
