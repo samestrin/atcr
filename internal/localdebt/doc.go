@@ -92,6 +92,15 @@
 // outstanding, and the re-detection that should have re-opened it is skipped. The
 // partial result is safe only for questions that do not depend on the fold.
 //
+// The seed is also authoritative only for the INSTANT it was taken. ReadSummaries
+// runs with no lock held — the lock is taken and released per-Append afterwards —
+// so two concurrent reconciles (a CLI run and an MCP-driven one, both on the
+// PersistForReconcile bridge) can each seed from a store that lacks the other's
+// records and both append the same ids. The observable damage is bounded to store
+// bloat and degraded RecordsBefore accounting: FoldRecords collapses the duplicate
+// ids on every read. Under concurrency, duplicates are collapsed by the fold, not
+// prevented by the seed.
+//
 // # Resolution contract
 //
 // Resolution lifetime depends on the status, because the identity function
