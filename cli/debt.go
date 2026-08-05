@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/validation"
 )
 
 // newDebtCmd builds `atcr debt`: query, capture, aggregate, resolve, and compact
@@ -55,6 +56,16 @@ func newDebtCmd() *cobra.Command {
 // die on a low-level mkdir error — an invocation mistake masquerading as store
 // state. One hook covers every consumer with no change to debtStoreDir's
 // signature or its call sites.
+//
+// The same hook runs the value through validation.FilePath, which is what the
+// sibling --output on this command family already does. Without it --dir went
+// verbatim to localdebt.Append, which MkdirAlls it: `--dir <repo>/../../escaped`
+// silently created and wrote a store outside the repo, and a system directory
+// failed only as a raw mkdir permission error. Both the raw value (so a `..`
+// segment is caught as typed, before absolutization collapses it) and its
+// absolute form (so a relative path that lands in /etc is caught too) are
+// checked. Containment inside the repo root is deliberately NOT required:
+// pointing at another repo's store is --dir's documented purpose.
 func addDebtStoreFlag(cmd *cobra.Command) {
 	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
 	cmd.Flags().Lookup("dir").DefValue = ""
@@ -65,8 +76,22 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 				return err
 			}
 		}
-		if cmd.Flags().Changed("dir") && strings.TrimSpace(mustFlag(cmd, "dir")) == "" {
+		if !cmd.Flags().Changed("dir") {
+			return nil
+		}
+		dir := strings.TrimSpace(mustFlag(cmd, "dir"))
+		if dir == "" {
 			return usageError(fmt.Errorf("--dir must not be empty; omit it to resolve <repo root>/.atcr/debt"))
+		}
+		if err := validation.FilePath(dir); err != nil {
+			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
+		}
+		if err := validation.FilePath(abs); err != nil {
+			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
 		}
 		return nil
 	}
