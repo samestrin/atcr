@@ -190,16 +190,26 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 // the next ReadSlice. Malformed lines are never handed to preserve — they are
 // corrupt, not merely unreadable by this version.
 //
-// The second return value reports that the shard contains a line this reader could
-// not represent at all: one longer than maxLineBytes, skipped by the buffer guard
-// before any decode happens, and therefore not capturable by preserve without
-// abandoning the memory bound the guard exists to enforce. Such a shard is not
-// safely rewritable — compaction must leave it alone rather than rebuild it from
-// the subset it managed to read.
-func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, bool, error) {
+// The second return value reports what the scan learned about the shard's health.
+// unrepresentable means it holds a line longer than maxLineBytes, skipped by the
+// buffer guard before any decode happens and therefore not capturable by preserve
+// without abandoning the memory bound the guard exists to enforce. malformed means it
+// holds a corrupt line. Either can make a shard unsafe to rewrite — compaction leaves
+// it alone rather than rebuild it from the subset it managed to read — though only
+// the first does so unconditionally; see readAllPreserving for the malformed rule.
+// shardHealth is what one scan learned about a shard beyond its records: whether it
+// held a line this reader could not represent at all, and whether it held a line that
+// was corrupt. Compaction needs both to decide whether rewriting the shard would
+// destroy something.
+type shardHealth struct {
+	unrepresentable bool // a line longer than maxLineBytes
+	malformed       bool // a line that failed to decode
+}
+
+func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, shardHealth, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, false, err
+		return nil, shardHealth{}, err
 	}
 	defer func() { _ = f.Close() }()
 	w := diagWriter(opts.Writer)
@@ -212,7 +222,7 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 	shard := filepath.Base(path)
 
 	var recs []Record
-	unrepresentable := false
+	var health shardHealth
 	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
 	// drained and skipped rather than terminating the read: bufio.Scanner's
 	// ErrTooLong is terminal and cannot resume, so one oversized line would abort the
@@ -227,13 +237,13 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 			// deliberately not captured — buffering it is exactly what the cap forbids
 			// — so the shard is flagged unrepresentable instead, and compaction leaves
 			// it whole rather than rewriting it without this line.
-			unrepresentable = true
+			health.unrepresentable = true
 			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, shard)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
 				}
-				return recs, unrepresentable, fmt.Errorf("reading localdebt file: %w", derr)
+				return recs, health, fmt.Errorf("reading localdebt file: %w", derr)
 			}
 			continue
 		}
@@ -245,16 +255,18 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 				if preserve != nil {
 					preserve(bytes.Clone(line))
 				}
+			case decodeMalformed:
+				health.malformed = true
 			}
 		}
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return recs, unrepresentable, fmt.Errorf("reading localdebt file: %w", err)
+			return recs, health, fmt.Errorf("reading localdebt file: %w", err)
 		}
 	}
-	return recs, unrepresentable, nil
+	return recs, health, nil
 }
 
 // decodeOutcome classifies what happened to one JSONL line on the read path. The
@@ -530,14 +542,22 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 			out.frozen[name] = true
 		}
 
-		recs, unrepresentable, err := scanShard(filepath.Join(dir, name), opts, collect)
+		recs, health, err := scanShard(filepath.Join(dir, name), opts, collect)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return out, basePathErr(err)
 		}
-		if unrepresentable {
+		// A shard is frozen when rewriting it would destroy something this reader
+		// could not carry: a line too long to buffer, or — when the shard yielded
+		// NOTHING decodable — its corrupt lines. The store-wide "never rewrite from
+		// an empty fold" guard has always covered the first case and the whole-store
+		// case; per shard it did not, so one shard of pure garbage was removed
+		// outright by the empty-shard sweep (TD internal/localdebt/store.go:1117).
+		// Quarantining it whole costs disk and keeps a human's recovery options open;
+		// deleting it costs the only copy.
+		if health.unrepresentable || (health.malformed && len(recs) == 0 && len(out.preserved[month]) == 0) {
 			out.frozen[name] = true
 		}
 		for _, r := range recs {
