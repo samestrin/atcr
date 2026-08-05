@@ -1279,6 +1279,45 @@ func TestDebtResolve_ResolutionRecordCarriesNoCounters(t *testing.T) {
 		"resolving does not add a sighting, so the count is unchanged")
 }
 
+func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
+	// The resolution copies the finding verbatim and ADDS terminal fields, so a
+	// finding whose encoded record sits just under the store's read cap
+	// (localdebt.MaxRecordBytes) tips its resolution line OVER it. An unguarded
+	// append writes a line every read path silently skips: the command reports
+	// "Marked <id> resolved." and exits 0 while the item stays open forever. The
+	// resolution must be rejected BEFORE the append, the way `debt add` bounds its
+	// encoded record and `--reason` bounds its justification.
+	base := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "")
+	empty, err := json.Marshal(base)
+	require.NoError(t, err)
+	// Pad Problem so the OPEN record encodes 64 bytes under the cap...
+	base.Problem = strings.Repeat("x", localdebt.MaxRecordBytes-len(empty)-1-64)
+	openLine, err := json.Marshal(base)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(openLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the open record itself must still be readable")
+	// ...while the resolution record the command builds from it exceeds the cap.
+	res := base
+	res.RunID = "2026-08-05T12:00:00Z-resolved"
+	res.Timestamp = res.RunID
+	res.Status = "resolved"
+	res.ResolvedAt = res.RunID
+	resLine, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.Greater(t, len(resLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the resolution record must exceed the read cap")
+
+	dir := writeDebtStore(t, base)
+	before := readStoreRecords(t, dir)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", base.ID)
+	require.Error(t, err, "a resolution record over the read cap must be rejected, not written invisibly")
+	assert.NotContains(t, out, "Marked", "must not report success for a resolution that cannot be read back")
+
+	after := readStoreRecords(t, dir)
+	assert.Len(t, after, len(before), "a rejected oversized resolution must not append a record")
+}
+
 // readStoreRecords reads every record from a test store dir.
 func readStoreRecords(t *testing.T, dir string) []localdebt.Record {
 	t.Helper()
