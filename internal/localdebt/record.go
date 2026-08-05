@@ -271,8 +271,11 @@ func (r *Record) StampID() {
 
 // EffectiveOrigin reports the record's provenance, resolving a v1/v2 record's
 // absent origin to OriginReview — reconcile was the only writer before schema v3.
-// The value is trimmed and lowercased, and a whitespace-only origin is treated as
-// absent rather than as a distinct value.
+// The value is trimmed and lowercased, and anything outside the closed set — a
+// whitespace-only origin, or an UNRECOGNIZED one — is treated as absent rather
+// than as a distinct value: decodeRecord validates schema_version, run_id and id
+// only, so a hand-edited or corrupted "origin":"bogus" would otherwise propagate
+// to every caller that switches on the two constants.
 //
 // The default is applied here, at the call site, and deliberately NOT on the read
 // path: Compact re-marshals exactly what ReadAll returned, so backfilling Origin
@@ -280,10 +283,12 @@ func (r *Record) StampID() {
 // schema_version still reads 1 or 2 — an on-disk record matching no schema
 // version. EffectiveOrigin takes a value receiver and never mutates r.
 func (r Record) EffectiveOrigin() string {
-	if o := strings.ToLower(strings.TrimSpace(r.Origin)); o != "" {
+	switch o := strings.ToLower(strings.TrimSpace(r.Origin)); o {
+	case OriginReview, OriginManual:
 		return o
+	default:
+		return OriginReview
 	}
-	return OriginReview
 }
 
 // IsClosedStatus reports whether a record CARRIES a terminal status marker:
