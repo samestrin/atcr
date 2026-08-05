@@ -258,7 +258,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		explicitRepo = repoRoot // the normalizeRepoFlag-validated value
 	}
 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
-	persistLocalDebt(reviewDir, explicitRepo, res, noLocalDebt, cmd.ErrOrStderr())
+	storeRoot := persistLocalDebt(reviewDir, explicitRepo, res, noLocalDebt, cmd.ErrOrStderr())
 
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is
@@ -291,8 +291,9 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// it is fail-open: a transport failure never changes this command's outcome.
 	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
 	// reached on the preview path. The gate's unrecognized-env-value warning goes to
-	// this command's stderr.
-	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr())
+	// this command's stderr. storeRoot threads the SAME root the persistence hook
+	// resolved, so the signal aggregates the store this run actually wrote.
+	maybeSendQualitySignal(cmd.Context(), cmd.ErrOrStderr(), storeRoot)
 
 	// --sync-cloud push (Story 4): an explicit, user-invoked action fired AFTER the
 	// reconcile outcome is finalized. An auth rejection overrides the outcome with
@@ -318,6 +319,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // keeping the two entry points on one implementation is the whole point of the
 // split, so nothing that shapes a record belongs here (Plan 35.13 T6).
 //
+// It returns the store root it resolved ("" when persistence is suppressed or the
+// root failed to resolve) so runReconcile can thread the SAME root into the
+// quality-signal send: the signal must aggregate the store this run actually
+// wrote, not re-derive a possibly different one (TD cli/qualitysignal.go:90).
+//
 // Only two things are genuinely CLI-side. --no-local-debt is a cobra flag the MCP
 // path has no equivalent of (mirroring the scorecard emit's same asymmetry). And
 // the CWD tier is CLI-only: `atcr reconcile` running from the repo root is a
@@ -327,9 +333,9 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // --repo carries a "." default, so the normalized value is non-empty on every run
 // and passing it here would make the explicit tier always win, the manifest tier
 // dead code, and the recorded-root feature inert with every test still green.
-func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLocalDebt bool, diag io.Writer) {
+func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLocalDebt bool, diag io.Writer) string {
 	if noLocalDebt {
-		return
+		return ""
 	}
 	root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
 		Explicit:  explicitRepo,
@@ -338,7 +344,7 @@ func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLo
 		Diag:      diag,
 	})
 	if !ok {
-		return // already warned; never a fall-through to a different store
+		return "" // already warned; never a fall-through to a different store
 	}
 	// autoCompactPolicy is threaded through as a value rather than read inside the
 	// bridge: a cli package var is unreachable from internal/localdebt, so passing it
@@ -348,6 +354,7 @@ func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLo
 		Diag:        diag,
 		AutoCompact: autoCompactPolicy,
 	})
+	return root
 }
 
 // autoCompactPolicy is the automatic-compaction threshold the reconcile persistence

@@ -306,7 +306,7 @@ func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
 	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
 
 	done := make(chan struct{})
-	go func() { maybeSendQualitySignal(ctx, io.Discard); close(done) }()
+	go func() { maybeSendQualitySignal(ctx, io.Discard, ""); close(done) }()
 
 	<-entered // the builder was invoked
 	select {
@@ -651,7 +651,7 @@ func TestQualitySignalSend_PayloadBuildsFromRepoRoot(t *testing.T) {
 	require.NoError(t, err)
 	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
 
-	maybeSendQualitySignal(ctx, io.Discard)
+	maybeSendQualitySignal(ctx, io.Discard, "")
 	waitQualitySignalInFlight()
 
 	want, err := filepath.EvalSymlinks(repo)
@@ -664,4 +664,48 @@ func TestQualitySignalSend_PayloadBuildsFromRepoRoot(t *testing.T) {
 	}
 	assert.Equal(t, want, got,
 		"the send path must build its payload from the discovered repo root, not the literal CWD")
+}
+
+// TestQualitySignalSend_UsesThreadedStoreRoot pins the TD fix
+// (cli/qualitysignal.go:90): `atcr reconcile` threads the SAME root its
+// persistence hook resolved into the send path, so when that store is NOT the
+// repo-root one (an explicit --repo or a manifest-recorded root) the signal
+// still aggregates the store the run actually wrote — repoRoot() discovery
+// must NOT override the threaded value.
+func TestQualitySignalSend_UsesThreadedStoreRoot(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+
+	// Stand in a repo subdirectory: repoRoot() WOULD resolve elsewhere if the
+	// threaded root did not win.
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	t.Chdir(repo)
+
+	threaded := filepath.Join(t.TempDir(), "other-root")
+	var mu sync.Mutex
+	var gotRoot string
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+		mu.Lock()
+		gotRoot = root
+		mu.Unlock()
+		return nil, errors.New("forced build error")
+	}
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+
+	client := telemetry.NewSingleDestination(qsEndpoint)
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
+
+	maybeSendQualitySignal(ctx, io.Discard, threaded)
+	waitQualitySignalInFlight()
+
+	mu.Lock()
+	got := gotRoot
+	mu.Unlock()
+	assert.Equal(t, threaded, got,
+		"a threaded store root must win over repoRoot() discovery — the signal reads the store the run wrote")
 }

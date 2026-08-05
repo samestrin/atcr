@@ -189,7 +189,15 @@ func waitQualitySignalInFlight() { qualitySignalInFlight.Wait() }
 // errW receives the gate's unrecognized-env-value warning (the call sites pass
 // cmd.ErrOrStderr(), so a misspelled ATCR_QUALITY_SIGNAL is capturable in
 // cmd-scoped tests); the detached goroutine never writes to it.
-func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
+//
+// storeRoot is the root of the debt store the run wrote its findings to, when
+// the caller knows it: `atcr reconcile` threads the SAME root its persistence
+// hook resolved, so an opted-in run's signal aggregates the store the run
+// actually wrote — even when that store is NOT the repo-root one (an explicit
+// --repo or a manifest-recorded root). An empty storeRoot (the `atcr review`
+// call site, which never persists locally) falls back to repoRoot() discovery,
+// matching what `atcr quality-report` reads.
+func maybeSendQualitySignal(ctx context.Context, errW io.Writer, storeRoot string) {
 	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path —
 	// the gate resolution or the goroutine spawn — is recovered here so it can
 	// never alter the review/reconcile run's exit code or stdout. The detached
@@ -207,15 +215,20 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 	if !qualitySignalGate(errW) {
 		return
 	}
-	// Resolve the root the payload build reads from: the SAME repo root the gate
-	// discovers for its config read above and `atcr quality-report` reads via
-	// debtStoreDir. Passing the literal "." instead aggregated the store under the
-	// process CWD — a different, usually empty one whenever atcr runs from a repo
-	// subdirectory — so the signal transmitted zero rows where the report showed
-	// real ones. Fail-soft to "." on a discovery error mirrors the gate.
-	root, rerr := repoRoot()
-	if rerr != nil {
-		root = "."
+	// Resolve the root the payload build reads from. A threaded storeRoot (the
+	// reconcile call site's persistence-resolved root) always wins: it names the
+	// store this run actually wrote. The empty fallback discovers the SAME repo
+	// root the gate finds for its config read above and `atcr quality-report`
+	// reads via debtStoreDir — never the literal CWD, which names a different,
+	// usually empty store whenever atcr runs from a repo subdirectory. Fail-soft
+	// to "." on a discovery error mirrors the gate.
+	root := storeRoot
+	if root == "" {
+		var rerr error
+		root, rerr = repoRoot()
+		if rerr != nil {
+			root = "."
+		}
 	}
 	client := telemetry.FromContext(ctx)
 	qualitySignalInFlight.Add(1)
