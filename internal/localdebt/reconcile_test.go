@@ -312,6 +312,55 @@ func TestPersistForReconcile_EmptyRootIsNoPersist(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "an empty Root must not create a CWD-relative store: %v", err)
 }
 
+// TestPersistForReconcile_VanishedRootIsNotResurrected pins the write-time half of
+// root validation (TD internal/localdebt/root.go:123). ResolveStoreRoot stats the
+// root ONCE and returns a string; everything after that is path-based, and both
+// withLock and appendLocked called os.MkdirAll, which creates every missing parent
+// INCLUDING the repo root. A root that passed validation and was then deleted or
+// renamed was silently recreated as an empty tree at that absolute path, with the
+// marker check never re-run — turning a stale-root stop signal into a write to a
+// directory nobody asked for.
+func TestPersistForReconcile_VanishedRootIsNotResurrected(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	chdir(t, t.TempDir())
+
+	// Resolve while the root is valid, exactly as an entry point does...
+	resolvedRoot, ok := ResolveStoreRoot(RootOpts{Explicit: root, AllowCWD: false})
+	require.True(t, ok)
+
+	// ...then the root goes away before the write lands.
+	require.NoError(t, os.RemoveAll(root))
+
+	var diag bytes.Buffer
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Root: resolvedRoot, Diag: &diag})
+
+	_, err := os.Stat(root)
+	assert.True(t, os.IsNotExist(err), "a vanished root must not be recreated by the write path: %v", err)
+	assert.Contains(t, diag.String(), "skipping local debt persistence",
+		"the vanished root must be reported, not silently swallowed")
+}
+
+// TestAppend_VanishedRootIsAnErrorNotAResurrection pins the same rule one layer
+// down, where the MkdirAll chain actually lived: Append must create the store
+// directory under an EXISTING root, never conjure the root itself.
+func TestAppend_VanishedRootIsAnErrorNotAResurrection(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "gone-repo")
+
+	err := Append(DefaultDir(root), Record{
+		SchemaVersion: SchemaVersion,
+		RunID:         "2026-08-04T10:00:00Z-review",
+		ID:            "abc123",
+		Timestamp:     "2026-08-04T10:00:00Z",
+	})
+
+	require.Error(t, err, "appending under a nonexistent root must fail, not create it")
+	_, staterr := os.Stat(root)
+	assert.True(t, os.IsNotExist(staterr), "the missing root must not be created: %v", staterr)
+}
+
 // TestPersistForReconcile_FailOpenWarningNamesDuplicateGrowth pins the REAL
 // effect of the fail-open path (TD internal/localdebt/reconcile.go:112). The
 // old warning claimed "previously dismissed/wontfix findings may be
