@@ -301,8 +301,12 @@
 //
 //		explicit > manifest > CWD
 //
-//	 1. Explicit — an operator-supplied root (`--repo`, or the MCP repo argument),
-//	    checked for existence only: the caller asserted it deliberately.
+//	 1. Explicit — an operator-supplied root (`--repo`, or the MCP repo argument).
+//	    The CLI's value is checked for existence only: a human typed it, and it
+//	    has already been through normalizeRepoFlag. The MCP argument is
+//	    model-supplied, so that entry point sets RequireMarker and the tier
+//	    re-validates exactly like the manifest tier — a model-named path must
+//	    prove repo-ness before it gains a store (TD-023).
 //	 2. Manifest — payload.Manifest.Root, recorded at review time when CWD == repo
 //	    root is a documented requirement, so it travels with the artifacts. It is a
 //	    CLAIM, not a fact, and is RE-VALIDATED before any write: the path must exist,
