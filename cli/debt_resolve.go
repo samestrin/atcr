@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -532,6 +533,22 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// blanking it.
 	if r := strings.TrimSpace(reason); r != "" {
 		rec.Justification = r
+	}
+	// Bound the ENCODED record before appending, the same rule `debt add` enforces
+	// (cli/debt_add.go): the resolution copies the finding verbatim and adds the
+	// terminal fields, so a finding whose own record sits just under the read cap
+	// tips its resolution line OVER localdebt.MaxRecordBytes. Every read path skips
+	// a line that long — the resolution would be written, invisible forever, and
+	// the item would stay open while the command reported success. maxReasonBytes
+	// bounds only the --reason slice of the record; this bounds the whole thing.
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("atcr debt resolve: failed to encode resolution: %w", err)
+	}
+	if len(line)+1 > localdebt.MaxRecordBytes {
+		return fmt.Errorf(
+			"atcr debt resolve: resolution record is too large to store: %d bytes encoded, cap is %d (the store skips longer lines on read, so the item would stay open while reported resolved)",
+			len(line)+1, localdebt.MaxRecordBytes)
 	}
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)

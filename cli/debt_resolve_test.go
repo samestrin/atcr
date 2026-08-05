@@ -1296,12 +1296,20 @@ func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(openLine)+1, localdebt.MaxRecordBytes,
 		"fixture: the open record itself must still be readable")
-	// ...while the resolution record the command builds from it exceeds the cap.
-	res := base
+	// ...while the resolution record the command builds from it — folded record
+	// with counters zeroed plus the terminal fields and a within-cap --reason —
+	// exceeds the cap. maxReasonBytes bounds the reason STRING, not the record.
+	reason := strings.Repeat("r", 2048)
+	eff := localdebt.FoldRecords([]localdebt.Record{base})[0]
+	res := eff
 	res.RunID = "2026-08-05T12:00:00Z-resolved"
 	res.Timestamp = res.RunID
 	res.Status = "resolved"
 	res.ResolvedAt = res.RunID
+	res.Occurrences = 0
+	res.FirstSeen = ""
+	res.CountedThrough = ""
+	res.Justification = reason
 	resLine, err := json.Marshal(res)
 	require.NoError(t, err)
 	require.Greater(t, len(resLine)+1, localdebt.MaxRecordBytes,
@@ -1310,7 +1318,7 @@ func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
 	dir := writeDebtStore(t, base)
 	before := readStoreRecords(t, dir)
 
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", base.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", base.ID, "--reason", reason)
 	require.Error(t, err, "a resolution record over the read cap must be rejected, not written invisibly")
 	assert.NotContains(t, out, "Marked", "must not report success for a resolution that cannot be read back")
 
