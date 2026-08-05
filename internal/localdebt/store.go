@@ -409,15 +409,16 @@ func FoldRecords(recs []Record) []Record {
 //	carrier := the record with the highest Occurrences (the last compaction's
 //	           aggregate), or none when no record carries a count
 //	carried := carrier.Occurrences
-//	fresh   := detections NEWER than the carrier — records with an empty Status,
-//	           no count of their own, and a Timestamp strictly after the
-//	           carrier's. Every detection counts when there is no carrier.
+//	fresh   := detections NEWER than the carrier — sighting records with no count
+//	           of their own and a Timestamp strictly after the carrier's. Every
+//	           detection counts when there is no carrier.
 //	Occurrences = max(carried+fresh, 1)
 //
-// An empty Status is the load-bearing discriminator between a DETECTION (written by
-// cli/reconcile.go's persistence hook and by `atcr debt add`) and a RESOLUTION
-// (written by cli/debt_resolve.go, which always sets one). Only detections are
-// occurrences of the finding; a resolution is a status marker.
+// A record is a SIGHTING (isSighting) rather than a status marker in two cases:
+// it carries no Status at all — what cli/reconcile.go's persistence hook and a
+// plain `atcr debt add` write — or it is a hand-filed item, which is a sighting
+// even when it carries a status like `deferred`. Only sightings are occurrences of
+// the finding; a resolution is a marker on one.
 //
 // # Why the carrier's timestamp is the boundary
 //
@@ -470,7 +471,7 @@ func aggregateCounters(eff *Record, group []Record) {
 
 	fresh, first := 0, ""
 	for _, r := range group {
-		if r.Status == "" && r.Occurrences == 0 && (carried == 0 || r.Timestamp > carrierTS) {
+		if isSighting(r) && r.Occurrences == 0 && (carried == 0 || r.Timestamp > carrierTS) {
 			fresh++
 		}
 		seen := r.FirstSeen
@@ -493,6 +494,28 @@ func aggregateCounters(eff *Record, group []Record) {
 	}
 	eff.Occurrences = occ
 	eff.FirstSeen = first
+}
+
+// isSighting reports whether a record is an OCCURRENCE of the finding rather than
+// a status marker placed on one.
+//
+// A record with no Status is always a sighting: that is what the reconcile
+// persistence hook writes for a detection, and what `atcr debt add` writes when no
+// --status is given.
+//
+// A hand-filed item is a sighting too, even when it carries a status. Filing
+// something straight to `deferred` is still a human saying "this exists here" —
+// treating it as a mere marker would leave the item contributing nothing to carry
+// forward, so its first genuine re-detection would report zero regressions.
+// Manual origin alone is not enough to identify one, because cli/debt_resolve.go
+// copies the folded record wholesale and so inherits Origin from a manually filed
+// item; a resolution always stamps ResolvedAt, and a filing never does, which
+// separates the two exactly.
+func isSighting(r Record) bool {
+	if r.Status == "" {
+		return true
+	}
+	return r.EffectiveOrigin() == OriginManual && strings.TrimSpace(r.ResolvedAt) == ""
 }
 
 // earlierTimestamp returns whichever of two non-empty timestamps is earlier.
@@ -621,7 +644,6 @@ func retainForCompaction(recs []Record) []Record {
 	effective := FoldRecords(recs)
 	out := make([]Record, 0, len(effective))
 	for _, eff := range effective {
-		out = append(out, eff)
 		if IsSettledStatus(eff.Status) {
 			// The effective record IS the resolution, so there is no rationale to
 			// preserve — but there may still be ATTRIBUTION. AggregateQualitySignal
@@ -631,11 +653,22 @@ func retainForCompaction(recs []Record) []Record {
 			// Dropping that donor makes the whole outcome vanish from the signal —
 			// silently and permanently, and now unattended, since compaction runs
 			// automatically inside the same reconcile that emits the signal.
+			//
+			// ORDER IS LOAD-BEARING: the donor is emitted BEFORE the effective
+			// record. Both are terminal, so they can tie on both timestamp and
+			// ClosedStatusRank, and latestItem breaks a full tie by append order —
+			// last wins. Emitting the donor last would hand it the fold, silently
+			// swapping which record readers see as effective and, on the NEXT
+			// compaction, deleting the displaced one along with the human-typed
+			// --reason only it carried. Writing it first keeps eff the winner and
+			// compaction fold-stable.
 			if donor := modelDonor(byID[eff.ID], eff); donor != nil {
 				out = append(out, *donor)
 			}
+			out = append(out, eff)
 			continue
 		}
+		out = append(out, eff)
 		// SETTLED, not merely closed, on both sides. An effective `deferred` record
 		// is not a resolution — it carries no justification, and treating it as one
 		// would discard an earlier `resolved` record and the --reason text only that
@@ -972,8 +1005,13 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		// StoreStats, not the semantic fold count, which excludes lines left in
 		// protected shards and would make the two disagree.
 		//
-		// Best-effort: the compaction has already succeeded and a missing watermark
-		// only costs one redundant future compaction.
+		// Best-effort, and measured OUTSIDE the lock: the rewrite has already
+		// committed, and the no-op-fold path returns early from the locked closure,
+		// so writing here covers both exits with one statement. A concurrent Append
+		// between the unlock and the stat only makes the baseline slightly stale,
+		// which costs at most one delayed or redundant future compaction — the gate
+		// degrades toward compacting (readCompactWatermark treats anything
+		// unreadable as zero) and can never PREVENT a needed one.
 		if records, size, serr := StoreStats(dir); serr == nil {
 			writeCompactWatermark(dir, compactWatermark{Records: records, Bytes: size}, opts.Writer)
 		}

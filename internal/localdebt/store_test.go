@@ -1751,3 +1751,121 @@ func TestCompact_PreservesQualitySignalModelRecovery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, recs, 2, "an id retains at most two records after compaction")
 }
+
+// TestCompact_TiedTerminalDonorDoesNotDisplaceTheEffectiveRecord is the gate
+// pass-2 HIGH guard.
+//
+// The model donor and the effective record are both terminal, so they can tie on
+// BOTH timestamp and ClosedStatusRank — and latestItem breaks a full tie by append
+// order, last wins. Emitting the donor after the effective record therefore handed
+// it the fold: readers saw a different record than before compaction, and the NEXT
+// compaction deleted the displaced one along with the human-typed --reason only it
+// carried.
+func TestCompact_TiedTerminalDonorDoesNotDisplaceTheEffectiveRecord(t *testing.T) {
+	dir := t.TempDir()
+	const tied = "2026-06-01T10:00:00Z"
+	base := detection("tied terminals", tied)
+	base.Reviewers = []string{"bruce"}
+
+	// Appended first: attributed, with its own rationale.
+	donor := base
+	donor.RunID = tied + "-donor"
+	donor.Status = "wontfix"
+	donor.Model = "claude-x"
+	donor.Justification = "DONOR-REASON"
+	// Appended last at the SAME timestamp and rank: this one is effective.
+	eff := base
+	eff.RunID = tied + "-eff"
+	eff.Status = "wontfix"
+	eff.Model = ""
+	eff.Justification = "EFFECTIVE-REASON"
+	require.NoError(t, Append(dir, donor))
+	require.NoError(t, Append(dir, eff))
+
+	effective := func() Record {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		return folded[0]
+	}
+	signal := func() []QualityRow {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		return AggregateQualitySignal(recs)
+	}
+	wantJustification := effective().Justification
+	require.Equal(t, "EFFECTIVE-REASON", wantJustification, "the last-appended record wins a full tie")
+	wantSignal := signal()
+
+	for i := 1; i <= 3; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, wantJustification, effective().Justification,
+			"compaction %d must not swap which record readers see as effective", i)
+		assert.Equal(t, wantSignal, signal(),
+			"compaction %d must not change the aggregated signal", i)
+	}
+}
+
+// TestFoldRecords_ManualFilingIsASighting covers both halves of the sighting rule:
+// a hand-filed item counts even when it carries a status, and filing one for an id
+// that already has history ADDS to the count rather than resetting it.
+func TestFoldRecords_ManualFilingIsASighting(t *testing.T) {
+	filed := detection("filed by hand", "2026-06-01T00:00:00Z")
+	filed.Status = "deferred"
+	filed.Origin = OriginManual
+
+	folded := FoldRecords([]Record{filed})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences, "a filed item is its own first sighting")
+
+	redetected := filed
+	redetected.Status = ""
+	redetected.Origin = ""
+	redetected.Timestamp = "2026-06-02T00:00:00Z"
+	folded = FoldRecords([]Record{filed, redetected})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 2, folded[0].Occurrences,
+		"a re-detection after a manual filing is the second sighting, so it reports one regression")
+}
+
+// TestFoldRecords_ManualFilingNeverDecreasesAnExistingCount pins the failure the
+// carrier-stamp approach introduced: filing an item whose file/line/problem hashes
+// to an id the store already holds must not erase that id's history.
+func TestFoldRecords_ManualFilingNeverDecreasesAnExistingCount(t *testing.T) {
+	first := detection("already tracked", "2026-06-01T00:00:00Z")
+	second := first
+	second.Timestamp = "2026-06-02T00:00:00Z"
+	require.Equal(t, 2, FoldRecords([]Record{first, second})[0].Occurrences)
+
+	filed := first
+	filed.Timestamp = "2026-06-03T00:00:00Z"
+	filed.Status = "deferred"
+	filed.Origin = OriginManual
+
+	folded := FoldRecords([]Record{first, second, filed})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 3, folded[0].Occurrences,
+		"filing a duplicate of a tracked id adds a sighting; it must never decrease the count")
+}
+
+// TestFoldRecords_ResolutionOfAManuallyFiledItemIsNotASighting guards the
+// discriminator's precision: `atcr debt resolve` copies the folded record and so
+// inherits Origin, but a resolution always stamps ResolvedAt and a filing never
+// does.
+func TestFoldRecords_ResolutionOfAManuallyFiledItemIsNotASighting(t *testing.T) {
+	filed := detection("filed then resolved", "2026-06-01T00:00:00Z")
+	filed.Status = "deferred"
+	filed.Origin = OriginManual
+
+	resolution := filed
+	resolution.Timestamp = "2026-06-02T00:00:00Z"
+	resolution.Status = "resolved"
+	resolution.ResolvedAt = "2026-06-02T00:00:00Z"
+
+	folded := FoldRecords([]Record{filed, resolution})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences,
+		"resolving a manually filed item is a marker on it, not a second sighting")
+}

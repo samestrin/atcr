@@ -122,9 +122,18 @@
 // Compaction is what bounds the store's growth. Month sharding gives file-size
 // hygiene and archival boundaries but no bound: every operation reads every shard,
 // because dedup needs every id ever seen and a resolution may live in any later
-// shard. Compact folds each id to its effective record (plus the resolution trail
-// when that record is open — retainForCompaction) and rewrites the shards
+// shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
+//
+// retainForCompaction keeps a SECOND record for an id in either of two cases, so
+// retention is bounded at two per id: the resolution TRAIL when the effective
+// record is open (preserving the ResolvedAt and the human-typed --reason a
+// regression would otherwise erase), and the model DONOR when the effective record
+// is settled but carries no attribution (preserving the record
+// AggregateQualitySignal recovers a Model from — without it the outcome vanishes
+// from the signal entirely). Both are written with their counters zeroed, and the
+// donor is emitted BEFORE the effective record so a full timestamp/rank tie still
+// folds to the effective one.
 //
 // It runs two ways. Manually, via `atcr debt compact`. Automatically, via
 // MaybeCompact, called once by cli/reconcile.go's persistLocalDebt AFTER its append
@@ -167,16 +176,19 @@
 // idempotent: re-compacting an already-compacted store leaves both values
 // unchanged. See aggregateCounters (store.go) for the rule and the lifecycle walk.
 //
-// There are exactly three writers of the store, and each has its own counter
-// convention. cli/reconcile.go's detection append leaves both fields ZERO, so the
-// fold counts it as a fresh sighting. cli/debt_resolve.go's resolution append and
-// retainForCompaction's retained trail/donor entries must ZERO them explicitly —
-// both copy an existing record, counters and all, and a second carrier in a group
-// would let the fold count part of the history twice. cli/debt_add.go does the
-// opposite deliberately and stamps Occurrences 1, because a hand-filed item is its
-// own first sighting and may carry a status the counting rule would otherwise never
-// treat as a detection. Outside that one case the counters live on an id's
-// effective record alone.
+// Three commands write the store — cli/reconcile.go (detections), cli/debt_add.go
+// (hand-filed items) and cli/debt_resolve.go (resolutions) — plus Compact itself,
+// and all of them use ONE convention: append with the counters ZERO. The counters
+// are derived state and live on an id's effective record alone, stamped there by
+// the fold. Two of those paths must zero them EXPLICITLY because they copy an
+// existing record wholesale — debt_resolve's resolution and retainForCompaction's
+// retained trail/donor — since a second carrier in a group would let the fold count
+// part of the history twice.
+//
+// A hand-filed item still counts as a sighting even though it is appended with zero
+// counters and may carry a status: isSighting recognises it from its manual origin
+// and empty ResolvedAt, which is what separates a filing from a resolution that
+// merely inherited the origin by copying.
 //
 // # Maintenance invariant (coupling)
 //
