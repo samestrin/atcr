@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/validation"
 )
 
@@ -77,9 +78,13 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	}
 	content := renderDebtDashboard(recs, top)
 
+	// Human-facing text uses `out` — what the user typed — while `outputPath` is
+	// for I/O only. Printing the resolved path leaked a username-bearing absolute
+	// path into CI logs and handed the reader back a command that was not the one
+	// they ran (the sprint's own SECURITY item addresses this class via basePathErr).
 	switch {
 	case check:
-		return checkDashboard(cmd, outputPath, content)
+		return checkDashboard(cmd, outputPath, out, content)
 	case out == "":
 		_, err := fmt.Fprint(cmd.OutOrStdout(), content)
 		return err
@@ -89,14 +94,16 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		// not-yet-created directory (docs/, .github/), so it creates the parent
 		// rather than failing. This is intentional, not an oversight.
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-			return usageError(fmt.Errorf("failed to create the directory for %q: %w", outputPath, err))
+			return usageError(fmt.Errorf("failed to create the directory for %q: %w", out, localdebt.RedactPathErr(err)))
 		}
 		// A local I/O failure is an infrastructure/usage error (exit 2), matching
 		// report.go's classification of its own disk writes. The write inspects and
 		// truncates through one O_NOFOLLOW handle — see writeDashboardFile for the
-		// two guards that requires.
+		// two guards that requires. The wrapped *os.PathError carries the absolute
+		// path a second time, so it goes through the same redaction hydrateOpenDebt
+		// applies sixty lines away.
 		if err := writeDashboardFile(outputPath, content); err != nil {
-			return usageError(fmt.Errorf("failed to write dashboard to %q: %w", outputPath, err))
+			return usageError(fmt.Errorf("failed to write dashboard to %q: %w", out, localdebt.RedactPathErr(err)))
 		}
 		// Nothing on stdout: report writes no "wrote it" line either, and a status
 		// line is noise to a caller that redirected the payload to a file.
@@ -221,17 +228,22 @@ const exitDrift = 4
 //   - drift or a missing file → exitDrift (4): regenerate and re-stage.
 //   - an unreadable target    → exitFailure (1): fix the read error;
 //     regenerating will not help, and the message does not suggest it.
-func checkDashboard(cmd *cobra.Command, out, content string) error {
-	existing, err := os.ReadFile(out)
+//
+// The path is read as `resolved` and REPORTED as `display` — the value the user
+// passed to --output. The two differ on every relative invocation, and it is the
+// reported one that lands in a CI log and in the copy-pasteable regenerate
+// command, so it must be the one the user can retype.
+func checkDashboard(cmd *cobra.Command, resolved, display, content string) error {
+	existing, err := os.ReadFile(resolved)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s does not exist; run `atcr debt dashboard --output %s` to generate it", out, out)}
+			return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s does not exist; run `atcr debt dashboard --output %s` to generate it", display, display)}
 		}
-		return fmt.Errorf("read dashboard %s: %w", out, err)
+		return fmt.Errorf("read dashboard %s: %w", display, localdebt.RedactPathErr(err))
 	}
 	if string(existing) != content {
-		return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s is out of date; regenerate with `atcr debt dashboard --output %s`", out, out)}
+		return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s is out of date; regenerate with `atcr debt dashboard --output %s`", display, display)}
 	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Dashboard %s is up to date.\n", out)
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Dashboard %s is up to date.\n", display)
 	return err
 }
