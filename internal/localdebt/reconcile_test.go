@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -354,4 +355,32 @@ func TestFoldRecords_WontfixSurvivesFailOpenDuplicate(t *testing.T) {
 	require.Len(t, folded, 1)
 	assert.Equal(t, "wontfix", folded[0].Status,
 		"a fail-open duplicate never displaces the wontfix record — suppression is the fold's job, not the seed's")
+}
+
+// TestPersistForReconcile_InvalidRunIDWarnsOnceAndWritesNothing pins call-site
+// validation of the run_id month precondition (TD
+// internal/localdebt/reconcile.go:129) — the same contract ManualRunID enforces
+// for `debt add`. An empty ReconciledAt yields a run_id monthFromRunID rejects,
+// and every finding shares that run_id, so without a pre-loop check EVERY
+// Append rejects identically: N identical "append failed" lines, zero persisted
+// records, and a clean return with no summary of what happened.
+func TestPersistForReconcile_InvalidRunIDWarnsOnceAndWritesNothing(t *testing.T) {
+	root := t.TempDir()
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Fix: "f", Category: "correctness", EstMinutes: 5}},
+			{Finding: reclib.Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Fix: "f", Category: "hygiene", EstMinutes: 5}},
+		},
+		Summary: reclib.Summary{ReconciledAt: ""},
+	}
+	var diag bytes.Buffer
+	PersistForReconcile("review", res, PersistOpts{Root: root, Diag: &diag})
+
+	warn := diag.String()
+	assert.Contains(t, warn, "cannot derive month from run_id", "the single diagnostic must name the bad run_id")
+	assert.Equal(t, 1, strings.Count(warn, "\n"),
+		"exactly one warning line, not one identical append failure per finding")
+	_, err := os.Stat(DefaultDir(root))
+	assert.True(t, os.IsNotExist(err), "an unpersistable run must create no store directory: %v", err)
 }
