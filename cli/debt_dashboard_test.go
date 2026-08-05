@@ -254,6 +254,36 @@ func TestDebtDashboard_OverwritesItsOwnPreviousOutput(t *testing.T) {
 	assert.Contains(t, string(raw), "Technical Debt Dashboard")
 }
 
+// TD: every dashboard message interpolated the RESOLVED absolute path rather
+// than what the user typed, so a `--output docs/debt.md` drift failure in CI
+// printed `run atcr debt dashboard --output /Users/<username>/.../docs/debt.md` —
+// leaking a username-bearing path into CI logs and handing back a command that is
+// not the one that ran. Human-facing text uses the user's value; the resolved
+// path is for I/O only.
+func TestDebtDashboard_MessagesUseTheUserSuppliedPath(t *testing.T) {
+	dir := writeLocalDebt(t)
+	work := t.TempDir()
+	t.Chdir(work)
+
+	t.Run("check on a missing file", func(t *testing.T) {
+		_, err := runDebt(t, "dashboard", "--dir", dir, "--output", "docs/debt.md", "--check")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "docs/debt.md", "the message echoes what the user typed")
+		assert.NotContains(t, err.Error(), work, "and never the resolved absolute path")
+	})
+
+	t.Run("write failure", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(work, "blocker"), []byte("x"), 0o644))
+
+		_, err := runDebt(t, "dashboard", "--dir", dir, "--output", "blocker/d.md")
+
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), work,
+			"the wrapped *os.PathError is reduced to its base name, like localdebt's own writes")
+	})
+}
+
 // TD item G: a negative --top used to slip past the topN >= 0 guard and mean a
 // third, undocumented thing ("build the unbounded list, then suppress it").
 // It is a usage error, phrased like debt add's invalid --est.
