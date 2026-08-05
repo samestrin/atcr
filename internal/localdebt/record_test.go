@@ -219,6 +219,11 @@ func TestRecord_EffectiveOrigin_DefaultsToReview(t *testing.T) {
 	blank := Record{SchemaVersion: SchemaVersion, Origin: "   "}
 	assert.Equal(t, OriginReview, blank.EffectiveOrigin(),
 		"a whitespace-only origin is treated as absent, not as a distinct value")
+
+	bogus := Record{SchemaVersion: SchemaVersion, Origin: "bogus"}
+	assert.Equal(t, OriginReview, bogus.EffectiveOrigin(),
+		"an unrecognized origin reports review — decodeRecord does not validate origin, so a hand-edited or corrupted value must not propagate outside the closed set")
+	assert.Equal(t, "bogus", bogus.Origin, "the fallback must not mutate the receiver")
 }
 
 // TestRecord_EmptyOriginOmittedFromJSON locks the omitempty half of backward
