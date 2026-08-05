@@ -99,6 +99,11 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		// assertion follows the code rather than the rounded prose.
 		{"AC13", "auto-compaction size threshold", "100 MiB"},
 		{"AC13", "seam: excluded workflow field", "source_label"},
+		// TD: `debt list --group` existed on main and was removed with the store
+		// split, but the breaking-changes table recorded --group only "on add", so a
+		// script running `atcr debt list --group U` hit an unknown-flag error the
+		// documented retirement list did not cover.
+		{"TD", "retired list --group filter", "`--group` on `list`"},
 	}
 	for _, tc := range required {
 		if !strings.Contains(doc, tc.substr) {
