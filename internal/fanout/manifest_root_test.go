@@ -56,6 +56,9 @@ func TestAbsRoot(t *testing.T) {
 
 	assert.Equal(t, filepath.Clean(mustAbs(t, "..")), absRoot(".."),
 		"a relative parent resolves against the CWD, like every other review-time path")
+
+	assert.Equal(t, "", absRoot(""),
+		"an empty root is no claim — filepath.Abs(\"\") would fabricate a CWD claim the re-validation tier then trusts")
 }
 
 func mustAbs(t *testing.T, p string) string {
