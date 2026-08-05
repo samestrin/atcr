@@ -16,6 +16,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The nil-able kinds a caller can hand in as an io.Writer beyond a pointer. Writing
+// to any of them when nil fails — a panic for func/map/slice, a permanent block for
+// a chan — which is exactly what a diagnostics path must never do.
+type (
+	writerFunc  func([]byte) (int, error)
+	writerMap   map[string]int
+	writerSlice []byte
+	writerChan  chan int
+)
+
+func (f writerFunc) Write(p []byte) (int, error)  { return f(p) }
+func (m writerMap) Write(p []byte) (int, error)   { m["n"] += len(p); return len(p), nil }
+func (s writerSlice) Write(p []byte) (int, error) { _ = s[0]; return len(p), nil }
+func (c writerChan) Write(p []byte) (int, error)  { c <- len(p); return len(p), nil }
+
+// TestDiagWriter_EveryNilableKindFallsBack pins the ACTUAL bound of the
+// diagnostics-sink guard (TD internal/localdebt/store.go:57). Its doc claimed it
+// preserved a "never panic in a diagnostics path" contract, while the check tested
+// reflect.Pointer alone — so a nil func-, map-, slice- or chan-kinded writer sailed
+// past it and failed on the first Write exactly as an unguarded one would. A guard
+// that upholds less than its comment asserts is worse for the next reader than no
+// guard at all; either the claim or the code had to move, and the claim is the one
+// worth keeping.
+func TestDiagWriter_EveryNilableKindFallsBack(t *testing.T) {
+	for name, w := range map[string]io.Writer{
+		"untyped nil": nil,
+		"nil pointer": (*bytes.Buffer)(nil),
+		"nil func":    writerFunc(nil),
+		"nil map":     writerMap(nil),
+		"nil slice":   writerSlice(nil),
+		"nil chan":    writerChan(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// require, not assert: the returned sink is written to below, and a
+			// wrong answer here means writing to the very value that hangs or panics.
+			got := diagWriter(w)
+			require.Equal(t, os.Stderr, got, "an unusable sink must fall back to os.Stderr")
+			assert.NotPanics(t, func() { _, _ = got.Write(nil) })
+		})
+	}
+
+	t.Run("a usable writer is passed through untouched", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.Same(t, &buf, diagWriter(&buf))
+	})
+}
+
 // sampleRecord builds a minimal valid current-schema record for store tests
 // (SchemaVersion is taken from the constant, so it tracks the bump), populating every
 // required field with a plausible value plus the optional justification/source
