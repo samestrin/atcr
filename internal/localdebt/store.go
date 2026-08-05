@@ -1148,18 +1148,86 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 	return result, nil
 }
 
-// stagedShard is a fully-written replacement for one month shard, not yet visible.
+// stagedShard is a fully-written replacement for one month shard, sitting in a temp
+// file beside it and not yet visible to any reader.
+//
+// Staging is separated from publishing so a multi-shard rewrite writes EVERY shard
+// before it replaces ANY (TD internal/localdebt/store.go:316). Interleaving the two
+// meant a failure partway through — ENOSPC, EACCES, a destination that cannot be
+// replaced — left some shards rewritten and others not, with the trailing
+// empty-shard removal never running. Cross-shard atomicity is not reachable without
+// a journal, but the exposure shrinks from "the whole rewrite" to "the rename
+// sequence": any failure before the first publish leaves the store untouched.
 type stagedShard struct {
 	tmpName string
 	path    string
 }
 
-// publish swaps the staged content in.
-func (s stagedShard) publish() error { return nil }
+// publish swaps the staged content in. After it returns nil the temp no longer
+// exists and discard must not be called for this shard.
+func (s stagedShard) publish() error {
+	if err := os.Rename(s.tmpName, s.path); err != nil {
+		return fmt.Errorf("renaming compacted file: %w", basePathErr(err))
+	}
+	return nil
+}
 
-// stageShard writes month's replacement content to a temp file beside it.
+// discard removes an unpublished temp. Best-effort: a leftover temp is inert to
+// every read path (it carries no .jsonl suffix) and the next Compact's
+// sweepStaleTemps reaps it.
+func (s stagedShard) discard() {
+	if s.tmpName != "" {
+		_ = os.Remove(s.tmpName)
+	}
+}
+
+// stageShard writes month's replacement content — the folded records followed by the
+// forward-incompatible lines carried through verbatim — to a temp file beside the
+// destination, and returns it unpublished.
+//
+// It is a function rather than an inlined loop body so its file handle and its
+// failure paths are scoped to ONE shard: the previous inline version deferred its
+// cleanup to the end of the whole compaction closure, so every shard's temp handle
+// accumulated until the last one finished.
 func stageShard(dir, month string, recs []Record, preserved [][]byte) (stagedShard, error) {
-	return stagedShard{path: filepath.Join(dir, month+".jsonl")}, nil
+	var buf bytes.Buffer
+	for _, r := range recs {
+		line, err := json.Marshal(r)
+		if err != nil {
+			return stagedShard{}, fmt.Errorf("marshaling localdebt record: %w", err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	// Carry forward-incompatible lines through byte-for-byte. They are never
+	// re-marshaled: this binary's Record cannot round-trip fields it does not
+	// declare, so marshaling a decoded copy is precisely how the data would be lost.
+	for _, line := range preserved {
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+month+".jsonl.tmp-*")
+	if err != nil {
+		return stagedShard{}, fmt.Errorf("creating temp file for compaction: %w", basePathErr(err))
+	}
+	staged := stagedShard{tmpName: tmp.Name(), path: filepath.Join(dir, month+".jsonl")}
+
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		staged.discard()
+		return stagedShard{}, fmt.Errorf("writing compacted records: %w", basePathErr(err))
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		staged.discard()
+		return stagedShard{}, fmt.Errorf("setting compacted file permissions: %w", basePathErr(err))
+	}
+	if err := tmp.Close(); err != nil {
+		staged.discard()
+		return stagedShard{}, fmt.Errorf("closing compacted temp file: %w", basePathErr(err))
+	}
+	return staged, nil
 }
 
 func Compact(dir string, opts ReadOpts) (CompactResult, error) {
@@ -1241,57 +1309,33 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			}
 		}
 
+		// Phase 1: stage every shard. Nothing on disk changes yet, so a failure here
+		// leaves the store exactly as it was.
+		staged := make([]stagedShard, 0, len(byMonth))
+		months := make([]string, 0, len(byMonth))
 		for month, monthRecs := range byMonth {
-			var buf bytes.Buffer
-			for _, r := range monthRecs {
-				line, err := json.Marshal(r)
-				if err != nil {
-					return fmt.Errorf("marshaling localdebt record: %w", err)
-				}
-				buf.Write(line)
-				buf.WriteByte('\n')
-			}
-			// Carry forward-incompatible lines through byte-for-byte. They are never
-			// re-marshaled: this binary's Record cannot round-trip fields it does not
-			// declare, so marshaling a decoded copy is precisely how the data would be
-			// lost.
-			for _, line := range preservedByShard[month] {
-				buf.Write(line)
-				buf.WriteByte('\n')
-			}
-
-			path := filepath.Join(dir, month+".jsonl")
-
-			tmp, err := os.CreateTemp(dir, "."+month+".jsonl.tmp-*")
+			s, err := stageShard(dir, month, monthRecs, preservedByShard[month])
 			if err != nil {
-				return fmt.Errorf("creating temp file for compaction: %w", basePathErr(err))
-			}
-			tmpName := tmp.Name()
-			cleanup := true
-			defer func() {
-				if cleanup {
-					_ = os.Remove(tmpName)
+				for _, done := range staged {
+					done.discard()
 				}
-			}()
+				return err
+			}
+			staged = append(staged, s)
+			months = append(months, month)
+		}
 
-			if _, err := tmp.Write(buf.Bytes()); err != nil {
-				_ = tmp.Close()
-				return fmt.Errorf("writing compacted records: %w", basePathErr(err))
+		// Phase 2: publish. A failure here can still leave a partial rewrite — that
+		// is irreducible without a journal — but every shard's content is already on
+		// disk, so the window is a sequence of renames rather than the whole rewrite.
+		for i, s := range staged {
+			if err := s.publish(); err != nil {
+				for _, rest := range staged[i:] {
+					rest.discard()
+				}
+				return err
 			}
-			if err := tmp.Chmod(0o600); err != nil {
-				_ = tmp.Close()
-				return fmt.Errorf("setting compacted file permissions: %w", basePathErr(err))
-			}
-			if err := tmp.Close(); err != nil {
-				return fmt.Errorf("closing compacted temp file: %w", basePathErr(err))
-			}
-
-			if err := os.Rename(tmpName, path); err != nil {
-				return fmt.Errorf("renaming compacted file: %w", basePathErr(err))
-			}
-			cleanup = false
-
-			delete(existingMonths, month)
+			delete(existingMonths, months[i])
 		}
 
 		for month := range existingMonths {
@@ -1306,32 +1350,38 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 
 		return nil
 	})
-	if err == nil {
-		// Record what this compaction left behind, so the automatic trigger has a
-		// baseline to measure growth against (see MaybeCompact).
-		//
-		// It lives HERE, not in MaybeCompact, for three reasons. A manual
-		// `atcr debt compact` refreshes the baseline too, so it cannot leave a stale
-		// watermark that provokes a redundant automatic compaction moments later. A
-		// no-op fold (StoreFound false — a store of only malformed or
-		// forward-incompatible lines) still establishes a baseline, without which
-		// the trigger re-fires on every append forever. And the measurement is taken
-		// on the same terms the trigger uses: real on-disk lines and bytes via
-		// StoreStats, not the semantic fold count, which excludes lines left in
-		// protected shards and would make the two disagree.
-		//
-		// Best-effort, and measured OUTSIDE the lock: the rewrite has already
-		// committed, and the no-op-fold path returns early from the locked closure,
-		// so writing here covers both exits with one statement. A concurrent Append
-		// between the unlock and the stat INFLATES the recorded baseline, and the
-		// growth gate then asks for 50% growth past an inflated number — so the
-		// effect is a DELAYED compaction, not a spurious one. It is self-correcting:
-		// the next compaction that does run rewrites the baseline accurately.
-		if records, size, serr := StoreStats(dir); serr == nil {
-			writeCompactWatermark(dir, compactWatermark{Records: records, Bytes: size}, opts.Writer)
-		}
+	if err != nil {
+		// Report nothing. The counts describe a fold that was planned, not one that
+		// landed, and a caller reading RecordsBefore/Dropped off a failed run reads
+		// them as work that happened (TD internal/localdebt/store.go:316). CompactPlan
+		// already zeroes on error; this is the same contract for the real thing.
+		return CompactResult{}, err
 	}
-	return result, err
+
+	// Record what this compaction left behind, so the automatic trigger has a
+	// baseline to measure growth against (see MaybeCompact).
+	//
+	// It lives HERE, not in MaybeCompact, for three reasons. A manual
+	// `atcr debt compact` refreshes the baseline too, so it cannot leave a stale
+	// watermark that provokes a redundant automatic compaction moments later. A
+	// no-op fold (StoreFound false — a store of only malformed or
+	// forward-incompatible lines) still establishes a baseline, without which
+	// the trigger re-fires on every append forever. And the measurement is taken
+	// on the same terms the trigger uses: real on-disk lines and bytes via
+	// StoreStats, not the semantic fold count, which excludes lines left in
+	// protected shards and would make the two disagree.
+	//
+	// Best-effort, and measured OUTSIDE the lock: the rewrite has already
+	// committed, and the no-op-fold path returns early from the locked closure,
+	// so writing here covers both exits with one statement. A concurrent Append
+	// between the unlock and the stat INFLATES the recorded baseline, and the
+	// growth gate then asks for 50% growth past an inflated number — so the
+	// effect is a DELAYED compaction, not a spurious one. It is self-correcting:
+	// the next compaction that does run rewrites the baseline accurately.
+	if records, size, serr := StoreStats(dir); serr == nil {
+		writeCompactWatermark(dir, compactWatermark{Records: records, Bytes: size}, opts.Writer)
+	}
+	return result, nil
 }
 
 // Automatic-compaction thresholds. Compaction is what bounds the store's growth —
