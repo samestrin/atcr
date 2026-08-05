@@ -110,12 +110,21 @@ func renderQualityReport(w io.Writer, rows []localdebt.QualityRow, format string
 // rate and sorts by rate descending, tie-broken by persona then model ascending
 // (matching AggregateQualitySignal's own tie-break style). It always returns a
 // non-nil slice so the JSON empty case marshals to [] rather than null.
+//
+// Persona and Model pass through cell HERE — the single funnel both renderers
+// consume — because the report reads the shared public .atcr/debt/ store
+// (debtStoreDir): world-appendable via `debt add`, MCP, and third-party tools,
+// so these fields are attacker-influenceable text, not catalog-controlled
+// slugs. cell flattens CR/LF/TAB to spaces (row structure) and strips the
+// remaining control characters through sanitizeCell — covering the json
+// renderer too: json.Marshal escapes the C0 range but emits C1
+// (U+0080–U+009F) raw.
 func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 	out := make([]qualityReportRow, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, qualityReportRow{
-			Persona:        r.Persona,
-			Model:          r.Model,
+			Persona:        cell(r.Persona),
+			Model:          cell(r.Model),
 			DismissedCount: r.DismissedCount,
 			ConfirmedCount: r.ConfirmedCount,
 			DismissalRate:  dismissalRate(r.DismissedCount, r.ConfirmedCount),
@@ -166,10 +175,12 @@ func renderQualityReportMarkdown(w io.Writer, rows []qualityReportRow) error {
 
 // escapeMarkdownCell makes a persona/model identifier safe to interpolate into a
 // markdown table cell: a literal pipe would break the column structure and a
-// newline would break the row. Persona and model are catalog-controlled slugs
-// today (so this is unreachable defense-in-depth), but the render layer holds the
-// same "enforced structurally, not left to input hygiene" line the aggregation
-// does rather than trusting the input.
+// newline would break the row. Control characters (ESC, C0/C1, DEL, U+2028/9)
+// are NOT this function's job — they are stripped upstream in qualityReportRows,
+// the funnel every renderer reads, because the report's input is the shared,
+// world-appendable .atcr/debt/ store and its text is untrusted. This guard holds
+// the remaining markdown-structure line the render layer owns — enforced
+// structurally, not left to input hygiene.
 func escapeMarkdownCell(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
