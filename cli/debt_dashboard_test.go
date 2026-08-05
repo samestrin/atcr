@@ -210,6 +210,45 @@ func TestDebtDashboard_TopHelpDocumentsZeroSemantics(t *testing.T) {
 	assert.Contains(t, f.Usage, "0 suppresses the list")
 }
 
+// TD item H: --check is a CI gate, so its failure modes need distinct exit
+// codes. Drift and a missing file are both "regenerate fixes it" → exitDrift
+// (4); an unreadable target regeneration cannot fix stays a plain failure (1).
+func TestDebtDashboard_CheckDriftExitsWithDriftCode(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(out, []byte("stale content\n"), 0o644))
+
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.Error(t, err)
+	assert.Equal(t, exitDrift, exitCode(err), "content drift gets its own exit code so a hook can regenerate")
+	assert.Contains(t, err.Error(), "regenerate")
+}
+
+func TestDebtDashboard_CheckMissingFileExitsWithDriftCode(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.Error(t, err)
+	assert.Equal(t, exitDrift, exitCode(err), "a missing dashboard is fixed by regenerating, like drift")
+	assert.Contains(t, err.Error(), "does not exist")
+}
+
+// A directory at the --output path makes os.ReadFile fail with EISDIR: not
+// drift, and regeneration will not fix it — a plain failure (exit 1), and the
+// message must not prescribe regenerating.
+func TestDebtDashboard_CheckUnreadableTargetIsExitOne(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", t.TempDir(), "--check")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err))
+	assert.NotContains(t, err.Error(), "regenerate")
+}
+
 func TestDebtDashboard_CheckMissingFileIsError(t *testing.T) {
 	dir := writeLocalDebt(t)
 	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
