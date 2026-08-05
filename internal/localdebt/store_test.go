@@ -1776,6 +1776,45 @@ func TestCompact_NonMonthShardIsInertNotHalfAdopted(t *testing.T) {
 	assert.Equal(t, rec.ID, recs[0].ID)
 }
 
+// TestCompact_ProtectionKeysOnThePhysicalShardNotTheDerivedMonth pins the fix for
+// the mismatch at TD internal/localdebt/store.go:774. `protected` was keyed by the
+// shard FILE that held the over-long line, while both passThroughUncompactable and
+// Compact's bucketing loop tested it with monthFromRunID(r.RunID) — the month derived
+// from the record's own run_id. The two agree only while every record physically
+// lives in the shard its run_id names. A record read from a DIFFERENT file (a
+// hand-edited store, an external writer, a rename) was judged compactable while
+// physically sitting in a shard that is never rewritten, so Compact wrote a second
+// copy into the derived month shard while the original survived — inflating
+// Occurrences by one sighting on every subsequent fold.
+func TestCompact_ProtectionKeysOnThePhysicalShardNotTheDerivedMonth(t *testing.T) {
+	dir := t.TempDir()
+	// A record whose run_id says 2026-06 but which physically lives in 2026-05.jsonl,
+	// alongside an over-long line that makes that shard unrewritable.
+	misfiled := detection("misfiled across shards", "2026-06-01T00:00:00Z")
+	misfiled.RunID = "2026-06-01T00:00:00Z-run"
+	writeShard(t, dir, "2026-05", recordLine(t, misfiled), strings.Repeat("x", maxLineBytes+16))
+
+	before, _, err := StoreStats(dir)
+	require.NoError(t, err)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	after, _, err := StoreStats(dir)
+	require.NoError(t, err)
+	assert.Equal(t, before, after,
+		"a record physically inside an unrewritable shard must not be copied into its derived month shard")
+
+	_, err = os.Stat(filepath.Join(dir, "2026-06.jsonl"))
+	assert.True(t, os.IsNotExist(err), "no second copy may be created in the derived month shard")
+
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	folded := FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences, "one sighting, however it is filed")
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
