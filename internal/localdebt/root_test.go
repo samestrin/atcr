@@ -215,6 +215,12 @@ func TestResolveStoreRoot(t *testing.T) {
 	t.Run("empty manifest root falls through to CWD", func(t *testing.T) {
 		// A MISSING claim is not a stale claim: a pre-field manifest asserted
 		// nothing, so the pre-field CWD behavior is exactly right.
+		//
+		// Chdir into a marker-less dir to pin THAT behavior specifically: tier 3 now
+		// walks up for a repo-root marker (TestResolveStoreRoot_CWDTierWalksToRepoRoot),
+		// so without this the assertion would be measuring the atcr checkout the test
+		// binary happens to run in rather than the fall-through itself.
+		t.Chdir(t.TempDir())
 		review := filepath.Join(t.TempDir(), "r")
 		writeReviewManifest(t, review, "")
 
@@ -227,6 +233,7 @@ func TestResolveStoreRoot(t *testing.T) {
 	})
 
 	t.Run("missing manifest falls through to CWD", func(t *testing.T) {
+		t.Chdir(t.TempDir()) // marker-less, as above
 		root, ok := ResolveStoreRoot(RootOpts{ReviewDir: filepath.Join(t.TempDir(), "no-such-review"), AllowCWD: true})
 
 		require.True(t, ok)

@@ -151,16 +151,13 @@ func debtRepoRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for dir := cwd; ; {
-		if localdebt.HasRepoRootMarker(dir) {
-			return dir, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return cwd, nil
-		}
-		dir = parent
+	// The walk itself lives in localdebt (FindRepoRoot), shared with the store's
+	// WRITER: a second copy of the loop here is exactly how the reader and writer
+	// halves came to resolve different roots (TD internal/localdebt/root.go:89).
+	if root, found := localdebt.FindRepoRoot(cwd); found {
+		return root, nil
 	}
+	return cwd, nil
 }
 
 // loadLocalDebt reads the store named by --dir and folds it by id, so list and

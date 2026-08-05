@@ -131,11 +131,26 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 		// tier 3: nothing was claimed, so nothing is stale.
 	}
 
-	// Tier 3: the process CWD, byte-for-byte the pre-manifest DefaultDir(".")
-	// behavior. Deliberately unvalidated — adding a marker requirement here would
-	// change CLI behavior beyond the AC and break the existing suite, whose isolate()
-	// helper chdirs into a bare temp dir with no .git.
+	// Tier 3: the CWD's REPO ROOT — the same marker walk the store's readers run
+	// (cli/debt.go debtStoreDir → debtRepoRoot), through the same exported helper so
+	// there is no second copy of the rule to drift.
+	//
+	// Returning the literal "." here is what split the two halves: DefaultDir(".")
+	// resolves against the process CWD, so a reconcile from a subdirectory wrote
+	// <cwd>/.atcr/debt while every reader walked up and read <repo-root>/.atcr/debt.
+	// The run's whole backlog was invisible, and the stray <cwd>/.atcr became a
+	// repo-root marker for every later walk from that subtree.
+	//
+	// With NO marker anywhere up the tree the answer is still the bare ".", byte-for-
+	// byte the pre-manifest behavior — that is what keeps the existing suite (whose
+	// isolate() helper chdirs into a bare temp dir with no .git) reading the store it
+	// just wrote.
 	if opts.AllowCWD {
+		if cwd, err := os.Getwd(); err == nil {
+			if root, found := FindRepoRoot(cwd); found {
+				return root, true
+			}
+		}
 		return ".", true
 	}
 	_, _ = fmt.Fprintf(diag, "localdebt: no repo root recorded in the review manifest and no repo argument given; skipping local debt persistence (pass repo=<path>)\n")
@@ -195,6 +210,29 @@ func validateRepoRoot(path string) (string, bool) {
 // Both use Lstat, so a SYMLINK is not a marker in either form: a link pointing at
 // an arbitrary directory must not pass as a repository root, and git never
 // creates one. That matches cli/root.go's hardening for the shared walk.
+// FindRepoRoot walks up from start (inclusive) and returns the first directory
+// carrying a repo-root marker. found == false means there is no marker anywhere up
+// the tree, which every caller treats as "keep the pre-walk behavior" rather than as
+// an error.
+//
+// It is exported because the store's WRITER (ResolveStoreRoot's CWD tier) and its
+// READERS (cli/debt.go debtRepoRoot) must answer "which directory is the repo root"
+// identically. They already share the marker predicate; sharing the walk too is what
+// closes the remaining gap — a second copy of the loop is how the two halves came to
+// disagree in the first place (TD internal/localdebt/root.go:89).
+func FindRepoRoot(start string) (string, bool) {
+	for dir := filepath.Clean(start); ; {
+		if HasRepoRootMarker(dir) {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
 func HasRepoRootMarker(dir string) bool {
 	if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil &&
 		(info.IsDir() || info.Mode().IsRegular()) {
