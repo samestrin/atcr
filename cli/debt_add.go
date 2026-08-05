@@ -290,11 +290,16 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 
 	// A manual add has no reconcile run behind it, so it carries the synthetic
 	// run id whose YYYY-MM prefix resolves the month shard (localdebt.ManualRunID),
-	// mirroring the resolution path's construction. time.Now() is always inside
-	// ManualRunID's documented four-digit-year precondition.
+	// mirroring the resolution path's construction. time.Now() can never trip
+	// ManualRunID's year validation; the error check keeps the validated
+	// (string, error) contract honest rather than discarding it.
 	ts := time.Now().UTC()
 	rec.SchemaVersion = localdebt.SchemaVersion
-	rec.RunID = localdebt.ManualRunID(ts)
+	runID, err := localdebt.ManualRunID(ts)
+	if err != nil {
+		return fmt.Errorf("stamping the item's run id: %w", err)
+	}
+	rec.RunID = runID
 	rec.Timestamp = ts.Format(time.RFC3339)
 	rec.Origin = localdebt.OriginManual
 	// Occurrences/FirstSeen are deliberately left ZERO. A filed item IS its own

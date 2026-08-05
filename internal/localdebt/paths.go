@@ -44,21 +44,28 @@ func monthFromRunID(runID string) (string, error) {
 // monthFromRunID requires and a manual entry lands in the correct month shard
 // instead of failing the append outright.
 //
-// Precondition: ts must fall in years 1-9999. RFC3339 formats a year outside that
-// range as "10000-01-…" or "-0001-01-…", neither of which matches monthRe, so
-// Append would reject the record; and the zero time.Time formats as "0001-01-…",
-// which does match and would silently create a phantom 0001-01 shard. Callers
-// validate their input before calling (see the tech-debt note filed against this
-// helper), because T2's `atcr debt add` is where a user-supplied timestamp
-// actually originates.
+// The year is VALIDATED here, at the boundary, not merely documented: years
+// outside 1-9999 format through RFC3339 as "10000-01-…" or "-0001-01-…" — neither
+// matches monthRe, so Append would reject the record — and the zero time.Time
+// formats as "0001-01-…", which monthRe ACCEPTS, silently creating a permanent
+// phantom .atcr/debt/0001-01.jsonl shard. The (string, error) signature makes the
+// precondition enforceable rather than trusting every caller to read a comment
+// (TD internal/localdebt/paths.go:51; the "callers validate" doc-only stance this
+// replaces).
 //
 // ts is normalized to UTC before formatting, so a local instant just past midnight
 // on the 1st is filed under the month it actually belongs to. The -manual suffix
 // keeps a manual entry's provenance legible in the raw JSONL as well as in the
 // record's origin field, where a reconcile run_id instead ends in the review
 // directory's base name.
-func ManualRunID(ts time.Time) string {
-	return ts.UTC().Format(time.RFC3339) + "-manual"
+func ManualRunID(ts time.Time) (string, error) {
+	if ts.IsZero() {
+		return "", fmt.Errorf("cannot build a manual run_id from the zero time (it would shard as the phantom 0001-01 month)")
+	}
+	if y := ts.Year(); y < 1 || y > 9999 {
+		return "", fmt.Errorf("cannot build a manual run_id for year %d: outside the four-digit range 1-9999", y)
+	}
+	return ts.UTC().Format(time.RFC3339) + "-manual", nil
 }
 
 // RedactPathErr is basePathErr for callers outside this package that build their

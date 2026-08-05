@@ -138,13 +138,17 @@ func TestStore_MonthBoundaryNewFile(t *testing.T) {
 // just past midnight on the 1st belongs to the PREVIOUS month once normalized.
 func TestManualRunID_HasResolvableMonthPrefix(t *testing.T) {
 	fixed := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
-	month, err := monthFromRunID(ManualRunID(fixed))
+	id, err := ManualRunID(fixed)
+	require.NoError(t, err)
+	month, err := monthFromRunID(id)
 	require.NoError(t, err, "a ManualRunID must always resolve to a month shard")
 	assert.Equal(t, "2026-06", month)
 
 	// 2026-07-01T00:30:00+02:00 is 2026-06-30T22:30:00Z — the June shard.
 	crossing := time.Date(2026, 7, 1, 0, 30, 0, 0, time.FixedZone("UTC+2", 2*60*60))
-	month, err = monthFromRunID(ManualRunID(crossing))
+	id, err = ManualRunID(crossing)
+	require.NoError(t, err)
+	month, err = monthFromRunID(id)
 	require.NoError(t, err)
 	assert.Equal(t, "2026-06", month,
 		"ManualRunID normalizes to UTC, so a local-time month boundary does not misfile the shard")
@@ -154,7 +158,8 @@ func TestManualRunID_HasResolvableMonthPrefix(t *testing.T) {
 // a manual entry's run_id is visibly distinct from a reconcile run_id
 // (<RFC3339>-<review-dir base>) in the raw JSONL, not only in the origin field.
 func TestManualRunID_SuffixDistinguishesManual(t *testing.T) {
-	id := ManualRunID(time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC))
+	id, err := ManualRunID(time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
 	assert.Equal(t, "2026-06-14T10:00:00Z-manual", id)
 	assert.True(t, strings.HasSuffix(id, "-manual"),
 		"the -manual suffix marks provenance in the raw JSONL")
@@ -167,7 +172,9 @@ func TestStore_AppendReadAll_V3RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	fixed := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
 
-	rec := sampleRecord(ManualRunID(fixed))
+	id, err := ManualRunID(fixed)
+	require.NoError(t, err)
+	rec := sampleRecord(id)
 	rec.Origin = OriginManual
 	rec.Occurrences = 3
 	rec.FirstSeen = "2026-01-02T03:04:05Z"
