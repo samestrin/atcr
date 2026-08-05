@@ -309,3 +309,31 @@ func TestIsSettledStatus_ResolvedAndWontfixOnly(t *testing.T) {
 	assert.False(t, IsSettledStatus("deferred"), "...but it is not done")
 	assert.False(t, IsSuppressingStatus("deferred"), "...and it does not survive re-detection")
 }
+
+// TestStatusConstants_ExhaustiveAcrossPredicates locks the single-source status
+// vocabulary (TD internal/localdebt/record.go:252): the terminal statuses are
+// spelled once as constants and every predicate routes through normalizeStatus,
+// so a status added without updating a predicate fails here instead of silently
+// ranking 0 — indistinguishable from open — in ClosedStatusRank.
+func TestStatusConstants_ExhaustiveAcrossPredicates(t *testing.T) {
+	terminal := []string{StatusResolved, StatusDeferred, StatusWontfix}
+	for _, s := range terminal {
+		assert.True(t, IsClosedStatus(s), "%q carries a terminal marker", s)
+		assert.NotZero(t, ClosedStatusRank(s), "%q must rank above open", s)
+	}
+	assert.True(t, IsSettledStatus(StatusResolved))
+	assert.True(t, IsSettledStatus(StatusWontfix))
+	assert.False(t, IsSettledStatus(StatusDeferred), "not-now is not done")
+	assert.True(t, IsSuppressingStatus(StatusWontfix))
+	assert.False(t, IsSuppressingStatus(StatusResolved))
+	assert.False(t, IsSuppressingStatus(StatusDeferred))
+
+	// One shared normalization: case/whitespace variants behave identically.
+	for _, s := range terminal {
+		shout := " " + strings.ToUpper(s) + " "
+		assert.Equal(t, IsClosedStatus(s), IsClosedStatus(shout), "%q", shout)
+		assert.Equal(t, ClosedStatusRank(s), ClosedStatusRank(shout), "%q", shout)
+		assert.Equal(t, IsSettledStatus(s), IsSettledStatus(shout), "%q", shout)
+		assert.Equal(t, IsSuppressingStatus(s), IsSuppressingStatus(shout), "%q", shout)
+	}
+}

@@ -65,6 +65,28 @@ const (
 	msgOverLongLine = "localdebt: skipping over-long line (> %d bytes) in %s\n"
 )
 
+// Terminal status values, spelled once here so no call site writes a bare
+// literal — the same contract the Origin constants above establish. Every
+// status predicate below routes through normalizeStatus over these, so adding
+// or renaming a status fails the exhaustiveness test rather than silently
+// ranking 0 (indistinguishable from open) in ClosedStatusRank.
+const (
+	// StatusResolved marks a finding that was fixed.
+	StatusResolved = "resolved"
+	// StatusDeferred marks a finding consciously put off: "not now", not "never".
+	StatusDeferred = "deferred"
+	// StatusWontfix marks a finding dismissed as a false positive; it is the
+	// only status that survives re-detection (see IsSuppressingStatus).
+	StatusWontfix = "wontfix"
+)
+
+// normalizeStatus is the ONE normalization applied before any status
+// comparison — trim surrounding whitespace and lowercase — so the predicates
+// below cannot drift apart on input hygiene.
+func normalizeStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
 // Origin values are the closed set a v3 record's origin field may carry. They are
 // spelled once here so no call site writes a bare literal. An empty Origin on a
 // v1/v2 record means OriginReview: reconcile was the only writer before v3 (see
@@ -250,8 +272,8 @@ func (r Record) EffectiveOrigin() string {
 // this question of the record you are looking at; ask whether an ITEM is closed
 // of the record FoldRecords selected for its id.
 func IsClosedStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "deferred", "wontfix":
+	switch normalizeStatus(status) {
+	case StatusResolved, StatusDeferred, StatusWontfix:
 		return true
 	default:
 		return false
@@ -280,7 +302,7 @@ func IsClosedStatus(status string) bool {
 // the entire point of the flag (Epic 24.0). `deferred` means "not now", which is
 // not "never".
 func IsSuppressingStatus(status string) bool {
-	return strings.ToLower(strings.TrimSpace(status)) == "wontfix"
+	return normalizeStatus(status) == StatusWontfix
 }
 
 // IsSettledStatus reports whether an item needs no further action: it was fixed
@@ -299,8 +321,8 @@ func IsSuppressingStatus(status string) bool {
 // record carry a terminal marker?", and IsSuppressingStatus for "does this
 // terminal state survive re-detection?".
 func IsSettledStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "resolved", "wontfix":
+	switch normalizeStatus(status) {
+	case StatusResolved, StatusWontfix:
 		return true
 	default:
 		return false
@@ -310,12 +332,12 @@ func IsSettledStatus(status string) bool {
 // ClosedStatusRank orders terminal statuses so a deterministic effective status can
 // be chosen when divergent terminal records exist for one id.
 func ClosedStatusRank(status string) int {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "wontfix":
+	switch normalizeStatus(status) {
+	case StatusWontfix:
 		return 3
-	case "resolved":
+	case StatusResolved:
 		return 2
-	case "deferred":
+	case StatusDeferred:
 		return 1
 	default:
 		return 0

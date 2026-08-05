@@ -117,10 +117,10 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 			continue // attribution-incomplete: excluded from per-model rows
 		}
 		var dismissed, confirmed int
-		switch strings.ToLower(strings.TrimSpace(rec.Status)) {
-		case "wontfix":
+		switch normalizeStatus(rec.Status) {
+		case StatusWontfix:
 			dismissed = 1
-		case "resolved":
+		case StatusResolved:
 			confirmed = 1
 		default:
 			continue // deferred (or any other terminal) is neither a signal nor a group
