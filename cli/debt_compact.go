@@ -18,7 +18,7 @@ func newDebtCompactCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtCompact,
 	}
-	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	addDebtStoreFlag(cmd)
 	return cmd
 }
 

@@ -40,8 +40,16 @@ func newDebtCmd() *cobra.Command {
 
 // addDebtStoreFlag registers the --dir flag every debt subcommand shares, with
 // the one default that makes them a single namespace over a single store.
+//
+// The DISPLAYED default is cleared after registration: cobra appends
+// "(default X)" to --help whenever DefValue is non-zero, and here X would be the
+// relative ".atcr/debt" — a path no command actually uses, since an unset --dir
+// resolves to <repo root>/.atcr/debt at run time (debtStoreDir). Clearing
+// DefValue touches only the help rendering; the flag's actual default value is
+// unchanged, so Changed("dir")-based resolution is unaffected.
 func addDebtStoreFlag(cmd *cobra.Command) {
 	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	cmd.Flags().Lookup("dir").DefValue = ""
 }
 
 // debtStoreDir resolves the store directory for a debt subcommand: an explicit

@@ -111,14 +111,19 @@ func TestDebt_CommandWiring(t *testing.T) {
 // AC1: every subcommand resolves its store through --dir, defaulting to the same
 // localdebt.DefaultDir(".") that resolve and compact already use. A default that
 // diverges between subcommands is exactly the two-store split this plan removes.
+// The displayed default (DefValue) is empty on all of them — the relative path is
+// never the resolved store, so --help must not advertise it; the actual default
+// VALUE still carries the shared store.
 func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 	cmd := newDebtCmd()
 	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
 		sub := debtSubcommand(t, cmd, name)
 		f := sub.Flags().Lookup("dir")
 		require.NotNil(t, f, "%s registers --dir", name)
-		assert.Equal(t, defaultDebtResolveDir, f.DefValue,
+		assert.Equal(t, defaultDebtResolveDir, f.Value.String(),
 			"%s --dir defaults to the shared .atcr/debt store", name)
+		assert.Equal(t, "", f.DefValue,
+			"%s --dir hides the relative default from --help", name)
 	}
 }
 

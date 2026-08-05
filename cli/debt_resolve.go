@@ -51,7 +51,7 @@ func newDebtResolveCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtResolve,
 	}
-	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	addDebtStoreFlag(cmd)
 	cmd.Flags().Bool("list", false, "list open items (default when no other action is given)")
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
 	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
