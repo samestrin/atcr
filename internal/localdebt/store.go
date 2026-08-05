@@ -24,12 +24,19 @@ const maxLineBytes = 1 << 20
 // be safe for the caller's concurrency model; the package does not synchronize
 // writes to it.
 //
-// SECURITY: diagnostics and wrapped errors may embed the store path. Callers follow
-// the DefaultDir(".") relative-root convention, so paths are repo-relative today;
-// but if an absolute dir is ever passed, a leaked path could contain a username
-// (~/…). The read path reduces *os.PathError paths to their base name (basePathErr)
-// for this reason, matching the write path. Before routing Writer to any non-local
-// sink, scrub absolute paths and avoid echoing raw error strings.
+// SECURITY: diagnostics and wrapped errors may embed the store path. The read path
+// reduces *os.PathError paths to their base name (basePathErr) for this reason,
+// matching the write path. Before routing Writer to any non-local sink, scrub
+// absolute paths and avoid echoing raw error strings.
+//
+// The "paths are repo-relative today" assumption this note used to rest on NO LONGER
+// HOLDS. Since Plan 35.13 T6 the store dir is DefaultDir(ResolveStoreRoot(...)), and
+// both the explicit and manifest tiers resolve to ABSOLUTE paths — so a leaked path
+// can now contain a username (~/…) in ordinary operation, not only hypothetically.
+// The *os.PathError reduction still applies, but the diagnostics that format a raw
+// `path` string directly (malformed-record and over-long-line warnings here and in
+// streaming.go) are not covered by it and will print the absolute shard path. That
+// gap is filed as TD-022; do not read this comment as saying it is handled.
 type ReadOpts struct {
 	Writer io.Writer
 }

@@ -224,12 +224,53 @@
 //
 // # Call-site scope
 //
-// The reconcile persistence hook (persistLocalDebt) is currently invoked only
-// from the CLI `atcr reconcile` path (cli/reconcile.go). The MCP
-// `atcr_reconcile` handler intentionally does NOT persist to this store today,
-// because the server operates on review artifact directories rather than a
-// checked-out repo root and lacks the resolved repo-root guard the hook needs.
-// This is a deliberate Story 2 scope boundary (TD-002), not an oversight; MCP
-// parity for local-debt persistence is deferred to a follow-up epic. Callers
-// should treat localdebt as a CLI-side ledger until that parity work lands.
+// TD-002 is CLOSED (Plan 35.13 T6). The reconcile persistence hook is
+// PersistForReconcile in this package, and BOTH entry points call it: the CLI
+// `atcr reconcile` path (cli/reconcile.go, via a thin resolve-and-delegate
+// persistLocalDebt wrapper) and the MCP `atcr_reconcile` handler
+// (internal/mcp/handlers.go, immediately after the scorecard emit). One
+// implementation is the contract, not an implementation detail — a second copy in
+// internal/mcp would satisfy parity on the day it shipped and then freeze at that
+// day's dedup, streaming, and compaction behavior while this one moved on.
+// localdebt is therefore no longer a CLI-side ledger.
+//
+// Shared code does NOT by itself make the two record sets identical, and claiming
+// otherwise would be the more dangerous error. The MCP handler calls RunReconcile
+// with an empty root, so finding-path validation is a no-op there and no finding is
+// PathWarning-stamped — which makes the bridge's path-warned exclusion unreachable
+// on that path. What the shared bridge guarantees is that record construction,
+// dedup seeding, and compaction cannot drift; the INPUT finding sets can still
+// differ where the callers differ upstream (TD-019).
+//
+// The store's READERS have not moved with the writer. `atcr debt list`/`add`/
+// `dashboard`/`resolve` and the quality-signal payload all still resolve
+// DefaultDir(".") from the process CWD, so a reconcile that persists to a
+// manifest-recorded root writes to a store those commands do not read when the CWD
+// is not that root (TD-020).
+//
+// What blocked MCP parity was root resolution, not persistence: the server operates
+// on review artifact directories whose process CWD is whatever launched it, so
+// DefaultDir(".") would have written to an unrelated place. ResolveStoreRoot
+// (root.go) settles it with an ordered precedence:
+//
+//		explicit > manifest > CWD
+//
+//	 1. Explicit — an operator-supplied root (`--repo`, or the MCP repo argument),
+//	    checked for existence only: the caller asserted it deliberately.
+//	 2. Manifest — payload.Manifest.Root, recorded at review time when CWD == repo
+//	    root is a documented requirement, so it travels with the artifacts. It is a
+//	    CLAIM, not a fact, and is RE-VALIDATED before any write: the path must exist,
+//	    be a directory, and carry a .git (directory or file, so linked worktrees and
+//	    submodules count) or .atcr marker.
+//	 3. CWD — byte-for-byte the pre-manifest DefaultDir(".") behavior, and CLI-only.
+//	    The MCP handler passes AllowCWD: false because its CWD is meaningless by
+//	    construction.
+//
+// An invalid root at any tier is NO-PERSIST-WITH-WARNING. There is no fall-through:
+// a root that was named and turned out to be stale is a stop signal, and falling
+// through to the next tier would convert a detectable no-op into an undetectable
+// write to the wrong store — the precise failure the recorded root exists to
+// prevent. A MISSING claim falls through (nobody asserted anything); an INVALID one
+// does not. Persistence is best-effort at both entry points: an unresolvable root
+// never changes a command's exit code or an MCP tool's result.
 package localdebt

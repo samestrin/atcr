@@ -514,14 +514,22 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	}
 
 	m := &payload.Manifest{
-		Base:            req.Range.Base,
-		Head:            req.Range.Head,
-		DetectionMode:   req.Range.DetectionMode,
-		DefaultBranch:   req.Range.DefaultBranch,
-		CommitCount:     req.Range.CommitCount,
-		PayloadMode:     payloadMode,
-		Baseline:        baseline, // full-repo/dir scan; resume keys on this to skip range validation
-		Dir:             req.Dir,  // --dir subtree scope; resume rebuilds the same scoped payload (Sprint 35.0)
+		Base:          req.Range.Base,
+		Head:          req.Range.Head,
+		DetectionMode: req.Range.DetectionMode,
+		DefaultBranch: req.Range.DefaultBranch,
+		CommitCount:   req.Range.CommitCount,
+		PayloadMode:   payloadMode,
+		Baseline:      baseline, // full-repo/dir scan; resume keys on this to skip range validation
+		Dir:           req.Dir,  // --dir subtree scope; resume rebuilds the same scoped payload (Sprint 35.0)
+		// Absolute repo root, recorded now because now is when it is known correct:
+		// review runs with CWD == repo root by documented requirement, while a later
+		// reconcile (CLI from another directory, or MCP whose CWD is unrelated to the
+		// reviewed repo) has no way to re-derive it. It travels with the artifacts so
+		// the .atcr/debt store resolves from the manifest instead of the reader's CWD
+		// (Sprint 35.13 T6). req.Root is "where .atcr lives" and is relative ("." from
+		// the CLI) at this point, so the Abs conversion is what makes it portable.
+		Root:            absRoot(req.Root),
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
@@ -2347,6 +2355,20 @@ func resolveHeadSHA(repo, ref string) (string, error) {
 		return "", fmt.Errorf("resolving %q: %w", ref, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// absRoot resolves a review root to a cleaned absolute path for Manifest.Root. It
+// returns "" when the path cannot be resolved (a broken CWD, essentially), because
+// recording no root degrades a later reconcile to its pre-field CWD behavior, while
+// recording a bad claim would send findings to the wrong store — and the manifest
+// root is trusted enough to be written to on the strength of a re-validation, so an
+// unresolvable value must never enter it.
+func absRoot(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(abs)
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).

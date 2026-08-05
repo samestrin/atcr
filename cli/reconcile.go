@@ -68,7 +68,7 @@ and atcr review --resume honor the config/registry tiers but take no flag.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runReconcile,
 	}
-	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against (default: current directory)")
+	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against, and whose .atcr/debt store findings persist to — overrides the root recorded in the review manifest (default: current directory)")
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().String("consensus", "", "consensus filter level: strict (default), lenient, or off")
@@ -243,8 +243,22 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// mirroring the scorecard emit above: a persistence failure is logged to the
 	// diagnostics channel and never changes runReconcile's return value or the
 	// reconcile gate's exit code. --no-local-debt suppresses this for the run.
+	// The store root resolves explicit --repo > the review manifest's recorded root >
+	// CWD (Plan 35.13 AC7). The explicit tier must fire only when the user actually
+	// named a root, which is what Flags().Changed reports — GetString returns the
+	// flag's declared "." DEFAULT when it was never passed, so keying off its value
+	// (raw or normalized) makes the explicit tier win on every run and the manifest
+	// tier dead code, with the whole feature inert and every test still green.
+	//
+	// The TrimSpace guard keeps `--repo ""`'s documented "normalizes to the default"
+	// behavior: a blank flag asserts nothing, so the manifest still speaks rather
+	// than the run being pinned to the CWD.
+	explicitRepo := ""
+	if raw, _ := cmd.Flags().GetString("repo"); cmd.Flags().Changed("repo") && strings.TrimSpace(raw) != "" {
+		explicitRepo = repoRoot // the normalizeRepoFlag-validated value
+	}
 	noLocalDebt, _ := cmd.Flags().GetBool("no-local-debt")
-	persistLocalDebt(reviewDir, res, noLocalDebt, cmd.ErrOrStderr())
+	persistLocalDebt(reviewDir, explicitRepo, res, noLocalDebt, cmd.ErrOrStderr())
 
 	// TD-004: warn when verify never ran — the gate would trivially pass
 	// everything. Routed through the context logger so it honors LOG_LEVEL and is
@@ -297,197 +311,43 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	return gateErr
 }
 
-// persistLocalDebt appends the run's reconciled findings to the .atcr/-scoped
-// local TD store (Epic 20.1 Story 2). It is a best-effort, non-fatal side effect
-// modeled on scorecard.EmitForReconcile: every failure is logged to diag and the
-// function always returns cleanly, so the reconcile's own return value and the
-// gate's exit code are never affected by a persistence problem.
+// persistLocalDebt is the CLI half of the local-TD persistence hook: resolve the
+// store root, then delegate to the one shared implementation. All record-building,
+// dedup-seeding, appending, and compaction logic lives in
+// localdebt.PersistForReconcile, which the MCP atcr_reconcile handler calls too —
+// keeping the two entry points on one implementation is the whole point of the
+// split, so nothing that shapes a record belongs here (Plan 35.13 T6).
 //
-// It reads from res.JSONFindings() (NOT res.Findings) so the Epic 18.3
-// Justification/SourceReport enrichment is carried through — those fields live
-// only on the cached JSONFinding layer. A zero-finding run does no I/O (no store
-// directory is created).
+// Only two things are genuinely CLI-side. --no-local-debt is a cobra flag the MCP
+// path has no equivalent of (mirroring the scorecard emit's same asymmetry). And
+// the CWD tier is CLI-only: `atcr reconcile` running from the repo root is a
+// long-standing convention, whereas the MCP server's CWD is whatever launched it.
 //
-// Dedup is write-time by finding id (history.FindingID(file,line,problem), via
-// Record.StampID): a single streaming pass over the store seeds the set of ids
-// already in it, and each new record is appended only if its id is unseen — the
-// same set also collapses in-run duplicates (two findings that hash to one id
-// write once). A dedup-read failure fails OPEN toward append (log + seed from
-// whatever was read) rather than silently dropping the whole run's backlog.
-//
-// The seed decodes localdebt.Summary values ({id, status, severity, ts, has-file})
-// rather than whole Records: it needs an id's effective STATUS and nothing else,
-// and a minimal decode keeps peak memory an order of magnitude below the
-// full-record path on a large store (Plan 35.13 AC6; localdebt/streaming.go).
-//
-// The fail-open path is all-or-nothing by design: a partial read is NOT used as a
-// smaller seed, because the seed keys on an id's EFFECTIVE status and the fold can
-// only compute that from the id's complete history. See the read-error branch for
-// the failure this prevents.
-//
-// The seed is SCOPED, not the whole store: only ids whose effective (folded)
-// record suppresses (wontfix) or is still open are seeded. A re-detected
-// resolved/deferred id is therefore appended as a fresh open record, and
-// localdebt.FoldRecords — which is recency-aware — returns it to the open
-// backlog. This is the write half of one coupled decision; the read half is
-// FoldRecords' precedence rule, and its doc comment carries the same warning.
-// Seeding every id instead would make a regression never re-append and silently
-// restore permanent closure with both sides' tests still green.
-func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, diag io.Writer) {
+// explicitRepo must be derived from the RAW --repo flag, not the normalized one:
+// --repo carries a "." default, so the normalized value is non-empty on every run
+// and passing it here would make the explicit tier always win, the manifest tier
+// dead code, and the recorded-root feature inert with every test still green.
+func persistLocalDebt(reviewDir, explicitRepo string, res reconcile.Result, noLocalDebt bool, diag io.Writer) {
 	if noLocalDebt {
 		return
 	}
-	findings := res.JSONFindings()
-	if len(findings) == 0 {
-		return // no-op on an empty result; never a zero-length write
+	root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
+		Explicit:  explicitRepo,
+		ReviewDir: reviewDir,
+		AllowCWD:  true,
+		Diag:      diag,
+	})
+	if !ok {
+		return // already warned; never a fall-through to a different store
 	}
-
-	dir := localdebt.DefaultDir(".")
-	seen := make(map[string]bool)
-	// Tracks whether this run actually wrote anything, so the automatic-compaction
-	// check after the loop is skipped entirely on a no-op run.
-	appended := false
-	if sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
-		// Fail open: append anyway so a corrupt/unreadable store does not drop this
-		// run's findings from the backlog. The error is already path-scrubbed
-		// (basePathErr). Because this also loses the set of previously dismissed
-		// (wontfix) ids, warn loudly that those dismissals may resurface. Only
-		// wontfix is at risk — a resolved/deferred id is re-appended by design now,
-		// so the warning names the narrower set the seed actually protects.
-		//
-		// The PARTIAL summaries ReadSummaries returns alongside the error are
-		// deliberately DISCARDED rather than used as a smaller seed. Seeding from a
-		// partial read looks strictly safer and is not: the seed's input is an id's
-		// EFFECTIVE status, which the fold can only compute from that id's COMPLETE
-		// history. Drop the shard holding an id's resolution and the id folds to
-		// `open`, gets seeded as still-outstanding, and the re-detection that should
-		// have re-opened it is skipped instead — silently suppressing exactly the
-		// regression this store exists to surface. All-or-nothing is the only
-		// fold-safe fail-open.
-		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; previously dismissed/wontfix findings may be re-surfaced: %v\n", err)
-	} else {
-		// Fold FIRST, then seed from the effective record. A per-summary
-		// seen[s.ID] = true would mark every id ever written, including the
-		// resolved/deferred ones that must re-open on re-detection — silently
-		// restoring terminal-forever dedup with every allocation assertion still
-		// green, because those measure bytes and this is behavior.
-		for _, s := range localdebt.FoldSummaries(sums) {
-			if localdebt.IsSuppressingStatus(s.Status) || !localdebt.IsClosedStatus(s.Status) {
-				seen[s.ID] = true
-			}
-		}
-	}
-
-	// run_id mirrors scorecard.EmitForReconcile verbatim so a finding's shard and
-	// provenance line up across the two ledgers; the ts is the same reconcile
-	// timestamp (deterministic, no second clock read).
-	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
-
-	// Resolve each finding's model from the fan-out pool summary's per-agent
-	// AgentStatus.Model (schema v2, Sprint 30.0), mirroring EmitForReconcile's
-	// reviewer->model mapping. Best-effort: a missing/unreadable summary leaves the
-	// map empty and records persist with Model == "" (attribution-incomplete), which
-	// the quality-signal aggregation excludes from per-model rows rather than
-	// mis-bucketing under an empty model.
-	modelByReviewer := map[string]string{}
-	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
-		for _, a := range ps.Agents {
-			if a.Model != "" {
-				modelByReviewer[a.Agent] = a.Model
-			}
-		}
-	}
-
-	for _, f := range findings {
-		// Apply the same exclusions the gate uses (internal/reconcile/gate.go
-		// IsFailing): out-of-scope findings and refuted verdicts never persist,
-		// so the local TD backlog matches what the gate considers real.
-		// Path-warned findings are also skipped: a file that did not resolve under
-		// the repo root is treated as a hallucinated path (Epic 5.0).
-		if strings.ToLower(strings.TrimSpace(f.Category)) == reclib.CategoryOutOfScope {
-			continue
-		}
-		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reclib.VerdictRefuted {
-			continue
-		}
-		if f.PathWarning != "" {
-			continue
-		}
-
-		// Narrow the record's attribution to the reviewers the resolved model
-		// actually covers: AggregateQualitySignal credits every persona in
-		// Reviewers under the record's single Model, so a persona with no
-		// recorded model must not be stamped alongside a sibling whose model
-		// resolved — it would be credited under a model it never ran on. When
-		// no model resolves (none recorded, or a cross-model merge) the full
-		// reviewer list is kept: an empty Model excludes the record from
-		// per-model rows regardless.
-		model := resolveRecordModel(f.Reviewers, modelByReviewer)
-		reviewers := f.Reviewers
-		if model != "" {
-			reviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
-		}
-		rec := localdebt.Record{
-			SchemaVersion: localdebt.SchemaVersion,
-			RunID:         runID,
-			Timestamp:     res.Summary.ReconciledAt,
-			Severity:      f.Severity,
-			File:          f.File,
-			Line:          f.Line,
-			Problem:       f.Problem,
-			Fix:           f.Fix,
-			Category:      f.Category,
-			EstMinutes:    f.EstMinutes,
-			Evidence:      f.Evidence,
-			Reviewers:     reviewers,
-			Confidence:    f.Confidence,
-			Model:         model,
-			Justification: f.Justification,
-		}
-		if f.SourceReport != nil {
-			rec.SourceReport = &localdebt.SourceReport{
-				Path:    f.SourceReport.Path,
-				Line:    f.SourceReport.Line,
-				Section: f.SourceReport.Section,
-			}
-		}
-		rec.StampID()
-		if seen[rec.ID] {
-			continue // already persisted (cross-run) or an in-run duplicate id
-		}
-		seen[rec.ID] = true
-		if err := localdebt.Append(dir, rec); err != nil {
-			// Non-fatal: log (already path-scrubbed by Append) and continue with the
-			// remaining findings.
-			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
-			continue
-		}
-		appended = true
-	}
-
-	if !appended {
-		// A run that added nothing cannot have pushed the store over a threshold, so
-		// a fully-deduped or fully-excluded reconcile pays ZERO extra I/O — not even
-		// the stat walk.
-		return
-	}
-	// The policy is passed as a VALUE, not read from package scope inside this
-	// body: Task 06 extracts this function into internal/localdebt, where a cli
-	// package var is unreachable. Hard-coding CompactPolicy{} there would leave the
-	// autoCompactPolicy test seam inert while every test still passed, so the
-	// dependency is explicit here and becomes a PersistOpts field there.
-	policy := autoCompactPolicy
-	switch res, triggered, err := localdebt.MaybeCompact(dir, policy, localdebt.ReadOpts{Writer: diag}); {
-	case err != nil:
-		// Best-effort, exactly like the appends above: compaction is store hygiene,
-		// never a reason to change the reconcile's return value or the gate's exit
-		// code. The store is append-only and Compact is atomic per shard, so a failed
-		// compaction leaves the findings this run just wrote fully intact.
-		_, _ = fmt.Fprintf(diag, "localdebt: automatic compaction failed: %v\n", err)
-	case triggered:
-		_, _ = fmt.Fprintf(diag, "localdebt: compacted %d records to %d (%d superseded dropped, %d preserved)\n",
-			res.RecordsBefore, res.RecordsAfter, res.Dropped, res.Preserved)
-	}
+	// autoCompactPolicy is threaded through as a value rather than read inside the
+	// bridge: a cli package var is unreachable from internal/localdebt, so passing it
+	// is what keeps this test seam live after the extraction.
+	localdebt.PersistForReconcile(reviewDir, res, localdebt.PersistOpts{
+		Root:        root,
+		Diag:        diag,
+		AutoCompact: autoCompactPolicy,
+	})
 }
 
 // autoCompactPolicy is the automatic-compaction threshold the reconcile persistence
@@ -496,53 +356,6 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 // restore it with t.Cleanup, rather than writing 100k records to exercise the
 // trigger. Same seam precedent as localdebt's lockWait/lockStale.
 var autoCompactPolicy = localdebt.CompactPolicy{}
-
-// resolveRecordModel picks the single model to attribute to a persisted
-// local-debt record from its reviewers and the fan-out's reviewer->model map
-// (Sprint 30.0, schema v2). A record carries one Model field, so a model can only
-// be attributed when it is unambiguous: it returns the shared model when the
-// record's resolvable reviewers all agree on one model (a single reviewer, or a
-// multi-persona merge that ran on the same model). It returns "" —
-// attribution-incomplete, which AggregateQualitySignal excludes from per-model
-// rows — when no reviewer has a resolvable model, OR when reviewers span two or
-// more DISTINCT models (a cross-model merged finding). Returning the first
-// reviewer's model in the cross-model case would mis-credit the other personas'
-// dismissal signal to a model they never ran on, so it is deliberately excluded
-// rather than guessed.
-func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) string {
-	model := ""
-	for _, rev := range reviewers {
-		m := modelByReviewer[rev]
-		if m == "" {
-			continue
-		}
-		if model == "" {
-			model = m
-		} else if m != model {
-			return "" // reviewers disagree on model → attribution-incomplete
-		}
-	}
-	return model
-}
-
-// attributableReviewers returns the subset of reviewers whose recorded pool
-// model IS the record's resolved model, preserving reviewer order. It is the
-// narrowing half of record attribution: AggregateQualitySignal credits every
-// persona in a record's Reviewers under the record's single Model, so when one
-// reviewer's model resolved and a sibling's is unrecorded, the sibling is
-// dropped from the record rather than mis-credited under a model it never ran
-// on. Callers invoke it only with a resolved (non-empty) model, so every
-// reviewer with an unrecorded model fails the equality and is excluded; a
-// reviewer that ran on the resolved model is kept.
-func attributableReviewers(reviewers []string, modelByReviewer map[string]string, model string) []string {
-	out := make([]string, 0, len(reviewers))
-	for _, rev := range reviewers {
-		if modelByReviewer[rev] == model {
-			out = append(out, rev)
-		}
-	}
-	return out
-}
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
 // readers share one semantic: a whitespace-only value is unset, never a usage

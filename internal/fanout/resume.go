@@ -356,6 +356,18 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		}
 	}
 
+	// Backfill the repo root when the manifest predates the field (Sprint 35.13 T6).
+	// Without this, a review created before Manifest.Root existed never acquires one
+	// and its reconcile silently falls back to CWD forever. Resume-time root is
+	// trusted on exactly the same basis as review-time root — the same documented
+	// CWD == repo-root requirement, the same req.Root — and the empty guard is what
+	// makes it safe: a resume can never overwrite a recorded root with the resuming
+	// machine's path, which is precisely the stale-claim failure re-validation exists
+	// to catch.
+	if m.Root == "" {
+		m.Root = absRoot(req.Root)
+	}
+
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)
 	p := &PreparedReview{
 		ID:          filepath.Base(reviewDir),
