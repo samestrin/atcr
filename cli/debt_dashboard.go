@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,15 +84,6 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		_, err := fmt.Fprint(cmd.OutOrStdout(), content)
 		return err
 	default:
-		// os.WriteFile below is O_TRUNC, so --output is a file-DESTRUCTION
-		// primitive on a surface that agents and skills drive with model-supplied
-		// arguments (`--output ~/.ssh/id_rsa` truncated the key and said nothing).
-		// The dashboard therefore only ever overwrites files it wrote itself,
-		// identified by the marker every render stamps in. A path that does not
-		// exist yet is fine — creating a file destroys nothing.
-		if err := guardDashboardOverwrite(outputPath); err != nil {
-			return usageError(err)
-		}
 		// The one deliberate divergence from `atcr report`'s --output contract:
 		// the dashboard is a generated artifact routinely pointed at a path in a
 		// not-yet-created directory (docs/, .github/), so it creates the parent
@@ -100,8 +92,10 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 			return usageError(fmt.Errorf("failed to create the directory for %q: %w", outputPath, err))
 		}
 		// A local I/O failure is an infrastructure/usage error (exit 2), matching
-		// report.go's classification of its own disk writes.
-		if err := os.WriteFile(outputPath, []byte(content), 0o644); err != nil {
+		// report.go's classification of its own disk writes. The write inspects and
+		// truncates through one O_NOFOLLOW handle — see writeDashboardFile for the
+		// two guards that requires.
+		if err := writeDashboardFile(outputPath, content); err != nil {
 			return usageError(fmt.Errorf("failed to write dashboard to %q: %w", outputPath, err))
 		}
 		// Nothing on stdout: report writes no "wrote it" line either, and a status
@@ -110,42 +104,58 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	}
 }
 
-// writeDashboardFile writes content to path. STUB: still the link-following
-// os.WriteFile the TD flags — replaced in the same change set by a single-handle
-// O_NOFOLLOW write.
+// writeDashboardFile inspects and writes the --output target through ONE file
+// handle, so the file that is checked is provably the file that is written.
+//
+// Two guards live here because both need that single handle:
+//
+//   - O_NOFOLLOW refuses a symlink AT the target. resolveDashboardOutput already
+//     resolves links lexically, but that guarantee expires the moment it returns:
+//     between the resolve/validate and this write the destination can be replaced,
+//     and the MkdirAll widens the window precisely on the not-yet-created
+//     components an attacker can win. Opening once with O_NOFOLLOW closes it —
+//     the check and the write share an inode rather than a path.
+//   - The authorship check refuses to truncate a file the dashboard did not
+//     generate, identified by dashboardGeneratedMarker (every render stamps it in).
+//     O_TRUNC is what made --output a file-destruction primitive on a surface
+//     agents drive with model-supplied paths.
+//
+// Truncation therefore happens AFTER the marker is read, through the same
+// descriptor, rather than as an open flag.
+//
+// Residual, and deliberately unclosed: a HARDLINK is a second name for one inode
+// with nothing to resolve and nothing for O_NOFOLLOW to see, so writing through
+// one reaches the shared inode — the same caveat cli/report.go documents for its
+// own --output, and not an escalation (the write still needs the invoking user's
+// permission on that inode). On Windows openNoFollow is 0, so only the marker
+// check applies there.
 func writeDashboardFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0o644)
-}
-
-// guardDashboardOverwrite refuses to truncate an existing --output target that
-// the dashboard did not generate.
-//
-// Authorship is decided by dashboardGeneratedMarker, which every render stamps
-// into its second line: present means this is a previous dashboard and
-// regenerating over it is the whole point; absent means the path belongs to
-// something else. Only the head of the file is read — enough to see the marker,
-// so pointing --output at a huge file costs nothing.
-//
-// A path that does not exist is allowed through: creating a file destroys
-// nothing. So is an unreadable one — the write below will fail on it anyway, and
-// reporting the read error here would just misattribute the failure.
-func guardDashboardOverwrite(path string) error {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|openNoFollow, 0o644)
 	if err != nil {
-		return nil // missing (the common case) or unreadable: nothing to protect
+		return err
 	}
 	defer func() { _ = f.Close() }()
-	if info, err := f.Stat(); err == nil && info.IsDir() {
-		return nil // a directory is not a truncation target; the write reports it
-	}
+
+	// Only the head is read — enough to see the marker, so pointing --output at a
+	// huge file costs nothing.
 	head := make([]byte, 4096)
 	n, _ := f.Read(head)
-	if strings.Contains(string(head[:n]), dashboardGeneratedMarker) {
-		return nil
+	if n > 0 && !strings.Contains(string(head[:n]), dashboardGeneratedMarker) {
+		return fmt.Errorf(
+			"refusing to overwrite %q: it exists and was not generated by `atcr debt dashboard`. Write to a different path, or delete that file first if you meant to replace it",
+			filepath.Base(path))
 	}
-	return fmt.Errorf(
-		"refusing to overwrite %q: it exists and was not generated by `atcr debt dashboard`. Write to a different path, or delete that file first if you meant to replace it",
-		filepath.Base(path))
+
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // resolveDashboardOutput resolves --output for the dashboard's create-the-parent
