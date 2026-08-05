@@ -2362,8 +2362,13 @@ func resolveHeadSHA(repo, ref string) (string, error) {
 // recording no root degrades a later reconcile to its pre-field CWD behavior, while
 // recording a bad claim would send findings to the wrong store — and the manifest
 // root is trusted enough to be written to on the strength of a re-validation, so an
-// unresolvable value must never enter it.
+// unresolvable value must never enter it. An empty or blank input returns "" for
+// the same reason: filepath.Abs("") does not error — it yields the CWD — so without
+// the guard "no root is known" would be recorded as a confident CWD claim.
 func absRoot(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return ""
+	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return ""
