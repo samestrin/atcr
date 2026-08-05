@@ -117,6 +117,61 @@
 // latest by timestamp, so a re-detection appended after a resolution is the
 // effective record and the id is open again.
 //
+// # Compaction contract
+//
+// Compaction is what bounds the store's growth. Month sharding gives file-size
+// hygiene and archival boundaries but no bound: every operation reads every shard,
+// because dedup needs every id ever seen and a resolution may live in any later
+// shard. Compact folds each id to its effective record (plus the resolution trail
+// when that record is open — retainForCompaction) and rewrites the shards
+// atomically, so store size tracks LIVE findings rather than history.
+//
+// It runs two ways. Manually, via `atcr debt compact`. Automatically, via
+// MaybeCompact, called once by cli/reconcile.go's persistLocalDebt AFTER its append
+// loop and ONLY when that run appended at least one record — a suppressed,
+// zero-finding, or fully-deduped reconcile pays no extra I/O at all. The automatic
+// call is best-effort in the same sense as the persistence hook itself: any failure
+// is logged to the diagnostics writer and never changes the reconcile's return
+// value or the gate's exit code.
+//
+// Two conditions gate the automatic trigger, and both are load-bearing:
+//
+//  1. A THRESHOLD is tripped — DefaultAutoCompactMaxRecords lines or
+//     DefaultAutoCompactMaxBytes bytes, whichever first. Measured with no JSON
+//     decode — stat for bytes, a newline count for lines — and the byte clause is
+//     satisfied by stat alone, so it short-circuits the line scan entirely.
+//     StoreStats reports the same two numbers for any caller that wants them.
+//  2. The store has GROWN materially (50%) past the size the last compaction left
+//     behind, recorded in the .compact-watermark file. This is not belt-and-braces:
+//     because compaction retains up to two records per id, a store's
+//     post-compaction floor can sit ABOVE the threshold, and a bare absolute
+//     threshold would then re-fire on every single append forever — taking the
+//     cross-process lock and rewriting every shard to drop nothing. The watermark
+//     degrades to zero when absent or unreadable, so it can delay a redundant
+//     compaction but never prevent a needed one. Compact writes it, not
+//     MaybeCompact, so a manual `atcr debt compact` refreshes the baseline too and
+//     cannot leave a stale one behind; a no-op fold records a baseline as well,
+//     without which the trigger would re-fire forever on a store of only malformed
+//     or forward-incompatible lines.
+//
+// MaybeCompact takes no lock; Compact acquires withLock internally and withLock is
+// not reentrant, so nesting would stall for the full lockWait and fail.
+//
+// # Aggregate counters
+//
+// Because resolution is re-openable, how many times a finding has come back is real
+// signal — and compaction would otherwise destroy it along with the superseded
+// records. FoldRecords therefore stamps the effective record with Occurrences and
+// FirstSeen aggregated across the whole id group, preserving that signal at O(1)
+// size instead of O(history). Regression count is Occurrences-1. The rule is
+// idempotent: re-compacting an already-compacted store leaves both values
+// unchanged. See aggregateCounters (store.go) for the rule and the lifecycle walk.
+//
+// Two writers must keep their counters zeroed so the aggregation is not double-fed:
+// the resolution record appended by cli/debt_resolve.go (which copies the folded
+// record, counters and all) and the resolution trail retained by
+// retainForCompaction. The counters live on an id's effective record alone.
+//
 // # Maintenance invariant (coupling)
 //
 // The read-side fold and the write-side dedup seed are ONE decision in two

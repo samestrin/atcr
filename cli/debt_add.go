@@ -238,6 +238,13 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	rec.RunID = localdebt.ManualRunID(ts)
 	rec.Timestamp = ts.Format(time.RFC3339)
 	rec.Origin = localdebt.OriginManual
+	// A filed item is its own first sighting, recorded as a carrier so the count
+	// persists. Without this an item filed with a status (--status deferred) is
+	// never a "detection" to the fold's counting rule, so it contributes nothing to
+	// carry forward and its first genuine re-detection reports zero regressions
+	// (localdebt.aggregateCounters).
+	rec.Occurrences = 1
+	rec.FirstSeen = rec.Timestamp
 	rec.StampID()
 	return nil
 }

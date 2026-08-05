@@ -344,6 +344,9 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 
 	dir := localdebt.DefaultDir(".")
 	seen := make(map[string]bool)
+	// Tracks whether this run actually wrote anything, so the automatic-compaction
+	// check after the loop is skipped entirely on a no-op run.
+	appended := false
 	if sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
 		// Fail open: append anyway so a corrupt/unreadable store does not drop this
 		// run's findings from the backlog. The error is already path-scrubbed
@@ -457,9 +460,42 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 			// Non-fatal: log (already path-scrubbed by Append) and continue with the
 			// remaining findings.
 			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
+			continue
 		}
+		appended = true
+	}
+
+	if !appended {
+		// A run that added nothing cannot have pushed the store over a threshold, so
+		// a fully-deduped or fully-excluded reconcile pays ZERO extra I/O — not even
+		// the stat walk.
+		return
+	}
+	// The policy is passed as a VALUE, not read from package scope inside this
+	// body: Task 06 extracts this function into internal/localdebt, where a cli
+	// package var is unreachable. Hard-coding CompactPolicy{} there would leave the
+	// autoCompactPolicy test seam inert while every test still passed, so the
+	// dependency is explicit here and becomes a PersistOpts field there.
+	policy := autoCompactPolicy
+	switch res, triggered, err := localdebt.MaybeCompact(dir, policy, localdebt.ReadOpts{Writer: diag}); {
+	case err != nil:
+		// Best-effort, exactly like the appends above: compaction is store hygiene,
+		// never a reason to change the reconcile's return value or the gate's exit
+		// code. The store is append-only and Compact is atomic per shard, so a failed
+		// compaction leaves the findings this run just wrote fully intact.
+		_, _ = fmt.Fprintf(diag, "localdebt: automatic compaction failed: %v\n", err)
+	case triggered:
+		_, _ = fmt.Fprintf(diag, "localdebt: compacted %d records to %d (%d superseded dropped, %d preserved)\n",
+			res.RecordsBefore, res.RecordsAfter, res.Dropped, res.Preserved)
 	}
 }
+
+// autoCompactPolicy is the automatic-compaction threshold the reconcile persistence
+// hook applies. The zero value means localdebt's production defaults (100k records
+// / 100 MiB); it is a var so a test can shrink it to a handful of records and
+// restore it with t.Cleanup, rather than writing 100k records to exercise the
+// trigger. Same seam precedent as localdebt's lockWait/lockStale.
+var autoCompactPolicy = localdebt.CompactPolicy{}
 
 // resolveRecordModel picks the single model to attribute to a persisted
 // local-debt record from its reviewers and the fan-out's reviewer->model map

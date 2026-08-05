@@ -129,37 +129,44 @@ type Record struct {
 	Origin string `json:"origin,omitempty"`
 
 	// Occurrences is how many times this id has been observed across the store's
-	// history, added in schema v3 (Plan 35.13). It is reserved for compaction: T5
-	// will fold an id's records to the latest one and carry this count forward, so
-	// the regression signal that re-openable resolution creates survives at O(1)
-	// size instead of O(history). Until that lands, nothing populates it and
-	// FoldRecords preserves only the selected record's value. omitempty keeps it
-	// absent from uncompacted records; readers treat an absent/zero value as one
-	// occurrence ("not yet aggregated").
+	// history, added in schema v3 (Plan 35.13). FoldRecords aggregates it across an
+	// id's whole record group and stamps it on the effective record, so the
+	// regression signal that re-openable resolution creates survives compaction at
+	// O(1) size instead of O(history). Regression count is Occurrences-1. See
+	// aggregateCounters (store.go) for the counting rule; it is idempotent, so
+	// re-compacting an already-compacted store never inflates or decays the value.
 	//
-	// The T5 prerequisite is satisfied: persistLocalDebt's dedup seed used to cover
-	// every id in the store, so a re-detected finding was never appended and a fold
-	// group could never hold more than one review-origin record per id. T3 narrowed
-	// the seed to suppressing-or-open ids, so a resolved/deferred id that is
-	// detected again now appends a fresh occurrence and multi-record fold groups
-	// exist — which is what makes a regression count meaningful to aggregate.
+	// A record carrying a non-zero value is a CARRIER: it already accounts for every
+	// detection up to its own Timestamp, including itself. Two writers must
+	// therefore append with this field zeroed, or the same detections are counted
+	// twice — the resolution record from cli/debt_resolve.go (which copies the
+	// folded record wholesale) and the resolution trail retained by
+	// retainForCompaction. `atcr debt add` does the opposite deliberately and stamps
+	// 1, because a hand-filed item is its own first sighting and may carry a status
+	// that the counting rule would otherwise never treat as a detection.
+	//
+	// omitempty keeps it absent from records no fold has aggregated yet; readers
+	// treat an absent/zero value as one occurrence ("not yet aggregated").
 	Occurrences int `json:"occurrences,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this
-	// id, added in schema v3 (Plan 35.13). Like Occurrences it is reserved for
-	// compaction: T5 will carry it forward so the original sighting is not lost
-	// when superseded records are dropped; today FoldRecords preserves only the
-	// selected record's value. omitempty keeps it absent from uncompacted records,
+	// id, added in schema v3 (Plan 35.13). FoldRecords carries it forward with
+	// Occurrences, so the original sighting is not lost when superseded records are
+	// dropped. omitempty keeps it absent from records no fold has aggregated yet,
 	// where the record's own Timestamp is the earliest known sighting.
 	//
 	// Invariant, shared with Timestamp: UTC-normalized RFC3339
-	// (time.Time.UTC().Format(time.RFC3339)). Both are compared LEXICOGRAPHICALLY,
-	// not parsed — FoldRecords selects the effective record by comparing Timestamp
-	// strings directly (store.go, latestRecord), and T5's min() across a fold group
-	// will do the same. An offset-bearing value breaks that ordering:
-	// "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet sorts after
-	// "2026-01-01T00:00:00Z". Every producer normalizes today; a writer that does
-	// not is a silent ordering bug, so normalize at the write site.
+	// (time.Time.UTC().Format(time.RFC3339)). An offset-bearing value is a silent
+	// ordering bug — "2026-01-01T01:00:00+05:00" is really 2025-12-31T20:00:00Z yet
+	// sorts after "2026-01-01T00:00:00Z" — so normalize at the write site.
+	//
+	// The two fields are compared differently, deliberately. FoldRecords selects the
+	// effective record by comparing Timestamp strings LEXICOGRAPHICALLY (store.go,
+	// latestItem), which is sound because every producer normalizes. FirstSeen is
+	// durable — carried forward across every future compaction — so a single
+	// offset-bearing record would corrupt it permanently rather than for one fold;
+	// earlierTimestamp (store.go) therefore PARSES both operands and falls back to a
+	// byte comparison only when a value does not parse.
 	FirstSeen string `json:"first_seen,omitempty"`
 
 	Justification string        `json:"justification,omitempty"`

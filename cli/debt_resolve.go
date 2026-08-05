@@ -485,6 +485,15 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	rec.Timestamp = now
 	rec.Status = status
 	rec.ResolvedAt = now
+	// The copied record is the FOLDED one, so it carries the id's aggregate
+	// counters — which this record must not duplicate. A resolution is a status
+	// marker, not an occurrence: leaving them set would let the fold count the
+	// carried total AND the still-present detection record it was derived from,
+	// inflating Occurrences on every resolve. The counters live on the id's
+	// effective record alone, the same rule retainForCompaction applies to the
+	// resolution trail it retains (internal/localdebt/store.go).
+	rec.Occurrences = 0
+	rec.FirstSeen = ""
 	// A supplied --reason records why the finding was dismissed/resolved and
 	// replaces any justification the item already carried (e.g. reconcile
 	// enrichment); an empty reason preserves the existing justification, never

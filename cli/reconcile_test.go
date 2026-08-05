@@ -1759,3 +1759,143 @@ func TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen(t *testing.T) {
 	assert.Equal(t, 3, count,
 		"a partially read store must not suppress the re-detection: seed nothing rather than seed a wrong effective status")
 }
+
+// --- T5: automatic compaction after a reconcile append ----------------------
+
+// withAutoCompactPolicy overrides the package-level trigger policy for one test and
+// restores it, so the threshold can be exercised with a handful of records instead
+// of the 100k the production default requires.
+func withAutoCompactPolicy(t *testing.T, p localdebt.CompactPolicy) {
+	t.Helper()
+	prev := autoCompactPolicy
+	autoCompactPolicy = p
+	t.Cleanup(func() { autoCompactPolicy = prev })
+}
+
+// TestPersistLocalDebt_AutoCompactsAtThreshold covers AC5: an over-threshold store
+// is compacted once, after the append loop, as a side effect of a reconcile that
+// actually wrote something.
+func TestPersistLocalDebt_AutoCompactsAtThreshold(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	// Superseded churn for one id: four records that fold to one.
+	base := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "churning finding",
+	}
+	base.StampID()
+	for i := 1; i <= 4; i++ {
+		rec := base
+		rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", i)
+		rec.Timestamp = fmt.Sprintf("2026-06-%02dT00:00:00Z", i)
+		require.NoError(t, localdebt.Append(dir, rec))
+	}
+	require.Len(t, readLocalDebtRecords(t), 4)
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("a brand new finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	assert.Less(t, len(recs), 5, "compaction ran: the superseded churn was dropped")
+	assert.Contains(t, diag.String(), "localdebt: compacted", "the trigger reports what it did")
+
+	// The backlog itself is unchanged: both findings are still live and open.
+	open := 0
+	for _, r := range localdebt.FoldRecords(recs) {
+		if r.Status == "" {
+			open++
+		}
+	}
+	assert.Equal(t, 2, open, "compaction bounds growth; it never drops a live finding")
+}
+
+// TestPersistLocalDebt_AutoCompactFailureIsNonFatal locks the best-effort contract:
+// persistLocalDebt has no return value and a compaction problem must not reach the
+// reconcile's exit code.
+func TestPersistLocalDebt_AutoCompactFailureIsNonFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	seed := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-01T00:00:00Z-run",
+		Timestamp: "2026-06-01T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "existing finding",
+	}
+	seed.StampID()
+	require.NoError(t, localdebt.Append(dir, seed))
+
+	// An unreadable JUNE shard fails the compaction pass, while the run's own
+	// append lands in JULY and succeeds — so the trigger genuinely runs and
+	// genuinely fails, instead of being skipped because nothing was appended.
+	blocked := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("a brand new finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	assert.NotPanics(t, func() { persistLocalDebt("review", res, false, &diag) },
+		"a compaction failure is logged, never fatal")
+
+	assert.Contains(t, diag.String(), "localdebt: automatic compaction failed",
+		"the failure is reported to diagnostics")
+	assert.NotContains(t, diag.String(), dir,
+		"and the failure message stays inside the store's path-redaction contract")
+	require.NoError(t, os.Chmod(blocked, 0o600))
+	ids := map[string]bool{}
+	for _, r := range readLocalDebtRecords(t) {
+		ids[r.ID] = true
+	}
+	assert.Len(t, ids, 2, "the run's findings landed regardless of the compaction failure")
+}
+
+// TestPersistLocalDebt_NoAppendSkipsAutoCompact covers the zero-added-I/O clause: a
+// fully-deduped run cannot have pushed the store over a threshold, so it must not
+// even stat the store — let alone rewrite it.
+func TestPersistLocalDebt_NoAppendSkipsAutoCompact(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	base := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "unchanged finding",
+	}
+	base.StampID()
+	for i := 1; i <= 3; i++ {
+		rec := base
+		rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", i)
+		rec.Timestamp = fmt.Sprintf("2026-06-%02dT00:00:00Z", i)
+		require.NoError(t, localdebt.Append(dir, rec))
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+
+	// The id is already open in the store, so the seed dedups it and nothing is
+	// appended.
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unchanged finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a zero-append run performs no compaction")
+	assert.NotContains(t, diag.String(), "localdebt: compacted")
+	assert.NoFileExists(t, filepath.Join(dir, ".compact-watermark"),
+		"and no compaction watermark is recorded, because none ran")
+}

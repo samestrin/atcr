@@ -1120,3 +1120,581 @@ func TestCompact_DeferredOnlyIDKeepsOneRecord(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.RecordsAfter, "no duplicate of the effective record")
 }
+
+// --- T5: occurrence/first-seen carry-through and automatic compaction ---------
+
+// detection builds an open (no-status) record for id-group tests: a fresh sighting
+// with no carried counters, exactly what the reconcile hook appends.
+func detection(problem, ts string) Record {
+	r := sampleRecord(ts + "-run")
+	r.Problem = problem
+	r.Timestamp = ts
+	r.StampID()
+	return r
+}
+
+func TestFoldRecords_CarriesOccurrencesAndFirstSeen(t *testing.T) {
+	a := detection("recurring finding", "2026-06-01T00:00:00Z")
+	b, c := a, a
+	b.Timestamp = "2026-06-02T00:00:00Z"
+	c.Timestamp = "2026-06-03T00:00:00Z"
+
+	folded := FoldRecords([]Record{a, b, c})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 3, folded[0].Occurrences, "three detections of one id count as three occurrences")
+	assert.Equal(t, "2026-06-01T00:00:00Z", folded[0].FirstSeen, "the earliest sighting, not the winner's own ts")
+	assert.Equal(t, "2026-06-03T00:00:00Z", folded[0].Timestamp, "the winning record is still the latest")
+}
+
+func TestFoldRecords_ResolutionRecordDoesNotInflateOccurrences(t *testing.T) {
+	open := detection("fixed once", "2026-06-01T00:00:00Z")
+	resolved := open
+	resolved.Timestamp = "2026-06-02T00:00:00Z"
+	resolved.Status = "resolved"
+
+	folded := FoldRecords([]Record{open, resolved})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences,
+		"a resolution is a status marker, not a second sighting")
+}
+
+func TestFoldRecords_DeferredOnlyGroupCountsAsOneSighting(t *testing.T) {
+	// `atcr debt add --status deferred` files an item that is not a detection; the
+	// floor of 1 keeps it from reporting zero occurrences.
+	rec := detection("filed straight to deferred", "2026-06-01T00:00:00Z")
+	rec.Status = "deferred"
+
+	folded := FoldRecords([]Record{rec})
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences)
+	assert.Equal(t, "2026-06-01T00:00:00Z", folded[0].FirstSeen)
+}
+
+func TestFoldRecords_FirstSeenPrefersEarlierCarriedValue(t *testing.T) {
+	// A compacted carrier holds the id's original FirstSeen even though its own
+	// Timestamp is much later; the aggregate must not regress to the later value.
+	carrier := detection("long-lived", "2026-09-01T00:00:00Z")
+	carrier.Occurrences = 4
+	carrier.FirstSeen = "2026-01-01T00:00:00Z"
+	fresh := detection("long-lived", "2026-09-02T00:00:00Z")
+
+	folded := FoldRecords([]Record{carrier, fresh})
+	require.Len(t, folded, 1)
+	assert.Equal(t, "2026-01-01T00:00:00Z", folded[0].FirstSeen)
+	assert.Equal(t, 5, folded[0].Occurrences, "carried 4 plus the one uncounted detection")
+}
+
+func TestFoldRecords_FirstSeenFallsBackToLexicalOnUnparseableTimestamp(t *testing.T) {
+	a := detection("garbage ts", "not-a-timestamp")
+	b := a
+	b.Timestamp = "2026-06-02T00:00:00Z"
+
+	folded := FoldRecords([]Record{a, b})
+	require.Len(t, folded, 1)
+	assert.Equal(t, "2026-06-02T00:00:00Z", folded[0].FirstSeen,
+		"an unparseable value falls back to a byte comparison, deterministically")
+}
+
+func TestEarlierTimestamp_ComparesInstantsNotBytes(t *testing.T) {
+	// The offset-bearing value is the EARLIER instant while sorting later
+	// lexically; FirstSeen is durable, so it is parsed rather than byte-compared.
+	assert.Equal(t, "2026-01-01T01:00:00+05:00",
+		earlierTimestamp("2026-01-01T00:00:00Z", "2026-01-01T01:00:00+05:00"))
+	assert.Equal(t, "2026-01-01T00:00:00Z",
+		earlierTimestamp("2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"))
+	assert.Equal(t, "aaa", earlierTimestamp("aaa", "bbb"), "unparseable falls back to bytes")
+}
+
+// TestCompact_RegressionCountSurvivesCompactionCycle is AC4's named assertion:
+// detect -> resolve -> compact -> re-detect -> compact leaves the regression count
+// and the original sighting intact at O(1) store size.
+func TestCompact_RegressionCountSurvivesCompactionCycle(t *testing.T) {
+	dir := t.TempDir()
+	first := detection("regresses after a fix", "2026-06-01T00:00:00Z")
+	first.RunID = "2026-06-01T00:00:00Z-run"
+	require.NoError(t, Append(dir, first))
+
+	resolved := first
+	resolved.RunID = "2026-06-02T00:00:00Z-resolved"
+	resolved.Timestamp = "2026-06-02T00:00:00Z"
+	resolved.Status = "resolved"
+	resolved.ResolvedAt = "2026-06-02T00:00:00Z"
+	resolved.Justification = "fixed in PR #1"
+	require.NoError(t, Append(dir, resolved))
+
+	_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	regressed := first
+	regressed.RunID = "2026-07-01T00:00:00Z-run"
+	regressed.Timestamp = "2026-07-01T00:00:00Z"
+	require.NoError(t, Append(dir, regressed))
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	folded := FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, 2, folded[0].Occurrences, "the regression is the second occurrence")
+	assert.Equal(t, "2026-06-01T00:00:00Z", folded[0].FirstSeen, "the original sighting survives")
+	assert.Empty(t, folded[0].Status, "the id is open again after the regression")
+
+	// The superseded resolution and its human-typed justification are still on disk.
+	var trail *Record
+	for i := range recs {
+		if recs[i].Status == "resolved" {
+			trail = &recs[i]
+		}
+	}
+	require.NotNil(t, trail, "compaction retains the resolution trail")
+	assert.Equal(t, "fixed in PR #1", trail.Justification)
+}
+
+func TestCompact_OccurrencesIdempotentAcrossRepeatedCompaction(t *testing.T) {
+	dir := t.TempDir()
+	first := detection("stable count", "2026-06-01T00:00:00Z")
+	first.RunID = "2026-06-01T00:00:00Z-run"
+	require.NoError(t, Append(dir, first))
+	resolved := first
+	resolved.RunID = "2026-06-02T00:00:00Z-resolved"
+	resolved.Timestamp = "2026-06-02T00:00:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, Append(dir, resolved))
+	regressed := first
+	regressed.RunID = "2026-07-01T00:00:00Z-run"
+	regressed.Timestamp = "2026-07-01T00:00:00Z"
+	require.NoError(t, Append(dir, regressed))
+
+	read := func() Record {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		return folded[0]
+	}
+
+	_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	once := read()
+	for i := 0; i < 3; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		again := read()
+		assert.Equal(t, once.Occurrences, again.Occurrences, "repeated compaction must not inflate or decay the count")
+		assert.Equal(t, once.FirstSeen, again.FirstSeen)
+	}
+	assert.Equal(t, 2, once.Occurrences)
+}
+
+func TestStoreStats_CountsRecordsAndBytes(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Append(dir, detection("a", "2026-06-01T00:00:00Z")))
+	require.NoError(t, Append(dir, detection("b", "2026-07-01T00:00:00Z")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignored\n"), 0o600))
+
+	records, size, err := StoreStats(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 2, records, "one line per record; non-.jsonl files ignored")
+
+	var want int64
+	for _, m := range []string{"2026-06", "2026-07"} {
+		info, err := os.Stat(filepath.Join(dir, m+".jsonl"))
+		require.NoError(t, err)
+		want += info.Size()
+	}
+	assert.Equal(t, want, size)
+}
+
+func TestStoreStats_MissingDirIsZero(t *testing.T) {
+	records, size, err := StoreStats(filepath.Join(t.TempDir(), "nope"))
+	require.NoError(t, err, "a missing store is the no-backlog state, not an error")
+	assert.Zero(t, records)
+	assert.Zero(t, size)
+}
+
+// seedChurn writes n superseded detections of ONE id, so a store has something for
+// compaction to actually drop (n records fold to 1).
+func seedChurn(t *testing.T, dir string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		rec := detection("churning finding", fmt.Sprintf("2026-06-%02dT00:00:00Z", i+1))
+		rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", i+1)
+		require.NoError(t, Append(dir, rec))
+	}
+}
+
+// seedIDs writes ids distinct findings, each with occ superseded detections, so a
+// store compacts to a known FLOOR of `ids` records rather than to 1. The watermark
+// tests need that floor to be large enough that one further append is not 50%
+// growth — which is the whole point of the damping.
+func seedIDs(t *testing.T, dir string, ids, occ int) {
+	t.Helper()
+	for i := 0; i < ids; i++ {
+		for j := 0; j < occ; j++ {
+			rec := detection(fmt.Sprintf("finding %d", i), fmt.Sprintf("2026-06-%02dT00:00:00Z", j+1))
+			rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", j+1)
+			require.NoError(t, Append(dir, rec))
+		}
+	}
+}
+
+func TestMaybeCompact_TriggersOnRecordThreshold(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 4)
+
+	res, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 3}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.True(t, triggered, "4 records against a 3-record threshold must compact")
+	assert.Equal(t, 4, res.RecordsBefore)
+	assert.Equal(t, 1, res.RecordsAfter, "the four occurrences fold to one live record")
+}
+
+func TestMaybeCompact_TriggersOnByteThreshold(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 2)
+
+	// Well under any record threshold: the byte clause is what fires.
+	_, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 1_000_000, MaxBytes: 1}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.True(t, triggered, "whichever threshold trips first wins")
+}
+
+func TestMaybeCompact_NoOpBelowThresholds(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 2)
+	before, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+
+	res, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 100, MaxBytes: 1 << 30}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered)
+	assert.Equal(t, CompactResult{}, res)
+
+	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a below-threshold store is not rewritten at all")
+}
+
+func TestMaybeCompact_ZeroPolicyUsesProductionDefaults(t *testing.T) {
+	assert.Equal(t, 100_000, DefaultAutoCompactMaxRecords, "the production record threshold is pinned")
+	assert.Equal(t, int64(100<<20), int64(DefaultAutoCompactMaxBytes), "the production byte threshold is pinned")
+
+	var zero CompactPolicy
+	assert.Equal(t, DefaultAutoCompactMaxRecords, zero.maxRecords())
+	assert.Equal(t, int64(DefaultAutoCompactMaxBytes), zero.maxBytes())
+
+	dir := t.TempDir()
+	seedChurn(t, dir, 3)
+	_, triggered, err := MaybeCompact(dir, CompactPolicy{}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered, "a tiny store is nowhere near the production defaults")
+}
+
+// TestMaybeCompact_WatermarkSuppressesReCompactionOfACompactedStore is the TD-013
+// guard, and the reason the trigger is not a bare absolute threshold.
+//
+// Compact retains up to TWO records per id, so a store's post-compaction floor can
+// sit above the threshold. Without the watermark, every subsequent append re-trips
+// it and rewrites every shard under the cross-process lock to drop nothing —
+// forever.
+func TestMaybeCompact_WatermarkSuppressesReCompactionOfACompactedStore(t *testing.T) {
+	dir := t.TempDir()
+	// 10 live ids x 3 occurrences: the store compacts to a floor of 10 records,
+	// which the 1-record threshold still exceeds — the exact shape TD-013 describes.
+	seedIDs(t, dir, 10, 3)
+	policy := CompactPolicy{MaxRecords: 1}
+
+	_, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.True(t, triggered, "the first pass compacts")
+	records, _, err := StoreStats(dir)
+	require.NoError(t, err)
+	require.Equal(t, 10, records, "the post-compaction floor still exceeds the threshold")
+
+	require.FileExists(t, filepath.Join(dir, compactWatermarkFile),
+		"a successful compaction records its post-compaction size")
+
+	// One more append, then re-check: the store is still above the threshold but has
+	// not grown materially, so nothing should happen.
+	fresh := detection("a different finding", "2026-07-01T00:00:00Z")
+	fresh.RunID = "2026-07-01T00:00:00Z-run"
+	require.NoError(t, Append(dir, fresh))
+
+	before, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	_, triggered, err = MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered,
+		"an already-compacted store above an absolute threshold must not re-compact on every append")
+	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "and it must not rewrite the shards either")
+}
+
+func TestMaybeCompact_ResumesOnceTheStoreGrowsPastTheWatermark(t *testing.T) {
+	dir := t.TempDir()
+	seedIDs(t, dir, 10, 3)
+	policy := CompactPolicy{MaxRecords: 1}
+	_, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.True(t, triggered)
+
+	// Grow well past 1.5x the watermark: the guard damps re-compaction, it does not
+	// disable it.
+	for i := 0; i < 12; i++ {
+		rec := detection("churning finding", fmt.Sprintf("2026-07-%02dT00:00:00Z", i+1))
+		rec.RunID = fmt.Sprintf("2026-07-%02dT00:00:00Z-run", i+1)
+		require.NoError(t, Append(dir, rec))
+	}
+	_, triggered, err = MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.True(t, triggered, "a store that genuinely grew is compacted again")
+}
+
+func TestMaybeCompact_CorruptWatermarkStillCompacts(t *testing.T) {
+	// The guard degrades toward compacting: it may delay a redundant compaction, it
+	// must never prevent a needed one.
+	dir := t.TempDir()
+	seedChurn(t, dir, 4)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, compactWatermarkFile), []byte("{not json"), 0o600))
+
+	_, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 3}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.True(t, triggered, "an unreadable watermark falls back to the thresholds alone")
+}
+
+func TestMaybeCompact_WatermarkFileIsInvisibleToTheReadPath(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 4)
+	_, _, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 1}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(dir, compactWatermarkFile))
+
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "the watermark is not a shard and never decodes as a record")
+
+	// sweepStaleTemps reaps crash debris on every Compact; it must not reap this.
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(dir, compactWatermarkFile),
+		"the watermark does not match the .jsonl.tmp- debris pattern")
+}
+
+// TestMaybeCompact_DoesNotDeadlockAgainstCompactLock proves MaybeCompact takes no
+// lock of its own: withLock is mkdir-based and NOT reentrant, so a nested acquire
+// would spin for the full lockWait before failing.
+func TestMaybeCompact_DoesNotDeadlockAgainstCompactLock(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 4)
+
+	// Hold the store's lock for the duration, so MaybeCompact runs AGAINST a real
+	// competing holder rather than merely against itself. Its stats read and
+	// threshold check take no lock and must complete regardless; only the delegated
+	// Compact contends, and it must not deadlock.
+	held := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		_ = withLock(dir, "test-holder", func() error {
+			close(held)
+			<-released
+			return nil
+		})
+	}()
+	<-held
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = MaybeCompact(dir, CompactPolicy{MaxRecords: 1}, ReadOpts{Writer: io.Discard})
+	}()
+
+	// A NESTED withLock would block on the holder AND on itself, so it could never
+	// finish even after the holder releases. Release, then require completion.
+	close(released)
+	select {
+	case <-done:
+	case <-time.After(lockWait / 3):
+		t.Fatal("MaybeCompact did not finish well inside lockWait: it is nesting withLock")
+	}
+}
+
+// TestCompact_OccurrencesStableWhenAShardIsSkipped is the 3.2.A HIGH-1 guard.
+//
+// Compact does not reach every record: a shard holding a line longer than
+// maxLineBytes is left whole rather than rewritten, so that shard's superseded
+// detections survive every compaction. An "already counted" test that infers
+// counted-ness from a record having been DROPPED therefore re-counts them forever,
+// and Occurrences climbs by one per compaction — unbounded, silent, and unattended
+// now that compaction is automatic.
+func TestCompact_OccurrencesStableWhenAShardIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	base := detection("survives in a protected shard", "2026-06-01T00:00:00Z")
+
+	// June: two real detections plus an over-long line, which protects the shard.
+	first := base
+	first.RunID = "2026-06-01T00:00:00Z-run"
+	second := base
+	second.RunID = "2026-06-02T00:00:00Z-run"
+	second.Timestamp = "2026-06-02T00:00:00Z"
+	writeShard(t, dir, "2026-06",
+		recordLine(t, first),
+		strings.Repeat("x", maxLineBytes+16),
+		recordLine(t, second),
+	)
+	// July: the latest detection, in a shard Compact CAN rewrite.
+	third := base
+	third.RunID = "2026-07-01T00:00:00Z-run"
+	third.Timestamp = "2026-07-01T00:00:00Z"
+	writeShard(t, dir, "2026-07", recordLine(t, third))
+
+	occurrences := func() int {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		return folded[0].Occurrences
+	}
+	require.Equal(t, 3, occurrences(), "three detections before any compaction")
+
+	for i := 1; i <= 5; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, 3, occurrences(),
+			"compaction %d: a skipped shard's surviving records must not be re-counted", i)
+	}
+}
+
+// TestCompact_OccurrencesStableWithANonMonthShard covers the second case Compact
+// cannot rewrite: a stray .jsonl file that is not a month shard is read for records
+// but never rewritten or removed, so its records survive as duplicates.
+func TestCompact_OccurrencesStableWithANonMonthShard(t *testing.T) {
+	dir := t.TempDir()
+	rec := detection("lives in a stray shard", "2026-06-01T00:00:00Z")
+	rec.RunID = "2026-06-01T00:00:00Z-run"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "archive.jsonl"),
+		[]byte(recordLine(t, rec)+"\n"), 0o600))
+
+	occurrences := func() int {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		return folded[0].Occurrences
+	}
+	require.Equal(t, 1, occurrences())
+
+	for i := 1; i <= 5; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, 1, occurrences(),
+			"compaction %d: a non-month shard's duplicate must not be re-counted", i)
+	}
+}
+
+// TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
+// A store of only malformed or forward-incompatible lines compacts to a no-op
+// (StoreFound false). Without a recorded baseline the growth gate reads a zero
+// watermark forever, so every subsequent append re-takes the cross-process lock and
+// re-reads the whole store to drop nothing.
+func TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds(t *testing.T) {
+	dir := t.TempDir()
+	future := sampleRecord("2026-06-14T10:00:00Z-future")
+	future.SchemaVersion = SchemaVersion + 1
+	future.StampID()
+	writeShard(t, dir, "2026-06",
+		"{not json",
+		"{also not json",
+		recordLine(t, future),
+		recordLine(t, future),
+	)
+	policy := CompactPolicy{MaxRecords: 2}
+
+	res, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.True(t, triggered)
+	require.False(t, res.StoreFound, "nothing foldable: the fold is a no-op")
+	require.FileExists(t, filepath.Join(dir, compactWatermarkFile),
+		"a no-op fold still records a baseline, or the trigger re-fires forever")
+
+	_, triggered, err = MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered, "an unchanged unfoldable store must not re-compact")
+}
+
+// TestCompact_ManualCompactionRefreshesTheWatermark pins that the baseline is
+// written by Compact rather than by MaybeCompact, so a manual `atcr debt compact`
+// cannot leave a stale watermark that provokes a redundant automatic compaction.
+func TestCompact_ManualCompactionRefreshesTheWatermark(t *testing.T) {
+	dir := t.TempDir()
+	seedIDs(t, dir, 10, 3)
+
+	_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	w := readCompactWatermark(dir)
+	records, size, err := StoreStats(dir)
+	require.NoError(t, err)
+	assert.Equal(t, records, w.Records, "the watermark measures the store the same way the trigger does")
+	assert.Equal(t, size, w.Bytes)
+
+	_, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 1}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered, "a store the user just compacted is not immediately re-compacted")
+}
+
+func TestMaybeCompact_ShrinkingStoreDoesNotTrigger(t *testing.T) {
+	dir := t.TempDir()
+	seedIDs(t, dir, 10, 3)
+	_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	// Remove a shard behind the store's back: current size is now BELOW the
+	// watermark, which must read as "no growth", not as an unsigned surprise.
+	require.NoError(t, os.Remove(filepath.Join(dir, "2026-06.jsonl")))
+	_, triggered, err := MaybeCompact(dir, CompactPolicy{MaxRecords: 1}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered)
+}
+
+func TestGrewPast_MeasuresFiftyPercentWithoutTruncation(t *testing.T) {
+	// Cross-multiplied rather than dividing the watermark: integer division would
+	// demand 66% growth at a watermark of 3 and 100% at a watermark of 1.
+	for _, tc := range []struct {
+		current, watermark int64
+		want               bool
+	}{
+		{current: 3, watermark: 2, want: false}, // exactly +50% is not PAST +50%...
+		{current: 4, watermark: 2, want: true},  // ...but this clearly is
+		{current: 5, watermark: 3, want: true},  // 66%
+		{current: 4, watermark: 3, want: false}, // 33% — below the bar
+		{current: 15, watermark: 10, want: false},
+		{current: 16, watermark: 10, want: true},
+		{current: 1, watermark: 0, want: true}, // never compacted: thresholds decide
+		{current: 0, watermark: 0, want: false},
+	} {
+		assert.Equalf(t, tc.want, grewPast(tc.current, tc.watermark),
+			"grewPast(%d, %d)", tc.current, tc.watermark)
+	}
+}
+
+// TestMaybeCompact_ByteThresholdBoundary pins the byte clause at its actual
+// boundary rather than with a MaxBytes any non-empty store trips.
+func TestMaybeCompact_ByteThresholdBoundary(t *testing.T) {
+	dir := t.TempDir()
+	seedChurn(t, dir, 3)
+	_, size, err := StoreStats(dir)
+	require.NoError(t, err)
+
+	_, triggered, err := MaybeCompact(dir,
+		CompactPolicy{MaxRecords: 1_000_000, MaxBytes: size + 1}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered, "one byte above the store size does not trip")
+
+	_, triggered, err = MaybeCompact(dir,
+		CompactPolicy{MaxRecords: 1_000_000, MaxBytes: size}, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.True(t, triggered, "the threshold is inclusive: size >= MaxBytes trips")
+}

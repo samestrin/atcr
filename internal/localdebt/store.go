@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // maxLineBytes bounds a single JSONL line on read. Records are ~500 bytes; 1 MiB is
@@ -382,8 +383,144 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // the dedup seed back to every id in the store would make a regressed finding
 // never re-append and silently restore the old permanent-closure behavior with
 // every test here still passing. Change one, change the other.
+//
+// # Aggregate counters
+//
+// The winning record is returned with Occurrences and FirstSeen stamped from the
+// WHOLE id group, so the regression signal that re-openable resolution creates
+// survives compaction at O(1) size instead of O(history). See aggregateCounters
+// for the rule and why it is idempotent.
 func FoldRecords(recs []Record) []Record {
-	return foldByID(recs)
+	byID := map[string][]Record{}
+	for _, r := range recs {
+		byID[r.ID] = append(byID[r.ID], r)
+	}
+	folded := foldByID(recs)
+	for i := range folded {
+		aggregateCounters(&folded[i], byID[folded[i].ID])
+	}
+	return folded
+}
+
+// aggregateCounters stamps eff with the id group's Occurrences and FirstSeen.
+//
+// It lives here rather than inside foldByID deliberately: Summary (streaming.go)
+// instantiates the same generic and carries neither field, so a generic
+// aggregation would not compile — and a summary has no use for the count.
+//
+// # The counting rule
+//
+//	carrier := the record with the highest Occurrences (the last compaction's
+//	           aggregate), or none when no record carries a count
+//	carried := carrier.Occurrences
+//	fresh   := detections NEWER than the carrier — records with an empty Status,
+//	           no count of their own, and a Timestamp strictly after the
+//	           carrier's. Every detection counts when there is no carrier.
+//	Occurrences = max(carried+fresh, 1)
+//
+// An empty Status is the load-bearing discriminator between a DETECTION (written by
+// cli/reconcile.go's persistence hook and by `atcr debt add`) and a RESOLUTION
+// (written by cli/debt_resolve.go, which always sets one). Only detections are
+// occurrences of the finding; a resolution is a status marker.
+//
+// # Why the carrier's timestamp is the boundary
+//
+// The carrier already counts every detection up to its own timestamp, INCLUDING
+// itself, so those must not be counted again. The tempting cheaper test — "does
+// this record still carry a zero count?" — infers "already counted" from the
+// record having been dropped by compaction, and that inference is false: Compact
+// deliberately leaves records on disk in two cases. A shard holding a line longer
+// than maxLineBytes is left whole rather than rewritten (see Compact), and a
+// non-month .jsonl file is read but never rewritten, so its records also survive
+// as duplicates. Those survivors are zero-count detections forever, so a
+// disk-survival test re-counts them on EVERY fold and Occurrences climbs by one per
+// compaction without bound — silently, and unattended once compaction is automatic.
+// A timestamp boundary is a property of the data rather than of what compaction
+// happened to reach.
+//
+// The boundary is strict (>), so a detection appended in the very same second as
+// the carrier is not counted. That costs at most one occurrence in a case the
+// reconcile hook cannot produce anyway (it dedups by id within a run), and it is
+// the safe direction: undercounting once beats drifting upward forever.
+//
+// Walk the lifecycle:
+//
+//	[open(0)@t1]                             no carrier, fresh 1        -> 1
+//	resolve   [open(0)@t1, resolved(0)@t2]   no carrier, fresh 1        -> 1
+//	                                         (the resolution record is appended with
+//	                                         its counters zeroed for this reason —
+//	                                         cli/debt_resolve.go)
+//	compact   [resolved(1)@t2]               carried 1, fresh 0         -> 1
+//	regress   [resolved(1)@t2, open(0)@t3]   carried 1, fresh 1 (t3>t2) -> 2
+//	compact   [open(2)@t3, resolved(0)@t2]   carried 2, fresh 0 (t2<t3) -> 2
+//	                                         (the retained trail is zeroed too)
+//	compact   (unchanged)                    carried 2, fresh 0         -> 2  idempotent
+//
+// Regression count is Occurrences-1. The floor of 1 covers a group whose only
+// record carries a status and no count.
+//
+// FirstSeen is the earliest sighting across the group: each record contributes its
+// own FirstSeen when it carries one (a compacted carrier does) and otherwise its
+// Timestamp. Empty values are skipped rather than compared, because "" sorts before
+// every RFC3339 value and a naive minimum would return it and lose the real first
+// sighting.
+func aggregateCounters(eff *Record, group []Record) {
+	carried, carrierTS := 0, ""
+	for _, r := range group {
+		if r.Occurrences > carried || (r.Occurrences == carried && carried > 0 && r.Timestamp > carrierTS) {
+			carried, carrierTS = r.Occurrences, r.Timestamp
+		}
+	}
+
+	fresh, first := 0, ""
+	for _, r := range group {
+		if r.Status == "" && r.Occurrences == 0 && (carried == 0 || r.Timestamp > carrierTS) {
+			fresh++
+		}
+		seen := r.FirstSeen
+		if seen == "" {
+			seen = r.Timestamp
+		}
+		if seen == "" {
+			continue
+		}
+		if first == "" {
+			first = seen
+			continue
+		}
+		first = earlierTimestamp(first, seen)
+	}
+
+	occ := carried + fresh
+	if occ < 1 {
+		occ = 1
+	}
+	eff.Occurrences = occ
+	eff.FirstSeen = first
+}
+
+// earlierTimestamp returns whichever of two non-empty timestamps is earlier.
+//
+// Both are parsed as RFC3339 and compared as instants when they parse. Every writer
+// in this repo emits UTC RFC3339, so the lexical comparison FoldRecords uses for
+// precedence is sound — but FirstSeen is durable, carried forward across every
+// future compaction, so a single hand-edited or third-party record with an offset
+// would silently invert it forever. Parsing costs nothing at fold scale and makes
+// that impossible. A value that does not parse falls back to the byte comparison,
+// which is what the rest of the package does.
+func earlierTimestamp(a, b string) string {
+	ta, aerr := time.Parse(time.RFC3339, a)
+	tb, berr := time.Parse(time.RFC3339, b)
+	if aerr == nil && berr == nil {
+		if tb.Before(ta) {
+			return b
+		}
+		return a
+	}
+	if b < a {
+		return b
+	}
+	return a
 }
 
 // foldable is the minimum a value must expose to take part in the fold: its
@@ -504,16 +641,14 @@ func retainForCompaction(recs []Record) []Record {
 			trail := highestRankedTerminal(resolutions)
 			// The retained record is a TRAIL entry, not an occurrence: the id's
 			// aggregate counters live solely on the effective record. Zeroing them
-			// here keeps compaction idempotent once T5 carries Occurrences/FirstSeen
-			// through the fold — otherwise the next Compact would re-fold a 2-record
-			// group and either inflate the count (summing the pair) or decay it
-			// (recomputing from group length).
+			// keeps compaction idempotent — a carrier accounts for every detection up
+			// to its own timestamp, so a second carrier in the same group would let
+			// the fold count part of that history twice (aggregateCounters).
 			//
-			// Note for T5's other half: FirstSeen is compared LEXICOGRAPHICALLY
-			// (record.go), and "" sorts before every RFC3339 value — so a naive min()
-			// across the retained pair would return "" and lose the first sighting.
-			// The carry-forward must skip empty values and fall back to the record's
-			// own Timestamp.
+			// Zeroing FirstSeen is safe because the aggregation skips empty values
+			// rather than comparing them: "" sorts before every RFC3339 value, so a
+			// naive minimum across the retained pair would return it and lose the
+			// first sighting. The effective record still carries the real value.
 			trail.Occurrences = 0
 			trail.FirstSeen = ""
 			out = append(out, trail)
@@ -773,5 +908,285 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 
 		return nil
 	})
+	if err == nil {
+		// Record what this compaction left behind, so the automatic trigger has a
+		// baseline to measure growth against (see MaybeCompact).
+		//
+		// It lives HERE, not in MaybeCompact, for three reasons. A manual
+		// `atcr debt compact` refreshes the baseline too, so it cannot leave a stale
+		// watermark that provokes a redundant automatic compaction moments later. A
+		// no-op fold (StoreFound false — a store of only malformed or
+		// forward-incompatible lines) still establishes a baseline, without which
+		// the trigger re-fires on every append forever. And the measurement is taken
+		// on the same terms the trigger uses: real on-disk lines and bytes via
+		// StoreStats, not the semantic fold count, which excludes lines left in
+		// protected shards and would make the two disagree.
+		//
+		// Best-effort: the compaction has already succeeded and a missing watermark
+		// only costs one redundant future compaction.
+		if records, size, serr := StoreStats(dir); serr == nil {
+			writeCompactWatermark(dir, compactWatermark{Records: records, Bytes: size}, opts.Writer)
+		}
+	}
 	return result, err
+}
+
+// Automatic-compaction thresholds. Compaction is what bounds the store's growth —
+// month sharding buys file-size hygiene and archival boundaries but no bound, since
+// every operation reads every shard. Leaving compaction manual (`atcr debt compact`)
+// means an unattended repo that only ever runs `atcr reconcile` grows without limit.
+//
+// The values are sized on Plan 35.13 Decision 5: with the minimal-decode streaming
+// read (streaming.go) a store at either threshold is a sub-second scan, and one
+// compaction returns it to live-findings scale — bounded by real debt, not by
+// history.
+const (
+	DefaultAutoCompactMaxRecords = 100_000
+	DefaultAutoCompactMaxBytes   = 100 << 20 // 100 MiB
+)
+
+// autoCompactGrowthNum / autoCompactGrowthDen express the growth a store must show
+// past its last post-compaction watermark before automatic compaction fires again:
+// 3/2, i.e. 50%.
+//
+// This is the damping the thresholds alone cannot provide. Compact retains up to
+// TWO records per id (retainForCompaction: the effective record plus the resolution
+// trail when the effective one is open), so a store's post-compaction floor can sit
+// above an absolute threshold — and then every single append re-trips it, taking
+// the cross-process lock and rewriting every shard to drop nothing, forever. The
+// watermark turns "above the threshold" into "above the threshold AND materially
+// bigger than last time it was compacted", which is the condition that actually
+// predicts there is something to drop.
+const (
+	autoCompactGrowthNum = 3
+	autoCompactGrowthDen = 2
+)
+
+// CompactPolicy bounds a store before automatic compaction runs. A zero value means
+// the production defaults, so a caller that has no opinion passes CompactPolicy{}.
+// Tests shrink it instead of writing 100k records; a separate assertion pins the
+// defaults so a shrunken policy cannot mask a wrong production constant.
+type CompactPolicy struct {
+	MaxRecords int   // <= 0 uses DefaultAutoCompactMaxRecords
+	MaxBytes   int64 // <= 0 uses DefaultAutoCompactMaxBytes
+}
+
+func (p CompactPolicy) maxRecords() int {
+	if p.MaxRecords <= 0 {
+		return DefaultAutoCompactMaxRecords
+	}
+	return p.MaxRecords
+}
+
+func (p CompactPolicy) maxBytes() int64 {
+	if p.MaxBytes <= 0 {
+		return DefaultAutoCompactMaxBytes
+	}
+	return p.MaxBytes
+}
+
+// shardPaths lists the store's *.jsonl shards and their total size on disk, using
+// the same filter and order as ReadAll. A missing directory is the "no backlog yet"
+// state: no shards, no bytes, no error.
+func shardPaths(dir string) ([]string, int64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, 0, nil
+		}
+		return nil, 0, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
+	}
+	var paths []string
+	var size int64
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // shard removed between ReadDir and stat
+			}
+			return nil, 0, fmt.Errorf("stating localdebt shard: %w", basePathErr(err))
+		}
+		paths = append(paths, filepath.Join(dir, e.Name()))
+		size += info.Size()
+	}
+	return paths, size, nil
+}
+
+// countLines counts '\n' bytes across the given shards with one reusable buffer and
+// no decode, so the threshold check never pays for JSON parsing.
+func countLines(paths []string) (int, error) {
+	buf := make([]byte, 64<<10)
+	total := 0
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return total, fmt.Errorf("reading localdebt shard: %w", basePathErr(err))
+		}
+		for {
+			n, rerr := f.Read(buf)
+			total += bytes.Count(buf[:n], []byte{'\n'})
+			if rerr != nil {
+				_ = f.Close()
+				if rerr == io.EOF {
+					break
+				}
+				return total, fmt.Errorf("reading localdebt shard: %w", basePathErr(rerr))
+			}
+		}
+	}
+	return total, nil
+}
+
+// StoreStats reports the store's size: the number of newline-terminated lines
+// across every *.jsonl shard, and their total bytes on disk.
+//
+// This is a SIZE HEURISTIC, not a semantic record count. It counts lines, so
+// malformed and forward-incompatible lines are included — which is what an
+// automatic-compaction trigger wants, since those bytes are on disk regardless of
+// whether this binary can interpret them. It performs no JSON decode.
+//
+// A missing directory returns (0, 0, nil), matching ReadAll's "no backlog yet".
+func StoreStats(dir string) (records int, size int64, err error) {
+	paths, size, err := shardPaths(dir)
+	if err != nil {
+		return 0, 0, err
+	}
+	records, err = countLines(paths)
+	if err != nil {
+		return records, size, err
+	}
+	return records, size, nil
+}
+
+// compactWatermarkFile is the store-local record of what the last compaction left
+// behind. The name deliberately carries no .jsonl suffix, so ReadAll, Compact's
+// shard enumeration, and readAllPreserving all skip it; and it does not match
+// sweepStaleTemps' ".jsonl.tmp-" pattern, so crash-debris reaping leaves it alone.
+const compactWatermarkFile = ".compact-watermark"
+
+// compactWatermark is the store's size immediately after the last successful
+// automatic compaction — the baseline the growth gate measures against.
+type compactWatermark struct {
+	Records int   `json:"records"`
+	Bytes   int64 `json:"bytes"`
+}
+
+// readCompactWatermark loads the watermark, degrading to a ZERO watermark on any
+// problem — absent, unreadable, truncated, or corrupt.
+//
+// Degrading to zero is the safe direction, and deliberately so: a zero watermark
+// makes the growth gate pass, so the thresholds alone decide and compaction still
+// happens. The guard can therefore delay a redundant compaction but can never
+// prevent a needed one, which is the only failure mode worth designing for here.
+func readCompactWatermark(dir string) compactWatermark {
+	var w compactWatermark
+	b, err := os.ReadFile(filepath.Join(dir, compactWatermarkFile))
+	if err != nil {
+		return compactWatermark{}
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return compactWatermark{}
+	}
+	if w.Records < 0 || w.Bytes < 0 {
+		return compactWatermark{}
+	}
+	return w
+}
+
+// writeCompactWatermark records the store's post-compaction size. It is
+// best-effort: a failure is reported to the caller's diagnostics sink and never
+// fails the compaction that already succeeded, because the only consequence is that
+// the next append re-evaluates the thresholds without a baseline.
+func writeCompactWatermark(dir string, w compactWatermark, diag io.Writer) {
+	b, err := json.Marshal(w)
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, compactWatermarkFile), b, 0o600); err != nil {
+		_, _ = fmt.Fprintf(diagWriter(diag), "localdebt: could not record compaction watermark: %v\n", basePathErr(err))
+	}
+}
+
+// grewPast reports whether a measured dimension has grown at least 50% past its
+// watermark. A zero watermark (never compacted, or an unreadable one) always
+// passes, so a first-ever compaction fires at the threshold exactly.
+//
+// The comparison is cross-multiplied rather than dividing the watermark: integer
+// division truncates, which at small watermarks demands materially more than 50%
+// growth (a watermark of 3 would not fire until 5, i.e. 66%). Irrelevant at the
+// production threshold, but every test policy lives in exactly that regime, so a
+// test expectation would otherwise hinge on truncation instead of the documented
+// rule. int64 operands make overflow unreachable at any real store size.
+func grewPast(current, watermark int64) bool {
+	if watermark <= 0 {
+		return current > 0
+	}
+	return current*autoCompactGrowthDen > watermark*autoCompactGrowthNum
+}
+
+// MaybeCompact compacts dir when the store has outgrown policy, and reports whether
+// it did. It is the automatic counterpart to the manual `atcr debt compact`; Compact
+// itself is unchanged and does all the rewriting.
+//
+// Two conditions must both hold:
+//
+//  1. A THRESHOLD is tripped — policy.MaxRecords lines or policy.MaxBytes bytes,
+//     whichever trips first. The byte check comes first and short-circuits the line
+//     scan, since it is satisfied by stat alone.
+//  2. The store has GROWN at least 50% past the watermark the last compaction left
+//     (see autoCompactGrowthNum). Without this, a store whose post-compaction floor
+//     already exceeds the threshold re-compacts on every single append forever,
+//     dropping nothing each time.
+//
+// # Locking
+//
+// MaybeCompact takes NO lock, and the stats read runs outside any lock. Compact
+// acquires withLock internally, and withLock is mkdir-based and NOT reentrant — a
+// nested acquire would spin for the full lockWait and then fail, turning every
+// over-threshold reconcile into a multi-second stall. A benign stats race just means
+// compaction happens one run later.
+func MaybeCompact(dir string, policy CompactPolicy, opts ReadOpts) (CompactResult, bool, error) {
+	paths, size, err := shardPaths(dir)
+	if err != nil {
+		return CompactResult{}, false, err
+	}
+
+	// records stays -1 when the byte threshold trips first and the line scan is
+	// skipped; the growth gate then measures the dimension it actually has.
+	records := -1
+	tripped := size >= policy.maxBytes()
+	if !tripped {
+		records, err = countLines(paths)
+		if err != nil {
+			return CompactResult{}, false, err
+		}
+		tripped = records >= policy.maxRecords()
+	}
+	if !tripped {
+		return CompactResult{}, false, nil
+	}
+
+	// Growth is measured in the dimension that actually tripped, not in either —
+	// a store can double in bytes while barely moving in records (and vice versa),
+	// and unlocking on the untripped dimension would defeat the damping.
+	w := readCompactWatermark(dir)
+	grew := grewPast(size, w.Bytes)
+	if records >= 0 {
+		grew = grewPast(int64(records), int64(w.Records))
+	}
+	if !grew {
+		return CompactResult{}, false, nil
+	}
+
+	res, err := Compact(dir, opts)
+	if err != nil {
+		return res, true, err
+	}
+	return res, true, nil
 }
