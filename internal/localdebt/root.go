@@ -64,7 +64,17 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 	// "create <some existing dir>/.atcr/debt/" reachable from a tool argument. The
 	// MCP entry point therefore sets RequireMarker, and the tier then runs the
 	// same validateRepoRoot re-validation the manifest tier gets (closing TD-023).
-	if explicit := strings.TrimSpace(opts.Explicit); explicit != "" {
+	if opts.Explicit != "" {
+		// A SUPPLIED-but-blank root ("   " — the shape an unset or partially
+		// quoted shell variable produces, e.g. --repo "$REPO " with REPO unset)
+		// is an invalid claim, not an absent one: the operator named a root, and
+		// acting as if they named nothing is the one silent transition the
+		// no-fall-through contract above forbids.
+		if strings.TrimSpace(opts.Explicit) == "" {
+			_, _ = fmt.Fprintf(diag, "localdebt: repo root is blank (whitespace only); skipping local debt persistence\n")
+			return "", false
+		}
+		explicit := strings.TrimSpace(opts.Explicit)
 		if opts.RequireMarker {
 			if _, ok := existingDir(explicit); !ok {
 				_, _ = fmt.Fprintf(diag, "localdebt: repo root %q does not exist or is not a directory; skipping local debt persistence\n", explicit)
