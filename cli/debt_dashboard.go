@@ -110,6 +110,13 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	}
 }
 
+// writeDashboardFile writes content to path. STUB: still the link-following
+// os.WriteFile the TD flags — replaced in the same change set by a single-handle
+// O_NOFOLLOW write.
+func writeDashboardFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 // guardDashboardOverwrite refuses to truncate an existing --output target that
 // the dashboard did not generate.
 //

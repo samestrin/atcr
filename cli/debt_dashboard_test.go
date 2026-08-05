@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -209,6 +210,32 @@ func TestDebtDashboard_RefusesToOverwriteAFileItDidNotGenerate(t *testing.T) {
 	raw, readErr := os.ReadFile(victim)
 	require.NoError(t, readErr)
 	assert.Equal(t, secret, string(raw), "the target is left byte-identical")
+}
+
+// TD: resolveDashboardOutput's comment claimed "the check and the write agree on
+// where the file lands", but the guarantee was only lexical — between the
+// resolve/validate and the MkdirAll/WriteFile the destination could be replaced
+// by a symlink, and neither call used O_NOFOLLOW. The write now goes through ONE
+// handle opened with O_NOFOLLOW, so the file that is inspected is the file that
+// is written and a link swapped in at the last moment is refused rather than
+// followed.
+func TestWriteDashboardFile_RefusesToFollowASymlinkAtTheTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("O_NOFOLLOW is a POSIX open flag; the guard degrades to the marker check on Windows")
+	}
+	base := t.TempDir()
+	victim := filepath.Join(base, "victim")
+	const secret = "do not truncate me\n"
+	require.NoError(t, os.WriteFile(victim, []byte(secret), 0o600))
+	link := filepath.Join(base, "swapped-in")
+	require.NoError(t, os.Symlink(victim, link))
+
+	err := writeDashboardFile(link, "# Technical Debt Dashboard\n")
+
+	require.Error(t, err, "a symlink at the write target is not followed")
+	raw, readErr := os.ReadFile(victim)
+	require.NoError(t, readErr)
+	assert.Equal(t, secret, string(raw), "the link's target is untouched")
 }
 
 // Regenerating over a previous dashboard is the normal path and stays silent —
