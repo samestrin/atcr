@@ -24,10 +24,29 @@ import (
 // neither a confirmation nor a dismissal until it is settled again. Only a
 // wontfix id is immune, because only wontfix survives re-detection.
 //
-// The fold is O(n): FoldRecords does a single keyed pass and this adds one linear
-// filter, with no per-id rescan of the whole stream.
+// The fold is O(n): FoldRecords does a single keyed pass, the donor index below
+// adds one more linear pass, and the filter's recovery is an O(1) map lookup —
+// no per-id rescan of the whole stream.
 func foldTerminalByID(records []Record) []Record {
 	effective := FoldRecords(records)
+
+	// Per-id index of the most recent terminal record's Model, built in ONE
+	// keyed pass (last-wins on timestamp ties, matching FoldRecords). The
+	// recovery below used to rescan the entire slice once per attribution-less
+	// terminal id — quadratic on a store near the 100k-record auto-compaction
+	// ceiling, where every v1 record and every model-less resolution needs it.
+	donorTS := map[string]string{}
+	donorModel := map[string]string{}
+	for _, r := range records {
+		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
+			continue
+		}
+		if _, ok := donorModel[r.ID]; !ok || r.Timestamp >= donorTS[r.ID] {
+			donorModel[r.ID] = r.Model
+			donorTS[r.ID] = r.Timestamp
+		}
+	}
+
 	terminal := make([]Record, 0, len(effective))
 	for _, r := range effective {
 		if !IsClosedStatus(r.Status) {
@@ -42,28 +61,11 @@ func foldTerminalByID(records []Record) []Record {
 		// before excluding. (Unreachable for a regressed id: that folds to an open
 		// record and is filtered out above.)
 		if strings.TrimSpace(r.Model) == "" {
-			r.Model = latestTerminalModel(records, r.ID)
+			r.Model = donorModel[r.ID]
 		}
 		terminal = append(terminal, r)
 	}
 	return terminal
-}
-
-// latestTerminalModel returns the Model of the most recent terminal record for id
-// that carries a non-empty Model (by timestamp; last-wins on ties, matching
-// FoldRecords), or "" if no terminal record for the id has a model.
-func latestTerminalModel(records []Record, id string) string {
-	var model, bestTS string
-	for _, r := range records {
-		if r.ID != id || !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
-			continue
-		}
-		if model == "" || r.Timestamp >= bestTS {
-			model = r.Model
-			bestTS = r.Timestamp
-		}
-	}
-	return model
 }
 
 // QualityRow is one aggregated per-(persona, model) quality-signal row: how many

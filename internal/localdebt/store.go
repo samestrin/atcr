@@ -702,7 +702,8 @@ func retainForCompaction(recs []Record) []Record {
 			// The effective record IS the resolution, so there is no rationale to
 			// preserve — but there may still be ATTRIBUTION. AggregateQualitySignal
 			// recovers a missing Model from an earlier same-id terminal record
-			// (qualitysignal.go, latestTerminalModel), which is how a wontfix that
+			// (qualitysignal.go, foldTerminalByID's donor index), which is how a
+			// wontfix that
 			// outranks an earlier attributed resolution still reports a dismissal.
 			// Dropping that donor makes the whole outcome vanish from the signal —
 			// silently and permanently, and now unattended, since compaction runs
@@ -833,11 +834,11 @@ func passThroughUncompactable(folded, all []Record, protected map[string]bool) [
 // recover for this id, or nil when the effective record already carries one or no
 // donor exists.
 //
-// Selection matches latestTerminalModel (qualitysignal.go) exactly — the most
-// recent terminal record with a non-empty Model, last-wins on ties — because the
-// point is that the recovery returns the SAME model before and after compaction. A
-// different rule here would make the signal depend on whether the store had been
-// compacted yet.
+// Selection matches foldTerminalByID's donor index (qualitysignal.go) exactly —
+// the most recent terminal record with a non-empty Model, last-wins on ties —
+// because the point is that the recovery returns the SAME model before and after
+// compaction. A different rule here would make the signal depend on whether the
+// store had been compacted yet.
 //
 // Retention stays bounded at two records per id: this branch is reached only when
 // the effective record is settled, which is exactly the branch that retains no
