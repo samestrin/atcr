@@ -406,13 +406,14 @@ func FoldRecords(recs []Record) []Record {
 //
 // # The counting rule
 //
-//	carrier := the record with the highest Occurrences (the last compaction's
-//	           aggregate), or none when no record carries a count
-//	carried := carrier.Occurrences
-//	fresh   := detections NEWER than the carrier — sighting records with no count
-//	           of their own and a Timestamp strictly after the carrier's. Every
-//	           detection counts when there is no carrier.
-//	Occurrences = max(carried+fresh, 1)
+//	carrier  := the record with the highest Occurrences (the last fold's
+//	            aggregate), or none when no record carries a count
+//	carried  := carrier.Occurrences
+//	boundary := carrier.CountedThrough (its own Timestamp when absent)
+//	fresh    := sightings with no count of their own and a Timestamp strictly
+//	            after the boundary. Every sighting counts when there is no carrier.
+//	Occurrences    = max(carried+fresh, 1)
+//	CountedThrough = the newest sighting timestamp now accounted for
 //
 // A record is a SIGHTING (isSighting) rather than a status marker in two cases:
 // it carries no Status at all — what cli/reconcile.go's persistence hook and a
@@ -420,38 +421,51 @@ func FoldRecords(recs []Record) []Record {
 // even when it carries a status like `deferred`. Only sightings are occurrences of
 // the finding; a resolution is a marker on one.
 //
-// # Why the carrier's timestamp is the boundary
+// # Why the boundary is persisted, not inferred
 //
-// The carrier already counts every detection up to its own timestamp, INCLUDING
-// itself, so those must not be counted again. The tempting cheaper test — "does
-// this record still carry a zero count?" — infers "already counted" from the
-// record having been dropped by compaction, and that inference is false: Compact
-// deliberately leaves records on disk in two cases. A shard holding a line longer
-// than maxLineBytes is left whole rather than rewritten (see Compact), and a
-// non-month .jsonl file is read but never rewritten, so its records also survive
-// as duplicates. Those survivors are zero-count detections forever, so a
-// disk-survival test re-counts them on EVERY fold and Occurrences climbs by one per
-// compaction without bound — silently, and unattended once compaction is automatic.
-// A timestamp boundary is a property of the data rather than of what compaction
-// happened to reach.
+// The carrier already counts every sighting up to its boundary, INCLUDING itself,
+// so those must not be counted again. Two cheaper-looking tests both fail, and both
+// fail the same way — they infer "already counted" from a record's SHAPE, when the
+// real question is what a previous fold actually accounted for:
 //
-// The boundary is strict (>), so a detection appended in the very same second as
-// the carrier is not counted. That costs at most one occurrence in a case the
+//   - "does it still carry a zero count?" — false for any sighting that SURVIVED
+//     compaction. Compact deliberately leaves records on disk in two cases: a shard
+//     holding a line longer than maxLineBytes is left whole rather than rewritten,
+//     and a non-month .jsonl file is read but never rewritten. Those survivors stay
+//     zero-count forever, so this test re-counts them on every fold.
+//   - "is it older than the carrier's own Timestamp?" — false whenever the carrier
+//     is not the group's newest record, which is exactly what rule 1 produces: a
+//     suppressing (wontfix) record wins unconditionally, so a survivor NEWER than it
+//     is re-counted on every fold.
+//
+// Either way Occurrences climbs by one per compaction, without bound, silently, and
+// unattended now that compaction is automatic. CountedThrough records the boundary
+// as a FACT the previous fold wrote down, so neither survivorship nor fold
+// precedence can move it.
+//
+// The comparison is strict (>), so a sighting appended in the very same second as
+// the boundary is not counted. That costs at most one occurrence in a case the
 // reconcile hook cannot produce anyway (it dedups by id within a run), and it is
 // the safe direction: undercounting once beats drifting upward forever.
 //
-// Walk the lifecycle:
+// Walk the lifecycle (ct = CountedThrough):
 //
-//	[open(0)@t1]                             no carrier, fresh 1        -> 1
-//	resolve   [open(0)@t1, resolved(0)@t2]   no carrier, fresh 1        -> 1
-//	                                         (the resolution record is appended with
-//	                                         its counters zeroed for this reason —
-//	                                         cli/debt_resolve.go)
-//	compact   [resolved(1)@t2]               carried 1, fresh 0         -> 1
-//	regress   [resolved(1)@t2, open(0)@t3]   carried 1, fresh 1 (t3>t2) -> 2
-//	compact   [open(2)@t3, resolved(0)@t2]   carried 2, fresh 0 (t2<t3) -> 2
+//	[open(0)@t1]                             no carrier, fresh 1        -> 1, ct=t1
+//	resolve   [open(0)@t1, resolved(0)@t2]   no carrier, fresh 1        -> 1, ct=t1
+//	                                         (the resolution is appended with its
+//	                                         counters zeroed — cli/debt_resolve.go)
+//	compact   [resolved(1,ct=t1)@t2]         carried 1, fresh 0         -> 1, ct=t1
+//	regress   [resolved(1,ct=t1), open(0)@t3] carried 1, fresh 1 (t3>t1) -> 2, ct=t3
+//	compact   [open(2,ct=t3)@t3, resolved(0)] carried 2, fresh 0         -> 2, ct=t3
 //	                                         (the retained trail is zeroed too)
 //	compact   (unchanged)                    carried 2, fresh 0         -> 2  idempotent
+//
+// And the rule-1 case the boundary exists for:
+//
+//	[wontfix(0)@t1, open(0)@t2 in an unrewritable shard]
+//	                                         no carrier, fresh 1        -> 1, ct=t2
+//	compact   wontfix wins rule 1 and carries the count; open@t2 survives on disk
+//	refold    carried 1, boundary t2, fresh 0 (t2 is not > t2)          -> 1  stable
 //
 // Regression count is Occurrences-1. The floor of 1 covers a group whose only
 // record carries a status and no count.
@@ -462,17 +476,39 @@ func FoldRecords(recs []Record) []Record {
 // every RFC3339 value and a naive minimum would return it and lose the real first
 // sighting.
 func aggregateCounters(eff *Record, group []Record) {
-	carried, carrierTS := 0, ""
-	for _, r := range group {
-		if r.Occurrences > carried || (r.Occurrences == carried && carried > 0 && r.Timestamp > carrierTS) {
-			carried, carrierTS = r.Occurrences, r.Timestamp
+	// The carrier is the record holding the highest count, the latest one winning a
+	// tie. Records with no count are not carriers.
+	var carrier *Record
+	for i := range group {
+		r := &group[i]
+		switch {
+		case r.Occurrences == 0:
+		case carrier == nil,
+			r.Occurrences > carrier.Occurrences,
+			r.Occurrences == carrier.Occurrences && r.Timestamp > carrier.Timestamp:
+			carrier = r
+		}
+	}
+	carried, boundary := 0, ""
+	if carrier != nil {
+		carried = carrier.Occurrences
+		// A carrier written before CountedThrough existed falls back to its own
+		// Timestamp, which is correct for it: the fold that stamped it always
+		// selected the group's newest record under rule 2.
+		if boundary = carrier.CountedThrough; boundary == "" {
+			boundary = carrier.Timestamp
 		}
 	}
 
-	fresh, first := 0, ""
+	fresh, first, counted := 0, "", boundary
 	for _, r := range group {
-		if isSighting(r) && r.Occurrences == 0 && (carried == 0 || r.Timestamp > carrierTS) {
-			fresh++
+		if isSighting(r) {
+			if r.Occurrences == 0 && (carried == 0 || r.Timestamp > boundary) {
+				fresh++
+			}
+			if r.Timestamp > counted {
+				counted = r.Timestamp
+			}
 		}
 		seen := r.FirstSeen
 		if seen == "" {
@@ -494,6 +530,7 @@ func aggregateCounters(eff *Record, group []Record) {
 	}
 	eff.Occurrences = occ
 	eff.FirstSeen = first
+	eff.CountedThrough = counted
 }
 
 // isSighting reports whether a record is an OCCURRENCE of the finding rather than
@@ -695,6 +732,7 @@ func retainForCompaction(recs []Record) []Record {
 			// first sighting. The effective record still carries the real value.
 			trail.Occurrences = 0
 			trail.FirstSeen = ""
+			trail.CountedThrough = ""
 			out = append(out, trail)
 		}
 	}
@@ -713,9 +751,15 @@ func retainForCompaction(recs []Record) []Record {
 //
 // Retention stays bounded at two records per id: this branch is reached only when
 // the effective record is settled, which is exactly the branch that retains no
-// resolution trail. An id whose effective record is OPEN is filtered out of the
-// quality signal entirely (an unsettled finding is not an outcome), so it needs no
-// donor and keeps its trail instead.
+// resolution trail.
+//
+// Settled — not merely closed — is the right gate, and not by luck. An id whose
+// effective record is OPEN is filtered out of the quality signal by
+// foldTerminalByID (an unsettled finding is not an outcome). A `deferred` one is
+// admitted by that filter and even has its Model recovered, but
+// AggregateQualitySignal's status switch maps anything that is neither wontfix nor
+// resolved to no counter and no group, so it emits no row whatever its attribution.
+// Only a settled effective record can produce a row, so only it can lose one.
 func modelDonor(group []Record, eff Record) *Record {
 	if strings.TrimSpace(eff.Model) != "" {
 		return nil
@@ -733,6 +777,7 @@ func modelDonor(group []Record, eff Record) *Record {
 			// the history twice.
 			r.Occurrences = 0
 			r.FirstSeen = ""
+			r.CountedThrough = ""
 			donor := r
 			best = &donor
 		}
@@ -1008,10 +1053,10 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		// Best-effort, and measured OUTSIDE the lock: the rewrite has already
 		// committed, and the no-op-fold path returns early from the locked closure,
 		// so writing here covers both exits with one statement. A concurrent Append
-		// between the unlock and the stat only makes the baseline slightly stale,
-		// which costs at most one delayed or redundant future compaction — the gate
-		// degrades toward compacting (readCompactWatermark treats anything
-		// unreadable as zero) and can never PREVENT a needed one.
+		// between the unlock and the stat INFLATES the recorded baseline, and the
+		// growth gate then asks for 50% growth past an inflated number — so the
+		// effect is a DELAYED compaction, not a spurious one. It is self-correcting:
+		// the next compaction that does run rewrites the baseline accurately.
 		if records, size, serr := StoreStats(dir); serr == nil {
 			writeCompactWatermark(dir, compactWatermark{Records: records, Bytes: size}, opts.Writer)
 		}

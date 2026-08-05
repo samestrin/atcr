@@ -1095,3 +1095,65 @@ func TestSelectOpenDebt_CrossShardDisplaysLastOccurrence(t *testing.T) {
 	assert.Equal(t, "LOW", got[0].Severity,
 		"the LAST occurrence wins even when it lives in a later shard")
 }
+
+// TestDebtAdd_DoesNotStampCountersOnTheFiledRecord pins the cli half of the
+// counting contract. Stamping Occurrences here would make the filed record a
+// counting carrier, and its timestamp the boundary for every earlier sighting of
+// the same id — silently DECREASING the count when a user files something that
+// hashes to an id the store already holds.
+func TestDebtAdd_DoesNotStampCountersOnTheFiledRecord(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:12", "--problem", "boom",
+		"--fix", "fix it", "--category", "correctness", "--status", "deferred")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	require.Len(t, recs, 1)
+	assert.Zero(t, recs[0].Occurrences, "a filed item is appended with no carried count")
+	assert.Empty(t, recs[0].FirstSeen)
+	assert.Empty(t, recs[0].CountedThrough)
+
+	// And the counting rule still treats it as a sighting, via origin + no ResolvedAt.
+	folded := localdebt.FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences)
+}
+
+// TestDebtResolve_ResolutionRecordCarriesNoCounters pins the other cli half: the
+// resolution copies the FOLDED record, which carries the id's aggregate, so it must
+// zero the counters or the fold counts that history twice.
+func TestDebtResolve_ResolutionRecordCarriesNoCounters(t *testing.T) {
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "counted twice?")
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = "2026-07-02T10:00:00Z"
+	dir := writeDebtStore(t, first, second)
+	require.Equal(t, 2, localdebt.FoldRecords(readStoreRecords(t, dir))[0].Occurrences)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID, "--reason", "fixed")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	var resolution *localdebt.Record
+	for i := range recs {
+		if recs[i].Status == "resolved" {
+			resolution = &recs[i]
+		}
+	}
+	require.NotNil(t, resolution)
+	assert.Zero(t, resolution.Occurrences, "the appended resolution must not carry the folded aggregate")
+	assert.Empty(t, resolution.FirstSeen)
+	assert.Empty(t, resolution.CountedThrough)
+
+	assert.Equal(t, 2, localdebt.FoldRecords(recs)[0].Occurrences,
+		"resolving does not add a sighting, so the count is unchanged")
+}
+
+// readStoreRecords reads every record from a test store dir.
+func readStoreRecords(t *testing.T, dir string) []localdebt.Record {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	return recs
+}

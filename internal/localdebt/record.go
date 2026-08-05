@@ -136,18 +136,39 @@ type Record struct {
 	// aggregateCounters (store.go) for the counting rule; it is idempotent, so
 	// re-compacting an already-compacted store never inflates or decays the value.
 	//
-	// A record carrying a non-zero value is a CARRIER: it already accounts for every
-	// detection up to its own Timestamp, including itself. Two writers must
-	// therefore append with this field zeroed, or the same detections are counted
-	// twice — the resolution record from cli/debt_resolve.go (which copies the
-	// folded record wholesale) and the resolution trail retained by
-	// retainForCompaction. `atcr debt add` does the opposite deliberately and stamps
-	// 1, because a hand-filed item is its own first sighting and may carry a status
-	// that the counting rule would otherwise never treat as a detection.
+	// A record carrying a non-zero value is a CARRIER, and CountedThrough says
+	// exactly which sightings it accounts for. Every writer appends with this field
+	// zero; three paths must do so EXPLICITLY because they copy an existing record
+	// wholesale — cli/debt_resolve.go's resolution, and retainForCompaction's
+	// resolution trail and model donor — since a second carrier in one group would
+	// let the fold count part of the history twice.
 	//
 	// omitempty keeps it absent from records no fold has aggregated yet; readers
 	// treat an absent/zero value as one occurrence ("not yet aggregated").
 	Occurrences int `json:"occurrences,omitempty"`
+
+	// CountedThrough is the newest sighting timestamp this record's Occurrences
+	// value accounts for. It is what makes the count idempotent under repeated
+	// compaction, and it must be persisted rather than inferred.
+	//
+	// The reason is that compaction does not reach every record. A shard holding a
+	// line over maxLineBytes is left whole, and a non-month .jsonl file is read but
+	// never rewritten, so sightings in them survive every compaction as zero-count
+	// records. Deciding "already counted?" from a record's shape — that it still
+	// carries a zero count, or that it predates the carrier's own Timestamp — is
+	// wrong for exactly those survivors: the first re-counts them every fold, and
+	// the second re-counts any survivor NEWER than the carrier, which happens
+	// whenever a suppressing (wontfix) record wins the fold and is therefore not the
+	// group's newest. Both drift upward by one per compaction, without bound.
+	// CountedThrough records the boundary as a fact rather than deriving it.
+	//
+	// Same UTC-normalized RFC3339 invariant as Timestamp and FirstSeen, and compared
+	// the same way FirstSeen is (see below). omitempty keeps it absent from records
+	// no fold has aggregated yet, where an absent value falls back to the carrier's
+	// own Timestamp — which is correct for any carrier written before this field
+	// existed, because the pre-existing fold always stamped the group's newest
+	// record under rule 2.
+	CountedThrough string `json:"counted_through,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this
 	// id, added in schema v3 (Plan 35.13). FoldRecords carries it forward with

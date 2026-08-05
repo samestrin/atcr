@@ -494,6 +494,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// resolution trail it retains (internal/localdebt/store.go).
 	rec.Occurrences = 0
 	rec.FirstSeen = ""
+	rec.CountedThrough = ""
 	// A supplied --reason records why the finding was dismissed/resolved and
 	// replaces any justification the item already carried (e.g. reconcile
 	// enrichment); an empty reason preserves the existing justification, never

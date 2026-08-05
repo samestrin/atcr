@@ -1869,3 +1869,129 @@ func TestFoldRecords_ResolutionOfAManuallyFiledItemIsNotASighting(t *testing.T) 
 	assert.Equal(t, 1, folded[0].Occurrences,
 		"resolving a manually filed item is a marker on it, not a second sighting")
 }
+
+// TestCompact_OccurrencesStableWhenASuppressingRecordWinsTheFold is the gate
+// pass-3 HIGH guard.
+//
+// Rule 1 makes a wontfix record win unconditionally, so the carrier is NOT the
+// group's newest record. A sighting newer than it that survives compaction — in a
+// shard the rewrite cannot reach — is then newer than the carrier's own timestamp
+// too, so a boundary derived from that timestamp re-counts it on every fold.
+// CountedThrough is what makes the boundary independent of fold precedence.
+func TestCompact_OccurrencesStableWhenASuppressingRecordWinsTheFold(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		survive func(t *testing.T, dir string, rec Record)
+	}{
+		{
+			name: "protected shard",
+			survive: func(t *testing.T, dir string, rec Record) {
+				t.Helper()
+				writeShard(t, dir, "2026-06", recordLine(t, rec), strings.Repeat("x", maxLineBytes+16))
+			},
+		},
+		{
+			name: "non-month shard",
+			survive: func(t *testing.T, dir string, rec Record) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "archive.jsonl"),
+					[]byte(recordLine(t, rec)+"\n"), 0o600))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base := detection("dismissed then re-sighted", "2026-05-01T00:00:00Z")
+
+			// The wontfix is OLDER, and rule 1 makes it effective regardless.
+			dismissed := base
+			dismissed.RunID = "2026-05-01T00:00:00Z-wontfix"
+			dismissed.Status = "wontfix"
+			dismissed.Justification = "accepted pattern"
+			writeShard(t, dir, "2026-05", recordLine(t, dismissed))
+
+			// A NEWER sighting, parked where compaction cannot rewrite it.
+			later := base
+			later.RunID = "2026-06-01T00:00:00Z-run"
+			later.Timestamp = "2026-06-01T00:00:00Z"
+			tc.survive(t, dir, later)
+
+			occurrences := func() int {
+				recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+				require.NoError(t, err)
+				folded := FoldRecords(recs)
+				require.Len(t, folded, 1)
+				require.Equal(t, "wontfix", folded[0].Status, "rule 1: the suppressing record wins")
+				return folded[0].Occurrences
+			}
+			want := occurrences()
+
+			for i := 1; i <= 5; i++ {
+				_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+				require.NoError(t, err)
+				assert.Equal(t, want, occurrences(),
+					"compaction %d: a survivor NEWER than the carrier must not be re-counted", i)
+			}
+		})
+	}
+}
+
+// TestCompact_DeferredEffectiveRecordEmitsNoSignalEitherWay pins why modelDonor's
+// SETTLED-only gate is exactly right rather than accidentally narrow.
+//
+// foldTerminalByID admits any CLOSED effective record, `deferred` included, and
+// recovers a Model for it — which reads as though a deferred-effective id could
+// depend on the donor. It cannot: AggregateQualitySignal's status switch maps
+// anything that is neither wontfix nor resolved to no counter and no group, so such
+// an id emits no row whatever its attribution. Nothing for compaction to preserve,
+// and nothing for the donor to be needed for.
+func TestCompact_DeferredEffectiveRecordEmitsNoSignalEitherWay(t *testing.T) {
+	dir := t.TempDir()
+	base := detection("resolved then deferred", "2026-06-01T10:00:00Z")
+	base.Reviewers = []string{"bruce"}
+	base.Model = "claude-x"
+
+	resolved := base
+	resolved.RunID = "2026-06-01T11:00:00Z-resolved"
+	resolved.Timestamp = "2026-06-01T11:00:00Z"
+	resolved.Status = "resolved"
+	resolved.ResolvedAt = resolved.Timestamp
+	// A later deferral with no attribution becomes the effective record.
+	deferred := base
+	deferred.RunID = "2026-06-01T12:00:00Z-deferred"
+	deferred.Timestamp = "2026-06-01T12:00:00Z"
+	deferred.Status = "deferred"
+	deferred.Model = ""
+	for _, r := range []Record{base, resolved, deferred} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	signal := func() []QualityRow {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		return AggregateQualitySignal(recs)
+	}
+	require.Empty(t, signal(),
+		"a deferred-effective id contributes to neither counter, so it emits no row")
+
+	for i := 1; i <= 3; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Empty(t, signal(), "compaction %d: still no row, so there is nothing to preserve", i)
+	}
+
+	// Re-settling the id DOES put it back in the signal, and that path is settled,
+	// so the donor covers it — which is the case modelDonor is gated on.
+	dismissed := deferred
+	dismissed.RunID = "2026-06-01T13:00:00Z-wontfix"
+	dismissed.Timestamp = "2026-06-01T13:00:00Z"
+	dismissed.Status = "wontfix"
+	require.NoError(t, Append(dir, dismissed))
+	want := signal()
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want)
+	for i := 1; i <= 3; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, want, signal(), "compaction %d must not change the settled id's signal", i)
+	}
+}
