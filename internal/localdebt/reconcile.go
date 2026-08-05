@@ -143,6 +143,17 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 	// timestamp (deterministic, no second clock read).
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
 
+	// Validate the derived month ONCE, here: every record in this run shares the
+	// run_id, so a month monthFromRunID rejects (an empty or non-RFC3339
+	// ReconciledAt) would make EVERY Append fail identically — N "append failed"
+	// lines, zero persisted records, and a clean return with no summary. One
+	// diagnostic naming the bad run_id is the whole story. This is the call-site
+	// half of the precondition ManualRunID enforces internally for `debt add`.
+	if _, err := monthFromRunID(runID); err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: %v; skipping local debt persistence\n", err)
+		return
+	}
+
 	// Resolve each finding's model from the fan-out pool summary's per-agent
 	// AgentStatus.Model (schema v2, Sprint 30.0), mirroring EmitForReconcile's
 	// reviewer->model mapping. Best-effort: a missing/unreadable summary leaves the
