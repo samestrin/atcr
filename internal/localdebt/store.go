@@ -940,8 +940,18 @@ func sweepStaleTemps(dir string) {
 }
 
 // CompactResult reports what a Compact call did so a caller can tell a real fold
-// from a no-op. StoreFound is false when there was nothing to compact (the store is
-// missing or holds no decodable records). RecordsBefore is the total records read;
+// from a no-op.
+//
+// StoreFound answers ONE question — is there a store here — and is true whenever
+// the directory holds at least one shard file, whatever this binary could make of
+// its contents. It used to be false for a store that existed and held records
+// (all newer-schema, or all malformed), which forced every caller to special-case
+// the other counts to avoid printing "no store" over existing records. Whether
+// anything was FOLDABLE is RecordsBefore's question, and what could not be
+// decoded is Preserved's; an empty directory holds no records either way, so it
+// is not found.
+//
+// RecordsBefore is the total records read;
 // RecordsAfter is the number of records written back — the folded (live) count,
 // plus the full history of any id passed through because it is anchored to a shard
 // this run could not rewrite (passThroughUncompactable); Dropped is
@@ -956,6 +966,24 @@ type CompactResult struct {
 	RecordsAfter  int
 	Dropped       int
 	Preserved     int
+}
+
+// hasShardFiles reports whether dir holds at least one .jsonl shard. It answers
+// CompactResult.StoreFound, so it deliberately does not parse anything: a shard
+// this binary cannot decode is still a store, and reporting otherwise is what let
+// a caller print "No local TD store" over records sitting on disk. A missing or
+// unreadable directory is simply not a store.
+func hasShardFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			return true
+		}
+	}
+	return false
 }
 
 // Compact reads all records in dir, folds them by ID to keep only the effective
@@ -1000,7 +1028,12 @@ type CompactResult struct {
 // what is guaranteed is that the bytes survive and stay in their own relative order.
 func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	var result CompactResult
+	// Presence is sampled BEFORE the lock: withLock MkdirAlls the store directory,
+	// so inside it every store exists and StoreFound could only ever mean
+	// "something was foldable" — the ambiguity this contract had.
+	storeFound := hasShardFiles(dir)
 	err := withLock(dir, "compact", func() error {
+		result.StoreFound = storeFound
 		sweepStaleTemps(dir)
 		read, err := readAllPreserving(dir, opts)
 		if err != nil {
@@ -1014,14 +1047,15 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		if len(recs) == 0 {
 			// Nothing foldable. Report any preserved lines so the caller can explain
 			// the no-op, but touch no file: rewriting from an empty fold is exactly
-			// the destruction this guard exists to prevent.
+			// the destruction this guard exists to prevent. RecordsBefore stays 0 —
+			// that, not StoreFound, is what says "nothing was folded".
 			result.Preserved = preservedCount
-			return nil // otherwise result stays zero: StoreFound false (no-op)
+			return nil
 		}
 
 		folded := passThroughUncompactable(retainForCompaction(recs), recs, protected)
 		result = CompactResult{
-			StoreFound:    true,
+			StoreFound:    storeFound,
 			RecordsBefore: len(recs),
 			RecordsAfter:  len(folded),
 			Dropped:       len(recs) - len(folded),

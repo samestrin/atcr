@@ -31,19 +31,26 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("compact: %w", err)
 	}
 
-	// Records written by a newer atcr are kept verbatim rather than folded or
-	// dropped. Say so, or the store looks stubbornly larger than the fold counts
-	// imply and the natural next step is to go delete something.
+	// The three no-op shapes are distinguished by the two counts, not by
+	// StoreFound: it now answers only "is there a store here", so "no store" can no
+	// longer be printed over records that exist (localdebt.CompactResult).
 	if !res.StoreFound {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No local TD store to compact.")
+		return nil
+	}
+	if res.RecordsBefore == 0 {
+		// Records written by a newer atcr are kept verbatim rather than folded or
+		// dropped. Say so, or the store looks stubbornly larger than the fold counts
+		// imply and the natural next step is to go delete something.
 		if res.Preserved > 0 {
-			// Reporting "no store" here would contradict the very next sentence and
-			// push the reader toward deleting the records by hand.
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"Nothing to compact: all %d record(s) were written by a newer atcr version and were left untouched. Upgrade to fold them.\n",
 				res.Preserved)
 			return nil
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No local TD store to compact.")
+		// A store whose shards hold nothing this binary can read at all: not "no
+		// store", and not a fold either.
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Nothing to compact: the store holds no readable records.")
 		return nil
 	}
 

@@ -100,6 +100,24 @@ func TestDebtCompact_PreservedOnlyStoreReportsCoherently(t *testing.T) {
 	assert.NotContains(t, out, "Compacted ", "nothing was folded")
 }
 
+// TD: a store whose shards hold nothing decodable is neither "no store" nor a
+// fold. It used to reach the same branch as a missing directory (StoreFound was
+// false for both), so `atcr debt compact` reported "No local TD store" over a
+// shard sitting on disk.
+func TestDebtCompact_UnreadableStoreIsNotReportedAsMissing(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"),
+		[]byte("{not json\n"), 0o600))
+
+	out, err := runDebt(t, "compact", "--dir", dir)
+
+	require.NoError(t, err)
+	assert.NotContains(t, out, "No local TD store to compact.",
+		"a shard on disk is a store, whatever this binary can read of it")
+	assert.Contains(t, out, "no readable records")
+	assert.NotContains(t, out, "Compacted ", "and nothing was folded")
+}
+
 func TestDebtCompact_PerformsCompaction(t *testing.T) {
 	dir := t.TempDir()
 
