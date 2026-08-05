@@ -236,6 +236,12 @@ type Record struct {
 	// offset-bearing record would corrupt it permanently rather than for one fold;
 	// earlierTimestamp (store.go) therefore PARSES both operands and falls back to a
 	// byte comparison only when a value does not parse.
+	//
+	// Unlike Origin, this field and Occurrences have no Effective accessor yet:
+	// their only consumer (aggregateCounters) works at the group level with its
+	// own guards. Add one following EffectiveOrigin's pattern when a single-record
+	// caller appears — do not re-implement the defaults inline (an empty
+	// FirstSeen sorts below every real timestamp).
 	FirstSeen string `json:"first_seen,omitempty"`
 
 	Justification string        `json:"justification,omitempty"`
