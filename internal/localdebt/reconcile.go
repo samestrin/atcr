@@ -106,10 +106,14 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 	if sums, err := ReadSummaries(dir, ReadOpts{Writer: diag}); err != nil {
 		// Fail open: append anyway so a corrupt/unreadable store does not drop this
 		// run's findings from the backlog. The error is already path-scrubbed
-		// (basePathErr). Because this also loses the set of previously dismissed
-		// (wontfix) ids, warn loudly that those dismissals may resurface. Only
-		// wontfix is at risk — a resolved/deferred id is re-appended by design now,
-		// so the warning names the narrower set the seed actually protects.
+		// (basePathErr). The seed's suppression role is an OPTIMIZATION, not a
+		// correctness mechanism: foldByID's rule 1 selects a suppressing (wontfix)
+		// record unconditionally, so a re-appended open record never displaces a
+		// dismissal. The REAL cost of an empty seed is duplicates — every
+		// reconcile re-appends the entire finding set until the read error is
+		// fixed, and MaybeCompact cannot recover because readAllPreserving hits
+		// the same unreadable shard. The warning names that, not a dismissal
+		// risk that does not exist.
 		//
 		// The PARTIAL summaries ReadSummaries returns alongside the error are
 		// deliberately DISCARDED rather than used as a smaller seed. Seeding from a
@@ -120,7 +124,7 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		// have re-opened it is skipped instead — silently suppressing exactly the
 		// regression this store exists to surface. All-or-nothing is the only
 		// fold-safe fail-open.
-		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; previously dismissed/wontfix findings may be re-surfaced: %v\n", err)
+		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; duplicate records will be appended and store growth is unbounded until the read error is fixed: %v\n", err)
 	} else {
 		// Fold FIRST, then seed from the effective record. A per-summary
 		// seen[s.ID] = true would mark every id ever written, including the
