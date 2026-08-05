@@ -720,7 +720,7 @@ func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 // that includes the terminal wontfix record, so the re-detected finding's id is
 // already `seen` and is skipped — suppression is by id-presence, independent of the
 // terminal status value. This is a regression lock on existing behavior.
-func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
+func TestPersistLocalDebt_DedupReadFailureWarnsAboutDuplicateGrowth(t *testing.T) {
 	isolate(t)
 	dir := localdebt.DefaultDir(".")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -740,9 +740,13 @@ func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
 	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	out := diag.String()
-	assert.Contains(t, strings.ToLower(out), "dismissed", "dedup-read failure warning must mention dismissed findings")
-	assert.Contains(t, strings.ToLower(out), "wontfix", "dedup-read failure warning must mention wontfix findings")
-	assert.Contains(t, strings.ToLower(out), "re-surfaced", "dedup-read failure warning must mention re-surfacing risk")
+	// The warning names the REAL effect: duplicates and unbounded growth. The old
+	// "dismissed/wontfix findings may be re-surfaced" claim was false — foldByID
+	// rule 1 makes a wontfix survive any re-detection (TD
+	// internal/localdebt/reconcile.go:112).
+	assert.Contains(t, strings.ToLower(out), "duplicate", "dedup-read failure warning must name the duplicate-append effect")
+	assert.Contains(t, strings.ToLower(out), "unbounded", "dedup-read failure warning must name the unbounded-growth effect")
+	assert.NotContains(t, strings.ToLower(out), "re-surfaced", "the dismissal claim was false: the fold suppresses wontfix, not the seed")
 }
 
 func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
