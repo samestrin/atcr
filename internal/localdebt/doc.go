@@ -253,11 +253,15 @@
 // dedup seeding, and compaction cannot drift; the INPUT finding sets can still
 // differ where the callers differ upstream (TD-019).
 //
-// The store's READERS have not moved with the writer. `atcr debt list`/`add`/
-// `dashboard`/`resolve` and the quality-signal payload all still resolve
-// DefaultDir(".") from the process CWD, so a reconcile that persists to a
-// manifest-recorded root writes to a store those commands do not read when the CWD
-// is not that root (TD-020).
+// The store's readers have since moved: `atcr debt list`/`add`/`dashboard`/
+// `resolve` resolve the store through debtStoreDir (cli/debt.go), which walks up
+// to the repo-root marker. The one remaining CWD-relative reader is the outbound
+// quality-signal payload (cli/qualitysignal.go), which calls
+// buildQualitySignalPayload("."). The residual mismatch is therefore narrower
+// than it was: the readers resolve to the repo root while ResolveStoreRoot tier 3
+// resolves to the process CWD, so a reconcile run from a subdirectory with no
+// --repo and no manifest root still writes to a store the payload does not read
+// (TD-020).
 //
 // What blocked MCP parity was root resolution, not persistence: the server operates
 // on review artifact directories whose process CWD is whatever launched it, so
