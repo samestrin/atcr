@@ -177,8 +177,8 @@ type Record struct {
 	// released SchemaVersion is 2, which has no occurrences field at all. It is
 	// exactly right under fold rule 2, where the carrier IS the group's newest
 	// record; under rule 1 a suppressing carrier can be older, so the fallback costs
-	// at most one extra count on the first fold, after which CountedThrough is
-	// persisted and the value is stable.
+	// one extra count per surviving sighting newer than that carrier — on the first
+	// fold only, after which CountedThrough is persisted and the value is stable.
 	CountedThrough string `json:"counted_through,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this

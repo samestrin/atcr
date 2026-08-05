@@ -739,9 +739,9 @@ func retainForCompaction(recs []Record) []Record {
 	return out
 }
 
-// passThroughUncompactable replaces the folded output for any id whose EFFECTIVE
-// record lives in a shard this run cannot rewrite, emitting every one of that id's
-// records untouched instead.
+// passThroughUncompactable replaces the folded output for any id with a record in a
+// shard this run cannot rewrite — its effective record, or the trail or donor the
+// fold retained — emitting every one of that id's records untouched instead.
 //
 // Compact skips writing a record whose month is protected — the shard holds a line
 // longer than maxLineBytes and is left whole rather than rebuilt from the subset
@@ -785,9 +785,28 @@ func passThroughUncompactable(folded, all []Record, protected map[string]bool) [
 			out = append(out, r)
 			continue
 		}
-		if !emitted[r.ID] {
-			emitted[r.ID] = true
-			out = append(out, byID[r.ID]...)
+		if emitted[r.ID] {
+			continue
+		}
+		emitted[r.ID] = true
+		// Emit each DISTINCT record once. A record read from a .jsonl file whose
+		// name is not its run_id's month is re-emitted into that month shard while
+		// the original copy is never rewritten, so the store already holds it twice
+		// (see readAllPreserving). Passing both copies through would write a third
+		// on the next run, then a fourth — unbounded growth, with every duplicate
+		// counted as another sighting. Folding is what normally collapses them; an
+		// uncompactable id does not fold, so it dedupes here instead.
+		seen := map[string]bool{}
+		for _, dup := range byID[r.ID] {
+			line, err := json.Marshal(dup)
+			if err != nil {
+				out = append(out, dup) // unmarshalable is not a reason to drop data
+				continue
+			}
+			if key := string(line); !seen[key] {
+				seen[key] = true
+				out = append(out, dup)
+			}
 		}
 	}
 	return out
@@ -906,8 +925,10 @@ func sweepStaleTemps(dir string) {
 // CompactResult reports what a Compact call did so a caller can tell a real fold
 // from a no-op. StoreFound is false when there was nothing to compact (the store is
 // missing or holds no decodable records). RecordsBefore is the total records read;
-// RecordsAfter is the folded (live) count; Dropped is RecordsBefore-RecordsAfter,
-// the superseded records removed. Preserved counts forward-incompatible lines
+// RecordsAfter is the number of records written back — the folded (live) count,
+// plus the full history of any id passed through because it is anchored to a shard
+// this run could not rewrite (passThroughUncompactable); Dropped is
+// RecordsBefore-RecordsAfter, the superseded records removed. Preserved counts forward-incompatible lines
 // carried through untouched — they are not records this binary can fold, so they
 // are excluded from the other three counts and explain any gap between the reported
 // fold and the store's actual on-disk size. All counts are zero on a no-op except
@@ -942,6 +963,14 @@ type CompactResult struct {
 // removed. It simply goes uncompacted. That costs disk; rewriting it would cost
 // data, and a future schema embedding a blob, diff, or log makes oversized records
 // ordinary rather than exotic.
+//
+// A fourth case follows from the third: when the shard left untouched happens to
+// hold an id's effective record, that id is not compacted at all. Writing the fold
+// would drop the aggregate counters that live only on the record being skipped, so
+// every record of that id is written back untouched instead and the next read
+// recomputes the identical fold (passThroughUncompactable). Such an id retains its
+// full history, not the usual at-most-two records, until the oversized line leaves
+// the store.
 //
 // Malformed lines are deliberately NOT preserved. A forward-incompatible or
 // over-long line is valid data this version cannot interpret or even buffer; a

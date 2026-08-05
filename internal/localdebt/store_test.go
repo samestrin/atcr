@@ -2077,3 +2077,48 @@ func TestCompact_AggregateSurvivesAProtectedEffectiveShard(t *testing.T) {
 		}
 	})
 }
+
+// TestCompact_UncompactableIDDoesNotGrowTheStore guards the pass-through against
+// the growth shape the gate found: a record whose physical .jsonl file is not its
+// run_id's month shard already exists twice on disk (readAllPreserving re-emits it
+// into the month shard without rewriting the original). Passing BOTH copies through
+// would write a third next run, then a fourth — unbounded, with every duplicate
+// counted as another sighting.
+func TestCompact_UncompactableIDDoesNotGrowTheStore(t *testing.T) {
+	dir := t.TempDir()
+	rec := detection("duplicated across shards", "2026-05-01T00:00:00Z")
+	rec.RunID = "2026-05-01T00:00:00Z-run"
+	// A stray non-month file holding a record whose run_id month is 2026-05.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "archive.jsonl"),
+		[]byte(recordLine(t, rec)+"\n"), 0o600))
+
+	// And the id's effective record parked in a protected shard, which is what makes
+	// the id uncompactable.
+	effective := rec
+	effective.RunID = "2026-06-01T00:00:00Z-run"
+	effective.Timestamp = "2026-06-01T00:00:00Z"
+	writeShard(t, dir, "2026-06", recordLine(t, effective), strings.Repeat("x", maxLineBytes+16))
+
+	stats := func() (int, int) {
+		t.Helper()
+		lines, _, err := StoreStats(dir)
+		require.NoError(t, err)
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		folded := FoldRecords(recs)
+		require.Len(t, folded, 1)
+		return lines, folded[0].Occurrences
+	}
+
+	_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	wantLines, wantOcc := stats()
+
+	for i := 2; i <= 6; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		gotLines, gotOcc := stats()
+		assert.Equal(t, wantLines, gotLines, "compaction %d must not grow the store", i)
+		assert.Equal(t, wantOcc, gotOcc, "compaction %d must not inflate the count", i)
+	}
+}

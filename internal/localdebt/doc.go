@@ -125,8 +125,8 @@
 // shard. Compact folds each id to its effective record and rewrites the shards
 // atomically, so store size tracks LIVE findings rather than history.
 //
-// retainForCompaction keeps a SECOND record for an id in either of two cases, so
-// retention is bounded at two per id: the resolution TRAIL when the effective
+// Retention is bounded at two records per id, with one documented exception below.
+// retainForCompaction keeps a SECOND record for an id in either of two cases: the resolution TRAIL when the effective
 // record is open (preserving the ResolvedAt and the human-typed --reason a
 // regression would otherwise erase), and the model DONOR when the effective record
 // is settled but carries no attribution (preserving the record
@@ -134,6 +134,14 @@
 // from the signal entirely). Both are written with their counters zeroed, and the
 // donor is emitted BEFORE the effective record so a full timestamp/rank tie still
 // folds to the effective one.
+//
+// The exception: an id ANCHORED to a shard Compact cannot rewrite (one holding a
+// line over maxLineBytes) is not compacted at all — every record of it is written
+// back untouched, so it retains its full history until that oversized line leaves
+// the store. Writing the fold instead would discard the aggregate counters, which
+// live only on the record being skipped, while still dropping the sightings they
+// summarized. That is the same trade the protected shard itself gets: leaving it
+// whole costs disk, rewriting it costs data.
 //
 // It runs two ways. Manually, via `atcr debt compact`. Automatically, via
 // MaybeCompact, called once by cli/reconcile.go's persistLocalDebt AFTER its append
