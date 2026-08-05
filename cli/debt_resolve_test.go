@@ -912,6 +912,37 @@ func TestDebtResolve_DeferredThenRegressedResurfaces(t *testing.T) {
 	assert.Contains(t, list, "internal/x/a.go", "a re-detected deferred id re-surfaces")
 }
 
+// TD: a deferred item is LIVE to the dashboard (debtIsLive -> IsSettledStatus)
+// and OFF the resolve worklist (selectOpenIDs -> IsClosedStatus), so it renders as
+// a top-priority row while `debt resolve --list` reports nothing to do. The
+// divergence is deliberate — deferring means "not now", which keeps the item on
+// the backlog view and off the fix worklist — but nothing asserted it, so a
+// future edit to either predicate could collapse the two views onto one answer
+// silently. This pins all three views at once.
+func TestDebt_DeferredIsLiveToTheDashboardAndOffTheResolveWorklist(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "CRITICAL", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a"
+	deferred.Timestamp = "2026-07-02T10:00:00Z"
+	deferred.Status = "deferred"
+	dir := writeDebtStore(t, rec, deferred)
+
+	worklist, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(worklist), "no items",
+		"deferring takes the item off the fix worklist")
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, dash, "internal/x/a.go",
+		"the same item stays on the dashboard's live backlog")
+
+	listed, err := runDebt(t, "list", "--dir", dir, "--status", "deferred")
+	require.NoError(t, err)
+	assert.Contains(t, listed, "internal/x/a.go",
+		"and is still listable and closeable by id")
+}
+
 // The already-closed guard must test the FOLDED effective status, not the mere
 // presence of a terminal record somewhere in history. Scanning all history would
 // refuse to close a regressed id a second time — permanently, since a resolution
