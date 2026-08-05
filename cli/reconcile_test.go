@@ -1559,3 +1559,203 @@ func TestPersistLocalDebt_StillDedupsAnOpenID(t *testing.T) {
 
 	require.Len(t, readLocalDebtRecords(t), 1, "an unchanged open finding is not duplicated per run")
 }
+
+// --- T4: streaming dedup seed (AC6 first clause, AC3(d) regression guard) ----
+
+// seedFinding is the one finding every streaming-seed test re-detects, spelled
+// once so a test's store fixture and its reconcile result cannot drift into two
+// different ids.
+func seedFinding(problem string) reclib.Merged {
+	return reclib.Merged{Finding: reclib.Finding{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: problem,
+		Fix: "fix it", Category: "correctness", EstMinutes: 10,
+	}}
+}
+
+// seedStore appends an open record for problem plus, when status is non-empty, a
+// terminal record for the same id, and returns the shared id.
+func seedStore(t *testing.T, dir, problem, status string) string {
+	t.Helper()
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: problem,
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+	if status != "" {
+		term := open
+		term.RunID = "2026-07-13T00:30:00Z-" + status
+		term.Timestamp = "2026-07-13T00:30:00Z"
+		term.Status = status
+		require.NoError(t, localdebt.Append(dir, term))
+	}
+	return open.ID
+}
+
+// TestPersistLocalDebt_StreamingSeedKeepsSuppressingScope is T4's AC3(d) guard.
+// The obvious streaming shape — a per-record `seen[s.ID] = true` callback —
+// restores terminal-forever dedup and silently reverts Task 03 while every
+// allocation assertion still passes, because AC6 measures bytes and AC3 measures
+// behavior. The seed must therefore FOLD first and cover only suppressing-or-open
+// effective ids: a resolved id re-appends on re-detection, a wontfix id does not.
+func TestPersistLocalDebt_StreamingSeedKeepsSuppressingScope(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	resolvedID := seedStore(t, dir, "regressed after a fix", "resolved")
+	// A second id in the same store, dismissed rather than fixed. Both live under
+	// one seed so a widened seed cannot pass by getting the wontfix case right in
+	// isolation.
+	wontfix := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "b.go", Line: 2, Problem: "known false positive",
+	}
+	wontfix.StampID()
+	require.NoError(t, localdebt.Append(dir, wontfix))
+	dismissed := wontfix
+	dismissed.RunID = "2026-07-13T00:30:00Z-wontfix"
+	dismissed.Timestamp = "2026-07-13T00:30:00Z"
+	dismissed.Status = "wontfix"
+	require.NoError(t, localdebt.Append(dir, dismissed))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			seedFinding("regressed after a fix"),
+			{Finding: reclib.Finding{
+				Severity: "HIGH", File: "b.go", Line: 2, Problem: "known false positive",
+				Fix: "n/a", Category: "correctness", EstMinutes: 10,
+			}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	byID := map[string]int{}
+	for _, r := range recs {
+		byID[r.ID]++
+	}
+	assert.Equal(t, 3, byID[resolvedID],
+		"a re-detected resolved id appends a fresh open record (AC3(d) via the streaming seed)")
+	assert.Equal(t, 2, byID[wontfix.ID],
+		"a dismissed id is still suppressed by the streaming seed")
+}
+
+// TestPersistLocalDebt_DedupParityWithStreamingSeed pins that the streaming seed
+// dedups exactly as the previous full-ReadAll seed did: reconciling the same
+// findings twice against one store leaves one record per id.
+func TestPersistLocalDebt_DedupParityWithStreamingSeed(t *testing.T) {
+	isolate(t)
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unchanged finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+	res.Summary.ReconciledAt = "2026-07-15T00:00:00Z"
+	persistLocalDebt("review", res, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 1,
+		"the streaming seed dedups across runs identically to the ReadAll seed")
+}
+
+// TestPersistLocalDebt_FailsOpenOnUnreadableStore locks the fail-open contract
+// through the new read path: a dedup read failure logs the existing warning
+// verbatim and appends anyway rather than dropping the run's backlog.
+func TestPersistLocalDebt_FailsOpenOnUnreadableStore(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	// The seeded record lives in an EARLIER month than the run's append target, so
+	// making its shard unreadable breaks the dedup read without also blocking the
+	// write this test is asserting still happens.
+	existing := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-13T00:00:00Z-r",
+		Timestamp: "2026-06-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "unreadable-store finding",
+	}
+	existing.StampID()
+	require.NoError(t, localdebt.Append(dir, existing))
+
+	shard := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.Chmod(shard, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(shard, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unreadable-store finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	assert.Contains(t, diag.String(), "dedup read failed, appending without dedup",
+		"the fail-open warning text is unchanged")
+	require.NoError(t, os.Chmod(shard, 0o600))
+	assert.Len(t, readLocalDebtRecords(t), 2,
+		"the finding is appended anyway: an unreadable store never drops a run's backlog")
+}
+
+// TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen is the regression guard
+// for the fail-open seed being ALL-OR-NOTHING.
+//
+// Seeding from a partially read store looks strictly safer and is not: the seed
+// keys on an id's EFFECTIVE status, which the fold can only compute from that id's
+// COMPLETE history. Here the id is open in one shard and `resolved` in another; if
+// the resolution's shard is unreadable, a partial seed folds the id to `open`,
+// seeds it as still-outstanding, and SKIPS the re-detection that should have
+// re-opened it — silently suppressing the regression the store exists to surface.
+//
+// The single-shard fail-open test above cannot catch this: blocking the only shard
+// leaves the partial set empty, which behaves identically to seeding nothing.
+func TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-13T00:00:00Z-r",
+		Timestamp: "2026-06-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "regressed after a fix",
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+
+	// The resolution lands in a DIFFERENT month shard, which is the one made
+	// unreadable — so the partial read sees the open record and misses the fix.
+	resolved := open
+	resolved.RunID = "2026-07-01T00:00:00Z-resolved"
+	resolved.Timestamp = "2026-07-01T00:00:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, localdebt.Append(dir, resolved))
+
+	blocked := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("regressed after a fix")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-08-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, false, &diag)
+
+	require.NoError(t, os.Chmod(blocked, 0o600))
+	recs := readLocalDebtRecords(t)
+	count := 0
+	for _, r := range recs {
+		if r.ID == open.ID {
+			count++
+		}
+	}
+	assert.Equal(t, 3, count,
+		"a partially read store must not suppress the re-detection: seed nothing rather than seed a wrong effective status")
+}

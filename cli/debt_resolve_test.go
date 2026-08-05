@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -145,7 +148,9 @@ func TestSelectOpenDebt_AgreesWithFoldRecordsOnReRaisedID(t *testing.T) {
 	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must share a stable id")
 
 	recs := []localdebt.Record{first, second}
-	got := selectOpenDebt(recs, "", 0)
+	dir := writeDebtStore(t, recs...)
+	got, err := selectOpenDebt(dir, "", 0, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
 	require.Len(t, got, 1, "the two occurrences fold to one open item")
 
 	folded := localdebt.FoldRecords(recs)
@@ -945,4 +950,148 @@ func TestDebtResolve_ResolvingADeferredItemKeepsReviewerAttribution(t *testing.T
 	assert.ElementsMatch(t, []string{"claude", "security", "performance"}, resolution.Reviewers,
 		"attribution unions across every LIVE record, deferred included")
 	assert.Equal(t, "claude-sonnet-4-6", resolution.Model)
+}
+
+// --- T4: two-pass select-then-hydrate (AC6 second call site) ----------------
+
+// summarize projects records the way localdebt's streaming read would, so the
+// pure pass-1 selection can be exercised without touching disk.
+func summarize(recs ...localdebt.Record) []localdebt.Summary {
+	sums := make([]localdebt.Summary, 0, len(recs))
+	for _, r := range recs {
+		sums = append(sums, localdebt.Summary{
+			ID: r.ID, Status: r.Status, Severity: r.Severity,
+			Timestamp: r.Timestamp, HasFile: r.File != "",
+		})
+	}
+	return sums
+}
+
+// TestSelectOpenIDs_ExcludesClosedAndFilelessIDs ports the exclusion half of the
+// old selectOpenDebt assertions onto the pure pass-1 function.
+func TestSelectOpenIDs_ExcludesClosedAndFilelessIDs(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "still open")
+	resolved := openRec("2026-07-01T10:00:00Z-b", "HIGH", "b.go", 2, "already fixed")
+	resolved.Status = "resolved"
+	dismissed := openRec("2026-07-01T10:00:00Z-c", "HIGH", "c.go", 3, "false positive")
+	dismissed.Status = "wontfix"
+	deferred := openRec("2026-07-01T10:00:00Z-d", "HIGH", "d.go", 4, "not now")
+	deferred.Status = "deferred"
+	fileless := openRec("2026-07-01T10:00:00Z-e", "HIGH", "", 0, "no location")
+	fileless.StampID()
+
+	got := selectOpenIDs(summarize(open, resolved, dismissed, deferred, fileless), "", 0)
+	assert.Equal(t, []string{open.ID}, got,
+		"closed (incl. deferred, which is off the fix worklist) and location-less ids are excluded")
+}
+
+// TestSelectOpenIDs_SeverityFilterAndOrdering ports the filter/sort/cap half.
+func TestSelectOpenIDs_SeverityFilterAndOrdering(t *testing.T) {
+	low := openRec("2026-07-05T10:00:00Z-low", "LOW", "z/low.go", 1, "low sev")
+	highNewer := openRec("2026-07-04T10:00:00Z-h2", "HIGH", "z/high2.go", 2, "high newer")
+	highOlder := openRec("2026-07-01T10:00:00Z-h1", "HIGH", "z/high1.go", 3, "high older")
+	sums := summarize(low, highNewer, highOlder)
+
+	assert.Equal(t, []string{highOlder.ID, highNewer.ID, low.ID}, selectOpenIDs(sums, "", 0),
+		"severity DESC, then ts ASC within a severity")
+	assert.Equal(t, []string{highOlder.ID, highNewer.ID}, selectOpenIDs(sums, "HIGH", 0),
+		"the severity filter is applied before the cap")
+	assert.Equal(t, []string{highOlder.ID}, selectOpenIDs(sums, "", 1), "--max caps the selection")
+	assert.Len(t, selectOpenIDs(sums, "", 0), 3, "limit 0 means no cap")
+	assert.Empty(t, selectOpenIDs(nil, "", 0), "an empty store selects nothing")
+}
+
+// TestHydrateOpenDebt_RetainsOnlySelectedIDsInPassOneOrder pins pass 2: it
+// materializes records for the selected ids ONLY, and returns them in the order
+// pass 1 chose rather than the store's read order.
+func TestHydrateOpenDebt_RetainsOnlySelectedIDsInPassOneOrder(t *testing.T) {
+	first := openRec("2026-07-01T10:00:00Z-a", "LOW", "a.go", 1, "first")
+	second := openRec("2026-07-02T10:00:00Z-b", "HIGH", "b.go", 2, "second")
+	unselected := openRec("2026-07-03T10:00:00Z-c", "HIGH", "c.go", 3, "not selected")
+	dir := writeDebtStore(t, first, second, unselected)
+
+	got, err := hydrateOpenDebt(dir, []string{second.ID, first.ID}, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, 2, "only the selected ids are hydrated")
+	assert.Equal(t, second.ID, got[0].ID, "pass 1's order is authoritative, not the store's")
+	assert.Equal(t, first.ID, got[1].ID)
+	assert.Equal(t, "second", got[0].Problem, "full record fields are present after hydration")
+}
+
+// TestHydrateOpenDebt_MissingStoreIsEmpty matches ReadAll's "no backlog yet"
+// convention rather than surfacing an error for a repo that never reconciled.
+func TestHydrateOpenDebt_MissingStoreIsEmpty(t *testing.T) {
+	got, err := hydrateOpenDebt(t.TempDir()+"/nope", []string{"deadbeef"}, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestDebtResolve_TwoPassSelectionEndToEnd runs the real command against a store
+// holding every excluded shape, and asserts the rendered rows carry the full
+// Severity/File/Line/Problem values — i.e. that hydration actually happened and
+// the minimal decode did not leak into the output.
+func TestDebtResolve_TwoPassSelectionEndToEnd(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "CRITICAL", "internal/x/a.go", 42, "still open")
+	resolved := openRec("2026-07-01T10:00:00Z-b", "HIGH", "internal/x/b.go", 7, "already fixed")
+	resolved.Status = "resolved"
+	dismissed := openRec("2026-07-01T10:00:00Z-c", "HIGH", "internal/x/c.go", 8, "false positive")
+	dismissed.Status = "wontfix"
+	fileless := openRec("2026-07-01T10:00:00Z-d", "HIGH", "", 0, "no location")
+	fileless.StampID()
+	dir := writeDebtStore(t, open, resolved, dismissed, fileless)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--json")
+	require.NoError(t, err)
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &items))
+	require.Len(t, items, 1, "only the open, located item is on the worklist")
+	assert.Equal(t, open.ID, items[0]["id"])
+	assert.Equal(t, "CRITICAL", items[0]["severity"])
+	assert.Equal(t, "internal/x/a.go", items[0]["file"])
+	assert.Equal(t, float64(42), items[0]["line"])
+	assert.Equal(t, "still open", items[0]["problem"])
+	assert.Equal(t, "apply the fix", items[0]["fix"], "a hydrated record carries fields Summary never decodes")
+}
+
+// TestHydrateOpenDebt_ErrorDoesNotLeakAbsolutePath keeps pass 2 inside the store
+// package's SECURITY contract. The read this replaced went through
+// localdebt.ReadAll, which redacts a surfaced *os.PathError to its base name; a
+// hand-rolled shard walk that returns the raw error regresses that.
+func TestHydrateOpenDebt_ErrorDoesNotLeakAbsolutePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	dir := writeDebtStore(t, rec)
+	shard := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(shard, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(shard, 0o600) })
+
+	_, err := hydrateOpenDebt(dir, []string{rec.ID}, localdebt.ReadOpts{Writer: io.Discard})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), dir,
+		"a shard read error must not embed the absolute (username-bearing) store path")
+}
+
+// TestSelectOpenDebt_CrossShardDisplaysLastOccurrence pins the display rule across
+// a shard boundary: the two passes enumerate shards independently, so an id whose
+// occurrences straddle two months must still render the occurrence FoldRecords
+// keeps (the last), not whichever one pass 2 happened to read first.
+func TestSelectOpenDebt_CrossShardDisplaysLastOccurrence(t *testing.T) {
+	first := openRec("2026-06-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	second := first
+	second.RunID = "2026-07-01T10:00:00Z-b"
+	second.Timestamp = "2026-07-01T10:00:00Z"
+	second.Severity = "LOW"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem share a stable id")
+
+	dir := writeDebtStore(t, first, second)
+	require.FileExists(t, filepath.Join(dir, "2026-06.jsonl"))
+	require.FileExists(t, filepath.Join(dir, "2026-07.jsonl"), "the occurrences must straddle two shards")
+
+	got, err := selectOpenDebt(dir, "", 0, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "LOW", got[0].Severity,
+		"the LAST occurrence wins even when it lives in a later shard")
 }

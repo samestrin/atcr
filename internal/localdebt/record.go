@@ -57,6 +57,12 @@ const SchemaVersion = 3
 const (
 	// MsgMalformedSkip is the substring logged when a JSONL line fails to parse.
 	MsgMalformedSkip = "skipping malformed record"
+
+	// msgOverLongLine is the full format string logged when a line exceeds
+	// maxLineBytes. Both read paths (store.go's scanShard and streaming.go's
+	// streamSummaryFile) emit it from this one constant, so the two cannot drift
+	// apart on the one gate whose warning the tests compare only by substring.
+	msgOverLongLine = "localdebt: skipping over-long line (> %d bytes) in %s\n"
 )
 
 // Origin values are the closed set a v3 record's origin field may carry. They are

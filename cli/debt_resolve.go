@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -115,11 +117,10 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	}
 	limit, _ := cmd.Flags().GetInt("max")
 
-	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
+	open, err := selectOpenDebt(dir, sev, limit, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}
-	open := selectOpenDebt(recs, sev, limit)
 
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 		return renderResolveJSON(cmd.OutOrStdout(), open)
@@ -156,17 +157,49 @@ func isClosedStatus(status string) bool {
 // Records whose effective occurrence has no File are skipped (nothing to
 // display/act on). Results are sorted severity DESC then ts ASC (oldest first) and
 // capped at max — the deterministic selection rule the skill route documents.
-func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []localdebt.Record {
-	folded := localdebt.FoldRecords(recs)
-	open := make([]localdebt.Record, 0, len(folded))
-	for _, r := range folded {
-		if isClosedStatus(r.Status) || r.File == "" {
+//
+// # Two passes, deliberately
+//
+// Pass 1 (selectOpenIDs) folds minimal localdebt.Summary values to decide WHICH
+// ids are open, in what order, and where the --max cap falls. Pass 2
+// (hydrateOpenDebt) re-reads the store retaining full Records only for those ids.
+// Peak retained memory becomes O(distinct ids x Summary) + O(selected ids x
+// Record) instead of O(all history x Record).
+//
+// This doubles read I/O, and that is an accepted trade rather than an oversight:
+// Plan 35.13 Decision 5 establishes that the store's ceiling is MEMORY, not CPU —
+// encoding/json sustains ~100 MB/s on records this size, so two streaming passes
+// at the 100 MB auto-compaction threshold cost well under a second, while peak
+// resident drops by roughly an order of magnitude. Do not "optimize" this back
+// into a single full-record read.
+func selectOpenDebt(dir string, severity string, limit int, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
+	sums, err := localdebt.ReadSummaries(dir, opts)
+	if err != nil {
+		return nil, err
+	}
+	return hydrateOpenDebt(dir, selectOpenIDs(sums, severity, limit), opts)
+}
+
+// selectOpenIDs is pass 1: the whole selection rule, pure and unit-testable. It
+// returns the ids of the open backlog in final display order, so the sort applied
+// here — not pass 2's read order — is authoritative.
+//
+// The closed test is isClosedStatus, NOT IsSettledStatus: `debt resolve --list` is
+// the fix WORKLIST, and a deferred item is deliberately off it until something
+// re-detects it — that is what deferring means. A deferred item remains live in
+// `debt list`/`dashboard` and closeable by id; those are different questions,
+// answered by different predicates (localdebt/record.go).
+func selectOpenIDs(sums []localdebt.Summary, severity string, limit int) []string {
+	folded := localdebt.FoldSummaries(sums)
+	open := make([]localdebt.Summary, 0, len(folded))
+	for _, s := range folded {
+		if isClosedStatus(s.Status) || !s.HasFile {
 			continue
 		}
-		if severity != "" && strings.ToUpper(r.Severity) != severity {
+		if severity != "" && strings.ToUpper(s.Severity) != severity {
 			continue
 		}
-		open = append(open, r)
+		open = append(open, s)
 	}
 
 	sort.SliceStable(open, func(i, j int) bool {
@@ -179,7 +212,85 @@ func selectOpenDebt(recs []localdebt.Record, severity string, limit int) []local
 	if limit > 0 && len(open) > limit {
 		open = open[:limit]
 	}
-	return open
+
+	ids := make([]string, 0, len(open))
+	for _, s := range open {
+		ids = append(ids, s.ID)
+	}
+	return ids
+}
+
+// hydrateOpenDebt is pass 2: walk the store shard by shard and retain full records
+// ONLY for the selected ids, then return them in the order pass 1 chose.
+//
+// Shards are enumerated with the same os.ReadDir + .jsonl filter, in the same
+// lexical order, that ReadAll uses, so pass 2 sees exactly the shard set pass 1
+// did. The retained records are re-folded, which is what preserves the documented
+// display rule: the record shown is the effective occurrence FoldRecords keeps
+// (the last open one for the id), not the first one encountered.
+//
+// A missing store directory is empty, not an error, matching ReadAll.
+func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+
+	// Every error leaving this function is redacted, the way localdebt.ReadAll
+	// redacts the read path this replaced: an EACCES here carries the absolute,
+	// username-bearing shard path, and reaching the user unredacted would be a
+	// regression against the store package's SECURITY contract.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading localdebt dir: %w", localdebt.RedactPathErr(err))
+	}
+	var retained []localdebt.Record
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		recs, err := localdebt.ReadRecords(filepath.Join(dir, e.Name()), opts)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, localdebt.RedactPathErr(err)
+		}
+		for _, r := range recs {
+			if wanted[r.ID] {
+				retained = append(retained, r)
+			}
+		}
+	}
+
+	byID := make(map[string]localdebt.Record, len(ids))
+	for _, r := range localdebt.FoldRecords(retained) {
+		// Re-assert pass 1's predicate against pass 2's fold. Normally a no-op —
+		// both folds see the same records and agree. It matters when they do NOT:
+		// the two passes are separate reads, so a concurrent `debt resolve
+		// --resolve` or `reconcile` appending between them can make an id's
+		// effective record terminal after pass 1 selected it, and without this the
+		// closed item would still be printed as an open worklist row.
+		if isClosedStatus(r.Status) || r.File == "" {
+			continue
+		}
+		byID[r.ID] = r
+	}
+	out := make([]localdebt.Record, 0, len(ids))
+	for _, id := range ids {
+		// An id selected by pass 1 and absent here was closed or removed between
+		// the passes; dropping it is correct — the worklist must not offer it.
+		if r, ok := byID[id]; ok {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // severityRank orders severities for selection: CRITICAL > HIGH > MEDIUM > LOW.

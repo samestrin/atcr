@@ -309,11 +309,21 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // directory is created).
 //
 // Dedup is write-time by finding id (history.FindingID(file,line,problem), via
-// Record.StampID): a single full-history ReadAll seeds the set of ids already in
-// the store, and each new record is appended only if its id is unseen — the same
-// set also collapses in-run duplicates (two findings that hash to one id write
-// once). A dedup-read failure fails OPEN toward append (log + treat store as
-// empty) rather than silently dropping the whole run's backlog.
+// Record.StampID): a single streaming pass over the store seeds the set of ids
+// already in it, and each new record is appended only if its id is unseen — the
+// same set also collapses in-run duplicates (two findings that hash to one id
+// write once). A dedup-read failure fails OPEN toward append (log + seed from
+// whatever was read) rather than silently dropping the whole run's backlog.
+//
+// The seed decodes localdebt.Summary values ({id, status, severity, ts, has-file})
+// rather than whole Records: it needs an id's effective STATUS and nothing else,
+// and a minimal decode keeps peak memory an order of magnitude below the
+// full-record path on a large store (Plan 35.13 AC6; localdebt/streaming.go).
+//
+// The fail-open path is all-or-nothing by design: a partial read is NOT used as a
+// smaller seed, because the seed keys on an id's EFFECTIVE status and the fold can
+// only compute that from the id's complete history. See the read-error branch for
+// the failure this prevents.
 //
 // The seed is SCOPED, not the whole store: only ids whose effective (folded)
 // record suppresses (wontfix) or is still open are seeded. A re-detected
@@ -334,21 +344,33 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, noLocalDebt bool, 
 
 	dir := localdebt.DefaultDir(".")
 	seen := make(map[string]bool)
-	if existing, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
+	if sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: diag}); err != nil {
 		// Fail open: append anyway so a corrupt/unreadable store does not drop this
-		// run's findings from the backlog. The error is already path-scrubbed by
-		// ReadAll (basePathErr). Because this also loses the set of previously
-		// dismissed (wontfix) ids, warn loudly that those dismissals may resurface.
-		// Only wontfix is at risk — a resolved/deferred id is re-appended by design
-		// now, so the warning names the narrower set the seed actually protects.
+		// run's findings from the backlog. The error is already path-scrubbed
+		// (basePathErr). Because this also loses the set of previously dismissed
+		// (wontfix) ids, warn loudly that those dismissals may resurface. Only
+		// wontfix is at risk — a resolved/deferred id is re-appended by design now,
+		// so the warning names the narrower set the seed actually protects.
+		//
+		// The PARTIAL summaries ReadSummaries returns alongside the error are
+		// deliberately DISCARDED rather than used as a smaller seed. Seeding from a
+		// partial read looks strictly safer and is not: the seed's input is an id's
+		// EFFECTIVE status, which the fold can only compute from that id's COMPLETE
+		// history. Drop the shard holding an id's resolution and the id folds to
+		// `open`, gets seeded as still-outstanding, and the re-detection that should
+		// have re-opened it is skipped instead — silently suppressing exactly the
+		// regression this store exists to surface. All-or-nothing is the only
+		// fold-safe fail-open.
 		_, _ = fmt.Fprintf(diag, "localdebt: dedup read failed, appending without dedup; previously dismissed/wontfix findings may be re-surfaced: %v\n", err)
 	} else {
-		// Fold FIRST, then seed from the effective record. Seeding per-record would
-		// mark every id ever written, including the resolved/deferred ones that must
-		// re-open on re-detection.
-		for _, r := range localdebt.FoldRecords(existing) {
-			if localdebt.IsSuppressingStatus(r.Status) || !localdebt.IsClosedStatus(r.Status) {
-				seen[r.ID] = true
+		// Fold FIRST, then seed from the effective record. A per-summary
+		// seen[s.ID] = true would mark every id ever written, including the
+		// resolved/deferred ones that must re-open on re-detection — silently
+		// restoring terminal-forever dedup with every allocation assertion still
+		// green, because those measure bytes and this is behavior.
+		for _, s := range localdebt.FoldSummaries(sums) {
+			if localdebt.IsSuppressingStatus(s.Status) || !localdebt.IsClosedStatus(s.Status) {
+				seen[s.ID] = true
 			}
 		}
 	}

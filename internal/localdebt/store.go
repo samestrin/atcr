@@ -147,7 +147,7 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 			// — so the shard is flagged unrepresentable instead, and compaction leaves
 			// it whole rather than rewriting it without this line.
 			unrepresentable = true
-			_, _ = fmt.Fprintf(w, "localdebt: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, path)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -383,40 +383,71 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // never re-append and silently restore the old permanent-closure behavior with
 // every test here still passing. Change one, change the other.
 func FoldRecords(recs []Record) []Record {
+	return foldByID(recs)
+}
+
+// foldable is the minimum a value must expose to take part in the fold: its
+// identity, its status, and its timestamp. It exists so FoldRecords and
+// FoldSummaries (streaming.go) are two instantiations of ONE precedence rule.
+//
+// Duplicating the rule instead was explicitly rejected: cli/debt_resolve.go states
+// the invariant that resolve, Compact and AggregateQualitySignal "share ONE
+// precedence rule", and a second copy would silently diverge the next time the
+// status semantics change — with each copy's own tests still green, because each
+// would be testing its own behavior.
+//
+// Record-specific aggregation (Occurrences/FirstSeen) must NOT move in here:
+// Summary carries no such fields, so it belongs in FoldRecords wrapping this call.
+type foldable interface {
+	foldID() string
+	foldStatus() string
+	foldTimestamp() string
+}
+
+func (r Record) foldID() string        { return r.ID }
+func (r Record) foldStatus() string    { return r.Status }
+func (r Record) foldTimestamp() string { return r.Timestamp }
+
+// foldByID is FoldRecords' precedence rule, generic over anything foldable. See
+// FoldRecords for the rule itself and the reasoning behind it. Insertion order is
+// preserved: an id appears in the output at the position of its FIRST occurrence
+// in the input, so the fold is deterministic for a given read order.
+func foldByID[T foldable](items []T) []T {
 	order := []string{}
 	seen := map[string]bool{}
 
-	byID := map[string][]Record{}
-	for _, r := range recs {
-		if !seen[r.ID] {
-			seen[r.ID] = true
-			order = append(order, r.ID)
+	byID := map[string][]T{}
+	for _, it := range items {
+		id := it.foldID()
+		if !seen[id] {
+			seen[id] = true
+			order = append(order, id)
 		}
-		byID[r.ID] = append(byID[r.ID], r)
+		byID[id] = append(byID[id], it)
 	}
 
-	var folded []Record
+	var folded []T
 	for _, id := range order {
 		group := byID[id]
 
 		// Rule 1: a suppressing record wins unconditionally. Among several, rank
 		// then recency decides — preserving the read-order independence divergent
 		// terminal records already relied on.
-		var suppressing []Record
-		for _, r := range group {
-			if IsSuppressingStatus(r.Status) {
-				suppressing = append(suppressing, r)
+		var suppressing []T
+		for _, it := range group {
+			if IsSuppressingStatus(it.foldStatus()) {
+				suppressing = append(suppressing, it)
 			}
 		}
 		if len(suppressing) > 0 {
-			folded = append(folded, latestRecord(suppressing))
+			folded = append(folded, latestItem(suppressing))
 			continue
 		}
 
 		// Rule 2: recency across open and non-suppressing-terminal records alike,
 		// so a re-detection newer than a resolution re-opens the id.
 		if len(group) > 0 {
-			folded = append(folded, latestRecord(group))
+			folded = append(folded, latestItem(group))
 		}
 	}
 	return folded
@@ -510,21 +541,24 @@ func highestRankedTerminal(terminals []Record) Record {
 	return best
 }
 
-// latestRecord picks the effective record from a non-empty fold group: the latest
+// latestItem picks the effective item from a non-empty fold group: the latest
 // timestamp wins; an equal timestamp is broken by ClosedStatusRank so a terminal
 // record outranks an open one (rank 0), and a full tie by append order (the last
 // wins). Recency first, rank only as a tiebreak — the inverse of
 // highestRankedTerminal.
-func latestRecord(group []Record) Record {
+//
+// Timestamps are compared as strings; see FoldRecords' "Timestamp comparison"
+// section for why that is sound and what breaks it.
+func latestItem[T foldable](group []T) T {
 	best := group[0]
-	for _, r := range group[1:] {
+	for _, it := range group[1:] {
 		switch {
-		case r.Timestamp > best.Timestamp:
-			best = r
-		case r.Timestamp == best.Timestamp && ClosedStatusRank(r.Status) > ClosedStatusRank(best.Status):
-			best = r
-		case r.Timestamp == best.Timestamp && ClosedStatusRank(r.Status) == ClosedStatusRank(best.Status):
-			best = r // full tie: append order, last wins
+		case it.foldTimestamp() > best.foldTimestamp():
+			best = it
+		case it.foldTimestamp() == best.foldTimestamp() && ClosedStatusRank(it.foldStatus()) > ClosedStatusRank(best.foldStatus()):
+			best = it
+		case it.foldTimestamp() == best.foldTimestamp() && ClosedStatusRank(it.foldStatus()) == ClosedStatusRank(best.foldStatus()):
+			best = it // full tie: append order, last wins
 		}
 	}
 	return best

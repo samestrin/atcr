@@ -56,10 +56,34 @@
 //
 // The store itself does not dedup on write — Append is unconditional. The settled
 // dedup strategy for the reconcile persistence hook (Story 2) is write-time dedup
-// by id (history.FindingID(file, line, problem)) using a full-history ReadAll scan
-// before each append: the hook skips any finding whose id already exists across all
-// shards, and fails open toward append (at-least-once) if the dedup read fails. The
-// contract is documented here so downstream callers write against a settled rule.
+// by id (history.FindingID(file, line, problem)) seeded from a full-history scan
+// before each append: the hook skips any finding whose id is already seeded, and
+// fails open toward append (at-least-once) if the dedup read fails. The contract is
+// documented here so downstream callers write against a settled rule.
+//
+// The seed is SCOPED, not the whole store — see the Resolution contract below and
+// the Maintenance invariant: only ids whose EFFECTIVE (folded) record suppresses or
+// is still open are seeded, so a re-detected resolved/deferred id re-appends.
+//
+// The scan is a minimal-decode STREAMING read (streaming.go: StreamSummaries /
+// ReadSummaries / FoldSummaries), not ReadAll. The seed needs an id's effective
+// status and nothing else, so decoding into Summary rather than Record keeps peak
+// memory an order of magnitude below the full-record path at the scale the
+// auto-compaction threshold allows. ReadAll remains the read path for every
+// consumer that renders records. Both decoders apply the same skip gates in the
+// same order — a line visible to one and invisible to the other would either leave
+// an id in the store but absent from the seed (re-appending a duplicate every run)
+// or seed an id no rendering path can display (hiding the finding permanently).
+// decodeSummary documents the one residual asymmetry and why it is accepted.
+//
+// The fail-open path is ALL-OR-NOTHING: on a read error the seed is left empty and
+// the run appends without dedup. ReadSummaries does return the summaries it decoded
+// before the error, but seeding from that partial set is NOT safe and must not be
+// reintroduced as an optimization. The seed keys on an id's EFFECTIVE status, and
+// the fold can only compute that from the id's COMPLETE history — drop the shard
+// holding an id's resolution and the id folds to `open`, gets seeded as
+// outstanding, and the re-detection that should have re-opened it is skipped. The
+// partial result is safe only for questions that do not depend on the fold.
 //
 // # Resolution contract
 //

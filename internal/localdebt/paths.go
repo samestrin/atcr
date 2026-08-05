@@ -65,6 +65,16 @@ func ManualRunID(ts time.Time) string {
 // path (which may embed a username) is not embedded in an error that could reach an
 // unredacted diagnostics sink. The operational Op and underlying Err are preserved;
 // non-PathError errors pass through unchanged. Mirrors internal/scorecard/store.go.
+// RedactPathErr is basePathErr for callers outside this package that build their
+// own store read paths (cli's two-pass debt-resolve hydration). The package's
+// SECURITY contract — a surfaced *os.PathError is reduced to its base name so an
+// absolute, username-bearing path never reaches a diagnostic sink or an error
+// string (see ReadOpts in store.go) — binds those callers too, and re-implementing
+// the reduction outside the package is how it drifts.
+func RedactPathErr(err error) error {
+	return basePathErr(err)
+}
+
 func basePathErr(err error) error {
 	var pe *os.PathError
 	if errors.As(err, &pe) {
