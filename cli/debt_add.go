@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -304,6 +305,24 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	// sighting from Origin + an empty ResolvedAt, which needs no stamp and cannot
 	// erase history.
 	rec.StampID()
+
+	// Bound the ENCODED record, not the individual fields. Every read path skips a
+	// JSONL line longer than localdebt.MaxRecordBytes, so a record over that cap is
+	// written, echoed as "Added <id>", and then invisible to every reader forever —
+	// while permanently protecting its shard from compaction. `debt resolve
+	// --reason` bounds its justification for exactly this reason; the add path
+	// bounded nothing, and the wizard's scanner accepts 1 MiB per answer, so two
+	// pasted fields reach the cap. Checking the marshaled form (plus the newline
+	// Append adds) is what makes the bound exact rather than a per-field guess.
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("encoding the item: %w", err)
+	}
+	if len(line)+1 > localdebt.MaxRecordBytes {
+		return usageError(fmt.Errorf(
+			"item is too large to store: %d bytes encoded, cap is %d — shorten --problem/--fix (the store skips longer lines on read, so it would be filed and never seen)",
+			len(line)+1, localdebt.MaxRecordBytes))
+	}
 	return nil
 }
 
