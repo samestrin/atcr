@@ -427,7 +427,12 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	var closedStatus string
 	if effective != nil && localdebt.IsSettledStatus(effective.Status) {
 		alreadyClosed = true
-		closedStatus = effective.Status
+		// Print the status the gate actually MATCHED, not the raw store text:
+		// IsSettledStatus lowercases and trims before comparing, so a stored
+		// "  ReSoLvEd  " settles the item — and the store is the world-appendable
+		// .atcr/debt/, so its text is untrusted input that must never be echoed
+		// verbatim to the terminal.
+		closedStatus = strings.ToLower(strings.TrimSpace(effective.Status))
 	}
 
 	// The resolution copies the EFFECTIVE record — the same one `--list` rendered
