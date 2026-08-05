@@ -243,8 +243,14 @@ retains both the current record and the resolution that closed it, so the
 `--reason` text is never destroyed.
 
 ```bash
-atcr debt compact          # reports records before/after and how many were dropped
+atcr debt compact --dry-run  # reports what a real run would drop; writes nothing
+atcr debt compact            # reports records before/after and how many were dropped
 ```
+
+It is the one irreversible subcommand in the namespace, so `--dry-run` runs the
+same fold and reports the same before/after/dropped counts without touching a
+file. When nothing is superseded, both modes say so rather than reporting a fold
+that changed nothing.
 
 Compaction also runs **automatically** after a reconcile append, once the store
 trips **100k records or 100 MiB, whichever comes first** (and only when it has
