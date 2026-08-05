@@ -2176,3 +2176,31 @@ func TestCompact_UncompactableIDDoesNotGrowTheStore(t *testing.T) {
 		assert.Equal(t, wantOcc, gotOcc, "compaction %d must not inflate the count", i)
 	}
 }
+
+// BenchmarkAppendBatch500 measures a 500-finding reconcile run's append phase
+// under ONE lock cycle (TD internal/localdebt/reconcile.go:204): the per-record
+// Append path it replaces paid a withLock acquisition — MkdirAll, lock-dir
+// mkdir, owner-file write, RemoveAll — per finding, roughly 6 syscalls each.
+func BenchmarkAppendBatch500(b *testing.B) {
+	recs := make([]Record, 500)
+	for i := range recs {
+		r := Record{
+			SchemaVersion: SchemaVersion,
+			RunID:         "2026-08-01T00:00:00Z-bench",
+			Timestamp:     "2026-08-01T00:00:00Z",
+			Severity:      "LOW",
+			File:          "f.go",
+			Line:          i + 1,
+			Problem:       "benchmark finding",
+		}
+		r.StampID()
+		recs[i] = r
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dir := filepath.Join(b.TempDir(), "store")
+		if _, err := appendBatch(dir, recs); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

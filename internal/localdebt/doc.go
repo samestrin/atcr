@@ -41,7 +41,8 @@
 // even if the lock is reclaimed stale and two appends overlap. No bufio.Writer is
 // shared across records — batching would coalesce records into one larger write
 // whose atomicity is not guaranteed, tearing lines under concurrency. The lock is
-// taken by Append and Compact only: MaybeCompact's threshold stats read runs
+// taken by Append, appendBatch (one cycle per reconcile run, one Write per
+// record inside it), and Compact only: MaybeCompact's threshold stats read runs
 // outside any lock (withLock is mkdir-based and not reentrant, so nesting it
 // inside Compact would stall for the full lockWait). The portability caveat for
 // non-POSIX append semantics is the accepted TD-004 won't-fix stance already

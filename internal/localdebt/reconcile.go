@@ -100,9 +100,9 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 
 	dir := DefaultDir(opts.Root)
 	seen := make(map[string]bool)
-	// Tracks whether this run actually wrote anything, so the automatic-compaction
-	// check after the loop is skipped entirely on a no-op run.
-	appended := false
+	// Records to persist, built first so the whole run appends under ONE lock
+	// acquisition (appendBatch) instead of a withLock cycle per finding.
+	var batch []Record
 	if sums, err := ReadSummaries(dir, ReadOpts{Writer: diag}); err != nil {
 		// Fail open: append anyway so a corrupt/unreadable store does not drop this
 		// run's findings from the backlog. The error is already path-scrubbed
@@ -229,19 +229,25 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 			continue // already persisted (cross-run) or an in-run duplicate id
 		}
 		seen[rec.ID] = true
-		if err := Append(dir, rec); err != nil {
-			// Non-fatal: log (already path-scrubbed by Append) and continue with the
-			// remaining findings.
-			_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
-			continue
-		}
-		appended = true
+		batch = append(batch, rec)
 	}
 
-	if !appended {
-		// A run that added nothing cannot have pushed the store over a threshold, so
-		// a fully-deduped or fully-excluded reconcile pays ZERO extra I/O — not even
-		// the stat walk.
+	// A run that added nothing cannot have pushed the store over a threshold, so
+	// a fully-deduped, fully-excluded, or fully-failed reconcile pays ZERO extra
+	// I/O — not even the stat walk.
+	if len(batch) == 0 {
+		return
+	}
+	// One lock cycle for the whole run (TD internal/localdebt/reconcile.go:204):
+	// per-record Append would take and release withLock for every finding, and
+	// under contention each of N findings could independently spin up to
+	// lockWait. Per-record failures remain non-fatal — appendBatch mirrors the
+	// old loop's continue-on-error semantics and reports them joined.
+	written, err := appendBatch(dir, batch)
+	if err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
+	}
+	if written == 0 {
 		return
 	}
 	switch res, triggered, err := MaybeCompact(dir, opts.AutoCompact, ReadOpts{Writer: diag}); {

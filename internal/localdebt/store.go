@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,30 +85,67 @@ func isNilPointer(w io.Writer) bool {
 // stance shared with the other five append-only ledgers.)
 func Append(dir string, rec Record) error {
 	return withLock(dir, "append", func() error {
-		month, err := monthFromRunID(rec.RunID)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("creating localdebt dir: %w", basePathErr(err))
-		}
-		line, err := json.Marshal(rec)
-		if err != nil {
-			return fmt.Errorf("marshaling localdebt record: %w", err)
-		}
-		line = append(line, '\n')
+		return appendLocked(dir, rec)
+	})
+}
 
-		path := filepath.Join(dir, month+".jsonl")
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			return fmt.Errorf("opening localdebt file: %w", basePathErr(err))
-		}
-		defer func() { _ = f.Close() }()
-		if _, err := f.Write(line); err != nil {
-			return fmt.Errorf("appending localdebt record: %w", basePathErr(err))
+// appendLocked is Append's body without the lock: the caller must already hold
+// the store lock (withLock).
+func appendLocked(dir string, rec Record) error {
+	month, err := monthFromRunID(rec.RunID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating localdebt dir: %w", basePathErr(err))
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("marshaling localdebt record: %w", err)
+	}
+	line = append(line, '\n')
+
+	path := filepath.Join(dir, month+".jsonl")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening localdebt file: %w", basePathErr(err))
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Write(line); err != nil {
+		return fmt.Errorf("appending localdebt record: %w", basePathErr(err))
+	}
+	return nil
+}
+
+// appendBatch appends recs under ONE withLock acquisition — the per-RUN
+// granularity PersistForReconcile needs (TD internal/localdebt/reconcile.go:204).
+// Calling Append per record wraps every record in its own lock cycle — an
+// os.MkdirAll, a lock-dir mkdir, an owner-file write, and an os.RemoveAll per
+// record, roughly 6 syscalls each — and under contention each of N records can
+// independently spin up to lockWait, stalling one reconcile N x 45s instead of
+// 45s once. The per-record write atomicity the concurrency contract requires is
+// unchanged: one marshaled []byte and one os.Write per record, all issued inside
+// the same critical section (withLock is not reentrant, so this must NOT call
+// Append). Failures are per-record and non-fatal to the batch — mirroring
+// PersistForReconcile's continue-on-error loop — and the written count is
+// returned so the caller can distinguish a no-op run from a partial one.
+func appendBatch(dir string, recs []Record) (int, error) {
+	var errs []error
+	written := 0
+	lockErr := withLock(dir, "append", func() error {
+		for _, rec := range recs {
+			if err := appendLocked(dir, rec); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			written++
 		}
 		return nil
 	})
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	return written, errors.Join(errs...)
 }
 
 // ReadRecords stream-parses a month JSONL file line-by-line. A malformed line is
