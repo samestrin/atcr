@@ -291,3 +291,22 @@ func TestPersistForReconcile_ManualEntryWinsIDCollision(t *testing.T) {
 	assert.Equal(t, OriginManual, all[0].Origin)
 	assert.Equal(t, "manual fix", all[0].Fix, "the surviving record is the manual one, fields intact")
 }
+
+// TestPersistForReconcile_EmptyRootIsNoPersist pins the bridge-side guard (TD
+// internal/localdebt/reconcile.go:90): an empty opts.Root must never fall
+// through to a CWD-relative .atcr/debt — the exact wrong-store write the
+// security profile forbids. Both current callers gate on ResolveStoreRoot's ok,
+// but the bridge is the single persistence implementation: the invariant must
+// hold here, not only in caller-side checks a third caller could forget.
+func TestPersistForReconcile_EmptyRootIsNoPersist(t *testing.T) {
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Diag: &diag})
+
+	assert.Contains(t, diag.String(), "skipping local debt persistence",
+		"an empty Root must warn, not silently write into whatever directory the process is in")
+	_, err := os.Stat(filepath.Join(cwd, ".atcr"))
+	assert.True(t, os.IsNotExist(err), "an empty Root must not create a CWD-relative store: %v", err)
+}
