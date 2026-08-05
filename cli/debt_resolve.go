@@ -241,6 +241,24 @@ func selectOpenIDs(sums []localdebt.Summary, severity string, limit int) []strin
 // notes the shortfall count on opts.Writer (when set), so a short worklist is
 // distinguishable from a short backlog.
 func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
+	// Re-assert pass 1's predicate against pass 2's fold. Normally a no-op — both
+	// folds see the same records and agree. It matters when they do NOT: the two
+	// passes are separate reads, so a concurrent `debt resolve --resolve` or
+	// `reconcile` appending between them can make an id's effective record terminal
+	// after pass 1 selected it, and without this the closed item would still be
+	// printed as an open worklist row.
+	return hydrateDebtIDs(dir, ids, opts, func(r localdebt.Record) bool {
+		return !isClosedStatus(r.Status) && r.File != ""
+	})
+}
+
+// hydrateDebtIDs is the shared pass 2 for every two-pass debt read: the resolve
+// worklist (hydrateOpenDebt) and `debt list` (selectDebtForList).
+//
+// keep re-asserts the caller's pass-1 predicate against pass 2's fold; nil keeps
+// every hydrated id, which is what `debt list` needs — it renders closed and
+// location-less records, so dropping them here would silently shorten the table.
+func hydrateDebtIDs(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -281,13 +299,7 @@ func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]local
 
 	byID := make(map[string]localdebt.Record, len(ids))
 	for _, r := range localdebt.FoldRecords(retained) {
-		// Re-assert pass 1's predicate against pass 2's fold. Normally a no-op —
-		// both folds see the same records and agree. It matters when they do NOT:
-		// the two passes are separate reads, so a concurrent `debt resolve
-		// --resolve` or `reconcile` appending between them can make an id's
-		// effective record terminal after pass 1 selected it, and without this the
-		// closed item would still be printed as an open worklist row.
-		if isClosedStatus(r.Status) || r.File == "" {
+		if keep != nil && !keep(r) {
 			continue
 		}
 		byID[r.ID] = r

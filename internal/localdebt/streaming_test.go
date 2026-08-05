@@ -83,8 +83,10 @@ func TestStreamSummaries_MatchesReadAllIDs(t *testing.T) {
 }
 
 // TestStreamSummaries_ProjectsFoldFields asserts the Summary carries every field
-// the fold and the resolve selection read — id, status, severity, ts, and whether
-// a File is present — and nothing that would retain the record's bulk.
+// the fold, the resolve selection, and the list/dashboard selection read — and
+// nothing that would retain the record's bulk. The exact-struct comparison is the
+// point: a field added to the projection without a reason to select on it shows
+// up here as a failure.
 func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 	dir := t.TempDir()
 	rec := idRecord("2026-06-14T10:00:00Z-a", "projected")
@@ -99,13 +101,18 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 	require.Len(t, sums, 2)
 
 	assert.Equal(t, Summary{
-		ID:        rec.ID,
-		Status:    "deferred",
-		Severity:  rec.Severity,
-		Timestamp: rec.Timestamp,
-		HasFile:   true,
+		ID:         rec.ID,
+		Status:     "deferred",
+		Severity:   rec.Severity,
+		Timestamp:  rec.Timestamp,
+		HasFile:    true,
+		File:       rec.File,
+		Line:       rec.Line,
+		Category:   rec.Category,
+		EstMinutes: rec.EstMinutes,
 	}, sums[0])
-	assert.False(t, sums[1].HasFile, "an empty File is projected as HasFile false, without retaining the path")
+	assert.False(t, sums[1].HasFile, "an empty File is projected as HasFile false")
+	assert.Empty(t, sums[1].File, "and the path itself is empty, not a stale value")
 }
 
 // TD: `debt list` and `debt dashboard` read every record in full (ReadAll +

@@ -320,6 +320,59 @@ func TestDebtList_RecognizedFilterValuesStillPass(t *testing.T) {
 	require.NoError(t, err, "an unset filter matches everything")
 }
 
+// TD: `debt list` selects on SUMMARIES and hydrates only the survivors, the way
+// `debt resolve --list` does — the filter runs before materialization, not after
+// it. The observable contract is that the summary-stage filter/sort and the
+// record-stage one agree exactly: they share debtView, so a record selected in
+// pass 1 renders in pass 2, in pass 1's order.
+func TestDebtList_SummarySelectionMatchesRecordSelection(t *testing.T) {
+	recs := debtSampleRecords()
+	dir := writeLocalDebt(t, recs...)
+
+	for _, tc := range []struct {
+		name   string
+		filter debtFilter
+		sort   string
+	}{
+		{"unfiltered by severity", debtFilter{}, sortKeySeverity},
+		{"by severity value", debtFilter{Severity: "CRITICAL"}, sortKeySeverity},
+		{"by status", debtFilter{Status: "deferred"}, sortKeyAge},
+		{"by category", debtFilter{Category: "docs"}, sortKeyEst},
+		{"by component", debtFilter{Component: "internal/autofix"}, sortKeyFile},
+		{"sorted by est", debtFilter{}, sortKeyEst},
+		{"sorted by file", debtFilter{}, sortKeyFile},
+		{"sorted by age", debtFilter{}, sortKeyAge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The record-stage answer: the pre-two-pass implementation, computed here
+			// over the same corpus.
+			want := applyDebtFilter(localdebt.FoldRecords(readDebtStore(t, dir)), tc.filter)
+			require.NoError(t, sortDebt(want, tc.sort))
+
+			cmd := newDebtListCmd()
+			require.NoError(t, cmd.Flags().Parse([]string{"--dir", dir}))
+			got, err := selectDebtForList(cmd, tc.filter, tc.sort)
+			require.NoError(t, err)
+
+			require.Len(t, got, len(want), "the two stages select the same rows")
+			for i := range want {
+				assert.Equal(t, want[i].ID, got[i].ID, "row %d matches, in the same order", i)
+			}
+		})
+	}
+}
+
+// A bad --sort value must still be a usage error once the sort moved to the
+// summary stage, not a silent unsorted table.
+func TestDebtList_UnknownSortKeyIsStillAUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	_, err := runDebt(t, "list", "--dir", dir, "--sort", "bogus")
+
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
 // debtSubcommand looks up a named `atcr debt` subcommand, failing the test when
 // it is absent.
 func debtSubcommand(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {

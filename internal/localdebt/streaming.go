@@ -35,8 +35,16 @@ type Summary struct {
 	Timestamp string
 	HasFile   bool
 
-	// STUB: declared for the list/dashboard selection path, not yet populated by
-	// decodeSummary.
+	// The selection fields `atcr debt list` and `atcr debt dashboard` filter and
+	// sort on: File and Line for the --component filter and sortDebt's location
+	// tiebreak, Category for --category, EstMinutes for --sort=est. They are the
+	// difference between selecting on summaries and reading every record in full,
+	// and they are still a fraction of a record: the bulk (problem, fix, evidence,
+	// justification, reviewers, source_report) stays unprojected.
+	//
+	// HasFile is kept alongside File rather than derived at each use: it is the
+	// resolve worklist's question ("is there anything to act on"), asked once per
+	// record on a path that predates these fields.
 	File       string
 	Line       int
 	Category   string
@@ -78,12 +86,15 @@ type summaryLine struct {
 	Severity      string `json:"severity"`
 	Timestamp     string `json:"ts"`
 	File          string `json:"file"`
+	Category      string `json:"category"`
+	Line          int    `json:"line"`
+	EstMinutes    int    `json:"est_minutes"`
 
 	// Declared for type-check parity only; never read. See the doc block above. The
 	// nested block is a VALUE, not a pointer, so it stays inline and allocation-free
 	// while still type-checking source_report.line the way decodeRecord does.
-	Line         int `json:"line"`
-	EstMinutes   int `json:"est_minutes"`
+	// (Line and EstMinutes were in this group until the list/dashboard selection
+	// path started reading them; they still type-check exactly as before.)
 	Occurrences  int `json:"occurrences"`
 	SourceReport struct {
 		Line int `json:"line"`
@@ -126,11 +137,15 @@ func decodeSummary(line []byte, path string, w io.Writer) (Summary, bool) {
 		return Summary{}, false
 	}
 	return Summary{
-		ID:        s.ID,
-		Status:    s.Status,
-		Severity:  s.Severity,
-		Timestamp: s.Timestamp,
-		HasFile:   s.File != "",
+		ID:         s.ID,
+		Status:     s.Status,
+		Severity:   s.Severity,
+		Timestamp:  s.Timestamp,
+		HasFile:    s.File != "",
+		File:       s.File,
+		Line:       s.Line,
+		Category:   s.Category,
+		EstMinutes: s.EstMinutes,
 	}, true
 }
 
