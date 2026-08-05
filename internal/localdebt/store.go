@@ -49,10 +49,11 @@ const MaxRecordBytes = maxLineBytes
 // HOLDS. Since Plan 35.13 T6 the store dir is DefaultDir(ResolveStoreRoot(...)), and
 // both the explicit and manifest tiers resolve to ABSOLUTE paths — so a leaked path
 // can now contain a username (~/…) in ordinary operation, not only hypothetically.
-// The *os.PathError reduction still applies, but the diagnostics that format a raw
-// `path` string directly (malformed-record and over-long-line warnings here and in
-// streaming.go) are not covered by it and will print the absolute shard path. That
-// gap is filed as TD-022; do not read this comment as saying it is handled.
+// The diagnostics that format a raw `path` string directly (the malformed-record,
+// schema-version and over-long-line warnings here and in streaming.go) are therefore
+// handed a base name rather than the path: scanShard and streamSummaryFile reduce it
+// once per shard and pass that display name to the decoders, which never see the
+// absolute path at all.
 type ReadOpts struct {
 	Writer io.Writer
 }
@@ -202,6 +203,13 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 	}
 	defer func() { _ = f.Close() }()
 	w := diagWriter(opts.Writer)
+	// Diagnostics name the shard by its BASE NAME only. The store dir is now
+	// DefaultDir(ResolveStoreRoot(...)) and both the explicit and manifest tiers
+	// resolve to absolute paths, so formatting `path` verbatim prints a
+	// username-bearing path into a sink the MCP path routes to server stderr
+	// (TD internal/localdebt/store.go:203). The base name is what a human needs
+	// anyway — WHICH shard is damaged.
+	shard := filepath.Base(path)
 
 	var recs []Record
 	unrepresentable := false
@@ -220,7 +228,7 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 			// — so the shard is flagged unrepresentable instead, and compaction leaves
 			// it whole rather than rewriting it without this line.
 			unrepresentable = true
-			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, path)
+			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, shard)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -230,7 +238,7 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, boo
 			continue
 		}
 		if line := bytes.TrimSpace(frag); len(line) > 0 {
-			switch r, outcome := decodeRecord(line, path, w); outcome {
+			switch r, outcome := decodeRecord(line, shard, w); outcome {
 			case decodeOK:
 				recs = append(recs, r)
 			case decodeForwardIncompatible:
@@ -269,21 +277,25 @@ const (
 // malformed-skip and schema-version-skip rules. The outcome is decodeOK when the
 // returned Record is usable; otherwise a warning has already been emitted to w and
 // the caller decides what to do with the raw line (see decodeOutcome).
-func decodeRecord(line []byte, path string, w io.Writer) (Record, decodeOutcome) {
+//
+// shard is a DISPLAY name, already reduced to its base name by the caller — it is
+// only ever formatted into a warning, and the store path is absolute in ordinary
+// operation (see the SECURITY note on ReadOpts).
+func decodeRecord(line []byte, shard string, w io.Writer) (Record, decodeOutcome) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
-		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: %v\n", path, err)
+		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: %v\n", shard, err)
 		return Record{}, decodeMalformed
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible schema
 	// must not be unmarshaled into this struct and treated as current — a field
 	// rename/semantic change would silently corrupt the backlog. Warn and skip.
 	if r.SchemaVersion > SchemaVersion {
-		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, shard)
 		return Record{}, decodeForwardIncompatible
 	}
 	if r.RunID == "" || r.ID == "" {
-		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", path)
+		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", shard)
 		return Record{}, decodeMalformed
 	}
 	return r, decodeOK

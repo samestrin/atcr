@@ -132,18 +132,21 @@ type summaryLine struct {
 // from a malformed one: only Compact needs that distinction (to carry unreadable
 // lines through a rewrite rather than destroy them), and Compact reads full
 // records.
-func decodeSummary(line []byte, path string, w io.Writer) (Summary, bool) {
+// shard is a DISPLAY name, already reduced to its base name by the caller, for the
+// same reason decodeRecord's is: an absolute store path can embed a username and
+// these warnings reach a sink the MCP path routes to server stderr.
+func decodeSummary(line []byte, shard string, w io.Writer) (Summary, bool) {
 	var s summaryLine
 	if err := json.Unmarshal(line, &s); err != nil {
-		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: %v\n", path, err)
+		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: %v\n", shard, err)
 		return Summary{}, false
 	}
 	if s.SchemaVersion > SchemaVersion {
-		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", s.SchemaVersion, SchemaVersion, path)
+		_, _ = fmt.Fprintf(w, "localdebt: skipping record with unsupported schema_version %d (> %d) in %s\n", s.SchemaVersion, SchemaVersion, shard)
 		return Summary{}, false
 	}
 	if s.RunID == "" || s.ID == "" {
-		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", path)
+		_, _ = fmt.Fprintf(w, "localdebt: "+MsgMalformedSkip+" in %s: missing required field (run_id or id)\n", shard)
 		return Summary{}, false
 	}
 	return Summary{
@@ -181,12 +184,13 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 	}
 	defer func() { _ = f.Close() }()
 	w := diagWriter(opts.Writer)
+	shard := filepath.Base(path) // display name only; see decodeSummary
 
 	br.Reset(f)
 	for {
 		frag, err := br.ReadSlice('\n')
 		if err == bufio.ErrBufferFull {
-			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, path)
+			_, _ = fmt.Fprintf(w, msgOverLongLine, maxLineBytes, shard)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -196,7 +200,7 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 			continue
 		}
 		if line := bytes.TrimSpace(frag); len(line) > 0 {
-			if s, ok := decodeSummary(line, path, w); ok {
+			if s, ok := decodeSummary(line, shard, w); ok {
 				if ferr := fn(s); ferr != nil {
 					return callbackErr{ferr}
 				}
