@@ -1079,6 +1079,27 @@ func TestHydrateOpenDebt_NotesSelectedIDsNotFoundOnReRead(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TD (renderResolveList): every interpolated column must pass through the same
+// sanitizers renderDebtTable uses. A tab or bare CR in File/Severity would tear
+// the tabwriter row into extra lines, and an empty id must render as the literal
+// "-" the command's contract documents — never a blank first column.
+func TestRenderResolveList_SanitizesEveryColumn(t *testing.T) {
+	dirty := openRec("2026-07-01T10:00:00Z-a", "HI\tGH", "pkg/x.go\tpkg/y.go", 1, "boom")
+	emptyID := openRec("2026-07-02T10:00:00Z-b", "LOW", "b.go", 2, "leak")
+	emptyID.ID = "" // only reachable from a hand-edited store
+
+	var b bytes.Buffer
+	require.NoError(t, renderResolveList(&b, t.TempDir(), []localdebt.Record{dirty, emptyID}))
+	out := b.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 3, "header + one row per record; a raw tab/CR must not tear a row:\n%q", out)
+	assert.NotContains(t, lines[1], "\t", "no raw tab survives into the rendered row")
+	assert.Contains(t, lines[1], "HI GH")
+	assert.Contains(t, lines[1], "pkg/x.go pkg/y.go")
+	assert.True(t, strings.HasPrefix(lines[2], "-"), "an empty id renders as -, got %q", lines[2])
+}
+
 // TestDebtResolve_TwoPassSelectionEndToEnd runs the real command against a store
 // holding every excluded shape, and asserts the rendered rows carry the full
 // Severity/File/Line/Problem values — i.e. that hydration actually happened and
