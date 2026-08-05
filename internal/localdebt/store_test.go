@@ -1735,6 +1735,47 @@ func TestCompact_OccurrencesStableWithANonMonthShard(t *testing.T) {
 	}
 }
 
+// TestCompact_NonMonthShardIsInertNotHalfAdopted pins the resolution of the
+// half-adoption the read/write asymmetry created (TD internal/localdebt/store.go:298).
+// readAllPreserving read records from ANY .jsonl file while Compact only ever
+// rewrites or removes monthRe-matching ones, so a record in, say, archive.jsonl was
+// read AND re-emitted into its run_id month shard — leaving it on disk TWICE, with
+// the original never rewritten and every later fold paying for the duplicate.
+//
+// A non-month file is now inert to compaction: not read for the fold, not copied,
+// not removed. It stays fully visible to the READ path (ReadAll), which is what
+// makes leaving it alone safe rather than a silent data loss.
+func TestCompact_NonMonthShardIsInertNotHalfAdopted(t *testing.T) {
+	dir := t.TempDir()
+	rec := detection("lives in a stray shard", "2026-06-01T00:00:00Z")
+	rec.RunID = "2026-06-01T00:00:00Z-run"
+	stray := filepath.Join(dir, "archive.jsonl")
+	require.NoError(t, os.WriteFile(stray, []byte(recordLine(t, rec)+"\n"), 0o600))
+
+	before, _, err := StoreStats(dir)
+	require.NoError(t, err)
+	require.Equal(t, 1, before)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	after, _, err := StoreStats(dir)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "the stray record must not be copied into a month shard")
+
+	_, err = os.Stat(filepath.Join(dir, "2026-06.jsonl"))
+	assert.True(t, os.IsNotExist(err), "compaction must not adopt a non-month shard's record into a month shard")
+
+	_, err = os.Stat(stray)
+	assert.NoError(t, err, "the non-month shard itself must survive untouched")
+
+	// And it is still readable: inert to compaction is not invisible to the reader.
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, rec.ID, recs[0].ID)
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
