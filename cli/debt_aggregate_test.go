@@ -142,6 +142,36 @@ func TestSummarizeDebt_ByComponent(t *testing.T) {
 	}
 }
 
+// TD item F: By Component is the dashboard's prioritization rollup, so it must
+// count the same live (open+deferred) scope as By Age and Top Priority — a
+// component whose findings are all settled is not work to do and must not rank.
+func TestSummarizeDebt_ByComponentCountsLiveOnly(t *testing.T) {
+	recs := []localdebt.Record{
+		mkDebtRecord("resolved", "HIGH", "closedonly/a.go", 1, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("wontfix", "HIGH", "closedonly/b.go", 2, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("", "HIGH", "mixed/a.go", 1, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("deferred", "HIGH", "mixed/b.go", 2, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("resolved", "HIGH", "mixed/c.go", 3, "2026-06-01T09:00:00Z"),
+	}
+	s := summarizeDebt(recs, debtRefNow, 5)
+
+	byComp := map[string]int{}
+	for _, c := range s.ByComponent {
+		byComp[c.Component] = c.Total
+	}
+	_, hasClosedOnly := byComp["closedonly"]
+	assert.False(t, hasClosedOnly, "a component holding only settled items must not appear in By Component")
+	assert.Equal(t, 2, byComp["mixed"], "only live (open+deferred) items count toward a component")
+}
+
+// The rendered column header names the scope so "Unresolved" cannot be misread
+// as an all-statuses count.
+func TestRenderDebtDashboard_ByComponentHeaderNamesTheScope(t *testing.T) {
+	out := renderDebtDashboard(debtSampleRecords(), 10)
+	assert.Contains(t, out, "| Component | Unresolved |")
+	assert.NotContains(t, out, "| Component | Items |")
+}
+
 func TestSummarizeDebt_ByAge_UnresolvedOnly(t *testing.T) {
 	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
 	total := 0
