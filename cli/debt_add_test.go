@@ -127,6 +127,38 @@ func TestDebtAdd_WarnsWhenTheIDAlreadyCarriesATerminalStatus(t *testing.T) {
 	assert.Contains(t, out, "wontfix", "the warning names the status that wins the fold")
 }
 
+// TD: the store bounds a single JSONL line at 1 MiB on READ and silently skips
+// anything longer, so an unbounded --problem/--fix produced a record that was
+// written, reported as "Added <id>", exit 0 — and then invisible to every reader
+// forever, permanently protecting its shard from compaction. `debt resolve
+// --reason` bounds itself for exactly this reason; add bounds nothing. The
+// oversized add is now a usage error and NOTHING is written.
+func TestDebtAdd_OverCapRecordIsRejectedAndNotWritten(t *testing.T) {
+	dir := emptyDebtStore(t)
+	huge := strings.Repeat("x", localdebt.MaxRecordBytes)
+
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", huge, "--fix", "f", "--category", "c")
+
+	require.Error(t, err, "a record that no reader could ever see is rejected")
+	assert.Equal(t, exitUsage, exitCode(err), "an over-cap field is a usage error (exit 2)")
+	assert.Contains(t, err.Error(), "too large")
+	assert.Empty(t, readDebtStore(t, dir), "the rejected record is not appended")
+}
+
+// The bound must not reject an ordinary finding: a verbose but realistic record
+// stays well under the cap.
+func TestDebtAdd_LongButUnderCapRecordIsAccepted(t *testing.T) {
+	dir := emptyDebtStore(t)
+	wordy := strings.Repeat("a very detailed finding. ", 400) // ~10 KB
+
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", wordy, "--fix", wordy, "--category", "c")
+
+	require.NoError(t, err, "a verbose real-world finding is still accepted")
+	require.Len(t, readDebtStore(t, dir), 1)
+}
+
 // The warning is scoped to a collision that actually suppresses the add: filing a
 // brand-new finding must stay silent, or every scripted add grows a spurious
 // stderr line.

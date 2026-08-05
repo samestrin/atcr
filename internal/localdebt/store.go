@@ -18,6 +18,16 @@ import (
 // reader buffer.
 const maxLineBytes = 1 << 20
 
+// MaxRecordBytes is maxLineBytes exported for WRITERS: the largest encoded record
+// (JSON plus its newline) any reader of this store will ever see. A writer that
+// exceeds it produces a line every read path skips — the record is written,
+// invisible forever, and its shard is permanently protected from compaction
+// (Compact preserves shards holding an unreadable line). Callers that accept
+// unbounded free text — `atcr debt add`, whose wizard scanner is itself
+// configured for 1 MiB lines — check the encoded size against this before
+// appending, the way `debt resolve --reason` bounds its justification.
+const MaxRecordBytes = maxLineBytes
+
 // ReadOpts carries read-path options. Writer is the sink for operational
 // diagnostics emitted while reading (malformed records, over-long lines); a nil
 // Writer defaults to os.Stderr so a zero ReadOpts keeps prior behavior. Writer must
