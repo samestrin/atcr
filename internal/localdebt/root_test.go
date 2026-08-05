@@ -275,3 +275,44 @@ func TestResolveStoreRoot(t *testing.T) {
 		}, "every warning path must tolerate an unset sink; persistence is best-effort")
 	})
 }
+
+// TestResolveStoreRoot_RequireMarker pins the explicit tier's tightening knob
+// (TD internal/localdebt/root.go:49): for an entry point whose root is
+// model-supplied (MCP), a named-but-unmarked existing directory must be a
+// no-persist-with-warning — never a fall-through — while a marked directory
+// resolves exactly as before.
+func TestResolveStoreRoot_RequireMarker(t *testing.T) {
+	t.Run("markerless explicit root is rejected and does not fall through", func(t *testing.T) {
+		bare := t.TempDir() // exists, but carries no .git/.atcr marker
+		manifestRoot := repoDir(t, ".git")
+		review := filepath.Join(t.TempDir(), "r")
+		writeReviewManifest(t, review, manifestRoot)
+
+		var diag bytes.Buffer
+		root, ok := ResolveStoreRoot(RootOpts{Explicit: bare, ReviewDir: review, AllowCWD: true, RequireMarker: true, Diag: &diag})
+
+		assert.False(t, ok, "a model-supplied root with no marker is a stop signal, like any invalid claim")
+		assert.Empty(t, root)
+		assert.Contains(t, diag.String(), "no repository marker")
+	})
+
+	t.Run("marked explicit root resolves", func(t *testing.T) {
+		marked := repoDir(t, ".git")
+
+		root, ok := ResolveStoreRoot(RootOpts{Explicit: marked, AllowCWD: false, RequireMarker: true})
+
+		require.True(t, ok)
+		assert.Equal(t, marked, root)
+	})
+
+	t.Run("markerless explicit root still resolves without the knob", func(t *testing.T) {
+		// The CLI stays permissive: its explicit value is operator-typed and has
+		// already been through normalizeRepoFlag.
+		bare := t.TempDir()
+
+		root, ok := ResolveStoreRoot(RootOpts{Explicit: bare, AllowCWD: false})
+
+		require.True(t, ok)
+		assert.Equal(t, bare, root)
+	})
+}

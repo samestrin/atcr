@@ -359,7 +359,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// validation stays a no-op (Root: "") and persistence is skipped — the
 	// pre-existing pair, never a fall-through to a guessed tree.
 	storeRoot, storeOK := localdebt.ResolveStoreRoot(localdebt.RootOpts{
-		Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, Diag: e.diagWriter(),
+		Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true, Diag: e.diagWriter(),
 	})
 	validationRoot := ""
 	if storeOK && storeRoot != "" {

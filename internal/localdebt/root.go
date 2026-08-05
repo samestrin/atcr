@@ -21,10 +21,17 @@ import (
 // meaningless by construction, so it passes false and an unresolvable root is a
 // no-persist instead of a write to an unrelated directory.
 type RootOpts struct {
-	Explicit  string    // an operator-supplied root (--repo, or the MCP repo argument)
-	ReviewDir string    // the review artifact directory whose manifest.json may record a root
-	AllowCWD  bool      // may this entry point fall back to "." when nothing else resolves?
-	Diag      io.Writer // best-effort diagnostics sink; nil is treated as io.Discard
+	Explicit  string // an operator-supplied root (--repo, or the MCP repo argument)
+	ReviewDir string // the review artifact directory whose manifest.json may record a root
+	AllowCWD  bool   // may this entry point fall back to "." when nothing else resolves?
+	// RequireMarker tightens the explicit tier for entry points whose root is
+	// model-supplied rather than operator-typed: the named directory must also
+	// carry a repo-root marker (.git or .atcr), closing the "create <any existing
+	// dir>/.atcr/debt/" primitive a tool argument would otherwise give. The CLI
+	// leaves it false — its explicit value has already been through
+	// normalizeRepoFlag and a human typed it (TD internal/localdebt/root.go:49).
+	RequireMarker bool
+	Diag          io.Writer // best-effort diagnostics sink; nil is treated as io.Discard
 }
 
 // ResolveStoreRoot picks the repository root whose .atcr/debt store a reconcile
@@ -46,17 +53,29 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 		diag = io.Discard
 	}
 
-	// Tier 1: explicit. Existence only, no repo-root marker check: the caller named
-	// this root deliberately, and requiring a marker would reject a legitimate root
-	// the operator knows about (a fresh directory that will hold .atcr) for no gain.
+	// Tier 1: explicit. The default check is existence only, no repo-root marker:
+	// the caller named this root deliberately, and requiring a marker would reject
+	// a legitimate root the operator knows about (a fresh directory that will hold
+	// .atcr) for no gain.
 	//
-	// That justification is strongest for the CLI, where the value has already been
-	// through normalizeRepoFlag and a human typed it. It is WEAKER over MCP, where
-	// in.Repo is model-supplied: an unmarked existing directory is accepted, which
-	// makes "create <some existing dir>/.atcr/debt/" reachable from a tool argument.
-	// The impact is bounded (the server already writes review artifacts with the same
-	// privileges) but the asymmetry is real and unaddressed — see TD-023.
+	// That justification holds for the CLI, where the value has already been
+	// through normalizeRepoFlag and a human typed it. It does NOT hold over MCP,
+	// where in.Repo is model-supplied — an unmarked existing directory would make
+	// "create <some existing dir>/.atcr/debt/" reachable from a tool argument. The
+	// MCP entry point therefore sets RequireMarker, and the tier then runs the
+	// same validateRepoRoot re-validation the manifest tier gets (closing TD-023).
 	if explicit := strings.TrimSpace(opts.Explicit); explicit != "" {
+		if opts.RequireMarker {
+			if _, ok := existingDir(explicit); !ok {
+				_, _ = fmt.Fprintf(diag, "localdebt: repo root %q does not exist or is not a directory; skipping local debt persistence\n", explicit)
+				return "", false
+			}
+			if root, ok := validateRepoRoot(explicit); ok {
+				return root, true
+			}
+			_, _ = fmt.Fprintf(diag, "localdebt: repo root %q carries no repository marker (.git/.atcr); skipping local debt persistence\n", explicit)
+			return "", false
+		}
 		if root, ok := existingDir(explicit); ok {
 			return root, true
 		}

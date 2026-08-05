@@ -102,6 +102,10 @@ func TestReconcileHandler_ExplicitRepoOverridesManifestRoot(t *testing.T) {
 	recordRootInManifest(t, root, id, root)
 
 	explicit := t.TempDir()
+	// The MCP explicit tier requires a repo-root marker (RequireMarker, TD
+	// internal/localdebt/root.go:49) — a model-supplied path to a bare directory
+	// no longer persists. A legitimate repo carries one.
+	require.NoError(t, os.Mkdir(filepath.Join(explicit, ".git"), 0o755))
 	// Finding-path validation runs against the explicit root too (TD-019).
 	require.NoError(t, os.WriteFile(filepath.Join(explicit, "auth.go"), []byte("package auth\n"), 0o644))
 	chdir(t, t.TempDir())
@@ -220,4 +224,28 @@ func TestReconcileHandler_DropsFindingsMissingUnderResolvedRoot(t *testing.T) {
 	assert.Empty(t, debtRecords(t, root),
 		"a finding missing under the resolved root must be dropped, not persisted (diag: %s)", diag.String())
 	assert.True(t, out.Pass, "the drop is a persistence-scope change, not a reconcile failure")
+}
+
+// TestReconcileHandler_MarkerlessExplicitRepoDoesNotPersist pins the MCP-side
+// close of TD internal/localdebt/root.go:49: in.Repo is model-supplied, so an
+// existing-but-unmarked directory must NOT become <dir>/.atcr/debt/ from a tool
+// argument — no persist, with a warning, and no fall-through to the otherwise
+// valid manifest root.
+func TestReconcileHandler_MarkerlessExplicitRepoDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	chdir(t, t.TempDir())
+
+	bare := t.TempDir() // exists, but carries no .git/.atcr marker
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{Repo: bare})
+	require.NoError(t, err, "a rejected root must never fail the reconcile")
+
+	assert.Empty(t, debtRecords(t, bare), "a markerless model-supplied root must not gain a store")
+	assert.Empty(t, debtRecords(t, root), "a rejected explicit root must not fall through to the manifest root")
+	assert.Contains(t, diag.String(), "no repository marker")
 }
