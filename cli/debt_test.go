@@ -277,6 +277,49 @@ func TestDebtRenderers_StripTerminalControlSequences(t *testing.T) {
 	}
 }
 
+// TD-011 (breaking): a typo'd `debt list --severity BOGUS` matched nothing and
+// exited 0, indistinguishable from a genuinely empty backlog, while
+// `debt resolve --severity BOGUS` rejected the same value as a usage error. List
+// now runs the same enum checks resolve and add already run.
+func TestDebtList_UnrecognizedFilterValuesAreUsageErrors(t *testing.T) {
+	dir := writeLocalDebt(t)
+	for _, tc := range []struct{ flag, value string }{
+		{"severity", "BOGUS"},
+		{"severity", "hgih"},
+		{"status", "opne"},
+		{"status", "closed"},
+	} {
+		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
+			_, err := runDebt(t, "list", "--dir", dir, "--"+tc.flag, tc.value)
+			require.Error(t, err, "an unrecognized --%s must not read as an empty backlog", tc.flag)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Contains(t, err.Error(), "--"+tc.flag)
+		})
+	}
+}
+
+// The recognized values keep working, case-insensitively, and an unset filter
+// stays a pass-through. `wontfix` is listable even though `debt add` refuses to
+// FILE it — dismissing is resolve's job, but a dismissed item is still viewable.
+func TestDebtList_RecognizedFilterValuesStillPass(t *testing.T) {
+	dir := writeLocalDebt(t)
+	for _, tc := range []struct{ flag, value string }{
+		{"severity", "critical"},
+		{"severity", "LOW"},
+		{"status", "open"},
+		{"status", "deferred"},
+		{"status", "resolved"},
+		{"status", "wontfix"},
+	} {
+		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
+			_, err := runDebt(t, "list", "--dir", dir, "--"+tc.flag, tc.value)
+			require.NoError(t, err)
+		})
+	}
+	_, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err, "an unset filter matches everything")
+}
+
 // debtSubcommand looks up a named `atcr debt` subcommand, failing the test when
 // it is absent.
 func debtSubcommand(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
