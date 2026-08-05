@@ -262,13 +262,33 @@ func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
 // path (see reviewDirRoot) and persists it, keeping the caller's in-memory
 // manifest in sync. Best-effort throughout: any failure leaves Root empty and
 // the run keeps the pre-field CWD behavior.
+//
+// The write is a NARROW field write: the manifest is re-read immediately before
+// writing and ONLY Root is set — the read-modify-write shape ClearInterrupted
+// already uses. PrepareResume's own snapshot was taken at the top of a long
+// validation run; writing it back here would silently revert any finalization
+// that landed in between (Partial, CompletedAt, Interrupted, Review), leaving
+// the review deriving as in_progress/interrupted forever. A sub-second race
+// between this read and the write remains — unavoidable without a review-dir
+// lock — but the lost-update window shrinks from the whole resume to
+// microseconds.
 func backfillReviewRoot(reviewDir string, m *payload.Manifest) {
 	root := reviewDirRoot(reviewDir)
 	if root == "" {
 		return
 	}
-	m.Root = root
-	_ = WriteManifest(reviewDir, m)
+	fresh, err := ReadManifest(reviewDir)
+	if err != nil {
+		return // best-effort: keep the pre-field CWD behavior
+	}
+	if fresh.Root != "" {
+		m.Root = fresh.Root // a concurrent backfill landed first: adopt, never overwrite
+		return
+	}
+	fresh.Root = root
+	if err := WriteManifest(reviewDir, fresh); err == nil {
+		m.Root = root
+	}
 }
 
 // reviewDirRoot recovers the reviewed repo's root from a managed review's
