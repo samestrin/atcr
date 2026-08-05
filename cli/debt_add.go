@@ -351,7 +351,11 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 	}
 	f, line, err := parseDebtFileLine(file)
 	if err != nil {
-		return localdebt.Record{}, err
+		// A rejected location is user-input validation, classified like every
+		// other wizard answer validation (finalizeDebtRecord's usageError) and
+		// like the flag path above — NOT like the wizard's exit-1 stream
+		// failures ("input ended" / "input read error"), which are I/O.
+		return localdebt.Record{}, usageError(err)
 	}
 	rec.File, rec.Line = f, line
 	return rec, nil

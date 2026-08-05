@@ -480,6 +480,30 @@ func (r *errReader) Read(p []byte) (int, error) {
 // Scan as end-of-input — a field with a seeded default silently TOOK that default
 // off a dead scanner, and the first error to surface was the generic "input
 // ended" for the next required field, burying the actual failure.
+// A ":0" answer in the wizard is the same user-input validation failure the
+// flag path rejects as a usage error (exit 2) — and the wizard's own answer
+// validation (finalizeDebtRecord) classifies as usage too. It must NOT fall
+// into the wizard's exit-1 bucket, which is reserved for stream failures
+// ("input ended", "input read error").
+func TestPromptEntry_ZeroLineSuffixIsUsageError(t *testing.T) {
+	answers := strings.Join([]string{
+		"HIGH",   // severity
+		"a.go:0", // file — rejected: line numbers are 1-based
+		"p",      // problem
+		"f",      // fix
+		"c",      // category
+		"",       // est
+		"",       // status
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	_, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{Status: "open"})
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err),
+		"an invalid location answer is a usage error, matching the flag path")
+	assert.Contains(t, err.Error(), "1-based")
+}
+
 func TestPromptEntry_ScannerFailureReportsTheRealCause(t *testing.T) {
 	// The stream answers severity, then dies. File carries a seeded default:
 	// with the bug, ask() silently accepts that default and the wizard goes on
