@@ -266,6 +266,14 @@
 //	    The MCP handler passes AllowCWD: false because its CWD is meaningless by
 //	    construction.
 //
+// AllowCWD: false bars the CWD as a FALLBACK; it does not prove the resolved root is
+// not the CWD. An MCP-created review records Manifest.Root from the engine's own
+// root, which cli/serve.go hardcodes to "." — so the manifest can carry the server's
+// CWD as an authoritative absolute claim, and that directory then validates, because
+// the review artifacts under .atcr/ ARE the marker. The recorded-root design rests on
+// review having run with CWD == repo root; where that does not hold, tier 2 inherits
+// the error rather than detecting it (TD-025).
+//
 // An invalid root at any tier is NO-PERSIST-WITH-WARNING. There is no fall-through:
 // a root that was named and turned out to be stale is a stop signal, and falling
 // through to the next tier would convert a detectable no-op into an undetectable

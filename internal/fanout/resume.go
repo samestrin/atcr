@@ -364,8 +364,19 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// makes it safe: a resume can never overwrite a recorded root with the resuming
 	// machine's path, which is precisely the stale-claim failure re-validation exists
 	// to catch.
+	//
+	// The backfill is PERSISTED here rather than left to ride a later finalization
+	// write. `atcr resume` on an already-complete review (cli/resume.go's AllComplete
+	// branch — the ordinary resume-then-reconcile route) clears the interrupt marker
+	// and returns without ever writing the manifest, so an in-memory-only backfill
+	// would never reach disk on exactly the path a pre-field review is most likely to
+	// take. Best-effort: the resume does not depend on the root, so a write failure
+	// must not fail it — the run simply keeps the pre-field CWD behavior.
 	if m.Root == "" {
-		m.Root = absRoot(req.Root)
+		if backfilled := absRoot(req.Root); backfilled != "" {
+			m.Root = backfilled
+			_ = WriteManifest(reviewDir, m)
+		}
 	}
 
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)

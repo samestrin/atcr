@@ -105,6 +105,16 @@ func TestPrepareResume_BackfillsMissingRoot(t *testing.T) {
 	require.NotNil(t, rprep.manifest)
 	assert.NotEmpty(t, rprep.manifest.Root, "a resume must backfill a missing root")
 	assert.True(t, filepath.IsAbs(rprep.manifest.Root))
+
+	// ON DISK, not just in memory. `atcr resume` on an already-complete review
+	// returns after ClearInterrupted without any finalization write, so a backfill
+	// that only mutates the in-memory struct never survives — and that is the very
+	// path a pre-field review takes. Asserting rprep.manifest alone passes against
+	// that defect.
+	onDisk, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, rprep.manifest.Root, onDisk.Root,
+		"the backfilled root must be persisted, not left to ride a write that may never happen")
 }
 
 // TestPrepareResume_DoesNotOverwriteRecordedRoot is the guard on the backfill's
