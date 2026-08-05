@@ -326,6 +326,35 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	return nil
 }
 
+// validDebtSeverity, validDebtStatus and validDebtEst are the wizard's prompt-time
+// validators. They check exactly what finalizeDebtRecord checks — the same
+// package-level enum maps, the same non-negative est — so the wizard cannot admit
+// a value the finalizer would then reject, and the error names the accepted set
+// so the re-prompt tells the user what to type.
+func validDebtSeverity(v string) error {
+	if !resolveSeverities[normalizeSeverity(v)] {
+		return fmt.Errorf("invalid severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", v)
+	}
+	return nil
+}
+
+func validDebtStatus(v string) error {
+	if !debtAddStatuses[normalizeStatus(v)] {
+		return fmt.Errorf("invalid status %q: expected open|deferred|resolved (dismiss a finding with `debt resolve --status wontfix --reason <why>`)", v)
+	}
+	return nil
+}
+
+// validDebtEst rejects only a NEGATIVE number of minutes. A non-numeric answer is
+// deliberately left to the caller's existing fall-back-to-the-default warning:
+// est is optional, and that behavior is the documented one.
+func validDebtEst(v string) error {
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n < 0 {
+		return fmt.Errorf("invalid est %d: expected a non-negative number of minutes", n)
+	}
+	return nil
+}
+
 // promptEntry runs the interactive wizard against in/out, returning the record
 // to file. An empty answer takes the seeded default; required fields (severity,
 // file, problem, fix, category) are re-prompted when left blank and error if the
@@ -339,10 +368,19 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var perr error
-	ask := func(label, dflt string, required bool) string {
+	// ask takes an optional validator so a bad VALUE is caught at the prompt, where
+	// the user can retype it, instead of by finalizeDebtRecord after all seven
+	// prompts — which failed the command and discarded every answer already typed.
+	// A nil validator accepts anything, which is the free-text fields' behavior.
+	ask := func(label, dflt string, required bool, valid func(string) error) string {
 		if perr != nil {
 			return ""
 		}
+		// The last value this prompt rejected, if any. When the stream ends while a
+		// field has only ever been given invalid values, the failure is the VALUE,
+		// not the missing input: it stays a usage error (exit 2), the same class
+		// finalizeDebtRecord returned before the check moved to prompt time.
+		var lastInvalid error
 		for {
 			if dflt != "" {
 				_, _ = fmt.Fprintf(out, "%s [%s]: ", label, dflt)
@@ -360,7 +398,20 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 					return ""
 				}
 				if dflt != "" {
+					// A seeded default the validator rejects must not be accepted
+					// silently at end-of-input: it would file exactly the invalid
+					// value the prompt was re-asking for.
+					if valid != nil {
+						if err := valid(dflt); err != nil {
+							perr = usageError(err)
+							return ""
+						}
+					}
 					return dflt
+				}
+				if lastInvalid != nil {
+					perr = usageError(lastInvalid)
+					return ""
 				}
 				if !required {
 					return ""
@@ -376,17 +427,24 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 				_, _ = fmt.Fprintf(out, "  %s is required; please enter a value.\n", label)
 				continue
 			}
+			if v != "" && valid != nil {
+				if err := valid(v); err != nil {
+					lastInvalid = err
+					_, _ = fmt.Fprintf(out, "  %v\n", err)
+					continue
+				}
+			}
 			return v
 		}
 	}
 
-	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", def.Severity, true)
-	file := ask("File (file:line)", def.File, true)
-	problem := ask("Problem", def.Problem, true)
-	fix := ask("Fix", def.Fix, true)
-	category := ask("Category", def.Category, true)
-	estStr := ask("Est minutes", strconv.Itoa(def.Est), false)
-	status := ask("Status (open|deferred|resolved)", def.Status, false)
+	sev := ask("Severity (CRITICAL|HIGH|MEDIUM|LOW)", def.Severity, true, validDebtSeverity)
+	file := ask("File (file:line)", def.File, true, nil)
+	problem := ask("Problem", def.Problem, true, nil)
+	fix := ask("Fix", def.Fix, true, nil)
+	category := ask("Category", def.Category, true, nil)
+	estStr := ask("Est minutes", strconv.Itoa(def.Est), false, validDebtEst)
+	status := ask("Status (open|deferred|resolved)", def.Status, false, validDebtStatus)
 
 	if perr != nil {
 		return localdebt.Record{}, perr
