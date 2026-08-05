@@ -31,12 +31,13 @@
 //
 // # Concurrency guarantee
 //
-// The guarantee has two layers. Mutual exclusion comes first: Append and Compact
-// run their critical sections under withLock (lock.go), a mkdir-based
+// The guarantee has two layers. Mutual exclusion comes first: Append, appendBatch
+// and Compact run their critical sections under withLock (lock.go), a mkdir-based
 // cross-process lock with staleness reclaim, so two processes never append to or
 // rewrite the store at the same time. Line integrity comes second: inside that
-// lock, each Append call marshals one record to one []byte and issues exactly one
-// os.Write to a file opened O_APPEND. On Linux/macOS a write() to a regular file
+// lock, each record is marshaled to one []byte and emitted in exactly one
+// os.Write to a file opened O_APPEND — per record, in a batch exactly as in a
+// single Append. On Linux/macOS a write() to a regular file
 // opened O_APPEND atomically appends, so a record can never interleave or tear
 // even if the lock is reclaimed stale and two appends overlap. No bufio.Writer is
 // shared across records — batching would coalesce records into one larger write
