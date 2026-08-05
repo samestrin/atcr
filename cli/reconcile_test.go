@@ -2024,3 +2024,23 @@ func TestReconcile_ValidatesAgainstResolvedStoreRoot(t *testing.T) {
 		"a finding whose path exists under the resolved root must validate and persist, even though it is absent under the CWD")
 	assert.Equal(t, "a.go", recs[0].File)
 }
+
+// TestReview_OneShotPersistsLocalDebt pins the TD cli/review.go:747 fix: the
+// one-shot `atcr review --fail-on` path runs reconcile in-process and, before
+// the fix, persisted NOTHING to the local debt store — a user whose whole
+// workflow is the primary CI invocation accumulated an empty backlog forever.
+// The inline site now mirrors persistLocalDebt (resolve store root, then the
+// shared localdebt.PersistForReconcile bridge).
+func TestReview_OneShotPersistsLocalDebt(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 1, execCmd(t, "review", "--fail-on", "high", "--base", "HEAD^"),
+		"the CRITICAL mock finding gates at the high threshold")
+
+	assert.NotEmpty(t, readLocalDebtRecords(t),
+		"the one-shot review's inline reconcile must persist its findings to the local debt store")
+}
