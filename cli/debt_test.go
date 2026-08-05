@@ -155,6 +155,42 @@ func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
 	}
 }
 
+// TD: an explicitly-set-but-empty --dir (the shape an unset shell variable
+// produces, `--dir "$UNSET"`) is an invocation mistake, not a request to read a
+// store: the shared registration point rejects it as a usage error (exit 2) on
+// every consumer, so a mistyped invocation can no longer masquerade as an empty
+// backlog or fail with a low-level mkdir error. The check lives in
+// addDebtStoreFlag's chained PreRunE, so all six store readers share it with no
+// per-command wiring and no change to debtStoreDir's signature.
+func TestDebtStoreFlag_EmptyDirIsUsageError(t *testing.T) {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+		t.Run("debt "+name, func(t *testing.T) {
+			_, err := runDebt(t, name, "--dir", "")
+			require.Error(t, err, "debt %s --dir \"\" must be rejected", name)
+			assert.Equal(t, exitUsage, exitCode(err),
+				"debt %s: an empty --dir is a usage error (exit 2)", name)
+			assert.Contains(t, err.Error(), "--dir")
+		})
+	}
+	t.Run("debt list whitespace-only", func(t *testing.T) {
+		_, err := runDebt(t, "list", "--dir", "   ")
+		require.Error(t, err, "a whitespace-only --dir is still empty")
+		assert.Equal(t, exitUsage, exitCode(err))
+	})
+	t.Run("quality-report", func(t *testing.T) {
+		cmd := newQualityReportCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetArgs([]string{"--dir", ""})
+		err := cmd.Execute()
+		require.Error(t, err, "quality-report --dir \"\" must be rejected")
+		assert.Equal(t, exitUsage, exitCode(err))
+		assert.Contains(t, err.Error(), "--dir")
+	})
+}
+
 // debtSubcommand looks up a named `atcr debt` subcommand, failing the test when
 // it is absent.
 func debtSubcommand(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
