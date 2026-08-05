@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Changed
+
+- `atcr debt list` now validates `--severity` and `--status` against the same enums `atcr debt resolve` and `atcr debt add` already enforce, returning a usage error (exit `2`) on an unrecognized value. **Breaking for scripts:** a typo'd filter (`--severity BOGUS`, `--status opne`) previously matched nothing and exited `0` — byte-for-byte indistinguishable from a genuinely empty backlog — so a broken query read as a clean bill of health. Recognized values are unchanged and remain case-insensitive; an unset filter still matches everything. `--status wontfix` is accepted here even though `debt add` refuses to file it: dismissing an item is `debt resolve`'s job, but a dismissed item stays viewable.
+
 ## [35.12.0] - 2026-08-02
 
 Activates the compiled-in telemetry endpoints and removes the `--sync-cloud` placeholder destination. The anonymous usage ping and the community quality signal previously compiled in an empty endpoint, making every send a no-op; both now name their live `atcr.dev` host. **The usage ping is on by default** (opt out with `ATCR_TELEMETRY=0` or `atcr config set telemetry false`); the quality signal remains opt-in and off by default. Neither consent gate changed — only whether a permitted send has somewhere to go.

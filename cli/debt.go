@@ -205,7 +205,37 @@ func newDebtListCmd() *cobra.Command {
 	return cmd
 }
 
+// debtListStatuses is the accepted --status enum for `debt list`. It is the four
+// buckets debtStatusBucket renders, NOT debt_add's narrower set: `wontfix` cannot
+// be FILED by add (dismissing needs resolve's --reason) but a dismissed item is
+// still viewable, so it must stay filterable.
+var debtListStatuses = map[string]bool{"open": true, "deferred": true, "resolved": true, "wontfix": true}
+
+// validateDebtListFilters rejects an unrecognized --severity or --status.
+//
+// Both used to be permissive: a typo matched nothing and exited 0, which is
+// byte-for-byte what a genuinely empty backlog looks like, while
+// `debt resolve --severity BOGUS` rejected the same value as a usage error. That
+// is the same class of silent failure debtStoreDir's repo-root walk exists to
+// prevent, and the enums are the ones resolve and add already validate against.
+// An empty value stays a pass-through: it is the unset filter.
+//
+// BREAKING: a script passing an unrecognized value now exits 2 instead of 0.
+func validateDebtListFilters(cmd *cobra.Command) error {
+	if sev := strings.ToUpper(strings.TrimSpace(mustFlag(cmd, "severity"))); sev != "" && !resolveSeverities[sev] {
+		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
+	}
+	if st := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status"))); st != "" && !debtListStatuses[st] {
+		return usageError(fmt.Errorf("invalid --status %q: expected open|deferred|resolved|wontfix", mustFlag(cmd, "status")))
+	}
+	return nil
+}
+
 func runDebtList(cmd *cobra.Command, _ []string) error {
+	if err := validateDebtListFilters(cmd); err != nil {
+		return err
+	}
+
 	recs, err := loadLocalDebt(cmd)
 	if err != nil {
 		return err
