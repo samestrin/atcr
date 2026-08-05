@@ -246,8 +246,14 @@ func (f debtFilter) match(r localdebt.Record) bool {
 	}
 	if f.Component != "" {
 		// Require an exact component match or a path-segment prefix so that
-		// "cmd" does not also match "cmder/...".
-		if r.File != f.Component && !strings.HasPrefix(r.File, f.Component+"/") {
+		// "cmd" does not also match "cmder/...". The record side is cleaned
+		// before comparing (the filter side is cleaned once in applyDebtFilter):
+		// an uncleaned "./internal/foo.go" record would miss a plain "internal"
+		// filter, and an uncleaned "internal/" filter — the shape shell
+		// tab-completion produces — would miss every record, with exit code 0
+		// either way, indistinguishable from an empty backlog.
+		file := filepath.ToSlash(filepath.Clean(r.File))
+		if file != f.Component && !strings.HasPrefix(file, f.Component+"/") {
 			return false
 		}
 	}
@@ -256,7 +262,16 @@ func (f debtFilter) match(r localdebt.Record) bool {
 
 // applyDebtFilter returns the subset of recs matching f, preserving order. It
 // always returns a non-nil slice so callers can range/marshal without nil checks.
+//
+// The component filter is normalized ONCE here rather than per record:
+// filepath.Clean strips the trailing slash shell tab-completion appends
+// ("internal/" -> "internal") and a leading ./, so both spellings match the
+// plain component. The empty-string guard is load-bearing — filepath.Clean("")
+// returns ".", which must never become an active filter.
 func applyDebtFilter(recs []localdebt.Record, f debtFilter) []localdebt.Record {
+	if f.Component != "" {
+		f.Component = filepath.ToSlash(filepath.Clean(f.Component))
+	}
 	out := make([]localdebt.Record, 0, len(recs))
 	for _, r := range recs {
 		if f.match(r) {
