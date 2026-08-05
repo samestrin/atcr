@@ -58,21 +58,33 @@ type ReadOpts struct {
 }
 
 // diagWriter resolves a diagnostics sink: the caller-supplied writer, or os.Stderr
-// when nil or a typed-nil pointer.
+// when nil or a typed nil of any kind.
 func diagWriter(w io.Writer) io.Writer {
-	if w == nil || isNilPointer(w) {
+	if w == nil || isTypedNil(w) {
 		return os.Stderr
 	}
 	return w
 }
 
-// isNilPointer reports whether w is a non-nil interface wrapping a nil pointer (a
-// typed nil handed in as io.Writer). w == nil is false for such a value, yet the
-// first Write on it panics — so diagWriter treats it as unset and falls back to
-// os.Stderr, preserving the "never panic in a diagnostics path" contract.
-func isNilPointer(w io.Writer) bool {
-	rv := reflect.ValueOf(w)
-	return rv.Kind() == reflect.Pointer && rv.IsNil()
+// isTypedNil reports whether w is a non-nil interface wrapping a nil value. w == nil
+// is false for such a value, yet writing to it fails — a panic for a pointer, func,
+// map or slice receiver, and a permanent block for a chan — so diagWriter treats it
+// as unset and falls back to os.Stderr, upholding the "never fail in a diagnostics
+// path" contract.
+//
+// EVERY nil-able kind is covered, not just Pointer (TD
+// internal/localdebt/store.go:57): the guard used to test reflect.Pointer alone while
+// its doc claimed the whole contract, so a nil func- or map-kinded writer walked
+// straight past it. The bound is still only what reflect can SEE — a non-nil value
+// whose Write panics for its own reasons is a caller bug this cannot catch, and the
+// doc no longer implies otherwise.
+func isTypedNil(w io.Writer) bool {
+	switch rv := reflect.ValueOf(w); rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // Append writes one record as a single JSONL line to the month file derived from
