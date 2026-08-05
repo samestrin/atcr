@@ -108,6 +108,35 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 	assert.False(t, sums[1].HasFile, "an empty File is projected as HasFile false, without retaining the path")
 }
 
+// TD: `debt list` and `debt dashboard` read every record in full (ReadAll +
+// FoldRecords) — 327/355 MB RSS on a 100k-record store versus 145 MB for
+// `debt resolve --list`, which selects on summaries and hydrates only the
+// survivors. Selecting the same way needs the fields those two filter and sort
+// on: File and Line (the --component filter and sortDebt's location tiebreak),
+// Category (--category) and EstMinutes (--sort=est). The projection carries
+// them; it still carries nothing of the record's bulk (problem, fix, evidence,
+// justification, reviewers, source_report).
+func TestStreamSummaries_ProjectsTheFieldsListAndDashboardSelectOn(t *testing.T) {
+	dir := t.TempDir()
+	rec := idRecord("2026-06-14T10:00:00Z-a", "projected")
+	rec.File = "internal/autofix/apply.go"
+	rec.Line = 108
+	rec.Category = "correctness"
+	rec.EstMinutes = 45
+	rec.StampID()
+	writeShard(t, dir, "2026-06", recordLine(t, rec))
+
+	sums, err := ReadSummaries(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, sums, 1)
+
+	assert.Equal(t, "internal/autofix/apply.go", sums[0].File, "--component filters on the path")
+	assert.Equal(t, 108, sums[0].Line, "sortDebt's location tiebreak needs the line")
+	assert.Equal(t, "correctness", sums[0].Category, "--category filters on it")
+	assert.Equal(t, 45, sums[0].EstMinutes, "--sort=est orders on it")
+	assert.True(t, sums[0].HasFile, "and the existing projection is unchanged")
+}
+
 // TestDecodeSummary_SkipsMalformedLine locks skip-and-warn parity with
 // decodeRecord on a corrupt line: same outcome, byte-identical warning.
 func TestDecodeSummary_SkipsMalformedLine(t *testing.T) {

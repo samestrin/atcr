@@ -34,6 +34,13 @@ type Summary struct {
 	Severity  string
 	Timestamp string
 	HasFile   bool
+
+	// STUB: declared for the list/dashboard selection path, not yet populated by
+	// decodeSummary.
+	File       string
+	Line       int
+	Category   string
+	EstMinutes int
 }
 
 // summaryLine is the on-the-wire decode target. Its JSON tags MUST stay identical
