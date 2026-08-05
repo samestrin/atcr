@@ -115,6 +115,12 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("invalid --severity %q: expected CRITICAL|HIGH|MEDIUM|LOW", mustFlag(cmd, "severity")))
 	}
 	limit, _ := cmd.Flags().GetInt("max")
+	// --max documents only "0 = no cap"; a negative value would otherwise fall
+	// through the `limit > 0` cap check as a silent no-cap. Reject it the way
+	// debt add rejects a negative --est.
+	if limit < 0 {
+		return usageError(fmt.Errorf("invalid --max %d: expected a non-negative number", limit))
+	}
 
 	open, err := selectOpenDebt(dir, sev, limit, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
