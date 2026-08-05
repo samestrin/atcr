@@ -220,6 +220,22 @@ func TestDebtResolve_MaxCapsSelection(t *testing.T) {
 	assert.Len(t, items, 1, "--max caps the number of selected items")
 }
 
+// A negative --max is rejected like a bad --severity/--status and debt add's
+// --est: the flag help documents only "0 = no cap", and without validation
+// `if limit > 0` silently treats --max -5 as unlimited — a typo'd cap that
+// quietly expands the worklist with exit code 0.
+func TestDebtResolve_NegativeMaxIsUsageError(t *testing.T) {
+	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
+	out, err := runDebt(t, "resolve", "--dir", dir, "--max", "-1")
+	require.Error(t, err, "a negative --max must be rejected, not silently treated as no cap")
+	assert.Equal(t, exitUsage, exitCode(err), "a negative --max is a usage error (exit 2)")
+	assert.Contains(t, out, "invalid --max -1: expected a non-negative number")
+
+	// 0 remains the documented "no cap" value and must stay valid.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--max", "0")
+	require.NoError(t, err, "--max 0 (no cap) is a documented, valid value")
+}
+
 func TestDebtResolve_MarkResolvedRemovesItemFromOpenList(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec,
