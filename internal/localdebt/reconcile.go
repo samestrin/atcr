@@ -87,6 +87,17 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		return // no-op on an empty result; never a zero-length write
 	}
 
+	// An empty Root would make DefaultDir resolve .atcr/debt relative to the
+	// process CWD — the silent wrong-store write ResolveStoreRoot's whole
+	// precedence design exists to prevent (root.go). Both entry points gate on
+	// ResolveStoreRoot's ok before calling, but the bridge is the single
+	// persistence implementation, so the invariant holds HERE rather than only
+	// in caller-side checks a third caller could forget.
+	if strings.TrimSpace(opts.Root) == "" {
+		_, _ = fmt.Fprintf(diag, "localdebt: no repo root supplied; skipping local debt persistence\n")
+		return
+	}
+
 	dir := DefaultDir(opts.Root)
 	seen := make(map[string]bool)
 	// Tracks whether this run actually wrote anything, so the automatic-compaction
