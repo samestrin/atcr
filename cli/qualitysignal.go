@@ -207,6 +207,16 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 	if !qualitySignalGate(errW) {
 		return
 	}
+	// Resolve the root the payload build reads from: the SAME repo root the gate
+	// discovers for its config read above and `atcr quality-report` reads via
+	// debtStoreDir. Passing the literal "." instead aggregated the store under the
+	// process CWD — a different, usually empty one whenever atcr runs from a repo
+	// subdirectory — so the signal transmitted zero rows where the report showed
+	// real ones. Fail-soft to "." on a discovery error mirrors the gate.
+	root, rerr := repoRoot()
+	if rerr != nil {
+		root = "."
+	}
 	client := telemetry.FromContext(ctx)
 	qualitySignalInFlight.Add(1)
 	// Client.Go — not a bare `go` — so the goroutine is registered with the
@@ -222,7 +232,7 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer) {
 				log.FromContext(ctx).Debug("quality-signal: recovered from panic", "value", r)
 			}
 		}()
-		payload, err := buildQualitySignalPayloadFn(".")
+		payload, err := buildQualitySignalPayloadFn(root)
 		if err != nil {
 			return // fail-open: a read error never surfaces on the send path
 		}
