@@ -630,6 +630,53 @@ func TestCompact_ReportsPreservedCount(t *testing.T) {
 	assert.Equal(t, 1, res.RecordsBefore, "preserved lines are not counted as records")
 }
 
+// TD: StoreFound answers "does the store exist", NOT "did a fold happen". It
+// reported false for a store that exists and holds records (all newer-schema), so
+// every caller had to special-case Preserved>0 to avoid printing "No local TD
+// store" over them — an ambiguous-ownership contract the CLI was compensating for
+// in two branches. Whether anything was foldable is RecordsBefore's job, and what
+// this binary could not decode is Preserved's; the two counts are separate.
+func TestCompact_StoreFoundReportsPresenceNotFoldability(t *testing.T) {
+	t.Run("existing store with only preserved records", func(t *testing.T) {
+		dir := t.TempDir()
+		writeShard(t, dir, "2026-06", futureLine("futureid", "2026-06-20T10:00:00Z-f"))
+
+		res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+
+		require.NoError(t, err)
+		assert.True(t, res.StoreFound, "the store plainly exists — it holds a record")
+		assert.Zero(t, res.RecordsBefore, "nothing this binary can fold is RecordsBefore's answer")
+		assert.Equal(t, 1, res.Preserved, "and the undecodable line is counted separately")
+	})
+
+	t.Run("existing store with only malformed lines", func(t *testing.T) {
+		dir := t.TempDir()
+		writeShard(t, dir, "2026-06", "{not json", "{also not json")
+
+		res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+
+		require.NoError(t, err)
+		assert.True(t, res.StoreFound, "a shard on disk is a store, however unreadable its contents")
+		assert.Zero(t, res.RecordsBefore)
+	})
+
+	t.Run("missing store", func(t *testing.T) {
+		res, err := Compact(filepath.Join(t.TempDir(), "absent"), ReadOpts{Writer: io.Discard})
+
+		require.NoError(t, err)
+		assert.False(t, res.StoreFound, "an absent store is not found")
+		assert.Zero(t, res.Preserved)
+	})
+
+	t.Run("existing but empty store directory", func(t *testing.T) {
+		res, err := Compact(t.TempDir(), ReadOpts{Writer: io.Discard})
+
+		require.NoError(t, err)
+		assert.False(t, res.StoreFound,
+			"a directory holding no shard holds no records either — the CLI's 'no store' line is accurate here")
+	})
+}
+
 // TestCompact_PreservedOnlyStoreIsNotRewritten locks the no-op path: when this
 // binary can decode nothing, compaction must touch no file at all rather than
 // rewriting shards from an empty fold.
@@ -640,7 +687,7 @@ func TestCompact_PreservedOnlyStoreIsNotRewritten(t *testing.T) {
 
 	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
 	require.NoError(t, err)
-	assert.False(t, res.StoreFound, "no foldable records is still a no-op")
+	assert.Zero(t, res.RecordsBefore, "no foldable records is still a no-op")
 	assert.Equal(t, 1, res.Preserved, "but the caller is told why")
 
 	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
@@ -1615,7 +1662,7 @@ func TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds(t *testing.T) {
 	res, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
 	require.NoError(t, err)
 	require.True(t, triggered)
-	require.False(t, res.StoreFound, "nothing foldable: the fold is a no-op")
+	require.Zero(t, res.RecordsBefore, "nothing foldable: the fold is a no-op")
 	require.FileExists(t, filepath.Join(dir, compactWatermarkFile),
 		"a no-op fold still records a baseline, or the trigger re-fires forever")
 
