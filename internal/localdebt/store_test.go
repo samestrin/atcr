@@ -1698,3 +1698,56 @@ func TestMaybeCompact_ByteThresholdBoundary(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, triggered, "the threshold is inclusive: size >= MaxBytes trips")
 }
+
+// TestCompact_PreservesQualitySignalModelRecovery is the Phase 3 gate's HIGH guard.
+//
+// AggregateQualitySignal recovers a missing Model from an earlier same-id terminal
+// record, which is how a wontfix that outranks an attributed resolution still
+// reports a dismissal. Compaction used to drop that donor, so the whole outcome
+// vanished from the signal — and T5 made compaction automatic inside the very
+// reconcile that emits the signal, so one invocation could compact and then emit
+// something different from what it would have emitted moments earlier.
+func TestCompact_PreservesQualitySignalModelRecovery(t *testing.T) {
+	dir := t.TempDir()
+	base := detection("attributed then dismissed", "2026-06-01T10:00:00Z")
+	base.Reviewers = []string{"bruce"}
+	base.Model = "claude-x"
+
+	open := base
+	open.RunID = "2026-06-01T10:00:00Z-run"
+	resolved := base
+	resolved.RunID = "2026-06-01T11:00:00Z-resolved"
+	resolved.Timestamp = "2026-06-01T11:00:00Z"
+	resolved.Status = "resolved"
+	// The dismissal outranks the resolution and carries NO model attribution.
+	dismissed := base
+	dismissed.RunID = "2026-06-01T12:00:00Z-wontfix"
+	dismissed.Timestamp = "2026-06-01T12:00:00Z"
+	dismissed.Status = "wontfix"
+	dismissed.Model = ""
+	for _, r := range []Record{open, resolved, dismissed} {
+		require.NoError(t, Append(dir, r))
+	}
+
+	signal := func() []QualityRow {
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		return AggregateQualitySignal(recs)
+	}
+	want := signal()
+	require.Equal(t, []QualityRow{{Persona: "bruce", Model: "claude-x", DismissedCount: 1}}, want,
+		"before compaction the model is recovered from the earlier resolution")
+
+	for i := 1; i <= 3; i++ {
+		_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.Equal(t, want, signal(),
+			"compaction %d must not change what the quality signal reports", i)
+	}
+
+	// Retention is still bounded: the effective record plus one donor, not a
+	// growing trail.
+	recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 2, "an id retains at most two records after compaction")
+}

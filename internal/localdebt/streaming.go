@@ -51,13 +51,14 @@ type Summary struct {
 // display, so a re-detection of that finding is skipped and it becomes
 // permanently invisible.
 //
-// Line, EstMinutes and Occurrences are therefore declared and left unread. They
-// cost nothing (ints are inline, no allocation) and they cover the realistic
-// corruption — a number written as a string, e.g. "line": "12".
+// Every NUMERIC field Record declares is therefore declared here too and left
+// unread — including SourceReport's nested Line. They cost nothing (ints are
+// inline, and the nested struct is a value field, so neither allocates) and they
+// cover the realistic corruption: a number written as a string, e.g. "line": "12".
 //
-// Residual, accepted and tracked: a wrong JSON TYPE in one of Record's string,
-// array or object fields (e.g. "problem": 123, "reviewers": "claude") is still
-// accepted here and rejected by decodeRecord. Closing it needs either the
+// Residual, accepted and tracked as TD-016: a wrong JSON TYPE in one of Record's
+// string, array or object fields (e.g. "problem": 123, "reviewers": "claude") is
+// still accepted here and rejected by decodeRecord. Closing it needs either the
 // per-record string allocations this whole path exists to avoid, or a bespoke
 // zero-size validating unmarshaler per field kind. No atcr writer can produce such
 // a line — Append always marshals a Record — so, like the other hand-corruption
@@ -71,10 +72,15 @@ type summaryLine struct {
 	Timestamp     string `json:"ts"`
 	File          string `json:"file"`
 
-	// Declared for type-check parity only; never read. See the doc block above.
-	Line        int `json:"line"`
-	EstMinutes  int `json:"est_minutes"`
-	Occurrences int `json:"occurrences"`
+	// Declared for type-check parity only; never read. See the doc block above. The
+	// nested block is a VALUE, not a pointer, so it stays inline and allocation-free
+	// while still type-checking source_report.line the way decodeRecord does.
+	Line         int `json:"line"`
+	EstMinutes   int `json:"est_minutes"`
+	Occurrences  int `json:"occurrences"`
+	SourceReport struct {
+		Line int `json:"line"`
+	} `json:"source_report"`
 }
 
 // decodeSummary parses one trimmed JSONL line into a Summary, applying the SAME
@@ -275,5 +281,6 @@ func (s Summary) foldTimestamp() string { return s.Timestamp }
 // automatically reaches both; TestFoldSummaries_MatchesFoldRecords pins that they
 // agree on id ordering and on the winning record per id.
 func FoldSummaries(sums []Summary) []Summary {
-	return foldByID(sums)
+	folded, _ := foldByID(sums)
+	return folded
 }

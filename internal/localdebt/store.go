@@ -391,11 +391,7 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // survives compaction at O(1) size instead of O(history). See aggregateCounters
 // for the rule and why it is idempotent.
 func FoldRecords(recs []Record) []Record {
-	byID := map[string][]Record{}
-	for _, r := range recs {
-		byID[r.ID] = append(byID[r.ID], r)
-	}
-	folded := foldByID(recs)
+	folded, byID := foldByID(recs)
 	for i := range folded {
 		aggregateCounters(&folded[i], byID[folded[i].ID])
 	}
@@ -549,7 +545,11 @@ func (r Record) foldTimestamp() string { return r.Timestamp }
 // FoldRecords for the rule itself and the reasoning behind it. Insertion order is
 // preserved: an id appears in the output at the position of its FIRST occurrence
 // in the input, so the fold is deterministic for a given read order.
-func foldByID[T foldable](items []T) []T {
+//
+// It returns the per-id groups alongside the fold so a caller that needs them —
+// FoldRecords, for the counter aggregation — does not rebuild an identical map on
+// the package's hottest read path.
+func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 	order := []string{}
 	seen := map[string]bool{}
 
@@ -587,7 +587,7 @@ func foldByID[T foldable](items []T) []T {
 			folded = append(folded, latestItem(group))
 		}
 	}
-	return folded
+	return folded, byID
 }
 
 // retainForCompaction is what compaction folds to: the effective record for each
@@ -623,7 +623,18 @@ func retainForCompaction(recs []Record) []Record {
 	for _, eff := range effective {
 		out = append(out, eff)
 		if IsSettledStatus(eff.Status) {
-			continue // the effective record IS the resolution; nothing to preserve
+			// The effective record IS the resolution, so there is no rationale to
+			// preserve — but there may still be ATTRIBUTION. AggregateQualitySignal
+			// recovers a missing Model from an earlier same-id terminal record
+			// (qualitysignal.go, latestTerminalModel), which is how a wontfix that
+			// outranks an earlier attributed resolution still reports a dismissal.
+			// Dropping that donor makes the whole outcome vanish from the signal —
+			// silently and permanently, and now unattended, since compaction runs
+			// automatically inside the same reconcile that emits the signal.
+			if donor := modelDonor(byID[eff.ID], eff); donor != nil {
+				out = append(out, *donor)
+			}
+			continue
 		}
 		// SETTLED, not merely closed, on both sides. An effective `deferred` record
 		// is not a resolution — it carries no justification, and treating it as one
@@ -655,6 +666,45 @@ func retainForCompaction(recs []Record) []Record {
 		}
 	}
 	return out
+}
+
+// modelDonor returns the terminal record whose Model AggregateQualitySignal would
+// recover for this id, or nil when the effective record already carries one or no
+// donor exists.
+//
+// Selection matches latestTerminalModel (qualitysignal.go) exactly — the most
+// recent terminal record with a non-empty Model, last-wins on ties — because the
+// point is that the recovery returns the SAME model before and after compaction. A
+// different rule here would make the signal depend on whether the store had been
+// compacted yet.
+//
+// Retention stays bounded at two records per id: this branch is reached only when
+// the effective record is settled, which is exactly the branch that retains no
+// resolution trail. An id whose effective record is OPEN is filtered out of the
+// quality signal entirely (an unsettled finding is not an outcome), so it needs no
+// donor and keeps its trail instead.
+func modelDonor(group []Record, eff Record) *Record {
+	if strings.TrimSpace(eff.Model) != "" {
+		return nil
+	}
+	var best *Record
+	for i := range group {
+		r := group[i]
+		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
+			continue
+		}
+		if best == nil || r.Timestamp >= best.Timestamp {
+			// The donor is a TRAIL entry, not an occurrence — same rule as the
+			// resolution trail below: an id's aggregate counters live solely on its
+			// effective record, or a second carrier would let the fold count part of
+			// the history twice.
+			r.Occurrences = 0
+			r.FirstSeen = ""
+			donor := r
+			best = &donor
+		}
+	}
+	return best
 }
 
 // highestRankedTerminal picks which terminal record to retain for an id whose

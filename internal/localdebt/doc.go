@@ -167,10 +167,16 @@
 // idempotent: re-compacting an already-compacted store leaves both values
 // unchanged. See aggregateCounters (store.go) for the rule and the lifecycle walk.
 //
-// Two writers must keep their counters zeroed so the aggregation is not double-fed:
-// the resolution record appended by cli/debt_resolve.go (which copies the folded
-// record, counters and all) and the resolution trail retained by
-// retainForCompaction. The counters live on an id's effective record alone.
+// There are exactly three writers of the store, and each has its own counter
+// convention. cli/reconcile.go's detection append leaves both fields ZERO, so the
+// fold counts it as a fresh sighting. cli/debt_resolve.go's resolution append and
+// retainForCompaction's retained trail/donor entries must ZERO them explicitly —
+// both copy an existing record, counters and all, and a second carrier in a group
+// would let the fold count part of the history twice. cli/debt_add.go does the
+// opposite deliberately and stamps Occurrences 1, because a hand-filed item is its
+// own first sighting and may carry a status the counting rule would otherwise never
+// treat as a detection. Outside that one case the counters live on an id's
+// effective record alone.
 //
 // # Maintenance invariant (coupling)
 //
