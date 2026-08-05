@@ -122,6 +122,34 @@ func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 	}
 }
 
+// TD: every store-reading command registers --dir through addDebtStoreFlag — the
+// five debt subcommands AND quality-report — so the Usage text can never drift
+// between hand-mirrored literals. The DISPLAYED default is cleared (DefValue "")
+// so --help does not advertise a relative "(default .atcr/debt)" no command ever
+// uses: an unset --dir resolves to <repo root>/.atcr/debt at RUN time via
+// debtStoreDir. The flag's actual default value is untouched — debtStoreDir's
+// Changed("dir") logic relies on it.
+func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
+	debt := newDebtCmd()
+	readers := map[string]*cobra.Command{"quality-report": newQualityReportCmd()}
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+		readers["debt "+name] = debtSubcommand(t, debt, name)
+	}
+
+	ref := readers["debt list"].Flags().Lookup("dir")
+	require.NotNil(t, ref, "debt list registers --dir")
+	for label, c := range readers {
+		f := c.Flags().Lookup("dir")
+		require.NotNil(t, f, "%s registers --dir", label)
+		assert.Equal(t, "", f.DefValue,
+			"%s --dir must not display a relative default in --help", label)
+		assert.Equal(t, ref.Usage, f.Usage,
+			"%s --dir usage text must match the shared helper's", label)
+		assert.Equal(t, defaultDebtResolveDir, f.Value.String(),
+			"%s --dir keeps the shared store as its actual default", label)
+	}
+}
+
 // debtSubcommand looks up a named `atcr debt` subcommand, failing the test when
 // it is absent.
 func debtSubcommand(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
