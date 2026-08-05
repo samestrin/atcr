@@ -1,6 +1,9 @@
 package localdebt
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,4 +47,27 @@ func TestManualRunID_RejectsOutOfRangeYears(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRedactPathErr pins the exported path-reduction contract (TD
+// internal/localdebt/paths.go:51 — the row's FIX cell was a reconcile
+// copy-paste of the ManualRunID item; this is the clarified fix): a surfaced
+// *os.PathError is reduced to its base name so an absolute, username-bearing
+// store path never reaches a diagnostic sink or an error string, while the
+// operational Op and underlying Err are preserved; a non-PathError passes
+// through unchanged.
+func TestRedactPathErr(t *testing.T) {
+	abs := filepath.Join(string(filepath.Separator), "home", "somebody", "repo", ".atcr", "debt", "2026-08.jsonl")
+	pathErr := &os.PathError{Op: "open", Path: abs, Err: os.ErrPermission}
+
+	redacted := RedactPathErr(pathErr)
+	var pe *os.PathError
+	require.ErrorAs(t, redacted, &pe, "a *os.PathError stays a *os.PathError")
+	assert.Equal(t, filepath.Base(abs), pe.Path, "the absolute path is reduced to its base name")
+	assert.Equal(t, "open", pe.Op, "the operational Op is preserved")
+	assert.ErrorIs(t, redacted, os.ErrPermission, "the wrapped Err is preserved")
+	assert.NotContains(t, redacted.Error(), "somebody", "no username-bearing path segment reaches the error string")
+
+	other := errors.New("boom")
+	assert.Same(t, other, RedactPathErr(other), "a non-PathError passes through unchanged")
 }
