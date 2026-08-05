@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -456,6 +457,41 @@ func TestPromptEntry_InputTooLongErrors(t *testing.T) {
 	_, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{Status: "open"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "input read error")
+}
+
+// errReader emits data, then fails every subsequent Read with err — an input
+// stream that dies mid-wizard with a real I/O error rather than a clean EOF.
+type errReader struct {
+	data string
+	err  error
+}
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+// A false Scan() is not always EOF: a scanner failure (bufio.ErrTooLong, an I/O
+// error) must surface its real cause. Before this fix, ask() treated every false
+// Scan as end-of-input — a field with a seeded default silently TOOK that default
+// off a dead scanner, and the first error to surface was the generic "input
+// ended" for the next required field, burying the actual failure.
+func TestPromptEntry_ScannerFailureReportsTheRealCause(t *testing.T) {
+	// The stream answers severity, then dies. File carries a seeded default:
+	// with the bug, ask() silently accepts that default and the wizard goes on
+	// to report "input ended" for Problem instead of the read error.
+	in := &errReader{data: "HIGH\n", err: errors.New("boom")}
+	var out bytes.Buffer
+	_, err := promptEntry(in, &out, wizardDefaults{File: "a.go:1", Status: "open"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input read error", "the scanner's real failure is reported")
+	assert.Contains(t, err.Error(), "boom")
+	assert.NotContains(t, err.Error(), "input ended",
+		"a dead scanner must not masquerade as a clean end of input")
 }
 
 func TestDebtAdd_PartialFlagsOnTTYSeedsWizard(t *testing.T) {
