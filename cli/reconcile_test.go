@@ -668,9 +668,10 @@ func TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution(t *testing
 // TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling covers the
 // mixed-attribution merge: two personas flag the identical finding, but only one
 // has a recorded pool-summary model. The record resolves to that one model, and
-// AggregateQualitySignal credits every persona in Reviewers under it — so the
-// persona with no recorded model must be dropped from the record's attribution
-// rather than mis-credited under a sibling's model it never ran on.
+// AggregateQualitySignal credits the subset in ModelReviewers under it — so the
+// persona with no recorded model is excluded from per-model credit WITHOUT
+// being stripped from the record's Reviewers (the store is the only persistent
+// copy; resolve-time credit unions the full list).
 func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing.T) {
 	isolate(t)
 	touchFiles(t, "a.go")
@@ -692,8 +693,10 @@ func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing
 	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
 	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
 		"the one recorded model still resolves for the merged record")
-	assert.Equal(t, []string{"bruce"}, recs[0].Reviewers,
-		"greta has no recorded model and must be dropped from attribution, not credited under bruce's model")
+	assert.ElementsMatch(t, []string{"bruce", "greta"}, recs[0].Reviewers,
+		"the record retains every reviewer — narrowing would destroy greta's resolve-time credit")
+	assert.Equal(t, []string{"bruce"}, recs[0].ModelReviewers,
+		"greta has no recorded model and is excluded from per-model credit, carried on ModelReviewers")
 }
 
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:

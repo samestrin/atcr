@@ -185,19 +185,18 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 			continue
 		}
 
-		// Narrow the record's attribution to the reviewers the resolved model
-		// actually covers: AggregateQualitySignal credits every persona in
-		// Reviewers under the record's single Model, so a persona with no
-		// recorded model must not be stamped alongside a sibling whose model
-		// resolved — it would be credited under a model it never ran on. When
-		// no model resolves (none recorded, or a cross-model merge) the full
-		// reviewer list is kept: an empty Model excludes the record from
-		// per-model rows regardless.
+		// Attribution is recorded WITHOUT narrowing: the record keeps the
+		// finding's FULL reviewer list. The store is the only persistent copy of
+		// the finding, so stripping a sibling persona here would permanently
+		// destroy the fact that they reported it — and with it their resolve-time
+		// credit (cli/debt_resolve.go unions Reviewers across the id's live
+		// records to attribute the outcome). The model-attributable subset goes
+		// to ModelReviewers instead: AggregateQualitySignal credits THAT set
+		// under the record's single Model, so a persona with no recorded model
+		// is not credited under a model it never ran on. When no model resolves
+		// (none recorded, or a cross-model merge) ModelReviewers stays empty and
+		// the empty Model excludes the record from per-model rows regardless.
 		model := resolveRecordModel(f.Reviewers, modelByReviewer)
-		reviewers := f.Reviewers
-		if model != "" {
-			reviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
-		}
 		rec := Record{
 			SchemaVersion: SchemaVersion,
 			RunID:         runID,
@@ -210,10 +209,13 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 			Category:      f.Category,
 			EstMinutes:    f.EstMinutes,
 			Evidence:      f.Evidence,
-			Reviewers:     reviewers,
+			Reviewers:     f.Reviewers,
 			Confidence:    f.Confidence,
 			Model:         model,
 			Justification: f.Justification,
+		}
+		if model != "" {
+			rec.ModelReviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
 		}
 		if f.SourceReport != nil {
 			rec.SourceReport = &SourceReport{
@@ -284,14 +286,14 @@ func resolveRecordModel(reviewers []string, modelByReviewer map[string]string) s
 }
 
 // attributableReviewers returns the subset of reviewers whose recorded pool
-// model IS the record's resolved model, preserving reviewer order. It is the
-// narrowing half of record attribution: AggregateQualitySignal credits every
-// persona in a record's Reviewers under the record's single Model, so when one
-// reviewer's model resolved and a sibling's is unrecorded, the sibling is
-// dropped from the record rather than mis-credited under a model it never ran
-// on. Callers invoke it only with a resolved (non-empty) model, so every
-// reviewer with an unrecorded model fails the equality and is excluded; a
-// reviewer that ran on the resolved model is kept.
+// model IS the record's resolved model, preserving reviewer order. It feeds
+// Record.ModelReviewers: AggregateQualitySignal credits that subset under the
+// record's single Model, so a sibling with no recorded model keeps its place
+// in the record's full Reviewers (resolve-time credit survives) without being
+// credited under a model it never ran on. Callers invoke it only with a
+// resolved (non-empty) model, so every reviewer with an unrecorded model fails
+// the equality and is excluded; a reviewer that ran on the resolved model is
+// kept.
 func attributableReviewers(reviewers []string, modelByReviewer map[string]string, model string) []string {
 	out := make([]string, 0, len(reviewers))
 	for _, rev := range reviewers {

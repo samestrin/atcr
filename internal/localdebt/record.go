@@ -24,10 +24,10 @@ import (
 // forward-incompat-skip model treats every newer version uniformly rather than
 // special-casing additive bumps.
 //
-// v2 -> v3 (Plan 35.13): adds the optional Origin provenance field and the
-// Occurrences / FirstSeen pair, as .atcr/debt/ becomes the single system of record
-// for every atcr debt subcommand — a manual `atcr debt add` will write here
-// alongside reconcile once T2 rewires it. The bump is backward-compatible on read —
+// v2 -> v3 (Plan 35.13): adds the optional Origin provenance field, the
+// Occurrences / FirstSeen pair, and ModelReviewers, as .atcr/debt/ becomes the
+// single system of record for every atcr debt subcommand — a manual `atcr debt
+// add` will write here alongside reconcile once T2 rewires it. The bump is backward-compatible on read —
 // a v1/v2 record has none of those keys and decodes with the Go zero values, which
 // EffectiveOrigin reports as "review" without mutating the record — and
 // forward-compatible in the same established sense: this reader accepts v1, v2 and
@@ -105,7 +105,8 @@ const (
 // record. docs/technical-debt.md documents the .atcr/debt/ store's command surface
 // as of T2 but not yet its wire schema; T7 adds that section, at which point the
 // two must be kept in step. The schema is v3 as of Plan 35.13, which added the
-// optional Origin, Occurrences and FirstSeen fields on top of v2's Model. The
+// optional Origin, Occurrences, FirstSeen and ModelReviewers fields on top of
+// v2's Model. The
 // required block is always present; the optional block
 // (omitempty) is present only when the reconciled finding carried the
 // corresponding enrichment (Epic 18.3 justification/source_report), a resolved
@@ -136,6 +137,20 @@ type Record struct {
 	// non-PII, publicly-known catalog identifier (see internal/scorecard/telemetry.go),
 	// never code/path/finding content.
 	Model string `json:"model,omitempty"`
+
+	// ModelReviewers is the subset of Reviewers whose recorded pool model IS
+	// Model — added to v3 alongside Origin/Occurrences/FirstSeen (Plan 35.13,
+	// still unreleased, so no bump) when Reviewers stopped being narrowed at
+	// write time. The record now keeps the finding's FULL reviewer list (the
+	// store is the only persistent copy — narrowing destroyed who else reported
+	// the finding, and with it their resolve-time credit), while this field
+	// carries the model-attributable subset AggregateQualitySignal credits under
+	// Model. omitempty keeps it absent whenever Model is "" (attribution-
+	// incomplete) and on records written before the field existed; readers
+	// falling back to Reviewers for those get exactly the pre-field behavior,
+	// because a pre-field record's Reviewers were already the narrowed,
+	// attributable set.
+	ModelReviewers []string `json:"model_reviewers,omitempty"`
 
 	// Origin is the provenance of this record — OriginReview for a finding produced
 	// by an `atcr reconcile` run, OriginManual for one filed by `atcr debt add` —

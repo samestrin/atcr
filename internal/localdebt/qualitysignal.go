@@ -37,6 +37,7 @@ func foldTerminalByID(records []Record) []Record {
 	// ceiling, where every v1 record and every model-less resolution needs it.
 	donorTS := map[string]string{}
 	donorModel := map[string]string{}
+	donorModelReviewers := map[string][]string{}
 	for _, r := range records {
 		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
 			continue
@@ -44,6 +45,14 @@ func foldTerminalByID(records []Record) []Record {
 		if _, ok := donorModel[r.ID]; !ok || r.Timestamp >= donorTS[r.ID] {
 			donorModel[r.ID] = r.Model
 			donorTS[r.ID] = r.Timestamp
+			// The grafted model covers the DONOR's attributable set, which need
+			// not match the effective record's full Reviewers. A pre-
+			// ModelReviewers donor has its attributable set in Reviewers
+			// already (write-time narrowing), so fall back to that.
+			donorModelReviewers[r.ID] = r.ModelReviewers
+			if len(donorModelReviewers[r.ID]) == 0 {
+				donorModelReviewers[r.ID] = r.Reviewers
+			}
 		}
 	}
 
@@ -62,6 +71,14 @@ func foldTerminalByID(records []Record) []Record {
 		// record and is filtered out above.)
 		if strings.TrimSpace(r.Model) == "" {
 			r.Model = donorModel[r.ID]
+			if r.Model != "" {
+				// Credit the donor's attributable subset, not the effective
+				// record's full Reviewers: a persona on the effective record
+				// who never ran on the donor's model must not receive a
+				// confirmation/dismissal under it — the same mis-crediting
+				// resolveRecordModel refuses at write time.
+				r.ModelReviewers = donorModelReviewers[r.ID]
+			}
 		}
 		terminal = append(terminal, r)
 	}
@@ -94,9 +111,11 @@ type QualityRow struct {
 //   - A terminal status that is neither wontfix nor resolved (i.e. deferred)
 //     contributes to neither counter and creates no group, so a deferred-only
 //     pair emits no row (AC 01-01 EC2).
-//   - Every listed persona in Reviewers receives the outcome, deduplicated
-//     per-record with empty entries skipped (AC 01-03); an empty Reviewers slice
-//     contributes to no group.
+//   - Every listed persona receives the outcome, deduplicated per-record with
+//     empty entries skipped (AC 01-03); an empty reviewer list contributes to
+//     no group. The list read is ModelReviewers (the subset the record's Model
+//     covers), falling back to Reviewers on pre-field records, whose Reviewers
+//     were already narrowed to the attributable set at write time.
 //
 // It is a total, pure function: nil input yields a non-nil empty slice, and
 // repeated calls on the same input are byte-for-byte identical (no shared mutable
@@ -127,7 +146,16 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		}
 
 		seen := map[string]bool{}
-		for _, raw := range rec.Reviewers {
+		// ModelReviewers is the attributable subset for the record's Model. An
+		// empty ModelReviewers on a model-carrying record means a pre-field
+		// record, whose Reviewers were already narrowed to exactly that set at
+		// write time — falling back to them preserves the pre-field behavior
+		// for the existing store.
+		reviewers := rec.ModelReviewers
+		if len(reviewers) == 0 {
+			reviewers = rec.Reviewers
+		}
+		for _, raw := range reviewers {
 			persona := strings.TrimSpace(raw)
 			if persona == "" || seen[persona] {
 				continue

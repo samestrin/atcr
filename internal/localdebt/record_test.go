@@ -337,3 +337,15 @@ func TestStatusConstants_ExhaustiveAcrossPredicates(t *testing.T) {
 		assert.Equal(t, IsSuppressingStatus(s), IsSuppressingStatus(shout), "%q", shout)
 	}
 }
+
+// TestRecord_ModelReviewersFieldOmitempty locks the field half of the
+// attribution-contract clarification (TD internal/localdebt/reconcile.go:173):
+// Record carries a ModelReviewers slice tagged json:"model_reviewers,omitempty"
+// so pre-field v3 records and attribution-incomplete records never serialize it.
+func TestRecord_ModelReviewersFieldOmitempty(t *testing.T) {
+	f, ok := reflect.TypeOf(Record{}).FieldByName("ModelReviewers")
+	require.True(t, ok, "Record must have a ModelReviewers field")
+	assert.Equal(t, "[]string", f.Type.String(), "ModelReviewers must be a []string")
+	assert.Equal(t, "model_reviewers,omitempty", f.Tag.Get("json"),
+		`ModelReviewers must be tagged json:"model_reviewers,omitempty"`)
+}

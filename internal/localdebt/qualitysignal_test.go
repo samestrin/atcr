@@ -294,3 +294,36 @@ func BenchmarkFoldTerminalByID_Unattributed100k(b *testing.B) {
 		foldTerminalByID(records)
 	}
 }
+
+// TestAggregateQualitySignal_PrefersModelReviewersOverFullList locks the read
+// half of the clarified attribution contract (TD internal/localdebt/
+// reconcile.go:173): with Reviewers no longer narrowed at write time, the
+// per-model credit goes to ModelReviewers — a persona on the finding whose
+// model never resolved must not be credited under a model it never ran on.
+func TestAggregateQualitySignal_PrefersModelReviewersOverFullList(t *testing.T) {
+	recs := []Record{{ID: "a", RunID: "a", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"security-reviewer", "style-reviewer"},
+		Model:     "claude-sonnet-4-6", ModelReviewers: []string{"security-reviewer"}, Status: "wontfix"}}
+
+	got := AggregateQualitySignal(recs)
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	assert.Equal(t, want, got, "only the model-attributable subset is credited; the full list is not")
+}
+
+// TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly locks the
+// donor-graft half (TD internal/localdebt/qualitysignal.go:55): when the
+// effective terminal carries no Model and one is recovered from a donor, the
+// credit goes to the DONOR's attributable subset — not the effective record's
+// full Reviewers, which would credit a persona under a model it never ran on.
+func TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly(t *testing.T) {
+	donor := Record{ID: "y", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"security-reviewer"}, Model: "claude-sonnet-4-6",
+		ModelReviewers: []string{"security-reviewer"}, Status: "resolved"}
+	effective := Record{ID: "y", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"security-reviewer", "style-reviewer"}, Status: "wontfix"}
+
+	got := AggregateQualitySignal([]Record{donor, effective})
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	assert.Equal(t, want, got,
+		"style-reviewer never ran on the donor's model and must receive no per-model credit from the graft")
+}

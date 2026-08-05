@@ -384,3 +384,46 @@ func TestPersistForReconcile_InvalidRunIDWarnsOnceAndWritesNothing(t *testing.T)
 	_, err := os.Stat(DefaultDir(root))
 	assert.True(t, os.IsNotExist(err), "an unpersistable run must create no store directory: %v", err)
 }
+
+// writePoolSummary stamps a minimal sources/pool/summary.json fixture so the
+// bridge's reviewer->model resolution has something to read.
+func writePoolSummary(t *testing.T, reviewDir, jsonText string) {
+	t.Helper()
+	dir := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summary.json"), []byte(jsonText), 0o644))
+}
+
+// TestPersistForReconcile_PreservesFullReviewersWithModelSubset locks the
+// clarified attribution contract (TD internal/localdebt/reconcile.go:173): the
+// record keeps the finding's FULL reviewer list — the store is the only
+// persistent copy, and cli/debt_resolve.go's resolve-time credit unions it —
+// while the model-attributable subset lives on ModelReviewers. Narrowing
+// Reviewers at write time used to destroy both.
+func TestPersistForReconcile_PreservesFullReviewersWithModelSubset(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := t.TempDir()
+	writePoolSummary(t, reviewDir,
+		`{"agents":[{"agent":"security-reviewer","model":"claude-sonnet-4-6"},{"agent":"style-reviewer"}],"total":2,"succeeded":2}`)
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{
+				Severity: "HIGH", File: "a.go", Line: 1, Problem: "leaks a handle",
+				Fix: "fix it", Category: "correctness", EstMinutes: 10,
+				Reviewers: []string{"security-reviewer", "style-reviewer"},
+			}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-08-04T10:00:00Z"},
+	}
+	PersistForReconcile(reviewDir, res, PersistOpts{Root: root})
+
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, []string{"security-reviewer", "style-reviewer"}, recs[0].Reviewers,
+		"the persisted record retains every reviewer the finding carried — resolve-time credit recovers them from this list")
+	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model)
+	assert.Equal(t, []string{"security-reviewer"}, recs[0].ModelReviewers,
+		"the model-attributable subset is recorded WITHOUT narrowing Reviewers")
+}
