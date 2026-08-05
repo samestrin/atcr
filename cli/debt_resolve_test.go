@@ -386,6 +386,30 @@ func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	require.Error(t, err, "resolving an unknown id must error, not silently no-op")
 }
 
+// TD (file-less open record): an item that genuinely exists and is genuinely
+// open but carries an empty File must NOT report "no open technical-debt item"
+// — it is live work in `debt list` and the dashboard, so calling it nonexistent
+// misleads the operator. It gets its own message naming the actual defect: the
+// record has no file location to resolve against.
+func TestDebtResolve_MarkResolvedFilelessRecordReportsDistinctError(t *testing.T) {
+	fileless := openRec("2026-07-01T10:00:00Z-a", "HIGH", "", 0, "no location")
+	fileless.StampID()
+	dir := writeDebtStore(t, fileless)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", fileless.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no file location and cannot be resolved",
+		"an existing-but-file-less open record must not masquerade as a nonexistent id")
+	assert.NotContains(t, err.Error(), "no open technical-debt item",
+		"the item exists; the unknown-id message would be a lie")
+
+	// Nothing may be appended for the rejected resolve.
+	recs := readStoreRecords(t, dir)
+	for _, r := range recs {
+		assert.Empty(t, r.Status, "a rejected resolve appends no terminal record")
+	}
+}
+
 func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	// A terminal wontfix record for the same id must fold the finding out of the
