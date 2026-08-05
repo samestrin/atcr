@@ -310,3 +310,48 @@ func TestPersistForReconcile_EmptyRootIsNoPersist(t *testing.T) {
 	_, err := os.Stat(filepath.Join(cwd, ".atcr"))
 	assert.True(t, os.IsNotExist(err), "an empty Root must not create a CWD-relative store: %v", err)
 }
+
+// TestPersistForReconcile_FailOpenWarningNamesDuplicateGrowth pins the REAL
+// effect of the fail-open path (TD internal/localdebt/reconcile.go:112). The
+// old warning claimed "previously dismissed/wontfix findings may be
+// re-surfaced" — impossible: foldByID rule 1 selects a suppressing record
+// unconditionally, so a re-appended open record never displaces a wontfix
+// (pinned by TestFoldRecords_WontfixSurvivesFailOpenDuplicate below). The
+// actual hazard is unbounded duplicate growth, and MaybeCompact cannot recover
+// because readAllPreserving hits the same unreadable shard.
+func TestPersistForReconcile_FailOpenWarningNamesDuplicateGrowth(t *testing.T) {
+	root := t.TempDir()
+	// A store path that is a regular FILE makes the dedup read fail (ENOTDIR) —
+	// no permissions games, so the trigger holds under any test user.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(DefaultDir(root), []byte("not a store"), 0o600))
+
+	var diag bytes.Buffer
+	PersistForReconcile("review", oneFindingResult("b.go", 2, "false positive"), PersistOpts{Root: root, Diag: &diag})
+
+	warn := diag.String()
+	assert.Contains(t, warn, "dedup read failed", "the fail-open path must still announce itself")
+	assert.Contains(t, warn, "duplicate",
+		"the warning must name the real effect: duplicate appends, unbounded until the read error is fixed")
+	assert.NotContains(t, warn, "re-surfaced",
+		"the dismissal claim is false — the fold's suppressing rule makes wontfix survive any re-detection")
+}
+
+// TestFoldRecords_WontfixSurvivesFailOpenDuplicate documents the seed's role as
+// an OPTIMIZATION rather than a suppression mechanism: when a failed dedup read
+// lets a wontfix id's re-detection append as a fresh open record, the fold
+// still selects the wontfix — suppression was never the seed's to give.
+func TestFoldRecords_WontfixSurvivesFailOpenDuplicate(t *testing.T) {
+	wontfix := Record{File: "b.go", Line: 2, Problem: "false positive",
+		Timestamp: "2026-08-01T00:00:00Z", Status: "wontfix"}
+	wontfix.StampID()
+	redetection := Record{File: "b.go", Line: 2, Problem: "false positive",
+		Timestamp: "2026-08-04T10:00:00Z"}
+	redetection.StampID()
+	require.Equal(t, wontfix.ID, redetection.ID, "same file/line/problem must share an id for this scenario")
+
+	folded := FoldRecords([]Record{wontfix, redetection})
+	require.Len(t, folded, 1)
+	assert.Equal(t, "wontfix", folded[0].Status,
+		"a fail-open duplicate never displaces the wontfix record — suppression is the fold's job, not the seed's")
+}
