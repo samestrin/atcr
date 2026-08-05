@@ -200,6 +200,51 @@ func TestSummarizeDebt_ZeroNowYieldsNoAgeProfile(t *testing.T) {
 	assert.NotEmpty(t, s.ByComponent)
 }
 
+// TD: `if sc, ok := sevIdx[...]; ok` silently dropped every record whose severity
+// is not exactly CRITICAL/HIGH/MEDIUM/LOW, while those records still counted in
+// Total and Open — the dashboard printed "Total: 5" over a By Severity table that
+// summed to 3, with no unknown row and no warning, while `debt list` rendered
+// both records normally. `debt add` validates severity but nothing else that
+// writes to the store does, so the schema-skew case lands exactly here.
+func TestSummarizeDebt_OffEnumSeverityIsCountedInAnUnknownRow(t *testing.T) {
+	recs := append(debtSampleRecords(),
+		mkDebtRecord("", "BLOCKER", "a.go", 1, "2026-06-13T09:00:00Z"),
+		mkDebtRecord("", "", "b.go", 2, "2026-06-13T09:00:00Z"),
+	)
+
+	s := summarizeDebt(recs, debtRefNow, 5)
+
+	var summed int
+	for _, c := range s.BySeverity {
+		summed += c.Total
+	}
+	assert.Equal(t, s.Total, summed, "the severity breakdown must reconcile to Total")
+
+	var unknown *debtSeverityCount
+	for i, c := range s.BySeverity {
+		if c.Severity == "(unknown)" {
+			unknown = &s.BySeverity[i]
+		}
+	}
+	require.NotNil(t, unknown, "off-enum records land in an (unknown) row")
+	assert.Equal(t, 2, unknown.Total)
+	assert.Equal(t, "(unknown)", s.BySeverity[len(s.BySeverity)-1].Severity, "the unknown row is appended last")
+
+	out := renderDebtDashboard(recs, 5)
+	assert.Contains(t, out, "| (unknown) |", "and it is rendered, so the table reconciles on screen too")
+}
+
+// The unknown row is emitted only when it is non-zero: a clean store's dashboard
+// must not grow a permanent empty row.
+func TestSummarizeDebt_NoUnknownRowWhenEverySeverityIsOnEnum(t *testing.T) {
+	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+
+	for _, c := range s.BySeverity {
+		assert.NotEqual(t, "(unknown)", c.Severity)
+	}
+	assert.NotContains(t, renderDebtDashboard(debtSampleRecords(), 5), "(unknown)")
+}
+
 func TestSummarizeDebt_TopPriority_SeverityThenAge(t *testing.T) {
 	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
 	require.NotEmpty(t, s.Top)
