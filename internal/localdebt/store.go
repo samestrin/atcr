@@ -359,12 +359,89 @@ type shardRead struct {
 	// records is the concatenation of every decodable record, in shard order —
 	// identical to what ReadAll returns.
 	records []Record
+	// shards[i] is the PHYSICAL file records[i] was read from, e.g. "2026-06.jsonl".
+	//
+	// It is tracked rather than derived because the two can disagree. Everything
+	// about where a record may be written follows from its run_id, but everything
+	// about whether its current copy is safe follows from the file it is actually
+	// in — and a hand-edited store, an external writer, or a rename puts a record
+	// in a file its run_id does not name. Judging protection by the derived month
+	// is what let Compact write a second copy of such a record while the original
+	// survived in a shard that is never rewritten (TD internal/localdebt/store.go:774).
+	shards []string
 	// preserved maps a month shard to the forward-incompatible raw lines read from
 	// it, in file order, to be written back into that same shard.
 	preserved map[string][][]byte
-	// protected is the set of month shards holding a line this reader could not
-	// represent (over-long). They must be neither rewritten nor removed.
-	protected map[string]bool
+	// frozen is the set of physical shard FILES Compact must neither rewrite nor
+	// remove: a month shard holding a line this reader could not represent
+	// (over-long), and every non-month .jsonl file, which Compact never rewrites by
+	// construction (TD internal/localdebt/store.go:298).
+	frozen map[string]bool
+}
+
+// frozenIDs is the set of finding ids with at least one record sitting in a frozen
+// shard. Those ids are not compactable: their frozen copies stay on disk verbatim,
+// so folding them elsewhere would either duplicate a record (the fold written beside
+// a surviving original) or strand the aggregate counters, which live only on the
+// folded record. Their remaining records are instead written back unchanged and the
+// next read recomputes the identical fold.
+func (s shardRead) frozenIDs() map[string]bool {
+	if len(s.frozen) == 0 {
+		return nil
+	}
+	ids := map[string]bool{}
+	for i, r := range s.records {
+		if s.frozen[s.shards[i]] {
+			ids[r.ID] = true
+		}
+	}
+	return ids
+}
+
+// planCompaction is what a compaction run would write: the retained fold over every
+// compactable record, plus the untouched records of any id anchored to a frozen
+// shard. Records that are THEMSELVES in a frozen shard are never emitted — they are
+// already on disk and stay there.
+//
+// Splitting the fold this way is what keeps the two halves of the store consistent.
+// A frozen id's history is preserved in full (the price of an unrewritable shard,
+// paid until the offending line leaves the store), while every other id folds to at
+// most two records as usual.
+// compactionCounts reports what a run reads, leaves behind, and drops.
+//
+// RecordsAfter counts what is ON DISK when the run finishes, which is the planned
+// writes PLUS the records sitting in frozen shards — those are never written by this
+// run precisely because they are already there. Counting only the writes would report
+// every frozen record as Dropped, i.e. as data this run removed, which is the one
+// thing compaction must never be wrong about.
+func compactionCounts(read shardRead, planned []Record) (before, after, dropped int) {
+	before = len(read.records)
+	after = len(planned)
+	for i := range read.records {
+		if read.frozen[read.shards[i]] {
+			after++
+		}
+	}
+	return before, after, before - after
+}
+
+func planCompaction(read shardRead) []Record {
+	frozen := read.frozenIDs()
+	if len(frozen) == 0 {
+		return retainForCompaction(read.records)
+	}
+	var compactable, carried []Record
+	for i, r := range read.records {
+		switch {
+		case read.frozen[read.shards[i]]:
+			// Already on disk in a file this run will not touch.
+		case frozen[r.ID]:
+			carried = append(carried, r)
+		default:
+			compactable = append(compactable, r)
+		}
+	}
+	return append(retainForCompaction(compactable), carried...)
 }
 
 // readAllPreserving is ReadAll for the compaction path: same records in the same
@@ -377,16 +454,16 @@ type shardRead struct {
 // back to the file it came from is the only placement that is correct without
 // understanding it.
 //
-// Only monthRe-matching shard names are tracked. A non-month .jsonl file is still
-// read for records (matching ReadAll), but Compact never rewrites or removes it, so
-// its contents are already safe. Note the pre-existing consequence, unchanged here:
-// records in such a file are read AND re-emitted into their run_id's month shard,
-// so they exist twice on disk afterwards and inflate the next run's RecordsBefore.
-// The duplicate is harmless — the fold collapses it on read.
+// A non-month .jsonl file is read for records (matching ReadAll) and marked FROZEN:
+// Compact never rewrites or removes such a file, so re-emitting its records into
+// their run_id's month shard left them on disk twice — read from one file, written
+// to another, with neither copy ever reconciled (TD internal/localdebt/store.go:298).
+// Reading them still matters — the fold must account for them — so they are read and
+// then held in place rather than ignored outright.
 func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 	out := shardRead{
 		preserved: map[string][][]byte{},
-		protected: map[string]bool{},
+		frozen:    map[string]bool{},
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -401,24 +478,30 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		month := strings.TrimSuffix(e.Name(), ".jsonl")
+		name := e.Name()
+		month := strings.TrimSuffix(name, ".jsonl")
 		isMonthShard := monthRe.MatchString(month)
 		var collect func([]byte)
 		if isMonthShard {
 			collect = func(line []byte) { out.preserved[month] = append(out.preserved[month], line) }
+		} else {
+			out.frozen[name] = true
 		}
 
-		recs, unrepresentable, err := scanShard(filepath.Join(dir, e.Name()), opts, collect)
+		recs, unrepresentable, err := scanShard(filepath.Join(dir, name), opts, collect)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return out, basePathErr(err)
 		}
-		if unrepresentable && isMonthShard {
-			out.protected[month] = true
+		if unrepresentable {
+			out.frozen[name] = true
 		}
-		out.records = append(out.records, recs...)
+		for _, r := range recs {
+			out.records = append(out.records, r)
+			out.shards = append(out.shards, name)
+		}
 	}
 	return out, nil
 }
@@ -824,79 +907,6 @@ func retainForCompaction(recs []Record) []Record {
 	return out
 }
 
-// passThroughUncompactable replaces the folded output for any id with a record in a
-// shard this run cannot rewrite — its effective record, or the trail or donor the
-// fold retained — emitting every one of that id's records untouched instead.
-//
-// Compact skips writing a record whose month is protected — the shard holds a line
-// longer than maxLineBytes and is left whole rather than rebuilt from the subset
-// that could be read. For an ordinary fold that was harmless: the raw records are
-// still on disk in that shard, and the next read folds them again.
-//
-// It stopped being harmless when the fold began carrying aggregates. Occurrences
-// and FirstSeen exist ONLY on the folded record, so skipping the write throws them
-// away — while the id's other shards, holding the very sightings the aggregate
-// summarized, are still rewritten or removed as compacted. The count deflates and
-// the original sighting is lost, permanently and unrecomputably: this is the exact
-// mirror of the inflation CountedThrough fixes, in the same survivorship shape.
-//
-// So an id whose effective record cannot be written is not compactable at all.
-// Passing its records through unchanged preserves every input, and the fold
-// recomputes the identical aggregate on the next read. It costs the space of one
-// id's history until the oversized line leaves the store — the same trade Compact
-// already makes for the protected shard itself, for the same reason: leaving it
-// whole costs disk, rewriting it costs data.
-func passThroughUncompactable(folded, all []Record, protected map[string]bool) []Record {
-	uncompactable := map[string]bool{}
-	for _, r := range folded {
-		if month, err := monthFromRunID(r.RunID); err == nil && protected[month] {
-			uncompactable[r.ID] = true
-		}
-	}
-	if len(uncompactable) == 0 {
-		return folded
-	}
-
-	byID := map[string][]Record{}
-	for _, r := range all {
-		if uncompactable[r.ID] {
-			byID[r.ID] = append(byID[r.ID], r)
-		}
-	}
-	out := make([]Record, 0, len(folded))
-	emitted := map[string]bool{}
-	for _, r := range folded {
-		if !uncompactable[r.ID] {
-			out = append(out, r)
-			continue
-		}
-		if emitted[r.ID] {
-			continue
-		}
-		emitted[r.ID] = true
-		// Emit each DISTINCT record once. A record read from a .jsonl file whose
-		// name is not its run_id's month is re-emitted into that month shard while
-		// the original copy is never rewritten, so the store already holds it twice
-		// (see readAllPreserving). Passing both copies through would write a third
-		// on the next run, then a fourth — unbounded growth, with every duplicate
-		// counted as another sighting. Folding is what normally collapses them; an
-		// uncompactable id does not fold, so it dedupes here instead.
-		seen := map[string]bool{}
-		for _, dup := range byID[r.ID] {
-			line, err := json.Marshal(dup)
-			if err != nil {
-				out = append(out, dup) // unmarshalable is not a reason to drop data
-				continue
-			}
-			if key := string(line); !seen[key] {
-				seen[key] = true
-				out = append(out, dup)
-			}
-		}
-	}
-	return out
-}
-
 // modelDonor returns the terminal record whose Model AggregateQualitySignal would
 // recover for this id, or nil when the effective record already carries one or no
 // donor exists.
@@ -1020,9 +1030,10 @@ func sweepStaleTemps(dir string) {
 // is not found.
 //
 // RecordsBefore is the total records read;
-// RecordsAfter is the number of records written back — the folded (live) count,
-// plus the full history of any id passed through because it is anchored to a shard
-// this run could not rewrite (passThroughUncompactable); Dropped is
+// RecordsAfter is the number of records the store holds afterwards — the folded
+// (live) count, plus the full history of any id anchored to a shard this run could
+// not rewrite, whether that history was written back or simply left in the frozen
+// shard it already occupied (planCompaction, compactionCounts); Dropped is
 // RecordsBefore-RecordsAfter, the superseded records removed. Preserved counts forward-incompatible lines
 // carried through untouched — they are not records this binary can fold, so they
 // are excluded from the other three counts and explain any gap between the reported
@@ -1077,13 +1088,22 @@ func hasShardFiles(dir string) bool {
 // data, and a future schema embedding a blob, diff, or log makes oversized records
 // ordinary rather than exotic.
 //
-// A fourth case follows from the third: when the shard left untouched happens to
-// hold an id's effective record, that id is not compacted at all. Writing the fold
-// would drop the aggregate counters that live only on the record being skipped, so
-// every record of that id is written back untouched instead and the next read
-// recomputes the identical fold (passThroughUncompactable). Such an id retains its
+// A fourth case follows from the third: an id with ANY record inside such a shard is
+// not compacted at all. Writing the fold would drop the aggregate counters that live
+// only on the folded record, or leave that fold beside a surviving original, so every
+// record of that id is instead left exactly where it is — written back unchanged when
+// it lives in a rewritable shard, untouched when it lives in the frozen one — and the
+// next read recomputes the identical fold (planCompaction). Such an id retains its
 // full history, not the usual at-most-two records, until the oversized line leaves
 // the store.
+//
+// Membership in that fourth case is decided by the PHYSICAL file a record was read
+// from, never by the month derived from its run_id. The two disagree for a
+// hand-edited store, an external writer, or a rename, and judging by the derived
+// month is what wrote a second copy of such a record while the original survived
+// (TD internal/localdebt/store.go:774). A non-month .jsonl file is frozen for the
+// same reason: Compact never rewrites one, so re-emitting its records into their
+// run_id month shard left them on disk twice (TD internal/localdebt/store.go:298).
 //
 // Malformed lines are deliberately NOT preserved. A forward-incompatible or
 // over-long line is valid data this version cannot interpret or even buffer; a
@@ -1119,10 +1139,7 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 		if len(read.records) == 0 {
 			return nil
 		}
-		folded := passThroughUncompactable(retainForCompaction(read.records), read.records, read.protected)
-		result.RecordsBefore = len(read.records)
-		result.RecordsAfter = len(folded)
-		result.Dropped = len(read.records) - len(folded)
+		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, planCompaction(read))
 		return nil
 	})
 	if err != nil {
@@ -1144,7 +1161,10 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		if err != nil {
 			return err
 		}
-		recs, preservedByShard, protected := read.records, read.preserved, read.protected
+		recs, preservedByShard := read.records, read.preserved
+		// Frozen is keyed by physical FILE; the destination checks below ask about a
+		// MONTH, so translate once here rather than at each use.
+		frozenMonth := func(month string) bool { return read.frozen[month+".jsonl"] }
 		preservedCount := 0
 		for _, lines := range preservedByShard {
 			preservedCount += len(lines)
@@ -1158,26 +1178,23 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			return nil
 		}
 
-		folded := passThroughUncompactable(retainForCompaction(recs), recs, protected)
+		planned := planCompaction(read)
 		result = CompactResult{
-			StoreFound:    storeFound,
-			RecordsBefore: len(recs),
-			RecordsAfter:  len(folded),
-			Dropped:       len(recs) - len(folded),
-			Preserved:     preservedCount,
+			StoreFound: storeFound,
+			Preserved:  preservedCount,
 		}
+		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, planned)
 
 		byMonth := map[string][]Record{}
-		for _, r := range folded {
+		for _, r := range planned {
 			month, err := monthFromRunID(r.RunID)
 			if err != nil {
 				return err
 			}
-			if protected[month] {
-				// The shard is left whole, superseded records and all. Its records still
-				// took part in the global fold above, so any copy of this id living in
-				// another shard is folded correctly; the stale copy left here is
-				// collapsed by the fold on the next read.
+			if frozenMonth(month) {
+				// The shard is left whole, superseded records and all. Writing into it
+				// is the one thing that must not happen — it is not rewritten, so a
+				// record placed here would be a second copy beside a surviving original.
 				continue
 			}
 			byMonth[month] = append(byMonth[month], r)
@@ -1185,7 +1202,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		// A shard with only preserved lines still has to be rewritten (rather than
 		// skipped and later removed), so seed it with an empty record set.
 		for month := range preservedByShard {
-			if protected[month] {
+			if frozenMonth(month) {
 				continue
 			}
 			if _, ok := byMonth[month]; !ok {
@@ -1201,10 +1218,10 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
 				month := strings.TrimSuffix(e.Name(), ".jsonl")
-				// A protected shard is never a removal candidate: it is excluded here
+				// A frozen shard is never a removal candidate: it is excluded here
 				// rather than deleted from the set later, so no path can reach os.Remove
 				// for it.
-				if monthRe.MatchString(month) && !protected[month] {
+				if monthRe.MatchString(month) && !frozenMonth(month) {
 					existingMonths[month] = true
 				}
 			}
