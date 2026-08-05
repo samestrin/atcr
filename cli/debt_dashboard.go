@@ -147,19 +147,32 @@ func resolveDashboardOutput(output string) (string, error) {
 	}
 }
 
+// exitDrift is the dedicated exit code for `dashboard --check` failures that
+// regenerating the dashboard fixes: content drift and a missing target file.
+// It lives here rather than in main.go's const block because it classifies
+// exactly one command's contract — a CI job or pre-commit hook can tell
+// "regenerate and stage it" (4) apart from a real failure (1) and a usage
+// error (2). An UNREADABLE target (permissions, a directory at the path) stays
+// exitFailure: regeneration will not fix it, so it must not share drift's code.
+const exitDrift = 4
+
 // checkDashboard compares the on-disk dashboard against freshly generated
-// content and returns a non-nil (exit 1) error when they differ or the file is
-// absent, so a CI job or pre-commit hook fails on drift.
+// content so a CI job or pre-commit hook fails on drift. The failure
+// classification is the contract a hook scripts against:
+//
+//   - drift or a missing file → exitDrift (4): regenerate and re-stage.
+//   - an unreadable target    → exitFailure (1): fix the read error;
+//     regenerating will not help, and the message does not suggest it.
 func checkDashboard(cmd *cobra.Command, out, content string) error {
 	existing, err := os.ReadFile(out)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("dashboard %s does not exist; run `atcr debt dashboard --output %s` to generate it", out, out)
+			return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s does not exist; run `atcr debt dashboard --output %s` to generate it", out, out)}
 		}
-		return fmt.Errorf("read dashboard: %w", err)
+		return fmt.Errorf("read dashboard %s: %w", out, err)
 	}
 	if string(existing) != content {
-		return fmt.Errorf("dashboard %s is out of date; regenerate with `atcr debt dashboard --output %s`", out, out)
+		return &codedError{code: exitDrift, err: fmt.Errorf("dashboard %s is out of date; regenerate with `atcr debt dashboard --output %s`", out, out)}
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Dashboard %s is up to date.\n", out)
 	return err
