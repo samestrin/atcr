@@ -344,6 +344,26 @@ func TestParseDebtFileLine(t *testing.T) {
 	}
 }
 
+// A ":0" line suffix is not a location: line numbers are 1-based, and Line 0 is
+// the sentinel localdebt.Record uses for "no line recorded". Accepting it would
+// collapse "a.go:0" and "a.go" onto the same StampID hash, so a second `debt add`
+// with the other spelling would silently reuse an existing record's id. It is a
+// usage error instead — in both zero and zero-padded form.
+func TestDebtAdd_ZeroLineSuffixIsUsageError(t *testing.T) {
+	for _, loc := range []string{"a.go:0", "a.go:00"} {
+		t.Run(loc, func(t *testing.T) {
+			dir := emptyDebtStore(t)
+			_, err := runDebt(t, "add", "--dir", dir,
+				"--severity", "LOW", "--file", loc,
+				"--problem", "p", "--fix", "f", "--category", "c")
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.Contains(t, err.Error(), "1-based", "the error explains that line numbers are 1-based")
+			assert.Empty(t, readDebtStore(t, dir), "a rejected add writes nothing")
+		})
+	}
+}
+
 func TestPromptEntry_ReadsFieldsAndDefaults(t *testing.T) {
 	// Answers, in order: severity, file, problem, fix, category, est, status.
 	// Empty lines take the seeded default.
