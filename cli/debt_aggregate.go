@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,12 +59,22 @@ func debtRecordDate(r localdebt.Record) string {
 // convention). A value with no path separator (free-text File) is bucketed under
 // a single "(unscoped)" sentinel so aggregation never explodes into one-off
 // buckets.
+//
+// The value is normalized (Clean + slash) before the separator test and split,
+// because File is a free-text wire string: "./internal/foo.go" must land in the
+// same bucket as "internal/foo.go", and redundant separators must collapse. An
+// absolute path loses its leading separator so the two-segment rule applies to
+// the real path ("/abs/x/y.go" buckets as "abs/x") rather than every absolute
+// path collapsing under "/abs". The empty check runs first because
+// filepath.Clean("") is ".", which would otherwise bucket as a bogus component.
 func debtComponent(file string) string {
 	p := strings.TrimSpace(file)
+	if p == "" {
+		return "(unscoped)"
+	}
+	p = filepath.ToSlash(filepath.Clean(p))
+	p = strings.TrimPrefix(p, "/")
 	if !strings.Contains(p, "/") {
-		if p == "" {
-			return "(unscoped)"
-		}
 		// A bare filename (e.g. main.go) is a legitimate one-segment component;
 		// genuinely path-less prose is not. Distinguish the two by looking for a
 		// file extension or a single free-form phrase.
