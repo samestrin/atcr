@@ -269,9 +269,12 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 
 // promptEntry runs the interactive wizard against in/out, returning the record
 // to file. An empty answer takes the seeded default; required fields (severity,
-// file, problem, fix, category) are re-prompted when left blank and error only
-// if the input stream ends first. The returned record carries only the
-// user-supplied fields — finalizeDebtRecord validates and stamps the rest.
+// file, problem, fix, category) are re-prompted when left blank and error if the
+// input stream ends first. A mid-stream read failure is NOT end-of-input: it
+// aborts the wizard with the underlying cause ("input read error: ...") rather
+// than letting later prompts silently accept seeded defaults off a dead scanner.
+// The returned record carries only the user-supplied fields — finalizeDebtRecord
+// validates and stamps the rest.
 func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Record, error) {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -288,6 +291,15 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 				_, _ = fmt.Fprintf(out, "%s: ", label)
 			}
 			if !sc.Scan() {
+				// A false Scan is not always EOF: a scanner failure
+				// (bufio.ErrTooLong, an I/O error) must surface its real cause
+				// rather than masquerade as end-of-input. Latching it into perr
+				// also stops every later ask from silently accepting a seeded
+				// default off a dead scanner.
+				if err := sc.Err(); err != nil {
+					perr = fmt.Errorf("input read error: %w", err)
+					return ""
+				}
 				if dflt != "" {
 					return dflt
 				}
@@ -320,6 +332,8 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 	if perr != nil {
 		return localdebt.Record{}, perr
 	}
+	// Redundant for the ask path — a scanner failure already latched into perr —
+	// but kept as a guard in case the prompt flow ever changes.
 	if err := sc.Err(); err != nil {
 		return localdebt.Record{}, fmt.Errorf("input read error: %w", err)
 	}
