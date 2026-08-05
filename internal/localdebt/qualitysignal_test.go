@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -268,4 +269,28 @@ func TestAggregateQualitySignal_WontfixRowSurvivesRedetection(t *testing.T) {
 	rows := AggregateQualitySignal([]Record{open, wontfix, regressed})
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].DismissedCount)
+}
+
+// BenchmarkFoldTerminalByID_Unattributed100k measures the model-recovery fold at
+// the store's own auto-compaction ceiling (100k records) with every effective
+// terminal needing donor recovery — the shape the TD items at
+// internal/localdebt/qualitysignal.go:22 and :45 flag: a per-id rescan of the
+// whole stream makes this quadratic at exactly the scale the comment's O(n)
+// claim invites reuse.
+func BenchmarkFoldTerminalByID_Unattributed100k(b *testing.B) {
+	const ids = 50_000
+	records := make([]Record, 0, 2*ids)
+	for i := 0; i < ids; i++ {
+		id := fmt.Sprintf("id%06d", i)
+		// An earlier resolved terminal carrying a Model (the donor) ...
+		records = append(records, Record{ID: id, RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "resolved"})
+		// ... outranked by a later wontfix terminal WITHOUT one (needs recovery).
+		records = append(records, Record{ID: id, RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+			Reviewers: []string{"claude"}, Status: "wontfix"})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		foldTerminalByID(records)
+	}
 }
