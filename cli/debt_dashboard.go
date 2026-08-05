@@ -116,7 +116,10 @@ func resolveDashboardOutput(output string) (string, error) {
 	// would leave a LEAF symlink unresolved — validation would see the link path
 	// while os.WriteFile follows it to its target, which is the same bypass in its
 	// shortest form.
-	abs = followDanglingLinkLeaf(abs)
+	abs, err = followDanglingLinkLeaf(abs)
+	if err != nil {
+		return "", err
+	}
 	if resolved, err := evalSymlinksFn(abs); err == nil {
 		return resolved, nil
 	}

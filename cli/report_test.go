@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -360,17 +361,38 @@ func TestResolveOutputPath_FollowsARelativeDanglingLeafSymlink(t *testing.T) {
 	require.Equal(t, filepath.Join(realDir, "sibling.json"), got)
 }
 
-// A link cycle must terminate rather than spin.
-func TestResolveOutputPath_SymlinkCycleTerminates(t *testing.T) {
+// A link cycle must terminate, and it must FAIL rather than fall open: an
+// exhausted hop budget means the real destination is unknown, and handing an
+// unresolved link to the validator is a bypass with one extra link.
+func TestResolveOutputPath_SymlinkCycleIsAnError(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	require.NoError(t, os.Symlink(b, a))
 	require.NoError(t, os.Symlink(a, b))
 
-	got, err := resolveOutputPath(a)
+	_, err = resolveOutputPath(a)
+	require.Error(t, err, "a link cycle must not resolve to a path the caller then trusts")
+}
+
+// A chain one link longer than the budget must not escape: the fall-open version
+// of this returned a still-dangling link, the parent-resolution branch then vetted
+// the link's own (safe-looking) path, and the write followed the rest of the chain.
+func TestResolveOutputPath_OverlongLinkChainIsAnError(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.True(t, filepath.IsAbs(got), "a cycle bails out to an absolute path, got %q", got)
+
+	// Build maxOutputLinkHops+1 chained dangling links ending outside the temp tree.
+	last := "/etc/atcr-chain-escape.md"
+	for i := 0; i <= maxOutputLinkHops; i++ {
+		link := filepath.Join(dir, fmt.Sprintf("l%d", i))
+		require.NoError(t, os.Symlink(last, link))
+		last = link
+	}
+
+	_, err = resolveOutputPath(last)
+	require.Error(t, err, "an over-long chain must fail closed, not fall open to the link path")
+	require.NoFileExists(t, "/etc/atcr-chain-escape.md")
 }
 
 // TestResolveOutputPath_FailsOpenWhenParentAbsent keeps the fail-open contract for

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,6 +116,24 @@ func TestDebtDashboard_OutputThroughLeafSymlinkIsUsageError(t *testing.T) {
 		})
 	}
 	assert.NoFileExists(t, "/etc/atcr-leak.md")
+}
+
+// A chain longer than the hop budget must fail closed rather than fall open to a
+// still-dangling link the validator would then vet as safe.
+func TestDebtDashboard_OverlongSymlinkChainIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	base := t.TempDir()
+	last := "/etc/atcr-dash-chain.md"
+	for i := 0; i <= maxOutputLinkHops; i++ {
+		link := filepath.Join(base, "l"+strconv.Itoa(i))
+		require.NoError(t, os.Symlink(last, link))
+		last = link
+	}
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", last)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.NoFileExists(t, "/etc/atcr-dash-chain.md")
 }
 
 // A relative link target resolves against the LINK's directory, not the process

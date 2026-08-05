@@ -163,7 +163,10 @@ func resolveOutputPath(output string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving --output: %w", err)
 	}
-	abs = followDanglingLinkLeaf(abs)
+	abs, err = followDanglingLinkLeaf(abs)
+	if err != nil {
+		return "", err
+	}
 	resolved, err := evalSymlinksFn(abs)
 	if err == nil {
 		return resolved, nil
@@ -194,22 +197,29 @@ const maxOutputLinkHops = 8
 //
 // A path with no leaf symlink is returned unchanged, so this is a no-op for the
 // ordinary case.
-func followDanglingLinkLeaf(abs string) string {
+//
+// It fails CLOSED. Running out of hops, or failing to read a link, means the real
+// destination is UNKNOWN — and an unknown destination must not be handed to a
+// validator that would then vet the link's own path while the write follows the
+// rest of the chain. Falling open here is a bypass with a chain one link longer
+// than the budget, so the budget must end in an error, not a guess.
+func followDanglingLinkLeaf(abs string) (string, error) {
 	for i := 0; i < maxOutputLinkHops; i++ {
 		info, err := os.Lstat(abs)
 		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			return abs
+			return abs, nil
 		}
 		target, err := os.Readlink(abs)
 		if err != nil {
-			return abs
+			return "", fmt.Errorf("resolving --output: cannot read the symlink %q: %w", abs, err)
 		}
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(filepath.Dir(abs), target)
 		}
 		abs = filepath.Clean(target)
 	}
-	return abs
+	return "", fmt.Errorf("resolving --output: more than %d chained symlinks at %q; refusing to write to an unresolvable target",
+		maxOutputLinkHops, abs)
 }
 
 // loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and
