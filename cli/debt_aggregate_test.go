@@ -48,6 +48,25 @@ func TestDebtComponent_DepthTwo(t *testing.T) {
 	assert.Equal(t, "(unscoped)", debtComponent(""))
 }
 
+// TD item E: File is a free-text wire string, so the same path arrives spelled
+// different ways. debtComponent must normalize before bucketing: a leading ./
+// and redundant separators collapse to the plain spelling's bucket, and an
+// absolute path drops its leading separator so the two-segment rule applies to
+// the real path instead of bucketing every absolute path under "/<first>".
+func TestDebtComponent_NormalizesPathSpellings(t *testing.T) {
+	// ./-prefixed and plain spellings of the same path share ONE bucket.
+	assert.Equal(t, "internal/autofix", debtComponent("./internal/autofix/apply.go"))
+	assert.Equal(t, debtComponent("internal/autofix/apply.go"), debtComponent("./internal/autofix/apply.go"))
+	// Redundant separators collapse the same way.
+	assert.Equal(t, "internal/autofix", debtComponent("internal//autofix/apply.go"))
+	// An absolute path buckets as its first two real segments, not "/abs".
+	assert.Equal(t, "abs/x", debtComponent("/abs/x/y.go"))
+	// The guards that must survive normalization.
+	assert.Equal(t, "(unscoped)", debtComponent(""))
+	assert.Equal(t, "(unscoped)", debtComponent("see the design doc"))
+	assert.Equal(t, "main.go", debtComponent("main.go"))
+}
+
 func TestSummarizeDebt_SeverityCounts(t *testing.T) {
 	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
 
