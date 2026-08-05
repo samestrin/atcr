@@ -31,15 +31,22 @@
 //
 // # Concurrency guarantee
 //
-// Each Append call marshals one record to one []byte and issues exactly one
+// The guarantee has two layers. Mutual exclusion comes first: Append and Compact
+// run their critical sections under withLock (lock.go), a mkdir-based
+// cross-process lock with staleness reclaim, so two processes never append to or
+// rewrite the store at the same time. Line integrity comes second: inside that
+// lock, each Append call marshals one record to one []byte and issues exactly one
 // os.Write to a file opened O_APPEND. On Linux/macOS a write() to a regular file
-// opened O_APPEND atomically appends, so two processes appending concurrently never
-// interleave or lose a record. No bufio.Writer is shared across records — batching
-// would coalesce records into one larger write whose atomicity is not guaranteed,
-// tearing lines under concurrency. The portability caveat for non-POSIX append
-// semantics is the accepted TD-004 won't-fix stance already applied to the other
-// five append-only ledgers (audit, debate, scorecard, tools, history); no
-// cross-process lock is introduced.
+// opened O_APPEND atomically appends, so a record can never interleave or tear
+// even if the lock is reclaimed stale and two appends overlap. No bufio.Writer is
+// shared across records — batching would coalesce records into one larger write
+// whose atomicity is not guaranteed, tearing lines under concurrency. The lock is
+// taken by Append and Compact only: MaybeCompact's threshold stats read runs
+// outside any lock (withLock is mkdir-based and not reentrant, so nesting it
+// inside Compact would stall for the full lockWait). The portability caveat for
+// non-POSIX append semantics is the accepted TD-004 won't-fix stance already
+// applied to the other five append-only ledgers (audit, debate, scorecard, tools,
+// history).
 //
 // Symlink following is an accepted won't-fix on the same footing. Append opens the
 // shard with O_CREATE|O_WRONLY|O_APPEND (no O_NOFOLLOW) and MkdirAll follows symlinked
