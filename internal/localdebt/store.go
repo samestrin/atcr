@@ -40,6 +40,11 @@ const MaxRecordBytes = maxLineBytes
 // matching the write path. Before routing Writer to any non-local sink, scrub
 // absolute paths and avoid echoing raw error strings.
 //
+// The contract binds RAW PATH STRINGS too, not only *os.PathError: a diagnostic that
+// formats a path it holds as a plain string reduces it to its base name explicitly
+// (withLock's lock path, lock.go:69-72; the root-resolution warnings that render a
+// manifest-recorded root, root.go).
+//
 // The "paths are repo-relative today" assumption this note used to rest on NO LONGER
 // HOLDS. Since Plan 35.13 T6 the store dir is DefaultDir(ResolveStoreRoot(...)), and
 // both the explicit and manifest tiers resolve to ABSOLUTE paths — so a leaked path

@@ -111,15 +111,20 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 					if root, ok := validateRepoRoot(recorded); ok {
 						return root, true
 					}
-					_, _ = fmt.Fprintf(diag, "localdebt: manifest repo root %q is no longer a valid repository root (copied or stale artifacts?); skipping local debt persistence\n", recorded)
+					// Redact to the base name. Unlike the explicit tier's value, which
+					// the caller just typed, this path was written into an artifact file
+					// (possibly on another machine) and can embed a username; on the MCP
+					// path this sink is bare os.Stderr, which a calling agent captures.
+					// Same reduction withLock applies to the lock path (lock.go:69-72).
+					_, _ = fmt.Fprintf(diag, "localdebt: manifest repo root %q is no longer a valid repository root (copied or stale artifacts?); skipping local debt persistence\n", filepath.Base(recorded))
 					return "", false
 				}
 			} else {
-				_, _ = fmt.Fprintf(diag, "localdebt: review manifest is unreadable (%v); skipping local debt persistence\n", err)
+				_, _ = fmt.Fprintf(diag, "localdebt: review manifest is unreadable (%v); skipping local debt persistence\n", basePathErr(err))
 				return "", false
 			}
 		} else if !os.IsNotExist(statErr) {
-			_, _ = fmt.Fprintf(diag, "localdebt: review manifest cannot be inspected (%v); skipping local debt persistence\n", statErr)
+			_, _ = fmt.Fprintf(diag, "localdebt: review manifest cannot be inspected (%v); skipping local debt persistence\n", basePathErr(statErr))
 			return "", false
 		}
 		// A missing manifest, and a manifest with an empty root, fall through to
