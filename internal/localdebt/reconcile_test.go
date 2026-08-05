@@ -252,3 +252,42 @@ func TestAttributableReviewers(t *testing.T) {
 		"unrecorded reviewers are excluded and the surviving order is preserved")
 	assert.Empty(t, attributableReviewers([]string{"perf-reviewer"}, byRev, "claude-sonnet-4-6"))
 }
+
+// TestPersistForReconcile_ManualEntryWinsIDCollision pins the current collision
+// rule the Deduplication contract documents (doc.go): StampID hashes
+// file/line/problem only — origin is deliberately excluded — so a manual
+// `debt add` record and a reconcile finding at the same location/problem share
+// one id, and write-time dedup silently drops whichever arrives SECOND. Here
+// the manual entry arrives first and the finding is skipped: the manual record
+// stands. Whether a review finding MAY supersede a manual entry is the open
+// T2/T3 semantics question (sprint-plan TD-003) — this pins the status quo so
+// the drop is deliberate, not accidental.
+func TestPersistForReconcile_ManualEntryWinsIDCollision(t *testing.T) {
+	root := t.TempDir()
+	dir := DefaultDir(root)
+
+	manual := Record{
+		SchemaVersion: SchemaVersion,
+		RunID:         "2026-08-01T00:00:00Z-manual",
+		Timestamp:     "2026-08-01T00:00:00Z",
+		Severity:      "MEDIUM",
+		File:          "a.go",
+		Line:          1,
+		Problem:       "leaks a handle",
+		Fix:           "manual fix",
+		Category:      "correctness",
+		Origin:        OriginManual,
+	}
+	manual.StampID()
+	require.NoError(t, Append(dir, manual))
+
+	// A reconcile finding at the SAME file/line/problem hashes to the same id.
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Root: root})
+
+	all, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, all, 1,
+		"the colliding reconcile finding must be dedup-dropped — the manual entry stands")
+	assert.Equal(t, OriginManual, all[0].Origin)
+	assert.Equal(t, "manual fix", all[0].Fix, "the surviving record is the manual one, fields intact")
+}

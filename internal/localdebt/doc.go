@@ -68,6 +68,22 @@
 // fails open toward append (at-least-once) if the dedup read fails. The contract is
 // documented here so downstream callers write against a settled rule.
 //
+// # Collision rule (origin is not part of the id)
+//
+// StampID hashes file/line/problem ONLY — origin is deliberately excluded — so a
+// manually-added item (`debt add`, OriginManual) and a reconcile finding for the
+// same location and problem text collide on ONE id, and the write-time dedup
+// above silently drops whichever arrives SECOND. Because the dedup lives only on
+// the reconcile hook while `debt add` appends unconditionally, the collision
+// resolves asymmetrically today: add-then-reconcile keeps the MANUAL entry (the
+// finding is skipped), while reconcile-then-add leaves BOTH records in the
+// store. No supersession exists in either direction — a review finding never
+// rewrites a manual entry's fields, and a manual entry never rewrites a
+// finding's. Whether a review finding MAY supersede a manual entry is an open
+// semantics question deferred to T2/T3 (sprint-plan TD-003); this paragraph
+// documents the current rule so the drop is deliberate rather than accidental.
+// Pinned by TestPersistForReconcile_ManualEntryWinsIDCollision.
+//
 // The seed is SCOPED, not the whole store — see the Resolution contract below and
 // the Maintenance invariant: only ids whose EFFECTIVE (folded) record suppresses or
 // is still open are seeded, so a re-detected resolved/deferred id re-appends.
