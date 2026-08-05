@@ -143,6 +143,11 @@ type debtSummary struct {
 // debtSeverityOrder is the canonical most-severe-first ordering for presentation.
 var debtSeverityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 
+// unknownSeverityLabel names the catch-all severity row. It is parenthesized so
+// it cannot collide with a real severity value read out of the store, and it
+// sorts last by construction (it is appended, not sorted into place).
+const unknownSeverityLabel = "(unknown)"
+
 // debtAgeBands defines the live-backlog age profile, evaluated in order; the
 // first band whose max (inclusive, in days) is >= the item's age wins. The final
 // catch-all band uses a max of -1 to mean "no upper bound".
@@ -234,11 +239,13 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 	s.Total = len(recs)
 
 	sevIdx := map[string]*debtSeverityCount{}
-	sevCounts := make([]debtSeverityCount, len(debtSeverityOrder))
+	sevCounts := make([]debtSeverityCount, len(debtSeverityOrder), len(debtSeverityOrder)+1)
 	for i, name := range debtSeverityOrder {
 		sevCounts[i] = debtSeverityCount{Severity: name}
 		sevIdx[name] = &sevCounts[i]
 	}
+	// Appended last, and only if something off-enum actually shows up.
+	var unknownSev *debtSeverityCount
 
 	compCount := map[string]int{}
 	ageCount := map[string]int{}
@@ -257,18 +264,35 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 			s.Open++
 		}
 
-		if sc, ok := sevIdx[strings.ToUpper(strings.TrimSpace(r.Severity))]; ok {
-			sc.Total++
-			switch bucket {
-			case "resolved":
-				sc.Resolved++
-			case "deferred":
-				sc.Deferred++
-			case "wontfix":
-				sc.Wontfix++
-			default:
-				sc.Open++
+		// An off-enum severity (a hand-edited record, a schema skew, anything that
+		// writes to the store without `debt add`'s validation) must not fall out of
+		// the breakdown while still counting in Total: that printed a By Severity
+		// table that did not sum to the header, with nothing on screen to explain
+		// the gap. It lands in the (unknown) row instead, which is created lazily so
+		// a clean store never grows an empty one.
+		sc, ok := sevIdx[strings.ToUpper(strings.TrimSpace(r.Severity))]
+		if !ok {
+			if unknownSev == nil {
+				sevCounts = append(sevCounts, debtSeverityCount{Severity: unknownSeverityLabel})
+				// sevCounts may have reallocated; re-point every index at the
+				// current backing array before taking another pointer into it.
+				for i := range sevCounts {
+					sevIdx[sevCounts[i].Severity] = &sevCounts[i]
+				}
+				unknownSev = sevIdx[unknownSeverityLabel]
 			}
+			sc = unknownSev
+		}
+		sc.Total++
+		switch bucket {
+		case "resolved":
+			sc.Resolved++
+		case "deferred":
+			sc.Deferred++
+		case "wontfix":
+			sc.Wontfix++
+		default:
+			sc.Open++
 		}
 
 		if debtIsLive(r) {
