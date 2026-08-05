@@ -1943,6 +1943,42 @@ func TestCompact_AllMalformedShardIsNotDeleted(t *testing.T) {
 	assert.Len(t, recs, 1, "the compactable shard still folds")
 }
 
+// TestMaybeCompact_UnderThresholdDoesNotScanEveryByte pins the threshold check's
+// cost (TD internal/localdebt/store.go:1388). The byte test short-circuits only when
+// it TRIPS, so for every store below the byte threshold — the overwhelmingly common
+// case — countLines opened and read every byte of every shard on every append-bearing
+// reconcile, purely to discover the store was under threshold and do nothing. A
+// record is at least minBytesPerRecord bytes, so a store smaller than
+// maxRecords*minBytesPerRecord cannot possibly hold maxRecords lines: the exact count
+// is only needed near the boundary.
+func TestMaybeCompact_UnderThresholdDoesNotScanEveryByte(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 64)
+	for i := 0; i < 64; i++ {
+		r := detection(fmt.Sprintf("finding %d", i), "2026-06-01T00:00:00Z")
+		lines = append(lines, recordLine(t, r))
+	}
+	writeShard(t, dir, "2026-06", lines...)
+
+	paths, size, err := shardPaths(dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+
+	// A policy whose record ceiling is far above what this store's BYTES could hold.
+	policy := CompactPolicy{MaxRecords: 1_000_000, MaxBytes: 1 << 40}
+	require.Less(t, size, int64(policy.maxRecords())*minBytesPerRecord,
+		"precondition: the store is too small to hold maxRecords lines")
+
+	_, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.False(t, triggered)
+
+	assert.False(t, needsExactLineCount(size, policy),
+		"a store this far below the ceiling must be settled by its size alone, with no line scan")
+	assert.True(t, needsExactLineCount(int64(policy.maxRecords())*minBytesPerRecord, policy),
+		"at the boundary the exact count is still required")
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero

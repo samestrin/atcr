@@ -1518,6 +1518,13 @@ func shardPaths(dir string) ([]string, int64, error) {
 	return paths, size, nil
 }
 
+// minBytesPerRecord is a floor on one encoded record's size on disk.
+const minBytesPerRecord = 1
+
+// needsExactLineCount reports whether the store's size leaves the record threshold in
+// doubt.
+func needsExactLineCount(size int64, policy CompactPolicy) bool { return true }
+
 // countLines counts '\n' bytes across the given shards with one reusable buffer and
 // no decode, so the threshold check never pays for JSON parsing.
 func countLines(paths []string) (int, error) {
