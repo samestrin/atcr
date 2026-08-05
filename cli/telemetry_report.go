@@ -76,7 +76,10 @@ func runQualityReport(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are md, json", format))
 	}
 
-	records, err := localdebt.ReadAll(debtStoreDir(cmd), localdebt.ReadOpts{Writer: io.Discard})
+	// Warnings go to stderr like every other store reader: a malformed or
+	// over-long line must never silently under-report the quality signal, and
+	// stderr keeps the --format json stdout stream clean.
+	records, err := localdebt.ReadAll(debtStoreDir(cmd), localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		// A present-but-unreadable store is a genuine failure (exit 1), distinct
 		// from the empty "no data" state below (a missing store reads as nil, nil).
