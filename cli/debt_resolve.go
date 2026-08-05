@@ -333,6 +333,11 @@ func severityRank(s string) int {
 // select from. An empty selection prints a clear "no items" line naming the
 // store dir it read — the same hint `debt add` prints on a write — so reading
 // the wrong store is distinguishable from an empty backlog. Exits 0 either way.
+//
+// Every column passes through the same sanitizers renderDebtTable uses
+// (debtIDCell, cell, truncate): a stray tab or CR in a store field must not tear
+// a tabwriter row, and an empty id (a hand-edited store is the only source)
+// renders as "-" rather than a blank leading column.
 func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
 	if len(recs) == 0 {
 		_, err := fmt.Fprintf(w, "No items to resolve (no open items in %s).\n", dir)
@@ -344,7 +349,7 @@ func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
-			r.ID, r.Severity, r.File, r.Line, truncate(r.Problem, 60)); err != nil {
+			debtIDCell(r.ID), cell(r.Severity), cell(r.File), r.Line, cell(truncate(r.Problem, 60))); err != nil {
 			return err
 		}
 	}
