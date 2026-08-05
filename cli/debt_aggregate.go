@@ -114,7 +114,9 @@ type debtSeverityCount struct {
 	Total                             int
 }
 
-// debtComponentCount is the item total for one component.
+// debtComponentCount is the live (open+deferred) item count for one component.
+// Settled items are excluded: By Component is the dashboard's prioritization
+// rollup, so it shares the live-backlog scope of By Age and Top Priority.
 type debtComponentCount struct {
 	Component string
 	Total     int
@@ -213,10 +215,10 @@ func debtBandLabel(days int) string {
 	return debtAgeBands[len(debtAgeBands)-1].label
 }
 
-// summarizeDebt aggregates recs into a debtSummary. Age buckets and Top cover
-// only live (open+deferred) items — resolved and dismissed debt is not part of
-// the backlog. Top is ordered most-severe first, then oldest first, capped at
-// topN.
+// summarizeDebt aggregates recs into a debtSummary. ByComponent, age buckets,
+// and Top cover only live (open+deferred) items — resolved and dismissed debt
+// is not part of the backlog. Top is ordered most-severe first, then oldest
+// first, capped at topN.
 func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary {
 	var s debtSummary
 	s.Total = len(recs)
@@ -259,9 +261,8 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 			}
 		}
 
-		compCount[debtComponent(r.File)]++
-
 		if debtIsLive(r) {
+			compCount[debtComponent(r.File)]++
 			if days, ok := debtAgeDays(r, now); ok {
 				ageCount[debtBandLabel(days)]++
 			} else {
@@ -339,12 +340,13 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	}
 	b.WriteString("\n")
 
-	// By component.
+	// By component — live items only; the header names the scope so the count
+	// cannot be misread as all-statuses.
 	b.WriteString("## By Component\n\n")
 	if len(sum.ByComponent) == 0 {
 		b.WriteString("_No items._\n\n")
 	} else {
-		b.WriteString("| Component | Items |\n|-----------|-------|\n")
+		b.WriteString("| Component | Unresolved |\n|-----------|------------|\n")
 		for _, c := range sum.ByComponent {
 			fmt.Fprintf(&b, "| %s | %d |\n", debtMarkdownCell(c.Component), c.Total)
 		}

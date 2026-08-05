@@ -128,7 +128,9 @@ func TestSummarizeDebt_ByComponent(t *testing.T) {
 	for _, c := range s.ByComponent {
 		byComp[c.Component] = c.Total
 	}
-	assert.Equal(t, 2, byComp["internal/autofix"])
+	// Live-only counts: internal/autofix loses its resolved LOW item, cmd/atcr
+	// keeps the open CRITICAL and the deferred MEDIUM.
+	assert.Equal(t, 1, byComp["internal/autofix"])
 	assert.Equal(t, 2, byComp["cmd/atcr"])
 
 	// Deterministic order: Total desc, then component name asc.
@@ -147,11 +149,11 @@ func TestSummarizeDebt_ByComponent(t *testing.T) {
 // component whose findings are all settled is not work to do and must not rank.
 func TestSummarizeDebt_ByComponentCountsLiveOnly(t *testing.T) {
 	recs := []localdebt.Record{
-		mkDebtRecord("resolved", "HIGH", "closedonly/a.go", 1, "2026-06-01T09:00:00Z"),
-		mkDebtRecord("wontfix", "HIGH", "closedonly/b.go", 2, "2026-06-01T09:00:00Z"),
-		mkDebtRecord("", "HIGH", "mixed/a.go", 1, "2026-06-01T09:00:00Z"),
-		mkDebtRecord("deferred", "HIGH", "mixed/b.go", 2, "2026-06-01T09:00:00Z"),
-		mkDebtRecord("resolved", "HIGH", "mixed/c.go", 3, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("resolved", "HIGH", "closedonly/sub/a.go", 1, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("wontfix", "HIGH", "closedonly/sub/b.go", 2, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("", "HIGH", "mixed/sub/a.go", 1, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("deferred", "HIGH", "mixed/sub/b.go", 2, "2026-06-01T09:00:00Z"),
+		mkDebtRecord("resolved", "HIGH", "mixed/sub/c.go", 3, "2026-06-01T09:00:00Z"),
 	}
 	s := summarizeDebt(recs, debtRefNow, 5)
 
@@ -159,9 +161,9 @@ func TestSummarizeDebt_ByComponentCountsLiveOnly(t *testing.T) {
 	for _, c := range s.ByComponent {
 		byComp[c.Component] = c.Total
 	}
-	_, hasClosedOnly := byComp["closedonly"]
+	_, hasClosedOnly := byComp["closedonly/sub"]
 	assert.False(t, hasClosedOnly, "a component holding only settled items must not appear in By Component")
-	assert.Equal(t, 2, byComp["mixed"], "only live (open+deferred) items count toward a component")
+	assert.Equal(t, 2, byComp["mixed/sub"], "only live (open+deferred) items count toward a component")
 }
 
 // The rendered column header names the scope so "Unresolved" cannot be misread
