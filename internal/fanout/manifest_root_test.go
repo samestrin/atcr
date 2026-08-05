@@ -90,8 +90,66 @@ func TestClearInterrupted_PreservesRoot(t *testing.T) {
 
 // TestPrepareResume_BackfillsMissingRoot covers AC7(b)'s backfill: a review created
 // before the field existed would otherwise never acquire a root, and its reconcile
-// would fall back to CWD forever.
+// would fall back to CWD forever. This pins the SHIPPED input shape (TD
+// internal/fanout/manifest_root_test.go:69): req.Root is "." on the real resume path
+// (cli/resume.go), resolved from a CWD that is NOT the review's repo — so the
+// backfill must name the review's OWN repo, recovered from the managed artifact
+// path (<root>/.atcr/reviews/<id>), never the resuming process's CWD
+// (TD internal/fanout/resume.go:376).
 func TestPrepareResume_BackfillsMissingRoot(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	repo := baselineRepo(t, map[string]string{"a.go": "package a\n"})
+	// Default path: .atcr/reviews/<id>/ under the repo root (the managed shape).
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, ""))
+	require.NoError(t, err)
+
+	// Simulate a pre-field manifest by clearing the root the review just wrote.
+	m, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	m.Root = ""
+	require.NoError(t, WriteManifest(prep.Dir, m))
+
+	// Resume with the shipped input — Root: "." — from a CWD that is not the
+	// review's repo: the candidate the old absRoot(req.Root) code would stamp.
+	req := repoReq(repo, "")
+	req.Root = "."
+	t.Chdir(t.TempDir())
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, req)
+	require.NoError(t, err)
+	require.NotNil(t, rprep.manifest)
+	require.NotEmpty(t, rprep.manifest.Root, "a resume must backfill a missing root")
+	assert.True(t, filepath.IsAbs(rprep.manifest.Root))
+
+	want, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(rprep.manifest.Root)
+	require.NoError(t, err)
+	assert.Equal(t, want, got,
+		"the backfill must name the review's own repo (derived from the artifact path), not the resuming CWD")
+
+	// ON DISK, not just in memory. `atcr resume` on an already-complete review
+	// returns after ClearInterrupted without any finalization write, so a backfill
+	// that only mutates the in-memory struct never survives — and that is the very
+	// path a pre-field review takes. Asserting rprep.manifest alone passes against
+	// that defect.
+	onDisk, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	gotDisk, err := filepath.EvalSymlinks(onDisk.Root)
+	require.NoError(t, err)
+	assert.Equal(t, want, gotDisk,
+		"the backfilled root must be persisted, not left to ride a write that may never happen")
+}
+
+// TestPrepareResume_DoesNotBackfillUnmanagedReviewDir pins the other half of the
+// derivation rule: a review written to a custom --output-dir does NOT live at
+// <root>/.atcr/reviews/<id>, so the artifact path cannot vouch for any root.
+// Stamping absRoot(req.Root) there trusts a claim the artifacts cannot verify —
+// on the shipped input (Root: ".") that is the resuming process's CWD, silently
+// attaching another repo's findings to wherever the operator stood. The backfill
+// is SKIPPED: Root stays empty, degrading to the pre-field CWD behavior the
+// reconcile already had for such reviews (TD internal/fanout/resume.go:376).
+func TestPrepareResume_DoesNotBackfillUnmanagedReviewDir(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	repo := baselineRepo(t, map[string]string{"a.go": "package a\n"})
 	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
@@ -106,18 +164,12 @@ func TestPrepareResume_BackfillsMissingRoot(t *testing.T) {
 	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, repoReq(repo, ""))
 	require.NoError(t, err)
 	require.NotNil(t, rprep.manifest)
-	assert.NotEmpty(t, rprep.manifest.Root, "a resume must backfill a missing root")
-	assert.True(t, filepath.IsAbs(rprep.manifest.Root))
+	assert.Empty(t, rprep.manifest.Root,
+		"an unmanaged review dir yields no artifact-backed root claim — the backfill must be skipped")
 
-	// ON DISK, not just in memory. `atcr resume` on an already-complete review
-	// returns after ClearInterrupted without any finalization write, so a backfill
-	// that only mutates the in-memory struct never survives — and that is the very
-	// path a pre-field review takes. Asserting rprep.manifest alone passes against
-	// that defect.
 	onDisk, err := ReadManifest(prep.Dir)
 	require.NoError(t, err)
-	assert.Equal(t, rprep.manifest.Root, onDisk.Root,
-		"the backfilled root must be persisted, not left to ride a write that may never happen")
+	assert.Empty(t, onDisk.Root, "a skipped backfill writes nothing")
 }
 
 // TestPrepareResume_DoesNotOverwriteRecordedRoot is the guard on the backfill's
