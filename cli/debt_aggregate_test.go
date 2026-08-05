@@ -234,6 +234,24 @@ func TestSummarizeDebt_OffEnumSeverityIsCountedInAnUnknownRow(t *testing.T) {
 	assert.Contains(t, out, "| (unknown) |", "and it is rendered, so the table reconciles on screen too")
 }
 
+// TD: the dashboard's --help claims "Secret-shaped tokens in finding text are
+// scrubbed", but red.Redact was applied to exactly ONE field (Top Priority's
+// Problem). The location — which carries whatever `debt add --file` was given —
+// and the component labels derived from it went out verbatim, in a file that is
+// routinely written to a published docs path.
+func TestRenderDebtDashboard_RedactsEveryFreeTextCell(t *testing.T) {
+	rec := mkDebtRecord("", "CRITICAL", "internal/keys/sk-live0000SECRET111/app.go", 4, "2026-06-13T09:00:00Z")
+	rec.Problem = "leaked sk-live0000SECRET222 in the header"
+	rec.StampID()
+
+	out := renderDebtDashboard([]localdebt.Record{rec}, 5)
+
+	assert.NotContains(t, out, "sk-live0000SECRET111",
+		"the location cell (and the component rollup derived from it) is scrubbed")
+	assert.NotContains(t, out, "sk-live0000SECRET222", "the problem cell stays scrubbed")
+	assert.Contains(t, out, "[redacted]")
+}
+
 // The unknown row is emitted only when it is non-zero: a clean store's dashboard
 // must not grow a permanent empty row.
 func TestSummarizeDebt_NoUnknownRowWhenEverySeverityIsOnEnum(t *testing.T) {
