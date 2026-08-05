@@ -401,6 +401,7 @@ commands went with it.
 | The store-selection flags of `list`/`add`/`dashboard` (the shard-directory and table-file pair) | `--dir` | That store is no longer read or written by any atcr code |
 | The table/shard synchronization flag | — | Nothing to synchronize: there is one store |
 | `--group`, `--label`, `--source-type`, `--source`, `--date` on `add` | — | Consumer workflow vocabulary, excluded by the seam |
+| `--group` on `list` | — | Same seam: group is not a record field, so there is nothing to filter on |
 | `--out` and `--stdout` on `dashboard` | `--output` (empty = stdout) | Parity with `atcr report` |
 | The `Wrote dashboard to <file>.` confirmation line | — | `--output` is silent on stdout, matching `atcr report`; `--check`'s status lines are unaffected |
 | The standalone migration command | — | The shard format it migrated no longer exists |
