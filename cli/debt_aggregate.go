@@ -155,6 +155,11 @@ var debtSeverityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 // ported from, and is retained (with its ported tests) so a caller that supplies
 // a real `now` — an `--as-of` flag, or a report that is not drift-checked — gets
 // the bands rather than having to re-derive them.
+//
+// Retained, but no longer computed for nobody: summarizeDebt skips the banding
+// entirely when `now` is zero, so the dashboard's per-record date parse is gone
+// and a future caller cannot read a profile that was never measured against a
+// real clock.
 var debtAgeBands = []struct {
 	label string
 	max   int
@@ -219,6 +224,11 @@ func debtBandLabel(days int) string {
 // and Top cover only live (open+deferred) items — resolved and dismissed debt
 // is not part of the backlog. Top is ordered most-severe first, then oldest
 // first, capped at topN.
+//
+// A ZERO `now` means "no clock supplied" and yields a nil ByAge rather than a
+// profile measured against year zero. Every other field is clock-independent, so
+// the dashboard — which passes a zero time deliberately, to keep `--check` from
+// failing on the passage of time — is unaffected.
 func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary {
 	var s debtSummary
 	s.Total = len(recs)
@@ -263,10 +273,16 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 
 		if debtIsLive(r) {
 			compCount[debtComponent(r.File)]++
-			if days, ok := debtAgeDays(r, now); ok {
-				ageCount[debtBandLabel(days)]++
-			} else {
-				ageCount["unknown"]++
+			// No clock, no age profile. The only production caller passes a zero
+			// `now`, against which every age is negative and clamps to 0, so the
+			// bands were computed for nobody and would have handed a future caller
+			// a profile claiming the whole backlog is 0-7 days old.
+			if !now.IsZero() {
+				if days, ok := debtAgeDays(r, now); ok {
+					ageCount[debtBandLabel(days)]++
+				} else {
+					ageCount["unknown"]++
+				}
 			}
 			top = append(top, r)
 		}
@@ -323,7 +339,8 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	// Severity/component/top are all independent of the wall clock. summarizeDebt
 	// needs a `now` only for its relative-age buckets, which the dashboard does
 	// not use (it renders a time-invariant by-month view below), so a zero time
-	// is passed and ByAge is ignored.
+	// is passed — which summarizeDebt reads as "no clock" and leaves ByAge nil
+	// instead of bucketing every record against year zero.
 	sum := summarizeDebt(recs, time.Time{}, topN)
 
 	var b strings.Builder
