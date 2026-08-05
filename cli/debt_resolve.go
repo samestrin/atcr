@@ -551,9 +551,9 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("atcr debt resolve: failed to encode resolution: %w", err)
 	}
 	if len(line)+1 > localdebt.MaxRecordBytes {
-		return fmt.Errorf(
-			"atcr debt resolve: resolution record is too large to store: %d bytes encoded, cap is %d (the store skips longer lines on read, so the item would stay open while reported resolved)",
-			len(line)+1, localdebt.MaxRecordBytes)
+		return usageError(fmt.Errorf(
+			"resolution record is too large to store: %d bytes encoded, cap is %d (the store skips longer lines on read, so the item would stay open while reported resolved)",
+			len(line)+1, localdebt.MaxRecordBytes))
 	}
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)
