@@ -233,15 +233,21 @@ func TestResolveStoreRoot(t *testing.T) {
 		assert.Equal(t, ".", root)
 	})
 
-	t.Run("corrupt manifest falls through to CWD", func(t *testing.T) {
+	t.Run("corrupt manifest is an invalid claim: warn and stop", func(t *testing.T) {
+		// A manifest that exists but cannot be parsed DID assert something — its
+		// invalidity is merely unreadable. Treating it as no claim would silently
+		// persist into the CWD, the exact wrong-store write the recorded-root
+		// design exists to prevent (TD internal/localdebt/root.go:72).
 		review := filepath.Join(t.TempDir(), "r")
 		require.NoError(t, os.MkdirAll(review, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(review, "manifest.json"), []byte("{not json"), 0o644))
 
-		root, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true})
+		var diag bytes.Buffer
+		root, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
 
-		require.True(t, ok, "an unreadable manifest claims nothing, so the CWD convention still applies")
-		assert.Equal(t, ".", root)
+		assert.False(t, ok, "an unreadable manifest is an invalid claim, not a missing one")
+		assert.Empty(t, root)
+		assert.Contains(t, diag.String(), "manifest", "the warning must name the unreadable manifest")
 	})
 
 	t.Run("no root and AllowCWD false is a no-persist", func(t *testing.T) {
