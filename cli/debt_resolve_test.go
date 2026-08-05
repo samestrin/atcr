@@ -1326,6 +1326,26 @@ func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
 	assert.Len(t, after, len(before), "a rejected oversized resolution must not append a record")
 }
 
+func TestDebtResolve_AlreadyClosedPrintsNormalizedStatus(t *testing.T) {
+	// The already-closed gate (localdebt.IsSettledStatus) lowercases and trims
+	// before comparing, so a stored status of "  ReSoLvEd  " settles the item.
+	// The message must print the canonical status the gate matched — store text
+	// is untrusted (the world-appendable .atcr/debt/ store) and must never be
+	// echoed verbatim to the terminal.
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	term := open
+	term.RunID = "2026-07-01T11:00:00Z-a-resolved"
+	term.Timestamp = term.RunID
+	term.Status = "  ReSoLvEd  "
+	dir := writeDebtStore(t, open, term)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	require.NoError(t, err)
+	assert.Contains(t, out, "already closed as resolved",
+		"the message must print the normalized status the gate matched")
+	assert.NotContains(t, out, "ReSoLvEd", "raw store text must not be echoed to the terminal")
+}
+
 // readStoreRecords reads every record from a test store dir.
 func readStoreRecords(t *testing.T, dir string) []localdebt.Record {
 	t.Helper()
