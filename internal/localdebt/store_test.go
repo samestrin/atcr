@@ -1909,6 +1909,40 @@ func TestCompact_UnderivableRunIDIsSkippedNotFatal(t *testing.T) {
 	require.NotEmpty(t, recs, "the valid records survive")
 }
 
+// TestCompact_AllMalformedShardIsNotDeleted extends the store-wide "never rewrite
+// from an empty fold" guard to the PER-SHARD case (TD internal/localdebt/store.go:1117).
+// A shard whose lines are all malformed — one truncated write, one corrupt byte —
+// contributes zero records and zero preserved lines, so it landed in existingMonths,
+// never appeared in byMonth, and was deleted outright by the removal loop. Before
+// this sprint that took a human typing `atcr debt compact`; MaybeCompact now runs
+// unattended inside every reconcile, so partially-recoverable corrupt shards were
+// destroyed automatically with nothing but per-line stderr warnings an MCP or CI
+// caller typically discards.
+func TestCompact_AllMalformedShardIsNotDeleted(t *testing.T) {
+	dir := t.TempDir()
+	writeShard(t, dir, "2026-04", "{not json", "also not json")
+	good := detection("a real finding", "2026-05-01T00:00:00Z")
+	superseded := good
+	superseded.Timestamp = "2026-05-02T00:00:00Z"
+	writeShard(t, dir, "2026-05", recordLine(t, good), recordLine(t, superseded))
+
+	corrupt := filepath.Join(dir, "2026-04.jsonl")
+	before, err := os.ReadFile(corrupt)
+	require.NoError(t, err)
+
+	_, err = Compact(dir, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(corrupt)
+	require.NoError(t, err, "a shard whose every line is malformed must survive compaction")
+	assert.Equal(t, string(before), string(after), "and must survive byte-for-byte, not rewritten empty")
+
+	// The healthy shard still compacts — one corrupt shard must not freeze the store.
+	recs, err := ReadRecords(filepath.Join(dir, "2026-05.jsonl"), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "the compactable shard still folds")
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
