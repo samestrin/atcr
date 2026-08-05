@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -614,4 +616,52 @@ func TestQualitySignalSend_FailureDiagnosticsNeverIncludePayloadBody(t *testing.
 	logs := logbuf.String()
 	assert.NotContains(t, logs, "persona_id_hash", "failure diagnostics must not include the payload body")
 	assert.NotContains(t, logs, "dismissed_count", "failure diagnostics must not include the payload body")
+}
+
+// TestQualitySignalSend_PayloadBuildsFromRepoRoot covers the store-root split:
+// `atcr quality-report` reads the repo-root store (debtStoreDir), but the gated
+// send path built its payload from the literal "." — the process CWD — so a run
+// from a repo SUBDIRECTORY aggregated a different, usually empty store and
+// transmitted zero rows where the report showed real ones. The payload build must
+// resolve the SAME repo root the gate already discovers for its config read.
+func TestQualitySignalSend_PayloadBuildsFromRepoRoot(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+
+	repo := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
+	subdir := filepath.Join(repo, "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	t.Chdir(subdir)
+
+	var mu sync.Mutex
+	var gotRoot string
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+		mu.Lock()
+		gotRoot = root
+		mu.Unlock()
+		return nil, errors.New("forced build error") // short-circuit before any client work
+	}
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+
+	client := telemetry.NewSingleDestination(qsEndpoint)
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	ctx := telemetry.NewContext(log.NewContext(context.Background(), logger), client)
+
+	maybeSendQualitySignal(ctx, io.Discard)
+	waitQualitySignalInFlight()
+
+	want, err := filepath.EvalSymlinks(repo)
+	require.NoError(t, err)
+	mu.Lock()
+	got := gotRoot
+	mu.Unlock()
+	if resolved, err := filepath.EvalSymlinks(got); err == nil {
+		got = resolved
+	}
+	assert.Equal(t, want, got,
+		"the send path must build its payload from the discovered repo root, not the literal CWD")
 }
