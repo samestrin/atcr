@@ -100,6 +100,47 @@ func TestDebtCompact_PreservedOnlyStoreReportsCoherently(t *testing.T) {
 	assert.NotContains(t, out, "Compacted ", "nothing was folded")
 }
 
+// TD: compact is the only destructive, irreversible subcommand in the namespace
+// (every other one is read-only or append-only) and offered no preview, no
+// confirmation and no backup — it went straight to localdebt.Compact, whose
+// multi-shard rewrite is acknowledged non-atomic. --dry-run reports exactly what
+// a real run would drop and writes nothing.
+func TestDebtCompact_DryRunReportsWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	rec := openRec("2026-06-14T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	require.NoError(t, localdebt.Append(dir, rec))
+	resolved := rec
+	resolved.RunID = "2026-06-16T10:00:00Z-resolved"
+	resolved.Timestamp = "2026-06-16T10:00:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, localdebt.Append(dir, resolved))
+
+	before, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+
+	out, err := runDebt(t, "compact", "--dir", dir, "--dry-run")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Would compact 2 records into 1 (1 superseded dropped).")
+	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after), "a dry run writes nothing")
+}
+
+// "Compacted N records into N (0 superseded dropped)" reads as a mutation that
+// did not happen. Nothing superseded means nothing to do — say that instead.
+func TestDebtCompact_NothingSupersededIsNotReportedAsAFold(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, localdebt.Append(dir,
+		openRec("2026-06-14T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")))
+
+	out, err := runDebt(t, "compact", "--dir", dir)
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Nothing to compact: 1 record(s), none superseded.")
+	assert.NotContains(t, out, "Compacted ")
+}
+
 // TD: a store whose shards hold nothing decodable is neither "no store" nor a
 // fold. It used to reach the same branch as a missing directory (StoreFound was
 // false for both), so `atcr debt compact` reported "No local TD store" over a
