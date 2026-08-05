@@ -138,10 +138,10 @@ type Record struct {
 	//
 	// A record carrying a non-zero value is a CARRIER, and CountedThrough says
 	// exactly which sightings it accounts for. Every writer appends with this field
-	// zero; three paths must do so EXPLICITLY because they copy an existing record
-	// wholesale — cli/debt_resolve.go's resolution, and retainForCompaction's
-	// resolution trail and model donor — since a second carrier in one group would
-	// let the fold count part of the history twice.
+	// zero. Three sites must do so EXPLICITLY, across the two paths that copy an
+	// existing record wholesale — cli/debt_resolve.go's resolution, and
+	// retainForCompaction's resolution trail and model donor — since a second
+	// carrier in one group would let the fold count part of the history twice.
 	//
 	// omitempty keeps it absent from records no fold has aggregated yet; readers
 	// treat an absent/zero value as one occurrence ("not yet aggregated").
@@ -162,12 +162,23 @@ type Record struct {
 	// group's newest. Both drift upward by one per compaction, without bound.
 	// CountedThrough records the boundary as a fact rather than deriving it.
 	//
-	// Same UTC-normalized RFC3339 invariant as Timestamp and FirstSeen, and compared
-	// the same way FirstSeen is (see below). omitempty keeps it absent from records
-	// no fold has aggregated yet, where an absent value falls back to the carrier's
-	// own Timestamp — which is correct for any carrier written before this field
-	// existed, because the pre-existing fold always stamped the group's newest
-	// record under rule 2.
+	// Same UTC-normalized RFC3339 invariant as Timestamp and FirstSeen, but compared
+	// LEXICOGRAPHICALLY like Timestamp, NOT parsed like FirstSeen. That is
+	// deliberate: this value is only ever compared against Timestamp values, so it
+	// has to use Timestamp's comparison to stay consistent with them — parsing one
+	// side of `r.Timestamp > boundary` and not the other would be worse than
+	// parsing neither. It inherits Timestamp's exposure to an offset-bearing
+	// producer, which every writer in this repo rules out by normalizing at the
+	// write site.
+	//
+	// omitempty keeps it absent from records no fold has aggregated yet, where an
+	// absent value falls back to the carrier's own Timestamp. That fallback is a
+	// defensive default for a schema state no released binary ever produced — the
+	// released SchemaVersion is 2, which has no occurrences field at all. It is
+	// exactly right under fold rule 2, where the carrier IS the group's newest
+	// record; under rule 1 a suppressing carrier can be older, so the fallback costs
+	// at most one extra count on the first fold, after which CountedThrough is
+	// persisted and the value is stable.
 	CountedThrough string `json:"counted_through,omitempty"`
 
 	// FirstSeen is the RFC3339 timestamp of the earliest record observed for this

@@ -61,10 +61,6 @@ func ManualRunID(ts time.Time) string {
 	return ts.UTC().Format(time.RFC3339) + "-manual"
 }
 
-// basePathErr reduces an *os.PathError's path to its base name so an absolute store
-// path (which may embed a username) is not embedded in an error that could reach an
-// unredacted diagnostics sink. The operational Op and underlying Err are preserved;
-// non-PathError errors pass through unchanged. Mirrors internal/scorecard/store.go.
 // RedactPathErr is basePathErr for callers outside this package that build their
 // own store read paths (cli's two-pass debt-resolve hydration). The package's
 // SECURITY contract — a surfaced *os.PathError is reduced to its base name so an
@@ -75,6 +71,10 @@ func RedactPathErr(err error) error {
 	return basePathErr(err)
 }
 
+// basePathErr reduces an *os.PathError's path to its base name so an absolute store
+// path (which may embed a username) is not embedded in an error that could reach an
+// unredacted diagnostics sink. The operational Op and underlying Err are preserved;
+// non-PathError errors pass through unchanged. Mirrors internal/scorecard/store.go.
 func basePathErr(err error) error {
 	var pe *os.PathError
 	if errors.As(err, &pe) {

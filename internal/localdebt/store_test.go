@@ -1995,3 +1995,85 @@ func TestCompact_DeferredEffectiveRecordEmitsNoSignalEitherWay(t *testing.T) {
 		assert.Equal(t, want, signal(), "compaction %d must not change the settled id's signal", i)
 	}
 }
+
+// TestCompact_AggregateSurvivesAProtectedEffectiveShard is the gate pass-4 HIGH
+// guard — the deflation mirror of the CountedThrough inflation case.
+//
+// When the effective record's month is protected, Compact never writes it, so the
+// Occurrences/FirstSeen that live only on the folded record are thrown away — while
+// the id's other shards, holding the sightings that aggregate summarized, are still
+// rewritten or removed. The count deflates unrecomputably.
+func TestCompact_AggregateSurvivesAProtectedEffectiveShard(t *testing.T) {
+	t.Run("bare sighting pair", func(t *testing.T) {
+		dir := t.TempDir()
+		base := detection("older sighting elsewhere", "2026-05-01T00:00:00Z")
+		older := base
+		older.RunID = "2026-05-01T00:00:00Z-run"
+		writeShard(t, dir, "2026-05", recordLine(t, older))
+
+		// The NEWER sighting — the effective record — shares its shard with an
+		// over-long line, so that shard cannot be rewritten.
+		newer := base
+		newer.RunID = "2026-06-01T00:00:00Z-run"
+		newer.Timestamp = "2026-06-01T00:00:00Z"
+		writeShard(t, dir, "2026-06", recordLine(t, newer), strings.Repeat("x", maxLineBytes+16))
+
+		fold := func() Record {
+			recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+			require.NoError(t, err)
+			folded := FoldRecords(recs)
+			require.Len(t, folded, 1)
+			return folded[0]
+		}
+		want := fold()
+		require.Equal(t, 2, want.Occurrences)
+		require.Equal(t, "2026-05-01T00:00:00Z", want.FirstSeen)
+
+		for i := 1; i <= 4; i++ {
+			_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+			require.NoError(t, err)
+			got := fold()
+			assert.Equal(t, want.Occurrences, got.Occurrences, "compaction %d must not deflate the count", i)
+			assert.Equal(t, want.FirstSeen, got.FirstSeen, "compaction %d must not lose the first sighting", i)
+		}
+	})
+
+	t.Run("carrier elsewhere, regression in the protected shard", func(t *testing.T) {
+		dir := t.TempDir()
+		base := detection("carrier elsewhere", "2026-05-01T00:00:00Z")
+
+		// A compacted carrier in a rewritable shard.
+		carrier := base
+		carrier.RunID = "2026-05-01T00:00:00Z-resolved"
+		carrier.Status = "resolved"
+		carrier.ResolvedAt = "2026-05-01T00:00:00Z"
+		carrier.Occurrences = 4
+		carrier.FirstSeen = "2026-04-01T00:00:00Z"
+		carrier.CountedThrough = "2026-04-01T00:00:00Z"
+		writeShard(t, dir, "2026-05", recordLine(t, carrier))
+
+		regression := base
+		regression.RunID = "2026-06-01T00:00:00Z-run"
+		regression.Timestamp = "2026-06-01T00:00:00Z"
+		writeShard(t, dir, "2026-06", recordLine(t, regression), strings.Repeat("x", maxLineBytes+16))
+
+		fold := func() Record {
+			recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+			require.NoError(t, err)
+			folded := FoldRecords(recs)
+			require.Len(t, folded, 1)
+			return folded[0]
+		}
+		want := fold()
+		require.Equal(t, 5, want.Occurrences, "the carrier's 4 plus the regression")
+		require.Equal(t, "2026-04-01T00:00:00Z", want.FirstSeen)
+
+		for i := 1; i <= 4; i++ {
+			_, err := Compact(dir, ReadOpts{Writer: io.Discard})
+			require.NoError(t, err)
+			got := fold()
+			assert.Equal(t, want.Occurrences, got.Occurrences, "compaction %d must not deflate the count", i)
+			assert.Equal(t, want.FirstSeen, got.FirstSeen, "compaction %d must not lose the first sighting", i)
+		}
+	})
+}

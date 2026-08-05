@@ -739,6 +739,60 @@ func retainForCompaction(recs []Record) []Record {
 	return out
 }
 
+// passThroughUncompactable replaces the folded output for any id whose EFFECTIVE
+// record lives in a shard this run cannot rewrite, emitting every one of that id's
+// records untouched instead.
+//
+// Compact skips writing a record whose month is protected — the shard holds a line
+// longer than maxLineBytes and is left whole rather than rebuilt from the subset
+// that could be read. For an ordinary fold that was harmless: the raw records are
+// still on disk in that shard, and the next read folds them again.
+//
+// It stopped being harmless when the fold began carrying aggregates. Occurrences
+// and FirstSeen exist ONLY on the folded record, so skipping the write throws them
+// away — while the id's other shards, holding the very sightings the aggregate
+// summarized, are still rewritten or removed as compacted. The count deflates and
+// the original sighting is lost, permanently and unrecomputably: this is the exact
+// mirror of the inflation CountedThrough fixes, in the same survivorship shape.
+//
+// So an id whose effective record cannot be written is not compactable at all.
+// Passing its records through unchanged preserves every input, and the fold
+// recomputes the identical aggregate on the next read. It costs the space of one
+// id's history until the oversized line leaves the store — the same trade Compact
+// already makes for the protected shard itself, for the same reason: leaving it
+// whole costs disk, rewriting it costs data.
+func passThroughUncompactable(folded, all []Record, protected map[string]bool) []Record {
+	uncompactable := map[string]bool{}
+	for _, r := range folded {
+		if month, err := monthFromRunID(r.RunID); err == nil && protected[month] {
+			uncompactable[r.ID] = true
+		}
+	}
+	if len(uncompactable) == 0 {
+		return folded
+	}
+
+	byID := map[string][]Record{}
+	for _, r := range all {
+		if uncompactable[r.ID] {
+			byID[r.ID] = append(byID[r.ID], r)
+		}
+	}
+	out := make([]Record, 0, len(folded))
+	emitted := map[string]bool{}
+	for _, r := range folded {
+		if !uncompactable[r.ID] {
+			out = append(out, r)
+			continue
+		}
+		if !emitted[r.ID] {
+			emitted[r.ID] = true
+			out = append(out, byID[r.ID]...)
+		}
+	}
+	return out
+}
+
 // modelDonor returns the terminal record whose Model AggregateQualitySignal would
 // recover for this id, or nil when the effective record already carries one or no
 // donor exists.
@@ -919,7 +973,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			return nil // otherwise result stays zero: StoreFound false (no-op)
 		}
 
-		folded := retainForCompaction(recs)
+		folded := passThroughUncompactable(retainForCompaction(recs), recs, protected)
 		result = CompactResult{
 			StoreFound:    true,
 			RecordsBefore: len(recs),

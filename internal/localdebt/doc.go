@@ -180,10 +180,10 @@
 // (hand-filed items) and cli/debt_resolve.go (resolutions) — plus Compact itself,
 // and all of them use ONE convention: append with the counters ZERO. The counters
 // are derived state and live on an id's effective record alone, stamped there by
-// the fold. Two of those paths must zero them EXPLICITLY because they copy an
-// existing record wholesale — debt_resolve's resolution and retainForCompaction's
-// retained trail/donor — since a second carrier in a group would let the fold count
-// part of the history twice.
+// the fold. Three sites must zero them EXPLICITLY, across the two paths that copy
+// an existing record wholesale — debt_resolve's resolution, and
+// retainForCompaction's retained trail and model donor — since a second carrier in
+// a group would let the fold count part of the history twice.
 //
 // A hand-filed item still counts as a sighting even though it is appended with zero
 // counters and may carry a status: isSighting recognises it from its manual origin
