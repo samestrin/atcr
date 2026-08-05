@@ -80,7 +80,11 @@ func TestDebtCompact_ReportsPreservedNewerRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Kept 1 record(s) written by a newer atcr version untouched",
 		"a preserved record must be reported, not silently absorbed into the fold counts")
-	assert.Contains(t, out, "Compacted 1 records into 1",
+	// The foldable half is one record with nothing superseding it, so this is the
+	// no-op wording rather than "Compacted 1 records into 1" — which read as a
+	// mutation that did not occur. Either way the preserved line stays OUT of the
+	// counts: it is reported on its own line, not as a second record.
+	assert.Contains(t, out, "Nothing to compact: 1 record(s), none superseded.",
 		"preserved lines are excluded from the fold counts")
 }
 

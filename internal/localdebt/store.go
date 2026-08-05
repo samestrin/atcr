@@ -1026,6 +1026,43 @@ func hasShardFiles(dir string) bool {
 // than at their original offsets. Compaction already reorders records (the fold is
 // global while the write is per-month), so within-shard position is not a contract;
 // what is guaranteed is that the bytes survive and stay in their own relative order.
+// CompactPlan reports what Compact WOULD do, writing nothing. The fold is pure —
+// it is a read, a group-by-id, and a count — so the preview is the same
+// computation the real run performs, not a re-derivation that could disagree with
+// it. `atcr debt compact --dry-run` is the caller: compaction is the only
+// irreversible operation in the debt namespace and its multi-shard rewrite is
+// acknowledged non-atomic, so a user needs a way to see what a run would drop
+// before it drops it.
+//
+// It takes the same lock as Compact, so the counts cannot be torn by a concurrent
+// append.
+func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
+	var result CompactResult
+	storeFound := hasShardFiles(dir)
+	err := withLock(dir, "compact-plan", func() error {
+		result.StoreFound = storeFound
+		read, err := readAllPreserving(dir, opts)
+		if err != nil {
+			return err
+		}
+		for _, lines := range read.preserved {
+			result.Preserved += len(lines)
+		}
+		if len(read.records) == 0 {
+			return nil
+		}
+		folded := passThroughUncompactable(retainForCompaction(read.records), read.records, read.protected)
+		result.RecordsBefore = len(read.records)
+		result.RecordsAfter = len(folded)
+		result.Dropped = len(read.records) - len(folded)
+		return nil
+	})
+	if err != nil {
+		return CompactResult{}, err
+	}
+	return result, nil
+}
+
 func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	var result CompactResult
 	// Presence is sampled BEFORE the lock: withLock MkdirAlls the store directory,
