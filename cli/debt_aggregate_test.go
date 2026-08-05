@@ -185,6 +185,21 @@ func TestSummarizeDebt_ByAge_UnresolvedOnly(t *testing.T) {
 	assert.Equal(t, 3, total)
 }
 
+// TD: the only production caller (renderDebtDashboard) passes a ZERO now, so
+// every live record was date-parsed and bucketed on every render and every result
+// landed in "0-7d" — now.Sub(d) is hugely negative and clamped to age 0. A future
+// caller reading ByAge off that call path would get a silently wrong profile.
+// With no clock there is no age profile: ByAge is nil and no record is bucketed.
+func TestSummarizeDebt_ZeroNowYieldsNoAgeProfile(t *testing.T) {
+	s := summarizeDebt(debtSampleRecords(), time.Time{}, 5)
+
+	assert.Nil(t, s.ByAge, "an age profile computed against a zero clock is garbage, not data")
+	// The clock-independent halves are unaffected.
+	assert.Equal(t, len(debtSampleRecords()), s.Total)
+	assert.NotEmpty(t, s.Top)
+	assert.NotEmpty(t, s.ByComponent)
+}
+
 func TestSummarizeDebt_TopPriority_SeverityThenAge(t *testing.T) {
 	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
 	require.NotEmpty(t, s.Top)
