@@ -422,13 +422,8 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// regression those differ: StampID excludes severity so a re-settled severity
 	// keeps the id, and copying the original would stamp the resolution with the
 	// superseded severity, fix, estimate and evidence. Compaction then makes that
-	// stale record the id's live one.
-	var orig *localdebt.Record
-	if effective != nil && !localdebt.IsSettledStatus(effective.Status) && effective.File != "" {
-		r := *effective
-		orig = &r
-	}
-
+	// stale record the id's live one. The copy happens below, once the id is
+	// known to name a live, located item.
 	var reviewers []string
 	seenReviewer := make(map[string]bool)
 	var model string
@@ -478,15 +473,24 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
 		return nil
 	}
-	if orig == nil {
+	// A nil effective record is the true "no such id" case. An id that DOES
+	// resolve but whose effective record carries no File is a different defect:
+	// the item renders as live work in `debt list` and the dashboard, so
+	// reporting it as nonexistent would send the operator hunting for an id
+	// that is right there — name the actual problem instead.
+	if effective == nil {
 		return fmt.Errorf("no open technical-debt item with id %q in the local store", id)
 	}
+	if effective.File == "" {
+		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
+	}
+	orig := *effective
 	if status == "wontfix" && strings.TrimSpace(reason) == "" && orig.Justification == "" {
 		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec := *orig
+	rec := orig
 	// Assign only a non-empty union, symmetric with Model below: an empty union
 	// means no live record carried attribution, and blanking the copied record's
 	// Reviewers would destroy credit rather than decline to add any.
