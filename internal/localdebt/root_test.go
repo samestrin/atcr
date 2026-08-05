@@ -151,6 +151,25 @@ func TestResolveStoreRoot(t *testing.T) {
 		assert.Contains(t, diag.String(), "no longer a valid repository root")
 	})
 
+	t.Run("manifest root with a .git SYMLINK is rejected", func(t *testing.T) {
+		// TD: the writer used os.Stat (which follows the link) while the CLI's reader
+		// walk (cli/debt.go debtRepoRoot) used os.Lstat, so a symlinked .git validated
+		// for the writer and was invisible to the reader — the two halves of one store
+		// disagreeing on where the repo root is. A link pointing at an arbitrary
+		// directory must not pass as a repository root on either side; git never
+		// creates one.
+		linked := t.TempDir()
+		require.NoError(t, os.Symlink(repoDir(t, ".git"), filepath.Join(linked, ".git")))
+		review := filepath.Join(t.TempDir(), "r")
+		writeReviewManifest(t, review, linked)
+
+		var diag bytes.Buffer
+		_, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
+
+		assert.False(t, ok, "a .git SYMLINK is not a repo-root marker for the writer either")
+		assert.Contains(t, diag.String(), "no longer a valid repository root")
+	})
+
 	t.Run("stale manifest root does not fall through to CWD", func(t *testing.T) {
 		// The copied-artifacts case: the tree carries an absolute path from another
 		// machine. AllowCWD is true, so a fall-through would silently succeed here —
