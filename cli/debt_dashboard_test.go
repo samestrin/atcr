@@ -89,6 +89,23 @@ func TestDebtDashboard_OutputThroughSymlinkedParentIsUsageError(t *testing.T) {
 	assert.Equal(t, exitUsage, exitCode(err))
 }
 
+// The create-the-parent divergence must not become a hole in the symlink guard:
+// a target BELOW a not-yet-created directory hides its symlinked ancestor from a
+// resolver that only resolves existing components, and MkdirAll would then follow
+// the link. The deeper path must be rejected exactly like the shallow one, and
+// nothing may be created under the link's target.
+func TestDebtDashboard_OutputUnderUncreatedDirBelowSymlinkIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink("/etc", link))
+	target := filepath.Join(link, "atcr-created", "d.md")
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", target)
+	require.Error(t, err, "a symlinked ANCESTOR must be caught, not just a symlinked parent")
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.NoDirExists(t, filepath.Join(link, "atcr-created"), "nothing is created before validation")
+}
+
 // AC10: a write failure is a usage/infrastructure error (exit 2), the same
 // classification cli/report.go applies to its own disk writes.
 func TestDebtDashboard_WriteFailureIsExitTwo(t *testing.T) {

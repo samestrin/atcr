@@ -52,7 +52,7 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	outputPath := out
 	if out != "" {
 		var err error
-		if outputPath, err = resolveOutputPath(out); err != nil {
+		if outputPath, err = resolveDashboardOutput(out); err != nil {
 			return usageError(err)
 		}
 		if err := validation.FilePath(outputPath); err != nil {
@@ -89,6 +89,41 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		// Nothing on stdout: report writes no "wrote it" line either, and a status
 		// line is noise to a caller that redirected the payload to a file.
 		return nil
+	}
+}
+
+// resolveDashboardOutput resolves --output for the dashboard's create-the-parent
+// contract, which report's --output does not have.
+//
+// resolveOutputPath (report.go) resolves symlinks only in components that
+// already exist and falls open to the plain absolute path otherwise. That is
+// safe for report, which never creates a directory: an unresolvable path simply
+// fails to open. It is NOT safe here, because os.MkdirAll below WILL follow a
+// symlinked ancestor — so a target two levels below a link (`link/newdir/d.md`)
+// would pass validation as its literal path and then be written inside the
+// link's target, bypassing the guard that rejects `link/d.md`.
+//
+// Resolving the deepest EXISTING ancestor and rejoining the not-yet-created
+// components puts the real destination in front of validation before anything is
+// created, so the check and the write agree on where the file lands.
+func resolveDashboardOutput(output string) (string, error) {
+	abs, err := absFn(output)
+	if err != nil {
+		return "", fmt.Errorf("resolving --output: %w", err)
+	}
+	missing := []string{filepath.Base(abs)}
+	for dir := filepath.Dir(abs); ; {
+		if resolved, err := evalSymlinksFn(dir); err == nil {
+			return filepath.Join(append([]string{resolved}, missing...)...), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Nothing on the path exists (an unrooted or vanished tree): fall open
+			// to the absolute path, which is what MkdirAll will create verbatim.
+			return abs, nil
+		}
+		missing = append([]string{filepath.Base(dir)}, missing...)
+		dir = parent
 	}
 }
 

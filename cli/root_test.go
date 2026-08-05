@@ -41,6 +41,28 @@ func TestRepoRoot_SymlinkToGitDirIsRejected(t *testing.T) {
 	require.Equal(t, expectedOuter, got, "repoRoot must skip .git symlink and walk up to the real repo root")
 }
 
+// A linked worktree and a submodule record their root with a .git FILE, which
+// must count as a marker — the write-side resolver (localdebt.validateRepoRoot)
+// accepts both forms, and a stricter rule here is what put the debt store's
+// readers and its writer on different roots. Widening to regular files must not
+// widen to symlinks; TestRepoRoot_SymlinkToGitDirIsRejected pins that half.
+func TestRepoRoot_GitFileCountsAsAMarker(t *testing.T) {
+	isolate(t)
+
+	outer := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outer, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/wt\n"), 0o644))
+	inner := filepath.Join(outer, "internal", "deep")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+	require.NoError(t, os.Chdir(inner))
+
+	got, err := repoRoot()
+	require.NoError(t, err)
+
+	expected, err := filepath.EvalSymlinks(outer)
+	require.NoError(t, err)
+	require.Equal(t, expected, got, "a .git file marks a linked worktree's root")
+}
+
 func TestRepoRoot_FallbackToCwdWhenNoMarker(t *testing.T) {
 	// When no .git or .atcr marker exists, repoRoot must return cwd.
 	isolate(t)

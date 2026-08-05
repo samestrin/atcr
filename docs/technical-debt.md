@@ -17,7 +17,7 @@ rendering of it at a moment in time.
 | Location | `.atcr/debt/`, resolved from the repository root |
 | Layout | One shard per calendar month: `YYYY-MM.jsonl` |
 | Shard key | The `YYYY-MM` prefix of the record's `run_id` |
-| Mutation model | Append-only, atomic `O_APPEND` line writes, no cross-process lock |
+| Mutation model | Append-only; one atomic `O_APPEND` write per record, under a mkdir-based cross-process advisory lock |
 
 Every subcommand resolves the store through `--dir`. With no `--dir`, atcr walks
 up from the working directory to the nearest `.git`/`.atcr` marker and uses that
@@ -95,7 +95,7 @@ rather than a fabricated value that `resolve` could not match.
 | `confidence` | string | Reviewer-panel confidence |
 | `model` | string | Model that produced the finding |
 | `justification` | string | Why it was resolved/dismissed (`--reason`) |
-| `source_report` | string | Report the finding came from |
+| `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …}` (`line`/`section` omitted when unset) |
 | `status` | string | Empty (open), `deferred`, `resolved`, or `wontfix` |
 | `resolved_at` | string | Timestamp of the terminal record |
 | `origin` | string | **v3** — `review` or `manual` |
@@ -247,7 +247,7 @@ atcr debt compact          # reports records before/after and how many were drop
 ```
 
 Compaction also runs **automatically** after a reconcile append, once the store
-trips **100k records or 100 MB, whichever comes first** (and only when it has
+trips **100k records or 100 MiB, whichever comes first** (and only when it has
 grown materially since the last compaction, so an already-compact store does not
 rewrite itself on every append). The manual command remains for on-demand use.
 
@@ -257,7 +257,7 @@ rewrite itself on every append). The manual command remains for on-demand use.
 $ atcr debt add --severity HIGH --file internal/x/y.go:12 \
     --problem "unbounded retry loop on 5xx" \
     --fix "cap retries and add jittered backoff" --category correctness --est 30
-Added HIGH item 8421025ce7cde4d3 to .atcr/debt.
+Added HIGH item 8421025ce7cde4d3 to /home/you/repo/.atcr/debt.
 
 $ atcr debt list
 ID                SEVERITY  STATUS  EST  FILE                CATEGORY     PROBLEM
@@ -402,6 +402,7 @@ commands went with it.
 | The table/shard synchronization flag | — | Nothing to synchronize: there is one store |
 | `--group`, `--label`, `--source-type`, `--source`, `--date` on `add` | — | Consumer workflow vocabulary, excluded by the seam |
 | `--out` and `--stdout` on `dashboard` | `--output` (empty = stdout) | Parity with `atcr report` |
+| The `Wrote dashboard to <file>.` confirmation line | — | `--output` is silent on stdout, matching `atcr report`; `--check`'s status lines are unaffected |
 | The standalone migration command | — | The shard format it migrated no longer exists |
 
 Passing a retired flag now fails with an unknown-flag usage error, which is the

@@ -557,6 +557,22 @@ func TestDebtStoreDir_DefaultWalksUpToTheRepoRoot(t *testing.T) {
 		"an unset --dir resolves against the repo root, not the working directory")
 }
 
+// A linked worktree and a submodule record their root with a .git FILE, not a
+// directory. The write side (localdebt.validateRepoRoot) accepts both; the reader
+// must too, or the store split this fix closes survives in exactly the checkouts
+// where a developer is most likely to be running from a non-root directory.
+func TestDebtStoreDir_AcceptsAGitFileMarker(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /elsewhere\n"), 0o644))
+	sub := filepath.Join(root, "internal", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+
+	cmd := newDebtListCmd()
+	require.NoError(t, cmd.Flags().Parse(nil))
+	assert.Equal(t, localdebt.DefaultDir(root), debtStoreDir(cmd))
+}
+
 // An explicit --dir still wins: it is the escape hatch every test and script uses.
 func TestDebtStoreDir_ExplicitFlagWins(t *testing.T) {
 	root := t.TempDir()

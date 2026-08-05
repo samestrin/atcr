@@ -94,7 +94,10 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		{"AC13", "terminal status", "wontfix"},
 		{"AC13", "re-surfacing status", "deferred"},
 		{"AC13", "auto-compaction record threshold", "100k"},
-		{"AC13", "auto-compaction size threshold", "100 MB"},
+		// AC13 words the threshold as "100 MB"; the constant is
+		// DefaultAutoCompactMaxBytes = 100 << 20, so the doc says MiB and this
+		// assertion follows the code rather than the rounded prose.
+		{"AC13", "auto-compaction size threshold", "100 MiB"},
 		{"AC13", "seam: excluded workflow field", "source_label"},
 	}
 	for _, tc := range required {
