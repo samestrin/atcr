@@ -190,6 +190,26 @@ func TestDebtDashboard_CreatesMissingParentDirectory(t *testing.T) {
 	assert.FileExists(t, out)
 }
 
+// TD item G: a negative --top used to slip past the topN >= 0 guard and mean a
+// third, undocumented thing ("build the unbounded list, then suppress it").
+// It is a usage error, phrased like debt add's invalid --est.
+func TestDebtDashboard_NegativeTopIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--top", "-1")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err), "a negative --top is a usage error, not a silent unbounded list")
+	assert.Contains(t, err.Error(), "invalid --top -1")
+}
+
+// The zero semantics stay as shipped and are documented in the flag help:
+// dashboard --top 0 suppresses the list (unlike resolve --max 0 = no cap).
+func TestDebtDashboard_TopHelpDocumentsZeroSemantics(t *testing.T) {
+	sub := debtSubcommand(t, newDebtCmd(), "dashboard")
+	f := sub.Flags().Lookup("top")
+	require.NotNil(t, f)
+	assert.Contains(t, f.Usage, "0 suppresses the list")
+}
+
 func TestDebtDashboard_CheckMissingFileIsError(t *testing.T) {
 	dir := writeLocalDebt(t)
 	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
