@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -39,7 +41,7 @@ func newDebtCmd() *cobra.Command {
 // addDebtStoreFlag registers the --dir flag every debt subcommand shares, with
 // the one default that makes them a single namespace over a single store.
 func addDebtStoreFlag(cmd *cobra.Command) {
-	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store (.atcr/debt)")
+	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
 }
 
 // debtStoreDir resolves the store directory for a debt subcommand: an explicit
@@ -63,13 +65,53 @@ func debtStoreDir(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("dir") {
 		return dir
 	}
-	root, err := repoRoot()
+	root, err := debtRepoRoot()
 	if err != nil {
 		// Getwd failed — there is no better root to offer than the relative
 		// default, which is what every caller used before this walk existed.
 		return dir
 	}
 	return localdebt.DefaultDir(root)
+}
+
+// debtRepoRoot finds the repository root for the debt store, using the marker
+// rules of the store's WRITER (localdebt's validateRepoRoot): `.git` counts as a
+// directory OR a regular file, because a linked worktree and a submodule both
+// record their root with a `.git` file; `.atcr` counts only as a directory,
+// since that is the only form atcr itself creates. With no marker anywhere up
+// the tree it falls back to the working directory.
+//
+// It deliberately does NOT reuse cli/root.go's repoRoot(), even though the walk
+// is the same shape. repoRoot() requires `.git` to be a directory, and its eight
+// other consumers (config, telemetry consent, history, audit, resume, review)
+// depend on that strictness: widening it there would treat a submodule as its
+// own atcr repo and silently relocate their state, including a recorded
+// telemetry opt-out. The debt readers are the only callers that must agree with
+// localdebt's writer, so the broader rule is scoped to them.
+//
+// A `.git` SYMLINK is not a marker, which is marginally stricter than the
+// writer's os.Stat. That is deliberate and matches repoRoot()'s hardening: a
+// link pointing at an arbitrary directory must not pass as a repository root,
+// and git never creates one.
+func debtRepoRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for dir := cwd; ; {
+		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil &&
+			(info.IsDir() || info.Mode().IsRegular()) {
+			return dir, nil
+		}
+		if info, err := os.Lstat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cwd, nil
+		}
+		dir = parent
+	}
 }
 
 // loadLocalDebt reads the store named by --dir and folds it by id, so list and

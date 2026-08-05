@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +86,46 @@ func TestDebtDashboard_OutputThroughSymlinkedParentIsUsageError(t *testing.T) {
 	require.NoError(t, os.Symlink("/etc", link))
 
 	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", filepath.Join(link, "d.md"))
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// The shortest form of the bypass: --output IS a symlink that already exists.
+// A resolver that starts at the parent leaves the leaf unresolved, so validation
+// sees the link path while the write follows it to its target.
+// It must hold whether the link's target exists or not: a DANGLING link fails
+// EvalSymlinks entirely, yet os.WriteFile still follows it and creates the
+// target — the cheapest form of the escape to plant.
+func TestDebtDashboard_OutputThroughLeafSymlinkIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+	}{
+		{"dangling target", "/etc/atcr-leak.md"},
+		{"existing target", "/etc/hosts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link := filepath.Join(t.TempDir(), "dash.md")
+			require.NoError(t, os.Symlink(tc.target, link))
+
+			_, err := runDebt(t, "dashboard", "--dir", dir, "--output", link)
+			require.Error(t, err, "a leaf symlink must be resolved before validation")
+			assert.Equal(t, exitUsage, exitCode(err))
+		})
+	}
+	assert.NoFileExists(t, "/etc/atcr-leak.md")
+}
+
+// A relative link target resolves against the LINK's directory, not the process
+// working directory — getting that wrong would validate a path nothing writes to.
+func TestDebtDashboard_OutputThroughRelativeLeafSymlinkIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	base := t.TempDir()
+	// Enough hops to clamp at the filesystem root from any temp-dir depth.
+	require.NoError(t, os.Symlink(strings.Repeat("../", 24)+"etc/atcr-rel.md", filepath.Join(base, "dash.md")))
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", filepath.Join(base, "dash.md"))
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 }

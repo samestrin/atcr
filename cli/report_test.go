@@ -327,6 +327,52 @@ func TestResolveOutputPath_ResolvesSymlinkedParentForNewLeaf(t *testing.T) {
 		"resolveOutputPath must resolve a symlinked parent even when the leaf is a new file")
 }
 
+// A --output whose LEAF is a symlink to a not-yet-existing target fails the
+// whole-path EvalSymlinks (every component must exist), so before this the
+// parent-resolution branch returned the LINK's own path — validation vetted the
+// link while os.WriteFile followed it and created the target. Planting a dangling
+// link is the cheapest form of that escape, so the leaf link must be followed
+// before anything is validated.
+func TestResolveOutputPath_FollowsADanglingLeafSymlink(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(realDir, "not-created-yet.json")
+
+	link := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.Symlink(target, link))
+
+	got, err := resolveOutputPath(link)
+	require.NoError(t, err)
+	require.Equal(t, target, got, "validation must see the link's target, not the link")
+}
+
+// A relative link target resolves against the LINK's directory, not the process
+// working directory.
+func TestResolveOutputPath_FollowsARelativeDanglingLeafSymlink(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	linkDir := filepath.Join(realDir, "sub")
+	require.NoError(t, os.MkdirAll(linkDir, 0o755))
+	require.NoError(t, os.Symlink("../sibling.json", filepath.Join(linkDir, "report.json")))
+
+	got, err := resolveOutputPath(filepath.Join(linkDir, "report.json"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realDir, "sibling.json"), got)
+}
+
+// A link cycle must terminate rather than spin.
+func TestResolveOutputPath_SymlinkCycleTerminates(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
+	require.NoError(t, os.Symlink(b, a))
+	require.NoError(t, os.Symlink(a, b))
+
+	got, err := resolveOutputPath(a)
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(got), "a cycle bails out to an absolute path, got %q", got)
+}
+
 // TestResolveOutputPath_FailsOpenWhenParentAbsent keeps the fail-open contract for
 // a genuinely absent parent: neither the leaf nor its directory exist on disk, so
 // there is nothing to resolve and the absolute (un-resolved) form is returned

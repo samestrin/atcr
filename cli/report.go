@@ -163,6 +163,7 @@ func resolveOutputPath(output string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving --output: %w", err)
 	}
+	abs = followDanglingLinkLeaf(abs)
 	resolved, err := evalSymlinksFn(abs)
 	if err == nil {
 		return resolved, nil
@@ -179,6 +180,36 @@ func resolveOutputPath(output string) (string, error) {
 		return abs, nil
 	}
 	return filepath.Join(resolvedDir, base), nil
+}
+
+// maxOutputLinkHops bounds the dangling-symlink chain followDanglingLinkLeaf will
+// walk, so a link cycle terminates instead of spinning.
+const maxOutputLinkHops = 8
+
+// followDanglingLinkLeaf resolves a write target whose LEAF is a symlink pointing
+// at something that does not exist yet. EvalSymlinks fails on such a path — every
+// component must exist — so without this the caller would validate the LINK's own
+// path while os.WriteFile follows the link and creates its TARGET. Planting a
+// dangling link is the cheapest form of the escape the resolver exists to stop.
+//
+// A path with no leaf symlink is returned unchanged, so this is a no-op for the
+// ordinary case.
+func followDanglingLinkLeaf(abs string) string {
+	for i := 0; i < maxOutputLinkHops; i++ {
+		info, err := os.Lstat(abs)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return abs
+		}
+		target, err := os.Readlink(abs)
+		if err != nil {
+			return abs
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(abs), target)
+		}
+		abs = filepath.Clean(target)
+	}
+	return abs
 }
 
 // loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and

@@ -111,6 +111,15 @@ func resolveDashboardOutput(output string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving --output: %w", err)
 	}
+	// Resolve the WHOLE path first, exactly as resolveOutputPath does, after
+	// following a dangling leaf link the same way it does. Starting at the parent
+	// would leave a LEAF symlink unresolved — validation would see the link path
+	// while os.WriteFile follows it to its target, which is the same bypass in its
+	// shortest form.
+	abs = followDanglingLinkLeaf(abs)
+	if resolved, err := evalSymlinksFn(abs); err == nil {
+		return resolved, nil
+	}
 	missing := []string{filepath.Base(abs)}
 	for dir := filepath.Dir(abs); ; {
 		if resolved, err := evalSymlinksFn(dir); err == nil {

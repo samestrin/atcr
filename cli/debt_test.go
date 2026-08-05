@@ -573,6 +573,30 @@ func TestDebtStoreDir_AcceptsAGitFileMarker(t *testing.T) {
 	assert.Equal(t, localdebt.DefaultDir(root), debtStoreDir(cmd))
 }
 
+// The broader marker rule is scoped to the debt readers on purpose: it must not
+// leak into the shared repoRoot() that config, telemetry consent, history, and
+// audit resolve their state through (see TestRepoRoot_GitFileIsNotAMarkerForTheSharedWalk).
+// A .git SYMLINK is not a marker in either walk — a link to an arbitrary
+// directory must not pass as a repository root.
+func TestDebtRepoRoot_GitSymlinkIsNotAMarker(t *testing.T) {
+	outer := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(outer, ".git"), 0o755))
+	inner := filepath.Join(outer, "inner")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+	require.NoError(t, os.Symlink("..", filepath.Join(inner, ".git")))
+	t.Chdir(inner)
+
+	got, err := debtRepoRoot()
+	require.NoError(t, err)
+	// Compare symlink-resolved on both sides: t.TempDir and os.Getwd can disagree
+	// on /var vs /private/var, which says nothing about which directory was picked.
+	gotResolved, err := filepath.EvalSymlinks(got)
+	require.NoError(t, err)
+	expected, err := filepath.EvalSymlinks(outer)
+	require.NoError(t, err)
+	assert.Equal(t, expected, gotResolved, "the walk skips a .git symlink and continues up")
+}
+
 // An explicit --dir still wins: it is the escape hatch every test and script uses.
 func TestDebtStoreDir_ExplicitFlagWins(t *testing.T) {
 	root := t.TempDir()

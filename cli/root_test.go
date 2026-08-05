@@ -41,26 +41,29 @@ func TestRepoRoot_SymlinkToGitDirIsRejected(t *testing.T) {
 	require.Equal(t, expectedOuter, got, "repoRoot must skip .git symlink and walk up to the real repo root")
 }
 
-// A linked worktree and a submodule record their root with a .git FILE, which
-// must count as a marker — the write-side resolver (localdebt.validateRepoRoot)
-// accepts both forms, and a stricter rule here is what put the debt store's
-// readers and its writer on different roots. Widening to regular files must not
-// widen to symlinks; TestRepoRoot_SymlinkToGitDirIsRejected pins that half.
-func TestRepoRoot_GitFileCountsAsAMarker(t *testing.T) {
+// repoRoot must stay STRICT about .git being a directory. Eight consumers
+// (config, telemetry consent, history, audit, resume, review) resolve their
+// repo-root state through it, and accepting a .git FILE would treat a submodule
+// or linked worktree as its own atcr repo — silently relocating that state, a
+// recorded telemetry opt-out included, out of the parent repo. The debt store
+// needs the broader rule and carries its own walk (debtRepoRoot); this test is
+// what stops that rule from being "unified" back into here.
+func TestRepoRoot_GitFileIsNotAMarkerForTheSharedWalk(t *testing.T) {
 	isolate(t)
 
-	outer := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(outer, ".git"), []byte("gitdir: /elsewhere/.git/worktrees/wt\n"), 0o644))
-	inner := filepath.Join(outer, "internal", "deep")
-	require.NoError(t, os.MkdirAll(inner, 0o755))
-	require.NoError(t, os.Chdir(inner))
+	parent := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, ".git"), 0o755))
+	sub := filepath.Join(parent, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: /elsewhere\n"), 0o644))
+	require.NoError(t, os.Chdir(sub))
 
 	got, err := repoRoot()
 	require.NoError(t, err)
 
-	expected, err := filepath.EvalSymlinks(outer)
+	expected, err := filepath.EvalSymlinks(parent)
 	require.NoError(t, err)
-	require.Equal(t, expected, got, "a .git file marks a linked worktree's root")
+	require.Equal(t, expected, got, "the shared walk resolves past a submodule to the parent repo")
 }
 
 func TestRepoRoot_FallbackToCwdWhenNoMarker(t *testing.T) {

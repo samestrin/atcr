@@ -62,7 +62,7 @@ func newQualityReportCmd() *cobra.Command {
 	// --dir mirrors `debt resolve`/`debt compact` exactly (same name, default, and
 	// help text) so the three store-reading commands script identically and tests
 	// can point quality-report at a fixture store without chdir.
-	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store (.atcr/debt)")
+	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
 	cmd.Flags().String("format", "md", "output format: md or json")
 	return cmd
 }
