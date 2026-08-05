@@ -191,6 +191,54 @@ func TestDebtStoreFlag_EmptyDirIsUsageError(t *testing.T) {
 	})
 }
 
+// TD: --dir is a model- and script-supplied path that every debt subcommand
+// hands to localdebt (which MkdirAlls it), so it gets the same validation the
+// sibling --output on this command family already has. A `..` segment or a
+// system directory is rejected as a usage error (exit 2) at the shared
+// registration point, before any store directory is created.
+func TestDebtStoreFlag_RejectsTraversalAndSystemDirs(t *testing.T) {
+	cases := map[string]string{
+		"traversal":        "../outside/../../escaped/debt",
+		"embedded parent":  "store/../../../escaped/debt",
+		"system directory": "/etc/atcr/debt",
+	}
+	for label, dir := range cases {
+		for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+			t.Run(label+"/debt "+name, func(t *testing.T) {
+				_, err := runDebt(t, name, "--dir", dir)
+				require.Error(t, err, "debt %s --dir %q must be rejected", name, dir)
+				assert.Equal(t, exitUsage, exitCode(err),
+					"debt %s: an unsafe --dir is a usage error (exit 2)", name)
+				assert.Contains(t, err.Error(), "--dir")
+			})
+		}
+	}
+	t.Run("quality-report", func(t *testing.T) {
+		cmd := newQualityReportCmd()
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetIn(&bytes.Buffer{})
+		cmd.SetArgs([]string{"--dir", "../outside/../../escaped/debt"})
+		err := cmd.Execute()
+		require.Error(t, err, "quality-report rejects an unsafe --dir too")
+		assert.Equal(t, exitUsage, exitCode(err))
+		assert.Contains(t, err.Error(), "--dir")
+	})
+}
+
+// A relative store path with no `..` segment stays legal: it is what the flag's
+// own default (.atcr/debt) is, and rejecting it would break every caller that
+// passes a repo-relative store.
+func TestDebtStoreFlag_AcceptsAPlainRelativeDir(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	t.Chdir(root)
+
+	_, err := runDebt(t, "list", "--dir", ".atcr/debt")
+	require.NoError(t, err, "a plain relative --dir is accepted")
+}
+
 // debtSubcommand looks up a named `atcr debt` subcommand, failing the test when
 // it is absent.
 func debtSubcommand(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
