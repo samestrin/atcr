@@ -47,9 +47,29 @@ func newDebtCmd() *cobra.Command {
 // resolves to <repo root>/.atcr/debt at run time (debtStoreDir). Clearing
 // DefValue touches only the help rendering; the flag's actual default value is
 // unchanged, so Changed("dir")-based resolution is unaffected.
+//
+// A set-but-empty --dir is rejected here, at the shared registration point, via
+// a chained PreRunE (prev-first, matching addRangeFlags in cli/flags.go): an
+// explicit `--dir ""` is the shape an unset shell variable produces, and letting
+// it through made `debt list` report an empty backlog (exit 0) and `debt add`
+// die on a low-level mkdir error — an invocation mistake masquerading as store
+// state. One hook covers every consumer with no change to debtStoreDir's
+// signature or its call sites.
 func addDebtStoreFlag(cmd *cobra.Command) {
 	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
 	cmd.Flags().Lookup("dir").DefValue = ""
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
+		}
+		if cmd.Flags().Changed("dir") && strings.TrimSpace(mustFlag(cmd, "dir")) == "" {
+			return usageError(fmt.Errorf("--dir must not be empty; omit it to resolve <repo root>/.atcr/debt"))
+		}
+		return nil
+	}
 }
 
 // debtStoreDir resolves the store directory for a debt subcommand: an explicit
