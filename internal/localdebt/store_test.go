@@ -63,6 +63,46 @@ func TestDiagWriter_EveryNilableKindFallsBack(t *testing.T) {
 	})
 }
 
+// TestReadPathDiagnostics_CarryNoAbsoluteShardPath pins the package SECURITY
+// contract over RAW PATH STRINGS (TD internal/localdebt/store.go:203). The contract
+// used to rest on callers following the DefaultDir(".") relative-root convention, but
+// the store dir is now DefaultDir(ResolveStoreRoot(...)) and both the explicit and
+// manifest tiers resolve to ABSOLUTE paths — so the malformed-record and over-long-
+// line warnings, which format their path with a bare %s rather than through
+// basePathErr, print a full username-bearing shard path. On the MCP path these go to
+// server stderr, which a calling agent typically captures into model context.
+func TestReadPathDiagnostics_CarryNoAbsoluteShardPath(t *testing.T) {
+	dir := t.TempDir()
+	longLine := strings.Repeat("x", maxLineBytes+16)
+	writeShard(t, dir, "2026-06",
+		"{not json",
+		`{"schema_version":3,"run_id":"2026-06-14T10:00:00Z-a"}`, // missing id
+		longLine,
+	)
+
+	t.Run("ReadRecords", func(t *testing.T) {
+		var diag bytes.Buffer
+		_, _ = ReadRecords(filepath.Join(dir, "2026-06.jsonl"), ReadOpts{Writer: &diag})
+		assertShardDiagIsRedacted(t, diag.String(), dir)
+	})
+
+	t.Run("StreamSummaries", func(t *testing.T) {
+		var diag bytes.Buffer
+		_ = StreamSummaries(dir, ReadOpts{Writer: &diag}, func(Summary) error { return nil })
+		assertShardDiagIsRedacted(t, diag.String(), dir)
+	})
+}
+
+// assertShardDiagIsRedacted checks the warnings still identify WHICH shard (the base
+// name is what a human needs) while carrying none of the absolute path above it.
+func assertShardDiagIsRedacted(t *testing.T, diag, dir string) {
+	t.Helper()
+	require.Contains(t, diag, MsgMalformedSkip, "the malformed-line warning must still fire")
+	require.Contains(t, diag, "over-long line", "the over-long-line warning must still fire")
+	assert.Contains(t, diag, "2026-06.jsonl", "the shard base name still names the damaged file")
+	assert.NotContains(t, diag, dir, "the absolute store path must never reach the sink:\n%s", diag)
+}
+
 // sampleRecord builds a minimal valid current-schema record for store tests
 // (SchemaVersion is taken from the constant, so it tracks the bump), populating every
 // required field with a plausible value plus the optional justification/source
