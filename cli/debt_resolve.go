@@ -235,6 +235,11 @@ func selectOpenIDs(sums []localdebt.Summary, severity string, limit int) []strin
 // (the last open one for the id), not the first one encountered.
 //
 // A missing store directory is empty, not an error, matching ReadAll.
+//
+// When pass 2 materializes fewer records than pass 1 selected — a concurrent
+// `debt resolve --resolve` or `debt compact` landed between the two reads — it
+// notes the shortfall count on opts.Writer (when set), so a short worklist is
+// distinguishable from a short backlog.
 func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -294,6 +299,15 @@ func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]local
 		if r, ok := byID[id]; ok {
 			out = append(out, r)
 		}
+	}
+	// But it must not be dropped SILENTLY: a worklist shortened by a concurrent
+	// close/compact between the passes reads exactly like a short backlog, with
+	// exit code 0 either way. Say on stderr how many selected ids could not be
+	// hydrated. Best-effort: a nil Writer (unit callers) skips the note.
+	if missing := len(ids) - len(out); missing > 0 && opts.Writer != nil {
+		_, _ = fmt.Fprintf(opts.Writer,
+			"note: %d selected item(s) were not found when re-reading the store (closed or compacted between passes)\n",
+			missing)
 	}
 	return out, nil
 }
