@@ -519,6 +519,49 @@ func TestPromptEntry_NonIntegerEstFallsBackWithWarning(t *testing.T) {
 	assert.Contains(t, out.String(), "is not an integer")
 }
 
+// TD: the wizard re-prompted on a BLANK required field but validated no VALUE, so
+// a typo'd severity or status was caught only by finalizeDebtRecord after all
+// seven prompts — and the command then exited with a usage error, discarding
+// every answer the user had typed. The enums are package-level maps available at
+// prompt time and the re-prompt loop already existed; the check is now wired in.
+func TestPromptEntry_RePromptsOnAnInvalidEnumValue(t *testing.T) {
+	answers := strings.Join([]string{
+		"HGIH", // typo -> re-prompt, naming the expected set
+		"HIGH", // corrected
+		"a.go:1", "p", "f", "c",
+		"5",
+		"opne", // typo -> re-prompt
+		"open",
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	rec, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{})
+
+	require.NoError(t, err, "a corrected answer completes the wizard instead of discarding it")
+	assert.Equal(t, "HIGH", rec.Severity)
+	assert.Equal(t, "open", rec.Status)
+	assert.Equal(t, "a.go", rec.File, "the answers typed after the typo are kept")
+	assert.Contains(t, out.String(), "CRITICAL", "the re-prompt names the expected severities")
+	assert.Contains(t, out.String(), "deferred", "the re-prompt names the expected statuses")
+}
+
+// A negative est is the third value finalizeDebtRecord rejects after the fact.
+// It re-prompts too, rather than throwing away the six answers before it.
+func TestPromptEntry_RePromptsOnANegativeEst(t *testing.T) {
+	answers := strings.Join([]string{
+		"LOW", "a.go:1", "p", "f", "c",
+		"-5", // rejected at the prompt
+		"15",
+		"open",
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	rec, err := promptEntry(strings.NewReader(answers), &out, wizardDefaults{})
+
+	require.NoError(t, err)
+	assert.Equal(t, 15, rec.EstMinutes)
+}
+
 func TestPromptEntry_InputTooLongErrors(t *testing.T) {
 	answers := strings.Join([]string{
 		"MEDIUM", "a.go:1", "p", "f", "c", "5",
