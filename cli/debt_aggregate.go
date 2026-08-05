@@ -295,9 +295,11 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 		s.ByAge = append(s.ByAge, debtAgeBucket{Label: "unknown", Count: n})
 	}
 
-	// Top priority: severity then age (oldest first), deterministic on ties.
+	// Top priority: severity then age (oldest first), deterministic on ties. The
+	// cap is unconditional: the CLI rejects a negative topN as a usage error
+	// before renderDebtDashboard — the only caller — can pass one here.
 	_ = sortDebt(top, sortKeySeverity) // severity rank, then date asc, then file
-	if topN >= 0 && len(top) > topN {
+	if len(top) > topN {
 		top = top[:topN]
 	}
 	s.Top = top

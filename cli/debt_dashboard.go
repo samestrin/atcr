@@ -29,7 +29,7 @@ func newDebtDashboardCmd() *cobra.Command {
 	// An empty default means stdout. The previous default wrote a file into the
 	// .planning/-scoped tree, which no longer exists as far as atcr is concerned.
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
-	cmd.Flags().Int("top", 10, "number of top-priority items to list")
+	cmd.Flags().Int("top", 10, "number of top-priority items to list (0 suppresses the list)")
 	cmd.Flags().Bool("check", false, "verify the file at --output matches freshly generated output; exit non-zero on drift")
 	return cmd
 }
@@ -60,11 +60,19 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Validate --top before touching the store. Note the deliberate divergence
+	// from `debt resolve --max` (where 0 = no cap): here 0 suppresses the top
+	// list, and a negative value is rejected rather than silently meaning
+	// "unbounded but suppressed".
+	top, _ := cmd.Flags().GetInt("top")
+	if top < 0 {
+		return usageError(fmt.Errorf("invalid --top %d: expected a non-negative number", top))
+	}
+
 	recs, err := loadLocalDebt(cmd)
 	if err != nil {
 		return err
 	}
-	top, _ := cmd.Flags().GetInt("top")
 	content := renderDebtDashboard(recs, top)
 
 	switch {
