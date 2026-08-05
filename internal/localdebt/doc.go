@@ -151,8 +151,8 @@
 // whole costs disk, rewriting it costs data.
 //
 // It runs two ways. Manually, via `atcr debt compact`. Automatically, via
-// MaybeCompact, called once by cli/reconcile.go's persistLocalDebt AFTER its append
-// loop and ONLY when that run appended at least one record — a suppressed,
+// MaybeCompact, called once by PersistForReconcile AFTER its append loop and ONLY
+// when that run appended at least one record — a suppressed,
 // zero-finding, or fully-deduped reconcile pays no extra I/O at all. The automatic
 // call is best-effort in the same sense as the persistence hook itself: any failure
 // is logged to the diagnostics writer and never changes the reconcile's return
@@ -191,8 +191,11 @@
 // idempotent: re-compacting an already-compacted store leaves both values
 // unchanged. See aggregateCounters (store.go) for the rule and the lifecycle walk.
 //
-// Three commands write the store — cli/reconcile.go (detections), cli/debt_add.go
-// (hand-filed items) and cli/debt_resolve.go (resolutions) — plus Compact itself,
+// Four writers append to the store: the two reconcile entry points that share the
+// PersistForReconcile bridge (cli/reconcile.go's persistLocalDebt wrapper and the
+// MCP atcr_reconcile handler in internal/mcp/handlers.go) for detections, plus
+// cli/debt_add.go (hand-filed items) and cli/debt_resolve.go (resolutions)
+// directly — plus Compact itself,
 // and all of them use ONE convention: append with the counters ZERO. The counters
 // are derived state and live on an id's effective record alone, stamped there by
 // the fold. Three sites must zero them EXPLICITLY, across the two paths that copy
@@ -211,7 +214,8 @@
 // places, and the fold is unconditional — so changing only the append side is a
 // no-op in observable behavior, and widening the seed back to every id in the
 // store silently restores permanent closure with both sides' tests still green.
-// persistLocalDebt (cli/reconcile.go) therefore folds before seeding and seeds
+// persistLocalDebt (cli/reconcile.go) is only a thin resolve-and-delegate wrapper;
+// PersistForReconcile therefore folds before seeding and seeds
 // only ids whose effective record suppresses or is still open. Change one, change
 // the other.
 //
