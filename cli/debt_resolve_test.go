@@ -107,6 +107,17 @@ func TestDebtResolve_EmptyStoreMessageExitsZero(t *testing.T) {
 	assert.Contains(t, strings.ToLower(out), "no items")
 }
 
+// The empty-list message names the store it read, the way `debt add` prints its
+// resolved dir — an undifferentiated "no open items" from the WRONG store reads
+// exactly like an empty backlog, with exit code 0 either way.
+func TestDebtResolve_EmptyListMessageNamesTheStore(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "no items")
+	assert.Contains(t, out, dir, "the empty-list line names the store it read")
+}
+
 func TestDebtResolve_MissingDirIsNotAnError(t *testing.T) {
 	out, err := runDebt(t, "resolve", "--dir", t.TempDir()+"/does-not-exist", "--list")
 	require.NoError(t, err, "a missing .atcr/debt dir is the no-backlog state, not an error")

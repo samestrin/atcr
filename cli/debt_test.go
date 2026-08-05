@@ -231,6 +231,19 @@ func TestDebtList_AbsentStoreIsNotAnError(t *testing.T) {
 	assert.Contains(t, strings.ToLower(out), "no matching")
 }
 
+// An empty result names the store it read: `debt add` already prints its
+// resolved dir ("Added ... to <dir>."), and an empty line with no store hint is
+// indistinguishable from reading the WRONG store — the silent failure
+// debtStoreDir's doc block calls out. The --json branch is exempt by contract
+// (a consumer must get [] with no human-readable line).
+func TestDebtList_EmptyResultMessageNamesTheStore(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out, err := runDebt(t, "list", "--dir", dir, "--category", "no-such-category")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "no matching")
+	assert.Contains(t, out, dir, "the empty-result line names the store it read")
+}
+
 func TestDebtList_UnknownSortIsUsageError(t *testing.T) {
 	dir := writeLocalDebt(t)
 	_, err := runDebt(t, "list", "--dir", dir, "--sort", "bogus")
