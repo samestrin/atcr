@@ -256,17 +256,23 @@ func TestResolveStoreRoot(t *testing.T) {
 		assert.Contains(t, diag.String(), "pass repo=<path>", "the warning names the operator's remedy")
 	})
 
-	t.Run("blank explicit root is treated as unset", func(t *testing.T) {
-		// `--repo ""` documented behavior: a blank flag asserts nothing, so the
-		// manifest still speaks rather than the run failing to persist.
+	t.Run("whitespace-only explicit root is an invalid claim, not an absent one", func(t *testing.T) {
+		// `--repo "$REPO "` with REPO unset produces "   ": the operator NAMED a
+		// root, and the resolver acting as if they named nothing is the one
+		// silent transition the no-fall-through contract forbids (TD
+		// internal/localdebt/root.go:59). Only a genuinely absent Explicit ("")
+		// falls through — covered by the manifest-tier cases above.
 		manifestRoot := repoDir(t, ".git")
 		review := filepath.Join(t.TempDir(), "r")
 		writeReviewManifest(t, review, manifestRoot)
 
-		root, ok := ResolveStoreRoot(RootOpts{Explicit: "   ", ReviewDir: review, AllowCWD: true})
+		var diag bytes.Buffer
+		root, ok := ResolveStoreRoot(RootOpts{Explicit: "   ", ReviewDir: review, AllowCWD: true, Diag: &diag})
 
-		require.True(t, ok)
-		assert.Equal(t, manifestRoot, root)
+		assert.False(t, ok, "a supplied-but-blank root is an invalid claim: stop, never fall through")
+		assert.Empty(t, root)
+		assert.NotEqual(t, manifestRoot, root, "the manifest tier must not rescue a blank explicit root")
+		assert.Contains(t, diag.String(), "blank")
 	})
 
 	t.Run("nil diag writer does not panic", func(t *testing.T) {
