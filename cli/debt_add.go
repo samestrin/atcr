@@ -91,31 +91,41 @@ func normalizeStatus(s string) string   { return strings.ToLower(strings.TrimSpa
 // line RANGE ("a.go:1-9", which is not a single line), or a bare path is kept
 // verbatim in File with Line 0.
 //
+// A numeric tail of 0 ("a.go:0", "a.go:00") is rejected: line numbers are
+// 1-based, and Line 0 is the sentinel localdebt.Record carries for "no line
+// recorded". Accepting it would make "a.go:0" indistinguishable from "a.go" —
+// StampID hashes file+line+problem, so the two spellings would collide onto one
+// id and a second `debt add` with the other spelling would silently reuse an
+// existing record's id.
+//
 // The split never yields an EMPTY File. ":42" is not a location, and a record
 // with no File is unreachable through `atcr debt resolve`, which skips records
 // it cannot act on (selectOpenDebt) — the item would list but never close. Such
 // a value is kept verbatim so the required-field check in finalizeDebtRecord
 // sees it and rejects the add outright.
-func parseDebtFileLine(v string) (string, int) {
+func parseDebtFileLine(v string) (string, int, error) {
 	// Trim first: surrounding whitespace on a flag value would otherwise make the
 	// numeric tail test fail ("a.go:1 " is not all digits), silently downgrading a
 	// real location to Line 0.
 	v = strings.TrimSpace(v)
 	i := strings.LastIndex(v, ":")
 	if i <= 0 || i == len(v)-1 {
-		return v, 0
+		return v, 0, nil
 	}
 	tail := v[i+1:]
 	for _, r := range tail {
 		if r < '0' || r > '9' {
-			return v, 0 // not a line suffix; keep verbatim
+			return v, 0, nil // not a line suffix; keep verbatim
 		}
 	}
 	n, err := strconv.Atoi(tail)
 	if err != nil {
-		return v, 0 // a digit run that overflows an int is not a usable line number
+		return v, 0, nil // a digit run that overflows an int is not a usable line number
 	}
-	return v[:i], n
+	if n == 0 {
+		return "", 0, fmt.Errorf("invalid location %q: line numbers are 1-based (a :0 suffix records no line)", v)
+	}
+	return v[:i], n, nil
 }
 
 func missingRequiredFlags(sev, file, problem, fix, category string) []string {
@@ -158,7 +168,11 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 			Severity: sev, Problem: problem, Fix: fix, Category: category,
 			EstMinutes: est, Status: def.Status,
 		}
-		rec.File, rec.Line = parseDebtFileLine(file)
+		f, line, err := parseDebtFileLine(file)
+		if err != nil {
+			return usageError(err)
+		}
+		rec.File, rec.Line = f, line
 	case debtStdinIsTTY(cmd.InOrStdin()):
 		// Interactive wizard — only when we can actually prompt a human. Any
 		// required flags already supplied were seeded into def above, so partial
@@ -321,6 +335,10 @@ func promptEntry(in io.Reader, out io.Writer, def wizardDefaults) (localdebt.Rec
 		Severity: sev, Problem: problem, Fix: fix, Category: category,
 		EstMinutes: est, Status: status,
 	}
-	rec.File, rec.Line = parseDebtFileLine(file)
+	f, line, err := parseDebtFileLine(file)
+	if err != nil {
+		return localdebt.Record{}, err
+	}
+	rec.File, rec.Line = f, line
 	return rec, nil
 }

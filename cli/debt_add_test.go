@@ -337,9 +337,23 @@ func TestParseDebtFileLine(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			file, line := parseDebtFileLine(tc.in)
+			file, line, err := parseDebtFileLine(tc.in)
+			require.NoError(t, err)
 			assert.Equal(t, tc.wantFile, file)
 			assert.Equal(t, tc.wantLine, line)
+		})
+	}
+}
+
+// Line 0 is the sentinel for "no line recorded", so a ":0" suffix (zero-padded
+// included) can never be a real location: it is rejected rather than collapsed
+// onto the same StampID hash as the bare path.
+func TestParseDebtFileLine_ZeroLineSuffixIsRejected(t *testing.T) {
+	for _, in := range []string{"a.go:0", "a.go:00", "a.go:000"} {
+		t.Run(in, func(t *testing.T) {
+			_, _, err := parseDebtFileLine(in)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "1-based")
 		})
 	}
 }
