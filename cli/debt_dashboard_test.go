@@ -190,6 +190,43 @@ func TestDebtDashboard_CreatesMissingParentDirectory(t *testing.T) {
 	assert.FileExists(t, out)
 }
 
+// TD: os.WriteFile is O_TRUNC, so --output was an arbitrary-file-TRUNCATION
+// primitive on a surface that agents and skills drive with model-supplied
+// arguments: `--output ~/.ssh/id_rsa` destroyed the key and reported nothing. The
+// dashboard now refuses to overwrite a file it did not generate — the marker it
+// stamps into every render is the proof of authorship — so the only files it can
+// destroy are its own.
+func TestDebtDashboard_RefusesToOverwriteAFileItDidNotGenerate(t *testing.T) {
+	dir := writeLocalDebt(t)
+	victim := filepath.Join(t.TempDir(), "id_rsa")
+	const secret = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+	require.NoError(t, os.WriteFile(victim, []byte(secret), 0o600))
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", victim)
+
+	require.Error(t, err, "a file the dashboard did not write must not be truncated")
+	assert.Equal(t, exitUsage, exitCode(err))
+	raw, readErr := os.ReadFile(victim)
+	require.NoError(t, readErr)
+	assert.Equal(t, secret, string(raw), "the target is left byte-identical")
+}
+
+// Regenerating over a previous dashboard is the normal path and stays silent —
+// the guard must not make the command single-use.
+func TestDebtDashboard_OverwritesItsOwnPreviousOutput(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
+	require.NoError(t, err)
+
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out)
+
+	require.NoError(t, err, "a dashboard regenerates over itself")
+	raw, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "Technical Debt Dashboard")
+}
+
 // TD item G: a negative --top used to slip past the topN >= 0 guard and mean a
 // third, undocumented thing ("build the unbounded list, then suppress it").
 // It is a usage error, phrased like debt add's invalid --est.
