@@ -13,8 +13,8 @@ This page documents that contract so external consumers — most importantly a
 `resolve-td`-style skill that fixes captured technical debt — can rely on it.
 It is a superset of the `problem` column defined in
 [findings-format.md](findings-format.md); the anchor is content *inside* that
-column, not a new column, so every legacy parser of the flat
-[technical-debt](technical-debt.md) table keeps working unchanged.
+column, not a new column, so every parser of the `problem` field of a
+[technical-debt](technical-debt.md) record keeps working unchanged.
 
 ## Why
 

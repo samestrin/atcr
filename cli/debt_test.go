@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -369,6 +371,240 @@ func TestSortDebt_UnknownKeyIsError(t *testing.T) {
 func TestTruncate_GuardNonPositiveN(t *testing.T) {
 	assert.Equal(t, "", truncate("abc", 0), "n==0 must not panic")
 	assert.Equal(t, "", truncate("abc", -1), "negative n must not panic")
+}
+
+// --- Plan 35.13 T7: --json, the id column, and the reader root --------------
+
+// AC9 (json): list --json emits the record array a downstream consumer joins on,
+// never the human-readable empty message.
+func TestDebtList_JSONEmitsRecordArray(t *testing.T) {
+	recs := debtSampleRecords()
+	dir := writeLocalDebt(t, recs...)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--json")
+	require.NoError(t, err)
+
+	var got []localdebt.Record
+	require.NoError(t, json.Unmarshal([]byte(out), &got), "output is a JSON array: %s", out)
+	require.Len(t, got, len(recs))
+	for _, r := range got {
+		assert.NotEmpty(t, r.ID, "every emitted record carries its join key")
+	}
+}
+
+// An empty result is [] — not null, and not "No matching technical-debt items."
+// A consumer parsing the stream must never have to special-case the empty store.
+func TestDebtList_JSONEmptyStoreEmitsEmptyArray(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".atcr", "debt")
+
+	out, err := runDebt(t, "list", "--dir", dir, "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "[]", strings.TrimSpace(out))
+	assert.NotContains(t, out, "No matching")
+}
+
+// --json honors the same filters and ordering the table renders, so a consumer
+// diffing successive runs sees content changes rather than order churn.
+func TestDebtList_JSONRespectsFiltersAndOrder(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--component", "cmd/atcr", "--json")
+	require.NoError(t, err)
+
+	var got []localdebt.Record
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Len(t, got, 2)
+	assert.Equal(t, "CRITICAL", got[0].Severity, "default severity sort survives the JSON path")
+	assert.Equal(t, "MEDIUM", got[1].Severity)
+}
+
+// AC9 (json): one renderer, two callers. A second encoder is exactly how the
+// list and resolve shapes would drift apart on indent or field ordering.
+func TestRenderDebtJSON_NilAndEmptyEncodeAsArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		recs []localdebt.Record
+	}{{"nil", nil}, {"empty", []localdebt.Record{}}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			require.NoError(t, renderDebtJSON(&b, tc.recs))
+			assert.Equal(t, "[]", strings.TrimSpace(b.String()))
+		})
+	}
+}
+
+// The two-space indent is a wire-format detail a downstream parser may already
+// depend on; pin it rather than letting an encoder tweak change it silently.
+func TestRenderDebtJSON_TwoSpaceIndent(t *testing.T) {
+	var b bytes.Buffer
+	require.NoError(t, renderDebtJSON(&b, debtSampleRecords()[:1]))
+	// Array elements indent by one level, their fields by two.
+	assert.Contains(t, b.String(), "[\n  {\n    \"schema_version\":")
+}
+
+// list --json and resolve --json go through renderDebtJSON, so the same record
+// serializes identically on both surfaces.
+func TestDebtJSON_ListAndResolveShareOneShape(t *testing.T) {
+	rec := debtSampleRecords()[0]
+	dir := writeLocalDebt(t, rec)
+
+	listOut, err := runDebt(t, "list", "--dir", dir, "--json")
+	require.NoError(t, err)
+	resolveOut, err := runDebt(t, "resolve", "--dir", dir, "--json")
+	require.NoError(t, err)
+	assert.Equal(t, listOut, resolveOut)
+}
+
+// AC9 (list): the id is fixed-width and load-bearing, so truncate never touches
+// it even when the row's problem text is cut.
+func TestRenderDebtTable_IDIsNeverTruncated(t *testing.T) {
+	rec := debtSampleRecords()[0]
+	rec.Problem = strings.Repeat("a very long problem statement ", 8)
+	rec.StampID()
+
+	var b bytes.Buffer
+	require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+	assert.Contains(t, b.String(), rec.ID, "the id survives whole")
+	assert.Contains(t, b.String(), "…", "the problem text is still truncated")
+}
+
+// A hand-edited store is the only way an empty id reaches a renderer. Render a
+// literal "-" rather than a blank cell, and never a computed fallback id:
+// markDebtResolved matches on the stored ID, so a synthesized display id would
+// print a value `resolve` cannot match — a copy-pasteable lie.
+func TestRenderDebtTable_EmptyIDRendersDash(t *testing.T) {
+	rec := debtSampleRecords()[0]
+	rec.ID = ""
+
+	var b bytes.Buffer
+	require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.True(t, strings.HasPrefix(lines[1], "-"), "an empty id renders as -, got %q", lines[1])
+}
+
+// AC9 (round trip): the id a human reads out of the table is the id resolve
+// matches. Parsing the RENDERED output rather than the record struct is the
+// point — it is what proves the rendered id is the resolvable id.
+func TestDebtList_RenderedIDClosesTheItem(t *testing.T) {
+	dir := writeLocalDebt(t, debtSampleRecords()[0])
+
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	id := firstRenderedID(t, listed)
+
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	require.NoError(t, err, "the id copied out of the table closes the item")
+
+	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(open), "no matching", "the item left the open backlog")
+
+	all, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, all, id, "a bare list still shows the same id")
+	assert.Contains(t, all, "resolved")
+}
+
+// AC9 (cross-view): list, dashboard, and --json show ONE id for one record.
+// Three renderers that disagree would break the join contract the ownership
+// model hands downstream.
+func TestDebtViews_ShowTheSameIDForOneRecord(t *testing.T) {
+	dir := writeLocalDebt(t, debtSampleRecords()[0])
+
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	id := firstRenderedID(t, listed)
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, dash, id, "the dashboard's Top Priority row carries the same id")
+
+	jsonOut, err := runDebt(t, "list", "--dir", dir, "--json")
+	require.NoError(t, err)
+	var got []localdebt.Record
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, id, got[0].ID)
+}
+
+// firstRenderedID copies the id out of the first data row of a rendered table,
+// the way a human copies it off the terminal.
+func firstRenderedID(t *testing.T, out string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.GreaterOrEqual(t, len(lines), 2, "expected a header and at least one row:\n%s", out)
+	id := strings.Fields(lines[1])[0]
+	require.NotEmpty(t, id)
+	return id
+}
+
+// --- TD-020 (reader half): the store readers walk up to the repo root --------
+
+// The writer moved to the manifest-recorded root in T6 while every reader stayed
+// CWD-relative, so `atcr debt list` from a subdirectory silently read an empty
+// store. The readers now share cli/root.go's existing .git/.atcr marker walk.
+func TestDebtStoreDir_DefaultWalksUpToTheRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	sub := filepath.Join(root, "internal", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+
+	cmd := newDebtListCmd()
+	require.NoError(t, cmd.Flags().Parse(nil))
+	assert.Equal(t, localdebt.DefaultDir(root), debtStoreDir(cmd),
+		"an unset --dir resolves against the repo root, not the working directory")
+}
+
+// An explicit --dir still wins: it is the escape hatch every test and script uses.
+func TestDebtStoreDir_ExplicitFlagWins(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	t.Chdir(root)
+
+	cmd := newDebtListCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{"--dir", "/tmp/elsewhere/debt"}))
+	assert.Equal(t, "/tmp/elsewhere/debt", debtStoreDir(cmd))
+}
+
+// No marker anywhere up the tree is the pre-existing behavior repoRoot already
+// defines: fall back to the working directory. That is what keeps the debt suite
+// (which chdirs into a bare temp dir) reading the store it just wrote.
+func TestDebtStoreDir_NoMarkerFallsBackToWorkingDir(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	cmd := newDebtListCmd()
+	require.NoError(t, cmd.Flags().Parse(nil))
+	got := debtStoreDir(cmd)
+	// The fallback root is the working directory itself unless an ancestor of the
+	// temp tree happens to carry a marker; either way the path must be absolute
+	// and end at the store subdirectory, never a stale process-start directory.
+	assert.True(t, filepath.IsAbs(got), "the resolved store path is absolute, got %q", got)
+	assert.Equal(t, localdebt.DefaultDir(filepath.Dir(filepath.Dir(got))), got)
+}
+
+// An id filed by add from a SUBDIRECTORY is visible to list from that same
+// subdirectory — AC1's headline claim, which was true only at the repo root
+// before this fix.
+func TestDebtAddThenList_FromASubdirectory(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	sub := filepath.Join(root, "internal", "deep")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+
+	_, err := runDebt(t, "add",
+		"--severity", "HIGH", "--file", "internal/x/y.go:12",
+		"--problem", "unbounded retry loop on 5xx", "--fix", "cap retries",
+		"--category", "correctness", "--est", "30")
+	require.NoError(t, err)
+
+	out, err := runDebt(t, "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "unbounded retry loop on 5xx",
+		"list reads the store add just wrote, from the same subdirectory")
 }
 
 // --- Plan 35.13 T3 ripple: list and dashboard share the fold ----------------

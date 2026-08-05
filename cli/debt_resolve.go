@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -64,7 +63,7 @@ func newDebtResolveCmd() *cobra.Command {
 }
 
 func runDebtResolve(cmd *cobra.Command, _ []string) error {
-	dir := mustFlag(cmd, "dir")
+	dir := debtStoreDir(cmd)
 
 	id := mustFlag(cmd, "resolve")
 	// --status/--reason only mean something for a mark action; without --resolve they
@@ -123,7 +122,7 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 	}
 
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
-		return renderResolveJSON(cmd.OutOrStdout(), open)
+		return renderDebtJSON(cmd.OutOrStdout(), open)
 	}
 	return renderResolveList(cmd.OutOrStdout(), open)
 }
@@ -308,17 +307,6 @@ func severityRank(s string) int {
 	default:
 		return 0
 	}
-}
-
-// renderResolveJSON writes the selected records as a JSON array (never null, so an
-// empty store yields [] for a scripting consumer).
-func renderResolveJSON(w io.Writer, recs []localdebt.Record) error {
-	if recs == nil {
-		recs = []localdebt.Record{}
-	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(recs)
 }
 
 // renderResolveList writes an aligned table of open items for the skill route to

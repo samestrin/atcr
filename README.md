@@ -95,7 +95,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
 | `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
-| `atcr debt` | Query, capture, and report on technical debt (`list` / `add` / `dashboard` / `resolve` / `compact`); `resolve --status wontfix --reason "<text>"` dismisses a false-positive finding so it stops resurfacing — see [docs/technical-debt.md](docs/technical-debt.md) |
+| `atcr debt` | Query, capture, and report on technical debt in the `.atcr/debt/` store (`list` / `add` / `dashboard` / `resolve` / `compact`, all over that one store); `resolve --status wontfix --reason "<text>"` dismisses a false-positive finding so it stops resurfacing — see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |

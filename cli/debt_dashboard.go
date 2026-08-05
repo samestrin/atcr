@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/samestrin/atcr/internal/validation"
 )
 
 func newDebtDashboardCmd() *cobra.Command {
@@ -26,7 +28,7 @@ func newDebtDashboardCmd() *cobra.Command {
 	addDebtStoreFlag(cmd)
 	// An empty default means stdout. The previous default wrote a file into the
 	// .planning/-scoped tree, which no longer exists as far as atcr is concerned.
-	cmd.Flags().String("output", "", "write the dashboard to this file instead of stdout")
+	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Int("top", 10, "number of top-priority items to list")
 	cmd.Flags().Bool("check", false, "verify the file at --output matches freshly generated output; exit non-zero on drift")
 	return cmd
@@ -42,6 +44,22 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		return usageError(errors.New("--check requires --output <file>"))
 	}
 
+	// Validate --output before any rendering or I/O, the same way runReport does:
+	// resolve it to an absolute, symlink-resolved path so a target under a system
+	// directory — or a symlink pointing into one — is rejected at the input layer
+	// (exit 2). The resolved path is also the path written below, so the value
+	// validated is the value used and no link-follow can slip in between.
+	outputPath := out
+	if out != "" {
+		var err error
+		if outputPath, err = resolveOutputPath(out); err != nil {
+			return usageError(err)
+		}
+		if err := validation.FilePath(outputPath); err != nil {
+			return usageError(err)
+		}
+	}
+
 	recs, err := loadLocalDebt(cmd)
 	if err != nil {
 		return err
@@ -51,19 +69,26 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 
 	switch {
 	case check:
-		return checkDashboard(cmd, out, content)
+		return checkDashboard(cmd, outputPath, content)
 	case out == "":
 		_, err := fmt.Fprint(cmd.OutOrStdout(), content)
 		return err
 	default:
-		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-			return fmt.Errorf("create dashboard directory: %w", err)
+		// The one deliberate divergence from `atcr report`'s --output contract:
+		// the dashboard is a generated artifact routinely pointed at a path in a
+		// not-yet-created directory (docs/, .github/), so it creates the parent
+		// rather than failing. This is intentional, not an oversight.
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+			return usageError(fmt.Errorf("failed to create the directory for %q: %w", outputPath, err))
 		}
-		if err := os.WriteFile(out, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write dashboard: %w", err)
+		// A local I/O failure is an infrastructure/usage error (exit 2), matching
+		// report.go's classification of its own disk writes.
+		if err := os.WriteFile(outputPath, []byte(content), 0o644); err != nil {
+			return usageError(fmt.Errorf("failed to write dashboard to %q: %w", outputPath, err))
 		}
-		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Wrote dashboard to %s.\n", out)
-		return err
+		// Nothing on stdout: report writes no "wrote it" line either, and a status
+		// line is noise to a caller that redirected the payload to a file.
+		return nil
 	}
 }
 

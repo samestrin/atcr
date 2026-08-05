@@ -48,18 +48,69 @@ func TestDebtDashboard_StdoutIsTheDefault(t *testing.T) {
 	assert.NoFileExists(t, unwritten, "the default path writes no file")
 }
 
-func TestDebtDashboard_WritesFile(t *testing.T) {
+// AC10: the file path writes the file and says nothing on stdout — atcr report's
+// contract, which has no "wrote it" line either. A status line on the write path
+// is noise a redirecting caller never asked for.
+func TestDebtDashboard_WritesFileAndIsSilentOnStdout(t *testing.T) {
 	dir := writeLocalDebt(t)
 	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
 
 	msg, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
 	require.NoError(t, err)
-	assert.Contains(t, msg, out)
+	assert.Empty(t, msg, "--output writes nothing to stdout")
 
 	got, err := os.ReadFile(out)
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "# Technical Debt Dashboard")
 	assert.Contains(t, string(got), "cmd/atcr/autofix.go:248")
+}
+
+// AC10: --output is validated the way atcr report validates it — resolved to an
+// absolute, symlink-resolved path and rejected when it lands in a system
+// directory, before anything is written.
+func TestDebtDashboard_OutputUnderSystemDirIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", "/etc/atcr-dashboard.md")
+	require.Error(t, err, "a system-directory target must be rejected")
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// A symlinked PARENT pointing into a system directory must be caught too: the
+// bypass resolveOutputPath exists to close is validating the link path while the
+// write follows the link.
+func TestDebtDashboard_OutputThroughSymlinkedParentIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink("/etc", link))
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", filepath.Join(link, "d.md"))
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// AC10: a write failure is a usage/infrastructure error (exit 2), the same
+// classification cli/report.go applies to its own disk writes.
+func TestDebtDashboard_WriteFailureIsExitTwo(t *testing.T) {
+	dir := writeLocalDebt(t)
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", filepath.Join(blocker, "d.md"))
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+}
+
+// The dashboard is a generated artifact routinely written into a directory that
+// does not exist yet, which is the one deliberate divergence from report's
+// contract. Keep it pinned so a later "parity" cleanup does not remove it.
+func TestDebtDashboard_CreatesMissingParentDirectory(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "new", "nested", "DASHBOARD.md")
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
+	require.NoError(t, err)
+	assert.FileExists(t, out)
 }
 
 func TestDebtDashboard_CheckMissingFileIsError(t *testing.T) {

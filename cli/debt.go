@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -41,6 +42,36 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store (.atcr/debt)")
 }
 
+// debtStoreDir resolves the store directory for a debt subcommand: an explicit
+// --dir verbatim, otherwise the store under the repo root that cli/root.go's
+// existing .git/.atcr marker walk finds. Without the walk a bare `atcr debt
+// list` run from a subdirectory reads a DIFFERENT (usually empty) store than the
+// one `atcr reconcile` wrote at the repo root — silently, with no error and no
+// hint. That is the reader half of the split T6 opened when it moved the writer
+// to a manifest-recorded root.
+//
+// Resolution happens here, at RUN time, and deliberately not in the package-level
+// flag default: localdebt.DefaultDir(".") is a RELATIVE path that re-resolves
+// against the working directory at each use, whereas an absolute root computed
+// at package-var init would capture the process's start directory and outlive
+// any later chdir (which is what the test suite does).
+//
+// repoRoot falls back to the working directory when it finds no marker, so a
+// caller outside a repo keeps exactly today's behavior.
+func debtStoreDir(cmd *cobra.Command) string {
+	dir := mustFlag(cmd, "dir")
+	if cmd.Flags().Changed("dir") {
+		return dir
+	}
+	root, err := repoRoot()
+	if err != nil {
+		// Getwd failed — there is no better root to offer than the relative
+		// default, which is what every caller used before this walk existed.
+		return dir
+	}
+	return localdebt.DefaultDir(root)
+}
+
 // loadLocalDebt reads the store named by --dir and folds it by id, so list and
 // dashboard see one effective record per finding — the same precedence rule
 // selectOpenDebt, Compact, and AggregateQualitySignal share. Without the fold a
@@ -56,7 +87,7 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 // A missing store is not an error: localdebt.ReadAll reports the "no backlog
 // yet" state as an empty result, which renders as the empty-result message.
 func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
-	dir := mustFlag(cmd, "dir")
+	dir := debtStoreDir(cmd)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
@@ -77,6 +108,9 @@ func newDebtListCmd() *cobra.Command {
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
 	cmd.Flags().String("sort", sortKeySeverity, "sort key: severity|age|est|file")
+	// Same flag name, type, and help string as `debt resolve --json`, so the two
+	// machine-readable surfaces read identically to a caller.
+	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
 	return cmd
 }
 
@@ -98,12 +132,32 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
+	// The JSON branch comes before the empty-result message: a consumer parsing
+	// the stream must get [] for an empty store, never a human-readable line it
+	// would have to special-case.
+	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+		return renderDebtJSON(out, recs)
+	}
 	if len(recs) == 0 {
 		_, _ = fmt.Fprintln(out, "No matching technical-debt items.")
 		return nil
 	}
 
 	return renderDebtTable(out, recs)
+}
+
+// renderDebtJSON writes records as a JSON array (never null, so an empty store
+// yields [] for a scripting consumer). It is the ONE encoder behind both
+// `debt list --json` and `debt resolve --json`: a second encoder is how the two
+// surfaces would drift apart on field ordering or indent, breaking a downstream
+// consumer that reads one and is tested against the other.
+func renderDebtJSON(w io.Writer, recs []localdebt.Record) error {
+	if recs == nil {
+		recs = []localdebt.Record{}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(recs)
 }
 
 // mustFlag reads a string flag, returning "" if it was not registered. The
@@ -253,12 +307,29 @@ func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			cell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), r.EstMinutes,
+			debtIDCell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), r.EstMinutes,
 			cell(debtLocation(r)), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// debtIDCell renders a record's id for a table or dashboard row. Every writer
+// stamps the id (Record.StampID, persistLocalDebt, and markDebtResolved copying
+// it forward), so an empty id only reaches a renderer from a hand-edited store;
+// it renders as a literal "-" rather than a blank cell that would misalign the
+// column and read as a missing value.
+//
+// It deliberately does NOT fall back to recomputing FindingID: markDebtResolved
+// matches on the STORED id, so a computed display id would print a value
+// `atcr debt resolve` cannot match. A copy-pasteable lie is worse than a
+// visible gap.
+func debtIDCell(id string) string {
+	if id == "" {
+		return "-"
+	}
+	return cell(id)
 }
 
 // cell makes a raw store field safe to interpolate into the tab-separated

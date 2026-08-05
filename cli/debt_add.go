@@ -177,7 +177,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	if err := finalizeDebtRecord(&rec); err != nil {
 		return err
 	}
-	dir := mustFlag(cmd, "dir")
+	dir := debtStoreDir(cmd)
 	if err := localdebt.Append(dir, rec); err != nil {
 		return fmt.Errorf("atcr debt add: failed to file the item: %w", err)
 	}

@@ -23,7 +23,7 @@ func newDebtCompactCmd() *cobra.Command {
 }
 
 func runDebtCompact(cmd *cobra.Command, _ []string) error {
-	dir := mustFlag(cmd, "dir")
+	dir := debtStoreDir(cmd)
 
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
 	res, err := localdebt.Compact(dir, opts)

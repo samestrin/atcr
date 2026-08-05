@@ -232,6 +232,61 @@ func TestRenderDebtDashboard_TopZeroShowsSuppressed(t *testing.T) {
 	assert.NotContains(t, top, "_No unresolved items._")
 }
 
+// AC9 (dashboard): the Top Priority table carries the id, so the view a human
+// scans for what to fix next is also the view they copy the resolve argument from.
+func TestRenderDebtDashboard_TopPriorityCarriesIDColumn(t *testing.T) {
+	recs := debtSampleRecords()
+	out := renderDebtDashboard(recs, 10)
+	top := out[strings.Index(out, "## Top Priority"):]
+
+	assert.Contains(t, top, "| ID | Severity | File | Est | Problem |")
+	for _, r := range recs {
+		if !debtIsLive(r) {
+			continue
+		}
+		assert.Contains(t, top, r.ID, "each listed row carries its id")
+	}
+}
+
+// Determinism is load-bearing for --check: the id is a pure content hash with no
+// clock component, but pin it rather than reasoning about it.
+func TestRenderDebtDashboard_IDColumnStaysDeterministic(t *testing.T) {
+	recs := debtSampleRecords()
+	assert.Equal(t, renderDebtDashboard(recs, 10), renderDebtDashboard(recs, 10))
+}
+
+// The id is a content hash, not free text: redacting it would break the join
+// contract the dashboard exists to serve, even on a record whose problem text
+// does get scrubbed.
+func TestRenderDebtDashboard_IDIsNotRedacted(t *testing.T) {
+	rec := mkDebtRecord("", "CRITICAL", "internal/x.go", 1, "2026-06-26T09:00:00Z")
+	rec.Problem = "leaked key sk-ABCDEF0123456789 in the log line"
+	rec.StampID()
+
+	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	assert.NotContains(t, out, "sk-ABCDEF0123456789")
+	assert.Contains(t, out, rec.ID, "the id passes through the redactor untouched")
+}
+
+// Matches the table renderer: a hand-edited record with no id renders "-", never
+// a blank cell and never a computed fallback.
+func TestRenderDebtDashboard_EmptyIDRendersDash(t *testing.T) {
+	rec := mkDebtRecord("", "CRITICAL", "internal/x.go", 1, "2026-06-26T09:00:00Z")
+	rec.Problem = "no id on this one"
+	rec.ID = "" // only a hand-edited store can produce this
+
+	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	top := out[strings.Index(out, "## Top Priority"):]
+	assert.Contains(t, top, "| - | CRITICAL |")
+}
+
+// A zero cap still suppresses the list rather than emitting a bare header row.
+func TestRenderDebtDashboard_TopZeroEmitsNoHeaderRow(t *testing.T) {
+	out := renderDebtDashboard(debtSampleRecords(), 0)
+	top := out[strings.Index(out, "## Top Priority"):]
+	assert.NotContains(t, top, "| ID | Severity |")
+}
+
 func TestRenderDebtDashboard_AgeByMonthIsTimeInvariant(t *testing.T) {
 	out := renderDebtDashboard(debtSampleRecords(), 10)
 	age := out[strings.Index(out, "## By Age"):]

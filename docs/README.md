@@ -62,8 +62,10 @@ single source of truth the website build consumes, so it links every doc in
   dispatcher pattern, and why it is out of this repo's automated scope.
 - [Release Process](release-process.md) — the bare `vX.Y.Z` tag convention and
   the tag-triggered goreleaser workflow a maintainer uses to cut a release.
-- [Technical-Debt Tooling (`atcr debt`)](technical-debt.md) — query, capture, and
-  report on technical debt; the `--check` dashboard gate for CI and pre-commit.
+- [Technical-Debt Tooling (`atcr debt`)](technical-debt.md) — the five-subcommand
+  family (`list` / `add` / `dashboard` / `resolve` / `compact`) over the one
+  `.atcr/debt/` store: finding ids, the record schema, status lifetimes, the
+  `--json` read contract, and the `--check` dashboard gate for CI and pre-commit.
 - [Symbol-anchored Problem cells (`(symbolName)` prefix)](technical-debt-format.md)
   — the stable AST-symbol anchor prepended to each finding's `problem`, and how a
   `resolve-td` consumer parses it as a drift-proof relocation key.

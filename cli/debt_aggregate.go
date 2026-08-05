@@ -361,10 +361,16 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	} else if topN <= 0 {
 		b.WriteString("_(top list suppressed)_\n")
 	} else {
-		b.WriteString("| Severity | File | Est | Problem |\n|----------|------|-----|---------|\n")
+		// The id leads the row for the same reason it leads `debt list`: this is
+		// the view a human scans for what to fix next, so it is also the view they
+		// copy the `atcr debt resolve --resolve <id>` argument out of. It is NOT
+		// passed through the redactor — an id is a content hash, and scrubbing it
+		// would break the join contract this table exists to serve.
+		b.WriteString("| ID | Severity | File | Est | Problem |\n|----|----------|------|-----|---------|\n")
 		for _, r := range sum.Top {
-			fmt.Fprintf(&b, "| %s | %s | %d | %s |\n",
-				r.Severity, debtMarkdownCell(debtLocation(r)), r.EstMinutes, debtMarkdownCell(red.Redact(r.Problem)))
+			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s |\n",
+				debtMarkdownCell(debtIDCell(r.ID)), r.Severity, debtMarkdownCell(debtLocation(r)),
+				r.EstMinutes, debtMarkdownCell(red.Redact(r.Problem)))
 		}
 	}
 
