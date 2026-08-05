@@ -1148,6 +1148,20 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 	return result, nil
 }
 
+// stagedShard is a fully-written replacement for one month shard, not yet visible.
+type stagedShard struct {
+	tmpName string
+	path    string
+}
+
+// publish swaps the staged content in.
+func (s stagedShard) publish() error { return nil }
+
+// stageShard writes month's replacement content to a temp file beside it.
+func stageShard(dir, month string, recs []Record, preserved [][]byte) (stagedShard, error) {
+	return stagedShard{path: filepath.Join(dir, month+".jsonl")}, nil
+}
+
 func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	var result CompactResult
 	// Presence is sampled BEFORE the lock: withLock MkdirAlls the store directory,

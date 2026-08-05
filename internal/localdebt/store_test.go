@@ -1815,6 +1815,63 @@ func TestCompact_ProtectionKeysOnThePhysicalShardNotTheDerivedMonth(t *testing.T
 	assert.Equal(t, 1, folded[0].Occurrences, "one sighting, however it is filed")
 }
 
+// TestCompact_StagesEveryShardBeforePublishingAny pins the staged rewrite (TD
+// internal/localdebt/store.go:316). The multi-shard rewrite used to write a temp and
+// rename it PER MONTH, so a failure partway through (ENOSPC, EACCES) left some shards
+// rewritten and others not — and the trailing removal loop never ran at all. Writing
+// every temp first and only then publishing them narrows the exposure to the rename
+// sequence: any failure before the first rename leaves the store byte-for-byte as it
+// was.
+//
+// The staging property is pinned on the helper, which is where it is decidable: after
+// a write the destination must still hold its ORIGINAL bytes, and only the explicit
+// publish may replace them.
+func TestCompact_StagesEveryShardBeforePublishingAny(t *testing.T) {
+	dir := t.TempDir()
+	original := recordLine(t, detection("already on disk", "2026-06-01T00:00:00Z"))
+	writeShard(t, dir, "2026-06", original)
+
+	replacement := detection("the compacted content", "2026-06-02T00:00:00Z")
+	staged, err := stageShard(dir, "2026-06", []Record{replacement}, nil)
+	require.NoError(t, err)
+
+	onDisk, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, original+"\n", string(onDisk),
+		"staging a shard must not touch the destination — nothing is published until every shard is staged")
+
+	require.NoError(t, staged.publish())
+
+	onDisk, err = os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, recordLine(t, replacement)+"\n", string(onDisk), "publish swaps the staged content in")
+}
+
+// TestCompact_FailedRewriteZeroesTheResultAndLeavesNoDebris covers the other half of
+// the same row: a compaction that fails must report nothing (a partially-filled
+// CompactResult reads as a successful fold) and must not leave temp files behind.
+func TestCompact_FailedRewriteZeroesTheResultAndLeavesNoDebris(t *testing.T) {
+	dir := t.TempDir()
+	// A record whose destination shard name is occupied by a DIRECTORY: the rename
+	// onto it cannot succeed, so the rewrite fails after the staging phase.
+	rec := detection("cannot be published", "2026-07-01T00:00:00Z")
+	rec.RunID = "2026-07-01T00:00:00Z-run"
+	writeShard(t, dir, "2026-06", recordLine(t, rec)) // physically misfiled, targets 2026-07
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "2026-07.jsonl"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl", "blocker"), []byte("x"), 0o600))
+
+	res, err := Compact(dir, ReadOpts{Writer: io.Discard})
+
+	require.Error(t, err)
+	assert.Equal(t, CompactResult{}, res, "a failed compaction must not report a fold it did not complete")
+
+	entries, rerr := os.ReadDir(dir)
+	require.NoError(t, rerr)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".jsonl.tmp-", "a failed rewrite must leave no temp debris")
+	}
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
