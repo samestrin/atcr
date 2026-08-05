@@ -288,6 +288,75 @@ func TestResolveStoreRoot(t *testing.T) {
 	})
 }
 
+// TestResolveStoreRoot_CWDTierWalksToRepoRoot pins the writer half of the ONE
+// resolver the store has (TD internal/localdebt/root.go:89). Tier 3 used to return
+// the literal ".", so DefaultDir(".") resolved against the process CWD with no
+// repo-root walk — while the reader half (cli/debt.go debtStoreDir → debtRepoRoot)
+// DID walk up for a .git/.atcr marker. `atcr reconcile` from a subdirectory wrote
+// <cwd>/.atcr/debt while `atcr debt list` from that same cwd read
+// <repo-root>/.atcr/debt, so the whole run's backlog was invisible — and the stray
+// <cwd>/.atcr it created became a repo-root marker for every later walk.
+//
+// Both halves now share ONE marker walk (FindRepoRoot), so there is no third copy
+// of the marker logic to drift.
+func TestResolveStoreRoot_CWDTierWalksToRepoRoot(t *testing.T) {
+	t.Run("resolves the repo root when run from a subdirectory", func(t *testing.T) {
+		root := repoDir(t, ".git")
+		sub := filepath.Join(root, "internal", "deep")
+		require.NoError(t, os.MkdirAll(sub, 0o755))
+		t.Chdir(sub)
+
+		got, ok := ResolveStoreRoot(RootOpts{AllowCWD: true})
+
+		require.True(t, ok)
+		assert.Equal(t, resolved(t, root), resolved(t, got),
+			"the writer must land in the same store the reader walk finds")
+	})
+
+	t.Run("an .atcr directory is a marker for the walk too", func(t *testing.T) {
+		root := repoDir(t, ".atcr")
+		sub := filepath.Join(root, "pkg")
+		require.NoError(t, os.MkdirAll(sub, 0o755))
+		t.Chdir(sub)
+
+		got, ok := ResolveStoreRoot(RootOpts{AllowCWD: true})
+
+		require.True(t, ok)
+		assert.Equal(t, resolved(t, root), resolved(t, got))
+	})
+
+	t.Run("no marker anywhere keeps the byte-for-byte CWD behavior", func(t *testing.T) {
+		// The suite's isolate() helper chdirs into a bare temp dir with no marker;
+		// that case must still resolve exactly as it did before the walk existed.
+		t.Chdir(t.TempDir())
+
+		got, ok := ResolveStoreRoot(RootOpts{AllowCWD: true})
+
+		require.True(t, ok)
+		assert.Equal(t, ".", got)
+	})
+
+	t.Run("AllowCWD false still refuses to guess", func(t *testing.T) {
+		root := repoDir(t, ".git")
+		t.Chdir(root)
+
+		var diag bytes.Buffer
+		got, ok := ResolveStoreRoot(RootOpts{AllowCWD: false, Diag: &diag})
+
+		assert.False(t, ok, "a marker under the MCP server's CWD is not a claim about the reviewed repo")
+		assert.Empty(t, got)
+	})
+}
+
+// resolved evaluates symlinks so a comparison never fails on /var vs /private/var,
+// which says nothing about which directory was picked.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	out, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	return out
+}
+
 // TestResolveStoreRoot_RedactsRecordedPath pins the package SECURITY contract on the
 // MANIFEST tier (TD internal/localdebt/root.go:77). The recorded root did not come
 // from the caller — it was written into an artifact file, possibly on another machine
