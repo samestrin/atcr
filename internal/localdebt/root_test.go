@@ -288,6 +288,58 @@ func TestResolveStoreRoot(t *testing.T) {
 	})
 }
 
+// TestResolveStoreRoot_RedactsRecordedPath pins the package SECURITY contract on the
+// MANIFEST tier (TD internal/localdebt/root.go:77). The recorded root did not come
+// from the caller — it was written into an artifact file, possibly on another machine
+// — so echoing it verbatim puts an absolute, username-bearing path (/Users/<name>/…)
+// into a sink the MCP path routes to bare os.Stderr, which a calling agent captures.
+// withLock already reduces its lock path to the base name for exactly this reason
+// (lock.go:69-72); these warnings must do the same.
+func TestResolveStoreRoot_RedactsRecordedPath(t *testing.T) {
+	t.Run("stale recorded root is reduced to its base name", func(t *testing.T) {
+		parent := t.TempDir()
+		gone := filepath.Join(parent, "was-a-repo")
+		review := filepath.Join(t.TempDir(), "r")
+		writeReviewManifest(t, review, gone)
+
+		var diag bytes.Buffer
+		_, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
+
+		require.False(t, ok)
+		assert.Contains(t, diag.String(), "was-a-repo", "the base name still identifies which root went stale")
+		assert.NotContains(t, diag.String(), parent, "the absolute parent path must never reach the sink")
+	})
+
+	t.Run("unmarked recorded root is reduced to its base name", func(t *testing.T) {
+		parent := t.TempDir()
+		notARepo := filepath.Join(parent, "not-a-repo")
+		require.NoError(t, os.Mkdir(notARepo, 0o755))
+		review := filepath.Join(t.TempDir(), "r")
+		writeReviewManifest(t, review, notARepo)
+
+		var diag bytes.Buffer
+		_, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
+
+		require.False(t, ok)
+		assert.NotContains(t, diag.String(), parent)
+	})
+
+	t.Run("unreadable manifest warning carries no absolute path", func(t *testing.T) {
+		// The manifest error is an artifact-derived path too: os.Stat's *os.PathError
+		// and ReadManifest's wrapped error both embed the full review-dir path.
+		parent := t.TempDir()
+		review := filepath.Join(parent, "review-artifacts")
+		require.NoError(t, os.MkdirAll(review, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(review, "manifest.json"), []byte("{not json"), 0o644))
+
+		var diag bytes.Buffer
+		_, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
+
+		require.False(t, ok)
+		assert.NotContains(t, diag.String(), parent, "the absolute review-dir path must never reach the sink")
+	})
+}
+
 // TestResolveStoreRoot_RequireMarker pins the explicit tier's tightening knob
 // (TD internal/localdebt/root.go:49): for an entry point whose root is
 // model-supplied (MCP), a named-but-unmarked existing directory must be a
