@@ -98,17 +98,32 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 	// path that resolves to nothing, or worse, to some unrelated directory — so it
 	// is re-validated against a repo-root marker before it is trusted with a write.
 	if opts.ReviewDir != "" {
-		if m, err := fanout.ReadManifest(opts.ReviewDir); err == nil {
-			if recorded := strings.TrimSpace(m.Root); recorded != "" {
-				if root, ok := validateRepoRoot(recorded); ok {
-					return root, true
+		// A MISSING manifest falls through (nobody asserted anything); an
+		// UNREADABLE one does not — it is an invalid claim whose invalidity
+		// happens to be unreadable, and the invalid-claim rule above admits no
+		// fall-through. Stat first: ReadManifest reports its not-exist case with
+		// a message that does not wrap fs.ErrNotExist, so the returned error
+		// alone cannot separate "no manifest" from "manifest present but
+		// unparseable".
+		if _, statErr := os.Stat(filepath.Join(opts.ReviewDir, "manifest.json")); statErr == nil {
+			if m, err := fanout.ReadManifest(opts.ReviewDir); err == nil {
+				if recorded := strings.TrimSpace(m.Root); recorded != "" {
+					if root, ok := validateRepoRoot(recorded); ok {
+						return root, true
+					}
+					_, _ = fmt.Fprintf(diag, "localdebt: manifest repo root %q is no longer a valid repository root (copied or stale artifacts?); skipping local debt persistence\n", recorded)
+					return "", false
 				}
-				_, _ = fmt.Fprintf(diag, "localdebt: manifest repo root %q is no longer a valid repository root (copied or stale artifacts?); skipping local debt persistence\n", recorded)
+			} else {
+				_, _ = fmt.Fprintf(diag, "localdebt: review manifest is unreadable (%v); skipping local debt persistence\n", err)
 				return "", false
 			}
+		} else if !os.IsNotExist(statErr) {
+			_, _ = fmt.Fprintf(diag, "localdebt: review manifest cannot be inspected (%v); skipping local debt persistence\n", statErr)
+			return "", false
 		}
-		// A missing, unreadable, or corrupt manifest, and a manifest with an empty
-		// root, all fall through to tier 3: nothing was claimed, so nothing is stale.
+		// A missing manifest, and a manifest with an empty root, fall through to
+		// tier 3: nothing was claimed, so nothing is stale.
 	}
 
 	// Tier 3: the process CWD, byte-for-byte the pre-manifest DefaultDir(".")
