@@ -101,6 +101,45 @@ func TestDebtAdd_EchoesTheAppendedID(t *testing.T) {
 	assert.Contains(t, out, recs[0].ID, "the appended id is echoed for copy-paste into `debt resolve`")
 }
 
+// TD: StampID hashes file+line+problem, so re-filing an identical finding reuses
+// the id of the existing record. When that id already carries a SUPPRESSING
+// status, the append is a no-op as far as every reader is concerned — wontfix
+// survives re-detection — yet add printed "Added <id>" and exited 0 while
+// `debt list` still showed the terminal status. The add still happens (the store
+// is append-only); it now says so on stderr, naming the status that wins.
+func TestDebtAdd_WarnsWhenTheIDAlreadyCarriesATerminalStatus(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "c")
+	require.NoError(t, err)
+	listed, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	id := debtIDFromListOutput(t, listed)
+	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id,
+		"--status", "wontfix", "--reason", "not a real finding")
+	require.NoError(t, err)
+
+	out, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "c")
+
+	require.NoError(t, err, "the append itself still succeeds — the store is append-only")
+	assert.Contains(t, out, id, "the warning names the colliding id")
+	assert.Contains(t, out, "wontfix", "the warning names the status that wins the fold")
+}
+
+// The warning is scoped to a collision that actually suppresses the add: filing a
+// brand-new finding must stay silent, or every scripted add grows a spurious
+// stderr line.
+func TestDebtAdd_DoesNotWarnForAFreshID(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	out, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "b.go:9", "--problem", "P", "--fix", "F", "--category", "c")
+
+	require.NoError(t, err)
+	assert.NotContains(t, out, "warning", "a fresh finding files silently")
+}
+
 // AC1 round trip: an item filed by add is visible to list and closeable by
 // resolve, with the id copy-pasted out of list's rendered output. Both halves are
 // asserted — the open-filtered disappearance is the closure proof, the unfiltered
