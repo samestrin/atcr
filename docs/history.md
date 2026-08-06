@@ -54,8 +54,14 @@ both locations hold the same month, merge them by concatenating the two files â€
 records are one JSON object per line and reads deduplicate on (`ts`, `id`), so a
 run present in both is counted once.
 
-Note that `.atcr/` is gitignored: trend data is per-checkout from here on, and is
-no longer shared through version control.
+Note that `atcr init` writes `.atcr/.gitignore` covering `history/` (alongside
+`cache/` and `reviews/`), so trend data is per-checkout from here on and is no
+longer shared through version control. The rest of `.atcr/` is not blanket-ignored
+â€” the editable `config.yaml` and `personas/` stay tracked on purpose. A workspace
+initialized before `history/` joined that list still has the older two-line ignore
+file: re-run `atcr init --force`, or add `history/` to `.atcr/.gitignore` by hand.
+Committing the ledger would undo the permissions below, since git carries no mode
+beyond `+x` and a fresh clone recreates the shards at `0644`/`0755`.
 
 The month in a shard's name is taken in **UTC**, so shard names are deterministic
 regardless of the machine's local zone, and every record from one run lands in

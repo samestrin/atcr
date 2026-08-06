@@ -16,9 +16,13 @@ import (
 // Directories are created 0700 and new ledger files 0600, matching
 // internal/localdebt: since Epic 35.14 the ledger lives under .atcr/ — local,
 // uncommitted state — and a trend ledger names which packages accrue which
-// findings, so it is not readable by every local account. The mode applies only
-// to paths this call creates; an existing ledger keeps whatever mode it already
-// has, so a repo that accrued history under the old 0644 default is untouched.
+// findings, so it is not readable by every local account. "Uncommitted" is not an
+// assumption: `atcr init` lists history/ in .atcr/.gitignore (atcrGitignore in
+// cli/init.go), which is what keeps these modes meaningful — a committed ledger
+// comes back 0644/0755 on a fresh clone, because git carries no mode beyond +x.
+// The mode applies only to paths this call creates; an existing ledger keeps
+// whatever mode it already has, so a repo that accrued history under the old 0644
+// default is untouched.
 //
 // The whole batch is serialized to memory first, then written in a single
 // f.Write call. In practice a small batch is emitted by one O_APPEND write()
