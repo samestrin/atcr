@@ -179,6 +179,16 @@ type ReconcileResult struct {
 	FailOn        string                  `json:"fail_on,omitempty"`
 	Consensus     string                  `json:"consensus,omitempty"`
 	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
+	// DebtPersisted reports whether this run's findings reached the local TD
+	// store, and DebtSkippedReason says why they did not (TD
+	// internal/mcp/tools.go:169). Persistence is best-effort by contract, so a
+	// skip cannot fail the tool — but the only trace used to be a line on the
+	// server's stderr, which a stdio client never sees. Without these fields a
+	// client that mistyped repo reads "pass=true, 12 findings" indefinitely while
+	// nothing is ever written. DebtPersisted is not omitempty: "false" is the
+	// answer worth transmitting.
+	DebtPersisted     bool   `json:"debt_persisted"`
+	DebtSkippedReason string `json:"debt_skipped_reason,omitempty"`
 }
 
 // GateStatus is the verify gate outcome, present in VerifyResult only when a

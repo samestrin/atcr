@@ -226,6 +226,67 @@ func TestReconcileHandler_InvalidExplicitRepoDoesNotPersist(t *testing.T) {
 	assert.Contains(t, diag.String(), "does not exist or is not a directory")
 }
 
+// TestReconcileResult_ReportsPersistenceOutcome closes TD
+// internal/mcp/tools.go:169. The CLI rejects a bad --repo as a usage error before
+// any work; the MCP path warns to the server's stderr — which a stdio client
+// never sees — and returns a fully successful result carrying no field that says
+// whether anything was written. A client that typos repo gets "reconciled N
+// findings, pass=true" forever while the store stays empty. The two outcomes must
+// be distinguishable in-band.
+func TestReconcileResult_ReportsPersistenceOutcome(t *testing.T) {
+	isolateUserConfig(t)
+
+	t.Run("persisted", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+		require.NoError(t, err)
+
+		assert.True(t, out.DebtPersisted, "a successful store write must be reported in-band")
+		assert.Empty(t, out.DebtSkippedReason)
+	})
+
+	t.Run("skipped", func(t *testing.T) {
+		root := t.TempDir()
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil,
+			ReconcileArgs{Repo: filepath.Join(t.TempDir(), "typo")})
+		require.NoError(t, err, "an unwritable store stays best-effort, never an error")
+
+		assert.False(t, out.DebtPersisted)
+		assert.Contains(t, out.DebtSkippedReason, "does not exist",
+			"the reason must say WHY, not merely that something was skipped")
+		assert.True(t, out.Pass, "the gate outcome is independent of the side effect")
+	})
+
+	t.Run("suppressed", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{NoLocalDebt: true})
+		require.NoError(t, err)
+
+		assert.False(t, out.DebtPersisted)
+		assert.Contains(t, out.DebtSkippedReason, "no_local_debt",
+			"a caller-requested suppression must read differently from a failure to resolve a root")
+	})
+}
+
 // TestReconcileHandler_RelativeExplicitRepoDoesNotPersist closes TD
 // internal/mcp/handlers.go:401. in.Repo reaches the explicit tier raw, and that
 // tier resolves it with filepath.Abs — i.e. against the SERVER's process CWD.
