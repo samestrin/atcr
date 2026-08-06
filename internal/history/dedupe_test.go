@@ -23,6 +23,24 @@ func TestDedupeOccurrences_ZeroTimestamps(t *testing.T) {
 	assert.Equal(t, "b", got[1].ID)
 }
 
+// The instant is keyed as (seconds, nanoseconds), NOT UnixNano (shard.go):
+// UnixNano is undefined outside 1678-2262, and the zero time (what a missing or
+// malformed "ts" decodes to) wraps to the same int64 as a real in-range date —
+// 1754-08-30T22:43:41.128654848Z here. A UnixNano-keyed collapse would merge
+// these two records into one occurrence; the (sec, nsec) key must keep both.
+func TestDedupeOccurrences_ZeroTimeDoesNotAliasWrappedUnixNano(t *testing.T) {
+	wrapped := time.Date(1754, 8, 30, 22, 43, 41, 128654848, time.UTC)
+	var zero time.Time
+	require.Equal(t, zero.UnixNano(), wrapped.UnixNano(),
+		"precondition: these instants collide under UnixNano keying")
+	recs := []Record{
+		{Timestamp: zero, ID: "a", File: "a.go"},
+		{Timestamp: wrapped, ID: "a", File: "a.go"},
+	}
+	assert.Len(t, dedupeOccurrences(recs), 2,
+		"instants that merely share a wrapped UnixNano are distinct occurrences")
+}
+
 // A surviving record keeps the FIRST copy's position, preserving input order —
 // the chronological legacy-then-shards ordering LoadAll depends on. (Its
 // severity is separately promoted to the highest seen; see
