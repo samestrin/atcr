@@ -50,6 +50,28 @@ func TestAppend_CreatesPrivateDirAndFile(t *testing.T) {
 // Each case below drives exactly one of them and asserts the wrapping, so a
 // refactor that swallows an error or drops the context is caught here.
 
+// A repo root that was deleted, renamed, or unmounted between root validation and
+// the write must NOT be silently resurrected as an empty tree. os.MkdirAll creates
+// every missing parent including the root itself, which is the opposite of what a
+// stale-root stop signal is for — internal/localdebt/paths.go:ensureStoreDir
+// deliberately refuses this for the sibling store under the same .atcr/ container,
+// and history sits behind the same container.
+func TestAppend_RefusesToRecreateMissingRepoRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr", "history"), 0o700))
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	path := ShardPath(filepath.Join(root, ".atcr", "history"), ts)
+
+	// The root goes away after the caller resolved it — the stale-root case.
+	require.NoError(t, os.RemoveAll(root))
+
+	err := Append(path, []Record{{Timestamp: ts, ID: "x", File: "a.go"}})
+
+	require.Error(t, err, "a vanished repo root must be an error, not a silent re-creation")
+	assert.NoDirExists(t, root, "Append must not resurrect the repo root it was pointed at")
+}
+
 // MkdirAll fails when a component of the shard dir path is a regular file.
 func TestAppend_ErrorsWhenShardDirCannotBeCreated(t *testing.T) {
 	root := t.TempDir()
