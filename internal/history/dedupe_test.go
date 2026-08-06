@@ -8,9 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Records whose "ts" was missing or unparseable decode to the zero time. Two
-// such records with different ids are still distinct occurrences and must both
-// survive; two with the same id are the same occurrence.
+// Records whose "ts" was missing or unparseable decode to the zero time —
+// UNKNOWN time, not SAME time. Two such records therefore have no occurrence
+// identity to match on (same carve-out as an empty id): two ts-less records
+// with different ids AND two with the same id must all survive, because
+// folding them would collapse records from different runs into one row and
+// destroy the trend data the (Timestamp, ID) key exists to preserve.
 func TestDedupeOccurrences_ZeroTimestamps(t *testing.T) {
 	recs := []Record{
 		{ID: "a", File: "a.go"},
@@ -18,9 +21,7 @@ func TestDedupeOccurrences_ZeroTimestamps(t *testing.T) {
 		{ID: "a", File: "a.go"},
 	}
 	got := dedupeOccurrences(recs)
-	assert.Len(t, got, 2)
-	assert.Equal(t, "a", got[0].ID)
-	assert.Equal(t, "b", got[1].ID)
+	assert.Len(t, got, 3, "zero-Timestamp records never dedupe — unknown time is not same time")
 }
 
 // The instant is keyed as (seconds, nanoseconds), NOT UnixNano (shard.go):
