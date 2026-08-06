@@ -189,6 +189,13 @@ the raw persona/reviewer string — never the raw string itself:
   persona that no later backfill can merge. Canonicalizing client-side is what
   keeps one persona to one bucket.
 
+  One consequence worth knowing: persona **lookup** is case-sensitive (two
+  personas named `sonny` and `Sonny` are distinct to the registry), but their
+  telemetry collapses to a single digest. That is deliberate and matches the
+  trust-prior key space, which has always been lowercased — but it does mean a
+  custom persona named as a case-variant of a catalog persona reports into the
+  catalog persona's bucket. Give custom personas distinct names, not re-casings.
+
 - **Deterministic:** the same persona always hashes to the same value, so the
   backend can correlate a persona's results across runs without ever learning
   its name.
