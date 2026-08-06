@@ -39,6 +39,27 @@ func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 		"the doomed-but-unremoved shards are still on disk — Kept must count every retained candidate file, including on the failure path")
 }
 
+// A symlinked shard DIR is refused, not followed: PruneShards is the only
+// destructive operation in the package, so it must never operate on a
+// directory the caller did not literally name. (Compare
+// TestPruneShards_RemovesSymlinkNotTarget: a symlink INSIDE the dir is
+// unlinked as a link — also never followed.)
+func TestPruneShards_RefusesSymlinkedShardDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on Windows")
+	}
+	root := t.TempDir()
+	real := filepath.Join(root, "real-history")
+	require.NoError(t, os.MkdirAll(real, 0o700))
+	doomed := mustAppendShard(t, real, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "old")
+	link := filepath.Join(root, "history")
+	require.NoError(t, os.Symlink(real, link))
+
+	_, err := PruneShards(link, 30*24*time.Hour, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
+	require.Error(t, err, "a symlinked shard dir must be refused, not followed")
+	assert.FileExists(t, doomed, "nothing in the symlink target may be removed")
+}
+
 // Symlinked shard names are removed as links, not followed: os.Remove unlinks
 // the entry in the shard dir and never touches the target.
 func TestPruneShards_RemovesSymlinkNotTarget(t *testing.T) {
