@@ -170,6 +170,25 @@ When a persona identity is included (for the leaderboard, and in the
 `--sync-cloud` payload below), it is transmitted as a **one-way SHA-256 hash** of
 the raw persona/reviewer string — never the raw string itself:
 
+- **Canonicalized before hashing:** the persona name is reduced to
+  `strings.ToLower(strings.TrimSpace(name))` first, so `bruce`, `Bruce`,
+  `BRUCE`, and `" bruce "` all produce **one** digest. The exact equivalent in
+  JS, which is what a backend must use to reproduce these values:
+
+  ```js
+  crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")
+  ```
+
+  This is plain ASCII lowercasing — deliberately **not** Unicode case folding and
+  **not** NFC normalization, so the transform stays a one-liner in any language.
+  A name in a script without case (e.g. CJK) is simply unchanged by it.
+
+  It matters more than it looks: an ingestion backend may re-key the received
+  digest under a server-side secret and discard the original, in which case a
+  casing or padding variant becomes a **second permanent identity** for one
+  persona that no later backfill can merge. Canonicalizing client-side is what
+  keeps one persona to one bucket.
+
 - **Deterministic:** the same persona always hashes to the same value, so the
   backend can correlate a persona's results across runs without ever learning
   its name.

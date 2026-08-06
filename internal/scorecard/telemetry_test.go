@@ -96,6 +96,39 @@ func TestHashPersonaID_UniquenessAcrossDifferentInputs(t *testing.T) {
 	}
 }
 
+// TestHashPersonaID_PinnedPublishedPersonaDigests is the CROSS-LANGUAGE contract
+// (epic 35.16.1 AC5). atcr.dev classifies a stored digest as a community persona by
+// pre-computing HMAC(pepper, SHA256(canonical_name)) over the published roster and
+// matching it — which only works if its JS reproduces this canonicalization exactly.
+//
+// These expected values were NOT generated from this Go code. They were computed
+// independently with node:
+//
+//	crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")
+//
+// so this test proves Go and the server agree rather than merely proving Go is
+// self-consistent. If it fails, the two implementations have diverged and atcr.dev's
+// persona dictionary will silently match nothing — do NOT "fix" it by regenerating
+// the constants from Go; re-derive them from the JS above and find out which side moved.
+//
+// Names are real entries in personas/community/.
+func TestHashPersonaID_PinnedPublishedPersonaDigests(t *testing.T) {
+	pinned := map[string]string{
+		"sonny":  "57f0e30b29126a4866ff1ba8da6f62d104007d322e40ddbdeee93c8a4a771f78",
+		"glenna": "d3e7fc7752f78729498a143d6f9547ce74ab291639ea6d2ffb74a0d7264382e9",
+		"milo":   "13adffea089b50908ce4d41d4ee483ea99cc375350fd664461ee979263fae45b",
+	}
+	for name, want := range pinned {
+		assert.Equal(t, want, HashPersonaID(name),
+			"digest for published persona %q must match the value atcr.dev's dictionary computes in JS", name)
+	}
+
+	// The same digests must be reached from non-canonical spellings — that is the
+	// whole reason the server can key its dictionary on one entry per persona.
+	assert.Equal(t, pinned["sonny"], HashPersonaID("Sonny"))
+	assert.Equal(t, pinned["glenna"], HashPersonaID("  GLENNA  "))
+}
+
 // TestHashPersonaID_NonReversible asserts the raw input never appears in the
 // digest. The function signature carries no error return and no io.Writer, so
 // there is no logging/error path that could leak the raw value (AC 03-04).

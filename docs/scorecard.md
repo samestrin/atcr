@@ -198,6 +198,19 @@ is a different sense of the word from the telemetry surfaces
 raw and travels only as a pseudonymous `persona_id_hash`. Both usages are
 deliberate; they are not the same guarantee.
 
+**Persona digest canonical form.** `scorecard.HashPersonaID` — the function
+behind every `persona_id_hash` — canonicalizes its input to
+`strings.ToLower(strings.TrimSpace(name))` **before** hashing, so `bruce`,
+`Bruce`, and `" bruce "` yield one digest rather than three. A consumer that
+needs to reproduce a digest from a known persona name (for example, to map
+submitted digests back to the published persona catalog) must apply the same
+transform; in JS that is
+`crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")`.
+The canonical form and the reasoning behind it are specified in full under
+[telemetry.md](telemetry.md#persona-leaderboard-data); the pinned digests for real
+catalog personas live in `internal/scorecard/telemetry_test.go`
+(`TestHashPersonaID_PinnedPublishedPersonaDigests`).
+
 ```bash
 # Anonymized JSON to stdout (pipe to jq, a file, etc.)
 atcr leaderboard --export
