@@ -1,7 +1,9 @@
 package history
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -66,6 +68,17 @@ type PruneResult struct {
 // removed fails the call, after any earlier removals have already happened —
 // deletion cannot be rolled back, so PruneResult reports what was actually
 // removed rather than pretending the pass was atomic.
+//
+// Concurrency: PruneShards takes no lock across the enumerate-then-delete
+// window and is not safe to run against a live writer (Append deliberately
+// punts locking to callers — writer.go): a record appended into a doomed
+// shard after os.ReadDir is unlinked with the file. The trigger is narrow —
+// the current month always intersects any positive cutoff, so a
+// normally-clocked review never writes into a doomed shard; it takes
+// backwards clock skew, or a resume re-recording old-dated records, racing
+// the prune. One race IS absorbed: an os.Remove that fails with
+// fs.ErrNotExist is skipped as an already-achieved end state (a concurrent
+// prune won), not treated as a failure.
 func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult, error) {
 	var res PruneResult
 	if horizon <= 0 {
@@ -105,6 +118,13 @@ func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult,
 
 	for _, name := range doomed {
 		if err := osRemove(filepath.Join(dir, name)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				// A concurrent prune already unlinked this shard: the end state
+				// is achieved, so skip it rather than aborting the pass with the
+				// remaining doomed shards left unpruned. It is not this pass's
+				// removal, so it is not reported in Removed.
+				continue
+			}
 			// The doomed remainder — the shard that just failed and every one not
 			// yet attempted — is retained on disk, so count it: Kept is documented
 			// as every retained candidate file, and the CLI prints it to the user
