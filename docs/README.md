@@ -75,6 +75,9 @@ single source of truth the website build consumes, so it links every doc in
 - [Benchmark Suite](benchmark.md) — the standard benchmark tooling behind the
   public leaderboard.
 - [Scorecard](scorecard.md) — the per-reviewer scorecard for a reconcile run.
+- [Finding History (`atcr history`)](history.md) — the per-repo trend ledger under
+  `.atcr/history/`: the record schema, the two read locations, how a `--since`
+  window skips shards by filename, and the opt-in `--prune` retention horizon.
 - [Metrics](metrics.md) — the metrics atcr records.
 - [Telemetry](telemetry.md) — the opt-out usage ping and the `--sync-cloud` push,
   and the privacy model for both.

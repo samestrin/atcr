@@ -375,7 +375,12 @@ func TestResume_SyncCloudWithEndpointStillIgnored(t *testing.T) {
 		"a with-endpoint resume must disclose the no-op too, not push silently")
 }
 
-func TestResume_AppendsFindingHistory(t *testing.T) {
+// AllComplete re-reconciliation performs no new review work, so — exactly like
+// the audit log — it must not re-append the pool to the finding history. The
+// resume stamps a fresh StartedAt, so each re-append earns a new (Timestamp, ID)
+// key that dedupe cannot collapse, and `atcr history` would count every finding
+// twice per resume.
+func TestResume_AllCompleteDoesNotAppendFindingHistory(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
@@ -383,10 +388,10 @@ func TestResume_AppendsFindingHistory(t *testing.T) {
 	liveReviewConfig(t, srv.URL, "bruce")
 
 	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
-	// History now shards by month under .planning/history (Epic 19.4). Read the
-	// whole shard dir rather than a single month's file so the assertion does not
-	// depend on which month the writes land in (avoids a month-boundary flake).
-	histDir := filepath.Join(".", ".planning", "history")
+	// History shards by month under .atcr/history (Epic 19.4, relocated in 35.14).
+	// Read the whole shard dir rather than a single month's file so the assertion
+	// does not depend on which month the writes land in (avoids a month-boundary flake).
+	histDir := filepath.Join(".", ".atcr", "history")
 	before, err := history.LoadShards(histDir)
 	require.NoError(t, err)
 	require.NotEmpty(t, before, "fresh review should have appended history")
@@ -396,7 +401,8 @@ func TestResume_AppendsFindingHistory(t *testing.T) {
 
 	after, err := history.LoadShards(histDir)
 	require.NoError(t, err)
-	require.Greater(t, len(after), len(before), "resume must append its own records to the finding history")
+	require.Len(t, after, len(before),
+		"AllComplete resume must not re-append the pool to the finding history")
 }
 
 func TestResume_AllCompleteDoesNotAppendAudit(t *testing.T) {
@@ -414,7 +420,7 @@ func TestResume_AllCompleteDoesNotAppendAudit(t *testing.T) {
 	require.Len(t, before, 1, "fresh review appends exactly one audit record")
 
 	// AllComplete re-reconcile performs no new review work; it must not append
-	// another record (mirrors recordResumeHistory guarding below).
+	// another record (mirrors the recordHistory guard on the same path).
 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 0, code, out)
 

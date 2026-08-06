@@ -56,10 +56,16 @@ func TestInit_FreshDirectory(t *testing.T) {
 }
 
 // TestInit_WritesGitignore: `atcr init` drops a .atcr/.gitignore so the runtime
-// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes, and
-// reviewer outputs) are ignored by git out of the box — even for end users who
-// never manually ignore .atcr/. The editable config.yaml and personas/ alongside
-// it stay tracked.
+// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes,
+// reviewer outputs, and the finding-history ledger) are ignored by git out of the
+// box — even for end users who never manually ignore .atcr/. The editable
+// config.yaml and personas/ alongside it stay tracked.
+//
+// history/ matters beyond tidiness: internal/history.Append creates its shards
+// 0600/0700 on the stated premise that the ledger is local, uncommitted state. A
+// committed ledger defeats that — a fresh clone recreates the shards at 0644/0755
+// because git carries no mode beyond +x — so the ignore is what makes the
+// permission tightening hold for a real user.
 func TestInit_WritesGitignore(t *testing.T) {
 	dir := t.TempDir()
 	initDir(t, dir)
@@ -69,6 +75,7 @@ func TestInit_WritesGitignore(t *testing.T) {
 	content := string(data)
 	assert.Contains(t, content, "cache/", "the diff cache dir must be ignored")
 	assert.Contains(t, content, "reviews/", "the reviews dir must be ignored")
+	assert.Contains(t, content, "history/", "the trend ledger must be ignored — Append's 0600/0700 modes assume it is never committed")
 }
 
 func TestInit_FilePermissions(t *testing.T) {
