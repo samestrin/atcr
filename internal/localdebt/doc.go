@@ -20,11 +20,21 @@
 // # Why .atcr/ and not .planning/
 //
 // This store is deliberately NOT a re-extension of internal/history. The two
-// stores share a root — Epic 35.14 moved history's shards back under .atcr/ for
-// the same reason this store was born there, after Epic 19.4 had relocated them
-// to .planning/ for the private pipeline — but not a design: localdebt answers a
-// resolution backlog (an open-item fold over every record), history answers a
-// time-windowed trend count, and the two take opposite positions on compaction.
+// stores share a store CONVENTION (<root>/.atcr/...) but resolve <root>
+// independently — Epic 35.14 moved history's shards back under .atcr/ for the
+// same reason this store was born there, after Epic 19.4 had relocated them to
+// .planning/ for the private pipeline. They do not share a design either:
+// localdebt answers a resolution backlog (an open-item fold over every record),
+// history answers a time-windowed trend count, and the two take opposite
+// positions on compaction.
+//
+// Read "share a convention" strictly: localdebt resolves <root> through
+// ResolveStoreRoot (explicit > manifest > CWD) and debtStoreDir, while history
+// resolves through cli.repoRoot(). For one invocation from a subdirectory those
+// can yield different absolute directories, so .atcr/debt/ and .atcr/history/ are
+// NOT guaranteed siblings — do not reason about backup, cleanup, or migration as
+// if they were. That divergence is the TD-020 mismatch described in the Call-site
+// scope section below.
 // It imports internal/history for the FindingID identity helper ONLY; it does not
 // import or extend any of history's read/write logic. Reusing FindingID keeps
 // record identity consistent with the rest of the codebase's finding-identity
