@@ -69,6 +69,15 @@ func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult,
 		return res, fmt.Errorf("retention horizon must be positive, got %s", horizon)
 	}
 
+	// A symlinked (or otherwise non-directory) dir is refused, not followed:
+	// this is the only destructive operation in the package, so it must never
+	// operate on a directory the caller did not literally name. Lstat, not
+	// Stat, keeps the check on the entry itself. A missing dir falls through
+	// to the ReadDir no-op below.
+	if info, lerr := os.Lstat(dir); lerr == nil && !info.IsDir() {
+		return res, fmt.Errorf("history shard dir %s is not a plain directory: refusing to prune", dir)
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
