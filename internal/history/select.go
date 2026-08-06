@@ -2,6 +2,7 @@ package history
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,14 +43,15 @@ import (
 // for a query whose whole purpose is to be bounded.
 //
 // A missing dir is a valid empty history, not an error (mirrors LoadShards).
-func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, error) {
+// An unreadable shard is skipped with a warning to diag (default os.Stderr).
+func LoadShardsSince(dir string, since time.Duration, now time.Time, diag ...io.Writer) ([]Record, error) {
 	if since <= 0 {
 		return []Record{}, nil // an explicit empty result, not a nil slice: the caller asked a bounded query
 	}
 	cutoff := now.Add(-since)
 	return loadShardsWhere(dir, func(name string) bool {
 		return shardMonthIntersects(name, cutoff)
-	})
+	}, diag...)
 }
 
 // isShardFile is the single "is a history shard candidate" predicate shared by
@@ -61,6 +63,18 @@ func isShardFile(e os.DirEntry) bool {
 	return !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl")
 }
 
+// diagWriter resolves the optional diagnostic writer threaded through the
+// loader chain: os.Stderr unless the caller supplied one. The caller's writer
+// (e.g. cobra's ErrOrStderr) is what makes a skipped-shard warning visible to
+// the CLI's own stderr contract and test harness — a process-global os.Stderr
+// write bypasses both.
+func diagWriter(diag []io.Writer) io.Writer {
+	if len(diag) > 0 && diag[0] != nil {
+		return diag[0]
+	}
+	return os.Stderr
+}
+
 // loadShardsWhere is the single shard-reading implementation behind both
 // LoadShards (keep everything) and LoadShardsSince (keep the window). keep is
 // consulted on the file NAME only, before the file is opened — that is what
@@ -70,7 +84,8 @@ func isShardFile(e os.DirEntry) bool {
 //
 // Results are ordered by shard file name, which for the YYYY-MM naming is
 // chronological. A missing dir is a valid empty history, not an error.
-func loadShardsWhere(dir string, keep func(name string) bool) ([]Record, error) {
+// An unreadable shard is skipped with a warning to diag (default os.Stderr).
+func loadShardsWhere(dir string, keep func(name string) bool, diag ...io.Writer) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -104,7 +119,7 @@ func loadShardsWhere(dir string, keep func(name string) bool) ([]Record, error) 
 		if err != nil {
 			// Skip an unreadable individual shard so the remaining shards stay
 			// queryable, mirroring Load's line-level tolerance for torn writes.
-			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping unreadable history shard %s: %v\n", path, err)
+			_, _ = fmt.Fprintf(diagWriter(diag), "warning: skipping unreadable history shard %s: %v\n", path, err)
 			continue
 		}
 		all = append(all, recs...)
@@ -142,9 +157,10 @@ func shardMonthIntersects(name string, cutoff time.Time) bool {
 //
 // Records still need Filter afterwards: selection is a file-granularity
 // pre-filter that can over-select, never a substitute for the record-level
-// window check.
-func LoadAllSince(shardDir, legacyPath string, since time.Duration, now time.Time) ([]Record, error) {
-	shards, err := LoadShardsSince(shardDir, since, now)
+// window check. An unreadable shard is skipped with a warning to diag
+// (default os.Stderr).
+func LoadAllSince(shardDir, legacyPath string, since time.Duration, now time.Time, diag ...io.Writer) ([]Record, error) {
+	shards, err := LoadShardsSince(shardDir, since, now, diag...)
 	if err != nil {
 		return nil, err
 	}

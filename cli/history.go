@@ -120,7 +120,7 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	recs, err := history.LoadAllSince(history.ShardDir(root), history.LegacyLedgerPath(root), since, now)
+	recs, err := history.LoadAllSince(history.ShardDir(root), history.LegacyLedgerPath(root), since, now, diag)
 	if err != nil {
 		// A filesystem failure (unreadable shard dir or legacy ledger), not a bad
 		// invocation: exit 1, not the usage code CI scripts read as "misconfigured

@@ -1,6 +1,7 @@
 package history
 
 import (
+	"io"
 	"path/filepath"
 	"time"
 
@@ -27,13 +28,14 @@ func ShardPath(dir string, ts time.Time) string {
 // YYYY-MM naming, is chronological. A missing or empty dir is a valid empty
 // history, not an error (mirroring Load), so a query spans whatever shards exist
 // without the caller naming one (Epic 19.4 AC2). Malformed lines inside a shard
-// are skipped by Load; an unreadable shard is skipped with a warning.
+// are skipped by Load; an unreadable shard is skipped with a warning to diag
+// (default os.Stderr).
 //
 // This is the unwindowed read — every shard, whatever its month. `atcr history`
 // uses LoadShardsSince instead, which skips out-of-window shards by filename;
 // both run through the same loadShardsWhere implementation so they cannot drift.
-func LoadShards(dir string) ([]Record, error) {
-	return loadShardsWhere(dir, func(string) bool { return true })
+func LoadShards(dir string, diag ...io.Writer) ([]Record, error) {
+	return loadShardsWhere(dir, func(string) bool { return true }, diag...)
 }
 
 // LoadAll returns the full queryable history: every monthly shard under shardDir
@@ -50,8 +52,8 @@ func LoadShards(dir string) ([]Record, error) {
 // key is (Timestamp, ID). Legacy records come first, so ordering stays
 // chronological across the two sources: the flat ledger only ever holds pre-19.4
 // runs, which all predate the oldest shard.
-func LoadAll(shardDir, legacyPath string) ([]Record, error) {
-	shards, err := LoadShards(shardDir)
+func LoadAll(shardDir, legacyPath string, diag ...io.Writer) ([]Record, error) {
+	shards, err := LoadShards(shardDir, diag...)
 	if err != nil {
 		return nil, err
 	}
