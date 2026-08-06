@@ -409,7 +409,11 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// the CLI's exclusion set (TD-019). Best-effort and non-fatal, exactly like
 	// the scorecard emit above: it never fails the reconcile or changes
 	// ReconcileResult.
-	if storeOK {
+	// no_local_debt is the MCP mirror of the CLI's --no-local-debt: the only lever
+	// a read-only-mount or consent-sensitive deployment has to stop this tool
+	// growing .atcr/debt/ under a caller-selected repo, short of disabling the
+	// tool outright. Like the flag it mirrors, it suppresses only this write.
+	if storeOK && !in.NoLocalDebt {
 		// AutoCompact is left zero: the MCP path takes the production thresholds
 		// (100k records / 100 MiB). The cli-side autoCompactPolicy var is a test
 		// seam for cli tests only and deliberately does not reach here.
