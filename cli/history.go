@@ -47,6 +47,18 @@ func newHistoryCmd() *cobra.Command {
 // anything below this floor is rejected as a usage error.
 const minPruneHorizon = 28 * 24 * time.Hour
 
+// formatWindow renders a query/retention window the way the flags accept one, so
+// a warning quotes back something the user could paste verbatim. Whole days print
+// as "90d" (the unit both --since and --prune are expressed in in practice);
+// anything else falls back to Duration.String rather than rounding a sub-day
+// window down to "0d".
+func formatWindow(d time.Duration) string {
+	if d >= 24*time.Hour && d%(24*time.Hour) == 0 {
+		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	}
+	return d.String()
+}
+
 func runHistory(cmd *cobra.Command, _ []string) error {
 	since := defaultHistorySince
 	if raw, _ := cmd.Flags().GetString("since"); strings.TrimSpace(raw) != "" {
@@ -104,6 +116,16 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	// later query reads as data loss.
 	pruned := false
 	if horizon > 0 {
+		// A horizon inside the report window deletes months the report is about to
+		// ask for. The combination is legal — narrowing retention is a real intent —
+		// but it must not be silent: prune runs first, so the table would otherwise
+		// read as "no findings in that period" when the truth is "that period was
+		// just deleted". Warn before the removal so the notice precedes its cause in
+		// the stderr stream.
+		if horizon < since {
+			_, _ = fmt.Fprintf(diag, "warning: --prune %s is shorter than the %s report window — shards inside the window will be deleted before the report reads them\n",
+				formatWindow(horizon), formatWindow(since))
+		}
 		res, perr := history.PruneShards(history.ShardDir(root), horizon, now)
 		pruned = true
 		if len(res.Removed) > 0 {
