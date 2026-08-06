@@ -107,8 +107,55 @@ type summaryLine struct {
 	// path started reading them; they still type-check exactly as before.)
 	Occurrences  int `json:"occurrences"`
 	SourceReport struct {
-		Line int `json:"line"`
+		Line    int        `json:"line"`
+		Path    jsonString `json:"path"`
+		Section jsonString `json:"section"`
 	} `json:"source_report"`
+
+	// The remaining fields Record declares, type-checked and discarded. Each is a
+	// zero-size validating type, so the projection still allocates nothing per line
+	// and retains none of the record's bulk — while a wrong JSON TYPE in a string,
+	// array or object field is now rejected by BOTH decoders instead of only the
+	// full one (TD internal/localdebt/streaming.go:65).
+	Problem        jsonString `json:"problem"`
+	Fix            jsonString `json:"fix"`
+	Evidence       jsonString `json:"evidence"`
+	Confidence     jsonString `json:"confidence"`
+	Model          jsonString `json:"model"`
+	Justification  jsonString `json:"justification"`
+	ResolvedAt     jsonString `json:"resolved_at"`
+	CountedThrough jsonString `json:"counted_through"`
+	FirstSeen      jsonString `json:"first_seen"`
+	Reviewers      jsonArray  `json:"reviewers"`
+	ModelReviewers jsonArray  `json:"model_reviewers"`
+}
+
+// jsonString and jsonArray accept exactly what their Record counterpart's type
+// accepts — a JSON string, and a JSON array — and store nothing.
+//
+// They exist because encoding/json type-checks only the fields the TARGET struct
+// declares. A field Record declares and summaryLine omitted was validated by
+// decodeRecord and NOT by decodeSummary, and that asymmetry runs the dangerous way:
+// a line the full path rejects but the summary path accepts puts an id in the dedup
+// seed that no rendering path can display, so a re-detection is skipped and the
+// finding goes permanently invisible.
+//
+// Both are empty structs and neither copies its input, so the parity costs no
+// allocation on the path whose whole purpose is to avoid them. `null` is accepted for
+// both, matching encoding/json's treatment of a null into a string or slice field.
+type (
+	jsonString struct{}
+	jsonArray  struct{}
+)
+
+func (jsonString) UnmarshalJSON(b []byte) error { return expectJSONKind(b, '"', "string") }
+func (jsonArray) UnmarshalJSON(b []byte) error  { return expectJSONKind(b, '[', "array") }
+
+func expectJSONKind(b []byte, open byte, kind string) error {
+	if len(b) == 0 || string(b) == "null" || b[0] == open {
+		return nil
+	}
+	return fmt.Errorf("cannot unmarshal %s into Go value of type %s", b, kind)
 }
 
 // decodeSummary parses one trimmed JSONL line into a Summary, applying the SAME
