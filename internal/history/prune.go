@@ -90,6 +90,11 @@ func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult,
 
 	for _, name := range doomed {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			// The doomed remainder — the shard that just failed and every one not
+			// yet attempted — is retained on disk, so count it: Kept is documented
+			// as every retained candidate file, and the CLI prints it to the user
+			// as the post-prune inventory even on this failure path.
+			res.Kept += len(doomed) - len(res.Removed)
 			return res, fmt.Errorf("removing history shard %s: %w", name, err)
 		}
 		res.Removed = append(res.Removed, name)
