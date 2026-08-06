@@ -18,7 +18,16 @@ import (
 // under the isolated store, so leaderboard filtering can be exercised end-to-end.
 func storeLeaderboardRec(t *testing.T, ageDays int, reviewer, model string) {
 	t.Helper()
-	ts := time.Now().UTC().AddDate(0, 0, -ageDays).Format(time.RFC3339)
+	storeLeaderboardRecAt(t, time.Now().UTC().AddDate(0, 0, -ageDays), reviewer, model)
+}
+
+// storeLeaderboardRecAt is storeLeaderboardRec with an explicit timestamp, for a
+// test that must place a record relative to a window boundary rather than at a
+// whole number of days back. The timestamp drives both the run_id (which the
+// --since filter parses) and the month file it lands in.
+func storeLeaderboardRecAt(t *testing.T, at time.Time, reviewer, model string) {
+	t.Helper()
+	ts := at.UTC().Format(time.RFC3339)
 	runID := ts + "-" + reviewer
 	storeRecord(t, scorecard.Record{
 		SchemaVersion:        scorecard.SchemaVersion,
@@ -338,25 +347,66 @@ func TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure(t *testing.T) {
 	require.NotContains(t, out, "No scorecard data found", "a store that cannot be read is not a store with no data")
 }
 
-// TestLeaderboardCmd_InWindowMonthButOutsideDayCutoffExcluded pins that the
-// windowed read narrows I/O without replacing the filter. ReadSince selects whole
-// calendar months, so a record from earlier in the cutoff's own month is read;
-// only the day-precision ApplyFilters boundary excludes it. Skipped near the start
-// of a month, where a 7d window has no same-month-but-older day to test.
-func TestLeaderboardCmd_InWindowMonthButOutsideDayCutoffExcluded(t *testing.T) {
+// TestLeaderboardCmd_InWindowMonthFileButOutsideDayCutoffExcluded pins that the
+// windowed read narrows I/O without replacing the filter: ReadSince selects whole
+// calendar months, so the month CONTAINING the cutoff is read entirely, and only
+// the day-precision ApplyFilters boundary excludes the records inside it that
+// predate the cutoff. Both halves matter — if the excluded record's file were
+// never opened, this would pass for the wrong reason and prove nothing about the
+// two composing.
+//
+// The older record is placed just before the cutoff inside the cutoff's own month
+// rather than at a fixed age, so the month file is guaranteed in-window on every
+// calendar day. A fixed age only lands there on days late enough in the month,
+// which would leave this contract unexercised for most of a month's CI runs.
+func TestLeaderboardCmd_InWindowMonthFileButOutsideDayCutoffExcluded(t *testing.T) {
 	isolate(t)
 	now := time.Now().UTC()
-	if now.Day() < 12 {
-		t.Skip("needs a day-of-month with room for an older same-month record outside a 7d window")
-	}
-	storeLeaderboardRec(t, 1, "recent", "m")
-	storeLeaderboardRec(t, 10, "sameMonthButOlder", "m")
+	cutoff := now.AddDate(0, 0, -1) // matches the --since 1d below
 
-	code, out := execCmdCapture(t, "leaderboard", "--since", "7d")
+	// A minute before the cutoff is in the cutoff's month except when the cutoff
+	// itself sits in that month's first minute; the month's own start instant is
+	// then the latest qualifying timestamp.
+	older := cutoff.Add(-time.Minute)
+	if older.Month() != cutoff.Month() {
+		older = time.Date(cutoff.Year(), cutoff.Month(), 1, 0, 0, 0, 0, time.UTC)
+	}
+	if !older.Before(cutoff) {
+		t.Skip("cutoff landed exactly on its month's first instant, leaving no room before it")
+	}
+
+	storeLeaderboardRecAt(t, now, "recent", "m")
+	storeLeaderboardRecAt(t, older, "sameMonthFileButOlder", "m")
+	require.Equal(t, cutoff.Format("2006-01"), older.Format("2006-01"),
+		"the excluded record must live in the cutoff's month file, which the window always opens")
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "1d")
 	require.Equal(t, 0, code, out)
 	require.Contains(t, out, "recent")
-	require.NotContains(t, out, "sameMonthButOlder",
+	require.NotContains(t, out, "sameMonthFileButOlder",
 		"the month file is read whole, but the day-precision --since boundary still applies")
+}
+
+// TestLeaderboardCmd_ExportStillReadsAllHistory pins the export path's exemption
+// from the window. Windowing --export would be invisible to every other export
+// test (they use an empty store or --since all, both zero-window), yet it would
+// swap the no-match failure for the empty-store one on a store whose data all
+// predates the window — the two export errors the command deliberately keeps
+// distinct. Deleting the read's export branch must fail here.
+func TestLeaderboardCmd_ExportStillReadsAllHistory(t *testing.T) {
+	isolate(t)
+	// ~13 months back, so the record's month file is outside the 30d window on
+	// every calendar day. A 45-day-old record would share the cutoff's month
+	// whenever the cutoff falls late enough in it, and a windowed export would
+	// then still read it — leaving the exemption unproven for part of the month.
+	storeLeaderboardRec(t, 400, "ancient", "m")
+
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--since", "30d")
+	require.Equal(t, 1, code, "no record survives the export filters: %s", out)
+	require.Contains(t, out, "no records match the export filters",
+		"the record was read and then filtered out, not missed by a windowed read")
+	require.NotContains(t, out, "no scorecard data yet",
+		"a windowed export would misreport a populated store as empty")
 }
 
 // TestLeaderboardCmd_SinceZeroShowsOldRecords pins the second no-window sentinel.

@@ -83,10 +83,12 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	}
 	readOpts := scorecard.ReadOpts{Writer: cmd.ErrOrStderr()}
 
-	// One now for the whole command: it anchors the windowed read below and the
+	// One now for the table path: it anchors the windowed read below and the
 	// day-precision filter further down, which would otherwise call time.Now()
-	// again. Month-file selection makes the skew immaterial in production, but a
-	// single anchor is what makes the boundary deterministic under test.
+	// again. (The export path keeps its own UTC anchor — see
+	// runLeaderboardExport.) Month-file selection makes the skew immaterial in
+	// production, but a single anchor is what makes the boundary deterministic
+	// under test.
 	now := time.Now()
 
 	// Size the read window from --since. The value is parsed here only to bound
@@ -109,6 +111,20 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// here would swap its empty-store error for the no-match one. The table view
 	// takes the windowed read, so displaying one month of leaderboard data no
 	// longer opens every month file the store has ever written.
+	//
+	// Two consequences follow from selecting files instead of filtering records,
+	// and both are accepted rather than overlooked:
+	//
+	//   - An unreadable or corrupt month file OUTSIDE the window no longer fails
+	//     the command. Not opening those files is the entire point, and a file
+	//     that is never opened cannot be diagnosed; `--since all` still surfaces
+	//     it, as does any window that reaches it.
+	//   - A record stamped in a FUTURE calendar month (host clock skew, an
+	//     imported record) drops out of the table. ReadSince's upper edge is
+	//     deliberately fail-closed (see monthOverlapsWindow), whereas the filter
+	//     alone only ever dropped records BEFORE the cutoff. Widening that edge
+	//     would be a change to the store's windowing contract, which this call
+	//     site is not the place to make.
 	var records []scorecard.Record
 	if export {
 		records, err = scorecard.ReadAll(dir, readOpts)
