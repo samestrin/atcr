@@ -245,7 +245,9 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict)."
+		"Reconciled findings are also appended to the reviewed repo's local TD store; the root is the repo argument, else the root recorded in the review manifest — there is no working-directory fallback, so a review whose manifest records no root persists nothing unless repo is given. " +
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict), repo (ABSOLUTE path to the reviewed repo root; required when the review manifest records no root), no_local_debt (skip the store write for this run). " +
+		"The result reports the outcome of that write as debt_persisted / debt_skipped_reason."
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."

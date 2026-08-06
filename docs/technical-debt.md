@@ -345,6 +345,15 @@ when it does not — an artifact tree copied to another machine carries a stale
 absolute path — the run warns and persists nothing rather than writing to the
 wrong place.
 
+The MCP path has only the first two tiers: **`repo` > the review manifest**, with
+no working-directory fallback. The server's working directory is whatever
+launched it, not the reviewed repo, so a review whose manifest records no root
+persists nothing unless the `repo` argument names one — and that argument must be
+an **absolute** path (a relative one would resolve against the server's directory,
+not yours). The tool result carries `debt_persisted` and, when nothing was
+written, `debt_skipped_reason`; pass `no_local_debt: true` to skip the write
+deliberately, the way `--no-local-debt` does on the CLI.
+
 ## CI/CD integration
 
 `atcr debt dashboard --output <file> --check` is the hook: it regenerates the
