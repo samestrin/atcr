@@ -2,6 +2,7 @@ package localdebt
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,44 @@ func TestPersistForReconcile_WritesUnderRootNotCWD(t *testing.T) {
 
 	_, err = os.Stat(filepath.Join(cwd, ".atcr"))
 	assert.True(t, os.IsNotExist(err), "nothing may be created under the process CWD: %v", err)
+}
+
+// TestPersistForReconcile_CancelledContextStopsBeforeWriting closes TD
+// internal/mcp/handlers.go:406. The bridge does a full streaming store read, one
+// lock-protected batch append (waiting up to lockWait under contention) and a
+// synchronous whole-store rewrite via MaybeCompact — none of it cancellable, so an
+// MCP client that timed out or disconnected left the handler running to completion
+// and the server draining it on shutdown. A CLI run at least has a human with
+// Ctrl-C; a serve-mode handler has neither.
+//
+// Context is optional and nil-safe (every other test here omits it), so the guard
+// cannot become a trap for a caller that never supplied one.
+func TestPersistForReconcile_CancelledContextStopsBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var diag bytes.Buffer
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"),
+		PersistOpts{Root: root, Diag: &diag, Context: ctx})
+
+	_, err := os.Stat(filepath.Join(root, ".atcr"))
+	assert.True(t, os.IsNotExist(err), "a cancelled persist must not create the store: %v", err)
+	assert.Contains(t, diag.String(), "cancelled",
+		"the abandoned side effect must be reported, not silent")
+}
+
+// TestPersistForReconcile_NilContextPersistsNormally pins the nil-safety half: the
+// three CLI call sites pass no Context, and a guard that treated the zero value as
+// "already cancelled" would silently disable persistence for all of them.
+func TestPersistForReconcile_NilContextPersistsNormally(t *testing.T) {
+	root := t.TempDir()
+
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Root: root})
+
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "an unset Context must mean 'not cancellable', never 'cancelled'")
 }
 
 // TestPersistForReconcile_EmptyResultDoesNoIO pins the zero-finding no-op: no store

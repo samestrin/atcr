@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,15 @@ type PersistOpts struct {
 	Root        string        // resolved repo root; the store is DefaultDir(Root)
 	Diag        io.Writer     // best-effort diagnostics sink
 	AutoCompact CompactPolicy // automatic-compaction threshold; zero value = production defaults
+	// Context, when supplied, makes the persist abandonable at its phase
+	// boundaries (TD internal/mcp/handlers.go:406). It is carried in the options
+	// struct rather than added as a parameter so the three CLI call sites — none
+	// of which needs it — are untouched; nil means "not cancellable", never
+	// "already cancelled". It is only ever read at a boundary between phases:
+	// the store is append-only and this whole side effect is best-effort, so
+	// stopping between phases is safe, and stopping mid-append is neither
+	// attempted nor needed.
+	Context context.Context
 }
 
 // PersistForReconcile appends a reconcile run's findings to the .atcr/-scoped local
