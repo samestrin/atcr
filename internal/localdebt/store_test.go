@@ -1979,6 +1979,41 @@ func TestMaybeCompact_UnderThresholdDoesNotScanEveryByte(t *testing.T) {
 		"at the boundary the exact count is still required")
 }
 
+// TestRetainForCompaction_ReusesTheFoldGroups pins the API shape foldByID's doc
+// already claims (TD internal/localdebt/store.go:683). It returns the per-id groups
+// "so a caller that needs them does not rebuild an identical map on the package's
+// hottest read path" — and retainForCompaction, the one caller that needs them, built
+// its own byte-identical map[string][]Record immediately before calling FoldRecords,
+// which built the other one internally and threw it away. Two full maps of every
+// record existed at once on the compaction path.
+//
+// The allocation bound is asserted rather than merely described: a rebuild is exactly
+// one extra map plus one slice header per id, so a run that rebuilds cannot come in
+// under a budget calibrated on the sharing one.
+func TestRetainForCompaction_ReusesTheFoldGroups(t *testing.T) {
+	var recs []Record
+	for i := 0; i < 200; i++ {
+		r := detection(fmt.Sprintf("finding %d", i%50), "2026-06-01T00:00:00Z")
+		r.Timestamp = fmt.Sprintf("2026-06-%02dT00:00:00Z", (i%20)+1)
+		recs = append(recs, r)
+	}
+
+	// Correctness first: sharing the groups must not change what is retained.
+	want := len(retainForCompaction(recs))
+	require.Positive(t, want)
+
+	// The budget is the fold's own allocation count plus a small margin for the
+	// retention output. Rebuilding the groups costs a second map plus a slice header
+	// per id on top of that, which no margin this size absorbs — 50 ids put the
+	// rebuilding implementation at roughly twice the fold's count.
+	fold := testing.AllocsPerRun(20, func() { _ = FoldRecords(recs) })
+	retain := testing.AllocsPerRun(20, func() { _ = retainForCompaction(recs) })
+
+	assert.LessOrEqual(t, retain, fold*1.25,
+		"retainForCompaction must consume the fold's groups (%v allocs) rather than rebuild an identical map; got %v",
+		fold, retain)
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
