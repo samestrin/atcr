@@ -187,3 +187,39 @@ func TestHasAny(t *testing.T) {
 		assert.False(t, HasAny(dir, legacy))
 	})
 }
+
+// An unreadable legacy ledger is a hard error on the windowed path too, exactly
+// as on LoadAll: the flat ledger is one file, so failing to read it silently
+// would drop every pre-19.4 record without saying so.
+func TestLoadAllSince_UnreadableLegacyIsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission files")
+	}
+	root := t.TempDir()
+	legacy := LegacyLedgerPath(root)
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(legacy, []Record{{Timestamp: now, ID: "l", File: "a.go"}}))
+	require.NoError(t, os.Chmod(legacy, 0o000))
+	defer func() { _ = os.Chmod(legacy, 0o600) }()
+
+	_, err := LoadAllSince(filepath.Join(root, ".atcr", "history"), legacy, 30*24*time.Hour, now)
+	require.Error(t, err)
+}
+
+// An unreadable shard DIRECTORY (as opposed to an individual shard) is a hard
+// error: it means the query cannot see the store at all, which is different from
+// one torn shard being skipped.
+func TestLoadAllSince_UnreadableShardDirIsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read 000-permission directories")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, ".atcr", "history")
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	mustAppendShard(t, dir, now, "aug")
+	require.NoError(t, os.Chmod(dir, 0o000))
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+
+	_, err := LoadAllSince(dir, LegacyLedgerPath(root), 30*24*time.Hour, now)
+	require.Error(t, err)
+}
