@@ -266,7 +266,7 @@ func TestRenderDebtDashboard_StripsControlSequencesAndNeutralizesHTML(t *testing
 	out := renderDebtDashboard([]localdebt.Record{rec}, 5)
 
 	assert.NotContains(t, out, "\x1b", "no ESC byte reaches the terminal")
-	assert.NotContains(t, out, "", "no C1 control byte either")
+	assert.NotContains(t, out, "\u009b", "no C1 control byte either")
 	assert.NotContains(t, out, " ", "no line separator")
 	assert.NotContains(t, out, "<img", "raw HTML is escaped rather than rendered")
 	assert.Contains(t, out, "erase", "the surrounding finding text survives")

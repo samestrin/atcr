@@ -265,7 +265,7 @@ func TestDebtRenderers_StripTerminalControlSequences(t *testing.T) {
 			for name, bad := range map[string]string{
 				"ESC":                "\x1b",
 				"DEL":                "\x7f",
-				"C1 CSI":             "",
+				"C1 CSI":             "\u009b",
 				"line separator":     " ",
 				"paragraph sep":      " ",
 				"raw carriage retn.": "\r",

@@ -254,7 +254,7 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]loca
 	// two — which measured as a net regression for an UNFILTERED `debt list`, where
 	// every id survives and the summary pass buys nothing.
 	sums, selected = nil, nil
-	_ = sums
+	_, _ = sums, selected
 
 	recs, err := hydrateDebtIDs(dir, ids, opts, nil)
 	if err != nil {
