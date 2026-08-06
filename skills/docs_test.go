@@ -104,6 +104,12 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		// script running `atcr debt list --group U` hit an unknown-flag error the
 		// documented retirement list did not cover.
 		{"TD", "retired list --group filter", "`--group` on `list`"},
+		// TD internal/payload/manifest.go:59: manifest.json durably records the
+		// reviewer's ABSOLUTE repo root, which embeds a username on a developer
+		// machine, and the review tree is the artifact people attach to PRs and bug
+		// reports. Nothing renders the field, so the residual risk is disclosure by
+		// sharing — which only a documented warning can address.
+		{"TD", "manifest root disclosure", "absolute path of the repository it was reviewed in"},
 	}
 	for _, tc := range required {
 		if !strings.Contains(doc, tc.substr) {

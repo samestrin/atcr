@@ -226,6 +226,34 @@ func TestReconcileHandler_InvalidExplicitRepoDoesNotPersist(t *testing.T) {
 	assert.Contains(t, diag.String(), "does not exist or is not a directory")
 }
 
+// TestMCPResults_DoNotEchoManifestRoot is the regression pin for the other half
+// of TD internal/payload/manifest.go:59: the recorded root is an absolute path
+// that embeds a username, so it must stay on disk and out of any rendered result
+// a client (or a pasted transcript) carries away. Nothing echoes it today; this
+// fails the moment a convenience field puts it back on the wire.
+func TestMCPResults_DoNotEchoManifestRoot(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	e := &engine{root: root, diag: &bytes.Buffer{}}
+	_, rec, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+	_, st, err := e.handleStatus(context.Background(), nil, StatusArgs{IDOrPath: id})
+	require.NoError(t, err)
+
+	for name, result := range map[string]any{"reconcile": rec, "status": st} {
+		encoded, mErr := json.Marshal(result)
+		require.NoError(t, mErr)
+		assert.NotContains(t, string(encoded), root,
+			"the %s result must not carry the reviewer's absolute repo path", name)
+	}
+}
+
 // TestReconcileResult_ReportsPersistenceOutcome closes TD
 // internal/mcp/tools.go:169. The CLI rejects a bad --repo as a usage error before
 // any work; the MCP path warns to the server's stderr — which a stdio client
