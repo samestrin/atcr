@@ -137,7 +137,9 @@ func TestHistoryCmd_AbsentHistoryExitsZeroWithMessage(t *testing.T) {
 	root := t.TempDir()
 	out, err := runHistoryIn(t, root)
 	require.NoError(t, err) // absent history is NOT an error (AC3)
-	assert.Contains(t, out, "no history")
+	// Assert the DISCRIMINATING substring: a bare "no history" matches both of
+	// the command's two empty-result messages and cannot tell which branch ran.
+	assert.Contains(t, out, "run 'atcr review' first", "truly-absent history earns the first-run hint")
 }
 
 func TestHistoryCmd_EmptyAfterFilterExitsZero(t *testing.T) {
@@ -148,9 +150,14 @@ func TestHistoryCmd_EmptyAfterFilterExitsZero(t *testing.T) {
 		"file": "internal/registry/x.go", "category": "CORRECTNESS",
 	})
 	// A 30d window filters out the 100-day-old record; still exit 0 with a message.
+	// Assert the DISCRIMINATING substring ("no history" alone matches both
+	// empty-result messages), and pin that the first-run hint is NOT shown — a
+	// HasAny regression that misclassified this populated ledger as "nothing
+	// recorded" would otherwise stay green here.
 	out, err := runHistoryIn(t, root, "--since", "30d")
 	require.NoError(t, err)
-	assert.Contains(t, out, "no history")
+	assert.Contains(t, out, "no history for the selected window")
+	assert.NotContains(t, out, "run 'atcr review' first")
 }
 
 func TestHistoryCmd_FiltersAndRendersTable(t *testing.T) {
