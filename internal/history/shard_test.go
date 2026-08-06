@@ -199,3 +199,88 @@ func TestLoadAll_UnreadableLegacyIsError(t *testing.T) {
 	_, err := LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
 	require.Error(t, err)
 }
+
+// AC2: the union of the two read locations is deduplicated on (Timestamp, ID) —
+// one occurrence of a finding recorded by a single run, not one row per file it
+// happens to appear in. The same run's records can exist in both locations when
+// a repo was mid-cutover, and a raw concatenation would double-count it into the
+// severity table.
+func TestLoadAll_DedupesSameOccurrenceAcrossSources(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	dupe := Record{Timestamp: ts, ID: "dupe", File: "a.go", Package: "a", Severity: "HIGH"}
+	require.NoError(t, Append(legacyPath, []Record{dupe}))
+	require.NoError(t, Append(ShardPath(shardDir, ts), []Record{
+		dupe,
+		{Timestamp: ts, ID: "only-shard", File: "b.go", Package: "b", Severity: "LOW"},
+	}))
+
+	recs, err := LoadAll(shardDir, legacyPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 2, "the shared occurrence must appear exactly once")
+	assert.Equal(t, "dupe", recs[0].ID, "the legacy copy is kept — first occurrence wins")
+	assert.Equal(t, "only-shard", recs[1].ID)
+}
+
+// The dedup key is (Timestamp, ID), NOT ID alone: a finding that recurs across
+// runs is the trend data `atcr history` exists to report, so every recurrence
+// must survive the union. Folding by id would collapse a six-month trend into a
+// single row (Epic 35.14 Design Decision 2).
+func TestLoadAll_KeepsRecurrencesOfTheSameFinding(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+
+	june := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	july := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+
+	// Same finding id, three different runs, spread across both locations.
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: june, ID: "recur", File: "a.go"}}))
+	require.NoError(t, Append(ShardPath(shardDir, july), []Record{{Timestamp: july, ID: "recur", File: "a.go"}}))
+	require.NoError(t, Append(ShardPath(shardDir, aug), []Record{{Timestamp: aug, ID: "recur", File: "a.go"}}))
+
+	recs, err := LoadAll(shardDir, legacyPath)
+	require.NoError(t, err)
+	require.Len(t, recs, 3, "each run's occurrence of a recurring finding must survive")
+	assert.Equal(t, []time.Time{june, july, aug}, []time.Time{recs[0].Timestamp, recs[1].Timestamp, recs[2].Timestamp})
+}
+
+// Two distinct findings recorded by the same run share a Timestamp but not an
+// ID, so neither half of the key alone is sufficient — dedup must not collapse
+// them.
+func TestLoadAll_KeepsDistinctFindingsFromOneRun(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, Append(ShardPath(shardDir, ts), []Record{
+		{Timestamp: ts, ID: "one", File: "a.go"},
+		{Timestamp: ts, ID: "two", File: "b.go"},
+	}))
+
+	recs, err := LoadAll(shardDir, filepath.Join(root, ".atcr", "findings-history.jsonl"))
+	require.NoError(t, err)
+	assert.Len(t, recs, 2)
+}
+
+// Timestamp equality is by instant, not by wall-clock representation: the same
+// occurrence read back from two files with different zone offsets (RFC3339
+// preserves the offset) is one occurrence, not two.
+func TestLoadAll_DedupeIsZoneIndependent(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+
+	utc := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	east := utc.In(time.FixedZone("east", 2*60*60)) // same instant, +02:00 offset
+
+	require.NoError(t, Append(legacyPath, []Record{{Timestamp: utc, ID: "x", File: "a.go"}}))
+	require.NoError(t, Append(ShardPath(shardDir, utc), []Record{{Timestamp: east, ID: "x", File: "a.go"}}))
+
+	recs, err := LoadAll(shardDir, legacyPath)
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "the same instant in a different zone is the same occurrence")
+}
