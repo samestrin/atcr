@@ -157,7 +157,12 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 		// byte-identical to the unbounded implementation: an empty store still
 		// falls through to the graceful message, while out-of-window data now
 		// reaches ApplyFilters and is rejected by it, producing the no-match error.
-		records, err = scorecard.ReadAll(dir, readOpts)
+		//
+		// The probe's only job is the boolean "is the store non-empty", so its read
+		// discards diagnostics; the windowed read above already reported any file it
+		// opened, and re-emitting them here would double the noise and re-expose the
+		// absolute store path in user-visible output.
+		records, err = scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: io.Discard})
 		if err != nil {
 			return fmt.Errorf("failed to read scorecard store: %w", err)
 		}
