@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -248,21 +249,37 @@ func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
 	require.NotEmpty(t, env.Reviewers, "old records must appear in export with --since all")
 }
 
-// unreadableMonthFileFor makes the month file holding a record of the given age
-// unreadable and returns its name, so a test can prove the leaderboard never
-// opened it: an opened file at mode 0o000 fails the read, and the leaderboard
-// surfaces that failure as an error. Nothing else can distinguish "not read" from
-// "read and ignored" — a record simply missing from the output would also be
-// explained by the in-memory filter, which is exactly what this epic is not about.
-func unreadableMonthFileFor(t *testing.T, ageDays int) string {
+// unreadableMonthFileFor replaces the month file for the given instant with a
+// bound Unix domain socket (symlinked into the store) and returns its name, so a
+// test can prove the leaderboard never opened it. os.Open on a socket fails
+// regardless of the effective uid, unlike mode 0o000 which is ignored by root.
+// The instant must be the same one passed to the store write, so the helper
+// targets the same month stem the writer used. The socket is bound under /tmp
+// because Unix domain socket paths have a small length budget and the isolated
+// scorecard dir is usually too deep.
+func unreadableMonthFileFor(t *testing.T, at time.Time) string {
 	t.Helper()
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
-	name := time.Now().UTC().AddDate(0, 0, -ageDays).Format("2006-01") + ".jsonl"
-	path := filepath.Join(dir, name)
-	require.FileExists(t, path, "the month file must exist before it is locked")
-	require.NoError(t, os.Chmod(path, 0o000))
-	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	name := at.UTC().Format("2006-01") + ".jsonl"
+	target := filepath.Join(dir, name)
+	require.FileExists(t, target, "the month file must exist before it is replaced")
+
+	sockDir, err := os.MkdirTemp("/tmp", "atcr-*")
+	require.NoError(t, err, "creating short socket directory")
+	sockPath := filepath.Join(sockDir, "sock")
+	l, err := net.Listen("unix", sockPath)
+	require.NoError(t, err, "creating unix socket fixture")
+
+	require.NoError(t, os.Remove(target))
+	require.NoError(t, os.Symlink(sockPath, target))
+
+	t.Cleanup(func() {
+		_ = l.Close()
+		_ = os.Remove(target)
+		_ = os.Remove(sockPath)
+		_ = os.Remove(sockDir)
+	})
 	return name
 }
 
@@ -272,13 +289,11 @@ func unreadableMonthFileFor(t *testing.T, ageDays int) string {
 // read fails on it (see the sibling test below), so a clean exit 0 proves the file
 // was skipped at selection rather than read and filtered away afterwards.
 func TestLeaderboardCmd_OutOfWindowMonthFileNeverOpened(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod 0o000 does not block reads when running as root")
-	}
 	isolate(t)
 	storeLeaderboardRec(t, 1, "recent", "m")
-	storeLeaderboardRec(t, 400, "ancient", "m") // ~13 months back: its own month file
-	locked := unreadableMonthFileFor(t, 400)
+	ancient := time.Now().UTC().AddDate(0, 0, -400)
+	storeLeaderboardRecAt(t, ancient, "ancient", "m") // ~13 months back: its own month file
+	locked := unreadableMonthFileFor(t, ancient)
 
 	code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
 	require.Equal(t, 0, code, "the out-of-window month file must never be opened: %s", out)
@@ -288,17 +303,15 @@ func TestLeaderboardCmd_OutOfWindowMonthFileNeverOpened(t *testing.T) {
 }
 
 // TestLeaderboardCmd_SinceAllStillOpensEveryMonthFile is the control for the test
-// above: with the window disabled, the same locked file IS opened and its failure
-// surfaces. Without this pair, the assertion above would also pass if the window
-// silently swallowed read errors.
+// above: with the window disabled, the same unreadable file IS opened and its
+// failure surfaces. Without this pair, the assertion above would also pass if the
+// window silently swallowed read errors.
 func TestLeaderboardCmd_SinceAllStillOpensEveryMonthFile(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod 0o000 does not block reads when running as root")
-	}
 	isolate(t)
 	storeLeaderboardRec(t, 1, "recent", "m")
-	storeLeaderboardRec(t, 400, "ancient", "m")
-	unreadableMonthFileFor(t, 400)
+	ancient := time.Now().UTC().AddDate(0, 0, -400)
+	storeLeaderboardRecAt(t, ancient, "ancient", "m")
+	unreadableMonthFileFor(t, ancient)
 
 	code, out := execCmdCapture(t, "leaderboard", "--since", "all")
 	require.Equal(t, 1, code, "an all-history read still opens every month file: %s", out)
@@ -335,12 +348,10 @@ func TestLeaderboardCmd_WindowedReadKeepsEmptyStoreAndNoMatchDistinct(t *testing
 // must surface as a read error, never be reported as the graceful "no data yet"
 // state, which would tell a user with a broken store that they have no history.
 func TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod 0o000 does not block reads when running as root")
-	}
 	isolate(t)
-	storeLeaderboardRec(t, 400, "ancient", "m") // out of window: the probe alone reads it
-	unreadableMonthFileFor(t, 400)
+	ancient := time.Now().UTC().AddDate(0, 0, -400)
+	storeLeaderboardRecAt(t, ancient, "ancient", "m") // out of window: the probe alone reads it
+	unreadableMonthFileFor(t, ancient)
 
 	code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
 	require.Equal(t, 1, code, "an unreadable store is a failure, not an empty store: %s", out)
@@ -353,10 +364,6 @@ func TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure(t *testing.T) {
 // With a populated window the file is never opened and the command succeeds; with
 // an empty window the probe must read the whole store and surfaces the failure.
 func TestLeaderboardCmd_OutOfWindowLockedFileDependsOnWindowState(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod 0o000 does not block reads when running as root")
-	}
-
 	cases := []struct {
 		name        string
 		storeRecent bool
@@ -386,8 +393,56 @@ func TestLeaderboardCmd_OutOfWindowLockedFileDependsOnWindowState(t *testing.T) 
 			if tc.storeRecent {
 				storeLeaderboardRec(t, 1, "recent", "m")
 			}
-			storeLeaderboardRec(t, 400, "ancient", "m")
-			unreadableMonthFileFor(t, 400)
+			ancient := time.Now().UTC().AddDate(0, 0, -400)
+			storeLeaderboardRecAt(t, ancient, "ancient", "m")
+			unreadableMonthFileFor(t, ancient)
+
+			code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+			require.Equal(t, tc.wantCode, code, out)
+			require.Contains(t, out, tc.wantContain)
+			for _, s := range tc.wantNot {
+				require.NotContains(t, out, s)
+			}
+		})
+	}
+}
+
+// TestLeaderboardCmd_FutureRecordVisibility keeps the accepted asymmetry of a
+// file-selecting window: a lone future-stamped record is read by the empty-window
+// probe and shown, while a future-stamped record alongside an in-window record is
+// excluded by monthOverlapsWindow's fail-closed upper edge.
+func TestLeaderboardCmd_FutureRecordVisibility(t *testing.T) {
+	cases := []struct {
+		name        string
+		storeRecent bool
+		wantCode    int
+		wantContain string
+		wantNot     []string
+	}{
+		{
+			name:        "lone future record is shown via the empty-window probe",
+			storeRecent: false,
+			wantCode:    0,
+			wantContain: "future",
+			wantNot:     []string{"no records match filters"},
+		},
+		{
+			name:        "future record is hidden when an in-window record exists",
+			storeRecent: true,
+			wantCode:    0,
+			wantContain: "recent",
+			wantNot:     []string{"future"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			future := time.Now().UTC().AddDate(0, 2, 0)
+			storeLeaderboardRecAt(t, future, "future", "m")
+			if tc.storeRecent {
+				storeLeaderboardRec(t, 1, "recent", "m")
+			}
 
 			code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
 			require.Equal(t, tc.wantCode, code, out)
