@@ -2065,29 +2065,47 @@ func TestStageShard_StreamsInsteadOfBufferingTheWholeShard(t *testing.T) {
 		encoded += len(recordLine(t, r)) + 1
 	}
 
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	staged, err := stageShard(dir, "2026-06", recs, nil)
-	require.NoError(t, err)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, staged.publish())
+	streamed := bytesAllocated(func() {
+		staged, err := stageShard(dir, "2026-06", recs, nil)
+		require.NoError(t, err)
+		require.NoError(t, staged.publish())
+	})
 
 	// Written content is exact regardless of how it got there.
 	onDisk, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
 	require.NoError(t, err)
 	require.Len(t, string(onDisk), encoded)
 
-	// The bound is the encoded shard itself. A streaming writer allocates a fixed
-	// buffer plus whatever encoding/json needs per record — transient garbage that
-	// stays well under one shard's worth. A whole-shard bytes.Buffer allocates the
-	// entire shard ON TOP of that same per-record cost, and pays its growth doubling
-	// getting there, which lands several times over the bound. Measured on this
-	// fixture: ~0.8 MB streaming against ~5.2 MB buffered for a 1.2 MB shard.
-	allocated := after.TotalAlloc - before.TotalAlloc
-	assert.Less(t, allocated, uint64(encoded),
-		"staging a %d-byte shard allocated %d bytes: the rewrite must stream, not buffer the shard",
-		encoded, allocated)
+	// The comparison is against the implementation this replaced — the whole shard
+	// marshaled into a bytes.Buffer and written once — rather than an absolute byte
+	// figure, because the absolute number moves with the toolchain and inflates
+	// several-fold under -race (which CI runs). The RATIO is the property: streaming
+	// pays a fixed buffer plus per-record marshaling, buffering pays the entire
+	// encoded shard on top of that same per-record cost, plus its growth doubling.
+	buffered := bytesAllocated(func() {
+		var buf bytes.Buffer
+		for _, r := range recs {
+			line, err := json.Marshal(r)
+			require.NoError(t, err)
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "buffered.tmp"), buf.Bytes(), 0o600))
+	})
+
+	assert.Less(t, streamed, buffered/2,
+		"the rewrite must stream (%d bytes allocated) rather than buffer the whole %d-byte shard (%d bytes allocated)",
+		streamed, encoded, buffered)
+}
+
+// bytesAllocated reports how many bytes fn allocated, from a settled heap.
+func bytesAllocated(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
 }
 
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
