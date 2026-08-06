@@ -35,6 +35,8 @@ func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 	res, err := PruneShards(dir, 30*24*time.Hour, now)
 	require.Error(t, err)
 	assert.Empty(t, res.Removed, "nothing could be removed, so nothing is reported as removed")
+	assert.Equal(t, 2, res.Kept,
+		"the doomed-but-unremoved shards are still on disk — Kept must count every retained candidate file, including on the failure path")
 }
 
 // Symlinked shard names are removed as links, not followed: os.Remove unlinks
