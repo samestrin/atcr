@@ -53,6 +53,34 @@ import (
 // a blank or malformed line instead of failing the read — so the worst outcome
 // here is one dropped record in a trend report, not a corrupt store. A caller
 // needing a hard per-line guarantee must serialize appends itself.
+func Append(path string, records []Record) error {
+	if len(records) == 0 {
+		return nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for i := range records {
+		if err := enc.Encode(records[i]); err != nil {
+			return fmt.Errorf("encoding history record: %w", err)
+		}
+	}
+	if err := ensureShardDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("creating history dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening history ledger: %w", err)
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing history ledger: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing history ledger: %w", err)
+	}
+	return nil
+}
+
 // ensureShardDir creates the shard directory without ever creating the REPO ROOT
 // it sits under, and reports an error when that root is gone.
 //
@@ -87,32 +115,4 @@ func ensureShardDir(dir string) error {
 		return fmt.Errorf("history store root %s does not exist; refusing to recreate it", filepath.Base(anchor))
 	}
 	return os.MkdirAll(dir, 0o700)
-}
-
-func Append(path string, records []Record) error {
-	if len(records) == 0 {
-		return nil
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	for i := range records {
-		if err := enc.Encode(records[i]); err != nil {
-			return fmt.Errorf("encoding history record: %w", err)
-		}
-	}
-	if err := ensureShardDir(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("creating history dir: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return fmt.Errorf("opening history ledger: %w", err)
-	}
-	if _, err := f.Write(buf.Bytes()); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("writing history ledger: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("closing history ledger: %w", err)
-	}
-	return nil
 }
