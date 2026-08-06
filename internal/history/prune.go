@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -89,7 +88,7 @@ func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult,
 	cutoff := now.Add(-horizon)
 	var doomed []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !isShardFile(e) {
 			continue
 		}
 		if shardMonthIntersects(e.Name(), cutoff) {

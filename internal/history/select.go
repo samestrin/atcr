@@ -50,6 +50,15 @@ func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, 
 	})
 }
 
+// isShardFile is the single "is a history shard candidate" predicate shared by
+// selection (loadShardsWhere), pruning (PruneShards), and existence checks
+// (HasAny): a non-directory *.jsonl entry. Centralizing it is what stops the
+// three paths from drifting on what counts as a shard — the same drift risk
+// Epic 35.14 centralized ShardDir to eliminate at directory granularity.
+func isShardFile(e os.DirEntry) bool {
+	return !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl")
+}
+
 // loadShardsWhere is the single shard-reading implementation behind both
 // LoadShards (keep everything) and LoadShardsSince (keep the window). keep is
 // consulted on the file NAME only, before the file is opened — that is what
@@ -70,7 +79,7 @@ func loadShardsWhere(dir string, keep func(name string) bool) ([]Record, error) 
 
 	var selected []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !isShardFile(e) {
 			continue
 		}
 		if !keep(e.Name()) {
@@ -152,7 +161,7 @@ func LoadAllSince(shardDir, legacyPath string, since time.Duration, now time.Tim
 func HasAny(shardDir, legacyPath string) bool {
 	if entries, err := os.ReadDir(shardDir); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			if isShardFile(e) {
 				return true
 			}
 		}
