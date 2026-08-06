@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -325,6 +326,128 @@ func TestResolveOutputPath_ResolvesSymlinkedParentForNewLeaf(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(realDir, "report.json"), got,
 		"resolveOutputPath must resolve a symlinked parent even when the leaf is a new file")
+}
+
+// A --output whose LEAF is a symlink to a not-yet-existing target fails the
+// whole-path EvalSymlinks (every component must exist), so before this the
+// parent-resolution branch returned the LINK's own path — validation vetted the
+// link while os.WriteFile followed it and created the target. Planting a dangling
+// link is the cheapest form of that escape, so the leaf link must be followed
+// before anything is validated.
+func TestResolveOutputPath_FollowsADanglingLeafSymlink(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(realDir, "not-created-yet.json")
+
+	link := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.Symlink(target, link))
+
+	got, err := resolveOutputPath(link)
+	require.NoError(t, err)
+	require.Equal(t, target, got, "validation must see the link's target, not the link")
+}
+
+// A relative link target resolves against the LINK's directory, not the process
+// working directory.
+func TestResolveOutputPath_FollowsARelativeDanglingLeafSymlink(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	linkDir := filepath.Join(realDir, "sub")
+	require.NoError(t, os.MkdirAll(linkDir, 0o755))
+	require.NoError(t, os.Symlink("../sibling.json", filepath.Join(linkDir, "report.json")))
+
+	got, err := resolveOutputPath(filepath.Join(linkDir, "report.json"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realDir, "sibling.json"), got)
+}
+
+// The case the test above cannot reach, because it pre-resolves its directory:
+// the relative leaf link is arrived at THROUGH a symlinked ancestor. Joining the
+// target against the lexical parent then names a third location — neither the
+// link nor its target — and that is what would get created.
+func TestResolveOutputPath_RelativeLeafSymlinkUnderASymlinkedAncestor(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	linkDir := filepath.Join(realDir, "realdir")
+	require.NoError(t, os.MkdirAll(linkDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(realDir, "realsafe"), 0o755))
+	require.NoError(t, os.Symlink("../realsafe/out.json", filepath.Join(linkDir, "leaf.json")))
+
+	// Reach the same leaf through a symlink to its directory.
+	viaDir := filepath.Join(realDir, "other")
+	require.NoError(t, os.MkdirAll(viaDir, 0o755))
+	require.NoError(t, os.Symlink(linkDir, filepath.Join(viaDir, "dlink")))
+
+	got, err := resolveOutputPath(filepath.Join(viaDir, "dlink", "leaf.json"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realDir, "realsafe", "out.json"), got,
+		"the target resolves against the link's real directory, not the path used to reach it")
+}
+
+// The hop budget must admit a chain of exactly maxOutputLinkHops links and reject
+// one longer — an off-by-one here rejects a legitimate target.
+func TestResolveOutputPath_LinkChainBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		links   int
+		wantErr bool
+	}{
+		{maxOutputLinkHops - 1, false},
+		{maxOutputLinkHops, false},
+		{maxOutputLinkHops + 1, true},
+	} {
+		t.Run(fmt.Sprintf("links=%d", tc.links), func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			last := filepath.Join(dir, "real.json")
+			for i := 0; i < tc.links; i++ {
+				link := filepath.Join(dir, fmt.Sprintf("l%d", i))
+				require.NoError(t, os.Symlink(last, link))
+				last = link
+			}
+
+			got, err := resolveOutputPath(last)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, filepath.Join(dir, "real.json"), got)
+		})
+	}
+}
+
+// A link cycle must terminate, and it must FAIL rather than fall open: an
+// exhausted hop budget means the real destination is unknown, and handing an
+// unresolved link to the validator is a bypass with one extra link.
+func TestResolveOutputPath_SymlinkCycleIsAnError(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
+	require.NoError(t, os.Symlink(b, a))
+	require.NoError(t, os.Symlink(a, b))
+
+	_, err = resolveOutputPath(a)
+	require.Error(t, err, "a link cycle must not resolve to a path the caller then trusts")
+}
+
+// A chain one link longer than the budget must not escape: the fall-open version
+// of this returned a still-dangling link, the parent-resolution branch then vetted
+// the link's own (safe-looking) path, and the write followed the rest of the chain.
+func TestResolveOutputPath_OverlongLinkChainIsAnError(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	// Build maxOutputLinkHops+1 chained dangling links ending outside the temp tree.
+	last := "/etc/atcr-chain-escape.md"
+	for i := 0; i <= maxOutputLinkHops; i++ {
+		link := filepath.Join(dir, fmt.Sprintf("l%d", i))
+		require.NoError(t, os.Symlink(last, link))
+		last = link
+	}
+
+	_, err = resolveOutputPath(last)
+	require.Error(t, err, "an over-long chain must fail closed, not fall open to the link path")
+	require.NoFileExists(t, "/etc/atcr-chain-escape.md")
 }
 
 // TestResolveOutputPath_FailsOpenWhenParentAbsent keeps the fail-open contract for

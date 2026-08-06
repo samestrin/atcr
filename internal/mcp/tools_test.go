@@ -204,6 +204,19 @@ func TestDescReconcile_DocumentsConsensus(t *testing.T) {
 	}
 }
 
+// TestDescReconcile_DocumentsPersistenceArgs covers TD internal/mcp/tools.go:236.
+// The tool description is what a client model reads when deciding which arguments
+// exist; a per-property jsonschema description is weaker signal. repo is the ONLY
+// way to persist anything for a review whose manifest predates Manifest.Root, and
+// no_local_debt is the only way to turn the write path off — both were invisible
+// in the description while consensus and fail_on were spelled out.
+func TestDescReconcile_DocumentsPersistenceArgs(t *testing.T) {
+	assert.Contains(t, descReconcile, "repo",
+		"descReconcile must name the argument that selects the debt store root")
+	assert.Contains(t, descReconcile, "no_local_debt",
+		"descReconcile must name the persistence opt-out")
+}
+
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
 // registrations are no-ops and do not overwrite the first failure (fail-fast: the
 // first error is the one NewServer surfaces).

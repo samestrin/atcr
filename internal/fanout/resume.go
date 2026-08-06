@@ -258,6 +258,57 @@ func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
 	return pending
 }
 
+// backfillReviewRoot stamps the manifest's Root from the review's own artifact
+// path (see reviewDirRoot) and persists it, keeping the caller's in-memory
+// manifest in sync. Best-effort throughout: any failure leaves Root empty and
+// the run keeps the pre-field CWD behavior.
+//
+// The write is a NARROW field write: the manifest is re-read immediately before
+// writing and ONLY Root is set — the read-modify-write shape ClearInterrupted
+// already uses. PrepareResume's own snapshot was taken at the top of a long
+// validation run; writing it back here would silently revert any finalization
+// that landed in between (Partial, CompletedAt, Interrupted, Review), leaving
+// the review deriving as in_progress/interrupted forever. A sub-second race
+// between this read and the write remains — unavoidable without a review-dir
+// lock — but the lost-update window shrinks from the whole resume to
+// microseconds.
+func backfillReviewRoot(reviewDir string, m *payload.Manifest) {
+	root := reviewDirRoot(reviewDir)
+	if root == "" {
+		return
+	}
+	fresh, err := ReadManifest(reviewDir)
+	if err != nil {
+		return // best-effort: keep the pre-field CWD behavior
+	}
+	if fresh.Root != "" {
+		m.Root = fresh.Root // a concurrent backfill landed first: adopt, never overwrite
+		return
+	}
+	fresh.Root = root
+	if err := WriteManifest(reviewDir, fresh); err == nil {
+		m.Root = root
+	}
+}
+
+// reviewDirRoot recovers the reviewed repo's root from a managed review's
+// artifact path: <root>/.atcr/reviews/<id> (the layout ReviewsRoot and
+// ScaffoldReviewDir produce). Any other layout — a custom --output-dir review —
+// yields "": the artifacts cannot vouch for a root, so the caller skips the
+// backfill rather than trusting a claim the path cannot verify.
+func reviewDirRoot(reviewDir string) string {
+	abs, err := filepath.Abs(reviewDir)
+	if err != nil {
+		return ""
+	}
+	reviewsDir := filepath.Dir(abs)
+	atcrDir := filepath.Dir(reviewsDir)
+	if filepath.Base(reviewsDir) != "reviews" || filepath.Base(atcrDir) != ".atcr" {
+		return ""
+	}
+	return filepath.Dir(atcrDir)
+}
+
 // PrepareResume validates an existing review directory against the current
 // working tree and configured roster, then assembles a PreparedReview whose Dir
 // is that existing directory and whose Slots are only the pending agents. The
@@ -354,6 +405,35 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		} else {
 			info.Pending = append(info.Pending, name)
 		}
+	}
+
+	// Backfill the repo root when the manifest predates the field (Sprint 35.13 T6).
+	// Without this, a review created before Manifest.Root existed never acquires one
+	// and its reconcile silently falls back to CWD forever.
+	//
+	// The root is DERIVED from the review directory, never from req.Root: a managed
+	// review lives at <root>/.atcr/reviews/<id>, so the artifacts themselves name
+	// the reviewed repo. req.Root is "." on the shipped resume path
+	// (cli/resume.go), and resolveResumeDir accepts an arbitrary absolute review
+	// path — so absRoot(req.Root) would stamp the RESUMING process's CWD onto
+	// another repo's review, and ResolveStoreRoot's tier-2 re-validation (a
+	// .git/.atcr marker exists) would pass for any developer repo, silently
+	// persisting that repo's findings into the wrong store. A review dir without
+	// the managed shape (a custom --output-dir) yields no artifact-backed claim:
+	// the backfill is skipped and Root stays empty, degrading to the pre-field
+	// CWD behavior such reviews already had. The empty guard is what keeps the
+	// backfill safe: a resume can never overwrite a recorded root with the
+	// resuming machine's path.
+	//
+	// The backfill is PERSISTED here rather than left to ride a later finalization
+	// write. `atcr resume` on an already-complete review (cli/resume.go's AllComplete
+	// branch — the ordinary resume-then-reconcile route) clears the interrupt marker
+	// and returns without ever writing the manifest, so an in-memory-only backfill
+	// would never reach disk on exactly the path a pre-field review is most likely to
+	// take. Best-effort: the resume does not depend on the root, so a write failure
+	// must not fail it — the run simply keeps the pre-field CWD behavior.
+	if m.Root == "" {
+		backfillReviewRoot(reviewDir, m)
 	}
 
 	changed, groundingDisabledReason := computeGroundingData(ctx, req, rb)

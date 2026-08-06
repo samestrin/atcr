@@ -22,6 +22,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/scorecard"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -597,8 +598,9 @@ func TestRunReconcile_LocalDebtAccumulatesAcrossRuns(t *testing.T) {
 // TestPersistLocalDebt_PopulatesModelFromAgentStatus covers Sprint 30.0 AC
 // 01-02 Scenario 1: persistLocalDebt copies the model bound to a finding's
 // reviewer (from the fan-out pool summary's AgentStatus.Model) onto the persisted
-// record, and stamps it schema v2. The reviewer "host" is bound to
-// "claude-sonnet-4-6" in the pool summary, so the record's Model must carry it.
+// record, and stamps it with the current schema version. The reviewer "host" is
+// bound to "claude-sonnet-4-6" in the pool summary, so the record's Model must
+// carry it.
 func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
 	isolate(t)
 	touchFiles(t, "a.go")
@@ -619,39 +621,20 @@ func TestPersistLocalDebt_PopulatesModelFromAgentStatus(t *testing.T) {
 	require.Len(t, recs, 1)
 	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
 		"persistLocalDebt must populate Model from the pool summary's AgentStatus.Model")
-	assert.Equal(t, 2, recs[0].SchemaVersion, "the persisted record is stamped schema v2")
+	// Version-relative, matching the writer (cli/reconcile.go's
+	// SchemaVersion: localdebt.SchemaVersion) and the sibling constructions in
+	// telemetry_report_test.go / qualitysignal_test.go. The assertion's intent is
+	// "the writer stamps the current schema version", not "the version is N" —
+	// pinning a literal here re-breaks this test on every additive bump, which is
+	// exactly what it did at the v2 -> v3 bump (Plan 35.13 T1).
+	assert.Equal(t, localdebt.SchemaVersion, recs[0].SchemaVersion,
+		"the persisted record is stamped with the current localdebt schema version")
 }
 
-// TestResolveRecordModel covers Sprint 30.0 AC 01-02/01-03 and the Phase 1 gate
-// fix: a single Record.Model can only be attributed when unambiguous. A
-// single-reviewer or same-model merge resolves to that model; a cross-model
-// merged finding (reviewers on 2+ distinct models) resolves to "" —
-// attribution-incomplete — so the aggregation excludes it rather than
-// mis-crediting one persona's model to another persona that never ran it.
-func TestResolveRecordModel(t *testing.T) {
-	byRev := map[string]string{
-		"security-reviewer": "claude-sonnet-4-6",
-		"perf-reviewer":     "gpt-5.1",
-		"style-reviewer":    "claude-sonnet-4-6",
-	}
-	cases := []struct {
-		name      string
-		reviewers []string
-		want      string
-	}{
-		{"single reviewer", []string{"security-reviewer"}, "claude-sonnet-4-6"},
-		{"two reviewers same model", []string{"security-reviewer", "style-reviewer"}, "claude-sonnet-4-6"},
-		{"two reviewers different models excluded", []string{"security-reviewer", "perf-reviewer"}, ""},
-		{"reviewer absent from map", []string{"unknown-reviewer"}, ""},
-		{"empty reviewers", nil, ""},
-		{"known + unknown resolves to known", []string{"unknown-reviewer", "perf-reviewer"}, "gpt-5.1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, resolveRecordModel(tc.reviewers, byRev))
-		})
-	}
-}
+// TestResolveRecordModel moved to internal/localdebt/reconcile_test.go with the
+// resolveRecordModel function itself (Plan 35.13 T6): the helper is now part of the
+// shared PersistForReconcile bridge both entry points call, so its unit coverage
+// belongs in the package that owns it rather than in one of the two callers.
 
 // TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution covers the
 // Phase 1 gate fix end-to-end: a finding flagged by two personas that ran on
@@ -685,9 +668,10 @@ func TestPersistLocalDebt_CrossModelMergeExcludedFromModelAttribution(t *testing
 // TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling covers the
 // mixed-attribution merge: two personas flag the identical finding, but only one
 // has a recorded pool-summary model. The record resolves to that one model, and
-// AggregateQualitySignal credits every persona in Reviewers under it — so the
-// persona with no recorded model must be dropped from the record's attribution
-// rather than mis-credited under a sibling's model it never ran on.
+// AggregateQualitySignal credits the subset in ModelReviewers under it — so the
+// persona with no recorded model is excluded from per-model credit WITHOUT
+// being stripped from the record's Reviewers (the store is the only persistent
+// copy; resolve-time credit unions the full list).
 func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing.T) {
 	isolate(t)
 	touchFiles(t, "a.go")
@@ -709,8 +693,10 @@ func TestPersistLocalDebt_UnknownModelReviewerNotCreditedUnderSibling(t *testing
 	require.Len(t, recs, 1, "the two personas' identical finding merges to one record")
 	assert.Equal(t, "claude-sonnet-4-6", recs[0].Model,
 		"the one recorded model still resolves for the merged record")
-	assert.Equal(t, []string{"bruce"}, recs[0].Reviewers,
-		"greta has no recorded model and must be dropped from attribution, not credited under bruce's model")
+	assert.ElementsMatch(t, []string{"bruce", "greta"}, recs[0].Reviewers,
+		"the record retains every reviewer — narrowing would destroy greta's resolve-time credit")
+	assert.Equal(t, []string{"bruce"}, recs[0].ModelReviewers,
+		"greta has no recorded model and is excluded from per-model credit, carried on ModelReviewers")
 }
 
 // TestRunReconcile_LocalDebtDedupsSameFinding covers AC 02-03 Scenario 2:
@@ -737,7 +723,7 @@ func TestRunReconcile_LocalDebtDedupsSameFinding(t *testing.T) {
 // that includes the terminal wontfix record, so the re-detected finding's id is
 // already `seen` and is skipped — suppression is by id-presence, independent of the
 // terminal status value. This is a regression lock on existing behavior.
-func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
+func TestPersistLocalDebt_DedupReadFailureWarnsAboutDuplicateGrowth(t *testing.T) {
 	isolate(t)
 	dir := localdebt.DefaultDir(".")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
@@ -754,12 +740,16 @@ func TestPersistLocalDebt_DedupReadFailureWarnsAboutDismissals(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	out := diag.String()
-	assert.Contains(t, strings.ToLower(out), "dismissed", "dedup-read failure warning must mention dismissed findings")
-	assert.Contains(t, strings.ToLower(out), "wontfix", "dedup-read failure warning must mention wontfix findings")
-	assert.Contains(t, strings.ToLower(out), "re-surfaced", "dedup-read failure warning must mention re-surfacing risk")
+	// The warning names the REAL effect: duplicates and unbounded growth. The old
+	// "dismissed/wontfix findings may be re-surfaced" claim was false — foldByID
+	// rule 1 makes a wontfix survive any re-detection (TD
+	// internal/localdebt/reconcile.go:112).
+	assert.Contains(t, strings.ToLower(out), "duplicate", "dedup-read failure warning must name the duplicate-append effect")
+	assert.Contains(t, strings.ToLower(out), "unbounded", "dedup-read failure warning must name the unbounded-growth effect")
+	assert.NotContains(t, strings.ToLower(out), "re-surfaced", "the dismissal claim was false: the fold suppresses wontfix, not the seed")
 }
 
 func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
@@ -788,7 +778,7 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 		Summary: reclib.Summary{ReconciledAt: "2026-07-13T01:00:00Z"},
 	}
 	var diag bytes.Buffer
-	persistLocalDebt("review", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "a wontfix-marked finding must not be re-appended on re-detection")
@@ -821,7 +811,7 @@ func TestPersistLocalDebt_SkipsGateExcludedFindings(t *testing.T) {
 	}
 
 	var diag bytes.Buffer
-	persistLocalDebt("review", res, false, &diag)
+	persistLocalDebt("review", res, ".", true, false, &diag)
 
 	recs := readLocalDebtRecords(t)
 	require.Len(t, recs, 1, "only the in-scope, non-refuted finding persists")
@@ -1416,4 +1406,648 @@ func TestRunReconcile_ResolvesSharedSettingsInOneLoad(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
 	assert.Equal(t, int32(1), atomic.LoadInt32(&fetches),
 		"one reconcile must load the user registry once for both shared settings")
+}
+
+// --- Plan 35.13 T3: dedup seeding scoped to suppressing-or-open ids ---------
+
+// AC3(d), the write half of the coupled change: seeding the dedup set from EVERY
+// id in the store means a regressed finding is never re-appended, so the
+// recency-aware fold has nothing newer to select and the read-side change is a
+// no-op. The seed must therefore cover only ids whose effective record
+// suppresses (wontfix) or is still open.
+func TestPersistLocalDebt_ReappendsARegressedResolvedID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "leaks a file handle",
+	}
+	open.StampID()
+	resolved := open
+	resolved.RunID = "2026-07-13T00:30:00Z-resolved"
+	resolved.Timestamp = "2026-07-13T00:30:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, resolved))
+
+	// Reconcile re-detects the identical finding: same file/line/problem → same id.
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "leaks a file handle", Fix: "close it", Category: "resource", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 3, "the regression is appended as a fresh open record")
+	assert.Equal(t, "2026-07-14T00:00:00Z", recs[2].Timestamp)
+	assert.Empty(t, recs[2].Status)
+
+	// And the fold must return it to the open backlog.
+	out, err := runDebt(t, "resolve", "--list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "a.go", "a resolved-then-regressed id is open again")
+}
+
+// The mirror case, and the reason the seed is scoped rather than removed: a
+// wontfix id must still suppress the re-append entirely.
+func TestPersistLocalDebt_StillSuppressesAWontfixID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "flagged false positive",
+	}
+	open.StampID()
+	wontfix := open
+	wontfix.RunID = "2026-07-13T00:30:00Z-wontfix"
+	wontfix.Timestamp = "2026-07-13T00:30:00Z"
+	wontfix.Status = "wontfix"
+	wontfix.Justification = "accepted pattern"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, wontfix))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "flagged false positive", Fix: "n/a", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	require.Len(t, recs, 2, "a dismissed finding is never re-appended")
+}
+
+// A deferred id re-surfaces too, so it must also be re-appended.
+func TestPersistLocalDebt_ReappendsADeferredID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "not now",
+	}
+	open.StampID()
+	deferred := open
+	deferred.RunID = "2026-07-13T00:30:00Z-deferred"
+	deferred.Timestamp = "2026-07-13T00:30:00Z"
+	deferred.Status = "deferred"
+	require.NoError(t, localdebt.Append(dir, open))
+	require.NoError(t, localdebt.Append(dir, deferred))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "not now", Fix: "later", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 3, "a deferred id re-surfaces, so re-detection appends")
+}
+
+// An id that is still OPEN must not be re-appended: the seed covers open ids so
+// an unchanged finding does not accumulate one record per reconcile run.
+func TestPersistLocalDebt_StillDedupsAnOpenID(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "still open",
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			{Finding: reclib.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "still open", Fix: "f", Category: "correctness", EstMinutes: 10}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 1, "an unchanged open finding is not duplicated per run")
+}
+
+// --- T4: streaming dedup seed (AC6 first clause, AC3(d) regression guard) ----
+
+// seedFinding is the one finding every streaming-seed test re-detects, spelled
+// once so a test's store fixture and its reconcile result cannot drift into two
+// different ids.
+func seedFinding(problem string) reclib.Merged {
+	return reclib.Merged{Finding: reclib.Finding{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: problem,
+		Fix: "fix it", Category: "correctness", EstMinutes: 10,
+	}}
+}
+
+// seedStore appends an open record for problem plus, when status is non-empty, a
+// terminal record for the same id, and returns the shared id.
+func seedStore(t *testing.T, dir, problem, status string) string {
+	t.Helper()
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: problem,
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+	if status != "" {
+		term := open
+		term.RunID = "2026-07-13T00:30:00Z-" + status
+		term.Timestamp = "2026-07-13T00:30:00Z"
+		term.Status = status
+		require.NoError(t, localdebt.Append(dir, term))
+	}
+	return open.ID
+}
+
+// TestPersistLocalDebt_StreamingSeedKeepsSuppressingScope is T4's AC3(d) guard.
+// The obvious streaming shape — a per-record `seen[s.ID] = true` callback —
+// restores terminal-forever dedup and silently reverts Task 03 while every
+// allocation assertion still passes, because AC6 measures bytes and AC3 measures
+// behavior. The seed must therefore FOLD first and cover only suppressing-or-open
+// effective ids: a resolved id re-appends on re-detection, a wontfix id does not.
+func TestPersistLocalDebt_StreamingSeedKeepsSuppressingScope(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	resolvedID := seedStore(t, dir, "regressed after a fix", "resolved")
+	// A second id in the same store, dismissed rather than fixed. Both live under
+	// one seed so a widened seed cannot pass by getting the wontfix case right in
+	// isolation.
+	wontfix := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-07-13T00:00:00Z-r",
+		Timestamp: "2026-07-13T00:00:00Z", Severity: "HIGH",
+		File: "b.go", Line: 2, Problem: "known false positive",
+	}
+	wontfix.StampID()
+	require.NoError(t, localdebt.Append(dir, wontfix))
+	dismissed := wontfix
+	dismissed.RunID = "2026-07-13T00:30:00Z-wontfix"
+	dismissed.Timestamp = "2026-07-13T00:30:00Z"
+	dismissed.Status = "wontfix"
+	require.NoError(t, localdebt.Append(dir, dismissed))
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{
+			seedFinding("regressed after a fix"),
+			{Finding: reclib.Finding{
+				Severity: "HIGH", File: "b.go", Line: 2, Problem: "known false positive",
+				Fix: "n/a", Category: "correctness", EstMinutes: 10,
+			}},
+		},
+		Summary: reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	byID := map[string]int{}
+	for _, r := range recs {
+		byID[r.ID]++
+	}
+	assert.Equal(t, 3, byID[resolvedID],
+		"a re-detected resolved id appends a fresh open record (AC3(d) via the streaming seed)")
+	assert.Equal(t, 2, byID[wontfix.ID],
+		"a dismissed id is still suppressed by the streaming seed")
+}
+
+// TestPersistLocalDebt_DedupParityWithStreamingSeed pins that the streaming seed
+// dedups exactly as the previous full-ReadAll seed did: reconciling the same
+// findings twice against one store leaves one record per id.
+func TestPersistLocalDebt_DedupParityWithStreamingSeed(t *testing.T) {
+	isolate(t)
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unchanged finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+	res.Summary.ReconciledAt = "2026-07-15T00:00:00Z"
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	require.Len(t, readLocalDebtRecords(t), 1,
+		"the streaming seed dedups across runs identically to the ReadAll seed")
+}
+
+// TestPersistLocalDebt_FailsOpenOnUnreadableStore locks the fail-open contract
+// through the new read path: a dedup read failure logs the existing warning
+// verbatim and appends anyway rather than dropping the run's backlog.
+func TestPersistLocalDebt_FailsOpenOnUnreadableStore(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	// The seeded record lives in an EARLIER month than the run's append target, so
+	// making its shard unreadable breaks the dedup read without also blocking the
+	// write this test is asserting still happens.
+	existing := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-13T00:00:00Z-r",
+		Timestamp: "2026-06-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "unreadable-store finding",
+	}
+	existing.StampID()
+	require.NoError(t, localdebt.Append(dir, existing))
+
+	shard := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.Chmod(shard, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(shard, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unreadable-store finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-14T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	assert.Contains(t, diag.String(), "dedup read failed, appending without dedup",
+		"the fail-open warning text is unchanged")
+	require.NoError(t, os.Chmod(shard, 0o600))
+	assert.Len(t, readLocalDebtRecords(t), 2,
+		"the finding is appended anyway: an unreadable store never drops a run's backlog")
+}
+
+// TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen is the regression guard
+// for the fail-open seed being ALL-OR-NOTHING.
+//
+// Seeding from a partially read store looks strictly safer and is not: the seed
+// keys on an id's EFFECTIVE status, which the fold can only compute from that id's
+// COMPLETE history. Here the id is open in one shard and `resolved` in another; if
+// the resolution's shard is unreadable, a partial seed folds the id to `open`,
+// seeds it as still-outstanding, and SKIPS the re-detection that should have
+// re-opened it — silently suppressing the regression the store exists to surface.
+//
+// The single-shard fail-open test above cannot catch this: blocking the only shard
+// leaves the partial set empty, which behaves identically to seeding nothing.
+func TestPersistLocalDebt_PartialReadDoesNotSuppressAReopen(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+
+	open := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-13T00:00:00Z-r",
+		Timestamp: "2026-06-13T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "regressed after a fix",
+	}
+	open.StampID()
+	require.NoError(t, localdebt.Append(dir, open))
+
+	// The resolution lands in a DIFFERENT month shard, which is the one made
+	// unreadable — so the partial read sees the open record and misses the fix.
+	resolved := open
+	resolved.RunID = "2026-07-01T00:00:00Z-resolved"
+	resolved.Timestamp = "2026-07-01T00:00:00Z"
+	resolved.Status = "resolved"
+	require.NoError(t, localdebt.Append(dir, resolved))
+
+	blocked := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("regressed after a fix")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-08-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	require.NoError(t, os.Chmod(blocked, 0o600))
+	recs := readLocalDebtRecords(t)
+	count := 0
+	for _, r := range recs {
+		if r.ID == open.ID {
+			count++
+		}
+	}
+	assert.Equal(t, 3, count,
+		"a partially read store must not suppress the re-detection: seed nothing rather than seed a wrong effective status")
+}
+
+// --- T5: automatic compaction after a reconcile append ----------------------
+
+// withAutoCompactPolicy overrides the package-level trigger policy for one test and
+// restores it, so the threshold can be exercised with a handful of records instead
+// of the 100k the production default requires.
+func withAutoCompactPolicy(t *testing.T, p localdebt.CompactPolicy) {
+	t.Helper()
+	prev := autoCompactPolicy
+	autoCompactPolicy = p
+	t.Cleanup(func() { autoCompactPolicy = prev })
+}
+
+// TestPersistLocalDebt_AutoCompactsAtThreshold covers AC5: an over-threshold store
+// is compacted once, after the append loop, as a side effect of a reconcile that
+// actually wrote something.
+func TestPersistLocalDebt_AutoCompactsAtThreshold(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	// Superseded churn for one id: four records that fold to one.
+	base := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "churning finding",
+	}
+	base.StampID()
+	for i := 1; i <= 4; i++ {
+		rec := base
+		rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", i)
+		rec.Timestamp = fmt.Sprintf("2026-06-%02dT00:00:00Z", i)
+		require.NoError(t, localdebt.Append(dir, rec))
+	}
+	require.Len(t, readLocalDebtRecords(t), 4)
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("a brand new finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	recs := readLocalDebtRecords(t)
+	assert.Less(t, len(recs), 5, "compaction ran: the superseded churn was dropped")
+	assert.Contains(t, diag.String(), "localdebt: compacted", "the trigger reports what it did")
+
+	// The backlog itself is unchanged: both findings are still live and open.
+	open := 0
+	for _, r := range localdebt.FoldRecords(recs) {
+		if r.Status == "" {
+			open++
+		}
+	}
+	assert.Equal(t, 2, open, "compaction bounds growth; it never drops a live finding")
+}
+
+// TestPersistLocalDebt_AutoCompactFailureIsNonFatal locks the best-effort contract:
+// persistLocalDebt has no return value and a compaction problem must not reach the
+// reconcile's exit code.
+func TestPersistLocalDebt_AutoCompactFailureIsNonFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	seed := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-01T00:00:00Z-run",
+		Timestamp: "2026-06-01T00:00:00Z", Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "existing finding",
+	}
+	seed.StampID()
+	require.NoError(t, localdebt.Append(dir, seed))
+
+	// An unreadable JUNE shard fails the compaction pass, while the run's own
+	// append lands in JULY and succeeds — so the trigger genuinely runs and
+	// genuinely fails, instead of being skipped because nothing was appended.
+	blocked := filepath.Join(dir, "2026-06.jsonl")
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("a brand new finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	assert.NotPanics(t, func() { persistLocalDebt("review", res, ".", true, false, &diag) },
+		"a compaction failure is logged, never fatal")
+
+	assert.Contains(t, diag.String(), "localdebt: automatic compaction failed",
+		"the failure is reported to diagnostics")
+	assert.NotContains(t, diag.String(), dir,
+		"and the failure message stays inside the store's path-redaction contract")
+	require.NoError(t, os.Chmod(blocked, 0o600))
+	ids := map[string]bool{}
+	for _, r := range readLocalDebtRecords(t) {
+		ids[r.ID] = true
+	}
+	assert.Len(t, ids, 2, "the run's findings landed regardless of the compaction failure")
+}
+
+// TestPersistLocalDebt_NoAppendSkipsAutoCompact covers the zero-added-I/O clause: a
+// fully-deduped run cannot have pushed the store over a threshold, so it must not
+// even stat the store — let alone rewrite it.
+func TestPersistLocalDebt_NoAppendSkipsAutoCompact(t *testing.T) {
+	isolate(t)
+	dir := localdebt.DefaultDir(".")
+	withAutoCompactPolicy(t, localdebt.CompactPolicy{MaxRecords: 1})
+
+	base := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, Severity: "HIGH",
+		File: "a.go", Line: 1, Problem: "unchanged finding",
+	}
+	base.StampID()
+	for i := 1; i <= 3; i++ {
+		rec := base
+		rec.RunID = fmt.Sprintf("2026-06-%02dT00:00:00Z-run", i)
+		rec.Timestamp = fmt.Sprintf("2026-06-%02dT00:00:00Z", i)
+		require.NoError(t, localdebt.Append(dir, rec))
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+
+	// The id is already open in the store, so the seed dedups it and nothing is
+	// appended.
+	res := reconcile.Result{
+		Findings: []reclib.Merged{seedFinding("unchanged finding")},
+		Summary:  reclib.Summary{ReconciledAt: "2026-07-01T00:00:00Z"},
+	}
+	var diag bytes.Buffer
+	persistLocalDebt("review", res, ".", true, false, &diag)
+
+	after, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a zero-append run performs no compaction")
+	assert.NotContains(t, diag.String(), "localdebt: compacted")
+	assert.NoFileExists(t, filepath.Join(dir, ".compact-watermark"),
+		"and no compaction watermark is recorded, because none ran")
+}
+
+// --- Sprint 35.13 T6: store-root resolution ------------------------------
+
+// writeReviewManifestRoot stamps a fixture review's manifest with a recorded repo
+// root, the way the review path does at review time.
+//
+// A manifest makes the review fan-out-managed, so EnsureReviewComplete then demands
+// the pool completion signal — reconciling mid-run would read a partial agent set.
+// The helper writes both, because a review that carries a recorded root is by
+// definition one the review path produced, and that path always writes both.
+func writeReviewManifestRoot(t *testing.T, id, root string) {
+	t.Helper()
+	dir := filepath.Join(".atcr", "reviews", id)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	data, err := json.Marshal(payload.Manifest{
+		Base: "aaa", Head: "bbb", Roster: []string{"host"}, Root: root,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+}
+
+// TestReconcile_PersistsToManifestRootNotCWD is the CLI half of AC7(c): reconciling
+// from a directory that is not the reviewed repo writes to the root the manifest
+// recorded, not to the CWD. Before the manifest tier existed, the CWD was the only
+// answer the CLI had. Since TD-024, finding-path validation runs against that same
+// resolved root, so the finding's file must exist under it — the reviewed repo —
+// not under the CWD the operator happens to stand in.
+func TestReconcile_PersistsToManifestRootNotCWD(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+
+	// A separate, valid repo root: the recorded review root, distinct from the CWD.
+	manifestRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(manifestRoot, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestRoot, "a.go"), []byte("package a\n"), 0o644))
+	writeReviewManifestRoot(t, "r", manifestRoot)
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir(manifestRoot), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "the finding must land under the manifest's recorded root")
+	assert.Equal(t, "a.go", recs[0].File)
+
+	_, statErr := os.Stat(localdebt.DefaultDir("."))
+	assert.True(t, os.IsNotExist(statErr), "no store may be created under the CWD when a manifest root resolved")
+}
+
+// TestReconcile_ExplicitRepoOverridesManifestRoot pins AC7(c)'s ordering AND the
+// raw-flag keying that makes it work. --repo carries a "." default, so keying the
+// explicit tier off the NORMALIZED value would make the explicit tier win on every
+// run — this test would still pass, but its sibling above would break. The pair is
+// what pins the behavior: one asserts the manifest tier is reachable, this one
+// asserts an explicit flag still outranks it.
+func TestReconcile_ExplicitRepoOverridesManifestRoot(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+
+	manifestRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(manifestRoot, ".git"), 0o755))
+	writeReviewManifestRoot(t, "r", manifestRoot)
+
+	// --repo is also the root finding file paths are validated against, so a.go has
+	// to exist there or the finding is path-warned and never persisted — which would
+	// make this test pass for the wrong reason under a broken resolver.
+	explicit := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(explicit, "a.go"), []byte("package a\n"), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r", "--repo", explicit))
+
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir(explicit), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, recs, 1, "an explicit --repo outranks the recorded manifest root")
+
+	fromManifest, err := localdebt.ReadAll(localdebt.DefaultDir(manifestRoot), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, fromManifest, "the manifest root must not also be written")
+}
+
+// TestReconcile_StaleManifestRootDoesNotFallBackToCWD covers AC7(e) at the CLI, the
+// tier where a fall-through is most tempting because the CWD tier is right there and
+// legitimate. It must still be a no-persist: a root that was recorded and no longer
+// resolves is a stop signal, and writing to the CWD instead would be an undetectable
+// wrong write dressed up as success.
+func TestReconcile_StaleManifestRootDoesNotFallBackToCWD(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	writeReviewManifestRoot(t, "r", filepath.Join(t.TempDir(), "repo-on-another-machine"))
+
+	code, _, stderr := execCmdSplit(t, "reconcile", "r")
+	require.Equal(t, 0, code, "a skipped persistence must never change the exit code")
+
+	_, statErr := os.Stat(localdebt.DefaultDir("."))
+	assert.True(t, os.IsNotExist(statErr), "no CWD fall-through on a stale recorded root")
+	assert.Contains(t, stderr, "no longer a valid repository root")
+}
+
+// TestReconcile_NoManifestRootUsesCWD locks the CLI's third tier as byte-for-byte
+// the pre-field behavior: a review with no recorded root still persists to the CWD,
+// which is what every existing CLI test relies on and what `atcr reconcile` from the
+// repo root has always meant.
+func TestReconcile_NoManifestRootUsesCWD(t *testing.T) {
+	isolate(t)
+	touchFiles(t, "a.go")
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	assert.Len(t, readLocalDebtRecords(t), 1,
+		"with nothing recorded, the CWD convention still applies — a missing claim is not a stale one")
+}
+
+// TestReconcile_ValidatesAgainstResolvedStoreRoot pins the TD-024 fix: finding-path
+// validation runs against the SAME root the findings persist under, resolved
+// BEFORE RunReconcile. Before the fix, validation used the --repo value (default
+// ".", the CWD): reconciling from a directory that is not the reviewed repo
+// PathWarning-stamped every finding whose file lived only under the manifest's
+// recorded root, and the bridge dropped all of them — the correctly-resolved
+// store received ZERO records.
+func TestReconcile_ValidatesAgainstResolvedStoreRoot(t *testing.T) {
+	isolate(t)
+	// a.go exists ONLY under the manifest's recorded root, never under the CWD.
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|leaks a file handle|close it|resource|10|ev|host\n",
+	})
+	manifestRoot := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(manifestRoot, ".git"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestRoot, "a.go"), []byte("package a\n"), 0o644))
+	writeReviewManifestRoot(t, "r", manifestRoot)
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir(manifestRoot), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1,
+		"a finding whose path exists under the resolved root must validate and persist, even though it is absent under the CWD")
+	assert.Equal(t, "a.go", recs[0].File)
+}
+
+// TestReview_OneShotPersistsLocalDebt pins the TD cli/review.go:747 fix: the
+// one-shot `atcr review --fail-on` path runs reconcile in-process and, before
+// the fix, persisted NOTHING to the local debt store — a user whose whole
+// workflow is the primary CI invocation accumulated an empty backlog forever.
+// The inline site now mirrors persistLocalDebt (resolve store root, then the
+// shared localdebt.PersistForReconcile bridge).
+func TestReview_OneShotPersistsLocalDebt(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 1, execCmd(t, "review", "--fail-on", "high", "--base", "HEAD^"),
+		"the CRITICAL mock finding gates at the high threshold")
+
+	assert.NotEmpty(t, readLocalDebtRecords(t),
+		"the one-shot review's inline reconcile must persist its findings to the local debt store")
 }

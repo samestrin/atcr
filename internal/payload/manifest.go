@@ -56,6 +56,19 @@ type Manifest struct {
 	// unaffected.
 	Dir string `json:"dir,omitempty"`
 
+	// Root is the absolute repository root the review ran against — where .atcr/
+	// lives. It is recorded at review time, when CWD == repo root is a documented
+	// requirement and the value is therefore known correct, so it travels with the
+	// artifacts: a later `atcr reconcile` (or an MCP-driven reconcile whose process
+	// CWD is unrelated to the repo) resolves the .atcr/debt store from the manifest
+	// instead of its own CWD. Absolute by construction — a relative root would be
+	// meaningless to any reader whose CWD differs, which is the entire point.
+	// Consumers MUST re-validate before writing: an artifact tree copied to another
+	// machine carries a stale absolute path, and the required failure mode is
+	// no-persist-with-warning, never persist-to-the-wrong-place. omitempty keeps a
+	// pre-field manifest byte-identical so older readers are unaffected.
+	Root string `json:"root,omitempty"`
+
 	// Interrupted is true when the fan-out was cut short by an external signal
 	// (SIGINT/SIGTERM cancelling the root context), as opposed to running to
 	// completion or hitting its own timeout (epic 4.1). It is the durable marker

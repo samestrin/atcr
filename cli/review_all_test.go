@@ -427,17 +427,16 @@ func TestReviewAll_FullBaselineChain_MultiChunkMultiPersona(t *testing.T) {
 
 	// Stage 3: debt add — file the FIRST reconciled baseline finding into a TD store,
 	// proving debt add consumes baseline-sourced findings identically to diff-sourced.
-	readme, items := emptyTDRepo(t)
+	store := emptyDebtStore(t)
 	f := findings[0]
-	code := execCmd(t, "debt", "add",
-		"--readme", readme, "--items", items,
+	code := execCmd(t, "debt", "add", "--dir", store,
 		"--severity", f.Severity, "--file", fmt.Sprintf("%s:%d", f.File, f.Line),
 		"--problem", f.Problem, "--fix", f.Fix, "--category", f.Category,
-		"--est", "15", "--date", "2026-07-27")
+		"--est", "15")
 	require.Equal(t, 0, code, "debt add of a reconciled baseline finding exits 0")
-	body, err := os.ReadFile(readme)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), f.File, "the baseline finding is filed into the debt store")
+	filed := readDebtStore(t, store)
+	require.Len(t, filed, 1)
+	assert.Equal(t, f.File, filed[0].File, "the baseline finding is filed into the debt store")
 
 	// Stage 4: report — md and json both render the baseline review at exit 0, and the
 	// reconciled finding's location surfaces in each rendered body (not just an exit code),

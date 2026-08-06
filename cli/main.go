@@ -181,6 +181,10 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // --fail-on threshold violations), 2 usage or configuration errors, 3 a
 // --sync-cloud authentication failure (missing/empty key or a remote 401/403),
 // distinct from exitUsage so scripts/CI can detect an auth failure specifically.
+// One code is deliberately NOT centralized here: `debt dashboard --check`
+// reports drift or a missing target as exit 4 (exitDrift, debt_dashboard.go),
+// so a hook can regenerate-and-restage on 4 without conflating it with a real
+// failure (1) or a usage error (2).
 // Ordering caveat: the --sync-cloud destination is validated in PreRunE before
 // the credential, so a run that omits --cloud-endpoint yields 2, not 3, even
 // when ATCR_API_KEY is also absent.

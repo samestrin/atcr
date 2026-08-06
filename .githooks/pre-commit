@@ -6,6 +6,17 @@
 # The slower gates (golangci-lint, go test -race) run in .githooks/pre-push.
 # Enabled via: git config core.hooksPath .githooks   (see .githooks/README.md)
 
+# 0. gitleaks — block the commit if staged changes contain a secret. Runs FIRST and
+#    unconditionally (secrets live in .env/config/fixtures, not just Go), i.e. before
+#    the Go-only gates and their early-exit below. Skipped cleanly if gitleaks absent.
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks git --staged --no-banner --redact; then
+    echo "pre-commit FAILED: gitleaks found a secret in staged changes (value redacted above)."
+    echo "  Remove it, or add a .gitleaks.toml allowlist entry if it is a false positive, then re-commit."
+    exit 1
+  fi
+fi
+
 # Only staged Go files matter (added / copied / modified).
 go_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
 [ -z "$go_files" ] && exit 0

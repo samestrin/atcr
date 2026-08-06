@@ -1,0 +1,454 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/payload"
+)
+
+// Sprint 35.13 T6 (AC8): the MCP atcr_reconcile handler persists reconciled
+// findings to the .atcr/debt store through the SAME localdebt.PersistForReconcile
+// bridge the CLI calls, closing TD-002 — findings produced over MCP used to reach
+// the scorecard and then silently vanish before the backlog.
+//
+// The store root is resolved repo > manifest, never CWD: the MCP server's CWD is
+// whatever launched it, and e.root is hardcoded to "." in serve mode, so both are
+// unusable by construction.
+
+// recordRootInManifest stamps a review fixture's manifest with a repo root, the way
+// the review path does at review time.
+func recordRootInManifest(t *testing.T, root, id, recorded string) {
+	t.Helper()
+	path := filepath.Join(root, ".atcr", "reviews", id, "manifest.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var m payload.Manifest
+	require.NoError(t, json.Unmarshal(data, &m))
+	m.Root = recorded
+	out, err := json.Marshal(m)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, out, 0o644))
+}
+
+// chdir moves the process into dir for the test. Every case here needs a CWD that
+// is NOT the store root — that divergence is the defect being fixed, and a test run
+// from the root would pass against the CWD-relative code this replaces.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+}
+
+// debtRecords reads every record in a root's local debt store, returning nil when
+// the store does not exist.
+func debtRecords(t *testing.T, root string) []localdebt.Record {
+	t.Helper()
+	recs, err := localdebt.ReadAll(localdebt.DefaultDir(root), localdebt.ReadOpts{})
+	require.NoError(t, err)
+	return recs
+}
+
+// TestReconcileHandler_PersistsToManifestRootWithCWDElsewhere is AC8's headline: an
+// MCP-driven reconcile lands findings in <root>/.atcr/debt/ while the process CWD is
+// a different directory entirely.
+func TestReconcileHandler_PersistsToManifestRootWithCWDElsewhere(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	// A REAL reviewed repo carries .git. The manifest tier requires it specifically
+	// (TD internal/localdebt/root.go:133) because .atcr/ alone is what atcr itself
+	// creates, so an artifacts tree would otherwise vouch for itself — see
+	// TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate below.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	// Finding-path validation now runs against the resolved root (TD-019), so the
+	// fixture's auth.go must exist there or the finding is path-warned and dropped.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	recs := debtRecords(t, root)
+	require.Len(t, recs, 1, "the MCP reconcile must land its finding in the manifest root's store (diag: %s)", diag.String())
+	assert.Equal(t, "auth.go", recs[0].File)
+	assert.Equal(t, localdebt.SchemaVersion, recs[0].SchemaVersion,
+		"the MCP path writes current-schema records, like the CLI path")
+
+	_, err = os.Stat(filepath.Join(cwd, ".atcr"))
+	assert.True(t, os.IsNotExist(err), "nothing may be written under the server's CWD")
+
+	// The result must be untouched by a side effect that is best-effort by contract.
+	assert.True(t, out.Pass)
+	assert.Equal(t, 1, out.TotalFindings)
+}
+
+// TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate closes the loophole at
+// the layer where it mattered (TD internal/localdebt/root.go:133).
+//
+// AllowCWD:false bars the CWD as a FALLBACK tier; it never established that the
+// RESOLVED root is not the CWD. cli/serve.go hardcodes the engine root to ".", the
+// review path stamps Manifest.Root = absRoot(req.Root), and that directory
+// necessarily contains .atcr/ — atcr just wrote the review into it — so the manifest
+// tier re-validated the server's own working directory and persisted into the very
+// place the design declares meaningless. Requiring .git specifically for a
+// machine-recorded root removes the self-reference: .git is the one marker no atcr
+// operation creates.
+func TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir() // holds .atcr/ (the review fixture) and nothing else
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err, "persistence is best-effort: refusing to persist never fails the reconcile")
+
+	assert.Empty(t, debtRecords(t, root),
+		"an artifacts-only directory must not validate itself into a store write")
+	assert.Contains(t, diag.String(), "skipping local debt persistence",
+		"the refusal must be reported, not silent")
+	assert.True(t, out.Pass, "the reconcile result is unaffected")
+}
+
+// TestReconcileHandler_ExplicitRepoOverridesManifestRoot covers AC8(a)'s argument
+// doing real work: repo outranks a valid recorded root.
+func TestReconcileHandler_ExplicitRepoOverridesManifestRoot(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+
+	explicit := t.TempDir()
+	// The MCP explicit tier requires a repo-root marker (RequireMarker, TD
+	// internal/localdebt/root.go:49) — a model-supplied path to a bare directory
+	// no longer persists. A legitimate repo carries one.
+	require.NoError(t, os.Mkdir(filepath.Join(explicit, ".git"), 0o755))
+	// Finding-path validation runs against the explicit root too (TD-019).
+	require.NoError(t, os.WriteFile(filepath.Join(explicit, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	e := &engine{root: root, diag: &bytes.Buffer{}}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{Repo: explicit})
+	require.NoError(t, err)
+
+	assert.Len(t, debtRecords(t, explicit), 1, "the explicit repo argument must win")
+	assert.Empty(t, debtRecords(t, root), "the manifest root must not also be written")
+}
+
+// TestReconcileHandler_NoRootDoesNotPersist covers the no-persist-with-warning path
+// for an unresolvable root. The store-directory absence is the real assertion: a
+// resolver that warned and then fell through to CWD would satisfy a warning-only
+// test while writing to an unrelated directory.
+func TestReconcileHandler_NoRootDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	reviewFixture(t, root) // fixture manifest records no root
+
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err, "an unresolvable root must never fail the reconcile")
+
+	assert.Empty(t, debtRecords(t, root))
+	_, statErr := os.Stat(filepath.Join(cwd, ".atcr"))
+	assert.True(t, os.IsNotExist(statErr), "no store may be created under the CWD as a fallback")
+	assert.Contains(t, diag.String(), "no repo root recorded in the review manifest",
+		"the skip must be visible on the engine's diagnostics sink")
+	assert.True(t, out.Pass, "the tool result is unchanged by a skipped persistence")
+}
+
+// TestReconcileHandler_StaleManifestRootDoesNotPersist is the copied-artifacts case:
+// the tree carries an absolute root from another machine that no longer resolves.
+// The required failure mode is no-persist-with-warning, never a write elsewhere.
+func TestReconcileHandler_StaleManifestRootDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	gone := filepath.Join(t.TempDir(), "repo-on-another-machine")
+	recordRootInManifest(t, root, id, gone)
+
+	cwd := t.TempDir()
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root))
+	assert.Empty(t, debtRecords(t, gone))
+	_, statErr := os.Stat(filepath.Join(cwd, ".atcr"))
+	assert.True(t, os.IsNotExist(statErr))
+	assert.Contains(t, diag.String(), "no longer a valid repository root")
+	assert.True(t, out.Pass)
+}
+
+// TestReconcileHandler_InvalidExplicitRepoDoesNotPersist pins the explicit tier's
+// no-fall-through: an operator who named a root and got it wrong must not have
+// findings quietly written somewhere else, including the otherwise-valid manifest
+// root sitting right there.
+func TestReconcileHandler_InvalidExplicitRepoDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, _, err := e.handleReconcile(context.Background(), nil,
+		ReconcileArgs{Repo: filepath.Join(t.TempDir(), "nope")})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root), "a bad explicit root must not fall through to the manifest root")
+	assert.Contains(t, diag.String(), "does not exist or is not a directory")
+}
+
+// TestMCPResults_DoNotEchoManifestRoot is the regression pin for the other half
+// of TD internal/payload/manifest.go:59: the recorded root is an absolute path
+// that embeds a username, so it must stay on disk and out of any rendered result
+// a client (or a pasted transcript) carries away. Nothing echoes it today; this
+// fails the moment a convenience field puts it back on the wire.
+func TestMCPResults_DoNotEchoManifestRoot(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	e := &engine{root: root, diag: &bytes.Buffer{}}
+	_, rec, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+	_, st, err := e.handleStatus(context.Background(), nil, StatusArgs{IDOrPath: id})
+	require.NoError(t, err)
+
+	for name, result := range map[string]any{"reconcile": rec, "status": st} {
+		encoded, mErr := json.Marshal(result)
+		require.NoError(t, mErr)
+		assert.NotContains(t, string(encoded), root,
+			"the %s result must not carry the reviewer's absolute repo path", name)
+	}
+}
+
+// TestReconcileResult_ReportsPersistenceOutcome closes TD
+// internal/mcp/tools.go:169. The CLI rejects a bad --repo as a usage error before
+// any work; the MCP path warns to the server's stderr — which a stdio client
+// never sees — and returns a fully successful result carrying no field that says
+// whether anything was written. A client that typos repo gets "reconciled N
+// findings, pass=true" forever while the store stays empty. The two outcomes must
+// be distinguishable in-band.
+func TestReconcileResult_ReportsPersistenceOutcome(t *testing.T) {
+	isolateUserConfig(t)
+
+	t.Run("persisted", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+		require.NoError(t, err)
+
+		assert.True(t, out.DebtPersisted, "a successful store write must be reported in-band")
+		assert.Empty(t, out.DebtSkippedReason)
+	})
+
+	t.Run("skipped", func(t *testing.T) {
+		root := t.TempDir()
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil,
+			ReconcileArgs{Repo: filepath.Join(t.TempDir(), "typo")})
+		require.NoError(t, err, "an unwritable store stays best-effort, never an error")
+
+		assert.False(t, out.DebtPersisted)
+		assert.Contains(t, out.DebtSkippedReason, "does not exist",
+			"the reason must say WHY, not merely that something was skipped")
+		assert.True(t, out.Pass, "the gate outcome is independent of the side effect")
+	})
+
+	t.Run("suppressed", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+		id := reviewFixture(t, root)
+		recordRootInManifest(t, root, id, root)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+		chdir(t, t.TempDir())
+
+		e := &engine{root: root, diag: &bytes.Buffer{}}
+		_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{NoLocalDebt: true})
+		require.NoError(t, err)
+
+		assert.False(t, out.DebtPersisted)
+		assert.Contains(t, out.DebtSkippedReason, "no_local_debt",
+			"a caller-requested suppression must read differently from a failure to resolve a root")
+	})
+}
+
+// TestReconcileHandler_RelativeExplicitRepoDoesNotPersist closes TD
+// internal/mcp/handlers.go:401. in.Repo reaches the explicit tier raw, and that
+// tier resolves it with filepath.Abs — i.e. against the SERVER's process CWD.
+// `repo: "."` is the single most likely value a model emits for "the repository
+// root", and the server's CWD carries .atcr/ by construction (cli/serve.go
+// hardcodes the engine root to "."), so it self-validates and the store lands in
+// the server's own directory — exactly what AllowCWD:false exists to refuse.
+//
+// The CWD fixture below therefore carries .atcr/: without it the case would pass
+// against the unfixed code for the wrong reason (marker absent), proving nothing.
+func TestReconcileHandler_RelativeExplicitRepoDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+
+	cwd := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(cwd, ".atcr"), 0o755))
+	// The finding's path must resolve under the CWD too, or the unfixed code
+	// would drop it during path validation and the store would come out empty for
+	// a reason unrelated to the defect.
+	require.NoError(t, os.WriteFile(filepath.Join(cwd, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{Repo: "."})
+	require.NoError(t, err, "a refused root must never fail the reconcile")
+
+	assert.Empty(t, debtRecords(t, cwd),
+		"a relative repo must not resolve against the server's CWD and persist there")
+	assert.Empty(t, debtRecords(t, root),
+		"a named-but-refused root must not fall through to the manifest root")
+	assert.Contains(t, diag.String(), "absolute path",
+		"the refusal must name the constraint the caller violated")
+	assert.True(t, out.Pass)
+}
+
+// TestReconcileHandler_NoLocalDebtSuppressesPersist covers the MCP half of the
+// CLI's --no-local-debt lever (TD internal/mcp/handlers.go:382): once
+// atcr_reconcile is reachable a client could grow .atcr/debt/ under any
+// resolvable root with no way to turn the write path off short of disabling the
+// tool. The argument must suppress the write while leaving the reconcile result
+// — a best-effort side effect by contract — untouched.
+func TestReconcileHandler_NoLocalDebtSuppressesPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{NoLocalDebt: true})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root),
+		"no_local_debt must suppress the store write on an otherwise-persisting root")
+	assert.True(t, out.Pass, "suppressing a best-effort side effect must not change the result")
+	assert.Equal(t, 1, out.TotalFindings, "the reconcile itself still runs in full")
+}
+
+// TestReconcileInputSchema_ExposesNoLocalDebt pins the argument's visibility: the
+// schema is inferred from the struct, so a missing jsonschema tag would leave the
+// only opt-out lever undiscoverable to every client.
+func TestReconcileInputSchema_ExposesNoLocalDebt(t *testing.T) {
+	schema, err := reconcileInputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	require.Contains(t, schema.Properties, "no_local_debt",
+		"the atcr_reconcile schema must expose the persistence opt-out")
+	assert.NotEmpty(t, schema.Properties["no_local_debt"].Description)
+}
+
+// TestReconcileInputSchema_ExposesRepo covers AC8(a)'s schema half: the argument is
+// inferred from the struct, so a missing jsonschema tag or a mistyped json tag would
+// leave the parameter invisible to every MCP client while the Go field compiles fine.
+func TestReconcileInputSchema_ExposesRepo(t *testing.T) {
+	schema, err := reconcileInputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	require.Contains(t, schema.Properties, "repo",
+		"the atcr_reconcile schema must expose the repo argument")
+	assert.NotEmpty(t, schema.Properties["repo"].Description,
+		"repo must be self-describing: a client cannot guess that it selects the debt store root")
+}
+
+// TestReconcileHandler_DropsFindingsMissingUnderResolvedRoot pins the TD-019
+// behavior change: with finding-path validation now running against the
+// resolved store root (previously a no-op at Root: ""), a finding whose path
+// does NOT exist in the reviewed repo is PathWarning-stamped and the bridge
+// drops it — an MCP store can no longer accumulate the hallucinated paths a
+// CLI run would have rejected. The fixture's auth.go is deliberately absent.
+func TestReconcileHandler_DropsFindingsMissingUnderResolvedRoot(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root),
+		"a finding missing under the resolved root must be dropped, not persisted (diag: %s)", diag.String())
+	assert.True(t, out.Pass, "the drop is a persistence-scope change, not a reconcile failure")
+}
+
+// TestReconcileHandler_MarkerlessExplicitRepoDoesNotPersist pins the MCP-side
+// close of TD internal/localdebt/root.go:49: in.Repo is model-supplied, so an
+// existing-but-unmarked directory must NOT become <dir>/.atcr/debt/ from a tool
+// argument — no persist, with a warning, and no fall-through to the otherwise
+// valid manifest root.
+func TestReconcileHandler_MarkerlessExplicitRepoDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	chdir(t, t.TempDir())
+
+	bare := t.TempDir() // exists, but carries no .git/.atcr marker
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{Repo: bare})
+	require.NoError(t, err, "a rejected root must never fail the reconcile")
+
+	assert.Empty(t, debtRecords(t, bare), "a markerless model-supplied root must not gain a store")
+	assert.Empty(t, debtRecords(t, root), "a rejected explicit root must not fall through to the manifest root")
+	assert.Contains(t, diag.String(), "no repository marker")
+}

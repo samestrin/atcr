@@ -78,6 +78,8 @@ type ReconcileArgs struct {
 	FailOn          string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
 	RequireVerified bool   `json:"require_verified,omitempty" jsonschema:"with fail_on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate; requires fail_on"`
 	Consensus       string `json:"consensus,omitempty" jsonschema:"consensus filter level for uncorroborated singletons on a 3+ reviewer panel: strict (default), lenient (keep MEDIUM-confidence singletons), or off (filter inert)"`
+	Repo            string `json:"repo,omitempty" jsonschema:"repository root whose .atcr/debt store reconciled findings are persisted to — must be an ABSOLUTE path carrying a .git or .atcr marker (a relative path such as \".\" is rejected: it would resolve against the server's working directory, not the reviewed repo); defaults to the repo root recorded in the review manifest, and persistence is skipped with a warning when neither is available"`
+	NoLocalDebt     bool   `json:"no_local_debt,omitempty" jsonschema:"skip writing reconciled findings to the local TD store for this run (mirrors the CLI's --no-local-debt); the reconcile result is unaffected"`
 }
 
 // VerifyArgs are the atcr_verify tool arguments. id_or_path is the review id
@@ -177,6 +179,17 @@ type ReconcileResult struct {
 	FailOn        string                  `json:"fail_on,omitempty"`
 	Consensus     string                  `json:"consensus,omitempty"`
 	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
+	// DebtPersisted reports whether the local TD store write ran against a
+	// resolved root (individual findings may still be dropped by path
+	// validation), and DebtSkippedReason says why it did not run at all (TD
+	// internal/mcp/tools.go:169). Persistence is best-effort by contract, so a
+	// skip cannot fail the tool — but the only trace used to be a line on the
+	// server's stderr, which a stdio client never sees. Without these fields a
+	// client that mistyped repo reads "pass=true, 12 findings" indefinitely while
+	// nothing is ever written. DebtPersisted is not omitempty: "false" is the
+	// answer worth transmitting.
+	DebtPersisted     bool   `json:"debt_persisted"`
+	DebtSkippedReason string `json:"debt_skipped_reason,omitempty"`
 }
 
 // GateStatus is the verify gate outcome, present in VerifyResult only when a
@@ -232,7 +245,9 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict)."
+		"Reconciled findings are also appended to the reviewed repo's local TD store; the root is the repo argument, else the root recorded in the review manifest — there is no working-directory fallback, so a review whose manifest records no root persists nothing unless repo is given. " +
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict), repo (ABSOLUTE path to the reviewed repo root; required when the review manifest records no root), no_local_debt (skip the store write for this run). " +
+		"The result reports the outcome of that write as debt_persisted / debt_skipped_reason."
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."

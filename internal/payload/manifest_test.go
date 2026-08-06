@@ -198,3 +198,46 @@ func TestManifest_EscalationFieldsOmittedWhenZero(t *testing.T) {
 	assert.NotContains(t, string(data), "per_file_payload", "empty PerFilePayload must be omitted via omitempty")
 	assert.NotContains(t, string(data), "escalation_degraded", "false EscalationDegraded must be omitted via omitempty")
 }
+
+// --- Sprint 35.13 T6: the recorded repo root ---
+
+// TestManifest_RootOmittedWhenEmpty is the byte-shape guard (AC7(a)): a manifest
+// written without a root must carry NO root key, so a pre-field manifest and a
+// post-field one that recorded nothing are byte-identical and an older reader is
+// unaffected. Losing omitempty here would put a "root":"" into every manifest,
+// which downstream re-validation would then have to special-case.
+func TestManifest_RootOmittedWhenEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC()}
+	require.NoError(t, WriteManifest(path, m))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), `"root"`,
+		"an unrecorded root must not appear in the serialized manifest at all")
+}
+
+// TestManifest_RootRoundTrips covers the other half of AC7(a): a recorded absolute
+// root survives WriteManifest + read-back intact, which is what makes it usable by a
+// later reconcile whose CWD is unrelated to the reviewed repo.
+func TestManifest_RootRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	root := filepath.Join(string(filepath.Separator), "abs", "path", "to", "repo")
+	m := &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC(), Root: root}
+	require.NoError(t, WriteManifest(path, m))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got Manifest
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, root, got.Root)
+}
+
+// TestManifest_RootTolerantWhenAbsent pins the read side: a manifest written before
+// the field existed parses cleanly with an empty Root, which the resolver reads as
+// "nothing was claimed" and falls through rather than treating as a stale claim.
+func TestManifest_RootTolerantWhenAbsent(t *testing.T) {
+	var got Manifest
+	require.NoError(t, json.Unmarshal([]byte(`{"base":"a","head":"b"}`), &got))
+	assert.Empty(t, got.Root)
+}

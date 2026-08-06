@@ -54,8 +54,9 @@ func TestExecuteReview_InterruptPreservesPartialAndMarksInterrupted(t *testing.T
 	dir := t.TempDir()
 	names := []string{"greta", "kai", "mira", "otto"}
 
+	root := mustAbs(t, t.TempDir())
 	m := &payload.Manifest{
-		Base: "a", Head: "b", Roster: names,
+		Base: "a", Head: "b", Roster: names, Root: root,
 		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
 		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
 	}
@@ -96,6 +97,8 @@ func TestExecuteReview_InterruptPreservesPartialAndMarksInterrupted(t *testing.T
 	var got payload.Manifest
 	require.NoError(t, json.Unmarshal(mdata, &got))
 	assert.True(t, got.Interrupted, "AC4: manifest records the interrupt")
+	assert.Equal(t, root, got.Root,
+		"the failure-path stamp must preserve the recorded root (TD internal/fanout/manifest_root_test.go:69)")
 
 	// Derived status reports interrupted — the single source of truth read by
 	// `atcr status` and the MCP handler.

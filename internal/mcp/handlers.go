@@ -20,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
@@ -347,15 +348,62 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, fmt.Errorf("no agent results found in review %s; run atcr_review first", id)
 	}
 
+	// Resolve the store root BEFORE RunReconcile (TD-019): finding-path validation
+	// runs against the SAME root the findings persist under. When the root
+	// resolves (explicit repo or the review manifest's recorded root — never the
+	// server's CWD, which is whatever launched it and is exactly as CWD-fragile as
+	// e.root's hardcoded "."), a finding whose path does not exist in the reviewed
+	// repo is PathWarning-stamped and the persistence bridge drops it — closing
+	// the hole where an MCP store accumulated findings against paths a CLI run
+	// would have rejected as hallucinated. When the root does NOT resolve,
+	// validation stays a no-op (Root: "") and persistence is skipped — the
+	// pre-existing pair, never a fall-through to a guessed tree.
+	//
+	// A RELATIVE repo argument is refused before the resolver ever sees it (TD
+	// internal/mcp/handlers.go:401): the explicit tier resolves it with
+	// filepath.Abs, which is relative to the SERVER's process CWD, not to
+	// anything the caller can see. `repo: "."` — the value a model reaches for
+	// first, and the one every CLI doc teaches — would therefore name the
+	// server's own directory, which carries .atcr/ by construction and
+	// self-validates, walking straight past the AllowCWD:false invariant. A path
+	// the caller cannot have meant is an INVALID claim, so it stops here rather
+	// than falling through to the manifest tier (root.go:44).
+	storeRoot, storeOK := "", false
+	debtSkippedReason := ""
+	if explicit := strings.TrimSpace(in.Repo); explicit != "" && !filepath.IsAbs(explicit) {
+		debtSkippedReason = fmt.Sprintf("repo root %q must be an absolute path (a relative one resolves against the MCP server's working directory, not the reviewed repo)", explicit)
+		_, _ = fmt.Fprintf(e.diagWriter(), "localdebt: %s; skipping local debt persistence\n", debtSkippedReason)
+	} else {
+		// The resolver states WHY it refused only through Diag, and on the MCP
+		// path that sink is the server's stderr — invisible to a stdio client.
+		// Tee it so the refusal can be echoed back in the tool result (TD
+		// internal/mcp/tools.go:169) instead of being lost.
+		var why bytes.Buffer
+		storeRoot, storeOK = localdebt.ResolveStoreRoot(localdebt.RootOpts{
+			Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true,
+			Diag: io.MultiWriter(e.diagWriter(), &why),
+		})
+		if !storeOK {
+			debtSkippedReason = debtSkipReason(why.String())
+		}
+	}
+	validationRoot := ""
+	if storeOK && storeRoot != "" {
+		validationRoot = storeRoot
+	}
+
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
-		// Empty root: the MCP server operates on a review-artifact dir, not a
-		// checked-out source tree, so it must NOT assume its cwd is the reviewed
-		// repo. An empty root hard-disables AST file reads (proximity fallback) and
-		// makes finding-path validation a no-op, rather than keying findings off
-		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
-		Root:        "",
+		// Empty root (unresolved store root): the MCP server operates on a
+		// review-artifact dir, not a checked-out source tree, so it must NOT
+		// assume its cwd is the reviewed repo. An empty root hard-disables AST
+		// file reads (proximity fallback) and makes finding-path validation a
+		// no-op, rather than keying findings off unrelated same-named files
+		// under the server's cwd (Epic 13.1 TD). A resolved root names the
+		// reviewed repo itself, so validation and AST grouping run against the
+		// right tree (TD-019).
+		Root:        validationRoot,
 		TrustPriors: scorecard.ResolveTrustPriors(),
 		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
@@ -378,6 +426,36 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// tests so the wiring is assertable (Epic 3.4 AC4). Best-effort.
 	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{Diag: e.diagWriter()})
 
+	// Persist the run's reconciled findings into the .atcr/-scoped local TD store
+	// through the same shared bridge the CLI reconcile calls, so the two entry points
+	// cannot drift in how a record is built, deduped, or compacted (closes TD-002).
+	// The root was resolved BEFORE RunReconcile (above), so validation and
+	// persistence agree on which store this run's findings belong to: findings the
+	// resolved root PathWarning-stamped are dropped by the bridge here, matching
+	// the CLI's exclusion set (TD-019). Best-effort and non-fatal, exactly like
+	// the scorecard emit above: it never fails the reconcile or changes
+	// ReconcileResult.
+	// no_local_debt is the MCP mirror of the CLI's --no-local-debt: the only lever
+	// a read-only-mount or consent-sensitive deployment has to stop this tool
+	// growing .atcr/debt/ under a caller-selected repo, short of disabling the
+	// tool outright. Like the flag it mirrors, it suppresses only this write.
+	debtPersisted := false
+	switch {
+	case storeOK && in.NoLocalDebt:
+		debtSkippedReason = "suppressed by no_local_debt"
+	case storeOK:
+		// AutoCompact is left zero: the MCP path takes the production thresholds
+		// (100k records / 100 MiB). The cli-side autoCompactPolicy var is a test
+		// seam for cli tests only and deliberately does not reach here.
+		// Context makes the persist abandonable at its phase boundaries (TD
+		// internal/mcp/handlers.go:406). A serve-mode handler has no human with
+		// Ctrl-C: without it a client timeout or disconnect left the store read,
+		// the lock wait and a full compaction running, and the server draining
+		// them on shutdown. The CLI call sites deliberately pass nothing.
+		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: storeRoot, Diag: e.diagWriter(), Context: ctx})
+		debtPersisted = true
+	}
+
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {
 		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
@@ -386,18 +464,42 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	}
 
 	out := ReconcileResult{
-		ReviewID:      id,
-		Pass:          true,
-		TotalFindings: res.Summary.TotalFindings,
-		Partial:       res.Summary.Partial,
-		FailOn:        threshold,
-		Consensus:     consensusLevel,
+		ReviewID:          id,
+		Pass:              true,
+		TotalFindings:     res.Summary.TotalFindings,
+		Partial:           res.Summary.Partial,
+		FailOn:            threshold,
+		Consensus:         consensusLevel,
+		DebtPersisted:     debtPersisted,
+		DebtSkippedReason: debtSkippedReason,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false
 		out.Findings = failingFindings(res, threshold, in.RequireVerified)
 	}
 	return nil, out, nil
+}
+
+// debtSkipReason turns ResolveStoreRoot's diagnostic line into the value carried
+// back in ReconcileResult.DebtSkippedReason: the LAST line written (a refusal is
+// the last thing the resolver says), stripped of the "localdebt: " prefix and the
+// "; skipping local debt persistence" tail that the field name already states.
+//
+// It never returns "" for a refusal — a reason field that is empty when the write
+// was skipped reproduces the silence this exists to end (TD internal/mcp/tools.go:169).
+func debtSkipReason(diag string) string {
+	reason := ""
+	for _, line := range strings.Split(strings.TrimSpace(diag), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			reason = trimmed
+		}
+	}
+	reason = strings.TrimPrefix(reason, "localdebt: ")
+	reason = strings.TrimSuffix(reason, "; skipping local debt persistence")
+	if reason == "" {
+		return "the repository root for the local TD store could not be resolved"
+	}
+	return reason
 }
 
 // handleReport renders a view over a review's reconciled findings. The format is
