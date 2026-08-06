@@ -369,12 +369,23 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// the caller cannot have meant is an INVALID claim, so it stops here rather
 	// than falling through to the manifest tier (root.go:44).
 	storeRoot, storeOK := "", false
+	debtSkippedReason := ""
 	if explicit := strings.TrimSpace(in.Repo); explicit != "" && !filepath.IsAbs(explicit) {
-		_, _ = fmt.Fprintf(e.diagWriter(), "localdebt: repo root %q must be an absolute path (a relative one resolves against the MCP server's working directory, not the reviewed repo); skipping local debt persistence\n", explicit)
+		debtSkippedReason = fmt.Sprintf("repo root %q must be an absolute path (a relative one resolves against the MCP server's working directory, not the reviewed repo)", explicit)
+		_, _ = fmt.Fprintf(e.diagWriter(), "localdebt: %s; skipping local debt persistence\n", debtSkippedReason)
 	} else {
+		// The resolver states WHY it refused only through Diag, and on the MCP
+		// path that sink is the server's stderr — invisible to a stdio client.
+		// Tee it so the refusal can be echoed back in the tool result (TD
+		// internal/mcp/tools.go:169) instead of being lost.
+		var why bytes.Buffer
 		storeRoot, storeOK = localdebt.ResolveStoreRoot(localdebt.RootOpts{
-			Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true, Diag: e.diagWriter(),
+			Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true,
+			Diag: io.MultiWriter(e.diagWriter(), &why),
 		})
+		if !storeOK {
+			debtSkippedReason = debtSkipReason(why.String())
+		}
 	}
 	validationRoot := ""
 	if storeOK && storeRoot != "" {
@@ -428,11 +439,16 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// a read-only-mount or consent-sensitive deployment has to stop this tool
 	// growing .atcr/debt/ under a caller-selected repo, short of disabling the
 	// tool outright. Like the flag it mirrors, it suppresses only this write.
-	if storeOK && !in.NoLocalDebt {
+	debtPersisted := false
+	switch {
+	case storeOK && in.NoLocalDebt:
+		debtSkippedReason = "suppressed by no_local_debt"
+	case storeOK:
 		// AutoCompact is left zero: the MCP path takes the production thresholds
 		// (100k records / 100 MiB). The cli-side autoCompactPolicy var is a test
 		// seam for cli tests only and deliberately does not reach here.
 		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: storeRoot, Diag: e.diagWriter()})
+		debtPersisted = true
 	}
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
@@ -443,18 +459,42 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	}
 
 	out := ReconcileResult{
-		ReviewID:      id,
-		Pass:          true,
-		TotalFindings: res.Summary.TotalFindings,
-		Partial:       res.Summary.Partial,
-		FailOn:        threshold,
-		Consensus:     consensusLevel,
+		ReviewID:          id,
+		Pass:              true,
+		TotalFindings:     res.Summary.TotalFindings,
+		Partial:           res.Summary.Partial,
+		FailOn:            threshold,
+		Consensus:         consensusLevel,
+		DebtPersisted:     debtPersisted,
+		DebtSkippedReason: debtSkippedReason,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false
 		out.Findings = failingFindings(res, threshold, in.RequireVerified)
 	}
 	return nil, out, nil
+}
+
+// debtSkipReason turns ResolveStoreRoot's diagnostic line into the value carried
+// back in ReconcileResult.DebtSkippedReason: the LAST line written (a refusal is
+// the last thing the resolver says), stripped of the "localdebt: " prefix and the
+// "; skipping local debt persistence" tail that the field name already states.
+//
+// It never returns "" for a refusal — a reason field that is empty when the write
+// was skipped reproduces the silence this exists to end (TD internal/mcp/tools.go:169).
+func debtSkipReason(diag string) string {
+	reason := ""
+	for _, line := range strings.Split(strings.TrimSpace(diag), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			reason = trimmed
+		}
+	}
+	reason = strings.TrimPrefix(reason, "localdebt: ")
+	reason = strings.TrimSuffix(reason, "; skipping local debt persistence")
+	if reason == "" {
+		return "the repository root for the local TD store could not be resolved"
+	}
+	return reason
 }
 
 // handleReport renders a view over a review's reconciled findings. The format is
