@@ -56,14 +56,23 @@ func newInitCmd() *cobra.Command {
 }
 
 // atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
-// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes, and
-// reviewer outputs — both can hold source snippets and review prose) are never
-// accidentally committed, even by end users who never manually ignore .atcr/.
-// The editable config.yaml and personas/ alongside this file stay tracked.
+// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes,
+// reviewer outputs — both can hold source snippets and review prose — and the
+// finding-history ledger) are never accidentally committed, even by end users who
+// never manually ignore .atcr/. The editable config.yaml and personas/ alongside
+// this file stay tracked.
+//
+// history/ is listed for a stronger reason than tidiness: internal/history.Append
+// creates shards 0600 and their dir 0700 because the ledger is local, uncommitted
+// state that records which packages accrue which findings. Committing it defeats
+// that outright — git carries no mode beyond +x, so a fresh clone recreates the
+// shards at 0644/0755 under the default umask. This entry is what makes that
+// premise true for a user who never ignores .atcr/ by hand.
 const atcrGitignore = `# Written by atcr init. Runtime outputs under .atcr/ — do not commit.
 # The editable config.yaml and personas/ alongside this file stay tracked.
 cache/
 reviews/
+history/
 `
 
 // initTargets returns every path `atcr init` writes under dir, config first.
