@@ -106,11 +106,14 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 		window, _ = scorecard.ParseSince(since)
 	}
 
-	// --export reads all history: whether the export surface should be windowed is
-	// a question about export semantics, not a performance fix, and windowing it
-	// here would swap its empty-store error for the no-match one. The table view
-	// takes the windowed read, so displaying one month of leaderboard data no
-	// longer opens every month file the store has ever written.
+	// --export reads all history: the `!export` guard on the window computation
+	// above forces window to 0 on the export path, and a zero-window ReadSince
+	// delegates to an all-history read (store.go:394). Keeping the export read
+	// surface unwindowed preserves the distinction between an empty store and a
+	// no-match filter: windowing it here would swap the empty-store error for the
+	// no-match one. The table view takes the real windowed read, so displaying
+	// one month of leaderboard data no longer opens every month file the store
+	// has ever written.
 	//
 	// Two consequences follow from selecting files instead of filtering records,
 	// and both are accepted rather than overlooked:
@@ -127,11 +130,7 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	//     would be a change to the store's windowing contract, which this call
 	//     site is not the place to make.
 	var records []scorecard.Record
-	if export {
-		records, err = scorecard.ReadAll(dir, readOpts)
-	} else {
-		records, err = scorecard.ReadSince(dir, window, now, readOpts)
-	}
+	records, err = scorecard.ReadSince(dir, window, now, readOpts)
 	if err != nil {
 		return fmt.Errorf("failed to read scorecard store: %w", err)
 	}

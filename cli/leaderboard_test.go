@@ -443,7 +443,7 @@ func TestLeaderboardCmd_InWindowMonthFileButOutsideDayCutoffExcluded(t *testing.
 // test (they use an empty store or --since all, both zero-window), yet it would
 // swap the no-match failure for the empty-store one on a store whose data all
 // predates the window — the two export errors the command deliberately keeps
-// distinct. Deleting the read's export branch must fail here.
+// distinct. Deleting the window computation's `!export` guard must fail here.
 func TestLeaderboardCmd_ExportStillReadsAllHistory(t *testing.T) {
 	isolate(t)
 	// ~13 months back, so the record's month file is outside the 30d window on
