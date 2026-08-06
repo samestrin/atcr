@@ -47,18 +47,27 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(fmt.Errorf("resolving repo root: %w", err))
 	}
-	recs, err := history.LoadAll(history.ShardDir(root), history.LegacyLedgerPath(root))
+	// One `now` for both the shard selection and the record-level Filter below:
+	// two separate time.Now() calls could straddle a month boundary and drop a
+	// shard the filter then expects records from.
+	now := time.Now()
+	recs, err := history.LoadAllSince(history.ShardDir(root), history.LegacyLedgerPath(root), since, now)
 	if err != nil {
 		return usageError(err) // corrupt/unreadable ledger (exit 2)
 	}
 
 	out := cmd.OutOrStdout()
-	if len(recs) == 0 {
+	// An empty result no longer implies an empty ledger: since Epic 35.14 the
+	// shards outside the --since window are never opened, so a repo with years of
+	// out-of-window history also loads zero records. Only a genuinely empty store
+	// earns the first-run hint — telling a user to "run atcr review first" when
+	// they have history that simply predates the window would read as data loss.
+	if len(recs) == 0 && !history.HasAny(history.ShardDir(root), history.LegacyLedgerPath(root)) {
 		_, _ = fmt.Fprintln(out, "no history recorded yet — run 'atcr review' first")
 		return nil
 	}
 
-	filtered := history.Filter(recs, since, pkg, time.Now())
+	filtered := history.Filter(recs, since, pkg, now)
 	if len(filtered) == 0 {
 		scope := "the selected window"
 		if strings.TrimSpace(pkg) != "" {

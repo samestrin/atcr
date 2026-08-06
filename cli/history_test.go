@@ -185,3 +185,32 @@ func TestHistoryCmd_ResolvesRepoRootFromSubdir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "| Package |")
 }
+
+// Windowed shard selection (Epic 35.14 AC4) means an empty result no longer
+// implies an empty ledger: a repo whose only shards fall outside --since loads
+// zero records. The first-run hint ("run 'atcr review' first") must not be shown
+// in that case — it tells the user their history is missing when it is merely
+// out of window.
+func TestHistoryCmd_OutOfWindowHistoryReportsWindowNotFirstRun(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "internal/registry", "severity": "HIGH",
+		"id": "old1", "file": "internal/registry/a.go", "category": "C",
+	})
+
+	out, err := runHistoryIn(t, root, "--since", "30d")
+	require.NoError(t, err) // AC6: still exit 0
+	assert.Contains(t, out, "no history")
+	assert.NotContains(t, out, "run 'atcr review' first",
+		"history exists but is out of window — the first-run hint is misleading")
+}
+
+// AC6: with nothing recorded anywhere, the first-run hint IS the right message.
+func TestHistoryCmd_TrulyAbsentHistoryKeepsFirstRunHint(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	out, err := runHistoryIn(t, root, "--since", "30d")
+	require.NoError(t, err)
+	assert.Contains(t, out, "run 'atcr review' first")
+}

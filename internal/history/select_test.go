@@ -154,3 +154,36 @@ func idSet(recs []Record) map[string]bool {
 	}
 	return out
 }
+
+// HasAny distinguishes "nothing ever recorded" from "nothing in this window",
+// the ambiguity windowed selection introduces.
+func TestHasAny(t *testing.T) {
+	t.Run("both absent", func(t *testing.T) {
+		root := t.TempDir()
+		assert.False(t, HasAny(filepath.Join(root, ".atcr", "history"), filepath.Join(root, ".atcr", "findings-history.jsonl")))
+	})
+
+	t.Run("out-of-window shard still counts", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".atcr", "history")
+		mustAppendShard(t, dir, time.Date(2019, 3, 1, 12, 0, 0, 0, time.UTC), "ancient")
+		assert.True(t, HasAny(dir, filepath.Join(root, ".atcr", "findings-history.jsonl")))
+	})
+
+	t.Run("legacy ledger alone counts", func(t *testing.T) {
+		root := t.TempDir()
+		legacy := filepath.Join(root, ".atcr", "findings-history.jsonl")
+		require.NoError(t, Append(legacy, []Record{{Timestamp: time.Now(), ID: "l", File: "a.go"}}))
+		assert.True(t, HasAny(filepath.Join(root, ".atcr", "history"), legacy))
+	})
+
+	t.Run("empty shard dir and empty legacy file do not count", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".atcr", "history")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600))
+		legacy := filepath.Join(root, ".atcr", "findings-history.jsonl")
+		require.NoError(t, os.WriteFile(legacy, nil, 0o600))
+		assert.False(t, HasAny(dir, legacy))
+	})
+}
