@@ -256,6 +256,25 @@ func TestHistoryCmd_PruneRemovesOutOfHorizonShards(t *testing.T) {
 	assert.Contains(t, out, old.UTC().Format("2006-01"), "the removed shard must be named in the output")
 }
 
+// A whitespace-only --prune is a passed-but-degenerate value: the user typed a
+// destructive flag, so silently treating it as unset (no parse error, no prune,
+// no notice) lets them believe retention was applied. It must fail with the same
+// exit-2 usage error as a garbage value like "banana" — and delete nothing.
+func TestHistoryCmd_BlankPruneIsUsageErrorAndDeletesNothing(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+	_, err := runHistoryIn(t, root, "--prune", "   ")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.FileExists(t, shard, "a rejected prune must not delete anything")
+}
+
 // A --prune horizon is parsed the same way as --since, and a bad one is a usage
 // error that deletes nothing.
 func TestHistoryCmd_InvalidPruneIsUsageErrorAndDeletesNothing(t *testing.T) {
