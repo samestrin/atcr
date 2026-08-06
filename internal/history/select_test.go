@@ -307,6 +307,35 @@ func TestHasAny(t *testing.T) {
 		require.NoError(t, os.WriteFile(legacy, nil, 0o600))
 		assert.False(t, HasAny(dir, legacy))
 	})
+
+	// A zero-byte SHARD must not count either: the legacy branch already
+	// requires Size() > 0, and the two locations must mean the same thing —
+	// otherwise a repo whose only "history" is a truncated or zero-byte shard
+	// gets "no history for the selected window" instead of the first-run hint.
+	t.Run("zero-byte shard does not count", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".atcr", "history")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-08.jsonl"), nil, 0o600))
+		assert.False(t, HasAny(dir, filepath.Join(root, ".atcr", "findings-history.jsonl")))
+	})
+
+	// The IsDir guards: a DIRECTORY named like a shard, or a directory at the
+	// legacy path, is not history — reporting true would suppress the "no
+	// history recorded" notice for a repo that has none.
+	t.Run("shard-named directory does not count", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, ".atcr", "history")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "2026-07.jsonl"), 0o700))
+		assert.False(t, HasAny(dir, filepath.Join(root, ".atcr", "findings-history.jsonl")))
+	})
+
+	t.Run("legacy path as directory does not count", func(t *testing.T) {
+		root := t.TempDir()
+		legacy := filepath.Join(root, ".atcr", "findings-history.jsonl")
+		require.NoError(t, os.MkdirAll(legacy, 0o700))
+		assert.False(t, HasAny(filepath.Join(root, ".atcr", "history"), legacy))
+	})
 }
 
 // An unreadable legacy ledger is a hard error on the windowed path too, exactly
