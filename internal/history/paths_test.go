@@ -1,7 +1,11 @@
 package history
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,14 +26,58 @@ func TestLegacyLedgerPath_Layout(t *testing.T) {
 }
 
 // AC3: atcr's history code has no .planning/ dependency — no path resolution
-// resolves there. Asserting on the resolved strings (rather than trusting a
-// grep) is what keeps a future edit from quietly reintroducing the coupling
-// that made `atcr history` unusable for a standalone user with no .planning/.
+// resolves there. These return-value assertions pin the two layout helpers;
+// the repo-wide guarantee is TestHistoryCode_HasNoPlanningLiteral below (a
+// helper-only assertion can never fail while those two functions are literal,
+// so it cannot catch a .planning fallback reintroduced in any other file).
 func TestHistoryPaths_NeverResolveUnderPlanning(t *testing.T) {
 	for _, got := range []string{ShardDir("repo"), LegacyLedgerPath("repo")} {
 		assert.NotContains(t, filepath.ToSlash(got), ".planning",
 			"history storage must not resolve under .planning/")
 	}
+}
+
+// AC3, proven rather than restated: no string literal anywhere in atcr's
+// PRODUCTION history code (internal/history/*.go, cli/history*.go) may
+// reference .planning. Parsing the AST and inspecting only BasicLit STRINGs
+// means comments — including paths.go's deliberate note that pre-existing
+// .planning/history shards are NOT read — never trip the scan, while any real
+// path-constructing literal would. Test files are excluded: they legitimately
+// name ".planning" in assertion needles and messages (including this one);
+// AC3 constrains what production code resolves, not what tests assert.
+// The needle is built by concatenation so this file stays honest either way.
+func TestHistoryCode_HasNoPlanningLiteral(t *testing.T) {
+	needle := ".plan" + "ning"
+	root := filepath.Join("..", "..") // go test runs with CWD = the package dir
+	var files []string
+	for _, pattern := range []string{
+		filepath.Join(root, "internal", "history", "*.go"),
+		filepath.Join(root, "cli", "history*.go"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		require.NoError(t, err)
+		files = append(files, matches...)
+	}
+	require.NotEmpty(t, files, "the history source scan must not silently scan nothing")
+
+	scanned := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		scanned++
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, f, nil, 0) // comments never enter the AST
+		require.NoError(t, err)
+		ast.Inspect(node, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				assert.NotContains(t, lit.Value, needle,
+					"%s: history code must not reference .planning/ (35.14 AC3)", f)
+			}
+			return true
+		})
+	}
+	require.Positive(t, scanned, "no production history files were scanned")
 }
 
 // Both storage locations live under the same .atcr/ root, so a standalone user
