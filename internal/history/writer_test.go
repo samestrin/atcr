@@ -34,6 +34,63 @@ func TestAppend_CreatesPrivateDirAndFile(t *testing.T) {
 	fi, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "shard file must not be group- or world-readable")
+
+	// Stat alone would pass against an Append that created the file and wrote
+	// nothing, so round-trip the payload back through Load: the modes are only
+	// worth asserting on a ledger that actually holds the records.
+	got, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "x", got[0].ID)
+	assert.Equal(t, "a.go", got[0].File)
+	assert.True(t, got[0].Timestamp.Equal(ts), "timestamp must survive the JSONL round trip")
+}
+
+// Append's three error branches had no negative coverage anywhere in the package.
+// Each case below drives exactly one of them and asserts the wrapping, so a
+// refactor that swallows an error or drops the context is caught here.
+
+// MkdirAll fails when a component of the shard dir path is a regular file.
+func TestAppend_ErrorsWhenShardDirCannotBeCreated(t *testing.T) {
+	root := t.TempDir()
+	blocker := filepath.Join(root, ".atcr")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+
+	err := Append(ShardPath(filepath.Join(blocker, "history"), ts), []Record{{Timestamp: ts, ID: "x"}})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating history dir")
+}
+
+// OpenFile fails when the shard path itself is already a directory.
+func TestAppend_ErrorsWhenLedgerPathIsADirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".atcr", "history")
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	path := ShardPath(dir, ts)
+	require.NoError(t, os.MkdirAll(path, 0o700))
+
+	err := Append(path, []Record{{Timestamp: ts, ID: "x"}})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opening history ledger")
+}
+
+// The write-error branch closes the handle before returning, and nothing else in
+// the package reaches it. /dev/full accepts the open and fails every write with
+// ENOSPC, which is the only portable-ish way to drive a short/failed write without
+// mocking the filesystem. Absent on macOS, so the case skips there.
+func TestAppend_ErrorsWhenWriteFails(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("/dev/full is not available on this platform")
+	}
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+
+	err := Append("/dev/full", []Record{{Timestamp: ts, ID: "x"}})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing history ledger")
 }
 
 // Only the leaf shard dir is created by the write path; an existing parent keeps
