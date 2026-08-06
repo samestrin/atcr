@@ -447,7 +447,12 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// AutoCompact is left zero: the MCP path takes the production thresholds
 		// (100k records / 100 MiB). The cli-side autoCompactPolicy var is a test
 		// seam for cli tests only and deliberately does not reach here.
-		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: storeRoot, Diag: e.diagWriter()})
+		// Context makes the persist abandonable at its phase boundaries (TD
+		// internal/mcp/handlers.go:406). A serve-mode handler has no human with
+		// Ctrl-C: without it a client timeout or disconnect left the store read,
+		// the lock wait and a full compaction running, and the server draining
+		// them on shutdown. The CLI call sites deliberately pass nothing.
+		localdebt.PersistForReconcile(dir, res, localdebt.PersistOpts{Root: storeRoot, Diag: e.diagWriter(), Context: ctx})
 		debtPersisted = true
 	}
 

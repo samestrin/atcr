@@ -109,6 +109,24 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		return
 	}
 
+	// Cancellation is checked at the three PHASE boundaries below — before the
+	// streaming store read, before the batch append, and before compaction — and
+	// nowhere else (TD internal/mcp/handlers.go:406). Those are the three
+	// unbounded stretches: the read scales with store size, the append can wait
+	// up to lockWait for the store lock, and MaybeCompact rewrites the whole
+	// store at the production thresholds. Abandoning between them is safe
+	// because the store is append-only and this side effect is best-effort by
+	// contract, so a client that timed out or disconnected stops paying for work
+	// nobody will read. A nil Context means not cancellable.
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: cancelled before reading the store; skipping local debt persistence (%v)\n", err)
+		return
+	}
+
 	dir := DefaultDir(opts.Root)
 	seen := make(map[string]bool)
 	// Records to persist, built first so the whole run appends under ONE lock
@@ -266,6 +284,12 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		_, _ = fmt.Fprintf(diag, "localdebt: repo root %q no longer exists; skipping local debt persistence\n", filepath.Base(opts.Root))
 		return
 	}
+	// Nothing has been written yet, so abandoning here costs only the records
+	// this run would have added — which a re-run re-derives.
+	if err := ctx.Err(); err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: cancelled before appending %d record(s); skipping local debt persistence (%v)\n", len(batch), err)
+		return
+	}
 	// One lock cycle for the whole run (TD internal/localdebt/reconcile.go:204):
 	// per-record Append would take and release withLock for every finding, and
 	// under contention each of N findings could independently spin up to
@@ -276,6 +300,13 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		_, _ = fmt.Fprintf(diag, "localdebt: append failed: %v\n", err)
 	}
 	if written == 0 {
+		return
+	}
+	// The append landed and is durable; compaction is pure hygiene, so a
+	// cancelled caller skips the whole-store rewrite and the next run's
+	// MaybeCompact picks it up against the same thresholds.
+	if err := ctx.Err(); err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: cancelled after appending %d record(s); skipping automatic compaction (%v)\n", written, err)
 		return
 	}
 	switch res, triggered, err := MaybeCompact(dir, opts.AutoCompact, ReadOpts{Writer: diag}); {
