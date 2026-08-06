@@ -14,8 +14,9 @@ import (
 const defaultHistorySince = 90 * 24 * time.Hour
 
 // newHistoryCmd builds `atcr history`: read the append-only finding history —
-// the monthly shards under .planning/history plus the legacy .atcr flat ledger
-// (Epic 19.4) — filter it by a time window (--since) and package prefix
+// the monthly shards under .atcr/history plus the legacy pre-19.4 flat ledger
+// .atcr/findings-history.jsonl (Epic 35.14) — filter it by a time window
+// (--since) and package prefix
 // (--package), and print a markdown table of counts by severity per package. An
 // absent or fully-filtered history is not an error — it exits 0 with a "no
 // history" notice (Epic 19.0 AC3).

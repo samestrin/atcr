@@ -39,14 +39,14 @@ func writeHistoryLedger(t *testing.T, root string, lines ...map[string]any) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings-history.jsonl"), buf.Bytes(), 0o644))
 }
 
-// writeHistoryShard lays down a monthly shard .planning/history/<YYYY-MM>.jsonl
-// (Epic 19.4) with the given records. It also drops a .git marker so repoRoot()
+// writeHistoryShard lays down a monthly shard .atcr/history/<YYYY-MM>.jsonl
+// (Epic 35.14) with the given records. It also drops a .git marker so repoRoot()
 // resolves to root even when no .atcr tree is present.
 func writeHistoryShard(t *testing.T, root string, ts time.Time, lines ...map[string]any) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
-	dir := filepath.Join(root, ".planning", "history")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
+	dir := filepath.Join(root, ".atcr", "history")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, l := range lines {
@@ -56,7 +56,7 @@ func writeHistoryShard(t *testing.T, root string, ts time.Time, lines ...map[str
 	require.NoError(t, os.WriteFile(shard, buf.Bytes(), 0o644))
 }
 
-// AC2: `atcr history` reads monthly shards under .planning/history without the
+// AC2: `atcr history` reads monthly shards under .atcr/history without the
 // caller naming a shard.
 func TestHistoryCmd_ReadsMonthlyShards(t *testing.T) {
 	root := t.TempDir()
@@ -99,7 +99,7 @@ func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
 
 	// Verify merged record ordering: legacy precedes shards in the raw LoadAll result.
 	recs, err := history.LoadAll(
-		filepath.Join(root, ".planning", "history"),
+		filepath.Join(root, ".atcr", "history"),
 		legacyPath,
 	)
 	require.NoError(t, err)

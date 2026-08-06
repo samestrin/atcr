@@ -13,6 +13,13 @@ import (
 // accumulates across runs — an existing ledger is never truncated. An empty
 // records slice is a no-op (no file is created).
 //
+// Directories are created 0700 and new ledger files 0600, matching
+// internal/localdebt: since Epic 35.14 the ledger lives under .atcr/ — local,
+// uncommitted state — and a trend ledger names which packages accrue which
+// findings, so it is not readable by every local account. The mode applies only
+// to paths this call creates; an existing ledger keeps whatever mode it already
+// has, so a repo that accrued history under the old 0644 default is untouched.
+//
 // The whole batch is serialized to memory first, then written in a single
 // f.Write call. In practice a small batch is emitted by one O_APPEND write()
 // syscall, which the kernel appends atomically, so two concurrent `atcr review`
@@ -33,10 +40,10 @@ func Append(path string, records []Record) error {
 			return fmt.Errorf("encoding history record: %w", err)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("creating history dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening history ledger: %w", err)
 	}
