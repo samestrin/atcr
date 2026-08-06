@@ -214,3 +214,76 @@ func TestHistoryCmd_TrulyAbsentHistoryKeepsFirstRunHint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "run 'atcr review' first")
 }
+
+// AC7: pruning is opt-in. Without --prune, a query over a narrow window leaves
+// every out-of-window shard on disk — reading history never deletes it.
+func TestHistoryCmd_WithoutPruneDeletesNothing(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+	_, err := runHistoryIn(t, root, "--since", "30d")
+	require.NoError(t, err)
+	assert.FileExists(t, shard, "a read must never delete a shard")
+}
+
+// --prune <horizon> removes whole shards older than the horizon and reports what
+// it removed, so the deletion is never silent.
+func TestHistoryCmd_PruneRemovesOutOfHorizonShards(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+	oldShard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+	newShard := filepath.Join(root, ".atcr", "history", recent.UTC().Format("2006-01")+".jsonl")
+
+	out, err := runHistoryIn(t, root, "--prune", "90d")
+	require.NoError(t, err)
+	assert.NoFileExists(t, oldShard)
+	assert.FileExists(t, newShard)
+	assert.Contains(t, out, "pruned")
+	assert.Contains(t, out, old.UTC().Format("2006-01"), "the removed shard must be named in the output")
+}
+
+// A --prune horizon is parsed the same way as --since, and a bad one is a usage
+// error that deletes nothing.
+func TestHistoryCmd_InvalidPruneIsUsageErrorAndDeletesNothing(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+	_, err := runHistoryIn(t, root, "--prune", "banana")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.FileExists(t, shard)
+}
+
+// Pruning with nothing past the horizon says so rather than printing nothing,
+// and still exits 0.
+func TestHistoryCmd_PruneWithNothingToRemoveExitsZero(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+
+	out, err := runHistoryIn(t, root, "--prune", "90d")
+	require.NoError(t, err)
+	assert.Contains(t, out, "no shards")
+}
