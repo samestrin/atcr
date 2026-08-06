@@ -1,11 +1,7 @@
 package history
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 )
 
@@ -27,40 +23,15 @@ func ShardPath(dir string, ts time.Time) string {
 // LoadShards reads every monthly shard (*.jsonl) under dir and returns the
 // merged records across all months, ordered by shard file name — which, for the
 // YYYY-MM naming, is chronological. A missing or empty dir is a valid empty
-// history, not an error (mirroring Load), so `atcr history` answers a query
-// across whatever shards exist without the caller naming one (Epic 19.4 AC2).
-// Malformed lines inside a shard are skipped by Load; an unreadable shard is a
-// hard error.
+// history, not an error (mirroring Load), so a query spans whatever shards exist
+// without the caller naming one (Epic 19.4 AC2). Malformed lines inside a shard
+// are skipped by Load; an unreadable shard is skipped with a warning.
+//
+// This is the unwindowed read — every shard, whatever its month. `atcr history`
+// uses LoadShardsSince instead, which skips out-of-window shards by filename;
+// both run through the same loadShardsWhere implementation so they cannot drift.
 func LoadShards(dir string) ([]Record, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading history shards: %w", err)
-	}
-
-	var matches []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		matches = append(matches, filepath.Join(dir, e.Name()))
-	}
-	sort.Strings(matches)
-
-	var all []Record
-	for _, path := range matches {
-		recs, err := Load(path)
-		if err != nil {
-			// Skip an unreadable individual shard so the remaining shards stay
-			// queryable, mirroring Load's line-level tolerance.
-			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping unreadable history shard %s: %v\n", path, err)
-			continue
-		}
-		all = append(all, recs...)
-	}
-	return all, nil
+	return loadShardsWhere(dir, func(string) bool { return true })
 }
 
 // LoadAll returns the full queryable history: every monthly shard under shardDir

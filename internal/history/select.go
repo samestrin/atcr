@@ -44,6 +44,22 @@ func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, 
 	if since <= 0 {
 		return nil, nil
 	}
+	cutoff := now.Add(-since)
+	return loadShardsWhere(dir, func(name string) bool {
+		return shardMonthIntersects(name, cutoff)
+	})
+}
+
+// loadShardsWhere is the single shard-reading implementation behind both
+// LoadShards (keep everything) and LoadShardsSince (keep the window). keep is
+// consulted on the file NAME only, before the file is opened — that is what
+// makes the windowed read cheap, and keeping one implementation is what stops
+// the two entry points from drifting on ordering, tolerance, or which files
+// count as shards.
+//
+// Results are ordered by shard file name, which for the YYYY-MM naming is
+// chronological. A missing dir is a valid empty history, not an error.
+func loadShardsWhere(dir string, keep func(name string) bool) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -52,14 +68,12 @@ func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, 
 		return nil, fmt.Errorf("reading history shards: %w", err)
 	}
 
-	cutoff := now.Add(-since)
-
 	var selected []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		if !shardMonthIntersects(e.Name(), cutoff) {
+		if !keep(e.Name()) {
 			continue
 		}
 		selected = append(selected, filepath.Join(dir, e.Name()))
@@ -71,7 +85,7 @@ func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, 
 		recs, err := Load(path)
 		if err != nil {
 			// Skip an unreadable individual shard so the remaining shards stay
-			// queryable, mirroring LoadShards and Load's line-level tolerance.
+			// queryable, mirroring Load's line-level tolerance for torn writes.
 			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping unreadable history shard %s: %v\n", path, err)
 			continue
 		}
