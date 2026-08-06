@@ -76,6 +76,19 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 		}
 		explicit := strings.TrimSpace(opts.Explicit)
 		if opts.RequireMarker {
+			// A model-supplied root that is ITSELF a symlink is refused, for the
+			// same reason HasRepoRootMarker Lstats its markers: the link is not
+			// the repository, it is a pointer at one, and everything downstream
+			// (existingDir's Stat, the write path's MkdirAll) follows it. A link
+			// repointed after this check moves the whole store with it. The
+			// caller who legitimately wants that directory can name it directly
+			// (TD internal/mcp/tools.go:79).
+			if abs, err := filepath.Abs(explicit); err == nil {
+				if info, lerr := os.Lstat(abs); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+					_, _ = fmt.Fprintf(diag, "localdebt: repo root %q is a symlink; name the repository directory itself; skipping local debt persistence\n", explicit)
+					return "", false
+				}
+			}
 			if _, ok := existingDir(explicit); !ok {
 				_, _ = fmt.Fprintf(diag, "localdebt: repo root %q does not exist or is not a directory; skipping local debt persistence\n", explicit)
 				return "", false
