@@ -2373,6 +2373,18 @@ func absRoot(p string) string {
 	if err != nil {
 		return ""
 	}
+	// Record the REAL path, not a pointer at it (TD internal/payload/manifest.go:70).
+	// A recorded root is re-validated by a marker check alone, which cannot tell one
+	// repository from another now living at the same path — so a root recorded
+	// through a symlink re-validates cleanly after the link is repointed, and the
+	// findings land in someone else's store. Resolving here is also the policy
+	// pathWithin and NewJail already apply; a second path-identity rule is how the
+	// two halves drift. On error (the usual case: a root that does not exist yet)
+	// the cleaned absolute path stands, exactly as before — an unresolved path is a
+	// far smaller regression than no recorded root at all.
+	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		return filepath.Clean(resolved)
+	}
 	return filepath.Clean(abs)
 }
 
