@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -103,6 +108,17 @@ func TestDebtResolve_EmptyStoreMessageExitsZero(t *testing.T) {
 	assert.Contains(t, strings.ToLower(out), "no items")
 }
 
+// The empty-list message names the store it read, the way `debt add` prints its
+// resolved dir — an undifferentiated "no open items" from the WRONG store reads
+// exactly like an empty backlog, with exit code 0 either way.
+func TestDebtResolve_EmptyListMessageNamesTheStore(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(out), "no items")
+	assert.Contains(t, out, dir, "the empty-list line names the store it read")
+}
+
 func TestDebtResolve_MissingDirIsNotAnError(t *testing.T) {
 	out, err := runDebt(t, "resolve", "--dir", t.TempDir()+"/does-not-exist", "--list")
 	require.NoError(t, err, "a missing .atcr/debt dir is the no-backlog state, not an error")
@@ -144,7 +160,9 @@ func TestSelectOpenDebt_AgreesWithFoldRecordsOnReRaisedID(t *testing.T) {
 	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must share a stable id")
 
 	recs := []localdebt.Record{first, second}
-	got := selectOpenDebt(recs, "", 0)
+	dir := writeDebtStore(t, recs...)
+	got, err := selectOpenDebt(dir, "", 0, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
 	require.Len(t, got, 1, "the two occurrences fold to one open item")
 
 	folded := localdebt.FoldRecords(recs)
@@ -201,6 +219,22 @@ func TestDebtResolve_MaxCapsSelection(t *testing.T) {
 	var items []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &items))
 	assert.Len(t, items, 1, "--max caps the number of selected items")
+}
+
+// A negative --max is rejected like a bad --severity/--status and debt add's
+// --est: the flag help documents only "0 = no cap", and without validation
+// `if limit > 0` silently treats --max -5 as unlimited — a typo'd cap that
+// quietly expands the worklist with exit code 0.
+func TestDebtResolve_NegativeMaxIsUsageError(t *testing.T) {
+	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
+	out, err := runDebt(t, "resolve", "--dir", dir, "--max", "-1")
+	require.Error(t, err, "a negative --max must be rejected, not silently treated as no cap")
+	assert.Equal(t, exitUsage, exitCode(err), "a negative --max is a usage error (exit 2)")
+	assert.Contains(t, out, "invalid --max -1: expected a non-negative number")
+
+	// 0 remains the documented "no cap" value and must stay valid.
+	_, err = runDebt(t, "resolve", "--dir", dir, "--max", "0")
+	require.NoError(t, err, "--max 0 (no cap) is a documented, valid value")
 }
 
 func TestDebtResolve_MarkResolvedRemovesItemFromOpenList(t *testing.T) {
@@ -350,6 +384,30 @@ func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
 	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
 	require.Error(t, err, "resolving an unknown id must error, not silently no-op")
+}
+
+// TD (file-less open record): an item that genuinely exists and is genuinely
+// open but carries an empty File must NOT report "no open technical-debt item"
+// — it is live work in `debt list` and the dashboard, so calling it nonexistent
+// misleads the operator. It gets its own message naming the actual defect: the
+// record has no file location to resolve against.
+func TestDebtResolve_MarkResolvedFilelessRecordReportsDistinctError(t *testing.T) {
+	fileless := openRec("2026-07-01T10:00:00Z-a", "HIGH", "", 0, "no location")
+	fileless.StampID()
+	dir := writeDebtStore(t, fileless)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", fileless.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has no file location and cannot be resolved",
+		"an existing-but-file-less open record must not masquerade as a nonexistent id")
+	assert.NotContains(t, err.Error(), "no open technical-debt item",
+		"the item exists; the unknown-id message would be a lie")
+
+	// Nothing may be appended for the rejected resolve.
+	recs := readStoreRecords(t, dir)
+	for _, r := range recs {
+		assert.Empty(t, r.Status, "a rejected resolve appends no terminal record")
+	}
 }
 
 func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
@@ -764,4 +822,565 @@ func TestDebtResolve_TerminalRecordModelFallsBackToEarlierNonEmpty(t *testing.T)
 	assert.Equal(t, "claude-sonnet-4-6", terminal.Model,
 		"most recent NON-EMPTY model wins; a later attribution-less record must not blank it")
 	assert.Equal(t, []string{"bruce", "ingrid"}, terminal.Reviewers)
+}
+
+// --- Plan 35.13 T3: resolution semantics split by status --------------------
+
+// redetect appends a fresh open record for rec's id, timestamped AFTER every
+// parseable record already in the store — simulating a later reconcile run that
+// finds the same file/line/problem again. The timestamp is derived rather than
+// hard-coded because markDebtResolved stamps its resolution with the wall clock,
+// so a literal date would silently stop being "later" and the test would assert
+// nothing.
+func redetect(t *testing.T, dir string, rec localdebt.Record) {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var latest time.Time
+	for _, r := range recs {
+		if ts, err := time.Parse(time.RFC3339, r.Timestamp); err == nil && ts.After(latest) {
+			latest = ts
+		}
+	}
+	next := latest.Add(time.Hour).UTC().Format(time.RFC3339)
+
+	out := rec
+	out.Status = ""
+	out.ResolvedAt = ""
+	out.RunID = next + "-redetect"
+	out.Timestamp = next
+	require.NoError(t, localdebt.Append(dir, out))
+}
+
+// AC3(b): a resolved id re-detected at the same file/line/problem is a
+// REGRESSION (or a fix that never landed) — the case most worth surfacing — so
+// it returns to the open backlog.
+func TestDebtResolve_ResolvedThenRegressedReopens(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.NotContains(t, list, "internal/x/a.go", "the resolution closes it first")
+
+	// A later reconcile re-detects the identical finding.
+	redetect(t, dir, rec)
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "internal/x/a.go", "a regressed resolved id returns to the open backlog")
+}
+
+// AC3(a): wontfix is the mirror image — a stable id at a stable location is
+// exactly what makes permanent suppression work, so re-detection changes nothing.
+func TestDebtResolve_WontfixThenRegressedStaysClosed(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	require.NoError(t, err)
+
+	redetect(t, dir, rec)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(list), "no items",
+		"a dismissed finding must stay dismissed when it is re-detected")
+}
+
+// AC3(c): "not now" is not "never" — a deferred id re-surfaces on re-detection.
+// The writer is `atcr debt add --status deferred` (see the doc.go sweep note).
+func TestDebtResolve_DeferredThenRegressedResurfaces(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a"
+	deferred.Timestamp = "2026-07-02T10:00:00Z"
+	deferred.Status = "deferred"
+	dir := writeDebtStore(t, rec, deferred)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(list), "no items", "a deferred item is out of the backlog while it stands")
+
+	redetect(t, dir, rec)
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "internal/x/a.go", "a re-detected deferred id re-surfaces")
+}
+
+// TD: a deferred item is LIVE to the dashboard (debtIsLive -> IsSettledStatus)
+// and OFF the resolve worklist (selectOpenIDs -> IsClosedStatus), so it renders as
+// a top-priority row while `debt resolve --list` reports nothing to do. The
+// divergence is deliberate — deferring means "not now", which keeps the item on
+// the backlog view and off the fix worklist — but nothing asserted it, so a
+// future edit to either predicate could collapse the two views onto one answer
+// silently. This pins all three views at once.
+func TestDebt_DeferredIsLiveToTheDashboardAndOffTheResolveWorklist(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "CRITICAL", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a"
+	deferred.Timestamp = "2026-07-02T10:00:00Z"
+	deferred.Status = "deferred"
+	dir := writeDebtStore(t, rec, deferred)
+
+	worklist, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(worklist), "no items",
+		"deferring takes the item off the fix worklist")
+
+	dash, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, dash, "internal/x/a.go",
+		"the same item stays on the dashboard's live backlog")
+
+	listed, err := runDebt(t, "list", "--dir", dir, "--status", "deferred")
+	require.NoError(t, err)
+	assert.Contains(t, listed, "internal/x/a.go",
+		"and is still listable and closeable by id")
+}
+
+// The already-closed guard must test the FOLDED effective status, not the mere
+// presence of a terminal record somewhere in history. Scanning all history would
+// refuse to close a regressed id a second time — permanently, since a resolution
+// record for it always exists.
+func TestDebtResolve_CanReResolveAfterARegression(t *testing.T) {
+	// Seeded with fixed past timestamps rather than driven through two `--resolve`
+	// calls: markDebtResolved stamps the wall clock, so two resolutions in one test
+	// share a timestamp and leave no room for a regression to fall between them.
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	resolved := rec
+	resolved.RunID = "2026-07-02T10:00:00Z-a-resolved"
+	resolved.Timestamp = resolved.RunID
+	resolved.Status = "resolved"
+	regressed := rec
+	regressed.RunID = "2026-07-03T10:00:00Z-a"
+	regressed.Timestamp = regressed.RunID
+	dir := writeDebtStore(t, rec, resolved, regressed)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, list, "internal/x/a.go", "the regression re-opened the id")
+
+	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+	assert.NotContains(t, strings.ToLower(out), "already closed",
+		"the regression re-opened the id, so it is closeable again")
+	assert.Contains(t, strings.ToLower(out), "marked")
+
+	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before)+1, "a second resolution record is appended")
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(list), "no items")
+}
+
+// An item filed as deferred through `atcr debt add` is the one live localdebt
+// writer of that status (T3 Step 1 sweep), so its re-surfacing is asserted
+// end-to-end through the command surface rather than only at the fold.
+func TestDebtNamespace_AddedDeferredItemResurfacesOnRedetection(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir, "--status", "deferred",
+		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "correctness")
+	require.NoError(t, err)
+
+	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	require.Contains(t, strings.ToLower(list), "no items")
+
+	filed := readDebtStore(t, dir)
+	require.Len(t, filed, 1)
+	redetect(t, dir, filed[0])
+
+	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "a.go", "the deferred item re-surfaces when it is detected again")
+}
+
+// Resolving a deferred item must carry its reviewer attribution onto the
+// resolution record. The union loop skips SETTLED records, not merely closed
+// ones — skipping the deferred record would resolve it with an empty union and
+// deny every persona that raised the finding its confirmed credit.
+func TestDebtResolve_ResolvingADeferredItemKeepsReviewerAttribution(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	deferred := rec
+	deferred.RunID = "2026-07-02T10:00:00Z-a-deferred"
+	deferred.Timestamp = deferred.RunID
+	deferred.Status = "deferred"
+	deferred.Reviewers = []string{"security", "performance"}
+	deferred.Model = "claude-sonnet-4-6"
+	dir := writeDebtStore(t, rec, deferred)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	require.NoError(t, err)
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	var resolution *localdebt.Record
+	for i := range recs {
+		if recs[i].Status == "resolved" {
+			resolution = &recs[i]
+		}
+	}
+	require.NotNil(t, resolution)
+	assert.ElementsMatch(t, []string{"claude", "security", "performance"}, resolution.Reviewers,
+		"attribution unions across every LIVE record, deferred included")
+	assert.Equal(t, "claude-sonnet-4-6", resolution.Model)
+}
+
+// --- T4: two-pass select-then-hydrate (AC6 second call site) ----------------
+
+// summarize projects records the way localdebt's streaming read would, so the
+// pure pass-1 selection can be exercised without touching disk.
+func summarize(recs ...localdebt.Record) []localdebt.Summary {
+	sums := make([]localdebt.Summary, 0, len(recs))
+	for _, r := range recs {
+		sums = append(sums, localdebt.Summary{
+			ID: r.ID, Status: r.Status, Severity: r.Severity,
+			Timestamp: r.Timestamp, HasFile: r.File != "",
+		})
+	}
+	return sums
+}
+
+// TestSelectOpenIDs_ExcludesClosedAndFilelessIDs ports the exclusion half of the
+// old selectOpenDebt assertions onto the pure pass-1 function.
+func TestSelectOpenIDs_ExcludesClosedAndFilelessIDs(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "still open")
+	resolved := openRec("2026-07-01T10:00:00Z-b", "HIGH", "b.go", 2, "already fixed")
+	resolved.Status = "resolved"
+	dismissed := openRec("2026-07-01T10:00:00Z-c", "HIGH", "c.go", 3, "false positive")
+	dismissed.Status = "wontfix"
+	deferred := openRec("2026-07-01T10:00:00Z-d", "HIGH", "d.go", 4, "not now")
+	deferred.Status = "deferred"
+	fileless := openRec("2026-07-01T10:00:00Z-e", "HIGH", "", 0, "no location")
+	fileless.StampID()
+
+	got := selectOpenIDs(summarize(open, resolved, dismissed, deferred, fileless), "", 0)
+	assert.Equal(t, []string{open.ID}, got,
+		"closed (incl. deferred, which is off the fix worklist) and location-less ids are excluded")
+}
+
+// TestSelectOpenIDs_SeverityFilterAndOrdering ports the filter/sort/cap half.
+func TestSelectOpenIDs_SeverityFilterAndOrdering(t *testing.T) {
+	low := openRec("2026-07-05T10:00:00Z-low", "LOW", "z/low.go", 1, "low sev")
+	highNewer := openRec("2026-07-04T10:00:00Z-h2", "HIGH", "z/high2.go", 2, "high newer")
+	highOlder := openRec("2026-07-01T10:00:00Z-h1", "HIGH", "z/high1.go", 3, "high older")
+	sums := summarize(low, highNewer, highOlder)
+
+	assert.Equal(t, []string{highOlder.ID, highNewer.ID, low.ID}, selectOpenIDs(sums, "", 0),
+		"severity DESC, then ts ASC within a severity")
+	assert.Equal(t, []string{highOlder.ID, highNewer.ID}, selectOpenIDs(sums, "HIGH", 0),
+		"the severity filter is applied before the cap")
+	assert.Equal(t, []string{highOlder.ID}, selectOpenIDs(sums, "", 1), "--max caps the selection")
+	assert.Len(t, selectOpenIDs(sums, "", 0), 3, "limit 0 means no cap")
+	assert.Empty(t, selectOpenIDs(nil, "", 0), "an empty store selects nothing")
+}
+
+// TestHydrateOpenDebt_RetainsOnlySelectedIDsInPassOneOrder pins pass 2: it
+// materializes records for the selected ids ONLY, and returns them in the order
+// pass 1 chose rather than the store's read order.
+func TestHydrateOpenDebt_RetainsOnlySelectedIDsInPassOneOrder(t *testing.T) {
+	first := openRec("2026-07-01T10:00:00Z-a", "LOW", "a.go", 1, "first")
+	second := openRec("2026-07-02T10:00:00Z-b", "HIGH", "b.go", 2, "second")
+	unselected := openRec("2026-07-03T10:00:00Z-c", "HIGH", "c.go", 3, "not selected")
+	dir := writeDebtStore(t, first, second, unselected)
+
+	got, err := hydrateOpenDebt(dir, []string{second.ID, first.ID}, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, 2, "only the selected ids are hydrated")
+	assert.Equal(t, second.ID, got[0].ID, "pass 1's order is authoritative, not the store's")
+	assert.Equal(t, first.ID, got[1].ID)
+	assert.Equal(t, "second", got[0].Problem, "full record fields are present after hydration")
+}
+
+// TestHydrateOpenDebt_MissingStoreIsEmpty matches ReadAll's "no backlog yet"
+// convention rather than surfacing an error for a repo that never reconciled.
+func TestHydrateOpenDebt_MissingStoreIsEmpty(t *testing.T) {
+	got, err := hydrateOpenDebt(t.TempDir()+"/nope", []string{"deadbeef"}, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TD (pass-2 shortfall): an id pass 1 selected can vanish before pass 2 re-reads
+// the store — a concurrent `debt compact` renaming shards makes ReadRecords hit
+// os.IsNotExist and continue. Dropping it silently makes a short WORKLIST read
+// exactly like a short BACKLOG, with exit code 0 either way. Pass 2 must say on
+// stderr how many selected ids it could not hydrate.
+func TestHydrateOpenDebt_NotesSelectedIDsNotFoundOnReRead(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	dir := writeDebtStore(t, rec)
+
+	var stderr bytes.Buffer
+	got, err := hydrateOpenDebt(dir, []string{rec.ID, "deadbeef-gone"},
+		localdebt.ReadOpts{Writer: &stderr})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the surviving id is still hydrated")
+	assert.Equal(t, rec.ID, got[0].ID)
+	assert.Contains(t, stderr.String(), "1 selected item(s)",
+		"the note names how many selected ids were not hydrated")
+	assert.Contains(t, stderr.String(), "note:")
+
+	// A nil Writer must not panic: the note is best-effort, never a failure.
+	got, err = hydrateOpenDebt(dir, []string{"deadbeef-gone"}, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TD (renderResolveList): every interpolated column must pass through the same
+// sanitizers renderDebtTable uses. A tab or bare CR in File/Severity would tear
+// the tabwriter row into extra lines, and an empty id must render as the literal
+// "-" the command's contract documents — never a blank first column.
+func TestRenderResolveList_SanitizesEveryColumn(t *testing.T) {
+	dirty := openRec("2026-07-01T10:00:00Z-a", "HI\tGH", "pkg/x.go\tpkg/y.go", 1, "boom")
+	emptyID := openRec("2026-07-02T10:00:00Z-b", "LOW", "b.go", 2, "leak")
+	emptyID.ID = "" // only reachable from a hand-edited store
+
+	var b bytes.Buffer
+	require.NoError(t, renderResolveList(&b, t.TempDir(), []localdebt.Record{dirty, emptyID}))
+	out := b.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 3, "header + one row per record; a raw tab/CR must not tear a row:\n%q", out)
+	assert.NotContains(t, lines[1], "\t", "no raw tab survives into the rendered row")
+	assert.Contains(t, lines[1], "HI GH")
+	assert.Contains(t, lines[1], "pkg/x.go pkg/y.go")
+	assert.True(t, strings.HasPrefix(lines[2], "-"), "an empty id renders as -, got %q", lines[2])
+}
+
+// TestDebtResolve_TwoPassSelectionEndToEnd runs the real command against a store
+// holding every excluded shape, and asserts the rendered rows carry the full
+// Severity/File/Line/Problem values — i.e. that hydration actually happened and
+// the minimal decode did not leak into the output.
+func TestDebtResolve_TwoPassSelectionEndToEnd(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "CRITICAL", "internal/x/a.go", 42, "still open")
+	resolved := openRec("2026-07-01T10:00:00Z-b", "HIGH", "internal/x/b.go", 7, "already fixed")
+	resolved.Status = "resolved"
+	dismissed := openRec("2026-07-01T10:00:00Z-c", "HIGH", "internal/x/c.go", 8, "false positive")
+	dismissed.Status = "wontfix"
+	fileless := openRec("2026-07-01T10:00:00Z-d", "HIGH", "", 0, "no location")
+	fileless.StampID()
+	dir := writeDebtStore(t, open, resolved, dismissed, fileless)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--json")
+	require.NoError(t, err)
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &items))
+	require.Len(t, items, 1, "only the open, located item is on the worklist")
+	assert.Equal(t, open.ID, items[0]["id"])
+	assert.Equal(t, "CRITICAL", items[0]["severity"])
+	assert.Equal(t, "internal/x/a.go", items[0]["file"])
+	assert.Equal(t, float64(42), items[0]["line"])
+	assert.Equal(t, "still open", items[0]["problem"])
+	assert.Equal(t, "apply the fix", items[0]["fix"], "a hydrated record carries fields Summary never decodes")
+}
+
+// TestHydrateOpenDebt_ErrorDoesNotLeakAbsolutePath keeps pass 2 inside the store
+// package's SECURITY contract. The read this replaced went through
+// localdebt.ReadAll, which redacts a surfaced *os.PathError to its base name; a
+// hand-rolled shard walk that returns the raw error regresses that.
+func TestHydrateOpenDebt_ErrorDoesNotLeakAbsolutePath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied open cannot be provoked as root")
+	}
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	dir := writeDebtStore(t, rec)
+	shard := filepath.Join(dir, "2026-07.jsonl")
+	require.NoError(t, os.Chmod(shard, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(shard, 0o600) })
+
+	_, err := hydrateOpenDebt(dir, []string{rec.ID}, localdebt.ReadOpts{Writer: io.Discard})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), dir,
+		"a shard read error must not embed the absolute (username-bearing) store path")
+}
+
+// TestSelectOpenDebt_CrossShardDisplaysLastOccurrence pins the display rule across
+// a shard boundary: the two passes enumerate shards independently, so an id whose
+// occurrences straddle two months must still render the occurrence FoldRecords
+// keeps (the last), not whichever one pass 2 happened to read first.
+func TestSelectOpenDebt_CrossShardDisplaysLastOccurrence(t *testing.T) {
+	first := openRec("2026-06-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	second := first
+	second.RunID = "2026-07-01T10:00:00Z-b"
+	second.Timestamp = "2026-07-01T10:00:00Z"
+	second.Severity = "LOW"
+	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem share a stable id")
+
+	dir := writeDebtStore(t, first, second)
+	require.FileExists(t, filepath.Join(dir, "2026-06.jsonl"))
+	require.FileExists(t, filepath.Join(dir, "2026-07.jsonl"), "the occurrences must straddle two shards")
+
+	got, err := selectOpenDebt(dir, "", 0, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "LOW", got[0].Severity,
+		"the LAST occurrence wins even when it lives in a later shard")
+}
+
+// TestDebtAdd_DoesNotStampCountersOnTheFiledRecord pins the cli half of the
+// counting contract. Stamping Occurrences here would make the filed record a
+// counting carrier, and its timestamp the boundary for every earlier sighting of
+// the same id — silently DECREASING the count when a user files something that
+// hashes to an id the store already holds.
+func TestDebtAdd_DoesNotStampCountersOnTheFiledRecord(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "a.go:12", "--problem", "boom",
+		"--fix", "fix it", "--category", "correctness", "--status", "deferred")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	require.Len(t, recs, 1)
+	assert.Zero(t, recs[0].Occurrences, "a filed item is appended with no carried count")
+	assert.Empty(t, recs[0].FirstSeen)
+	assert.Empty(t, recs[0].CountedThrough)
+
+	// And the counting rule still treats it as a sighting, via origin + no ResolvedAt.
+	folded := localdebt.FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, 1, folded[0].Occurrences)
+}
+
+// TestDebtResolve_ResolutionRecordCarriesNoCounters pins the other cli half: the
+// resolution copies the FOLDED record, which carries the id's aggregate, so it must
+// zero the counters or the fold counts that history twice.
+func TestDebtResolve_ResolutionRecordCarriesNoCounters(t *testing.T) {
+	first := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "counted twice?")
+	second := first
+	second.RunID = "2026-07-02T10:00:00Z-b"
+	second.Timestamp = "2026-07-02T10:00:00Z"
+	dir := writeDebtStore(t, first, second)
+	require.Equal(t, 2, localdebt.FoldRecords(readStoreRecords(t, dir))[0].Occurrences)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID, "--reason", "fixed")
+	require.NoError(t, err)
+
+	recs := readStoreRecords(t, dir)
+	var resolution *localdebt.Record
+	for i := range recs {
+		if recs[i].Status == "resolved" {
+			resolution = &recs[i]
+		}
+	}
+	require.NotNil(t, resolution)
+	assert.Zero(t, resolution.Occurrences, "the appended resolution must not carry the folded aggregate")
+	assert.Empty(t, resolution.FirstSeen)
+	assert.Empty(t, resolution.CountedThrough)
+
+	assert.Equal(t, 2, localdebt.FoldRecords(recs)[0].Occurrences,
+		"resolving does not add a sighting, so the count is unchanged")
+}
+
+func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
+	// The resolution copies the finding verbatim and ADDS terminal fields, so a
+	// finding whose encoded record sits just under the store's read cap
+	// (localdebt.MaxRecordBytes) tips its resolution line OVER it. An unguarded
+	// append writes a line every read path silently skips: the command reports
+	// "Marked <id> resolved." and exits 0 while the item stays open forever. The
+	// resolution must be rejected BEFORE the append, the way `debt add` bounds its
+	// encoded record and `--reason` bounds its justification.
+	base := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "")
+	empty, err := json.Marshal(base)
+	require.NoError(t, err)
+	// Pad Problem so the OPEN record encodes 64 bytes under the cap...
+	base.Problem = strings.Repeat("x", localdebt.MaxRecordBytes-len(empty)-1-64)
+	openLine, err := json.Marshal(base)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(openLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the open record itself must still be readable")
+	// ...while the resolution record the command builds from it — folded record
+	// with counters zeroed plus the terminal fields and a within-cap --reason —
+	// exceeds the cap. maxReasonBytes bounds the reason STRING, not the record.
+	reason := strings.Repeat("r", 2048)
+	eff := localdebt.FoldRecords([]localdebt.Record{base})[0]
+	res := eff
+	res.RunID = "2026-08-05T12:00:00Z-resolved"
+	res.Timestamp = res.RunID
+	res.Status = "resolved"
+	res.ResolvedAt = res.RunID
+	res.Occurrences = 0
+	res.FirstSeen = ""
+	res.CountedThrough = ""
+	res.Justification = reason
+	resLine, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.Greater(t, len(resLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the resolution record must exceed the read cap")
+
+	dir := writeDebtStore(t, base)
+	before := readStoreRecords(t, dir)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", base.ID, "--reason", reason)
+	require.Error(t, err, "a resolution record over the read cap must be rejected, not written invisibly")
+	assert.NotContains(t, out, "Marked", "must not report success for a resolution that cannot be read back")
+
+	after := readStoreRecords(t, dir)
+	assert.Len(t, after, len(before), "a rejected oversized resolution must not append a record")
+}
+
+func TestDebtResolve_AlreadyClosedPrintsNormalizedStatus(t *testing.T) {
+	// The already-closed gate (localdebt.IsSettledStatus) lowercases and trims
+	// before comparing, so a stored status of "  ReSoLvEd  " settles the item.
+	// The message must print the canonical status the gate matched — store text
+	// is untrusted (the world-appendable .atcr/debt/ store) and must never be
+	// echoed verbatim to the terminal.
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	term := open
+	term.RunID = "2026-07-01T11:00:00Z-a-resolved"
+	term.Timestamp = term.RunID
+	term.Status = "  ReSoLvEd  "
+	dir := writeDebtStore(t, open, term)
+
+	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	require.NoError(t, err)
+	assert.Contains(t, out, "already closed as resolved",
+		"the message must print the normalized status the gate matched")
+	assert.NotContains(t, out, "ReSoLvEd", "raw store text must not be echoed to the terminal")
+}
+
+// readStoreRecords reads every record from a test store dir.
+func readStoreRecords(t *testing.T, dir string) []localdebt.Record {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	return recs
+}
+
+// TestCollectDebtIDRecords_RetainsRawRecordsForWantedIDsOnly pins the shared
+// shard-walk markDebtResolved now uses instead of localdebt.ReadAll (TD
+// cli/debt_resolve.go:357): it returns the RAW, unfolded records — an open
+// record AND its terminal sibling for one id both come back, because the
+// caller folds locally — and only for the wanted ids, so peak memory is one
+// shard plus the wanted ids' history rather than the whole store.
+func TestCollectDebtIDRecords_RetainsRawRecordsForWantedIDsOnly(t *testing.T) {
+	open := openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "boom")
+	term := open
+	term.RunID = "2026-07-01T11:00:00Z-a-resolved"
+	term.Timestamp = term.RunID
+	term.Status = "resolved"
+	other := openRec("2026-07-01T12:00:00Z-b", "LOW", "b.go", 2, "leak")
+	dir := writeDebtStore(t, open, term, other)
+
+	retained, err := collectDebtIDRecords(dir, []string{open.ID}, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, retained, 2, "the open record AND its terminal sibling are both retained, unfolded")
+	for _, r := range retained {
+		assert.Equal(t, open.ID, r.ID, "only the wanted id's records are retained")
+	}
+
+	retained, err = collectDebtIDRecords(dir, []string{"no-such-id"}, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, retained)
+
+	retained, err = collectDebtIDRecords(dir, nil, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	assert.Empty(t, retained, "no wanted ids is a no-op, not a full scan")
 }

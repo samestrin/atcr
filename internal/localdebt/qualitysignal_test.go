@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -233,4 +234,96 @@ func TestAggregateQualitySignal_Idempotent(t *testing.T) {
 		term("b", "perf-reviewer", "claude-sonnet-4-6", "wontfix"),
 	}
 	assert.Equal(t, AggregateQualitySignal(recs), AggregateQualitySignal(recs))
+}
+
+// --- Plan 35.13 T3 ripple: the quality signal reads FoldRecords -------------
+
+// A regressed id folds to an OPEN record, so it is no longer terminal and
+// contributes neither a confirmation nor a dismissal. That is the intended
+// reading — an unsettled finding is not yet an outcome — and it is pinned here
+// rather than left as incidental behavior of the fold change.
+func TestAggregateQualitySignal_ReopenedIDContributesNoRow(t *testing.T) {
+	open := Record{ID: "z", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+	resolved := Record{ID: "z", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "resolved"}
+	regressed := Record{ID: "z", RunID: "r3", Timestamp: "2026-07-03T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+
+	assert.NotEmpty(t, AggregateQualitySignal([]Record{open, resolved}),
+		"a settled resolution still emits its confirmed row")
+	assert.Empty(t, AggregateQualitySignal([]Record{open, resolved, regressed}),
+		"once the id re-opens it is unsettled again and emits no row until it closes")
+}
+
+// A wontfix id is never re-opened, so its dismissal row survives a later
+// re-detection.
+func TestAggregateQualitySignal_WontfixRowSurvivesRedetection(t *testing.T) {
+	open := Record{ID: "w", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+	wontfix := Record{ID: "w", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "wontfix"}
+	regressed := Record{ID: "w", RunID: "r3", Timestamp: "2026-07-03T00:00:00Z",
+		Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6"}
+
+	rows := AggregateQualitySignal([]Record{open, wontfix, regressed})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+}
+
+// BenchmarkFoldTerminalByID_Unattributed100k measures the model-recovery fold at
+// the store's own auto-compaction ceiling (100k records) with every effective
+// terminal needing donor recovery — the shape the TD items at
+// internal/localdebt/qualitysignal.go:22 and :45 flag: a per-id rescan of the
+// whole stream makes this quadratic at exactly the scale the comment's O(n)
+// claim invites reuse.
+func BenchmarkFoldTerminalByID_Unattributed100k(b *testing.B) {
+	const ids = 50_000
+	records := make([]Record, 0, 2*ids)
+	for i := 0; i < ids; i++ {
+		id := fmt.Sprintf("id%06d", i)
+		// An earlier resolved terminal carrying a Model (the donor) ...
+		records = append(records, Record{ID: id, RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+			Reviewers: []string{"claude"}, Model: "claude-sonnet-4-6", Status: "resolved"})
+		// ... outranked by a later wontfix terminal WITHOUT one (needs recovery).
+		records = append(records, Record{ID: id, RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+			Reviewers: []string{"claude"}, Status: "wontfix"})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		foldTerminalByID(records)
+	}
+}
+
+// TestAggregateQualitySignal_PrefersModelReviewersOverFullList locks the read
+// half of the clarified attribution contract (TD internal/localdebt/
+// reconcile.go:173): with Reviewers no longer narrowed at write time, the
+// per-model credit goes to ModelReviewers — a persona on the finding whose
+// model never resolved must not be credited under a model it never ran on.
+func TestAggregateQualitySignal_PrefersModelReviewersOverFullList(t *testing.T) {
+	recs := []Record{{ID: "a", RunID: "a", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"security-reviewer", "style-reviewer"},
+		Model:     "claude-sonnet-4-6", ModelReviewers: []string{"security-reviewer"}, Status: "wontfix"}}
+
+	got := AggregateQualitySignal(recs)
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	assert.Equal(t, want, got, "only the model-attributable subset is credited; the full list is not")
+}
+
+// TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly locks the
+// donor-graft half (TD internal/localdebt/qualitysignal.go:55): when the
+// effective terminal carries no Model and one is recovered from a donor, the
+// credit goes to the DONOR's attributable subset — not the effective record's
+// full Reviewers, which would credit a persona under a model it never ran on.
+func TestAggregateQualitySignal_GraftedModelCreditsDonorSubsetOnly(t *testing.T) {
+	donor := Record{ID: "y", RunID: "r1", Timestamp: "2026-07-01T00:00:00Z",
+		Reviewers: []string{"security-reviewer"}, Model: "claude-sonnet-4-6",
+		ModelReviewers: []string{"security-reviewer"}, Status: "resolved"}
+	effective := Record{ID: "y", RunID: "r2", Timestamp: "2026-07-02T00:00:00Z",
+		Reviewers: []string{"security-reviewer", "style-reviewer"}, Status: "wontfix"}
+
+	got := AggregateQualitySignal([]Record{donor, effective})
+	want := []QualityRow{{Persona: "security-reviewer", Model: "claude-sonnet-4-6", DismissedCount: 1}}
+	assert.Equal(t, want, got,
+		"style-reviewer never ran on the donor's model and must receive no per-model credit from the graft")
 }

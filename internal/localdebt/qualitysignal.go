@@ -12,50 +12,77 @@ import (
 // incapable of carrying finding content.
 
 // foldTerminalByID folds the append-only record stream by ID down to at most one
-// TERMINAL record per id, discarding ids that never reached a terminal
-// (resolved/wontfix/deferred) status. It reuses FoldRecords for the precedence
-// logic — terminal wins over open, higher-precedence terminal wins over lower
-// (wontfix > resolved > deferred), later timestamp breaks a same-rank tie — and
-// then keeps only the ids whose effective record is terminal, because an
-// unresolved (still-open) finding is not yet a quality signal. The fold is O(n):
-// FoldRecords does a single keyed pass and this adds one linear filter, with no
-// per-id rescan of the whole stream.
+// TERMINAL record per id, discarding ids whose effective record is not terminal.
+// It reuses FoldRecords for the precedence logic — a suppressing (wontfix) record
+// wins unconditionally, otherwise the latest timestamp wins with rank breaking a
+// tie (see FoldRecords) — and then keeps only the ids whose effective record is
+// terminal, because an unsettled finding is not yet a quality signal.
+//
+// Since resolution became re-openable, "not terminal" covers two cases, and both
+// are correctly excluded: an id that never closed, and an id that closed and then
+// REGRESSED. A regressed id folds to its newer open record, so it contributes
+// neither a confirmation nor a dismissal until it is settled again. Only a
+// wontfix id is immune, because only wontfix survives re-detection.
+//
+// The fold is O(n): FoldRecords does a single keyed pass, the donor index below
+// adds one more linear pass, and the filter's recovery is an O(1) map lookup —
+// no per-id rescan of the whole stream.
 func foldTerminalByID(records []Record) []Record {
 	effective := FoldRecords(records)
+
+	// Per-id index of the most recent terminal record's Model, built in ONE
+	// keyed pass (last-wins on timestamp ties, matching FoldRecords). The
+	// recovery below used to rescan the entire slice once per attribution-less
+	// terminal id — quadratic on a store near the 100k-record auto-compaction
+	// ceiling, where every v1 record and every model-less resolution needs it.
+	donorTS := map[string]string{}
+	donorModel := map[string]string{}
+	donorModelReviewers := map[string][]string{}
+	for _, r := range records {
+		if !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
+			continue
+		}
+		if _, ok := donorModel[r.ID]; !ok || r.Timestamp >= donorTS[r.ID] {
+			donorModel[r.ID] = r.Model
+			donorTS[r.ID] = r.Timestamp
+			// The grafted model covers the DONOR's attributable set, which need
+			// not match the effective record's full Reviewers. A pre-
+			// ModelReviewers donor has its attributable set in Reviewers
+			// already (write-time narrowing), so fall back to that.
+			donorModelReviewers[r.ID] = r.ModelReviewers
+			if len(donorModelReviewers[r.ID]) == 0 {
+				donorModelReviewers[r.ID] = r.Reviewers
+			}
+		}
+	}
+
 	terminal := make([]Record, 0, len(effective))
 	for _, r := range effective {
 		if !IsClosedStatus(r.Status) {
 			continue
 		}
-		// FoldRecords keeps the highest-precedence terminal (wontfix > resolved >
-		// deferred), which can be a later attribution-less record even when an earlier
-		// same-id terminal carried a real Model. AggregateQualitySignal excludes empty
-		// Model, so without this the whole finding — a genuine outcome that DID have
-		// model attribution — would be silently dropped. Recover the model from the
-		// most recent same-id terminal that carries one before excluding.
+		// The effective terminal record can be an attribution-less one even when an
+		// earlier same-id terminal carried a real Model — a wontfix that outranks an
+		// earlier resolved, or simply a later resolution. AggregateQualitySignal
+		// excludes an empty Model, so without this the whole finding — a genuine
+		// outcome that DID have model attribution — would be silently dropped.
+		// Recover the model from the most recent same-id terminal that carries one
+		// before excluding. (Unreachable for a regressed id: that folds to an open
+		// record and is filtered out above.)
 		if strings.TrimSpace(r.Model) == "" {
-			r.Model = latestTerminalModel(records, r.ID)
+			r.Model = donorModel[r.ID]
+			if r.Model != "" {
+				// Credit the donor's attributable subset, not the effective
+				// record's full Reviewers: a persona on the effective record
+				// who never ran on the donor's model must not receive a
+				// confirmation/dismissal under it — the same mis-crediting
+				// resolveRecordModel refuses at write time.
+				r.ModelReviewers = donorModelReviewers[r.ID]
+			}
 		}
 		terminal = append(terminal, r)
 	}
 	return terminal
-}
-
-// latestTerminalModel returns the Model of the most recent terminal record for id
-// that carries a non-empty Model (by timestamp; last-wins on ties, matching
-// FoldRecords), or "" if no terminal record for the id has a model.
-func latestTerminalModel(records []Record, id string) string {
-	var model, bestTS string
-	for _, r := range records {
-		if r.ID != id || !IsClosedStatus(r.Status) || strings.TrimSpace(r.Model) == "" {
-			continue
-		}
-		if model == "" || r.Timestamp >= bestTS {
-			model = r.Model
-			bestTS = r.Timestamp
-		}
-	}
-	return model
 }
 
 // QualityRow is one aggregated per-(persona, model) quality-signal row: how many
@@ -84,9 +111,11 @@ type QualityRow struct {
 //   - A terminal status that is neither wontfix nor resolved (i.e. deferred)
 //     contributes to neither counter and creates no group, so a deferred-only
 //     pair emits no row (AC 01-01 EC2).
-//   - Every listed persona in Reviewers receives the outcome, deduplicated
-//     per-record with empty entries skipped (AC 01-03); an empty Reviewers slice
-//     contributes to no group.
+//   - Every listed persona receives the outcome, deduplicated per-record with
+//     empty entries skipped (AC 01-03); an empty reviewer list contributes to
+//     no group. The list read is ModelReviewers (the subset the record's Model
+//     covers), falling back to Reviewers on pre-field records, whose Reviewers
+//     were already narrowed to the attributable set at write time.
 //
 // It is a total, pure function: nil input yields a non-nil empty slice, and
 // repeated calls on the same input are byte-for-byte identical (no shared mutable
@@ -107,17 +136,26 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 			continue // attribution-incomplete: excluded from per-model rows
 		}
 		var dismissed, confirmed int
-		switch strings.ToLower(strings.TrimSpace(rec.Status)) {
-		case "wontfix":
+		switch normalizeStatus(rec.Status) {
+		case StatusWontfix:
 			dismissed = 1
-		case "resolved":
+		case StatusResolved:
 			confirmed = 1
 		default:
 			continue // deferred (or any other terminal) is neither a signal nor a group
 		}
 
 		seen := map[string]bool{}
-		for _, raw := range rec.Reviewers {
+		// ModelReviewers is the attributable subset for the record's Model. An
+		// empty ModelReviewers on a model-carrying record means a pre-field
+		// record, whose Reviewers were already narrowed to exactly that set at
+		// write time — falling back to them preserves the pre-field behavior
+		// for the existing store.
+		reviewers := rec.ModelReviewers
+		if len(reviewers) == 0 {
+			reviewers = rec.Reviewers
+		}
+		for _, raw := range reviewers {
 			persona := strings.TrimSpace(raw)
 			if persona == "" || seen[persona] {
 				continue

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // debtSubdir is the local TD store location under the repo root: <root>/.atcr/debt.
@@ -24,6 +25,39 @@ func DefaultDir(root string) string {
 	return filepath.Join(root, debtSubdir)
 }
 
+// ensureStoreDir creates the store directory without ever creating the REPO ROOT it
+// sits under, and reports an error when that root is gone.
+//
+// os.MkdirAll(dir) — what the write path used to call from both withLock and
+// appendLocked — creates every missing parent, including the root itself. Root
+// validation happens once per invocation and returns a string; everything after it
+// is path-based, so a root that passed validation and was then deleted, renamed, or
+// unmounted was silently RESURRECTED as an empty tree at that absolute path, with the
+// marker check never re-run (TD internal/localdebt/root.go:123). Recreating a
+// directory the operator removed is the opposite of what a stale-root stop signal is
+// for.
+//
+// The container (<root>/.atcr) is still created on demand — that is ordinary
+// first-write behavior — but only under a parent that already exists, so the chain
+// stops exactly one level below the root.
+func ensureStoreDir(dir string) error {
+	if info, err := os.Stat(dir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("localdebt store path %s is not a directory", filepath.Base(dir))
+		}
+		return nil
+	}
+	container := filepath.Dir(dir)    // <root>/.atcr
+	anchor := filepath.Dir(container) // <root>, or "." for the CWD-relative default
+	if info, err := os.Stat(anchor); err != nil || !info.IsDir() {
+		return fmt.Errorf("localdebt store root %s does not exist; refusing to recreate it", filepath.Base(anchor))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return basePathErr(err)
+	}
+	return nil
+}
+
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix is
 // an RFC3339 timestamp (e.g. "2026-06-14T10:00:00Z-abc123" -> "2026-06"). The month
 // drives monthly JSONL rotation, so all records from one run share a file. A run_id
@@ -34,6 +68,47 @@ func monthFromRunID(runID string) (string, error) {
 		return "", fmt.Errorf("cannot derive month from run_id %q (expected YYYY-MM prefix)", runID)
 	}
 	return runID[:7], nil
+}
+
+// ManualRunID builds the synthetic run_id for an item filed by `atcr debt add`,
+// which has no reconcile run behind it to supply one. It mirrors the resolution
+// path's existing <RFC3339>-<suffix> construction (cli/debt_resolve.go), so for any
+// timestamp in the four-digit-year range the result carries the YYYY-MM prefix
+// monthFromRunID requires and a manual entry lands in the correct month shard
+// instead of failing the append outright.
+//
+// The year is VALIDATED here, at the boundary, not merely documented: years
+// outside 1-9999 format through RFC3339 as "10000-01-…" or "-0001-01-…" — neither
+// matches monthRe, so Append would reject the record — and the zero time.Time
+// formats as "0001-01-…", which monthRe ACCEPTS, silently creating a permanent
+// phantom .atcr/debt/0001-01.jsonl shard. The (string, error) signature makes the
+// precondition enforceable rather than trusting every caller to read a comment
+// (TD internal/localdebt/paths.go:51; the "callers validate" doc-only stance this
+// replaces).
+//
+// ts is normalized to UTC before formatting, so a local instant just past midnight
+// on the 1st is filed under the month it actually belongs to. The -manual suffix
+// keeps a manual entry's provenance legible in the raw JSONL as well as in the
+// record's origin field, where a reconcile run_id instead ends in the review
+// directory's base name.
+func ManualRunID(ts time.Time) (string, error) {
+	if ts.IsZero() {
+		return "", fmt.Errorf("cannot build a manual run_id from the zero time (it would shard as the phantom 0001-01 month)")
+	}
+	if y := ts.Year(); y < 1 || y > 9999 {
+		return "", fmt.Errorf("cannot build a manual run_id for year %d: outside the four-digit range 1-9999", y)
+	}
+	return ts.UTC().Format(time.RFC3339) + "-manual", nil
+}
+
+// RedactPathErr is basePathErr for callers outside this package that build their
+// own store read paths (cli's two-pass debt-resolve hydration). The package's
+// SECURITY contract — a surfaced *os.PathError is reduced to its base name so an
+// absolute, username-bearing path never reaches a diagnostic sink or an error
+// string (see ReadOpts in store.go) — binds those callers too, and re-implementing
+// the reduction outside the package is how it drifts.
+func RedactPathErr(err error) error {
+	return basePathErr(err)
 }
 
 // basePathErr reduces an *os.PathError's path to its base name so an absolute store

@@ -44,8 +44,34 @@ Route providers through a normalizing proxy such as [LiteLLM](https://github.com
 
 Review payloads are source code — and diffs are disproportionately likely to contain the sensitive parts (config, credentials being rotated, customer fixtures). When the roster includes third-party providers, consider:
 
-- **Proxy-level redaction guardrails.** LiteLLM integrates [Microsoft Presidio](https://github.com/microsoft/presidio) as a guardrail hook, detecting and masking PII and secret-shaped content in requests before they leave your network — transparent to atcr.
-- **The tradeoff is real:** reviewers see masked tokens, so findings may reference redacted placeholders, and a finding *about* a leaked secret can itself be masked away. For secret-heavy repos, pairing atcr with a pre-commit secret scanner is the stronger control; redaction guards the residual risk.
+- **Proxy-level redaction guardrails.** LiteLLM integrates [Microsoft Presidio](https://github.com/microsoft/presidio) as a guardrail hook, masking PII in requests before they leave your network — transparent to atcr.
+- **Do NOT use the default entity set on code.** Presidio's defaults are tuned for prose and will mangle diffs: in testing on a code sample they flagged `port=8080` as `LOCATION` (0.85), `user.email` as `URL`, an IP as both `IP_ADDRESS` and `PHONE_NUMBER`, and double-flagged a credit card as bank/driver-license — while **missing an actual `sk-live-…` API key entirely**. Masking those code tokens degrades review quality for zero security benefit.
+- **Recommended default: a high-precision entity set only.** Restrict masking to entities that don't collide with code identifiers. This masks real PII cleanly and leaves code untouched:
+
+  ```yaml
+  # litellm config.yaml
+  guardrails:
+    - guardrail_name: presidio-mask
+      litellm_params:
+        guardrail: presidio
+        mode: pre_call
+        default_on: true
+        pii_entities_config:
+          EMAIL_ADDRESS: MASK
+          CREDIT_CARD: MASK
+          US_SSN: MASK
+          IBAN_CODE: MASK
+          US_BANK_NUMBER: MASK
+          CRYPTO: MASK
+  ```
+  ```bash
+  # litellm .env  (presidio-analyzer / -anonymizer reachable on the proxy's network)
+  PRESIDIO_ANALYZER_API_BASE=http://presidio-analyzer:3000
+  PRESIDIO_ANONYMIZER_API_BASE=http://presidio-anonymizer:3000
+  ```
+  Explicitly **exclude** `PERSON`, `LOCATION`, `URL`, `PHONE_NUMBER`, `IP_ADDRESS`, `DATE_TIME` — all high-noise on source. Roll out with `mode: logging_only` first if you want to observe detections before enforcing.
+- **Presidio is a PII masker, not a secret scanner.** It does not reliably catch API keys / tokens / high-entropy secrets. For those, a **pre-commit secret scanner (e.g. [gitleaks](https://github.com/gitleaks/gitleaks)) is the real control** — it stops secrets from ever entering a diff. Use both: gitleaks for secrets, the tuned presidio set for residual PII.
+- **The masking tradeoff:** reviewers see placeholders, so a finding *about* a masked value can itself be redacted away. The tuned entity set keeps this to genuinely-sensitive tokens, not code.
 - **Roster routing as policy.** Per-agent provider bindings mean sensitive repos can run an all-local roster (ollama/vllm) while open-source repos use frontier APIs — same tool, different registry.
 
 ## Defensive posture regardless of proxy

@@ -239,6 +239,43 @@ func TestQualityReport_DirFlagReadsExplicitStoreWithoutChdir(t *testing.T) {
 		"--dir must point the report at the explicit fixture store, not DefaultDir(\".\")")
 }
 
+// TD (cli/telemetry_report.go): quality-report is a store reader like every debt
+// subcommand, so a malformed or over-long line in the store must surface the
+// localdebt skip warning on stderr — silently discarding it would let a
+// partially corrupt store under-report the quality signal with no hint that
+// records were skipped. Warnings go to stderr, so --format json stdout stays a
+// clean, parseable stream.
+func TestQualityReport_StoreWarningsReachStderr(t *testing.T) {
+	isolate(t)
+
+	dir := filepath.Join(t.TempDir(), "debt")
+	seedQualityRecordAt(t, dir, "alpha", "gpt-4", "wontfix", "a.go")
+
+	// Append a malformed line directly to the shard seedQualityRecordAt wrote.
+	shard := filepath.Join(dir, "2026-07.jsonl")
+	require.FileExists(t, shard)
+	f, err := os.OpenFile(shard, os.O_WRONLY|os.O_APPEND, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("{this is not json\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	cmd := newQualityReportCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	require.NoError(t, cmd.ParseFlags([]string{"--dir", dir, "--format", "json"}))
+	require.NoError(t, cmd.RunE(cmd, nil),
+		"a malformed line is skipped with a warning, never a read failure")
+
+	assert.Contains(t, errBuf.String(), localdebt.MsgMalformedSkip,
+		"the store's malformed-record warning must reach stderr")
+	var rows []qualityReportRow
+	require.NoError(t, json.Unmarshal(out.Bytes(), &rows),
+		"warnings on stderr must not pollute the json stdout stream: %q", out.String())
+	require.Len(t, rows, 1, "the valid record still aggregates")
+}
+
 // seedQualityRecordAt is seedQualityRecord's explicit-dir counterpart: it appends
 // one terminal local-debt record to the given store dir so --dir tests can seed a
 // fixture store outside the chdir'd DefaultDir("."). Distinct files per call keep
@@ -259,4 +296,33 @@ func seedQualityRecordAt(t *testing.T, dir, persona, model, status, file string)
 	}
 	rec.StampID()
 	require.NoError(t, localdebt.Append(dir, rec))
+}
+
+// TD (cli/telemetry_report.go:170): quality-report reads the shared public
+// .atcr/debt/ store — world-appendable via `debt add`, MCP, and third-party
+// tools — so Persona and Model are attacker-influenceable text, not
+// catalog-controlled slugs. escapeMarkdownCell flattens only newlines and
+// pipes; ESC/C0/C1 bytes pass through to the terminal verbatim (cursor control,
+// screen clear). The render layer must strip them structurally in BOTH
+// renderers: json.Marshal escapes the C0 range but emits C1 (U+0080–U+009F)
+// raw, so the json path needs the guard too.
+func TestQualityReport_StripsControlSequences_MDAndJSON(t *testing.T) {
+	isolate(t)
+
+	dir := filepath.Join(t.TempDir(), "debt")
+	seedQualityRecordAt(t, dir, "bruce\x1b[2J\x1b[H", "gpt-4\u0099", "wontfix", "a.go")
+
+	for _, format := range []string{"md", "json"} {
+		out, err := runQualityReportCmd(t, "--dir", dir, "--format", format)
+		require.NoError(t, err)
+		for i, r := range out {
+			if r < 0x20 && r != '\n' && r != '\t' && r != '\r' {
+				t.Fatalf("format %s: raw C0 control U+%04X at byte %d must never reach the terminal", format, r, i)
+			}
+			if r >= 0x80 && r <= 0x9f {
+				t.Fatalf("format %s: raw C1 control U+%04X at byte %d must never reach the terminal", format, r, i)
+			}
+		}
+		assert.Contains(t, out, "bruce", "the printable portion of the persona must survive sanitization")
+	}
 }

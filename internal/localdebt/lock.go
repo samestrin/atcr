@@ -36,9 +36,10 @@ func withLock(dir, session string, fn func() error) error {
 	lockDir := filepath.Join(dir, lockSubdir)
 	ownerFile := filepath.Join(lockDir, lockOwner)
 
-	// Ensure the parent store directory exists
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating localdebt dir for lock: %w", basePathErr(err))
+	// Ensure the parent store directory exists — WITHOUT recreating a repo root
+	// that has since vanished (ensureStoreDir; TD internal/localdebt/root.go:123).
+	if err := ensureStoreDir(dir); err != nil {
+		return fmt.Errorf("creating localdebt dir for lock: %w", err)
 	}
 
 	deadline := time.Now().Add(lockWait)

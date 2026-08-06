@@ -17,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -692,7 +693,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// transport failure never changes this command's outcome. --preview (Story 3)
 		// short-circuits at the top of runReview, so it is never reached on that path.
 		// The gate's unrecognized-env-value warning goes to this command's stderr.
-		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr())
+		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr(), "")
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
@@ -760,6 +761,22 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// in this count between runs is the signal. Logged (not printed) so the
 		// --axi stdout contract is untouched.
 		log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+		// Persist the inline reconcile's findings to the local TD store, mirroring
+		// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
+		// cli/review.go:747): this one-shot --fail-on/--verify/--debate/--auto-fix
+		// path is the primary CI invocation, and before the fix it persisted
+		// nothing — a user whose whole workflow is this path accumulated an empty
+		// backlog forever. No suppression flag exists on this command (the same
+		// asymmetry as the MCP handler), and AutoCompact stays zero (production
+		// thresholds). Best-effort: persistence never fails the review or changes
+		// its exit code. Placed BEFORE the verify/debate chain below so the
+		// recorded set is the reconciled one — exactly what a later standalone
+		// `atcr reconcile` of this review dir would persist.
+		if root, ok := localdebt.ResolveStoreRoot(localdebt.RootOpts{
+			ReviewDir: result.Dir, AllowCWD: true, Diag: cmd.ErrOrStderr(),
+		}); ok {
+			localdebt.PersistForReconcile(result.Dir, rec, localdebt.PersistOpts{Root: root, Diag: cmd.ErrOrStderr()})
+		}
 		// Gated under --axi. The axi run-summary payload carries findings_total (the
 		// raw per-agent fanout metric, mirroring writeReviewSummary's "Findings:"
 		// line); the deduplicated reconciled count and the verify/debate verdict

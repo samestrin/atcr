@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,25 +64,24 @@ func TestBaselineDownstream_ReportNoMalformedRange(t *testing.T) {
 // consumes flag-driven fields directly (no review-dir/provenance read), so it is
 // exercised standalone with a non-TTY stdin (flag mode, no wizard).
 func TestBaselineDownstream_DebtAddFilesBaselineFinding(t *testing.T) {
-	readme, items := emptyTDRepo(t) // pre-seeds the README AppendItem reads
+	dir := emptyDebtStore(t)
 
 	cmd := newDebtCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetIn(&bytes.Buffer{}) // non-TTY → flag mode, never the wizard
-	cmd.SetArgs([]string{"add",
-		"--readme", readme, "--items", items,
+	cmd.SetArgs([]string{"add", "--dir", dir,
 		"--severity", "HIGH", "--file", "a.txt:1",
 		"--problem", "Unchecked call from baseline scan", "--fix", "Guard it",
-		"--category", "security", "--est", "15", "--date", "2026-07-26"})
+		"--category", "security", "--est", "15"})
 	require.NoError(t, cmd.Execute(), "debt add of a baseline-sourced finding succeeds")
 
-	data, err := os.ReadFile(readme)
-	require.NoError(t, err)
-	body := string(data)
-	assert.Contains(t, body, "a.txt:1", "the baseline finding's location is filed")
-	assert.Contains(t, body, "Unchecked call from baseline scan", "the baseline finding's problem is filed")
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "a.txt", recs[0].File, "the baseline finding's location is filed")
+	assert.Equal(t, 1, recs[0].Line)
+	assert.Equal(t, "Unchecked call from baseline scan", recs[0].Problem, "the baseline finding's problem is filed")
 }
 
 // AC 06-04 Error Scenario 1: `atcr report` against a baseline review with no
@@ -106,8 +104,7 @@ func TestBaselineDownstream_ReportMissingReconcileErrors(t *testing.T) {
 // baseline finding returns the existing missing-flags usage error (exit 2) on a
 // non-interactive (non-TTY) shell — unchanged for baseline provenance.
 func TestBaselineDownstream_DebtAddMissingFlagErrors(t *testing.T) {
-	readme := filepath.Join(t.TempDir(), "TECH_DEBT.md")
-	items := filepath.Join(t.TempDir(), "items")
+	dir := emptyDebtStore(t)
 
 	cmd := newDebtCmd()
 	var out bytes.Buffer
@@ -115,8 +112,7 @@ func TestBaselineDownstream_DebtAddMissingFlagErrors(t *testing.T) {
 	cmd.SetErr(&out)
 	cmd.SetIn(&bytes.Buffer{}) // non-TTY → no wizard, so missing flags are a usage error
 	// Omit --fix.
-	cmd.SetArgs([]string{"add",
-		"--readme", readme, "--items", items,
+	cmd.SetArgs([]string{"add", "--dir", dir,
 		"--severity", "HIGH", "--file", "a.txt:1",
 		"--problem", "p", "--category", "security"})
 	err := cmd.Execute()
