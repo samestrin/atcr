@@ -319,6 +319,25 @@ func TestLeaderboardCmd_WindowedReadKeepsEmptyStoreAndNoMatchDistinct(t *testing
 	})
 }
 
+// TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure covers the failure mode
+// the empty-store probe introduces: the window legitimately finds nothing, so the
+// probe reads the whole store — and that read can fail. An unreadable month file
+// must surface as a read error, never be reported as the graceful "no data yet"
+// state, which would tell a user with a broken store that they have no history.
+func TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	isolate(t)
+	storeLeaderboardRec(t, 400, "ancient", "m") // out of window: the probe alone reads it
+	unreadableMonthFileFor(t, 400)
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+	require.Equal(t, 1, code, "an unreadable store is a failure, not an empty store: %s", out)
+	require.Contains(t, out, "failed to read scorecard store")
+	require.NotContains(t, out, "No scorecard data found", "a store that cannot be read is not a store with no data")
+}
+
 // TestLeaderboardCmd_InWindowMonthButOutsideDayCutoffExcluded pins that the
 // windowed read narrows I/O without replacing the filter. ReadSince selects whole
 // calendar months, so a record from earlier in the cutoff's own month is read;
