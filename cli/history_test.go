@@ -336,6 +336,46 @@ func TestHistoryCmd_PruneNoticeGoesToStderrNotStdout(t *testing.T) {
 	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
 }
 
+// A destructive retention horizon must be long enough that it cannot plausibly
+// be a mistyped query window: ParseSince's fallback is time.ParseDuration, where
+// "m" means MINUTES, so `--prune 6m` ("six months") would otherwise compute a
+// 6-minute cutoff and irreversibly delete every shard but the current month.
+// Sub-floor horizons are a usage error that names the unit meanings, and nothing
+// is removed.
+func TestHistoryCmd_PruneBelowSafetyFloorIsUsageErrorAndDeletesNothing(t *testing.T) {
+	for _, horizon := range []string{"6m", "30s", "1h"} {
+		t.Run(horizon, func(t *testing.T) {
+			root := t.TempDir()
+			old := time.Now().Add(-400 * 24 * time.Hour)
+			writeHistoryShard(t, root, old, map[string]any{
+				"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+				"id": "old1", "file": "p/a.go", "category": "C",
+			})
+			shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+			_, err := runHistoryIn(t, root, "--prune", horizon)
+			require.Error(t, err)
+			assert.Equal(t, exitUsage, exitCode(err))
+			assert.FileExists(t, shard, "a rejected prune horizon must not delete anything")
+		})
+	}
+
+	// The floor must not reject a genuine long retention horizon.
+	t.Run("365d still prunes", func(t *testing.T) {
+		root := t.TempDir()
+		old := time.Now().Add(-400 * 24 * time.Hour)
+		writeHistoryShard(t, root, old, map[string]any{
+			"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+			"id": "old1", "file": "p/a.go", "category": "C",
+		})
+		shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+		_, err := runHistoryIn(t, root, "--prune", "365d")
+		require.NoError(t, err)
+		assert.NoFileExists(t, shard)
+	})
+}
+
 // Pruning everything must not then tell the user to run their first review —
 // that would contradict the prune notice printed a line earlier.
 func TestHistoryCmd_PruneEverythingDoesNotSuggestFirstRun(t *testing.T) {
