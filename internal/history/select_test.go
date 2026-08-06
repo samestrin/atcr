@@ -24,28 +24,35 @@ func mustAppendShard(t *testing.T, dir string, ts time.Time, id string) string {
 // any file is read — that is what makes a 30d query cost proportionally to its
 // window instead of scanning all of history.
 //
-// "Did not open" is proven two ways, because neither alone is sufficient.
-// LoadShardsSince applies no record-level filtering, so a READABLE out-of-window
-// shard's records appearing in the result is direct proof it was opened — an
-// implementation that reads everything and filters afterwards cannot pass that.
-// A second out-of-window shard is chmod 000: an implementation that opens it
-// would have to swallow the read error to stay green, so the two together pin
-// both the selection and the absence of an open attempt.
+// The proof is the READABLE out-of-window shard: LoadShardsSince applies no
+// record-level filtering, so a "read everything, filter after" mutant would
+// return may-readable's record — the assertion below cannot pass such a mutant.
+// On non-root the chmod'd shard adds a second, orthogonal probe: OPENING it
+// would emit the skip warning (loadShardsWhere warns and continues), so silent
+// captured stderr proves no open attempt was made. (As root the chmod is
+// ineffective, so that probe is skipped and the readable shard carries the test.)
 func TestLoadShardsSince_DoesNotOpenOutOfWindowShards(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root can read 000-permission files")
-	}
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 
 	mustAppendShard(t, dir, now, "aug")
 	mustAppendShard(t, dir, time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC), "may-readable")
 
-	unreadable := mustAppendShard(t, dir, time.Date(2025, 12, 10, 12, 0, 0, 0, time.UTC), "dec")
-	require.NoError(t, os.Chmod(unreadable, 0o000))
-	defer func() { _ = os.Chmod(unreadable, 0o600) }()
+	var recs []Record
+	var err error
+	if os.Getuid() == 0 {
+		recs, err = LoadShardsSince(dir, 30*24*time.Hour, now)
+	} else {
+		unreadable := mustAppendShard(t, dir, time.Date(2025, 12, 10, 12, 0, 0, 0, time.UTC), "dec")
+		require.NoError(t, os.Chmod(unreadable, 0o000))
+		defer func() { _ = os.Chmod(unreadable, 0o600) }()
 
-	recs, err := LoadShardsSince(dir, 30*24*time.Hour, now)
+		stderr := captureStderr(t, func() {
+			recs, err = LoadShardsSince(dir, 30*24*time.Hour, now)
+		})
+		assert.Empty(t, stderr,
+			"opening the out-of-window shard would emit the skip warning — silence proves it was never opened")
+	}
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "only the in-window shard may be opened")
 	assert.Equal(t, "aug", recs[0].ID)
