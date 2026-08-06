@@ -164,6 +164,12 @@ func TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel(t *testing.T)
 // TestQualitySignal_PersonaHashedNotRaw locks AC 01-05 Scenario 3: the
 // construction function hashes the raw persona via HashPersonaID and never
 // carries the raw persona name in cleartext.
+// It also carries the anti-drift half of epic 35.16.1's AC2. NOTE the fixtures
+// below deliberately include NON-CANONICAL inputs: with an already-canonical value
+// like "security-reviewer" the two producers agree whether or not either one
+// canonicalizes, so a canonical-only fixture proves nothing about drift. Reverting
+// the transform in exactly one producer is the failure this test has to catch, and
+// only a padded/mixed-case input can catch it.
 func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	const raw = "security-reviewer"
 	qs := NewQualitySignal(raw, "claude-sonnet-4-6", 3, 1)
@@ -173,6 +179,18 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	}
 	if qs.PersonaIDHash == raw {
 		t.Errorf("PersonaIDHash must never equal the raw persona name %q", raw)
+	}
+
+	for _, noncanonical := range []string{"Security-Reviewer", " security-reviewer ", "SECURITY-REVIEWER", "\tSecurity-Reviewer\n"} {
+		got := NewQualitySignal(noncanonical, "claude-sonnet-4-6", 3, 1).PersonaIDHash
+		if want := scorecard.HashPersonaID(noncanonical); got != want {
+			t.Errorf("non-canonical %q: telemetry hashed %q, scorecard hashed %q — the two producers have DRIFTED", noncanonical, got, want)
+		}
+		// And both must land on the canonical persona's digest, not merely agree
+		// with each other on some other value.
+		if want := scorecard.HashPersonaID(raw); got != want {
+			t.Errorf("non-canonical %q hashed to %q, want the canonical digest %q", noncanonical, got, want)
+		}
 	}
 	if qs.Model != "claude-sonnet-4-6" || qs.DismissedCount != 3 || qs.ConfirmedCount != 1 {
 		t.Errorf("non-persona fields must pass through unchanged, got %+v", qs)
