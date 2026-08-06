@@ -468,6 +468,59 @@ func TestHistoryCmd_PruneNothingToRemoveNoticeGoesToStderrNotStdout(t *testing.T
 	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
 }
 
+// A --prune horizon SHORTER than the report window deletes data the same
+// invocation is about to ask for: prune runs first so the report describes what is
+// left on disk, so `--prune 30d` under the default 90d window silently removes
+// month 2 and 3 and then reports a 90-day window that can no longer contain them.
+// The combination is legal — it is a narrowing retention policy — but it must not
+// be silent, or the report reads as "no findings in that period" rather than "you
+// just deleted that period".
+func TestHistoryCmd_WarnsWhenPruneHorizonIsShorterThanReportWindow(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	// 30d retention against the default 90d report window.
+	cmd.SetArgs([]string{"--prune", "30d"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, stderr.String(), "shorter than the 90d report window",
+		"a horizon inside the report window must be called out before the report is read")
+	assert.NotContains(t, stdout.String(), "shorter than", "the warning is a diagnostic — stdout stays a clean table")
+	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
+}
+
+// The warning is specific to the overlap, not to --prune in general: a horizon at
+// or beyond the report window deletes nothing the report would have shown, so
+// warning there would train users to ignore it.
+func TestHistoryCmd_NoWarningWhenPruneHorizonCoversReportWindow(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--prune", "90d", "--since", "30d"})
+	require.NoError(t, cmd.Execute())
+
+	assert.NotContains(t, stderr.String(), "report window",
+		"a horizon wider than the window removes nothing the report would show")
+}
+
 // A destructive retention horizon must be long enough that it cannot plausibly
 // be a mistyped query window: ParseSince's fallback is time.ParseDuration, where
 // "m" means MINUTES, so `--prune 6m` ("six months") would otherwise compute a
