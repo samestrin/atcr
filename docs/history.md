@@ -155,6 +155,9 @@ a deletion is never silent. Guardrails:
 - The legacy flat ledger is never pruned. It is one file spanning every pre-19.4
   month, so deleting it would be record-level pruning by proxy.
 - A non-positive horizon is a usage error, not a wipe.
+- `--prune` cannot be combined with `--package`. A shard holds every package's
+  records for its month, so pruning is not scopeable to one package; the
+  combination is rejected rather than silently deleting more than asked.
 
 To reset history entirely, delete `.atcr/history/` (and, if you want the pre-19.4
 data gone too, `.atcr/findings-history.jsonl`) by hand.

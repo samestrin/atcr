@@ -287,3 +287,22 @@ func TestHistoryCmd_PruneWithNothingToRemoveExitsZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "no shards")
 }
+
+// Pruning is file-granular and cannot be scoped to a package: a shard holds
+// every package's records for its month. Silently ignoring --package next to a
+// destructive --prune would let a user delete every package's history believing
+// they had scoped the deletion, so the combination is rejected outright.
+func TestHistoryCmd_PruneWithPackageIsUsageErrorAndDeletesNothing(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	shard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+
+	_, err := runHistoryIn(t, root, "--prune", "90d", "--package", "p")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.FileExists(t, shard, "a rejected prune must not delete anything")
+}

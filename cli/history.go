@@ -60,6 +60,15 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	}
 	pkg, _ := cmd.Flags().GetString("package")
 
+	// A shard holds every package's records for its month, so pruning cannot be
+	// scoped to one package — it is file-granular by construction. Silently
+	// ignoring --package here would let a user delete every package's history
+	// believing the deletion was scoped, so the combination is rejected before
+	// anything is removed.
+	if horizon > 0 && strings.TrimSpace(pkg) != "" {
+		return usageError(fmt.Errorf("--prune cannot be combined with --package: pruning removes whole monthly shards, which hold every package's records"))
+	}
+
 	root, err := repoRoot()
 	if err != nil {
 		return usageError(fmt.Errorf("resolving repo root: %w", err))
