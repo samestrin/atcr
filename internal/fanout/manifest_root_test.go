@@ -63,6 +63,38 @@ func TestAbsRoot(t *testing.T) {
 		"an empty root is no claim — filepath.Abs(\"\") would fabricate a CWD claim the re-validation tier then trusts")
 }
 
+// TestAbsRoot_ResolvesSymlinks closes half of TD internal/payload/manifest.go:70.
+// The recorded root is re-validated later by a marker check alone, so it has to be
+// the REAL path: recorded through a symlink, the link can be repointed after the
+// review and the re-validation still passes, routing one repo's findings into
+// another repo's store. It is also the policy pathWithin/NewJail already apply —
+// two path-identity rules in one codebase is how they drift apart.
+//
+// The full identity check (recording a root-commit SHA) is deliberately NOT here:
+// it reopens the sprint's settled marker-only re-validation design and is tracked
+// separately. This closes the symlink half, which costs one call.
+func TestAbsRoot_ResolvesSymlinks(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "repo-link")
+	require.NoError(t, os.Symlink(real, link))
+
+	wantResolved, err := filepath.EvalSymlinks(real)
+	require.NoError(t, err)
+
+	assert.Equal(t, wantResolved, absRoot(link),
+		"the manifest must record the repository itself, not a pointer at it")
+}
+
+// TestAbsRoot_UnresolvableFallsBackToClean pins the fallback: a root that does not
+// exist yet (or cannot be resolved) still records its cleaned absolute path rather
+// than "" — an empty root would silently degrade a later reconcile to no manifest
+// tier at all, which is a bigger regression than an unresolved symlink.
+func TestAbsRoot_UnresolvableFallsBackToClean(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "not-created-yet")
+
+	assert.Equal(t, filepath.Clean(missing), absRoot(missing))
+}
+
 func mustAbs(t *testing.T, p string) string {
 	t.Helper()
 	abs, err := filepath.Abs(p)
