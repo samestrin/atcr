@@ -1197,6 +1197,22 @@ func hasShardFiles(dir string) bool {
 // full history, not the usual at-most-two records, until the oversized line leaves
 // the store.
 //
+// That retention-bound exemption is the SETTLED contract, reviewed and kept as-is
+// (TD internal/localdebt/store.go:742). The alternative — streaming an over-long line
+// through a rewrite verbatim so a protected shard could be rebuilt — would remove the
+// concept and the exemption together, but it restructures the stage/publish split and
+// reaches into the CountedThrough accounting that exists precisely to keep this case
+// correct. That is a large change against a rare, LOW-severity condition.
+//
+// How rare, precisely: `atcr debt add` and `atcr debt resolve` both reject a record
+// whose encoded line would exceed MaxRecordBytes before appending, so neither can
+// create the condition. PersistForReconcile does NOT — it copies a reviewer's
+// Problem/Fix text verbatim with no length bound, and appendBatch/appendLocked do not
+// check either — and that is the store's dominant writer, every reconcile and every
+// MCP review. So the guard holds on two of three writers, not all three: a
+// sufficiently verbose finding can still produce an oversized line. Bounding the
+// reconcile path is the follow-up worth filing if this ever shows up in practice.
+//
 // Membership in that fourth case is decided by the PHYSICAL file a record was read
 // from, never by the month derived from its run_id. The two disagree for a
 // hand-edited store, an external writer, or a rename, and judging by the derived
