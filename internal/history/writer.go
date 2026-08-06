@@ -53,6 +53,42 @@ import (
 // a blank or malformed line instead of failing the read — so the worst outcome
 // here is one dropped record in a trend report, not a corrupt store. A caller
 // needing a hard per-line guarantee must serialize appends itself.
+// ensureShardDir creates the shard directory without ever creating the REPO ROOT
+// it sits under, and reports an error when that root is gone.
+//
+// This mirrors internal/localdebt/paths.go:ensureStoreDir, and for the same
+// reason. os.MkdirAll creates every missing parent, including the root itself.
+// Root validation happens once per invocation and yields a string; everything
+// after it is path-based, so a root that passed validation and was then deleted,
+// renamed, or unmounted would be silently RESURRECTED here as an empty tree at
+// that absolute path. Re-creating a directory the operator removed is the opposite
+// of what a stale-root stop signal is for.
+//
+// The container (<root>/.atcr) is still created on demand — ordinary first-write
+// behavior — but only under a parent that already exists, so the chain stops
+// exactly one level below the root. Both stores under .atcr/ therefore fail the
+// same way on a vanished root instead of one failing and one resurrecting it.
+//
+// The anchor arithmetic assumes dir is ShardDir(root) — <root>/.atcr/history —
+// which is the only shape production writes: both hooks derive the path as
+// ShardPath(ShardDir(root), ts) (cli/resume.go). The legacy flat ledger sits one
+// level shallower, but nothing writes it, and an existing directory short-circuits
+// on the Stat above regardless of depth.
+func ensureShardDir(dir string) error {
+	if info, err := os.Stat(dir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("history store path %s is not a directory", filepath.Base(dir))
+		}
+		return nil
+	}
+	container := filepath.Dir(dir)    // <root>/.atcr
+	anchor := filepath.Dir(container) // <root>, or "." for a CWD-relative path
+	if info, err := os.Stat(anchor); err != nil || !info.IsDir() {
+		return fmt.Errorf("history store root %s does not exist; refusing to recreate it", filepath.Base(anchor))
+	}
+	return os.MkdirAll(dir, 0o700)
+}
+
 func Append(path string, records []Record) error {
 	if len(records) == 0 {
 		return nil
@@ -64,7 +100,7 @@ func Append(path string, records []Record) error {
 			return fmt.Errorf("encoding history record: %w", err)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := ensureShardDir(filepath.Dir(path)); err != nil {
 		return fmt.Errorf("creating history dir: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
