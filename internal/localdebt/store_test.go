@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -2043,6 +2044,47 @@ func TestMaybeCompact_AbsentWatermarkDoesNotRecompactForever(t *testing.T) {
 			"pass %d: an unchanged store must not re-compact just because its watermark is missing", i)
 		_ = os.Remove(filepath.Join(dir, compactWatermarkFile))
 	}
+}
+
+// TestStageShard_StreamsInsteadOfBufferingTheWholeShard pins the write half of the
+// compaction path's memory profile (TD internal/localdebt/store.go:1064). The shard
+// rewrite accumulated every marshaled line into a bytes.Buffer before a single byte
+// reached disk, so peak heap carried a whole month shard on top of the records
+// themselves — inside `atcr reconcile` and inside a long-lived MCP server process,
+// unattended, now that compaction is automatic. streaming.go exists specifically to
+// keep the READ path an order of magnitude leaner; the write path got none of it.
+func TestStageShard_StreamsInsteadOfBufferingTheWholeShard(t *testing.T) {
+	dir := t.TempDir()
+	recs := make([]Record, 2000)
+	for i := range recs {
+		recs[i] = detection(fmt.Sprintf("finding %d", i), "2026-06-01T00:00:00Z")
+	}
+
+	var encoded int
+	for _, r := range recs {
+		encoded += len(recordLine(t, r)) + 1
+	}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	staged, err := stageShard(dir, "2026-06", recs, nil)
+	require.NoError(t, err)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, staged.publish())
+
+	// Written content is exact regardless of how it got there.
+	onDisk, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+	require.Len(t, string(onDisk), encoded)
+
+	// A streaming writer allocates its fixed buffer plus per-line marshaling; a
+	// whole-shard buffer allocates the entire encoded shard on top of that (and more,
+	// through its growth doubling). Half the shard is comfortably between the two.
+	allocated := after.TotalAlloc - before.TotalAlloc
+	assert.Less(t, allocated, uint64(encoded/2),
+		"staging a %d-byte shard allocated %d bytes: the rewrite must stream, not buffer the shard",
+		encoded, allocated)
 }
 
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
