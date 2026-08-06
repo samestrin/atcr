@@ -3,6 +3,7 @@ package history
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -108,6 +109,27 @@ func TestLoadShardsSince_IncludesUnparseableStems(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "an unparseable stem must be read, not assumed out of window")
 	assert.Equal(t, "odd", recs[0].ID)
+}
+
+// A symlinked (or otherwise non-regular) shard is never followed on read:
+// selection accepts the name, but opening it would read a file outside the
+// shard dir — and a FIFO in its place would hang the read entirely. (Prune
+// unlinks such entries as links; the read path simply skips them.)
+func TestLoadShardsSince_SkipsSymlinkedShards(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on Windows")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "history")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	outside := filepath.Join(root, "outside.jsonl")
+	require.NoError(t, Append(outside, []Record{{Timestamp: now, ID: "outside", File: "a.go"}}))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "2026-08.jsonl")))
+
+	recs, err := LoadShardsSince(dir, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Empty(t, recs, "a symlinked shard is never followed on read")
 }
 
 // An absent shard dir is a valid empty history, not an error (AC6).
