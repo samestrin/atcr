@@ -423,13 +423,14 @@ commands went with it.
 
 | Retired | Replaced by | Why |
 |---------|-------------|-----|
-| The store-selection flags of `list`/`add`/`dashboard` (the shard-directory and table-file pair) | `--dir` | That store is no longer read or written by any atcr code |
-| The table/shard synchronization flag | — | Nothing to synchronize: there is one store |
+| `--items` (shard directory) and `--readme` (table file) on `list`/`add`/`dashboard` | `--dir` | That store is no longer read or written by any atcr code |
+| `--sync` on `add` | — | Nothing to synchronize: there is one store |
 | `--group`, `--label`, `--source-type`, `--source`, `--date` on `add` | — | Consumer workflow vocabulary, excluded by the seam |
 | `--group` on `list` | — | Same seam: group is not a record field, so there is nothing to filter on |
 | `--out` and `--stdout` on `dashboard` | `--output` (empty = stdout) | Parity with `atcr report` |
+| The default `DASHBOARD.md` output path | `--output <file>` (explicit; empty = stdout) | Nothing is written unless you name a file |
 | The `Wrote dashboard to <file>.` confirmation line | — | `--output` is silent on stdout, matching `atcr report`; `--check`'s status lines are unaffected |
-| The standalone migration command | — | The shard format it migrated no longer exists |
+| The `td-migrate` command | — | The shard format it migrated no longer exists |
 
 Passing a retired flag now fails with an unknown-flag usage error, which is the
 correct outcome: each pointed at a store the command no longer reads. Run
