@@ -2108,6 +2108,51 @@ func bytesAllocated(fn func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
+// TestFoldRecords_UnparseableTimestampFallsBackToAppendOrder pins the fold's
+// behavior when the ordering key is not usable (TD internal/localdebt/store.go:433).
+//
+// Precedence is a LEXICOGRAPHIC compare on Record.Timestamp, which makes ts
+// load-bearing for correctness — but decodeRecord validates only schema_version,
+// run_id and id. A record with ts:"" or a non-RFC3339 value therefore decodes
+// cleanly, renders everywhere, and then sorts below every sibling, so in a MIXED
+// group it can never be selected no matter how recently it was appended.
+//
+// The fallback is append order — the rule the fold already applies to a full tie —
+// rather than rejecting the record at decode time, which would make a hand-edited ts
+// silently drop a finding instead of merely misordering it.
+func TestFoldRecords_UnparseableTimestampFallsBackToAppendOrder(t *testing.T) {
+	for name, badTS := range map[string]string{
+		"empty ts":      "",
+		"garbage ts":    "not-a-timestamp",
+		"date only":     "2026-06-01",
+		"unix epoch ts": "1780000000",
+	} {
+		t.Run(name, func(t *testing.T) {
+			first := detection("recurring finding", "2026-06-01T00:00:00Z")
+			last := first
+			last.Timestamp = badTS
+
+			folded := FoldRecords([]Record{first, last})
+
+			require.Len(t, folded, 1)
+			assert.Equal(t, badTS, folded[0].Timestamp,
+				"the later-appended record wins when its timestamp cannot be ordered")
+		})
+	}
+
+	t.Run("a valid pair still orders by timestamp, not append order", func(t *testing.T) {
+		newer := detection("recurring finding", "2026-06-02T00:00:00Z")
+		older := newer
+		older.Timestamp = "2026-06-01T00:00:00Z"
+
+		folded := FoldRecords([]Record{newer, older}) // newest FIRST in append order
+
+		require.Len(t, folded, 1)
+		assert.Equal(t, "2026-06-02T00:00:00Z", folded[0].Timestamp,
+			"recency still decides whenever both timestamps parse")
+	})
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
