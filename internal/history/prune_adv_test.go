@@ -196,11 +196,13 @@ func TestPruneShards_SurvivingShardIsByteIdentical(t *testing.T) {
 func TestPruneShards_KeepsTheDirectoryItself(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
-	mustAppendShard(t, dir, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "old")
+	old := mustAppendShard(t, dir, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "old")
 
-	_, err := PruneShards(dir, 30*24*time.Hour, now)
+	res, err := PruneShards(dir, 30*24*time.Hour, now)
 	require.NoError(t, err)
 	assert.DirExists(t, dir)
+	assert.NoFileExists(t, old, "the out-of-horizon shard itself must be gone — keeping only the dir is not a no-op prune")
+	assert.Equal(t, []string{"2020-01.jsonl"}, res.Removed)
 
 	// The dir is still writable for the next run.
 	mustAppendShard(t, dir, now, "new")

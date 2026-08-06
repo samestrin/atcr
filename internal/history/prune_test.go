@@ -56,16 +56,30 @@ func TestPruneShards_KeepsTheCutoffMonthWhole(t *testing.T) {
 
 // The legacy flat ledger is never pruned. It is one file spanning every pre-19.4
 // month, so deleting it would be record-granularity pruning by proxy — exactly
-// what AC7 excludes — and it is documented read-only.
+// what AC7 excludes — and it is documented read-only. The adversarial case is
+// the ledger INSIDE the scanned shard dir (a user moved or copied it there):
+// only the unparseable-stem guard protects it, and a PruneShards that deleted
+// every .jsonl it enumerated would destroy it.
 func TestPruneShards_NeverTouchesLegacyLedger(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".atcr", "history")
-	legacy := LegacyLedgerPath(root)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
 	ancient := time.Date(2019, 1, 1, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, Append(legacy, []Record{{Timestamp: ancient, ID: "l", File: "a.go"}}))
+	inside := filepath.Join(dir, "findings-history.jsonl")
+	require.NoError(t, Append(inside, []Record{{Timestamp: ancient, ID: "l", File: "a.go"}}))
 	mustAppendShard(t, dir, ancient, "ancient")
 
-	_, err := PruneShards(dir, 30*24*time.Hour, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
+	res, err := PruneShards(dir, 30*24*time.Hour, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.FileExists(t, inside, "a ledger file inside the shard dir survives on its unparseable stem")
+	assert.NotContains(t, res.Removed, "findings-history.jsonl")
+	assert.Equal(t, []string{"2019-01.jsonl"}, res.Removed, "only the genuine past-month shard is pruned")
+
+	// Secondary: the ledger at its real location (a different directory) is
+	// never even enumerated.
+	legacy := LegacyLedgerPath(root)
+	require.NoError(t, Append(legacy, []Record{{Timestamp: ancient, ID: "l2", File: "b.go"}}))
+	_, err = PruneShards(dir, 30*24*time.Hour, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	assert.FileExists(t, legacy, "the legacy ledger is not a shard and is never pruned")
 }
