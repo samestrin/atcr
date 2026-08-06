@@ -3,6 +3,7 @@ package telemetry
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 )
 
 // QualitySignal is the sole allowlisted outbound payload for the community prompt
@@ -43,6 +44,13 @@ type QualitySignal struct {
 // this is updated in lockstep. It takes primitives rather than a localdebt.QualityRow
 // so telemetry never imports localdebt either.
 //
+// CANONICALIZATION (epic 35.16.1): the persona is reduced to
+// strings.ToLower(strings.TrimSpace(persona)) before hashing, matching
+// scorecard.HashPersonaID exactly. The digest is the only persona identity the
+// backend ever holds and atcr.dev peppers it irreversibly on arrival, so a casing
+// or padding variant would mint a second permanent identity for one persona with
+// no backfill available to merge them.
+//
 // A non-empty persona is a caller precondition: an empty persona is an upstream
 // data-quality bug, and hashing it would produce sha256("")=e3b0c442... — a
 // well-known constant that looks like a real, stable aggregation bucket on the
@@ -50,11 +58,17 @@ type QualitySignal struct {
 // (empty PersonaIDHash), recognizable and droppable by the caller. The sole
 // production source (localdebt.AggregateQualitySignal) already excludes empty
 // personas structurally, so this guard only fires for future misuse.
+//
+// The guard is evaluated on the CANONICAL value, not the raw one. A whitespace-only
+// persona is empty in every sense that matters here; checking `persona == ""` first
+// would let "   " past the sentinel and hash it to exactly the constant the sentinel
+// exists to keep off the backend.
 func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySignal {
-	if persona == "" {
+	canonical := strings.ToLower(strings.TrimSpace(persona))
+	if canonical == "" {
 		return QualitySignal{}
 	}
-	sum := sha256.Sum256([]byte(persona))
+	sum := sha256.Sum256([]byte(canonical))
 	return QualitySignal{
 		PersonaIDHash:  hex.EncodeToString(sum[:]),
 		Model:          model,
