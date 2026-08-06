@@ -345,6 +345,16 @@ when it does not — an artifact tree copied to another machine carries a stale
 absolute path — the run warns and persists nothing rather than writing to the
 wrong place.
 
+> **A shared review tree discloses where it was reviewed.** To make that
+> resolution work off the reviewing machine, `manifest.json` records the
+> absolute path of the repository it was reviewed in — which on a developer
+> machine contains your username (`/Users/<you>/src/<repo>`). Nothing renders
+> the value, so it is disclosed only by sharing the artifacts: attaching a
+> review tree to a PR or bug report, or copying a `--output-dir` result. Strip
+> or rewrite the manifest's `root` field before publishing one. Removing it
+> costs only the manifest tier of the store-root resolution above — pass
+> `--repo` / the MCP `repo` argument instead.
+
 The MCP path has only the first two tiers: **`repo` > the review manifest**, with
 no working-directory fallback. The server's working directory is whatever
 launched it, not the reviewed repo, so a review whose manifest records no root
