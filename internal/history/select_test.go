@@ -166,7 +166,60 @@ func TestLoadAllSince_UnionsLegacyWithSelectedShards(t *testing.T) {
 
 	recs, err := LoadAllSince(shardDir, legacyPath, 30*24*time.Hour, now)
 	require.NoError(t, err)
+	// Cardinality, not just membership: a set cannot detect double-counting.
+	require.Len(t, recs, 2)
 	assert.Equal(t, map[string]bool{"legacy": true, "aug": true}, idSet(recs))
+}
+
+// AC2's (Timestamp, ID) dedupe, pinned on the WINDOWED union the product
+// actually calls (LoadAllSince — cli/history.go), not only on the unwindowed
+// LoadAll. The identical record present in BOTH the legacy ledger and an
+// in-window shard (the storage-cutover overlap) must collapse to one row.
+func TestLoadAllSince_DedupesLegacyAgainstSelectedShards(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	ts := now.Add(-24 * time.Hour)
+
+	dup := Record{Timestamp: ts, ID: "dup", File: "a.go", Severity: "HIGH", Package: "p", Category: "C"}
+	require.NoError(t, Append(legacyPath, []Record{dup}))
+	require.NoError(t, Append(ShardPath(shardDir, ts), []Record{dup}))
+
+	recs, err := LoadAllSince(shardDir, legacyPath, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "the same (ts, id) in both locations is one occurrence, not two")
+}
+
+// The other half of the key: the same finding id recorded by three DIFFERENT
+// runs (three timestamps) is three occurrences — each run's record survives,
+// because that recurrence IS the trend the ledger exists to report.
+func TestLoadAllSince_KeepsOneOccurrencePerRun(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{
+		now.Add(-72 * time.Hour),
+		now.Add(-48 * time.Hour),
+		now.Add(-24 * time.Hour),
+	} {
+		require.NoError(t, Append(ShardPath(shardDir, ts), []Record{
+			{Timestamp: ts, ID: "recur", File: "a.go", Severity: "HIGH", Package: "p", Category: "C"},
+			{Timestamp: ts, ID: "other", File: "b.go", Severity: "LOW", Package: "q", Category: "D"},
+		}))
+	}
+
+	recs, err := LoadAllSince(shardDir, legacyPath, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	recur := 0
+	for _, r := range recs {
+		if r.ID == "recur" {
+			recur++
+		}
+	}
+	assert.Equal(t, 3, recur, "each run's occurrence of the same finding survives")
 }
 
 // A non-positive window must select NOTHING — including from the legacy
