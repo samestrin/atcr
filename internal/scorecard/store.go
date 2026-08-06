@@ -358,19 +358,19 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 // windowed and all-history paths share one enumeration at the boundary rather
 // than drifting apart.
 //
-// WHY EXPORTED: cli/leaderboard.go is the external consumer. Its --since window
-// (30d by default) is the one user-facing time window in the codebase, and it
-// calls this function to size its read so a one-month query opens only the month
-// files that window intersects. The export also keeps the store's public surface
-// symmetric — ReadAll alone would leave the unbounded read as the only public way
-// to read the store, which is what epic 35.11 specified a windowed counterpart
-// for. The leaderboard migration itself landed in epic 35.15.
+// WHY EXPORTED: cli/leaderboard.go is the external consumer and
+// trustPriorsSince is the in-package caller. Both use this function to size the
+// read so a bounded query opens only the month files the window intersects. The
+// export also keeps the store's public surface symmetric — ReadAll alone would
+// leave the unbounded read as the only public way to read the store, which is
+// what epic 35.11 specified a windowed counterpart for. The leaderboard
+// migration itself landed in epic 35.15.
 //
-// The leaderboard still runs ApplyFilters over this function's result: month
-// selection is coarser than a day-precision --since, so the two compose rather
-// than substitute (see the month-stem note below). It also probes with ReadAll
-// when a window comes back empty, because an empty window cannot by itself
-// distinguish an empty store from a store whose records all predate the window.
+// Callers still run ApplyFilters over this function's result: month selection is
+// coarser than a day-precision --since, so the two compose rather than
+// substitute (see the month-stem note below). An empty result cannot by itself
+// distinguish an empty store from a store whose records all predate the window;
+// callers needing that distinction must probe separately.
 //
 // A month file whose stem is not a parseable YYYY-MM is READ (fail-open): an
 // odd filename cannot prove its contents fall outside the window, and silently
