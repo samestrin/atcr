@@ -55,6 +55,35 @@ func TestAppend_LeavesExistingParentModeAlone(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm(), "an existing .atcr/ must keep its own mode")
 }
 
+// The leaf shard dir gets the same treatment as the ledger file and as
+// localdebt's store dir (ensureStoreDir in internal/localdebt/paths.go returns
+// early for a dir that already exists): 0700 applies to a directory this call
+// CREATES, and a pre-existing one keeps whatever mode it has. That distinction is
+// load-bearing for the documented migration recipe, which is why it is pinned
+// here rather than left to the doc comment — `mkdir -p .atcr/history` leaves 0755
+// under a default umask and Append will not tighten it, so docs/history.md tells
+// migrating users to `install -d -m 700` instead.
+func TestAppend_LeavesExistingShardDirModeAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes are not modeled on Windows")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, ".atcr", "history")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Capture what the umask actually allowed rather than assuming 0755: the
+	// contract under test is "unchanged", not a specific bit pattern.
+	before, err := os.Stat(dir)
+	require.NoError(t, err)
+	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+
+	require.NoError(t, Append(ShardPath(dir, ts), []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
+
+	after, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode().Perm(), after.Mode().Perm(),
+		"an existing shard dir keeps its mode — Append never tightens one it did not create")
+}
+
 // Appending to a ledger that already exists must not change its mode: a repo
 // that accrued history under the old 0644 default keeps working, and Append
 // never silently re-permissions a file it did not create.

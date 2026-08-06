@@ -20,9 +20,17 @@ import (
 // assumption: `atcr init` lists history/ in .atcr/.gitignore (atcrGitignore in
 // cli/init.go), which is what keeps these modes meaningful — a committed ledger
 // comes back 0644/0755 on a fresh clone, because git carries no mode beyond +x.
-// The mode applies only to paths this call creates; an existing ledger keeps
-// whatever mode it already has, so a repo that accrued history under the old 0644
-// default is untouched.
+// Both modes apply only to paths this call CREATES, and that holds for the
+// directory as much as the file. os.MkdirAll returns nil without touching a
+// directory that already exists, so a shard dir left at 0755 by something else
+// stays 0755 for good — Append never tightens it, exactly as localdebt's
+// ensureStoreDir never tightens its own store dir. An existing ledger likewise
+// keeps its mode, so a repo that accrued history under the old 0644 default is
+// untouched.
+//
+// This is why docs/history.md's migration recipe uses `install -d -m 700` and
+// `install -m 600` rather than mkdir/cp: a hand-migrated ledger is created by the
+// operator, not by this function, so nothing here will ever correct it.
 //
 // The whole batch is serialized to memory first, then written in a single
 // f.Write call. The unit that matters for tearing is therefore the BATCH, not the

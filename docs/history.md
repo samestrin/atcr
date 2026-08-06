@@ -45,9 +45,16 @@ them, but they no longer contribute to `atcr history` output. To carry that tren
 data forward, copy the shards across by hand:
 
 ```bash
-mkdir -p .atcr/history
+install -d -m 700 .atcr/history
 cp -n .planning/history/*.jsonl .atcr/history/
+chmod 600 .atcr/history/*.jsonl
 ```
+
+The `install -d -m 700` and the trailing `chmod` are not decoration. atcr applies
+`0700`/`0600` only to paths **it** creates: `os.MkdirAll` leaves an existing
+directory alone and the ledger is opened `O_CREATE` without re-permissioning, so
+anything you migrate by hand keeps whatever your umask gave it — `0755`/`0644` by
+default — and no later `atcr` run will ever tighten it.
 
 `cp -n` will not clobber a month that already has a shard in the new location. If
 both locations hold the same month, merge them by concatenating the two files —
@@ -68,8 +75,10 @@ regardless of the machine's local zone, and every record from one run lands in
 exactly one shard.
 
 - **Append-only.** Each run appends; existing lines are never rewritten.
-- **Permissions.** Shard files are created `0600` and the directory `0700`. The
-  directory is created lazily on the first write.
+- **Permissions.** Shard files are created `0600` and the shard directory `0700`.
+  The directory is created lazily on the first write. Both modes apply only to
+  paths atcr itself creates — an existing directory or ledger keeps the mode it
+  already has, and no run tightens it afterwards (see the migration note above).
 - **Tolerant reads.** A blank or malformed line is skipped rather than failing
   the whole read, and an unreadable shard is skipped with a warning so the
   remaining shards stay queryable. The ledger is append-only with no repair
