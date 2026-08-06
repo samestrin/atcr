@@ -27,6 +27,31 @@ func TestHashPersonaID_Deterministic(t *testing.T) {
 	assert.Equal(t, hex.EncodeToString(sum[:]), h1, "must be the stdlib SHA-256 hex digest")
 }
 
+// TestHashPersonaID_CanonicalizesCaseAndWhitespace pins epic 35.16.1's contract:
+// the digest is the SOLE persona identity the telemetry backend ever holds, and
+// atcr.dev peppers it irreversibly on arrival (HMAC-SHA256 under a never-rotated
+// secret, pre-pepper value discarded). A casing or padding variant therefore does
+// not merely look untidy — it mints a SECOND permanent, unmergeable backend
+// identity for one persona, and there is no backfill that can repair it later.
+//
+// So every variant must collapse to one digest BEFORE it leaves the process.
+// cloudsync.go:104 already trimmed at its own call site for exactly this reason
+// (see TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing, "fragments the Persona
+// Leaderboard into two buckets for one identity"); canonicalizing inside the hash
+// generalizes that one-site fix to every producer, present and future.
+func TestHashPersonaID_CanonicalizesCaseAndWhitespace(t *testing.T) {
+	want := HashPersonaID("bruce")
+	for _, variant := range []string{"Bruce", "BRUCE", " bruce ", "\tBruce\n", "bRuCe"} {
+		assert.Equal(t, want, HashPersonaID(variant),
+			"variant %q must canonicalize to the same digest as %q — a split here is permanent once atcr.dev peppers it", variant, "bruce")
+	}
+
+	// Whitespace-only canonicalizes to the empty string, so it takes the same path
+	// as a genuinely empty persona rather than minting its own bucket.
+	assert.Equal(t, HashPersonaID(""), HashPersonaID("   "),
+		"whitespace-only must canonicalize to the empty-string digest")
+}
+
 // TestHashPersonaID_EmptyPathAndUnicode covers the AC 03-01 edge cases: the empty
 // string hashes to the well-known SHA-256 constant; a path-like value is hashed
 // raw (no scrubbing); Unicode input yields a valid digest without panic.
