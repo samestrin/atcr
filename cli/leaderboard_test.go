@@ -347,6 +347,57 @@ func TestLeaderboardCmd_EmptyWindowProbeSurfacesReadFailure(t *testing.T) {
 	require.NotContains(t, out, "No scorecard data found", "a store that cannot be read is not a store with no data")
 }
 
+// TestLeaderboardCmd_OutOfWindowLockedFileDependsOnWindowState keeps the two
+// divergent outcomes for the same locked out-of-window month file in one place.
+// With a populated window the file is never opened and the command succeeds; with
+// an empty window the probe must read the whole store and surfaces the failure.
+func TestLeaderboardCmd_OutOfWindowLockedFileDependsOnWindowState(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+
+	cases := []struct {
+		name        string
+		storeRecent bool
+		wantCode    int
+		wantContain string
+		wantNot     []string
+	}{
+		{
+			name:        "populated window ignores locked out-of-window file",
+			storeRecent: true,
+			wantCode:    0,
+			wantContain: "recent",
+			wantNot:     []string{"failed to read scorecard store"},
+		},
+		{
+			name:        "empty window probe surfaces locked out-of-window file",
+			storeRecent: false,
+			wantCode:    1,
+			wantContain: "failed to read scorecard store",
+			wantNot:     []string{"No scorecard data found"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			if tc.storeRecent {
+				storeLeaderboardRec(t, 1, "recent", "m")
+			}
+			storeLeaderboardRec(t, 400, "ancient", "m")
+			unreadableMonthFileFor(t, 400)
+
+			code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+			require.Equal(t, tc.wantCode, code, out)
+			require.Contains(t, out, tc.wantContain)
+			for _, s := range tc.wantNot {
+				require.NotContains(t, out, s)
+			}
+		})
+	}
+}
+
 // TestLeaderboardCmd_InWindowMonthFileButOutsideDayCutoffExcluded pins that the
 // windowed read narrows I/O without replacing the filter: ReadSince selects whole
 // calendar months, so the month CONTAINING the cutoff is read entirely, and only

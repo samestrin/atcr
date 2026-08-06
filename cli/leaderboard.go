@@ -116,9 +116,10 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// and both are accepted rather than overlooked:
 	//
 	//   - An unreadable or corrupt month file OUTSIDE the window no longer fails
-	//     the command. Not opening those files is the entire point, and a file
-	//     that is never opened cannot be diagnosed; `--since all` still surfaces
-	//     it, as does any window that reaches it.
+	//     the command WHILE THE WINDOW IS NON-EMPTY. When the window comes back
+	//     empty, the probe below runs ReadAll and may open that file and surface
+	//     its failure; `--since all` still surfaces it, as does any window that
+	//     reaches it.
 	//   - A record stamped in a FUTURE calendar month (host clock skew, an
 	//     imported record) drops out of the table. ReadSince's upper edge is
 	//     deliberately fail-closed (see monthOverlapsWindow), whereas the filter
