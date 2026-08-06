@@ -80,7 +80,10 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 				_, _ = fmt.Fprintf(diag, "localdebt: repo root %q does not exist or is not a directory; skipping local debt persistence\n", explicit)
 				return "", false
 			}
-			if root, ok := validateRepoRoot(explicit); ok {
+			// The marker UNION, not .git specifically: this root was named by a
+			// caller, so a repo marked only by .atcr is a legitimate answer. The
+			// stricter rule below applies to roots no human named.
+			if root, ok := validateRepoRoot(explicit, false); ok {
 				return root, true
 			}
 			_, _ = fmt.Fprintf(diag, "localdebt: repo root %q carries no repository marker (.git/.atcr); skipping local debt persistence\n", explicit)
@@ -108,7 +111,17 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 		if _, statErr := os.Stat(filepath.Join(opts.ReviewDir, "manifest.json")); statErr == nil {
 			if m, err := fanout.ReadManifest(opts.ReviewDir); err == nil {
 				if recorded := strings.TrimSpace(m.Root); recorded != "" {
-					if root, ok := validateRepoRoot(recorded); ok {
+					// requireGit: a MACHINE-recorded root must carry .git
+					// specifically, not the .git-or-.atcr union every other tier
+					// accepts (TD internal/localdebt/root.go:133). Nobody typed this
+					// value — the review path stamped it from the engine root, which
+					// cli/serve.go hardcodes to "." — and the directory it names
+					// NECESSARILY contains .atcr/, because atcr just wrote the review
+					// into it. Under the union that made tier 2 re-validate the
+					// server's own CWD, the one directory AllowCWD:false exists to
+					// refuse, so an artifacts-only tree could self-validate into a
+					// store write. .git is the marker no atcr operation creates.
+					if root, ok := validateRepoRoot(recorded, true); ok {
 						return root, true
 					}
 					// Redact to the base name. Unlike the explicit tier's value, which
@@ -172,16 +185,30 @@ func existingDir(p string) (string, bool) {
 }
 
 // validateRepoRoot reports whether path is still a plausible repository root: an
-// existing directory carrying a .git or .atcr marker. The marker pair reuses the
+// existing directory carrying a repo-root marker. The marker pair reuses the
 // repo-root definition already established at cli/root.go rather than inventing a
 // second one.
 //
 // The marker test itself lives in HasRepoRootMarker, which the store's readers
 // (cli/debt.go's debtRepoRoot walk) call as well: one predicate, so writer and
 // reader cannot disagree about which directory is the repo root.
-func validateRepoRoot(path string) (string, bool) {
+//
+// requireGit narrows that pair to .git alone, and exists for exactly one caller: the
+// manifest tier, whose root was recorded by a MACHINE rather than named by a person
+// (TD internal/localdebt/root.go:133). Every atcr run creates .atcr/ in whatever
+// directory it works in, so under the union an artifacts tree vouches for itself;
+// .git is the marker atcr never writes, which is what makes it evidence. It is
+// deliberately NOT the default — the reader walk and the CWD tier keep the union, or
+// a repo whose only marker is .atcr would split writer from reader all over again.
+func validateRepoRoot(path string, requireGit bool) (string, bool) {
 	abs, ok := existingDir(path)
 	if !ok {
+		return "", false
+	}
+	if requireGit {
+		if hasGitMarker(abs) {
+			return abs, true
+		}
 		return "", false
 	}
 	if HasRepoRootMarker(abs) {
@@ -234,12 +261,23 @@ func FindRepoRoot(start string) (string, bool) {
 }
 
 func HasRepoRootMarker(dir string) bool {
-	if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil &&
-		(info.IsDir() || info.Mode().IsRegular()) {
+	if hasGitMarker(dir) {
 		return true
 	}
 	if info, err := os.Lstat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
 		return true
 	}
 	return false
+}
+
+// hasGitMarker reports whether dir carries the .git half of the marker pair, with
+// HasRepoRootMarker's exact rules: a directory OR a regular file (a linked worktree
+// and a submodule both record their root with a .git FILE), never a symlink.
+//
+// It is the whole marker test for a machine-recorded root (validateRepoRoot's
+// requireGit), and half of it everywhere else — one implementation, so the strict
+// and permissive forms cannot drift on what counts as .git.
+func hasGitMarker(dir string) bool {
+	info, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil && (info.IsDir() || info.Mode().IsRegular())
 }

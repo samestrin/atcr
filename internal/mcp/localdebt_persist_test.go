@@ -65,6 +65,11 @@ func debtRecords(t *testing.T, root string) []localdebt.Record {
 func TestReconcileHandler_PersistsToManifestRootWithCWDElsewhere(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
+	// A REAL reviewed repo carries .git. The manifest tier requires it specifically
+	// (TD internal/localdebt/root.go:133) because .atcr/ alone is what atcr itself
+	// creates, so an artifacts tree would otherwise vouch for itself — see
+	// TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate below.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
 	id := reviewFixture(t, root)
 	recordRootInManifest(t, root, id, root)
 	// Finding-path validation now runs against the resolved root (TD-019), so the
@@ -91,6 +96,37 @@ func TestReconcileHandler_PersistsToManifestRootWithCWDElsewhere(t *testing.T) {
 	// The result must be untouched by a side effect that is best-effort by contract.
 	assert.True(t, out.Pass)
 	assert.Equal(t, 1, out.TotalFindings)
+}
+
+// TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate closes the loophole at
+// the layer where it mattered (TD internal/localdebt/root.go:133).
+//
+// AllowCWD:false bars the CWD as a FALLBACK tier; it never established that the
+// RESOLVED root is not the CWD. cli/serve.go hardcodes the engine root to ".", the
+// review path stamps Manifest.Root = absRoot(req.Root), and that directory
+// necessarily contains .atcr/ — atcr just wrote the review into it — so the manifest
+// tier re-validated the server's own working directory and persisted into the very
+// place the design declares meaningless. Requiring .git specifically for a
+// machine-recorded root removes the self-reference: .git is the one marker no atcr
+// operation creates.
+func TestReconcileHandler_ArtifactsOnlyRootDoesNotSelfValidate(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir() // holds .atcr/ (the review fixture) and nothing else
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err, "persistence is best-effort: refusing to persist never fails the reconcile")
+
+	assert.Empty(t, debtRecords(t, root),
+		"an artifacts-only directory must not validate itself into a store write")
+	assert.Contains(t, diag.String(), "skipping local debt persistence",
+		"the refusal must be reported, not silent")
+	assert.True(t, out.Pass, "the reconcile result is unaffected")
 }
 
 // TestReconcileHandler_ExplicitRepoOverridesManifestRoot covers AC8(a)'s argument
