@@ -358,9 +358,24 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// would have rejected as hallucinated. When the root does NOT resolve,
 	// validation stays a no-op (Root: "") and persistence is skipped — the
 	// pre-existing pair, never a fall-through to a guessed tree.
-	storeRoot, storeOK := localdebt.ResolveStoreRoot(localdebt.RootOpts{
-		Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true, Diag: e.diagWriter(),
-	})
+	//
+	// A RELATIVE repo argument is refused before the resolver ever sees it (TD
+	// internal/mcp/handlers.go:401): the explicit tier resolves it with
+	// filepath.Abs, which is relative to the SERVER's process CWD, not to
+	// anything the caller can see. `repo: "."` — the value a model reaches for
+	// first, and the one every CLI doc teaches — would therefore name the
+	// server's own directory, which carries .atcr/ by construction and
+	// self-validates, walking straight past the AllowCWD:false invariant. A path
+	// the caller cannot have meant is an INVALID claim, so it stops here rather
+	// than falling through to the manifest tier (root.go:44).
+	storeRoot, storeOK := "", false
+	if explicit := strings.TrimSpace(in.Repo); explicit != "" && !filepath.IsAbs(explicit) {
+		_, _ = fmt.Fprintf(e.diagWriter(), "localdebt: repo root %q must be an absolute path (a relative one resolves against the MCP server's working directory, not the reviewed repo); skipping local debt persistence\n", explicit)
+	} else {
+		storeRoot, storeOK = localdebt.ResolveStoreRoot(localdebt.RootOpts{
+			Explicit: in.Repo, ReviewDir: dir, AllowCWD: false, RequireMarker: true, Diag: e.diagWriter(),
+		})
+	}
 	validationRoot := ""
 	if storeOK && storeRoot != "" {
 		validationRoot = storeRoot
