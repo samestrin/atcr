@@ -169,6 +169,52 @@ func TestLoadAllSince_UnionsLegacyWithSelectedShards(t *testing.T) {
 	assert.Equal(t, map[string]bool{"legacy": true, "aug": true}, idSet(recs))
 }
 
+// A non-positive window must select NOTHING — including from the legacy
+// ledger. LoadShardsSince's documented posture ("silently load everything is
+// the wrong failure mode for a query whose whole purpose is to be bounded")
+// applies to the whole union: reaching here with since<=0 is a caller bug
+// (ParseSince rejects such values at the CLI boundary), and returning the
+// entire pre-19.4 ledger while dropping every shard is the exact inversion of
+// that posture.
+func TestLoadAllSince_NonPositiveWindowSelectsNothing(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+	mustAppendShard(t, shardDir, now, "aug")
+	require.NoError(t, Append(legacyPath, []Record{
+		{Timestamp: now.Add(-5 * 365 * 24 * time.Hour), ID: "ancient", File: "l.go"},
+	}))
+
+	recs, err := LoadAllSince(shardDir, legacyPath, 0, now)
+	require.NoError(t, err)
+	assert.Empty(t, recs, "a non-positive window selects nothing — not even the legacy ledger")
+}
+
+// The union's dedupe map and output slice are sized by what they hold, so the
+// record-level cutoff is applied to the legacy ledger BEFORE dedupe: a narrow
+// --since then costs proportionally to the window, not to the entire pre-19.4
+// ledger (Epic 35.14's whole point). Safe because a (Timestamp, ID) duplicate
+// group shares its Timestamp, so the cutoff can never split a group.
+func TestLoadAllSince_PreFiltersLegacyBeforeDedupe(t *testing.T) {
+	root := t.TempDir()
+	shardDir := filepath.Join(root, ".atcr", "history")
+	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+	mustAppendShard(t, shardDir, now, "aug")
+	require.NoError(t, Append(legacyPath, []Record{
+		{Timestamp: now.Add(-5 * 365 * 24 * time.Hour), ID: "ancient", File: "l.go"},
+		{Timestamp: now.Add(-24 * time.Hour), ID: "recent", File: "r.go"},
+	}))
+
+	recs, err := LoadAllSince(shardDir, legacyPath, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"aug": true, "recent": true}, idSet(recs),
+		"out-of-window legacy records are dropped before the union, not after")
+}
+
 func idSet(recs []Record) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range recs {
