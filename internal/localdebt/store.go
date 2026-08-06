@@ -1057,6 +1057,10 @@ func latestItem[T foldable](group []T) T {
 	best := group[0]
 	for _, it := range group[1:] {
 		switch {
+		case !orderableTimestamps(it.foldTimestamp(), best.foldTimestamp()):
+			// One side's timestamp cannot be ordered, so there is nothing to compare
+			// and append order decides — the same rule a full tie already uses.
+			best = it
 		case it.foldTimestamp() > best.foldTimestamp():
 			best = it
 		case it.foldTimestamp() == best.foldTimestamp() && ClosedStatusRank(it.foldStatus()) > ClosedStatusRank(best.foldStatus()):
@@ -1066,6 +1070,29 @@ func latestItem[T foldable](group []T) T {
 		}
 	}
 	return best
+}
+
+// orderableTimestamps reports whether both values are RFC3339 and can therefore be
+// compared as strings the way the fold does.
+//
+// The fold's precedence is a lexicographic compare, which makes ts load-bearing for
+// correctness — while decodeRecord validates only schema_version, run_id and id. A
+// record with ts:"" or a non-RFC3339 value decodes cleanly, renders everywhere, and
+// then sorts arbitrarily: "" below every sibling (so it can never be selected in a
+// mixed group), "not-a-timestamp" above every sibling (so it always wins). Neither is
+// an ordering (TD internal/localdebt/store.go:433).
+//
+// Falling back to append order rather than rejecting the record at decode time is
+// deliberate: the value is unusable for SORTING, which is not a reason to make a
+// hand-edited or third-party ts drop a finding out of the backlog entirely. Both
+// callers of the fold reach this through the one generic, so the record path and the
+// streaming summary path cannot disagree about it.
+func orderableTimestamps(a, b string) bool {
+	if _, err := time.Parse(time.RFC3339, a); err != nil {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339, b)
+	return err == nil
 }
 
 // sweepStaleTemps removes compaction temp files (.<month>.jsonl.tmp-*) leaked by a
