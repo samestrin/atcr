@@ -411,6 +411,29 @@ func TestHistoryCmd_PruneNoticeGoesToStderrNotStdout(t *testing.T) {
 	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
 }
 
+// The sibling "nothing to prune" notice is held to the same stream contract: it
+// is a diagnostic and must land on stderr, never in a redirected report.md.
+func TestHistoryCmd_PruneNothingToRemoveNoticeGoesToStderrNotStdout(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--prune", "90d"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, stderr.String(), "no shards older than the retention horizon")
+	assert.NotContains(t, stdout.String(), "no shards", "the nothing-to-prune notice must not corrupt stdout")
+	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
+}
+
 // A destructive retention horizon must be long enough that it cannot plausibly
 // be a mistyped query window: ParseSince's fallback is time.ParseDuration, where
 // "m" means MINUTES, so `--prune 6m` ("six months") would otherwise compute a
@@ -449,6 +472,39 @@ func TestHistoryCmd_PruneBelowSafetyFloorIsUsageErrorAndDeletesNothing(t *testin
 		require.NoError(t, err)
 		assert.NoFileExists(t, shard)
 	})
+}
+
+// The prune failure path (cli/history.go: on a PruneShards error the command
+// must return a NON-usage error — exit 1, not the exit-2 code CI reads as
+// "misconfigured command") is exercised here at CLI level: an unremovable shard
+// dir fails the first deletion, so every shard survives and the error names the
+// shard that could not be removed.
+func TestHistoryCmd_PruneUnremovableShardIsFailureNotUsage(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	root := t.TempDir()
+	old1 := time.Now().Add(-400 * 24 * time.Hour)
+	old2 := time.Now().Add(-500 * 24 * time.Hour)
+	for _, old := range []time.Time{old1, old2} {
+		writeHistoryShard(t, root, old, map[string]any{
+			"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+			"id": "old-" + old.UTC().Format("2006-01"), "file": "p/a.go", "category": "C",
+		})
+	}
+	shardDir := filepath.Join(root, ".atcr", "history")
+	require.NoError(t, os.Chmod(shardDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(shardDir, 0o700) }) // let TempDir removal succeed
+
+	_, err := runHistoryIn(t, root, "--prune", "90d")
+	require.Error(t, err)
+	assert.NotEqual(t, exitUsage, exitCode(err),
+		"a filesystem failure mid-prune is not a usage error")
+	assert.Contains(t, err.Error(), ".jsonl", "the error must name the shard that could not be removed")
+	for _, old := range []time.Time{old1, old2} {
+		assert.FileExists(t, filepath.Join(shardDir, old.UTC().Format("2006-01")+".jsonl"),
+			"a shard that was never removed must still be on disk")
+	}
 }
 
 // Pruning everything must not then tell the user to run their first review —
