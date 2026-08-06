@@ -467,6 +467,36 @@ func TestResolveStoreRoot_RequireMarker(t *testing.T) {
 		assert.Equal(t, marked, root)
 	})
 
+	t.Run("symlinked explicit root is rejected", func(t *testing.T) {
+		// Symmetry with the marker checks, which already use Lstat so a symlinked
+		// .git never vouches for a directory (TD internal/mcp/tools.go:79, brad).
+		// The root itself was the remaining gap: existingDir stats through the
+		// link, so a model-supplied symlink resolved to whatever it pointed at,
+		// and a link repointed afterwards would silently move the store.
+		real := repoDir(t, ".git")
+		link := filepath.Join(t.TempDir(), "repo-link")
+		require.NoError(t, os.Symlink(real, link))
+
+		var diag bytes.Buffer
+		root, ok := ResolveStoreRoot(RootOpts{Explicit: link, AllowCWD: false, RequireMarker: true, Diag: &diag})
+
+		assert.False(t, ok, "a model-supplied symlinked root is a stop signal, not a redirect")
+		assert.Empty(t, root)
+		assert.Contains(t, diag.String(), "symlink")
+	})
+
+	t.Run("symlinked explicit root still resolves without the knob", func(t *testing.T) {
+		// The CLI keeps its permissive tier: an operator who types a path through
+		// a symlinked checkout meant that checkout.
+		real := repoDir(t, ".git")
+		link := filepath.Join(t.TempDir(), "repo-link")
+		require.NoError(t, os.Symlink(real, link))
+
+		_, ok := ResolveStoreRoot(RootOpts{Explicit: link, AllowCWD: false})
+
+		assert.True(t, ok, "the operator-typed tier is unchanged by the model-supplied tightening")
+	})
+
 	t.Run("markerless explicit root still resolves without the knob", func(t *testing.T) {
 		// The CLI stays permissive: its explicit value is operator-typed and has
 		// already been through normalizeRepoFlag.
