@@ -29,7 +29,33 @@ history:
 Reads union both; writes only ever go to the current month's shard. The legacy
 flat ledger is read in place and is never moved, rewritten, or deleted, so a
 repo that accrued history before sharding keeps that data queryable alongside new
-shards. There is nothing to migrate.
+shards. Neither location needs a migration step.
+
+### Upgrading from the `.planning/history/` layout
+
+For one stretch of atcr's history the shards lived at `.planning/history/`
+instead, so that a team could commit and share trend data. That location is no
+longer read: a standalone atcr user has no `.planning/` directory at all, which
+left `atcr history` with nowhere to read or write, so the ledger moved back under
+`.atcr/` where atcr owns its artifacts.
+
+If your repo has a `.planning/history/` directory from that period, **atcr will
+not see it** — the shards are left exactly where they are, and nothing deletes
+them, but they no longer contribute to `atcr history` output. To carry that trend
+data forward, copy the shards across by hand:
+
+```bash
+mkdir -p .atcr/history
+cp -n .planning/history/*.jsonl .atcr/history/
+```
+
+`cp -n` will not clobber a month that already has a shard in the new location. If
+both locations hold the same month, merge them by concatenating the two files —
+records are one JSON object per line and reads deduplicate on (`ts`, `id`), so a
+run present in both is counted once.
+
+Note that `.atcr/` is gitignored: trend data is per-checkout from here on, and is
+no longer shared through version control.
 
 The month in a shard's name is taken in **UTC**, so shard names are deterministic
 regardless of the machine's local zone, and every record from one run lands in

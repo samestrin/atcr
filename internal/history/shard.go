@@ -3,6 +3,8 @@ package history
 import (
 	"path/filepath"
 	"time"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // shardMonthLayout is the year-month stem of a monthly history shard file.
@@ -83,6 +85,20 @@ func LoadAll(shardDir, legacyPath string) ([]Record, error) {
 // (seconds, nanoseconds) rather than UnixNano because UnixNano is undefined
 // outside 1678-2262 — a record whose "ts" field was missing or malformed decodes
 // to the zero time (year 1), which is exactly the out-of-range case.
+//
+// Two rules keep the collapse from losing information:
+//
+//   - A record with an EMPTY id is never deduplicated. An id-less record (a
+//     malformed line that still parsed as JSON) has no identity to match on, so
+//     keying it as (ts, "") would collapse every id-less record from one run into
+//     a single row — silent loss the plain concatenation this replaces did not
+//     have.
+//   - A duplicate resolves to the HIGHEST severity seen, matching RecordReview's
+//     within-run rule (capture.go). This is reachable: a resumed review
+//     re-records the whole pool stamped with the ORIGINAL run's start time
+//     (cli/resume.go), so the fuller resumed run's re-settled severity shares a
+//     (ts, id) with the earlier partial run's. Keeping whichever copy was read
+//     first would let file order decide the reported severity.
 func dedupeOccurrences(recs []Record) []Record {
 	if len(recs) < 2 {
 		return recs
@@ -93,13 +109,21 @@ func dedupeOccurrences(recs []Record) []Record {
 		id   string
 	}
 	out := make([]Record, 0, len(recs))
-	seen := make(map[occurrence]struct{}, len(recs))
+	seen := make(map[occurrence]int, len(recs)) // occurrence -> index in out
 	for _, r := range recs {
-		key := occurrence{sec: r.Timestamp.Unix(), nsec: r.Timestamp.Nanosecond(), id: r.ID}
-		if _, dup := seen[key]; dup {
+		if r.ID == "" {
+			out = append(out, r)
 			continue
 		}
-		seen[key] = struct{}{}
+		key := occurrence{sec: r.Timestamp.Unix(), nsec: r.Timestamp.Nanosecond(), id: r.ID}
+		if idx, dup := seen[key]; dup {
+			if stream.SeverityRank[stream.NormalizeSeverity(r.Severity)] >
+				stream.SeverityRank[stream.NormalizeSeverity(out[idx].Severity)] {
+				out[idx].Severity = r.Severity
+			}
+			continue
+		}
+		seen[key] = len(out)
 		out = append(out, r)
 	}
 	return out

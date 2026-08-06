@@ -11,10 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A shard that cannot be removed fails the call, and the result still names the
-// shards that WERE removed before the failure — deletion cannot be rolled back,
-// so the report must describe what actually happened, not a clean abort.
-func TestPruneShards_UnremovableShardReportsPartialProgress(t *testing.T) {
+// A shard that cannot be unlinked fails the call rather than reporting a
+// success it did not achieve. Here the very first unlink is blocked, so nothing
+// was removed and Removed is empty — the result reports what actually happened.
+// (The partial case, where an earlier unlink succeeded and a later one failed,
+// cannot be provoked portably: unlink permission is a property of the directory,
+// so it is all-or-nothing within one pass. PruneResult is built incrementally so
+// that case would report the earlier removals, and the CLI prints Removed before
+// surfacing the error — see TestHistoryCmd_PruneNoticeGoesToStderrNotStdout.)
+func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("needs POSIX directory permissions and a non-root user")
 	}

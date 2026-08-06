@@ -10,9 +10,16 @@ import (
 )
 
 // PruneResult reports what a prune pass did: the base names of the shards it
-// removed (sorted, so the report is deterministic) and how many shard files it
-// kept. Removed is empty when nothing was past the horizon — a distinction the
-// caller needs in order to say "pruned N" versus "nothing to prune".
+// removed (sorted, so the report is deterministic) and how many *.jsonl files it
+// retained. Kept counts every retained candidate file, including one whose stem
+// is not a YYYY-MM month — such a file is deliberately never a deletion
+// candidate, so it is retained by definition. Removed is empty when nothing was
+// past the horizon, a distinction the caller needs in order to say "pruned N"
+// versus "nothing to prune".
+//
+// Removed is built incrementally: on a failed pass it names the shards already
+// unlinked before the failure. Deletion cannot be rolled back, so a caller must
+// report those rather than treating the error as a clean abort.
 type PruneResult struct {
 	Removed []string
 	Kept    int

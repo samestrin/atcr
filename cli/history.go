@@ -79,20 +79,31 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	now := time.Now()
 
 	out := cmd.OutOrStdout()
+	// Prune notices go to stderr, not stdout: stdout carries the markdown table
+	// and nothing else, so `atcr history --prune 365d > report.md` still produces
+	// a valid document.
+	diag := cmd.ErrOrStderr()
 
 	// Prune first, so the report that follows describes what is actually left on
-	// disk. Removals are always named: deleting a month of trend data silently
-	// would leave the next query looking like data loss.
+	// disk. Removals are always named — including on the error path, since a
+	// failed prune is not an unwound one: shards removed before the failure are
+	// already gone, and a deletion the user is never told about is exactly how a
+	// later query reads as data loss.
+	pruned := false
 	if horizon > 0 {
 		res, perr := history.PruneShards(history.ShardDir(root), horizon, now)
+		pruned = true
+		if len(res.Removed) > 0 {
+			_, _ = fmt.Fprintf(diag, "pruned %d shard(s) past the retention horizon: %s (%d file(s) kept)\n",
+				len(res.Removed), strings.Join(res.Removed, ", "), res.Kept)
+		}
 		if perr != nil {
-			return usageError(perr) // exit 2; res.Removed reports what was already deleted
+			// A filesystem failure, not a bad invocation: exit 1, not the usage
+			// code CI scripts read as "misconfigured command".
+			return fmt.Errorf("pruning history: %w", perr)
 		}
 		if len(res.Removed) == 0 {
-			_, _ = fmt.Fprintf(out, "no shards older than the retention horizon — nothing pruned (%d kept)\n", res.Kept)
-		} else {
-			_, _ = fmt.Fprintf(out, "pruned %d shard(s) past the retention horizon: %s (%d kept)\n",
-				len(res.Removed), strings.Join(res.Removed, ", "), res.Kept)
+			_, _ = fmt.Fprintf(diag, "no shards older than the retention horizon — nothing pruned (%d file(s) kept)\n", res.Kept)
 		}
 	}
 
@@ -106,7 +117,9 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	// out-of-window history also loads zero records. Only a genuinely empty store
 	// earns the first-run hint — telling a user to "run atcr review first" when
 	// they have history that simply predates the window would read as data loss.
-	if len(recs) == 0 && !history.HasAny(history.ShardDir(root), history.LegacyLedgerPath(root)) {
+	// After a prune the hint is suppressed outright: "run atcr review first"
+	// directly under "pruned 4 shard(s)" would contradict the line above it.
+	if len(recs) == 0 && !pruned && !history.HasAny(history.ShardDir(root), history.LegacyLedgerPath(root)) {
 		_, _ = fmt.Fprintln(out, "no history recorded yet — run 'atcr review' first")
 		return nil
 	}

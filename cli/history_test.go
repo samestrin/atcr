@@ -306,3 +306,48 @@ func TestHistoryCmd_PruneWithPackageIsUsageErrorAndDeletesNothing(t *testing.T) 
 	assert.Equal(t, exitUsage, exitCode(err))
 	assert.FileExists(t, shard, "a rejected prune must not delete anything")
 }
+
+// Prune notices are diagnostics, not payload: stdout carries the markdown table
+// and nothing else, so `atcr history --prune 365d > report.md` stays a valid
+// document.
+func TestHistoryCmd_PruneNoticeGoesToStderrNotStdout(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--prune", "90d"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, stderr.String(), "pruned")
+	assert.NotContains(t, stdout.String(), "pruned")
+	assert.Contains(t, stdout.String(), "| Package |", "stdout still carries the table")
+}
+
+// Pruning everything must not then tell the user to run their first review —
+// that would contradict the prune notice printed a line earlier.
+func TestHistoryCmd_PruneEverythingDoesNotSuggestFirstRun(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+
+	out, err := runHistoryIn(t, root, "--prune", "90d")
+	require.NoError(t, err)
+	assert.Contains(t, out, "pruned")
+	assert.NotContains(t, out, "run 'atcr review' first")
+}

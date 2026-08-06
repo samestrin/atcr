@@ -138,7 +138,7 @@ func TestLoadShards_IgnoresNonJSONLFiles(t *testing.T) {
 // ledger, so history that accrued before sharding stays queryable.
 func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
 	root := t.TempDir()
-	shardDir := filepath.Join(root, ".planning", "history")
+	shardDir := filepath.Join(root, ".atcr", "history")
 	legacyPath := filepath.Join(root, ".atcr", "findings-history.jsonl")
 
 	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
@@ -161,7 +161,7 @@ func TestLoadAll_MergesShardsAndLegacy(t *testing.T) {
 // Absent shard dir and absent legacy file is a valid empty history.
 func TestLoadAll_AbsentBothIsEmpty(t *testing.T) {
 	root := t.TempDir()
-	recs, err := LoadAll(filepath.Join(root, ".planning", "history"), filepath.Join(root, ".atcr", "findings-history.jsonl"))
+	recs, err := LoadAll(ShardDir(root), LegacyLedgerPath(root))
 	require.NoError(t, err)
 	assert.Empty(t, recs)
 }
@@ -176,7 +176,7 @@ func TestLoadAll_DoesNotMutateLegacyFile(t *testing.T) {
 	before, err := os.ReadFile(legacyPath)
 	require.NoError(t, err)
 
-	_, err = LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
+	_, err = LoadAll(ShardDir(root), legacyPath)
 	require.NoError(t, err)
 
 	after, err := os.ReadFile(legacyPath)
@@ -196,7 +196,7 @@ func TestLoadAll_UnreadableLegacyIsError(t *testing.T) {
 	require.NoError(t, os.Chmod(legacyPath, 0o000))
 	defer func() { _ = os.Chmod(legacyPath, 0o644) }() // ensure cleanup can remove the file
 
-	_, err := LoadAll(filepath.Join(root, ".planning", "history"), legacyPath)
+	_, err := LoadAll(ShardDir(root), legacyPath)
 	require.Error(t, err)
 }
 
