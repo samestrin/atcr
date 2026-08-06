@@ -57,9 +57,11 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 		since = d
 	}
 	// Parsed before anything is read or deleted: a bad horizon must fail the
-	// command outright rather than after a partial prune.
+	// command outright rather than after a partial prune. Gate on the flag being
+	// SET, not on a non-blank value: a whitespace-only --prune is a passed
+	// destructive flag and must fail as a usage error, not silently read as unset.
 	var horizon time.Duration
-	if raw, _ := cmd.Flags().GetString("prune"); strings.TrimSpace(raw) != "" {
+	if raw, _ := cmd.Flags().GetString("prune"); cmd.Flags().Changed("prune") {
 		d, err := history.ParseSince(raw)
 		if err != nil {
 			return usageError(fmt.Errorf("--prune: %w", err)) // exit 2, nothing deleted
