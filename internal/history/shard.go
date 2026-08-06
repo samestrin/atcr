@@ -65,11 +65,18 @@ func LoadShards(dir string) ([]Record, error) {
 
 // LoadAll returns the full queryable history: every monthly shard under shardDir
 // (LoadShards) merged with the legacy flat ledger at legacyPath, if it still
-// exists. The legacy file — the pre-19.4 .atcr/findings-history.jsonl — is read
-// in place and read-only; it is never moved or rewritten (Epic 19.4: "no complex
-// write-migrations"), so a project that accrued history before sharding keeps
-// that data visible alongside new shards. An absent shard dir or legacy file is
-// simply empty history, not an error.
+// exists. Both locations live under .atcr/ (Epic 35.14), so a standalone user
+// with no .planning/ directory gets the whole ledger. The legacy file — the
+// pre-19.4 .atcr/findings-history.jsonl — is read in place and read-only; it is
+// never moved or rewritten (Epic 19.4: "no complex write-migrations"), so a
+// project that accrued history before sharding keeps that data visible alongside
+// new shards. An absent shard dir or legacy file is simply empty history, not an
+// error.
+//
+// The union is deduplicated by dedupeOccurrences; see that function for why the
+// key is (Timestamp, ID). Legacy records come first, so ordering stays
+// chronological across the two sources: the flat ledger only ever holds pre-19.4
+// runs, which all predate the oldest shard.
 func LoadAll(shardDir, legacyPath string) ([]Record, error) {
 	shards, err := LoadShards(shardDir)
 	if err != nil {
@@ -79,5 +86,50 @@ func LoadAll(shardDir, legacyPath string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(legacy, shards...), nil
+	return dedupeOccurrences(append(legacy, shards...)), nil
+}
+
+// dedupeOccurrences collapses records that describe the SAME occurrence of a
+// finding — the same finding id recorded by the same run — keeping the first one
+// seen. Duplicates arise when a repo's two read locations both hold a run's
+// records, which is what a cutover between storage locations produces; counting
+// such a record twice would inflate the per-severity table.
+//
+// The key is (Timestamp, ID), and both halves are load-bearing:
+//
+//   - ID alone would fold every recurrence of a finding into one row. A finding
+//     that survives six monthly reviews IS the trend this ledger exists to
+//     report (Epic 35.14 Design Decision 2 — "history's value is the history"),
+//     so each run's occurrence must survive. RecordReview dedupes by id alone
+//     (capture.go) only because every record in one run shares a Timestamp; that
+//     precondition does not hold across the union.
+//   - Timestamp alone would fold every distinct finding from a single run into
+//     one row, since one run stamps all of its records identically.
+//
+// Timestamp is compared as an instant rather than as a time.Time value: RFC3339
+// round-trips preserve the zone offset, so the same instant read from two files
+// written in different zones is one occurrence, not two. The instant is keyed as
+// (seconds, nanoseconds) rather than UnixNano because UnixNano is undefined
+// outside 1678-2262 — a record whose "ts" field was missing or malformed decodes
+// to the zero time (year 1), which is exactly the out-of-range case.
+func dedupeOccurrences(recs []Record) []Record {
+	if len(recs) < 2 {
+		return recs
+	}
+	type occurrence struct {
+		sec  int64
+		nsec int
+		id   string
+	}
+	out := make([]Record, 0, len(recs))
+	seen := make(map[occurrence]struct{}, len(recs))
+	for _, r := range recs {
+		key := occurrence{sec: r.Timestamp.Unix(), nsec: r.Timestamp.Nanosecond(), id: r.ID}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, r)
+	}
+	return out
 }
