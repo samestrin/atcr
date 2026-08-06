@@ -1518,12 +1518,31 @@ func shardPaths(dir string) ([]string, int64, error) {
 	return paths, size, nil
 }
 
-// minBytesPerRecord is a floor on one encoded record's size on disk.
-const minBytesPerRecord = 1
+// minBytesPerRecord is a conservative floor on one encoded record's size on disk: the
+// required fields alone (schema_version, id, run_id, ts) plus their JSON punctuation
+// and the trailing newline exceed this, and a real record — which also carries
+// severity, file, problem and fix — is several times larger. It is deliberately far
+// below the true minimum, because the only thing that depends on it is whether an
+// EXACT count is needed, and underestimating merely means counting when counting was
+// not strictly necessary.
+const minBytesPerRecord = 64
 
-// needsExactLineCount reports whether the store's size leaves the record threshold in
-// doubt.
-func needsExactLineCount(size int64, policy CompactPolicy) bool { return true }
+// needsExactLineCount reports whether the store's size on disk leaves the record
+// threshold genuinely in doubt.
+//
+// The record threshold is a LINE count, and counting lines is O(store bytes): every
+// shard opened and read end to end. The byte threshold short-circuits that scan only
+// when it TRIPS, so for every store under it — the overwhelmingly common case — the
+// scan ran in full on every append-bearing reconcile just to conclude there was
+// nothing to do, on top of the read the reconcile already performed
+// (TD internal/localdebt/store.go:1388).
+//
+// A store holding N lines is at least N*minBytesPerRecord bytes, so a store smaller
+// than maxRecords*minBytesPerRecord cannot hold maxRecords lines and the count cannot
+// change the answer. Only near the boundary is it consulted.
+func needsExactLineCount(size int64, policy CompactPolicy) bool {
+	return size >= int64(policy.maxRecords())*minBytesPerRecord
+}
 
 // countLines counts '\n' bytes across the given shards with one reusable buffer and
 // no decode, so the threshold check never pays for JSON parsing.
@@ -1647,8 +1666,10 @@ func grewPast(current, watermark int64) bool {
 // Two conditions must both hold:
 //
 //  1. A THRESHOLD is tripped — policy.MaxRecords lines or policy.MaxBytes bytes,
-//     whichever trips first. The byte check comes first and short-circuits the line
-//     scan, since it is satisfied by stat alone.
+//     whichever trips first. Both are decided from stat alone whenever that is
+//     possible: the byte check trips outright, and the record check is skipped
+//     entirely for a store too small to hold maxRecords lines (needsExactLineCount).
+//     The O(store bytes) line scan runs only near the record boundary.
 //  2. The store has GROWN at least 50% past the watermark the last compaction left
 //     (see autoCompactGrowthNum). Without this, a store whose post-compaction floor
 //     already exceeds the threshold re-compacts on every single append forever,
@@ -1667,11 +1688,12 @@ func MaybeCompact(dir string, policy CompactPolicy, opts ReadOpts) (CompactResul
 		return CompactResult{}, false, err
 	}
 
-	// records stays -1 when the byte threshold trips first and the line scan is
-	// skipped; the growth gate then measures the dimension it actually has.
+	// records stays -1 when the line scan is skipped — because the byte threshold
+	// tripped first, or because the store is too small to reach the record threshold
+	// at all — and the growth gate then measures the dimension it actually has.
 	records := -1
 	tripped := size >= policy.maxBytes()
-	if !tripped {
+	if !tripped && needsExactLineCount(size, policy) {
 		records, err = countLines(paths)
 		if err != nil {
 			return CompactResult{}, false, err
