@@ -1264,39 +1264,47 @@ func (s stagedShard) discard() {
 // failure paths are scoped to ONE shard: the previous inline version deferred its
 // cleanup to the end of the whole compaction closure, so every shard's temp handle
 // accumulated until the last one finished.
+// The content is STREAMED to the file through a bufio.Writer rather than accumulated
+// in a bytes.Buffer and written once (TD internal/localdebt/store.go:1064). Buffering
+// the shard put a whole month's encoded bytes on the heap — plus the growth doubling
+// a bytes.Buffer pays getting there — on top of the records already materialized by
+// the read, inside `atcr reconcile` and inside a long-lived MCP server process. Peak
+// heap for the write is now one fixed buffer plus one marshaled record.
 func stageShard(dir, month string, recs []Record, preserved [][]byte) (stagedShard, error) {
-	var buf bytes.Buffer
-	for _, r := range recs {
-		line, err := json.Marshal(r)
-		if err != nil {
-			return stagedShard{}, fmt.Errorf("marshaling localdebt record: %w", err)
-		}
-		buf.Write(line)
-		buf.WriteByte('\n')
-	}
-	// Carry forward-incompatible lines through byte-for-byte. They are never
-	// re-marshaled: this binary's Record cannot round-trip fields it does not
-	// declare, so marshaling a decoded copy is precisely how the data would be lost.
-	for _, line := range preserved {
-		buf.Write(line)
-		buf.WriteByte('\n')
-	}
-
 	tmp, err := os.CreateTemp(dir, "."+month+".jsonl.tmp-*")
 	if err != nil {
 		return stagedShard{}, fmt.Errorf("creating temp file for compaction: %w", basePathErr(err))
 	}
 	staged := stagedShard{tmpName: tmp.Name(), path: filepath.Join(dir, month+".jsonl")}
-
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
+	fail := func(what string, err error) (stagedShard, error) {
 		_ = tmp.Close()
 		staged.discard()
-		return stagedShard{}, fmt.Errorf("writing compacted records: %w", basePathErr(err))
+		return stagedShard{}, fmt.Errorf("%s: %w", what, basePathErr(err))
+	}
+
+	bw := bufio.NewWriter(tmp)
+	enc := json.NewEncoder(bw) // one compact line plus its newline per record
+	for _, r := range recs {
+		if err := enc.Encode(r); err != nil {
+			return fail("writing compacted records", err)
+		}
+	}
+	// Carry forward-incompatible lines through byte-for-byte. They are never
+	// re-marshaled: this binary's Record cannot round-trip fields it does not
+	// declare, so marshaling a decoded copy is precisely how the data would be lost.
+	for _, line := range preserved {
+		if _, err := bw.Write(line); err != nil {
+			return fail("writing compacted records", err)
+		}
+		if err := bw.WriteByte('\n'); err != nil {
+			return fail("writing compacted records", err)
+		}
+	}
+	if err := bw.Flush(); err != nil {
+		return fail("writing compacted records", err)
 	}
 	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		staged.discard()
-		return stagedShard{}, fmt.Errorf("setting compacted file permissions: %w", basePathErr(err))
+		return fail("setting compacted file permissions", err)
 	}
 	if err := tmp.Close(); err != nil {
 		staged.discard()

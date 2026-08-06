@@ -2078,11 +2078,14 @@ func TestStageShard_StreamsInsteadOfBufferingTheWholeShard(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, string(onDisk), encoded)
 
-	// A streaming writer allocates its fixed buffer plus per-line marshaling; a
-	// whole-shard buffer allocates the entire encoded shard on top of that (and more,
-	// through its growth doubling). Half the shard is comfortably between the two.
+	// The bound is the encoded shard itself. A streaming writer allocates a fixed
+	// buffer plus whatever encoding/json needs per record — transient garbage that
+	// stays well under one shard's worth. A whole-shard bytes.Buffer allocates the
+	// entire shard ON TOP of that same per-record cost, and pays its growth doubling
+	// getting there, which lands several times over the bound. Measured on this
+	// fixture: ~0.8 MB streaming against ~5.2 MB buffered for a 1.2 MB shard.
 	allocated := after.TotalAlloc - before.TotalAlloc
-	assert.Less(t, allocated, uint64(encoded/2),
+	assert.Less(t, allocated, uint64(encoded),
 		"staging a %d-byte shard allocated %d bytes: the rewrite must stream, not buffer the shard",
 		encoded, allocated)
 }
