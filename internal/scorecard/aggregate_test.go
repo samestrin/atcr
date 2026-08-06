@@ -47,6 +47,8 @@ func TestParseSince(t *testing.T) {
 		{"-1d", 0, true},
 		{"", 0, true},
 		{"5y", 0, true},
+		{"213504d", 0, true},
+		{"999999999d", 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
