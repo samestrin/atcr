@@ -52,6 +52,16 @@ func LoadShards(dir string, diag ...io.Writer) ([]Record, error) {
 // key is (Timestamp, ID). Legacy records come first, so ordering stays
 // chronological across the two sources: the flat ledger only ever holds pre-19.4
 // runs, which all predate the oldest shard.
+//
+// NOTE: this is a TEST-FACING PRIMITIVE, kept deliberately — it has had no
+// production caller since Epic 35.14 pointed cli/history.go at LoadAllSince. It
+// stays because it is the unwindowed union, which is exactly what the AC2
+// union+dedup tests want to assert: expressing them through LoadAllSince would
+// mean inventing a "wide enough" duration and a now, making tests of the MERGE
+// depend on clock arithmetic that has nothing to do with what they cover. The
+// windowing logic is tested separately against LoadAllSince. Both share
+// unionWithLegacy, so the two entry points cannot drift on legacy handling or
+// dedupe, and this wrapper cannot rot independently of the one in production use.
 func LoadAll(shardDir, legacyPath string, diag ...io.Writer) ([]Record, error) {
 	shards, err := LoadShards(shardDir, diag...)
 	if err != nil {
