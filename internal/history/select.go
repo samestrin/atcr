@@ -16,10 +16,12 @@ import (
 // The point is that selection happens on the FILENAME, before anything is
 // opened. Month sharding is a real index here, unlike in the sibling debt store:
 // the dominant query is time-windowed and the file name encodes the month, so a
-// `--since 30d` query opens at most two files no matter how many years of
-// history a repo has accrued (Epic 35.14 Design Decision 3). Enumeration still
-// costs one directory read, which is O(months) in stat calls but zero in bytes
-// parsed — the part that grows with the ledger.
+// `--since 30d` query opens at most two MONTH-NAMED shards no matter how many
+// years of history a repo has accrued (Epic 35.14 Design Decision 3) — plus any
+// *.jsonl whose stem does not parse as YYYY-MM and any future-dated shard, both
+// always selected (below), and the legacy flat ledger, which LoadAllSince always
+// reads in full. Enumeration still costs one directory read, which is O(months)
+// in stat calls but zero in bytes parsed — the part that grows with the ledger.
 //
 // Selection may over-select but must never under-select: it works at file
 // granularity, so a shard is taken whole as soon as any instant in its month is
@@ -42,7 +44,7 @@ import (
 // A missing dir is a valid empty history, not an error (mirrors LoadShards).
 func LoadShardsSince(dir string, since time.Duration, now time.Time) ([]Record, error) {
 	if since <= 0 {
-		return nil, nil
+		return []Record{}, nil // an explicit empty result, not a nil slice: the caller asked a bounded query
 	}
 	cutoff := now.Add(-since)
 	return loadShardsWhere(dir, func(name string) bool {

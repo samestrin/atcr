@@ -6,7 +6,11 @@
 // 19.4 introduced month sharding; Epic 35.14 moved the shards under .atcr/, so a
 // standalone user with no .planning/ directory can record and query history).
 // Sharding by month is also the read index: a --since query selects shards by
-// filename and never opens one whose month falls outside the window. The `atcr
+// filename and never opens one whose filename proves its month falls outside
+// the window. Two cases are deliberately always read (see LoadShardsSince's
+// doc): a *.jsonl whose stem does not parse as YYYY-MM, and any future-dated
+// shard — and the legacy flat ledger is read in full on every query, having no
+// month in its name to select on. The `atcr
 // history` command reads the selected shards, merged with the legacy pre-19.4
 // flat ledger at .atcr/findings-history.jsonl if present, filtered by a duration
 // window (--since) and a package path prefix (--package), and renders a markdown
