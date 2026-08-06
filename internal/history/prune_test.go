@@ -31,7 +31,10 @@ func TestPruneShards_RemovesWholeShardsPastHorizon(t *testing.T) {
 	assert.FileExists(t, edge)
 	assert.NoFileExists(t, drop)
 	assert.NoFileExists(t, older)
-	assert.ElementsMatch(t, []string{"2024-03.jsonl", "2026-01.jsonl"}, res.Removed)
+	// assert.Equal, not ElementsMatch: the PruneResult doc promises Removed is
+	// sorted ("so the report is deterministic"), and only an ordered assertion
+	// pins that contract.
+	assert.Equal(t, []string{"2024-03.jsonl", "2026-01.jsonl"}, res.Removed, "Removed must be sorted for a deterministic report")
 	assert.Equal(t, 2, res.Kept)
 }
 
