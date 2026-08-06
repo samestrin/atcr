@@ -1,6 +1,7 @@
 package history
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,10 +17,10 @@ import (
 // success it did not achieve. Here the very first unlink is blocked, so nothing
 // was removed and Removed is empty — the result reports what actually happened.
 // (The partial case, where an earlier unlink succeeded and a later one failed,
-// cannot be provoked portably: unlink permission is a property of the directory,
-// so it is all-or-nothing within one pass. PruneResult is built incrementally so
-// that case would report the earlier removals, and the CLI prints Removed before
-// surfacing the error — see TestHistoryCmd_PruneNoticeGoesToStderrNotStdout.)
+// is proven portably via the osRemove seam in
+// TestPruneShards_PartialFailureNamesEarlierRemovals below; the CLI error-path
+// contract — non-usage exit, failed shard named — is pinned by
+// TestHistoryCmd_PruneUnremovableShardIsFailureNotUsage.)
 func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("needs POSIX directory permissions and a non-root user")
@@ -38,6 +39,37 @@ func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 	assert.Empty(t, res.Removed, "nothing could be removed, so nothing is reported as removed")
 	assert.Equal(t, 2, res.Kept,
 		"the doomed-but-unremoved shards are still on disk — Kept must count every retained candidate file, including on the failure path")
+}
+
+// A failure MID-pass — an earlier unlink succeeded, a later one fails — must
+// report the shards already unlinked (deletion cannot be rolled back, so the
+// caller has to name them) and count the un-attempted remainder as Kept.
+// Proven portably via the osRemove seam: failing the second removal.
+func TestPruneShards_PartialFailureNamesEarlierRemovals(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	mustAppendShard(t, dir, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "a")
+	mustAppendShard(t, dir, time.Date(2020, 2, 1, 12, 0, 0, 0, time.UTC), "b")
+
+	realRemove := osRemove
+	calls := 0
+	osRemove = func(name string) error {
+		calls++
+		if calls == 2 {
+			return errors.New("simulated unlink failure")
+		}
+		return realRemove(name)
+	}
+	t.Cleanup(func() { osRemove = realRemove })
+
+	res, err := PruneShards(dir, 30*24*time.Hour, now)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2020-02.jsonl", "the error names the shard that could not be removed")
+	assert.Equal(t, []string{"2020-01.jsonl"}, res.Removed,
+		"removals before the failure are reported, never rolled back")
+	assert.Equal(t, 1, res.Kept, "the failed shard is retained on disk and counted")
+	assert.NoFileExists(t, filepath.Join(dir, "2020-01.jsonl"))
+	assert.FileExists(t, filepath.Join(dir, "2020-02.jsonl"))
 }
 
 // A concurrent prune that already unlinked a doomed shard turns this pass's
