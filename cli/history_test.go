@@ -256,6 +256,29 @@ func TestHistoryCmd_PruneRemovesOutOfHorizonShards(t *testing.T) {
 	assert.Contains(t, out, old.UTC().Format("2006-01"), "the removed shard must be named in the output")
 }
 
+// An unreadable ledger is a filesystem failure, not a bad invocation: it must
+// exit 1, not the usage code (2) CI scripts read as "misconfigured command" —
+// the same classification the prune error path already applies nine lines above.
+func TestHistoryCmd_UnreadableShardsDirIsFailureNotUsage(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "s1", "file": "p/a.go", "category": "C",
+	})
+	shardDir := filepath.Join(root, ".atcr", "history")
+	require.NoError(t, os.Chmod(shardDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(shardDir, 0o700) }) // let TempDir removal succeed
+
+	_, err := runHistoryIn(t, root)
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err),
+		"a permission fault on the ledger is not a usage error")
+}
+
 // A whitespace-only --prune is a passed-but-degenerate value: the user typed a
 // destructive flag, so silently treating it as unset (no parse error, no prune,
 // no notice) lets them believe retention was applied. It must fail with the same
