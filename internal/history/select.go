@@ -42,6 +42,16 @@ import (
 // means a caller bug, and "silently load everything" is the wrong failure mode
 // for a query whose whole purpose is to be bounded.
 //
+// That the READ paths return empty here while PruneShards ERRORS on a
+// non-positive horizon is deliberate, not an inconsistency left unresolved.
+// A read that degrades to empty is recoverable — re-run the query — so the
+// bounded-query contract is satisfied by returning nothing. PruneShards is this
+// package's one irreversible operation, and "retain nothing" would wipe the
+// ledger, so it is the only entry point where a strict error contract earns its
+// keep. Both readers return a FULLY empty result (LoadAllSince guards the same
+// way before touching the legacy ledger), so no caller can observe the
+// half-populated result the two behaviors might otherwise suggest.
+//
 // A missing dir is a valid empty history, not an error (mirrors LoadShards).
 // An unreadable shard is skipped with a warning to diag (default os.Stderr).
 func LoadShardsSince(dir string, since time.Duration, now time.Time, diag ...io.Writer) ([]Record, error) {
