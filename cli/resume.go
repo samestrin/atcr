@@ -215,11 +215,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		log.FromContext(ctx).Debug(w)
 	}
 
-	// Resolve the repo root once so both the AllComplete re-reconcile path and the
-	// normal completion path append history to the same repo-root-relative shard
-	// the `atcr history` read path uses — never a CWD-relative dir a subdir run
-	// writes but never reads back. Fall back to CWD on resolution failure,
-	// preserving the prior behavior.
+	// Resolve the repo root once so the normal completion path appends history to
+	// the same repo-root-relative shard the `atcr history` read path uses — never
+	// a CWD-relative dir a subdir run writes but never reads back. Fall back to
+	// CWD on resolution failure, preserving the prior behavior.
 	histRoot, herr := repoRoot()
 	if herr != nil {
 		histRoot = "."
