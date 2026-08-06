@@ -238,6 +238,108 @@ func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
 	require.NotEmpty(t, env.Reviewers, "old records must appear in export with --since all")
 }
 
+// unreadableMonthFileFor makes the month file holding a record of the given age
+// unreadable and returns its name, so a test can prove the leaderboard never
+// opened it: an opened file at mode 0o000 fails the read, and the leaderboard
+// surfaces that failure as an error. Nothing else can distinguish "not read" from
+// "read and ignored" — a record simply missing from the output would also be
+// explained by the in-memory filter, which is exactly what this epic is not about.
+func unreadableMonthFileFor(t *testing.T, ageDays int) string {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	name := time.Now().UTC().AddDate(0, 0, -ageDays).Format("2006-01") + ".jsonl"
+	path := filepath.Join(dir, name)
+	require.FileExists(t, path, "the month file must exist before it is locked")
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	return name
+}
+
+// TestLeaderboardCmd_OutOfWindowMonthFileNeverOpened is the epic's core assertion:
+// a --since window selects month FILES before opening them, so a month outside the
+// window is never read. The out-of-window file is locked at 0o000 — an all-history
+// read fails on it (see the sibling test below), so a clean exit 0 proves the file
+// was skipped at selection rather than read and filtered away afterwards.
+func TestLeaderboardCmd_OutOfWindowMonthFileNeverOpened(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	isolate(t)
+	storeLeaderboardRec(t, 1, "recent", "m")
+	storeLeaderboardRec(t, 400, "ancient", "m") // ~13 months back: its own month file
+	locked := unreadableMonthFileFor(t, 400)
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+	require.Equal(t, 0, code, "the out-of-window month file must never be opened: %s", out)
+	require.Contains(t, out, "recent")
+	require.NotContains(t, out, locked, "no diagnostic may name a file the window excluded")
+	require.NotContains(t, out, "failed to read scorecard store")
+}
+
+// TestLeaderboardCmd_SinceAllStillOpensEveryMonthFile is the control for the test
+// above: with the window disabled, the same locked file IS opened and its failure
+// surfaces. Without this pair, the assertion above would also pass if the window
+// silently swallowed read errors.
+func TestLeaderboardCmd_SinceAllStillOpensEveryMonthFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0o000 does not block reads when running as root")
+	}
+	isolate(t)
+	storeLeaderboardRec(t, 1, "recent", "m")
+	storeLeaderboardRec(t, 400, "ancient", "m")
+	unreadableMonthFileFor(t, 400)
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "all")
+	require.Equal(t, 1, code, "an all-history read still opens every month file: %s", out)
+	require.Contains(t, out, "failed to read scorecard store")
+}
+
+// TestLeaderboardCmd_WindowedReadKeepsEmptyStoreAndNoMatchDistinct pins the two
+// states a naive windowed read collapses: with records outside the window never
+// entering the result set, a populated store looks identical to an empty one. They
+// have different exit codes and different messages, and both run the same command
+// path, so they are asserted together.
+func TestLeaderboardCmd_WindowedReadKeepsEmptyStoreAndNoMatchDistinct(t *testing.T) {
+	t.Run("empty store exits 0", func(t *testing.T) {
+		isolate(t)
+		code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+		require.Equal(t, 0, code, "no data at all is a graceful empty state: %s", out)
+		require.Contains(t, out, "No scorecard data found")
+	})
+
+	t.Run("all data outside the window exits 1", func(t *testing.T) {
+		isolate(t)
+		storeLeaderboardRec(t, 400, "ancient", "m") // months outside a 30d window
+
+		code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+		require.Equal(t, 1, code, "data exists but none is in the window: %s", out)
+		require.Contains(t, out, "no records match filters")
+		require.NotContains(t, out, "No scorecard data found", "a populated store is never the empty-store state")
+	})
+}
+
+// TestLeaderboardCmd_InWindowMonthButOutsideDayCutoffExcluded pins that the
+// windowed read narrows I/O without replacing the filter. ReadSince selects whole
+// calendar months, so a record from earlier in the cutoff's own month is read;
+// only the day-precision ApplyFilters boundary excludes it. Skipped near the start
+// of a month, where a 7d window has no same-month-but-older day to test.
+func TestLeaderboardCmd_InWindowMonthButOutsideDayCutoffExcluded(t *testing.T) {
+	isolate(t)
+	now := time.Now().UTC()
+	if now.Day() < 12 {
+		t.Skip("needs a day-of-month with room for an older same-month record outside a 7d window")
+	}
+	storeLeaderboardRec(t, 1, "recent", "m")
+	storeLeaderboardRec(t, 10, "sameMonthButOlder", "m")
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "7d")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "recent")
+	require.NotContains(t, out, "sameMonthButOlder",
+		"the month file is read whole, but the day-precision --since boundary still applies")
+}
+
 // TestLeaderboardCmd_SinceZeroShowsOldRecords pins the second no-window sentinel.
 // "all" and "0" both map to an empty Since (leaderboard.go), which ApplyFilters
 // treats as "no window" — and which the windowed read must turn back into an
