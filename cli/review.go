@@ -703,12 +703,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// so `atcr history` can answer per-package trend queries later. It runs on
 	// every successful review — before the conditional in-process reconcile
 	// below — reading the pool findings.txt that WritePool always writes, and
-	// always targets <root>/.planning/history regardless of --output-dir (the
-	// ledger is a repo-level accumulator, not part of the redirected review
-	// tree). Findings are appended to the current month's shard (Epic 19.4) so
-	// the version-controlled history stops churning one ever-growing blob. A
-	// history write failure is non-fatal: it must never fail an
-	// otherwise-successful review, so it is logged and swallowed.
+	// always targets <root>/.atcr/history regardless of --output-dir (the ledger
+	// is a repo-level accumulator, not part of the redirected review tree).
+	// Findings are appended to the current month's shard (Epic 19.4; relocated
+	// under .atcr/ by Epic 35.14), which both bounds per-file growth and lets a
+	// --since query skip whole months by filename. A history write failure is
+	// non-fatal: it must never fail an otherwise-successful review, so it is
+	// logged and swallowed.
 	histRoot, rerr := repoRoot()
 	if rerr != nil {
 		histRoot = req.Root // fall back to the review root on resolution failure

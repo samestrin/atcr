@@ -93,7 +93,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr config` | Update project configuration in `.atcr/config.yaml` via `atcr config set <telemetry\|quality_signal> <true\|false>` |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
-| `atcr history` | Query the per-package finding-history ledger: trend counts by severity over a `--since` window and optional `--package` prefix |
+| `atcr history` | Query the per-package finding-history ledger in `.atcr/history/`: trend counts by severity over a `--since` window and optional `--package` prefix; `--prune <horizon>` deletes whole monthly shards past a retention horizon — see [docs/history.md](docs/history.md) |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 | `atcr debt` | Query, capture, and report on technical debt in the `.atcr/debt/` store (`list` / `add` / `dashboard` / `resolve` / `compact`, all over that one store); `resolve --status wontfix --reason "<text>"` dismisses a false-positive finding so it stops resurfacing — see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
@@ -258,6 +258,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
 - [docs/metrics.md](docs/metrics.md) — metric catalog, end-of-review CLI summary, and the `atcr_metrics` MCP tool
 - [docs/scorecard.md](docs/scorecard.md) — per-reviewer scorecards, trust priors, and the leaderboard
+- [docs/history.md](docs/history.md) — the per-package finding-history ledger: storage layout, record schema, windowed reads, and `--prune` retention
 - [docs/benchmark.md](docs/benchmark.md) — benchmark-suite tooling for the public leaderboard
 - [docs/telemetry.md](docs/telemetry.md) — what telemetry collects, opting out, and `--sync-cloud`
 - [docs/personas-install.md](docs/personas-install.md) — discovering and installing provider and community personas

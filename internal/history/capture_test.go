@@ -176,3 +176,21 @@ func TestRecordReview_LogsSkippedRows(t *testing.T) {
 	assert.Contains(t, stderr, "1")
 	assert.Contains(t, stderr, "skipped")
 }
+
+// AC5: FindingID's hash construction is FROZEN. Epic 35.13 made the .atcr/debt/
+// store authoritative and every id in it is a FindingID digest, so changing the
+// construction would silently invalidate the whole backlog — a stored id would
+// stop matching the finding it names, and resolved items would resurface as new.
+//
+// The digests below are literals on purpose. Asserting FindingID against itself
+// (same inputs => same id) passes no matter how the hash is built; only a pinned
+// value catches a changed separator, field order, truncation length, or digest
+// algorithm. If this test fails, the fix is to restore the construction, not to
+// update the constants.
+//
+// Construction: sha256 over file + NUL + decimal line + NUL + problem, first 8
+// bytes hex-encoded. Severity is deliberately not an input.
+func TestFindingID_PinnedDigests(t *testing.T) {
+	assert.Equal(t, "0fa44612c176f768", FindingID("internal/registry/load.go", 42, "unchecked error"))
+	assert.Equal(t, "6b12f4d562e6d5f9", FindingID("a.go", 1, ""))
+}
