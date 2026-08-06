@@ -103,7 +103,9 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// a no-window query an all-history read instead of an error.
 	var window time.Duration
 	if !export && since != "" {
-		window, _ = scorecard.ParseSince(since)
+		if d, perr := scorecard.ParseSince(since); perr == nil {
+			window = d
+		}
 	}
 
 	// --export reads all history: the `!export` guard on the window computation
