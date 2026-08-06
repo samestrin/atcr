@@ -620,11 +620,25 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // survives compaction at O(1) size instead of O(history). See aggregateCounters
 // for the rule and why it is idempotent.
 func FoldRecords(recs []Record) []Record {
+	folded, _ := foldWithGroups(recs)
+	return folded
+}
+
+// foldWithGroups is FoldRecords plus the per-id groups it folded over.
+//
+// foldByID returns those groups precisely so a caller that needs them does not
+// rebuild an identical map on the package's hottest read path, and
+// retainForCompaction — the one caller that needs them — used to rebuild one anyway,
+// immediately before calling FoldRecords, which built the other internally and threw
+// it away. Two full maps of every record existed at once on the compaction path, and
+// the stated rationale for the API shape was contradicted by its only consumer
+// (TD internal/localdebt/store.go:683).
+func foldWithGroups(recs []Record) ([]Record, map[string][]Record) {
 	folded, byID := foldByID(recs)
 	for i := range folded {
 		aggregateCounters(&folded[i], byID[folded[i].ID])
 	}
-	return folded
+	return folded, byID
 }
 
 // aggregateCounters stamps eff with the id group's Occurrences and FirstSeen.
@@ -835,9 +849,10 @@ func (r Record) foldTimestamp() string { return r.Timestamp }
 // preserved: an id appears in the output at the position of its FIRST occurrence
 // in the input, so the fold is deterministic for a given read order.
 //
-// It returns the per-id groups alongside the fold so a caller that needs them —
-// FoldRecords, for the counter aggregation — does not rebuild an identical map on
-// the package's hottest read path.
+// It returns the per-id groups alongside the fold so a caller that needs them does
+// not rebuild an identical map on the package's hottest read path. Both consumers go
+// through foldWithGroups: the counter aggregation, and retainForCompaction's
+// resolution-trail selection.
 func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 	order := []string{}
 	seen := map[string]bool{}
@@ -902,12 +917,7 @@ func foldByID[T foldable](items []T) ([]T, map[string][]T) {
 // wontfix record itself the effective one, so its justification is retained by
 // the first half.
 func retainForCompaction(recs []Record) []Record {
-	byID := map[string][]Record{}
-	for _, r := range recs {
-		byID[r.ID] = append(byID[r.ID], r)
-	}
-
-	effective := FoldRecords(recs)
+	effective, byID := foldWithGroups(recs)
 	out := make([]Record, 0, len(effective))
 	for _, eff := range effective {
 		if IsSettledStatus(eff.Status) {
