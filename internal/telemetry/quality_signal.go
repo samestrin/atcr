@@ -6,6 +6,21 @@ import (
 	"strings"
 )
 
+// canonicalPersonaID is a deliberate BYTE-FOR-BYTE MIRROR of
+// scorecard.canonicalPersonaID. It is duplicated rather than imported because this
+// package is a transport leaf and must not depend on internal/scorecard (the
+// boundaries test enforces that direction).
+//
+// ⚠️ The drift gate for this duplication lives in the OTHER package's test suite:
+// TestQualitySignal_PersonaHashedNotRaw (quality_signal_test.go) compares both
+// producers on non-canonical inputs. Editing internal/scorecard and running only
+// `go test ./internal/scorecard/...` will NOT catch a divergence — run
+// `go test ./internal/telemetry/...` too, or the two silently disagree and split
+// one persona into two permanent backend identities.
+func canonicalPersonaID(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
 // QualitySignal is the sole allowlisted outbound payload for the community prompt
 // quality signal (Sprint 30.0). Like Event, it has exactly four fields with NO
 // omitempty tags, and deliberately does NOT embed or extend Event, any scorecard
@@ -64,7 +79,7 @@ type QualitySignal struct {
 // would let "   " past the sentinel and hash it to exactly the constant the sentinel
 // exists to keep off the backend.
 func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySignal {
-	canonical := strings.ToLower(strings.TrimSpace(persona))
+	canonical := canonicalPersonaID(persona)
 	if canonical == "" {
 		return QualitySignal{}
 	}

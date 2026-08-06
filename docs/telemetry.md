@@ -172,16 +172,32 @@ the raw persona/reviewer string — never the raw string itself:
 
 - **Canonicalized before hashing:** the persona name is reduced to
   `strings.ToLower(strings.TrimSpace(name))` first, so `bruce`, `Bruce`,
-  `BRUCE`, and `" bruce "` all produce **one** digest. The exact equivalent in
-  JS, which is what a backend must use to reproduce these values:
+  `BRUCE`, and `" bruce "` all produce **one** digest.
+
+  For an **ASCII** persona name — which every persona in `personas/community/`
+  is — the exact equivalent a backend can use to reproduce these values is:
 
   ```js
   crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")
   ```
 
-  This is plain ASCII lowercasing — deliberately **not** Unicode case folding and
-  **not** NFC normalization, so the transform stays a one-liner in any language.
-  A name in a script without case (e.g. CJK) is simply unchanged by it.
+  **The cross-language guarantee is scoped to ASCII, and only ASCII.** Go's
+  `strings.ToLower` is Unicode *simple* case mapping and `strings.TrimSpace` uses
+  `unicode.IsSpace`; JS `toLowerCase`/`trim` apply different rules, and they
+  measurably disagree:
+
+  | Input | Go | JS |
+  |---|---|---|
+  | `ΟΔΥΣΣΕΥΣ` | `οδυσσευσ` | `οδυσσευς` (final sigma) |
+  | `İstanbul` | `istanbul` | `i̇stanbul` (combining dot) |
+  | `﻿bruce` | BOM retained | BOM stripped |
+
+  This does **not** create split identities: a `persona_id_hash` is only ever
+  produced by the Go client, never by a backend. The JS above exists solely to
+  build a *lookup table* of known persona names. So a divergence means a
+  non-ASCII persona simply fails to match that table and is treated as an
+  unrecognized persona — a lookup miss, not a second bucket. Do not rely on the
+  JS form for a non-ASCII name; port the Go semantics if you ever need one.
 
   It matters more than it looks: an ingestion backend may re-key the received
   digest under a server-side secret and discard the original, in which case a

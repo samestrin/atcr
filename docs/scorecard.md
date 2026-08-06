@@ -204,8 +204,13 @@ behind every `persona_id_hash` — canonicalizes its input to
 `Bruce`, and `" bruce "` yield one digest rather than three. A consumer that
 needs to reproduce a digest from a known persona name (for example, to map
 submitted digests back to the published persona catalog) must apply the same
-transform; in JS that is
+transform; for an **ASCII** name — which every catalog persona is — the JS
+equivalent is
 `crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")`.
+That equivalence holds for ASCII only: Go and JS disagree on some non-ASCII
+inputs (final sigma, dotted capital I, a leading BOM), which makes such a name a
+lookup **miss** rather than a second identity — digests are only ever produced by
+the Go client. See telemetry.md for the divergence table.
 The canonical form and the reasoning behind it are specified in full under
 [telemetry.md](telemetry.md#persona-leaderboard-data); the pinned digests for real
 catalog personas live in `internal/scorecard/telemetry_test.go`

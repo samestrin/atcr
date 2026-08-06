@@ -48,13 +48,23 @@ func TestHashPersonaID_CanonicalizesCaseAndWhitespace(t *testing.T) {
 
 	// Whitespace-only canonicalizes to the empty string, so it takes the same path
 	// as a genuinely empty persona rather than minting its own bucket.
+	//
+	// This deliberately does NOT contradict Design Decision 3 ("a blank persona must
+	// never reach the backend as sha256(\"\")=e3b0c442..."). That is a constraint on
+	// the PRODUCERS, not on this pure hash: HashPersonaID is total over every string
+	// and empty-guarding is the caller's job. NewQualitySignal returns its zero
+	// sentinel before hashing, and cloudsync.go skips an agent whose trimmed name is
+	// empty. Collapsing blank-ish inputs onto ONE digest here is what makes those
+	// guards checkable at all — otherwise "   " would be a distinct, valid-looking
+	// bucket that no guard is watching for.
 	assert.Equal(t, HashPersonaID(""), HashPersonaID("   "),
 		"whitespace-only must canonicalize to the empty-string digest")
 }
 
 // TestHashPersonaID_EmptyPathAndUnicode covers the AC 03-01 edge cases: the empty
-// string hashes to the well-known SHA-256 constant; a path-like value is hashed
-// raw (no scrubbing); Unicode input yields a valid digest without panic.
+// string hashes to the well-known SHA-256 constant; a path-like value is canonicalized
+// (trimmed + lowercased, per epic 35.16.1) and then hashed with NO scrubbing or
+// validation of its content; Unicode input yields a valid digest without panic.
 func TestHashPersonaID_EmptyPathAndUnicode(t *testing.T) {
 	assert.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", HashPersonaID(""))
 
@@ -106,12 +116,16 @@ func TestHashPersonaID_UniquenessAcrossDifferentInputs(t *testing.T) {
 //
 //	crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")
 //
-// so this test proves Go and the server agree rather than merely proving Go is
-// self-consistent. If it fails, the two implementations have diverged and atcr.dev's
-// persona dictionary will silently match nothing — do NOT "fix" it by regenerating
-// the constants from Go; re-derive them from the JS above and find out which side moved.
+// so this test proves Go and the server agree for these names rather than merely
+// proving Go is self-consistent. If it fails, the two implementations have diverged
+// and atcr.dev's persona dictionary will silently match nothing — do NOT "fix" it by
+// regenerating the constants from Go; re-derive them from the JS above and find out
+// which side moved.
 //
-// Names are real entries in personas/community/.
+// SCOPE: the Go/JS equivalence holds for ASCII names ONLY, which is what the catalog
+// contains — see TestHashPersonaID_GoJSDivergenceIsASCIIScoped below for the cases
+// where it does not hold and why that is tolerable. Names here are real entries in
+// personas/community/.
 func TestHashPersonaID_PinnedPublishedPersonaDigests(t *testing.T) {
 	pinned := map[string]string{
 		"sonny":  "57f0e30b29126a4866ff1ba8da6f62d104007d322e40ddbdeee93c8a4a771f78",
@@ -127,6 +141,37 @@ func TestHashPersonaID_PinnedPublishedPersonaDigests(t *testing.T) {
 	// whole reason the server can key its dictionary on one entry per persona.
 	assert.Equal(t, pinned["sonny"], HashPersonaID("Sonny"))
 	assert.Equal(t, pinned["glenna"], HashPersonaID("  GLENNA  "))
+}
+
+// TestHashPersonaID_GoJSDivergenceIsASCIIScoped pins the KNOWN LIMIT of the
+// cross-language contract, so nobody re-asserts a total equivalence that does not
+// exist. Go's strings.ToLower is Unicode simple case mapping and strings.TrimSpace
+// uses unicode.IsSpace; JS toLowerCase/trim apply different rules. Verified
+// divergences (Go value on the left of each pair, JS on the right):
+//
+//	"ΟΔΥΣΣΕΥΣ" -> "οδυσσευσ"  vs  "οδυσσευς"   (JS emits final sigma)
+//	"İstanbul" -> "istanbul"  vs  "i̇stanbul"   (JS keeps a combining dot)
+//	U+FEFF + "bruce" -> BOM kept  vs  BOM stripped  (JS trim() strips U+FEFF)
+//
+// Why this is tolerable rather than a defect to fix: a persona_id_hash is only ever
+// PRODUCED by this Go client. The JS form exists solely so a backend can build a
+// lookup table of published persona names. A divergence therefore makes a non-ASCII
+// name a lookup MISS (classified as an unrecognized persona), never a second
+// permanent bucket for one persona — and every published catalog persona is ASCII,
+// where the two agree exactly (pinned above).
+//
+// This test asserts the Go side only; it is a tripwire on the Go semantics, so if a
+// future change alters them the documented divergence table goes stale loudly.
+func TestHashPersonaID_GoJSDivergenceIsASCIIScoped(t *testing.T) {
+	// Greek final-sigma case: Go lowercases Σ to σ unconditionally, so the
+	// word-final Σ does NOT become ς the way JS renders it.
+	assert.Equal(t, HashPersonaID("οδυσσευσ"), HashPersonaID("ΟΔΥΣΣΕΥΣ"),
+		"Go must fold Greek capitals to non-final sigma; if this changes, update the divergence table in docs/telemetry.md")
+
+	// Leading U+FEFF is NOT whitespace to unicode.IsSpace, so Go retains it where
+	// JS trim() would strip it — the digests must therefore differ.
+	assert.NotEqual(t, HashPersonaID("bruce"), HashPersonaID("\ufeffbruce"),
+		"a leading BOM is not trimmed by Go; if this changes, update the divergence table in docs/telemetry.md")
 }
 
 // TestHashPersonaID_NonReversible asserts the raw input never appears in the
