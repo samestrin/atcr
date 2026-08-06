@@ -25,14 +25,26 @@ import (
 // default is untouched.
 //
 // The whole batch is serialized to memory first, then written in a single
-// f.Write call. In practice a small batch is emitted by one O_APPEND write()
-// syscall, which the kernel appends atomically, so two concurrent `atcr review`
-// runs usually interleave only at batch boundaries. That is not guaranteed,
-// though: os.File.Write loops on short writes, so a large buffer can be split
-// across several write() syscalls and a concurrent append may land between them,
-// tearing a JSONL line. Records are small, so the risk is low in practice; a
-// caller needing a hard guarantee must serialize appends with an external file
-// lock (intentionally not done here).
+// f.Write call. The unit that matters for tearing is therefore the BATCH, not the
+// record: the loop below encodes one line per finding for the entire run into one
+// buffer, so a wide review submits hundreds of records — 100KB and up — in one
+// call. Do not reason about this as a small write.
+//
+// A single O_APPEND write() to a regular file on a local filesystem is appended
+// atomically, so two concurrent `atcr review` runs interleave only at batch
+// boundaries. Two things narrow that guarantee. First, os.File.Write loops on
+// short writes, so a buffer this size can be split across several write() calls
+// and a concurrent append may land between them, tearing a JSONL line. Second,
+// the guarantee is local-filesystem-only: on NFS or SMB, O_APPEND is emulated
+// client-side and does not hold at all, whatever the buffer size.
+//
+// No external lock is taken here, and that is a deliberate trade rather than an
+// oversight. internal/localdebt does ship one (withLock in lock.go, mkdir-based),
+// but it guards read-modify-write over a whole file, where a lost update destroys
+// committed data. This ledger is append-only and read tolerantly — reader.go skips
+// a blank or malformed line instead of failing the read — so the worst outcome
+// here is one dropped record in a trend report, not a corrupt store. A caller
+// needing a hard per-line guarantee must serialize appends itself.
 func Append(path string, records []Record) error {
 	if len(records) == 0 {
 		return nil
