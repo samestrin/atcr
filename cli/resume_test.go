@@ -420,7 +420,7 @@ func TestResume_AllCompleteDoesNotAppendAudit(t *testing.T) {
 	require.Len(t, before, 1, "fresh review appends exactly one audit record")
 
 	// AllComplete re-reconcile performs no new review work; it must not append
-	// another record (mirrors recordResumeHistory guarding below).
+	// another record (mirrors the recordHistory guard on the same path).
 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 0, code, out)
 

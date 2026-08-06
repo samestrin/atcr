@@ -243,7 +243,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err != nil {
 			return err
 		}
-		recordHistory(ctx, histRoot, dir, req.StartedAt)
+		// No recordHistory here: the AllComplete re-reconcile performs no new review
+		// work, so there is nothing new to append — and req.StartedAt was just
+		// stamped with time.Now(), so a re-append would earn fresh (Timestamp, ID)
+		// keys dedupe cannot collapse, double-counting every finding per resume.
 		if axiMode {
 			// This path runs no fan-out, so there is no metrics delta to report: the
 			// payload carries the already-complete agent set (all succeeded) and the
@@ -257,7 +260,8 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			}
 		}
 		// AllComplete re-reconciles an already-completed review; no new review work
-		// was performed, so do not append another audit record.
+		// was performed, so do not append another audit record (the finding-history
+		// append is likewise guarded, above).
 		return nil
 	}
 
