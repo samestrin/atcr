@@ -122,7 +122,10 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 
 	recs, err := history.LoadAllSince(history.ShardDir(root), history.LegacyLedgerPath(root), since, now)
 	if err != nil {
-		return usageError(err) // corrupt/unreadable ledger (exit 2)
+		// A filesystem failure (unreadable shard dir or legacy ledger), not a bad
+		// invocation: exit 1, not the usage code CI scripts read as "misconfigured
+		// command" — the same classification the prune path applies above.
+		return fmt.Errorf("loading history: %w", err)
 	}
 
 	// An empty result no longer implies an empty ledger: since Epic 35.14 the
