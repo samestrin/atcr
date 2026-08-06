@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,6 +69,9 @@ func ParseSince(s string) (time.Duration, error) {
 	}
 	if n <= 0 {
 		return 0, fmt.Errorf("--since must be a positive duration")
+	}
+	if int64(n) > math.MaxInt64/int64(per) {
+		return 0, invalidSinceErr(s)
 	}
 	return time.Duration(n) * per, nil
 }

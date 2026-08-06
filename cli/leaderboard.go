@@ -81,7 +81,58 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
 	}
-	records, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
+	readOpts := scorecard.ReadOpts{Writer: cmd.ErrOrStderr()}
+
+	// One now for the table path: it anchors the windowed read below and the
+	// day-precision filter further down, which would otherwise call time.Now()
+	// again. (The export path keeps its own UTC anchor — see
+	// runLeaderboardExport.) Month-file selection makes the skew immaterial in
+	// production, but a single anchor is what makes the boundary deterministic
+	// under test.
+	now := time.Now()
+
+	// Size the read window from --since. The value is parsed here only to bound
+	// the I/O, so a parse failure is deliberately NOT reported at this point: a
+	// zero window reads all history, and ApplyFilters below stays the single
+	// source of the invalid --since error. That keeps the empty-store check's
+	// precedence intact — `--since abc` against an empty store reports the
+	// graceful empty state (exit 0) exactly as it did before the window existed.
+	//
+	// The "all"/"0" sentinels already became an empty string above, which
+	// ParseSince rejects by construction; skipping the parse for it is what keeps
+	// a no-window query an all-history read instead of an error.
+	var window time.Duration
+	if !export && since != "" {
+		if d, perr := scorecard.ParseSince(since); perr == nil {
+			window = d
+		}
+	}
+
+	// --export reads all history: the `!export` guard on the window computation
+	// above forces window to 0 on the export path, and a zero-window ReadSince
+	// delegates to an all-history read (store.go:394). Keeping the export read
+	// surface unwindowed preserves the distinction between an empty store and a
+	// no-match filter: windowing it here would swap the empty-store error for the
+	// no-match one. The table view takes the real windowed read, so displaying
+	// one month of leaderboard data no longer opens every month file the store
+	// has ever written.
+	//
+	// Two consequences follow from selecting files instead of filtering records,
+	// and both are accepted rather than overlooked:
+	//
+	//   - An unreadable or corrupt month file OUTSIDE the window no longer fails
+	//     the command WHILE THE WINDOW IS NON-EMPTY. When the window comes back
+	//     empty, the probe below runs ReadAll and may open that file and surface
+	//     its failure; `--since all` still surfaces it, as does any window that
+	//     reaches it.
+	//   - A record stamped in a FUTURE calendar month (host clock skew, an
+	//     imported record) drops out of the table. ReadSince's upper edge is
+	//     deliberately fail-closed (see monthOverlapsWindow), whereas the filter
+	//     alone only ever dropped records BEFORE the cutoff. Widening that edge
+	//     would be a change to the store's windowing contract, which this call
+	//     site is not the place to make.
+	var records []scorecard.Record
+	records, err = scorecard.ReadSince(dir, window, now, readOpts)
 	if err != nil {
 		return fmt.Errorf("failed to read scorecard store: %w", err)
 	}
@@ -96,13 +147,36 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 		return runLeaderboardExport(cmd, records, filters, output)
 	}
 
+	if len(records) == 0 && window > 0 {
+		// The window came back empty, which the windowed read alone cannot explain:
+		// an empty store and a store whose every record predates the window look
+		// identical once out-of-window files are never opened — yet they are
+		// different outcomes with different exit codes. Probe the whole store to
+		// tell them apart. The cost lands only here, on a query that already found
+		// nothing, never on the populated-window path this read exists to bound.
+		//
+		// Reading all history back into `records` also keeps the two branches below
+		// byte-identical to the unbounded implementation: an empty store still
+		// falls through to the graceful message, while out-of-window data now
+		// reaches ApplyFilters and is rejected by it, producing the no-match error.
+		//
+		// The probe's only job is the boolean "is the store non-empty", so its read
+		// discards diagnostics; the windowed read above already reported any file it
+		// opened, and re-emitting them here would double the noise and re-expose the
+		// absolute store path in user-visible output.
+		records, err = scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: io.Discard})
+		if err != nil {
+			return fmt.Errorf("failed to read scorecard store: %w", err)
+		}
+	}
+
 	if len(records) == 0 {
 		// No data at all is a graceful empty state, not an error (exit 0).
 		_, err := fmt.Fprintln(out, "No scorecard data found. Run 'atcr reconcile' to generate scorecard records.")
 		return err
 	}
 
-	filtered, err := scorecard.ApplyFilters(records, filters, time.Now())
+	filtered, err := scorecard.ApplyFilters(records, filters, now)
 	if err != nil {
 		// A bad --since value parses at runtime (not by cobra); per the sprint
 		// contract it is a runtime error (exit 1) carrying actionable guidance.
