@@ -35,9 +35,17 @@ func newHistoryCmd() *cobra.Command {
 	}
 	cmd.Flags().String("since", "", "only include findings within this window: h/m/s or d/w units (e.g. 30d, 2w, 48h); default 90d")
 	cmd.Flags().String("package", "", "only include findings whose package is at or under this path prefix (e.g. internal/registry)")
-	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d); same units as --since, no default")
+	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d); minimum 28d, no default. Note: h/m/s units mean hours/MINUTES/seconds")
 	return cmd
 }
+
+// minPruneHorizon is the shortest retention horizon --prune accepts. ParseSince
+// falls back to time.ParseDuration for h/m/s units, where "m" means MINUTES —
+// so `--prune 6m` ("six months") would compute a 6-minute cutoff and
+// irreversibly delete every shard but the current UTC month. A horizon shorter
+// than a month can never be a sane retention policy for monthly shards, so
+// anything below this floor is rejected as a usage error.
+const minPruneHorizon = 28 * 24 * time.Hour
 
 func runHistory(cmd *cobra.Command, _ []string) error {
 	since := defaultHistorySince
@@ -55,6 +63,9 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 		d, err := history.ParseSince(raw)
 		if err != nil {
 			return usageError(fmt.Errorf("--prune: %w", err)) // exit 2, nothing deleted
+		}
+		if d < minPruneHorizon {
+			return usageError(fmt.Errorf("--prune: retention horizon %q is below the 28-day minimum (units: d/w = days/weeks, h/m/s = hours/MINUTES/seconds — '6m' is 6 minutes, not 6 months)", raw)) // exit 2, nothing deleted
 		}
 		horizon = d
 	}
