@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1616,26 +1617,58 @@ type compactWatermark struct {
 	Bytes   int64 `json:"bytes"`
 }
 
-// readCompactWatermark loads the watermark, degrading to a ZERO watermark on any
-// problem — absent, unreadable, truncated, or corrupt.
+// recentWatermarks remembers, per store directory, what the last compaction IN THIS
+// PROCESS left behind. It is a fallback for the on-disk watermark, not a replacement:
+// the file is what survives a restart and what a second process can see.
 //
-// Degrading to zero is the safe direction, and deliberately so: a zero watermark
-// makes the growth gate pass, so the thresholds alone decide and compaction still
-// happens. The guard can therefore delay a redundant compaction but can never
-// prevent a needed one, which is the only failure mode worth designing for here.
+// It exists because the on-disk watermark's failure mode is the opposite of what its
+// design assumed (TD internal/localdebt/store.go:1310). A zero watermark makes
+// grewPast pass unconditionally, so a watermark that cannot be WRITTEN — a read-only
+// .atcr/, a StoreStats error, a concurrent sweep, a corrupt body — turns "compact
+// when the store has grown 50%" into "compact on every single append", each run
+// taking the cross-process lock and rewriting every shard to drop nothing. The
+// long-lived callers this damping exists for (the MCP server, a repeated reconcile
+// loop) are exactly the ones a per-process memory covers.
+var recentWatermarks sync.Map // absolute store dir -> compactWatermark
+
+// readCompactWatermark loads the watermark: the file when it is readable and sane,
+// otherwise this process's memory of its own last compaction, otherwise zero.
+//
+// Zero still means "the thresholds alone decide", so the guard can delay a redundant
+// compaction but never prevent a needed one. What changed is that zero is now reached
+// only when NEITHER source knows anything, rather than whenever the file is missing.
 func readCompactWatermark(dir string) compactWatermark {
+	if w, ok := readCompactWatermarkFile(dir); ok {
+		return w
+	}
+	if w, ok := recentWatermarks.Load(watermarkKey(dir)); ok {
+		return w.(compactWatermark)
+	}
+	return compactWatermark{}
+}
+
+func readCompactWatermarkFile(dir string) (compactWatermark, bool) {
 	var w compactWatermark
 	b, err := os.ReadFile(filepath.Join(dir, compactWatermarkFile))
 	if err != nil {
-		return compactWatermark{}
+		return compactWatermark{}, false
 	}
 	if err := json.Unmarshal(b, &w); err != nil {
-		return compactWatermark{}
+		return compactWatermark{}, false
 	}
 	if w.Records < 0 || w.Bytes < 0 {
-		return compactWatermark{}
+		return compactWatermark{}, false
 	}
-	return w
+	return w, true
+}
+
+// watermarkKey normalizes the store dir so the in-process fallback is keyed by the
+// directory itself rather than by however a caller spelled it.
+func watermarkKey(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(dir)
 }
 
 // writeCompactWatermark records the store's post-compaction size. It is
@@ -1643,6 +1676,9 @@ func readCompactWatermark(dir string) compactWatermark {
 // fails the compaction that already succeeded, because the only consequence is that
 // the next append re-evaluates the thresholds without a baseline.
 func writeCompactWatermark(dir string, w compactWatermark, diag io.Writer) {
+	// Record it in memory FIRST, so a store whose watermark file cannot be written
+	// still damps its own re-compaction for the life of this process.
+	recentWatermarks.Store(watermarkKey(dir), w)
 	b, err := json.Marshal(w)
 	if err != nil {
 		return
