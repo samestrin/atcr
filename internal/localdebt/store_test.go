@@ -2014,6 +2014,37 @@ func TestRetainForCompaction_ReusesTheFoldGroups(t *testing.T) {
 		fold, retain)
 }
 
+// TestMaybeCompact_AbsentWatermarkDoesNotRecompactForever pins the failure mode
+// readCompactWatermark's doc got backwards (TD internal/localdebt/store.go:1310).
+// Degrading to a ZERO watermark makes grewPast return true unconditionally, so when
+// the watermark cannot be persisted — a read-only .atcr/, a StoreStats error, a
+// concurrent sweep — a store parked above the threshold performs a full lock-taking
+// rewrite of every shard on EVERY append-bearing reconcile, forever, dropping
+// nothing. The comment claimed the guard "can never prevent a needed compaction" and
+// never considered that a permanently-absent watermark causes an unbounded series of
+// redundant ones.
+func TestMaybeCompact_AbsentWatermarkDoesNotRecompactForever(t *testing.T) {
+	dir := t.TempDir()
+	seedIDs(t, dir, 10, 3)
+	policy := CompactPolicy{MaxRecords: 1}
+
+	_, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	require.True(t, triggered, "the first pass compacts")
+
+	// The watermark cannot survive: simulate the read-only-store / failed-write case
+	// by removing it after every compaction.
+	require.NoError(t, os.Remove(filepath.Join(dir, compactWatermarkFile)))
+
+	for i := 2; i <= 4; i++ {
+		_, triggered, err := MaybeCompact(dir, policy, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err)
+		assert.False(t, triggered,
+			"pass %d: an unchanged store must not re-compact just because its watermark is missing", i)
+		_ = os.Remove(filepath.Join(dir, compactWatermarkFile))
+	}
+}
+
 // TestMaybeCompact_WatermarkRecordedEvenWhenNothingFolds is the 3.2.A HIGH-2 guard.
 // A store of only malformed or forward-incompatible lines compacts to a no-op
 // (StoreFound false). Without a recorded baseline the growth gate reads a zero
