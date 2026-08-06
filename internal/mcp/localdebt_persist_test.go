@@ -226,6 +226,46 @@ func TestReconcileHandler_InvalidExplicitRepoDoesNotPersist(t *testing.T) {
 	assert.Contains(t, diag.String(), "does not exist or is not a directory")
 }
 
+// TestReconcileHandler_RelativeExplicitRepoDoesNotPersist closes TD
+// internal/mcp/handlers.go:401. in.Repo reaches the explicit tier raw, and that
+// tier resolves it with filepath.Abs — i.e. against the SERVER's process CWD.
+// `repo: "."` is the single most likely value a model emits for "the repository
+// root", and the server's CWD carries .atcr/ by construction (cli/serve.go
+// hardcodes the engine root to "."), so it self-validates and the store lands in
+// the server's own directory — exactly what AllowCWD:false exists to refuse.
+//
+// The CWD fixture below therefore carries .atcr/: without it the case would pass
+// against the unfixed code for the wrong reason (marker absent), proving nothing.
+func TestReconcileHandler_RelativeExplicitRepoDoesNotPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+
+	cwd := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(cwd, ".atcr"), 0o755))
+	// The finding's path must resolve under the CWD too, or the unfixed code
+	// would drop it during path validation and the store would come out empty for
+	// a reason unrelated to the defect.
+	require.NoError(t, os.WriteFile(filepath.Join(cwd, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, cwd)
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{Repo: "."})
+	require.NoError(t, err, "a refused root must never fail the reconcile")
+
+	assert.Empty(t, debtRecords(t, cwd),
+		"a relative repo must not resolve against the server's CWD and persist there")
+	assert.Empty(t, debtRecords(t, root),
+		"a named-but-refused root must not fall through to the manifest root")
+	assert.Contains(t, diag.String(), "absolute path",
+		"the refusal must name the constraint the caller violated")
+	assert.True(t, out.Pass)
+}
+
 // TestReconcileHandler_NoLocalDebtSuppressesPersist covers the MCP half of the
 // CLI's --no-local-debt lever (TD internal/mcp/handlers.go:382): once
 // atcr_reconcile is reachable a client could grow .atcr/debt/ under any
