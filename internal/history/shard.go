@@ -111,8 +111,9 @@ func unionWithLegacy(shards []Record, legacyPath string, cutoff time.Time) ([]Re
 // round-trips preserve the zone offset, so the same instant read from two files
 // written in different zones is one occurrence, not two. The instant is keyed as
 // (seconds, nanoseconds) rather than UnixNano because UnixNano is undefined
-// outside 1678-2262 — a record whose "ts" field was missing or malformed decodes
-// to the zero time (year 1), which is exactly the out-of-range case.
+// outside 1678-2262 — a zero-time record decodes to year 1, the canonical
+// out-of-range case (such records are now carved out of keying entirely, below,
+// but any other pre-1678 or post-2262 date wraps the same way).
 //
 // Two rules keep the collapse from losing information:
 //
@@ -121,12 +122,19 @@ func unionWithLegacy(shards []Record, legacyPath string, cutoff time.Time) ([]Re
 //     keying it as (ts, "") would collapse every id-less record from one run into
 //     a single row — silent loss the plain concatenation this replaces did not
 //     have.
+//   - A record with a ZERO Timestamp is never deduplicated either: a missing or
+//     malformed "ts" decodes to the zero time, which is UNKNOWN time, not the
+//     SAME time — folding two such records would collapse occurrences from
+//     different runs into one row, the same silent loss by the other half of
+//     the key.
 //   - A duplicate resolves to the HIGHEST severity seen, matching RecordReview's
-//     within-run rule (capture.go). This is reachable: a resumed review
-//     re-records the whole pool stamped with the ORIGINAL run's start time
-//     (cli/resume.go), so the fuller resumed run's re-settled severity shares a
-//     (ts, id) with the earlier partial run's. Keeping whichever copy was read
-//     first would let file order decide the reported severity.
+//     within-run rule (capture.go). Duplicates reach the union from the
+//     storage-location cutover — a run's records present in BOTH the legacy
+//     ledger and a shard — where the two copies are normally identical;
+//     highest-severity-wins is the deterministic rule for the defensive case
+//     where they disagree (a hand-edited file, or a severity re-settled between
+//     the two writes). Only Severity is promoted; every other field keeps the
+//     first copy read, so file order never decides the reported severity.
 func dedupeOccurrences(recs []Record) []Record {
 	if len(recs) < 2 {
 		return recs
@@ -139,7 +147,12 @@ func dedupeOccurrences(recs []Record) []Record {
 	out := make([]Record, 0, len(recs))
 	seen := make(map[occurrence]int, len(recs)) // occurrence -> index in out
 	for _, r := range recs {
-		if r.ID == "" {
+		// A record missing EITHER half of the key has no occurrence identity:
+		// an empty id has no finding to match on, and a zero Timestamp (a line
+		// whose "ts" was missing or unparseable) is UNKNOWN time, not the SAME
+		// time — keying two ts-less occurrences of one finding as equal would
+		// fold records from different runs into one row.
+		if r.ID == "" || r.Timestamp.IsZero() {
 			out = append(out, r)
 			continue
 		}
