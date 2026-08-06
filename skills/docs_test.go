@@ -2,6 +2,7 @@ package skills
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -163,6 +164,70 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		if !strings.Contains(migration, tc.substr) {
 			t.Errorf("AC13 (%s): the breaking-changes table must name %q so an upgrader can grep for it",
 				tc.name, tc.substr)
+		}
+	}
+}
+
+// TestAC11_PrivateStoreLiteralHasExactlyTwoReferences enforces AC11 — "no Go
+// source references the private store" — which until now was attested by a
+// one-off manual grep recorded in a DoD report (TD skills/docs_test.go:113).
+// Nothing ran, so nothing stopped it regressing: the next file to reach for the
+// private tree would have shipped with a green suite.
+//
+// The gate is an exact SET comparison, not a ceiling. An unexpected hit is a new
+// reference to a store atcr no longer reads; a missing hit means an allowlisted
+// exception went away and the allowlist should shrink with it, which is how an
+// allowlist stops accumulating permanently-stale entries.
+//
+// Both survivors are references in PROSE — a comment pointing at where this
+// repo's own tracked debt lives — not code that reads the store. That is the
+// distinction AC11 draws, and it is why an allowlist exists at all.
+func TestAC11_PrivateStoreLiteralHasExactlyTwoReferences(t *testing.T) {
+	root := repoRoot(t)
+
+	// Assembled at runtime from parts: spelled out, this file would match its own
+	// gate and the test would report itself as the violation.
+	literal := ".planning" + "/" + "technical-debt"
+
+	cmd := exec.Command("git", "ls-files", "*.go")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git ls-files: %v (AC11 is enforced against tracked files, so an untracked working tree cannot be checked)", err)
+	}
+
+	allowed := map[string]bool{
+		// Prose reference: names this repo's own tracked-debt file in a comment
+		// explaining a deliberately-still-open item.
+		"internal/reconcile/adapter/adapter.go": false,
+		// Prose reference: quotes the debt entry the test was written against.
+		"internal/localdebt/lock_test.go": false,
+	}
+
+	for _, rel := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if rel == "" {
+			continue
+		}
+		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if readErr != nil {
+			// A tracked-but-absent file is a staging artifact, not an AC11 breach.
+			continue
+		}
+		if !strings.Contains(string(content), literal) {
+			continue
+		}
+		if _, ok := allowed[rel]; !ok {
+			t.Errorf("AC11: %s references the private store %q; no Go source may read or name it outside the allowlist in this test",
+				rel, literal)
+			continue
+		}
+		allowed[rel] = true
+	}
+
+	for rel, hit := range allowed {
+		if !hit {
+			t.Errorf("AC11: allowlisted file %s no longer references %q — remove it from the allowlist so the gate keeps tightening",
+				rel, literal)
 		}
 	}
 }
