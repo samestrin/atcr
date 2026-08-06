@@ -57,9 +57,35 @@ func LoadAll(shardDir, legacyPath string, diag ...io.Writer) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	return unionWithLegacy(shards, legacyPath, time.Time{})
+}
+
+// unionWithLegacy is the single union implementation behind LoadAll and
+// LoadAllSince — one merge so the two entry points cannot drift on legacy
+// handling or dedupe (the same argument loadShardsWhere makes one level
+// down). It reads the legacy flat ledger and deduplicates the union on
+// (Timestamp, ID); legacy records come first, so ordering stays
+// chronological across the two sources (the flat ledger only ever holds
+// pre-19.4 runs, which all predate the oldest shard).
+//
+// A non-zero cutoff drops legacy records strictly before it BEFORE the
+// dedupe pass: the dedupe map and output slice are sized by what they hold,
+// so the windowed caller's cost stays proportional to the window rather than
+// to the entire pre-19.4 ledger. The cutoff can never split a duplicate
+// group — a (Timestamp, ID) group shares its Timestamp by construction.
+func unionWithLegacy(shards []Record, legacyPath string, cutoff time.Time) ([]Record, error) {
 	legacy, err := Load(legacyPath)
 	if err != nil {
 		return nil, err
+	}
+	if !cutoff.IsZero() {
+		inWindow := make([]Record, 0, len(legacy))
+		for _, r := range legacy {
+			if !r.Timestamp.Before(cutoff) {
+				inWindow = append(inWindow, r)
+			}
+		}
+		legacy = inWindow
 	}
 	return dedupeOccurrences(append(legacy, shards...)), nil
 }

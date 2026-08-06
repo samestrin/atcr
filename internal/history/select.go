@@ -148,27 +148,33 @@ func shardMonthIntersects(name string, cutoff time.Time) bool {
 
 // LoadAllSince is LoadAll narrowed to a time window: the shards whose month
 // intersects [now-since, ∞) (LoadShardsSince) unioned with the legacy pre-19.4
-// flat ledger, deduplicated on (Timestamp, ID) exactly as LoadAll does.
+// flat ledger, deduplicated on (Timestamp, ID) exactly as LoadAll does (both
+// run through unionWithLegacy, so the merge cannot drift).
 //
-// The legacy ledger is always read in full. It is a single flat file with no
-// month in its name, so there is nothing to select on — the shard-selection
-// optimization applies only to the sharded location. It is read in place and
+// A non-positive since selects NOTHING, legacy included — the same posture
+// LoadShardsSince documents: reaching here with such a value is a caller bug
+// (ParseSince rejects it at the CLI boundary), and "silently load everything"
+// is the wrong failure mode for a query whose whole purpose is to be bounded.
+//
+// The legacy ledger is always READ in full. It is a single flat file with no
+// month in its name, so there is nothing to select on — but its records are
+// cut to the window before the dedupe pass, so a narrow --since does not pay
+// a dedupe sized by the entire pre-19.4 history. It is read in place and
 // never rewritten.
 //
 // Records still need Filter afterwards: selection is a file-granularity
-// pre-filter that can over-select, never a substitute for the record-level
-// window check. An unreadable shard is skipped with a warning to diag
-// (default os.Stderr).
+// pre-filter that can over-select (a shard is taken whole when its month
+// intersects), never a substitute for the record-level window check. An
+// unreadable shard is skipped with a warning to diag (default os.Stderr).
 func LoadAllSince(shardDir, legacyPath string, since time.Duration, now time.Time, diag ...io.Writer) ([]Record, error) {
+	if since <= 0 {
+		return []Record{}, nil
+	}
 	shards, err := LoadShardsSince(shardDir, since, now, diag...)
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := Load(legacyPath)
-	if err != nil {
-		return nil, err
-	}
-	return dedupeOccurrences(append(legacy, shards...)), nil
+	return unionWithLegacy(shards, legacyPath, now.Add(-since))
 }
 
 // HasAny reports whether either read location holds anything at all: at least
