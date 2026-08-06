@@ -260,6 +260,40 @@ func TestStreamSummaries_ErrorDoesNotLeakAbsolutePath(t *testing.T) {
 		"a shard error must not embed the absolute (username-bearing) store path")
 }
 
+// TestDecodeSummary_SkipDecisionMatchesDecodeRecord pins gate parity across EVERY
+// field kind (TD internal/localdebt/streaming.go:65). encoding/json type-checks only
+// the fields the target struct declares, so a field Record declares and summaryLine
+// omits was validated by decodeRecord and not by decodeSummary. The asymmetry runs
+// the dangerous way: a line the full path REJECTS but the summary path ACCEPTS puts
+// an id into the dedup seed that no rendering path can display, so a re-detection of
+// that finding is skipped and the finding becomes permanently invisible.
+//
+// The numeric fields were already covered by declaring them unread; these are the
+// string, array and object fields that were not.
+func TestDecodeSummary_SkipDecisionMatchesDecodeRecord(t *testing.T) {
+	base := `"schema_version":3,"id":"abc","run_id":"2026-06-14T10:00:00Z-r","ts":"2026-06-14T10:00:00Z"`
+	for name, line := range map[string]string{
+		"valid":                     `{` + base + `}`,
+		"string field is a number":  `{` + base + `,"problem":123}`,
+		"string field is an array":  `{` + base + `,"fix":["a"]}`,
+		"array field is a string":   `{` + base + `,"reviewers":"claude"}`,
+		"array field is a number":   `{` + base + `,"model_reviewers":7}`,
+		"object field is a string":  `{` + base + `,"source_report":"nope"}`,
+		"evidence is an object":     `{` + base + `,"evidence":{"a":1}}`,
+		"justification is a bool":   `{` + base + `,"justification":true}`,
+		"status is a number":        `{` + base + `,"status":5}`,
+		"numeric field is a string": `{` + base + `,"line":"12"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, recordOutcome := decodeRecord([]byte(line), "2026-06.jsonl", io.Discard)
+			_, summaryOK := decodeSummary([]byte(line), "2026-06.jsonl", io.Discard)
+
+			assert.Equal(t, recordOutcome == decodeOK, summaryOK,
+				"the two decoders must agree on whether this line is usable:\n%s", line)
+		})
+	}
+}
+
 // TestStreamSummaries_NilWriterDoesNotPanic covers both unset-writer shapes: a
 // zero ReadOpts and a typed-nil io.Writer, which is non-nil as an interface yet
 // panics on first Write.
