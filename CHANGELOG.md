@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## [35.15.0] - 2026-08-06
+
+Puts `atcr leaderboard` on the windowed scorecard read Epic 35.11 built. The leaderboard is the one surface with a user-facing time window — `--since` defaults to 30 days — yet it read every month file the store had ever written and then filtered in memory, so displaying one month of data cost the whole history. The window now selects month files before opening them.
+
+### Changed
+
+- `atcr leaderboard` sizes its store read from `--since`, so a windowed query opens only the month files its window intersects. Output, columns, exit codes, and every flag are unchanged.
+- Month selection is coarser than the day-precision `--since`, so the filter still runs over the windowed result: the month containing the cutoff is read whole, and records inside it that predate the cutoff are excluded exactly as before. The two compose; neither alone is correct.
+- `--since all` and `--since 0` still read all history, and an invalid `--since` still reports the same error at the same exit code — including against an empty store, where the graceful "no scorecard data found" state continues to take precedence over the window value.
+- `--export` deliberately keeps its all-history read: whether the export surface should be windowed is a question about export semantics, not a performance fix, and windowing it would swap its empty-store failure for the no-match one.
+- Two consequences follow from selecting files rather than filtering records, both accepted: an unreadable month file *outside* the window no longer fails the command (a file that is never opened cannot be diagnosed — `--since all` still surfaces it), and a record stamped in a future calendar month drops out of the table, since the store's windowing is fail-closed at its upper edge.
+
+*Shipped via /execute-epic (epic 35.15)*
+
 ## [35.14.0] - 2026-08-05
 
 Moves the finding-history ledger under `.atcr/`, alongside the debt store Epic 35.13 unified. `atcr history` previously resolved its monthly shards to `.planning/history/`, so a standalone atcr user — who has no `.planning/` directory — had nowhere to record or query trend data. The move also turns month sharding into a real read index: a `--since` query now selects shards by filename and opens only the months its window touches.

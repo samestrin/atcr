@@ -358,14 +358,19 @@ func readMonthFiles(dir string, keep func(stem string) bool, opts ReadOpts) ([]R
 // windowed and all-history paths share one enumeration at the boundary rather
 // than drifting apart.
 //
-// WHY EXPORTED with only one in-package caller (trustPriorsSince): the epic
-// 35.11 plan specified a store-level windowed read as the deliverable, paired
-// with the exported ReadAll it bounds — an unexported readSince would leave
-// ReadAll as the only public way to read the store, i.e. the unbounded one. The
-// asymmetry, not the caller count, is what earns the export. The known external
-// consumer is cli/leaderboard.go, which still runs ReadAll plus an in-memory
-// ApplyFilters against a 30d default and was explicitly out of scope for the
-// epic; moving it onto this function is the tracked follow-up.
+// WHY EXPORTED: cli/leaderboard.go is the external consumer and
+// trustPriorsSince is the in-package caller. Both use this function to size the
+// read so a bounded query opens only the month files the window intersects. The
+// export also keeps the store's public surface symmetric — ReadAll alone would
+// leave the unbounded read as the only public way to read the store, which is
+// what epic 35.11 specified a windowed counterpart for. The leaderboard
+// migration itself landed in epic 35.15.
+//
+// Callers still run ApplyFilters over this function's result: month selection is
+// coarser than a day-precision --since, so the two compose rather than
+// substitute (see the month-stem note below). An empty result cannot by itself
+// distinguish an empty store from a store whose records all predate the window;
+// callers needing that distinction must probe separately.
 //
 // A month file whose stem is not a parseable YYYY-MM is READ (fail-open): an
 // odd filename cannot prove its contents fall outside the window, and silently
