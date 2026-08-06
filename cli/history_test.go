@@ -323,6 +323,7 @@ func TestHistoryCmd_PruneWithPackageIsUsageErrorAndDeletesNothing(t *testing.T) 
 	_, err := runHistoryIn(t, root, "--prune", "90d", "--package", "p")
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "cannot be combined", "the error must name the rejected flag combination")
 	assert.FileExists(t, shard, "a rejected prune must not delete anything")
 }
 
