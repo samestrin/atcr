@@ -238,6 +238,46 @@ func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
 	require.NotEmpty(t, env.Reviewers, "old records must appear in export with --since all")
 }
 
+// TestLeaderboardCmd_SinceZeroShowsOldRecords pins the second no-window sentinel.
+// "all" and "0" both map to an empty Since (leaderboard.go), which ApplyFilters
+// treats as "no window" — and which the windowed read must turn back into an
+// all-history read rather than into a zero-length window that hides every record.
+func TestLeaderboardCmd_SinceZeroShowsOldRecords(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 45, "oldreviewer", "m") // older than the default 30d window
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "0")
+	require.Equal(t, 0, code, "--since 0 must disable the window and show all records: %s", out)
+	require.Contains(t, out, "oldreviewer", "record older than 30d must appear with --since 0")
+}
+
+// TestLeaderboardCmd_InvalidSinceEmptyStoreExit0 pins the precedence between the
+// empty-store check and the --since parse: the store is read BEFORE the window
+// value is validated, so an empty store reports its graceful exit-0 state and the
+// invalid value is never surfaced. Sizing a window from --since ahead of the read
+// must not turn this into the exit-1 invalid-since error.
+func TestLeaderboardCmd_InvalidSinceEmptyStoreExit0(t *testing.T) {
+	isolate(t)
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "abc")
+	require.Equal(t, 0, code, "an empty store is graceful even with an invalid --since: %s", out)
+	require.Contains(t, out, "No scorecard data found")
+	require.NotContains(t, out, "invalid --since", "the empty-store state takes precedence over the window value")
+}
+
+// TestLeaderboardCmd_ExportInvalidSinceEmptyStoreReportsEmptyStore pins the same
+// precedence on the export path, where the empty-store failure carries its own
+// distinct message. --export never needs a window, so no window parsing may run
+// ahead of this check either.
+func TestLeaderboardCmd_ExportInvalidSinceEmptyStoreReportsEmptyStore(t *testing.T) {
+	isolate(t)
+
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--since", "abc")
+	require.Equal(t, 1, code, "an empty store fails the export: %s", out)
+	require.Contains(t, out, "no scorecard data yet")
+	require.NotContains(t, out, "invalid --since", "the empty-store export error takes precedence")
+}
+
 func TestRenderLeaderboard_WriteErrorPropagated(t *testing.T) {
 	rows := []scorecard.LeaderboardRow{
 		{Reviewer: "alice", Model: "m", Runs: 1, FindingsRaised: 5, FindingsCorroborated: 3, CorroborationRate: 0.6},
