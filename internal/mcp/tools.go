@@ -79,6 +79,7 @@ type ReconcileArgs struct {
 	RequireVerified bool   `json:"require_verified,omitempty" jsonschema:"with fail_on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate; requires fail_on"`
 	Consensus       string `json:"consensus,omitempty" jsonschema:"consensus filter level for uncorroborated singletons on a 3+ reviewer panel: strict (default), lenient (keep MEDIUM-confidence singletons), or off (filter inert)"`
 	Repo            string `json:"repo,omitempty" jsonschema:"repository root whose .atcr/debt store reconciled findings are persisted to — must carry a .git or .atcr marker; defaults to the repo root recorded in the review manifest, and persistence is skipped with a warning when neither is available"`
+	NoLocalDebt     bool   `json:"no_local_debt,omitempty" jsonschema:"skip writing reconciled findings to the local TD store for this run (mirrors the CLI's --no-local-debt); the reconcile result is unaffected"`
 }
 
 // VerifyArgs are the atcr_verify tool arguments. id_or_path is the review id

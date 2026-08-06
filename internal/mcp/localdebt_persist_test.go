@@ -226,6 +226,44 @@ func TestReconcileHandler_InvalidExplicitRepoDoesNotPersist(t *testing.T) {
 	assert.Contains(t, diag.String(), "does not exist or is not a directory")
 }
 
+// TestReconcileHandler_NoLocalDebtSuppressesPersist covers the MCP half of the
+// CLI's --no-local-debt lever (TD internal/mcp/handlers.go:382): once
+// atcr_reconcile is reachable a client could grow .atcr/debt/ under any
+// resolvable root with no way to turn the write path off short of disabling the
+// tool. The argument must suppress the write while leaving the reconcile result
+// — a best-effort side effect by contract — untouched.
+func TestReconcileHandler_NoLocalDebtSuppressesPersist(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	id := reviewFixture(t, root)
+	recordRootInManifest(t, root, id, root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "auth.go"), []byte("package auth\n"), 0o644))
+	chdir(t, t.TempDir())
+
+	var diag bytes.Buffer
+	e := &engine{root: root, diag: &diag}
+	_, out, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{NoLocalDebt: true})
+	require.NoError(t, err)
+
+	assert.Empty(t, debtRecords(t, root),
+		"no_local_debt must suppress the store write on an otherwise-persisting root")
+	assert.True(t, out.Pass, "suppressing a best-effort side effect must not change the result")
+	assert.Equal(t, 1, out.TotalFindings, "the reconcile itself still runs in full")
+}
+
+// TestReconcileInputSchema_ExposesNoLocalDebt pins the argument's visibility: the
+// schema is inferred from the struct, so a missing jsonschema tag would leave the
+// only opt-out lever undiscoverable to every client.
+func TestReconcileInputSchema_ExposesNoLocalDebt(t *testing.T) {
+	schema, err := reconcileInputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	require.Contains(t, schema.Properties, "no_local_debt",
+		"the atcr_reconcile schema must expose the persistence opt-out")
+	assert.NotEmpty(t, schema.Properties["no_local_debt"].Description)
+}
+
 // TestReconcileInputSchema_ExposesRepo covers AC8(a)'s schema half: the argument is
 // inferred from the struct, so a missing jsonschema tag or a mistyped json tag would
 // leave the parameter invisible to every MCP client while the Go field compiles fine.
