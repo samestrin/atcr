@@ -152,6 +152,11 @@ func TestAppend_LeavesExistingShardDirModeAlone(t *testing.T) {
 // Appending to a ledger that already exists must not change its mode: a repo
 // that accrued history under the old 0644 default keeps working, and Append
 // never silently re-permissions a file it did not create.
+//
+// As with the parent-mode case above, the fixture's mode is observed rather than
+// assumed: os.WriteFile applies the umask too, so under `umask 077` the file is
+// created 0600, Append correctly preserves it, and a hardcoded 0o644 assertion
+// fails anyway. The property is preservation, so assert preservation.
 func TestAppend_PreservesExistingFileMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes are not modeled on Windows")
@@ -159,11 +164,14 @@ func TestAppend_PreservesExistingFileMode(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "findings-history.jsonl")
 	require.NoError(t, os.WriteFile(path, nil, 0o644))
+	before, err := os.Stat(path)
+	require.NoError(t, err)
 	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 
 	require.NoError(t, Append(path, []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
 
-	fi, err := os.Stat(path)
+	after, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o644), fi.Mode().Perm())
+	assert.Equal(t, before.Mode().Perm(), after.Mode().Perm(),
+		"an existing ledger keeps the mode it already had")
 }
