@@ -67,13 +67,22 @@ func TestHashPersonaID_EmptyPathAndUnicode(t *testing.T) {
 }
 
 // TestHashPersonaID_UniquenessAcrossDifferentInputs hashes 20+ distinct Persona
-// IDs (including near-identical whitespace/case variants) and asserts pairwise
-// distinctness plus per-input reproducibility (AC 03-04).
+// IDs and asserts pairwise distinctness plus per-input reproducibility (AC 03-04).
+//
+// SUPERSEDED IN PART by epic 35.16.1. This list used to also carry "bruce " and
+// "Bruce" and assert they hashed DISTINCTLY from "bruce" — the opposite of what
+// HashPersonaID now guarantees. Those two entries are removed deliberately, and must
+// NOT be restored as a "regression fix": collapsing casing and padding variants onto
+// one digest is the intended contract, pinned by
+// TestHashPersonaID_CanonicalizesCaseAndWhitespace above. Distinctness across
+// genuinely DIFFERENT personas is the property this test still exists to protect,
+// and the 22 remaining ids (still ≥ 20, per the require below) all differ by more
+// than case or whitespace.
 func TestHashPersonaID_UniquenessAcrossDifferentInputs(t *testing.T) {
 	ids := []string{
 		"bruce", "alice", "carol", "dave", "eve", "frank", "grace", "heidi",
 		"ivan", "judy", "mallory", "niaj", "olivia", "peggy", "rupert", "sybil",
-		"trent", "victor", "walter", "yvonne", "zoe", "bruce ", "Bruce", "审阅者-42",
+		"trent", "victor", "walter", "yvonne", "zoe", "审阅者-42",
 	}
 	require.GreaterOrEqual(t, len(ids), 20)
 	seen := map[string]string{}

@@ -3,6 +3,7 @@ package scorecard
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 )
 
 // HashPersonaID returns the lowercase hex SHA-256 digest of raw, pseudonymizing a
@@ -10,10 +11,32 @@ import (
 //
 // It is deliberately NOT part of the Epic 10.0 PublicRecord allowlist / scrubField
 // export path: it lives here (not in export.go) and never calls, wraps, or
-// references PublicRecord, scrubField, AnonymizeRecord, or ScrubPublicRecord. It
-// performs no normalization (no case-folding, no trimming) and no validation:
-// hashing is total over every Go string, including the empty string, returns no
-// error, and cannot panic.
+// references PublicRecord, scrubField, AnonymizeRecord, or ScrubPublicRecord.
+//
+// CANONICALIZATION (epic 35.16.1): raw is reduced to
+// strings.ToLower(strings.TrimSpace(raw)) BEFORE hashing, so every casing and
+// padding variant of one persona yields one digest. This function previously
+// performed no normalization at all; that is no longer true, and the reversal is
+// deliberate rather than incidental.
+//
+// The reason is that the digest is the ONLY persona identity the telemetry backend
+// ever holds, and it is irreversible on arrival: atcr.dev re-keys it with
+// HMAC-SHA256 under a pepper that is never rotated and discards the pre-pepper
+// value. A variant that escapes this function therefore mints a SECOND permanent,
+// unmergeable identity for one persona, splitting its aggregate with no backfill
+// available afterwards. Normalizing at the hash boundary — rather than at each call
+// site — is what makes every producer, present and future, correct by construction;
+// cloudsync.go had already patched the whitespace half of this at its own call site,
+// which is exactly the one-site fix that generalizes here.
+//
+// Plain strings.ToLower, deliberately: NOT golang.org/x/text/cases folding and NOT
+// NFC normalization. The persona catalog (personas/community/*.yaml) is pure
+// lowercase ASCII, x/text is not a direct dependency, and atcr.dev must reproduce
+// this transform in one line of JS to build its persona dictionary. A non-ASCII
+// persona still hashes fine — ToLower is simply a no-op on scripts without case.
+//
+// Hashing remains total over every Go string, including the empty string, returns
+// no error, and cannot panic. No validation is performed.
 //
 // Guarantee and its bound: SHA-256 is a one-way (preimage-resistant) hash, so a
 // digest is not directly reversible. But Persona IDs are a small, enumerable,
@@ -24,8 +47,20 @@ import (
 // sprint's tech-debt-captured.md TD-007): it needs a provisioned secret and would
 // change the AC-pinned digest values, so it is scoped with the real-endpoint decision.
 func HashPersonaID(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
+	sum := sha256.Sum256([]byte(canonicalPersonaID(raw)))
 	return hex.EncodeToString(sum[:])
+}
+
+// canonicalPersonaID reduces a raw persona name to the single form every producer
+// hashes. It is the one definition of "the same persona" on the telemetry path, and
+// internal/telemetry inlines an identical copy (that package is a transport leaf and
+// may not import this one — see NewQualitySignal). TestQualitySignal_PersonaHashedNotRaw
+// locks the two byte-for-byte, so this cannot drift without a test failing.
+//
+// Trim first, then lower: the order is immaterial for ASCII but fixed so the JS the
+// atcr.dev dictionary uses (`name.trim().toLowerCase()`) is a literal translation.
+func canonicalPersonaID(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 // TelemetryPersonaRecord is the telemetry / cloud-sync-scoped Persona Leaderboard
