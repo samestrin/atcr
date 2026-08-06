@@ -107,15 +107,37 @@ func TestResolveStoreRoot(t *testing.T) {
 		assert.Empty(t, diag.String())
 	})
 
-	t.Run("manifest root with an .atcr directory is used", func(t *testing.T) {
+	t.Run("manifest root with ONLY an .atcr directory is rejected", func(t *testing.T) {
+		// This case asserted ok == true until TD internal/localdebt/root.go:133. The
+		// manifest tier's marker union let an artifacts-only .atcr/ directory
+		// self-validate: cli/serve.go hardcodes the MCP engine root to ".", the review
+		// path stamps Manifest.Root = absRoot(req.Root), and that directory
+		// NECESSARILY contains .atcr/ because atcr just wrote the review into it — so
+		// tier 2 re-validated the server's own CWD, the one directory AllowCWD:false
+		// exists to refuse. A machine-recorded root must now carry .git specifically.
 		manifestRoot := repoDir(t, ".atcr")
 		review := filepath.Join(t.TempDir(), "r")
 		writeReviewManifest(t, review, manifestRoot)
 
-		root, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true})
+		var diag bytes.Buffer
+		root, ok := ResolveStoreRoot(RootOpts{ReviewDir: review, AllowCWD: true, Diag: &diag})
+
+		assert.False(t, ok, "an .atcr-only directory is an artifacts tree, not a repository root")
+		assert.Empty(t, root)
+		assert.Contains(t, diag.String(), "no longer a valid repository root")
+	})
+
+	t.Run("the CWD tier still accepts an .atcr marker", func(t *testing.T) {
+		// The stricter rule is scoped to the MACHINE-RECORDED tier. The CWD walk and
+		// the store's readers (cli/debt.go debtRepoRoot) keep the marker union, or a
+		// repo whose only marker is .atcr would split writer from reader again.
+		root := repoDir(t, ".atcr")
+		t.Chdir(root)
+
+		got, ok := ResolveStoreRoot(RootOpts{AllowCWD: true})
 
 		require.True(t, ok)
-		assert.Equal(t, manifestRoot, root)
+		assert.Equal(t, resolved(t, root), resolved(t, got))
 	})
 
 	t.Run("manifest root with a .git FILE is used (linked worktree)", func(t *testing.T) {
