@@ -20,6 +20,12 @@ const defaultHistorySince = 90 * 24 * time.Hour
 // (--package), and print a markdown table of counts by severity per package. An
 // absent or fully-filtered history is not an error — it exits 0 with a "no
 // history" notice (Epic 19.0 AC3).
+//
+// --prune <horizon> additionally deletes whole monthly shards older than the
+// horizon before reporting. It is the only destructive thing this command can
+// do, and it is strictly opt-in: there is no default horizon and no implicit
+// pruning anywhere else — a review run appends to the ledger but never trims it,
+// so history is only ever deleted by someone asking for it.
 func newHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history",
@@ -29,6 +35,7 @@ func newHistoryCmd() *cobra.Command {
 	}
 	cmd.Flags().String("since", "", "only include findings within this window: h/m/s or d/w units (e.g. 30d, 2w, 48h); default 90d")
 	cmd.Flags().String("package", "", "only include findings whose package is at or under this path prefix (e.g. internal/registry)")
+	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d); same units as --since, no default")
 	return cmd
 }
 
@@ -41,6 +48,16 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 		}
 		since = d
 	}
+	// Parsed before anything is read or deleted: a bad horizon must fail the
+	// command outright rather than after a partial prune.
+	var horizon time.Duration
+	if raw, _ := cmd.Flags().GetString("prune"); strings.TrimSpace(raw) != "" {
+		d, err := history.ParseSince(raw)
+		if err != nil {
+			return usageError(fmt.Errorf("--prune: %w", err)) // exit 2, nothing deleted
+		}
+		horizon = d
+	}
 	pkg, _ := cmd.Flags().GetString("package")
 
 	root, err := repoRoot()
@@ -51,12 +68,30 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	// two separate time.Now() calls could straddle a month boundary and drop a
 	// shard the filter then expects records from.
 	now := time.Now()
+
+	out := cmd.OutOrStdout()
+
+	// Prune first, so the report that follows describes what is actually left on
+	// disk. Removals are always named: deleting a month of trend data silently
+	// would leave the next query looking like data loss.
+	if horizon > 0 {
+		res, perr := history.PruneShards(history.ShardDir(root), horizon, now)
+		if perr != nil {
+			return usageError(perr) // exit 2; res.Removed reports what was already deleted
+		}
+		if len(res.Removed) == 0 {
+			_, _ = fmt.Fprintf(out, "no shards older than the retention horizon — nothing pruned (%d kept)\n", res.Kept)
+		} else {
+			_, _ = fmt.Fprintf(out, "pruned %d shard(s) past the retention horizon: %s (%d kept)\n",
+				len(res.Removed), strings.Join(res.Removed, ", "), res.Kept)
+		}
+	}
+
 	recs, err := history.LoadAllSince(history.ShardDir(root), history.LegacyLedgerPath(root), since, now)
 	if err != nil {
 		return usageError(err) // corrupt/unreadable ledger (exit 2)
 	}
 
-	out := cmd.OutOrStdout()
 	// An empty result no longer implies an empty ledger: since Epic 35.14 the
 	// shards outside the --since window are never opened, so a repo with years of
 	// out-of-window history also loads zero records. Only a genuinely empty store
