@@ -118,16 +118,34 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		}
 	}
 
-	// The negative half. The private-scope store is asserted absent as the bare
-	// ".planning/" prefix rather than the full former path: it is the stricter
-	// assertion (no private-tree reference of ANY kind survives in this page), and
-	// it keeps this file out of the AC11 grep gate, which scans Go source for the
-	// full literal.
+	// The negative half, scoped to the LIVE documentation — everything above the
+	// breaking-changes heading (TD skills/docs_test.go:104). Applied page-wide,
+	// this gate and the migration table it sits beside were mutually
+	// unsatisfiable: the table exists so an upgrader can find the flag their
+	// script passes, and forbidding those literals everywhere forced it into
+	// paraphrase ("the store-selection flags"), which nobody can grep for. What
+	// AC13 protects — no live instruction pointing at a retired surface —
+	// survives: a migration table is documentation OF a retirement, not an
+	// instruction to use it.
+	const migrationHeading = "## Breaking changes from the private-scope tooling"
+	live, migration, found := strings.Cut(doc, migrationHeading)
+	if !found {
+		t.Fatalf("AC13: docs/technical-debt.md is missing the %q section, so the retired-surface assertions have no scope", migrationHeading)
+	}
+
+	// The private-scope store stays absent from the WHOLE page. Unlike a flag
+	// name it is not something an upgrader greps for — the legacy file is left
+	// untouched by design — and the bare ".planning/" prefix is the stricter
+	// assertion that also keeps this file out of the AC11 grep gate, which scans
+	// Go source for the full literal.
+	if strings.Contains(doc, ".planning/") {
+		t.Errorf("AC13 (private-scoped tree): docs/technical-debt.md still references retired surface %q", ".planning/")
+	}
+
 	retired := []struct {
 		name   string
 		substr string
 	}{
-		{"private-scoped tree", ".planning/"},
 		{"retired shard flag", "--items"},
 		{"retired README flag", "--readme"},
 		{"retired sync flag", "--sync"},
@@ -135,8 +153,15 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		{"retired dashboard default", "DASHBOARD.md"},
 	}
 	for _, tc := range retired {
-		if strings.Contains(doc, tc.substr) {
-			t.Errorf("AC13 (%s): docs/technical-debt.md still references retired surface %q",
+		if strings.Contains(live, tc.substr) {
+			t.Errorf("AC13 (%s): the live documentation still references retired surface %q",
+				tc.name, tc.substr)
+		}
+		// The complementary half of the same rule: the migration table MUST name
+		// it, because that table is the only place a reader lands after grepping
+		// the page for what their script passes today.
+		if !strings.Contains(migration, tc.substr) {
+			t.Errorf("AC13 (%s): the breaking-changes table must name %q so an upgrader can grep for it",
 				tc.name, tc.substr)
 		}
 	}
