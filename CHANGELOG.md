@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+## [35.14.0] - 2026-08-05
+
+Moves the finding-history ledger under `.atcr/`, alongside the debt store Epic 35.13 unified. `atcr history` previously resolved its monthly shards to `.planning/history/`, so a standalone atcr user — who has no `.planning/` directory — had nowhere to record or query trend data. The move also turns month sharding into a real read index: a `--since` query now selects shards by filename and opens only the months its window touches.
+
+### Added
+
+- `atcr history --prune <horizon>` deletes whole monthly shards older than a retention horizon and names every shard it removes. Strictly opt-in with no default: nothing else in atcr ever trims the ledger, and pruning is deliberately file-granular — there is no record-level compaction, because folding a trend ledger by finding id would destroy the trend it exists to report.
+- [docs/history.md](docs/history.md) — the ledger's storage layout, record schema, deduplication rule, windowed reads, and retention, including how to carry forward shards from the previous `.planning/history/` layout.
+
+### Changed
+
+- The finding-history ledger now lives at `.atcr/history/YYYY-MM.jsonl`. `atcr review` (including `--resume`) writes there, and `atcr history` reads it unioned with the pre-19.4 flat ledger `.atcr/findings-history.jsonl`, which stays queryable in place and is never moved or rewritten.
+- A `--since` query selects shards by their `YYYY-MM` filename before opening them, so a narrow window costs proportionally to the window rather than to the size of the ledger. Selection may over-select but never under-select: a month containing the cutoff is read whole, and a shard whose name is not a month is always read.
+- The union of the two read locations is deduplicated on (timestamp, finding id) — one occurrence per finding per run. A finding's recurrence across runs is preserved, since that is the trend being reported; a duplicate resolves to the highest severity seen, matching how a single run's records are already collapsed.
+- History directories are now created `0700` and new ledger files `0600`, matching the sibling `.atcr/debt/` store. Existing files keep their current mode.
+- An empty result is no longer reported as "no history recorded yet" when history exists outside the query window; the first-run hint is shown only for a genuinely empty ledger.
+
+### Removed
+
+- atcr's history code no longer resolves any path under `.planning/`. Shards left there by the previous layout are not read, moved, or deleted — see the upgrade note in [docs/history.md](docs/history.md) for copying them into `.atcr/history/`. Because `.atcr/` is gitignored, trend data is per-checkout and is no longer shared through version control.
+
+*Shipped via /execute-epic (epic 35.14)*
+
 ## [35.13.0] - 2026-08-05
 
 Unifies atcr's technical-debt tooling onto a single store. `atcr debt` previously split across two stores that never reconciled — `.planning/technical-debt/` (`list`/`add`/`dashboard`) and `.atcr/debt/` (`resolve`/`compact`) — so an item filed by `add` could never be closed by `resolve`. All five subcommands now read and write the same append-only, month-sharded `.atcr/debt/` store, with corrected resolution semantics, automatic bounded growth, and MCP write parity.
