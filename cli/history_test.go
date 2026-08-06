@@ -56,6 +56,40 @@ func writeHistoryShard(t *testing.T, root string, ts time.Time, lines ...map[str
 	require.NoError(t, os.WriteFile(shard, buf.Bytes(), 0o644))
 }
 
+// An unreadable in-window shard is skipped so the rest stay queryable — but
+// the warning must reach the command's stderr (not the process's os.Stderr),
+// or the table undercounts findings while looking authoritative, with the
+// notice invisible to the cobra harness and any embedded caller.
+func TestHistoryCmd_UnreadableShardWarnsOnCommandStderr(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod does not block root")
+	}
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	older := time.Now().Add(-40 * 24 * time.Hour) // still inside the default 90d window
+	for _, ts := range []time.Time{recent, older} {
+		writeHistoryShard(t, root, ts, map[string]any{
+			"ts": ts.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+			"id": "s-" + ts.UTC().Format("2006-01"), "file": "p/a.go", "category": "C",
+		})
+	}
+	unreadable := filepath.Join(root, ".atcr", "history", older.UTC().Format("2006-01")+".jsonl")
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) }) // let TempDir removal succeed
+
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, stderr.String(), "skipping unreadable history shard",
+		"the undercount warning must land on the command's stderr")
+	assert.Contains(t, stdout.String(), "| Package |",
+		"the table still renders from the readable shards")
+}
+
 // AC2: `atcr history` reads monthly shards under .atcr/history without the
 // caller naming a shard.
 func TestHistoryCmd_ReadsMonthlyShards(t *testing.T) {
