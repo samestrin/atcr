@@ -128,6 +128,39 @@ func TestNewQualitySignal_EmptyPersonaReturnsZeroSentinel(t *testing.T) {
 	}
 }
 
+// TestNewQualitySignal_CanonicalizesCaseAndWhitespace pins epic 35.16.1 on the
+// telemetry half of the split. NewQualitySignal inlines its own SHA-256 rather than
+// importing scorecard (transport leaf must not depend on a high-level package), so
+// the canonicalization has to be duplicated here — and a duplicate is exactly what
+// silently drifts. This asserts the OUTCOME on this side;
+// TestQualitySignal_PersonaHashedNotRaw asserts byte-equality with scorecard's copy,
+// so together they fail if either producer is changed alone.
+func TestNewQualitySignal_CanonicalizesCaseAndWhitespace(t *testing.T) {
+	want := NewQualitySignal("bruce", "claude-sonnet-4-6", 3, 1).PersonaIDHash
+	if want == "" {
+		t.Fatal("baseline persona must produce a non-empty digest")
+	}
+	for _, variant := range []string{"Bruce", "BRUCE", " bruce ", "\tBruce\n", "bRuCe"} {
+		if got := NewQualitySignal(variant, "claude-sonnet-4-6", 3, 1).PersonaIDHash; got != want {
+			t.Errorf("variant %q hashed to %q, want %q — a split here is permanent once atcr.dev peppers it", variant, got, want)
+		}
+	}
+}
+
+// TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel extends the empty
+// guard (TD 30.0) across canonicalization. Before 35.16.1 a whitespace-only persona
+// was non-empty at the guard and hashed to a junk-but-valid-looking digest; now it
+// canonicalizes to "", so the guard MUST be evaluated on the canonical value or it
+// would launder a blank persona into sha256("")=e3b0c442... — the well-known
+// constant the sentinel exists to keep off the backend.
+func TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel(t *testing.T) {
+	for _, blank := range []string{" ", "   ", "\t", "\n", " \t\n "} {
+		if qs := NewQualitySignal(blank, "claude-sonnet-4-6", 3, 1); qs != (QualitySignal{}) {
+			t.Errorf("whitespace-only persona %q must return the zero sentinel, got %+v", blank, qs)
+		}
+	}
+}
+
 // TestQualitySignal_PersonaHashedNotRaw locks AC 01-05 Scenario 3: the
 // construction function hashes the raw persona via HashPersonaID and never
 // carries the raw persona name in cleartext.
