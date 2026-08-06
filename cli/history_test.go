@@ -97,15 +97,40 @@ func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "legacy ledger must not be mutated")
 
-	// Verify merged record ordering: legacy precedes shards in the raw LoadAll result.
-	recs, err := history.LoadAll(
+	// Verify merged record ordering: legacy precedes shards in the result of the
+	// windowed loader the command itself uses (LoadAllSince over the default
+	// window) — the unwindowed LoadAll is never invoked by runHistory.
+	recs, err := history.LoadAllSince(
 		filepath.Join(root, ".atcr", "history"),
 		legacyPath,
+		defaultHistorySince,
+		time.Now(),
 	)
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
 	assert.Equal(t, "legacy/pkg", recs[0].Package, "first record should be from legacy")
 	assert.Equal(t, "shard/pkg", recs[1].Package, "second record should be from shard")
+}
+
+// AC2's "deduplicated consistently", pinned at CLI level: the identical
+// (ts, id) record present in BOTH the legacy ledger and a shard must be counted
+// once in the rendered table, not twice. (The library-level union test compares
+// an ID set, which is structurally blind to duplicates.)
+func TestHistoryCmd_DedupesIdenticalLegacyAndShardRecords(t *testing.T) {
+	root := t.TempDir()
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	rec := map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "dup1", "file": "p/a.go", "category": "C",
+	}
+	writeHistoryLedger(t, root, rec)
+	writeHistoryShard(t, root, recent, rec)
+
+	out, err := runHistoryIn(t, root)
+	require.NoError(t, err)
+	assert.Contains(t, out, "| Package |")
+	assert.Regexp(t, `\*\*Total\*\*.*\|\s*0\s*\|\s*1\s*\|\s*0\s*\|\s*0\s*\|\s*1\s*\|`, out,
+		"the duplicated (ts, id) record must be counted exactly once")
 }
 
 func TestHistoryCmd_AbsentHistoryExitsZeroWithMessage(t *testing.T) {
