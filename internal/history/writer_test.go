@@ -96,6 +96,12 @@ func TestAppend_ErrorsWhenWriteFails(t *testing.T) {
 // Only the leaf shard dir is created by the write path; an existing parent keeps
 // whatever mode it already had, so tightening history's modes never rewrites the
 // permissions of a .atcr/ tree another component created.
+//
+// The premise is captured with os.Stat rather than assumed to be the 0o755 passed
+// to MkdirAll: MkdirAll applies the process umask, so under a hardened umask the
+// dir is never 0755 to begin with and a hardcoded assertion fails without Append
+// doing anything wrong. Comparing before/after also states the actual contract —
+// "unchanged" — instead of one particular bit pattern.
 func TestAppend_LeavesExistingParentModeAlone(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes are not modeled on Windows")
@@ -103,13 +109,15 @@ func TestAppend_LeavesExistingParentModeAlone(t *testing.T) {
 	root := t.TempDir()
 	atcr := filepath.Join(root, ".atcr")
 	require.NoError(t, os.MkdirAll(atcr, 0o755))
+	before, err := os.Stat(atcr)
+	require.NoError(t, err)
 	ts := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 
 	require.NoError(t, Append(ShardPath(filepath.Join(atcr, "history"), ts), []Record{{Timestamp: ts, ID: "x", File: "a.go"}}))
 
-	fi, err := os.Stat(atcr)
+	after, err := os.Stat(atcr)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm(), "an existing .atcr/ must keep its own mode")
+	assert.Equal(t, before.Mode().Perm(), after.Mode().Perm(), "an existing .atcr/ must keep its own mode")
 }
 
 // The leaf shard dir gets the same treatment as the ledger file and as
