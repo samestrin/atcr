@@ -1,8 +1,32 @@
 ## [Unreleased]
 
+## [35.13.0] - 2026-08-05
+
+Unifies atcr's technical-debt tooling onto a single store. `atcr debt` previously split across two stores that never reconciled — `.planning/technical-debt/` (`list`/`add`/`dashboard`) and `.atcr/debt/` (`resolve`/`compact`) — so an item filed by `add` could never be closed by `resolve`. All five subcommands now read and write the same append-only, month-sharded `.atcr/debt/` store, with corrected resolution semantics, automatic bounded growth, and MCP write parity.
+
+### Added
+
+- Schema v3: records gain `origin` (`review`|`manual`), `occurrences`, `first_seen`, and `counted_through`, carried forward through compaction so a resolved-then-regressed item's history survives.
+- `--origin` filter and an `ORIGIN` column on `atcr debt list`.
+- Finding ids as the leading column in `atcr debt list`, `atcr debt dashboard`, and `--json` output, so `atcr debt resolve <id>` is copy-pasteable from what was just read.
+- Automatic compaction: the store now compacts itself after a reconcile append once it crosses a persisted watermark past 100k records or 100 MB, instead of requiring a manual `atcr debt compact`.
+- A minimal streaming-decode read path for dedup seeding and the open-backlog fold, replacing full-record materialization on the hot path.
+- The review manifest now records the repository root at review time; `atcr reconcile` and the MCP `atcr_reconcile` handler resolve the local-debt store via `explicit --repo > manifest > CWD`, closing the gap where MCP-driven reconciles never persisted findings.
+- `atcr debt dashboard --output <file>`, mirroring `atcr report`; stdout is now the default.
+
 ### Changed
 
-- `atcr debt list` now validates `--severity` and `--status` against the same enums `atcr debt resolve` and `atcr debt add` already enforce, returning a usage error (exit `2`) on an unrecognized value. **Breaking for scripts:** a typo'd filter (`--severity BOGUS`, `--status opne`) previously matched nothing and exited `0` — byte-for-byte indistinguishable from a genuinely empty backlog — so a broken query read as a clean bill of health. Recognized values are unchanged and remain case-insensitive; an unset filter still matches everything. `--status wontfix` is accepted here even though `debt add` refuses to file it: dismissing an item is `debt resolve`'s job, but a dismissed item stays viewable.
+- `atcr debt list` / `add` / `dashboard` now read and write `.atcr/debt/` instead of `.planning/technical-debt/`.
+- Resolution semantics now split by status: `wontfix` stays terminal, while `resolved` and `deferred` re-open on re-detection of the same finding id — a regression or an unlanded fix is surfaced again rather than silently suppressed forever.
+- `atcr debt list --severity` / `--status` now validate against the same enums `resolve` / `add` already enforce, returning a usage error (exit `2`) on an unrecognized value. **Breaking for scripts:** a typo'd filter previously matched nothing and exited `0`, indistinguishable from a genuinely empty backlog.
+- Every `atcr debt` subcommand resolves its store by walking up from the working directory to the nearest `.git`/`.atcr` marker when `--dir` is unset, so a subdirectory invocation reads the same store as the repo root does.
+
+### Removed
+
+- `internal/debt`, `internal/tdmigrate`, and `cmd/td-migrate`, along with the `--readme` / `--items` flags on `atcr debt`. No atcr code reads or writes `.planning/technical-debt/` anymore; that tree is left untouched for external tooling to drain on its own schedule.
+- The `.planning/technical-debt/DASHBOARD.md` default output path — `atcr debt dashboard` writes to stdout by default now.
+
+*Shipped via /execute-sprint + /resolve-td (sprint 35.13)*
 
 ## [35.12.0] - 2026-08-02
 

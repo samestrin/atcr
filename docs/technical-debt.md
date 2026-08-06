@@ -150,7 +150,7 @@ atcr debt list --json                           # the same selection, as JSON
 
 Flags: `--dir`, `--severity`, `--status` (`open|deferred|resolved|wontfix`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
-`--sort` (`severity|age|est|file`), `--json`.
+`--origin` (`review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
 `--status` has no default, so a bare `list` shows every item including closed
 ones, each with its effective status — a resolved item stays visible (as
@@ -159,7 +159,10 @@ asks for the live backlog; it also matches the empty status that open records
 carry on disk.
 
 The `ID` column is the finding id, rendered untruncated so it can be pasted
-straight into `atcr debt resolve --resolve <id>`.
+straight into `atcr debt resolve --resolve <id>`. The `ORIGIN` column shows
+each record's effective origin (`review` or `manual`); `--origin` filters
+against that same effective value, so a pre-v3 record with no stored `origin`
+still matches `--origin review`.
 
 ### `atcr debt add`
 
