@@ -1,6 +1,7 @@
 package history
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,35 @@ func TestPruneShards_UnremovableShardIsAnErrorNotASilentSuccess(t *testing.T) {
 	assert.Empty(t, res.Removed, "nothing could be removed, so nothing is reported as removed")
 	assert.Equal(t, 2, res.Kept,
 		"the doomed-but-unremoved shards are still on disk — Kept must count every retained candidate file, including on the failure path")
+}
+
+// A concurrent prune that already unlinked a doomed shard turns this pass's
+// os.Remove into fs.ErrNotExist — the end state is already achieved, so the
+// pass must skip it and continue rather than aborting with the remaining
+// doomed shards left unpruned (the race the reviewer reproduced 40/40 with
+// two concurrent PruneShards over one dir).
+func TestPruneShards_RemoveNotExistRaceIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	mustAppendShard(t, dir, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "a")
+	mustAppendShard(t, dir, time.Date(2020, 2, 1, 12, 0, 0, 0, time.UTC), "b")
+
+	realRemove := osRemove
+	calls := 0
+	osRemove = func(name string) error {
+		calls++
+		if calls == 1 {
+			return fs.ErrNotExist // a concurrent prune won the race for 2020-01
+		}
+		return realRemove(name)
+	}
+	t.Cleanup(func() { osRemove = realRemove })
+
+	res, err := PruneShards(dir, 30*24*time.Hour, now)
+	require.NoError(t, err, "an already-achieved removal is not a failure")
+	assert.Equal(t, []string{"2020-02.jsonl"}, res.Removed,
+		"only removals this pass actually performed are reported")
+	assert.NoFileExists(t, filepath.Join(dir, "2020-02.jsonl"))
 }
 
 // A symlinked shard DIR is refused, not followed: PruneShards is the only

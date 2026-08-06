@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// osRemove is a seam for tests simulating removal races and failures;
+// production code always assigns os.Remove.
+var osRemove = os.Remove
+
 // PruneResult reports what a prune pass did: the base names of the shards it
 // removed (sorted, so the report is deterministic) and how many *.jsonl files it
 // retained. Kept counts every retained candidate file, including one whose stem
@@ -100,7 +104,7 @@ func PruneShards(dir string, horizon time.Duration, now time.Time) (PruneResult,
 	sort.Strings(doomed)
 
 	for _, name := range doomed {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if err := osRemove(filepath.Join(dir, name)); err != nil {
 			// The doomed remainder — the shard that just failed and every one not
 			// yet attempted — is retained on disk, so count it: Kept is documented
 			// as every retained candidate file, and the CLI prints it to the user
