@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -396,6 +397,26 @@ func TestLeaderboardCmd_OutOfWindowLockedFileDependsOnWindowState(t *testing.T) 
 			}
 		})
 	}
+}
+
+// TestLeaderboardCmd_MalformedInWindowFileDiagnosticOnce pins that the empty-store
+// probe does not re-emit diagnostics the windowed read already printed. A file
+// that decodes to zero records but is non-empty is opened once by ReadSince and
+// once by the probe's ReadAll; the probe must discard its diagnostics writer so
+// the user sees exactly one warning.
+func TestLeaderboardCmd_MalformedInWindowFileDiagnosticOnce(t *testing.T) {
+	isolate(t)
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	name := time.Now().UTC().Format("2006-01") + ".jsonl"
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("{not valid json\n"), 0o600))
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "30d")
+	require.Equal(t, 0, code, "a store with only malformed data is the empty-store state: %s", out)
+	count := strings.Count(out, scorecard.MsgMalformedSkip)
+	require.Equal(t, 1, count, "malformed-file diagnostic must be emitted exactly once, got %d:\n%s", count, out)
 }
 
 // TestLeaderboardCmd_InWindowMonthFileButOutsideDayCutoffExcluded pins that the
