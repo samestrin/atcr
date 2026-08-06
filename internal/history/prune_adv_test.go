@@ -76,6 +76,38 @@ func TestPruneShards_CannotEscapeShardDir(t *testing.T) {
 	assert.FileExists(t, outside, "a same-named shard outside the dir is untouched")
 }
 
+// "Nothing inside a surviving shard is ever rewritten: a shard is removed whole
+// or left entirely alone" (PruneShards doc, Epic 35.14 Design Decision 2) is
+// pinned at record granularity: a surviving shard holding MULTIPLE records must
+// be byte-identical after the prune. Every other prune test's surviving shard
+// holds a single record, so a mutant that folds each survivor down to its first
+// record would otherwise stay green.
+func TestPruneShards_SurvivingShardIsByteIdentical(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	keep := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	keepPath := ShardPath(dir, keep)
+	require.NoError(t, Append(keepPath, []Record{
+		{Timestamp: keep, ID: "k1", Severity: "HIGH", File: "a.go", Package: "p"},
+		{Timestamp: keep.Add(time.Minute), ID: "k2", Severity: "LOW", File: "b.go", Package: "q"},
+		{Timestamp: keep.Add(2 * time.Minute), ID: "k3", Severity: "CRITICAL", File: "c.go", Package: "r"},
+	}))
+	mustAppendShard(t, dir, time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC), "old")
+
+	before, err := os.ReadFile(keepPath)
+	require.NoError(t, err)
+
+	res, err := PruneShards(dir, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2020-01.jsonl"}, res.Removed)
+	assert.Equal(t, 1, res.Kept)
+
+	after, err := os.ReadFile(keepPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after,
+		"a surviving shard must be left entirely alone — never rewritten at record granularity")
+}
+
 // Pruning an empty shard directory is a no-op, not an error, and never removes
 // the directory itself — a later review run appends into it as usual.
 func TestPruneShards_KeepsTheDirectoryItself(t *testing.T) {
