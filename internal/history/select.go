@@ -84,6 +84,13 @@ func loadShardsWhere(dir string, keep func(name string) bool) ([]Record, error) 
 		if !isShardFile(e) {
 			continue
 		}
+		if !e.Type().IsRegular() {
+			// Reads never open special files: a FIFO named *.jsonl would hang
+			// Load on open, and a symlink would read a file outside the shard
+			// dir. (PruneShards instead unlinks such entries AS links — the
+			// paths share the isShardFile name check but differ here.)
+			continue
+		}
 		if !keep(e.Name()) {
 			continue
 		}
