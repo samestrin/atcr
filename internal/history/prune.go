@@ -44,8 +44,11 @@ type PruneResult struct {
 // Deletion is conservative in three further ways, because this is the only
 // destructive operation in the package:
 //
-//   - Only *.jsonl regular files are candidates; directories and any other file
-//     in the shard dir are untouched.
+//   - Only *.jsonl non-directories are candidates — regular files and symlinks
+//     (unlinked as links, never followed; see
+//     TestPruneShards_RemovesSymlinkNotTarget). Directories and any other file
+//     in the shard dir are untouched, including a directory whose name happens
+//     to look like a shard (2020-01.jsonl/).
 //   - A stem that does not parse as YYYY-MM is NEVER deleted. It cannot be proven
 //     past the horizon, and treating an unrecognized name as prunable would make
 //     an unrelated file destroyable by a prune.

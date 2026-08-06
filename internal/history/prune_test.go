@@ -85,6 +85,25 @@ func TestPruneShards_LeavesNonShardFilesAlone(t *testing.T) {
 	assert.Equal(t, []string{"2020-01.jsonl"}, res.Removed)
 }
 
+// A DIRECTORY named exactly like a past-month shard (2020-01.jsonl/) is not a
+// deletion candidate: the IsDir guard rejects it before the month test, so it
+// survives with its contents and is not reported in Removed. (The
+// 2020-01.jsonl.d directory above never reaches the guard — the suffix check
+// rejects it first — so it cannot pin this.)
+func TestPruneShards_NeverDeletesShardNamedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	sub := filepath.Join(dir, "2020-01.jsonl")
+	require.NoError(t, os.MkdirAll(sub, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "inner.txt"), []byte("keep"), 0o600))
+
+	res, err := PruneShards(dir, 30*24*time.Hour, now)
+	require.NoError(t, err)
+	assert.DirExists(t, sub, "a directory is never a prune candidate, even named like a shard")
+	assert.FileExists(t, filepath.Join(sub, "inner.txt"))
+	assert.Empty(t, res.Removed)
+}
+
 // A *.jsonl file whose stem is not a YYYY-MM month cannot be proven past the
 // horizon, so it is never deleted. Deleting on an unparseable name would make an
 // unrelated file in the directory destroyable by a prune.
