@@ -188,11 +188,16 @@ func LoadAllSince(shardDir, legacyPath string, since time.Duration, now time.Tim
 //
 // Any error (missing dir, unreadable entry) reports false: the question is
 // "is there something to say history exists", and an unanswerable question is
-// not a yes.
+// not a yes. Both locations use the same emptiness test — a shard, like the
+// legacy ledger, counts only when it is a non-empty FILE: a zero-byte
+// 2026-08.jsonl is no more history than a zero-byte ledger.
 func HasAny(shardDir, legacyPath string) bool {
 	if entries, err := os.ReadDir(shardDir); err == nil {
 		for _, e := range entries {
-			if isShardFile(e) {
+			if !isShardFile(e) {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.Size() > 0 {
 				return true
 			}
 		}
