@@ -199,6 +199,11 @@ a deletion is never silent. Guardrails:
 - `--prune` cannot be combined with `--package`. A shard holds every package's
   records for its month, so pruning is not scopeable to one package; the
   combination is rejected rather than silently deleting more than asked.
+- A horizon **shorter than the report window** warns on stderr. Pruning runs
+  first, so `atcr history --prune 30d` under the default 90-day window deletes
+  months the report then asks for — without the warning the table reads as "no
+  findings in that period" rather than "that period was just deleted". The
+  combination is still allowed: narrowing retention is a legitimate intent.
 
 To reset history entirely, delete `.atcr/history/` (and, if you want the pre-19.4
 data gone too, `.atcr/findings-history.jsonl`) by hand.
