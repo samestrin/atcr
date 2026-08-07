@@ -405,6 +405,33 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	}
 }
 
+// The config-key ↔ flag mapping must be derivable without reading source:
+// documented in one table in the config docs (registry.md) and in root help.
+// Three pairs diverge (payload_mode→--payload, timeout_secs→--timeout,
+// payload_byte_budget→--byte-budget); fail_on and max_parallel match and anchor
+// the convention.
+func TestConfigKeyFlagMappingIsDocumented(t *testing.T) {
+	pairs := [][2]string{
+		{"payload_mode", "--payload"},
+		{"timeout_secs", "--timeout"},
+		{"payload_byte_budget", "--byte-budget"},
+		{"fail_on", "--fail-on"},
+		{"max_parallel", "--max-parallel"},
+	}
+
+	_, helpOut := execCmdCapture(t, "--help")
+	for _, p := range pairs {
+		require.Contains(t, helpOut, p[0], "root help must name config key %s", p[0])
+		require.Contains(t, helpOut, p[1], "root help must name flag %s for config key %s", p[1], p[0])
+	}
+
+	reg := auditedMarkdown(t)["docs/registry.md"]
+	for _, p := range pairs {
+		require.Contains(t, reg, p[0], "registry.md must name config key %s", p[0])
+		require.Contains(t, reg, p[1], "registry.md must map config key %s to %s", p[0], p[1])
+	}
+}
+
 // TestSubcommandValidationSkipsFlags asserts that a bogus subcommand placed
 // after a flag is still rejected (e.g. `atcr benchmark --json frobnicate`).
 func TestSubcommandValidationSkipsFlags(t *testing.T) {
