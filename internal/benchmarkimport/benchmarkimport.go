@@ -49,10 +49,18 @@ func ParseDataset(raw []byte) ([]Record, error) {
 	if len(recs) == 0 {
 		return nil, fmt.Errorf("dataset holds no records")
 	}
+	seen := make(map[string]int, len(recs))
 	for i, r := range recs {
 		if strings.TrimSpace(r.GithubPrURL) == "" {
 			return nil, fmt.Errorf("record %d: githubPrUrl is required", i)
 		}
+		// The PR URL is the sample's sort key and the case id's basis. A duplicate
+		// would make sampling order-dependent (sort.Slice is not stable) and would
+		// emit two cases with the same id, which the manifest contract rejects.
+		if prev, dup := seen[r.GithubPrURL]; dup {
+			return nil, fmt.Errorf("record %d duplicates record %d: %s", i, prev, r.GithubPrURL)
+		}
+		seen[r.GithubPrURL] = i
 		if strings.TrimSpace(r.SourceCommit) == "" || strings.TrimSpace(r.TargetCommit) == "" {
 			return nil, fmt.Errorf("record %d (%s): both source_commit and target_commit are required", i, r.GithubPrURL)
 		}

@@ -51,6 +51,14 @@ func TestParseDataset_RejectsRecordMissingCommitPair(t *testing.T) {
 	assert.Error(t, err, "a record without both commits cannot produce a diff, so it is refused at parse time")
 }
 
+func TestParseDataset_RejectsDuplicatePullRequestURLs(t *testing.T) {
+	rec := `{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"a","target_commit":"b","comments":[{"category":"Code Defect","path":"a.go"}]}`
+
+	_, err := ParseDataset([]byte("[" + rec + "," + rec + "]"))
+
+	assert.Error(t, err, "a duplicate PR URL would make sampling order-dependent and emit two cases sharing an id")
+}
+
 func TestSample_IsDeterministicForAFixedSeed(t *testing.T) {
 	recs := loadFixture(t)
 
