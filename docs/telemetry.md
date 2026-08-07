@@ -190,7 +190,12 @@ the canonicalized persona/reviewer name (`strings.ToLower(strings.TrimSpace(name
   |---|---|---|
   | `ΟΔΥΣΣΕΥΣ` | `οδυσσευσ` | `οδυσσευς` (final sigma) |
   | `İstanbul` | `istanbul` | `i̇stanbul` (combining dot) |
-  | `﻿bruce` | BOM retained | BOM stripped |
+  | `<U+FEFF>bruce` | BOM retained | BOM stripped |
+  | `<U+0085>bruce` | NEL stripped → `bruce` | NEL retained → `<U+0085>bruce` |
+
+  Go's `strings.TrimSpace` (via `unicode.IsSpace`) treats U+0085 as whitespace;
+  ECMAScript's `WhiteSpace`/`LineTerminator` productions do not, so JS `trim()`
+  leaves it in place.
 
   This does **not** create split identities: a stored persona identity MUST always
   be the digest received from the Go client, and a JS-computed digest is a match

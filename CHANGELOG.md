@@ -6,8 +6,8 @@ Canonicalizes the persona digest before telemetry collection begins. `HashPerson
 
 ### Changed
 
-- `scorecard.HashPersonaID` now reduces its input to `strings.ToLower(strings.TrimSpace(raw))` before hashing, so every casing and padding variant of one persona yields one digest. **Digests produced by earlier releases will not match digests produced by this one** for any name that was not already lowercase and untrimmed.
-- `telemetry.NewQualitySignal` applies the identical transform to its inlined hash, and evaluates its empty-persona sentinel on the **canonical** value — so a whitespace-only persona now returns the zero sentinel instead of hashing to the well-known `sha256("")` constant.
+- `scorecard.HashPersonaID` now reduces its input to `strings.ToLower(strings.TrimSpace(raw))` before hashing, so every casing and padding variant of one persona yields one digest. **Digests produced by earlier releases will not match digests produced by this one** for any name that was not already lowercase and trimmed (i.e., free of leading/trailing whitespace).
+- `telemetry.NewQualitySignal` applies the identical transform to its inlined hash, and evaluates its empty-persona sentinel on the **canonical** value — so a whitespace-only persona (e.g. `"   "`) now canonicalizes to the empty string and returns the zero sentinel, instead of previously hashing the literal whitespace value (`sha256("   ")`) as if it were a legitimate persona identity.
 - `--sync-cloud` persona digests change with the same transform: `cloudsync.go` is the second consumer of `HashPersonaID`, and its call-site `TrimSpace` remains as defense in depth (its empty-agent gate still depends on it).
 - `docs/telemetry.md` and `docs/scorecard.md` document the canonical form and the JS a backend uses to reproduce it. That cross-language equivalence is **scoped to ASCII**, which is what the `personas/community/` catalog contains: Go and JS disagree on Greek final sigma, dotted capital I, and a leading BOM. A divergence there is a dictionary **miss** (the persona reads as unrecognized), never a split identity — digests are only ever produced by the Go client.
 
