@@ -43,8 +43,10 @@ func TestVerifyDiff_IsHiddenDeprecatedAlias(t *testing.T) {
 	require.NotNil(t, verify)
 	diff := findSubCmd(verify, "diff")
 	require.NotNil(t, diff, "`atcr verify diff` must stay reachable for the one-minor-version alias window")
-	require.NotEmpty(t, diff.Deprecated,
-		"`atcr verify diff` must be marked deprecated — which also hides it from `atcr verify --help`")
+	require.True(t, diff.Hidden,
+		"`atcr verify diff` must be hidden from `atcr verify --help` (cobra's Deprecated field is unusable: it prints to stdout, breaking payload-only `--json`)")
+	require.Empty(t, diff.Deprecated,
+		"cobra's Deprecated prints its warning to STDOUT — the deprecation signal lives in the RunE stderr note instead")
 }
 
 // TestDiffSmellCmd_ParityWithVerifyDiffAlias runs the same scan through both
