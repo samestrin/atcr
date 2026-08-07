@@ -48,11 +48,12 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyFiveSubcommands(t *testing.T) {
+func TestRootCmd_HasExactlyTwentySixSubcommands(t *testing.T) {
 	// The twenty-two prior commands plus `config`, the project-config mutation
 	// namespace (Sprint 28.0), plus `quality-report`, the maintainer-facing
 	// community prompt quality signal (Sprint 30.0), plus `skill`, which installs
-	// the embedded Agent Skill (Epic 35.5).
+	// the embedded Agent Skill (Epic 35.5), plus `diff-smell`, the top-level
+	// promotion of the scanner formerly at `atcr verify diff`.
 	root := NewRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -62,8 +63,8 @@ func TestRootCmd_HasExactlyTwentyFiveSubcommands(t *testing.T) {
 		assert.False(t, names[c.Name()], "subcommand %q is registered more than once", c.Name())
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 25)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config", "skill"} {
+	assert.Len(t, names, 26)
+	for _, sub := range []string{"review", "reconcile", "verify", "diff-smell", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config", "skill"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }

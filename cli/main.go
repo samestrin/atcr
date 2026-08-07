@@ -435,6 +435,7 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 		newReviewCmd(),
 		newReconcileCmd(),
 		newVerifyCmd(),
+		newDiffSmellCmd(),
 		newDebateCmd(),
 		newReportCmd(),
 		newQualityReportCmd(),

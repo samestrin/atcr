@@ -83,7 +83,7 @@ and atcr review --resume honor the config/registry tiers but take no flag.`,
 }
 
 // normalizeRepoFlag reads the shared --repo-root flag for the commands that
-// thread a reviewed-repo root (`reconcile`, `verify`, and `verify diff`),
+// thread a reviewed-repo root (`reconcile`, `verify`, and `diff-smell`),
 // defaults an empty or whitespace-only value to "." (the CWD == repo-root
 // operating assumption), and verifies the result is an existing directory. A
 // nonexistent or non-directory --repo-root is a usage error (exit 2) so a bad
