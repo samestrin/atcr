@@ -170,6 +170,14 @@ func TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel(t *testing.T)
 // canonicalizes, so a canonical-only fixture proves nothing about drift. Reverting
 // the transform in exactly one producer is the failure this test has to catch, and
 // only a padded/mixed-case input can catch it.
+//
+// The fixtures must also exceed the ASCII subset of ToLower/TrimSpace semantics:
+// an ASCII-only lower (strings.Map) or trim (strings.Trim(raw, " \t\n")) in one
+// producer agrees with the other on every ASCII fixture while genuinely diverging
+// on cased non-ASCII ("ΟΔΥΣΣΕΥΣ", "İstanbul") and exotic whitespace ("bruce\r",
+// "bruce\v"). The second loop carries those; its fixtures are NOT variants of the
+// canonical persona, so they check cross-producer agreement only, not the
+// canonical digest.
 func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	const raw = "security-reviewer"
 	qs := NewQualitySignal(raw, "claude-sonnet-4-6", 3, 1)
@@ -190,6 +198,15 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 		// with each other on some other value.
 		if want := scorecard.HashPersonaID(raw); got != want {
 			t.Errorf("non-canonical %q hashed to %q, want the canonical digest %q", noncanonical, got, want)
+		}
+	}
+	// Non-ASCII / exotic-whitespace drift fixtures: catch an ASCII-only
+	// reimplementation of ToLower or TrimSpace in exactly one producer, which
+	// every fixture above is blind to.
+	for _, drift := range []string{"ΟΔΥΣΣΕΥΣ", "Ревизор", "İstanbul", "bruce\r", "bruce\v"} {
+		got := NewQualitySignal(drift, "claude-sonnet-4-6", 3, 1).PersonaIDHash
+		if want := scorecard.HashPersonaID(drift); got != want {
+			t.Errorf("drift fixture %q: telemetry hashed %q, scorecard hashed %q — the two producers have DRIFTED", drift, got, want)
 		}
 	}
 	if qs.Model != "claude-sonnet-4-6" || qs.DismissedCount != 3 || qs.ConfirmedCount != 1 {
