@@ -148,3 +148,13 @@ func TestBenchmarkRunCmd_CheckpointHelpMentionsSymlink(t *testing.T) {
 	require.NotNil(t, f, "benchmark run exposes a --checkpoint flag")
 	require.Contains(t, f.Usage, "symlink", "checkpoint help must document symlink replace-not-follow behavior")
 }
+
+// pflag's UnquoteUsage reads the first backquoted span in a usage string as the
+// flag's value name, so backquotes around the example command in --in's usage
+// would render `--in atcr benchmark run` instead of `--in string`.
+func TestBenchmarkExport_InFlagRendersStringValueName(t *testing.T) {
+	_, out := execCmdCapture(t, "benchmark", "export", "--help")
+	require.Contains(t, out, "--in string",
+		"--in must render its real value name, not a backquoted example command")
+	require.NotContains(t, out, "--in atcr benchmark run")
+}
