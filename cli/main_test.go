@@ -243,6 +243,27 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
 }
 
+// ATCR_LOG_LEVEL is the canonical, namespaced variable (every atcr-owned env
+// var is ATCR_*); bare LOG_LEVEL remains a deprecated fallback, and the
+// namespaced variable wins when both are set.
+func TestRootCmd_ATCRLogLevelPrecedence(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("ATCR_LOG_LEVEL", "warn")
+	assert.Equal(t, "warn", logLevelFromEnv(), "ATCR_LOG_LEVEL wins when both are set")
+
+	t.Setenv("ATCR_LOG_LEVEL", "")
+	assert.Equal(t, "debug", logLevelFromEnv(), "a blank ATCR_LOG_LEVEL falls back to LOG_LEVEL")
+
+	t.Setenv("ATCR_LOG_LEVEL", "   ")
+	assert.Equal(t, "debug", logLevelFromEnv(), "a whitespace-only ATCR_LOG_LEVEL falls back to LOG_LEVEL")
+}
+
+// The root help text names the canonical variable.
+func TestRootCmd_HelpNamesATCRLogLevel(t *testing.T) {
+	_, out := execCmdCapture(t, "--help")
+	assert.Contains(t, out, "ATCR_LOG_LEVEL", "root help must name the canonical ATCR_LOG_LEVEL variable")
+}
+
 // unsetEnvForTest removes key for the duration of the test, restoring the prior
 // state on cleanup (t.Setenv alone cannot express "unset"). It is the ONE helper
 // for this in package cli — a bare os.Unsetenv is never correct here, and the
