@@ -6,10 +6,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // DatasetURL is the canonical location of aacr-bench's expert-verified
@@ -132,7 +133,7 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 	dir := filepath.Join(work, owner+"__"+repo)
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		clone := exec.CommandContext(ctx, "git", "clone", "--filter=blob:none", "--no-checkout",
+		clone := gitexec.CommandContextFn(ctx, "clone", "--filter=blob:none", "--no-checkout",
 			f.cloneURL(owner, repo), dir)
 		if out, err := clone.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("cloning %s/%s: %w: %s", owner, repo, err, strings.TrimSpace(string(out)))
@@ -141,12 +142,12 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 
 	// PR head commits are frequently unreachable from any branch tip, so fetch
 	// the exact objects rather than relying on the default refspec.
-	fetch := exec.CommandContext(ctx, "git", "-C", dir, "fetch", "--depth=1", "origin", base, head)
+	fetch := gitexec.CommandContextFn(ctx, "-C", dir, "fetch", "--depth=1", "origin", base, head)
 	if out, err := fetch.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, err, strings.TrimSpace(string(out)))
 	}
 
-	diff := exec.CommandContext(ctx, "git", "-C", dir, "diff", base+".."+head)
+	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", base+".."+head)
 	out, err := diff.Output()
 	if err != nil {
 		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
