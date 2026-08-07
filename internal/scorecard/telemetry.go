@@ -26,17 +26,22 @@ import (
 // unmergeable identity for one persona, splitting its aggregate with no backfill
 // available afterwards. Normalizing at the hash boundary — rather than at each call
 // site — is what makes every producer, present and future, correct by construction;
-// cloudsync.go had already patched the whitespace half of this at its own call site,
-// which is exactly the one-site fix that generalizes here.
+// NewCloudSyncRecord had already patched the whitespace half of this at its own
+// call site, which is exactly the one-site fix that generalizes here.
 //
 // Plain strings.ToLower, deliberately: NOT golang.org/x/text/cases folding and NOT
 // NFC normalization. The persona catalog (personas/community/*.yaml) is pure
 // lowercase ASCII, x/text is not a direct dependency, and atcr.dev must reproduce
-// this transform in one line of JS to build its persona dictionary. A non-ASCII
-// persona still hashes fine — ToLower is simply a no-op on scripts without case.
+// this transform in one line of JS to build its persona dictionary. The Go/JS
+// equivalence holds for ASCII names (which is the entire published catalog — all
+// personas/community/*.yaml name values are lowercase ASCII), and a CASED
+// non-ASCII name may be a backend lookup miss. See
+// TestHashPersonaID_GoJSDivergenceIsASCIIScoped for the pinned limits.
 //
-// Hashing remains total over every Go string, including the empty string, returns
-// no error, and cannot panic. No validation is performed.
+// Invalid UTF-8 is normalized to U+FFFD by strings.ToLower, so byte-distinct
+// invalid inputs may collapse to one digest. Hashing remains total over every Go
+// string, including the empty string, returns no error, and cannot panic. No
+// validation is performed.
 //
 // Guarantee and its bound: SHA-256 is a one-way (preimage-resistant) hash, so a
 // digest is not directly reversible. But Persona IDs are a small, enumerable,
@@ -87,7 +92,14 @@ type TelemetryPersonaRecord struct {
 // accepts any Record without validation (mirroring AnonymizeRecord's permissive
 // style) and never copies the raw Reviewer value in unhashed form; a zero-value
 // Record yields the hash of the empty string.
+//
+// A whitespace-only persona canonicalizes to the empty string, so it returns the
+// zero TelemetryPersonaRecord sentinel rather than sha256("")=e3b0c442..., which
+// would look like a real, stable aggregation bucket on the backend.
 func NewTelemetryPersonaRecord(r Record) TelemetryPersonaRecord {
+	if canonicalPersonaID(r.Reviewer) == "" {
+		return TelemetryPersonaRecord{}
+	}
 	return TelemetryPersonaRecord{
 		PersonaIDHash: HashPersonaID(r.Reviewer),
 		Model:         r.Model,

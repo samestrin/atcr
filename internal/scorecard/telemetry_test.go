@@ -35,7 +35,7 @@ func TestHashPersonaID_Deterministic(t *testing.T) {
 // identity for one persona, and there is no backfill that can repair it later.
 //
 // So every variant must collapse to one digest BEFORE it leaves the process.
-// cloudsync.go:104 already trimmed at its own call site for exactly this reason
+// NewCloudSyncRecord already trimmed at its own call site for exactly this reason
 // (see TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing, "fragments the Persona
 // Leaderboard into two buckets for one identity"); canonicalizing inside the hash
 // generalizes that one-site fix to every producer, present and future.
@@ -56,7 +56,10 @@ func TestHashPersonaID_CanonicalizesCaseAndWhitespace(t *testing.T) {
 	// sentinel before hashing, and cloudsync.go skips an agent whose trimmed name is
 	// empty. Collapsing blank-ish inputs onto ONE digest here is what makes those
 	// guards checkable at all — otherwise "   " would be a distinct, valid-looking
-	// bucket that no guard is watching for.
+	// bucket that no guard is watching for. Blank-looking code points that
+	// unicode.IsSpace does NOT treat as whitespace — notably U+FEFF and U+200B —
+	// still mint their own buckets; this documents the limit rather than claiming
+	// the guard catches every visually-empty string.
 	assert.Equal(t, HashPersonaID(""), HashPersonaID("   "),
 		"whitespace-only must canonicalize to the empty-string digest")
 }
@@ -69,11 +72,17 @@ func TestHashPersonaID_EmptyPathAndUnicode(t *testing.T) {
 	assert.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", HashPersonaID(""))
 
 	p := HashPersonaID("/Users/sam/reviewer")
-	assert.True(t, hexDigestRe.MatchString(p))
-	assert.NotContains(t, p, "Users", "raw path value must not survive into the digest")
+	assert.True(t, hexDigestRe.MatchString(p), "digest must be 64-char lowercase hex")
 
 	u := HashPersonaID("审阅者-42")
 	assert.True(t, hexDigestRe.MatchString(u), "unicode input must produce a valid 64-hex digest")
+
+	// Invalid UTF-8 is normalized to U+FFFD by strings.ToLower, so byte-distinct
+	// invalid strings collapse to the same digest.
+	invalidA := HashPersonaID("b\xffr")
+	invalidB := HashPersonaID("b\xfer")
+	assert.True(t, hexDigestRe.MatchString(invalidA))
+	assert.Equal(t, invalidA, invalidB, "byte-distinct invalid UTF-8 must normalize to the same digest")
 }
 
 // TestHashPersonaID_UniquenessAcrossDifferentInputs hashes 20+ distinct Persona
@@ -168,6 +177,10 @@ func TestHashPersonaID_GoJSDivergenceIsASCIIScoped(t *testing.T) {
 	assert.Equal(t, HashPersonaID("οδυσσευσ"), HashPersonaID("ΟΔΥΣΣΕΥΣ"),
 		"Go must fold Greek capitals to non-final sigma; if this changes, update the divergence table in docs/telemetry.md")
 
+	// Dotted capital I: Go folds İstanbul to istanbul; JS keeps a combining dot.
+	assert.Equal(t, HashPersonaID("istanbul"), HashPersonaID("İstanbul"),
+		"Go folds dotted capital I to plain i; if this changes, update the divergence table in docs/telemetry.md")
+
 	// Leading U+FEFF is NOT whitespace to unicode.IsSpace, so Go retains it where
 	// JS trim() would strip it — the digests must therefore differ.
 	assert.NotEqual(t, HashPersonaID("bruce"), HashPersonaID("\ufeffbruce"),
@@ -178,10 +191,12 @@ func TestHashPersonaID_GoJSDivergenceIsASCIIScoped(t *testing.T) {
 // digest. The function signature carries no error return and no io.Writer, so
 // there is no logging/error path that could leak the raw value (AC 03-04).
 func TestHashPersonaID_NonReversible(t *testing.T) {
-	raw := "correct-horse-battery-staple-42"
+	// Use a hex-legal input so a leak is actually detectable: a 64-char hex digest
+	// cannot contain a non-hex character, but it can contain "deadbeef".
+	raw := "deadbeef"
 	h := HashPersonaID(raw)
-	assert.NotContains(t, h, raw)
-	assert.NotContains(t, h, "correct")
+	assert.True(t, hexDigestRe.MatchString(h), "digest must be 64-char lowercase hex")
+	assert.NotContains(t, h, raw, "raw input must not survive into the digest")
 }
 
 // TestTelemetryPersonaSchema_SeparateFromPublicRecord asserts the new
@@ -212,7 +227,17 @@ func TestTelemetryPersonaSchema_SeparateFromPublicRecord(t *testing.T) {
 	}
 	assert.Contains(t, m, "persona_id_hash")
 
-	// Zero-value Record does not panic and hashes the empty string.
+	// Zero-value Record does not panic and returns the zero sentinel (empty
+	// reviewer canonicalizes to the empty string).
 	trZero := NewTelemetryPersonaRecord(Record{})
-	assert.Equal(t, HashPersonaID(""), trZero.PersonaIDHash)
+	assert.Equal(t, TelemetryPersonaRecord{}, trZero)
+}
+
+// TestNewTelemetryPersonaRecord_GuardsWhitespaceOnlyPersona pins the empty-persona
+// sentinel on the canonical value: a whitespace-only reviewer must return the zero
+// TelemetryPersonaRecord rather than sha256("")=e3b0c442..., which looks like a real
+// aggregation bucket on the backend.
+func TestNewTelemetryPersonaRecord_GuardsWhitespaceOnlyPersona(t *testing.T) {
+	tr := NewTelemetryPersonaRecord(Record{Reviewer: "   ", Model: "claude-sonnet-4-6"})
+	assert.Equal(t, TelemetryPersonaRecord{}, tr, "whitespace-only reviewer must return the zero sentinel")
 }

@@ -120,9 +120,32 @@ func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
 		return nil, err
 	}
 	rows := localdebt.AggregateQualitySignal(records)
-	payload := make([]telemetry.QualitySignal, 0, len(rows))
+
+	// AggregateQualitySignal groups by the raw persona name, but the wire identity is
+	// the canonical digest. Fold rows that share the same (persona_id_hash, model)
+	// so case- or whitespace-variants produce one payload entry (epic 35.16.1).
+	type key struct{ personaIDHash, model string }
+	groups := map[key]*telemetry.QualitySignal{}
+	order := []key{}
 	for _, r := range rows {
-		payload = append(payload, telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount))
+		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount)
+		if qs.PersonaIDHash == "" {
+			continue // empty/whitespace-only canonical persona
+		}
+		k := key{qs.PersonaIDHash, qs.Model}
+		if existing, ok := groups[k]; ok {
+			existing.DismissedCount += qs.DismissedCount
+			existing.ConfirmedCount += qs.ConfirmedCount
+		} else {
+			qsCopy := qs
+			groups[k] = &qsCopy
+			order = append(order, k)
+		}
+	}
+
+	payload := make([]telemetry.QualitySignal, 0, len(order))
+	for _, k := range order {
+		payload = append(payload, *groups[k])
 	}
 	return payload, nil
 }
