@@ -98,12 +98,12 @@ Behavior:
 
 ---
 
-## `atcr benchmark run --suite-path <dir> [--out <path>] [--checkpoint <path>]`
+## `atcr benchmark run --suite-path <dir> [--output <path>] [--checkpoint <path>]`
 
 Execute a suite through the **review pipeline** and write a scored run-result.
 
 ```bash
-atcr benchmark run --suite-path ./my-suite --out run.json
+atcr benchmark run --suite-path ./my-suite --output run.json
 atcr benchmark run --suite-path ./my-suite          # run-result to stdout
 atcr benchmark run --suite-path ./my-suite --checkpoint run.ckpt.json   # resumable
 ```
@@ -152,7 +152,7 @@ Behavior:
 - A case whose entire roster fails to review → error (a case nothing reviewed is
   not scored as zero). Partial failures score the failed reviewers as recall 0 for
   that case.
-- `--suite-path` is required. `--out` writes the JSON to a file (atomic, parents
+- `--suite-path` is required. `--output` writes the JSON to a file (atomic, parents
   created) instead of stdout.
 
 ### Resumability (`--checkpoint`)

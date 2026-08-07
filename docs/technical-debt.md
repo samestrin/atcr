@@ -342,8 +342,8 @@ the run (`--no-local-debt` opts out). The MCP `atcr_reconcile` tool persists
 through the same code path, so a review driven by an editor or agent lands in the
 same backlog a CLI review does.
 
-The store's location resolves by **explicit `--repo` > the review manifest >
-the current working directory**. The repo root recorded in the manifest at review
+The store's location resolves by **explicit `--repo-root` > the review manifest >
+the current working directory** (`--repo` remains a deprecated alias). The repo root recorded in the manifest at review
 time is re-validated before any write (it must exist and look like a repository);
 when it does not — an artifact tree copied to another machine carries a stale
 absolute path — the run warns and persists nothing rather than writing to the
@@ -357,7 +357,7 @@ wrong place.
 > review tree to a PR or bug report, or copying a `--output-dir` result. Strip
 > or rewrite the manifest's `root` field before publishing one. Removing it
 > costs only the manifest tier of the store-root resolution above — pass
-> `--repo` / the MCP `repo` argument instead.
+> `--repo-root` / the MCP `repo` argument instead.
 
 The MCP path has only the first two tiers: **`repo` > the review manifest**, with
 no working-directory fallback. The server's working directory is whatever
