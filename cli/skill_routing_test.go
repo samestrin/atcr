@@ -22,7 +22,7 @@ var skillRoutingRow = regexp.MustCompile("^\\|\\s*`atcr ([a-z][a-z-]*)`")
 // user-routed atcr commands and never appear in the SKILL.md routing table.
 // Hidden commands are maintainer-facing and deliberately not user-routed, so
 // they are excluded too — the same definition of "the command surface" that
-// TestRootCmd_HasExactlyTwentyFiveSubcommands (cli/main_test.go) uses.
+// TestRootCmd_HasExactlyTwentySixSubcommands (cli/main_test.go) uses.
 func topLevelRegistry() map[string]bool {
 	reg := map[string]bool{}
 	for _, c := range NewRootCmd().Commands() {

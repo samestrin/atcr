@@ -31,7 +31,9 @@ func newVerifyCmd() *cobra.Command {
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runVerify,
 	}
-	cmd.Flags().String("repo", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
+	cmd.Flags().String("repo-root", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
+	cmd.Flags().String("repo", ".", "deprecated alias for --repo-root")
+	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")

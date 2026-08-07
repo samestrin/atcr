@@ -134,12 +134,14 @@ appears six times, and that is the point.
 ```bash
 atcr history                                   # last 90 days, all packages
 atcr history --since 30d                       # narrow the window
+atcr history --since 3m                        # three 30-day months
+atcr history --since all                       # every record, no window
 atcr history --since 2w --package internal/registry
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--since` | Window to report, in `h`/`m`/`s` or `d`/`w` units (`48h`, `30d`, `2w`). Default `90d`. |
+| `--since` | Window to report: `Nd` (days), `Nw` (weeks), `Nm` (30-day months), or `all` to disable the window. `N` is a positive integer. Default `90d`. Clock units are **not** accepted — `48h` is a usage error; write `2d`. This is the same grammar `atcr leaderboard --since` uses (`internal/timewindow`), so `3m` means three months on every command. |
 | `--package` | Restrict to a package path prefix. Separator-aware: `internal/registry` matches `internal/registry/sub` but never the sibling `internal/registry2`. |
 | `--prune` | **Destructive.** Delete monthly shards older than this retention horizon before reporting. No default. |
 
@@ -182,6 +184,7 @@ time instead, at file granularity:
 ```bash
 atcr history --prune 365d      # delete shards wholly older than a year
 atcr history --prune 24w
+atcr history --prune 6m        # six 30-day months
 ```
 
 `--prune` takes the same units as `--since` and has **no default** — omit it and
@@ -196,6 +199,9 @@ a deletion is never silent. Guardrails:
 - The legacy flat ledger is never pruned. It is one file spanning every pre-19.4
   month, so deleting it would be record-level pruning by proxy.
 - A non-positive horizon is a usage error, not a wipe.
+- A horizon **below 28 days** is a usage error. A retention policy shorter than a
+  month can never be sane for monthly shards, so `--prune 1d` is rejected rather
+  than deleting everything but the current month.
 - `--prune` cannot be combined with `--package`. A shard holds every package's
   records for its month, so pruning is not scopeable to one package; the
   combination is rejected rather than silently deleting more than asked.

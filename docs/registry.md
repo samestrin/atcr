@@ -131,6 +131,24 @@ fail_on: HIGH
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
+### Config-key ↔ CLI flag mapping
+
+Most shared settings have an `atcr review` CLI override, but three flag names
+differ from their config keys — the mapping is not derivable from the key name
+alone:
+
+| Config key (`.atcr/config.yaml`) | CLI flag (`atcr review`) |
+|----------------------------------|--------------------------|
+| `payload_mode` | `--payload` |
+| `timeout_secs` | `--timeout` |
+| `payload_byte_budget` | `--byte-budget` |
+| `fail_on` | `--fail-on` |
+| `max_parallel` | `--max-parallel` |
+
+`--timeout` takes bare seconds (no unit suffix, matching `timeout_secs`).
+`review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, and `cache_max_bytes`
+resolve at the registry and project tiers only — there is no CLI flag for them.
+
 ## Project registry overlay
 
 A repository can ship its own providers and agents in **`.atcr/registry.yaml`**, so a clone is self-contained — no contributor has to mirror agent definitions into `~/.config/atcr/registry.yaml` by hand. The overlay reuses the exact `providers:` / `agents:` shapes documented above (including the reserved fields) and is strictly parsed like every other config file. It carries **definitions only** — shared settings such as `payload_mode` belong in `.atcr/config.yaml`, so a settings key here is an unknown-field load error.

@@ -13,39 +13,40 @@ commit and safe to run in a sandbox with no credentials.
 
 The same analyzer already gates atcr's own auto-fix pipeline — a model-produced
 fix that trips a HARD smell is rejected and retried before it is ever written.
-`atcr verify diff` is that analyzer exposed as a command, so a patch judged
-here is judged by identical logic.
+`atcr diff-smell` is that analyzer exposed as a command, so a patch judged
+here is judged by identical logic. (It shipped first as `atcr verify diff`;
+that spelling still works as a hidden deprecated alias for one minor version.)
 
 ## Usage
 
 ```bash
-atcr verify diff                             # scan HEAD (the default)
-atcr verify diff --rev HEAD~1                # scan a single commit
-atcr verify diff --staged                    # scan the git index
-atcr verify diff --diff patch.diff           # scan a file
-git diff | atcr verify diff --diff -         # scan stdin
+atcr diff-smell                             # scan HEAD (the default)
+atcr diff-smell --rev HEAD~1                # scan a single commit
+atcr diff-smell --staged                    # scan the git index
+atcr diff-smell --diff patch.diff           # scan a file
+git diff | atcr diff-smell --diff -         # scan stdin
 ```
 
 ### Diff sources
 
 Exactly one source may be named. Naming none falls through to `--rev`'s `HEAD`
-default, so a bare `atcr verify diff` scans the last commit.
+default, so a bare `atcr diff-smell` scans the last commit.
 
-> **A review id or path named `diff` is shadowed.** `verify` is both a group and a
-> leaf — it takes an optional `[id-or-path]` — and cobra resolves a matching
-> subcommand before positional args. So `atcr verify diff` always reaches this
-> scanner. To verify a review whose id happens to be `diff`, pass it after `--`:
-> `atcr verify -- diff`.
+> **A review id or path named `diff` is shadowed — for the alias window.** This
+> command was promoted from `atcr verify diff`, and that spelling stays
+> registered (hidden, deprecated) for one minor version. While it does, `verify`
+> still resolves the `diff` child before positional args, so a review whose id
+> happens to be `diff` is reachable only after `--`: `atcr verify -- diff`.
 
 | Flag | Source |
 |------|--------|
-| `--rev <rev>` | a single commit in `--repo` (default: `HEAD`) |
-| `--staged` | the staged changes in `--repo` |
+| `--rev <rev>` | a single commit in `--repo-root` (default: `HEAD`) |
+| `--staged` | the staged changes in `--repo-root` |
 | `--diff <path>` | a unified diff read from a file |
 | `--diff -` | a unified diff read from stdin |
 
-`--repo <path>` sets the repository root for the two git-backed sources
-(default: the current directory).
+`--repo-root <path>` sets the repository root for the two git-backed sources
+(default: the current directory). `--repo` remains a deprecated hidden alias.
 
 **Merge commits** are diffed against their **first parent** (`--first-parent -m`),
 so `--rev <merge>` reports what the merge introduces to the branch it lands on. A
@@ -58,7 +59,7 @@ Naming two sources is a usage error (exit `2`) that names both offenders, rather
 than a silent precedence win.
 
 Git is always invoked with `--no-ext-diff`, `--no-textconv`, and `--no-color`.
-The first two matter for safety, not formatting: `--repo <path>` invites pointing
+The first two matter for safety, not formatting: `--repo-root <path>` invites pointing
 the scanner at a tree you do not control, and a repo-local `diff.external` **or**
 a `[diff "x"] textconv = <program>` driver (armed by a worktree `.gitattributes`)
 would otherwise execute an arbitrary program with your privileges. They are
@@ -134,7 +135,7 @@ exits `0` for every verdict — preserving drop-in parity with upstream
 - **`--fail-on none`** — explicit no-op, so a script can always pass the flag and
   vary only its value.
 - **`--fail-on ""`** — an empty or whitespace-only value is also unset, so
-  `atcr verify diff --fail-on "$LEVEL"` is a no-op when `LEVEL` is unset rather
+  `atcr diff-smell --fail-on "$LEVEL"` is a no-op when `LEVEL` is unset rather
   than a usage error. This matches `atcr verify --min-severity` and
   `atcr reconcile --fail-on`.
 
@@ -232,7 +233,7 @@ diff --git a/pkg/auth.go b/pkg/auth.go
 +	//nolint:errcheck
 ```
 
-`atcr verify diff --json` emits:
+`atcr diff-smell --json` emits:
 
 ```json
 {
@@ -293,7 +294,7 @@ Notes on the shape:
 
 ## Stability contract
 
-The moment a consumer pins to `atcr verify diff --json`, that shape *is* its API.
+The moment a consumer pins to `atcr diff-smell --json`, that shape *is* its API.
 So it is stated deliberately rather than becoming a contract by accident.
 
 **Committed:**
@@ -317,27 +318,33 @@ cannot drift silently through a refactor.
 
 ## Version discoverability
 
-`v0.1.0` does **not** contain this command; it ships in the first tagged release
-after that. Rather than pinning a version, probe for the subcommand and degrade
+The command shipped first as `atcr verify diff` and was promoted to top-level
+`atcr diff-smell`; the old spelling is a hidden deprecated alias for one minor
+version. Rather than pinning a version, probe for the command and degrade
 gracefully — a consumer should skip the gate with a warning, not hard-fail, when
-running against an older atcr:
+running against an older atcr. Probe the new name first and fall back to the
+alias, so a hook pasted during the alias window does not silently skip the gate:
 
 ```bash
-if atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
-  atcr verify diff --staged --fail-on hard
+if atcr diff-smell --help 2>&1 | grep -- '--fail-on' >/dev/null; then
+  atcr diff-smell --staged --fail-on hard
+elif atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
+  atcr verify diff --staged --fail-on hard   # deprecated alias, one minor version
 else
-  echo "warning: atcr is too old for 'verify diff'; skipping the diff-smell gate" >&2
+  echo "warning: atcr is too old for the diff-smell gate; skipping it" >&2
 fi
 ```
 
-**Probe the help TEXT, not the exit status.** `verify` is both a group and a leaf
-— it takes an optional `[id-or-path]` — so on an older atcr cobra reads `diff` as
-a positional and `--help` short-circuits to `verify`'s own help, exiting `0`. So
-does `atcr help verify diff`. An exit-status probe therefore reports "new enough"
-on *every* binary ever shipped, and the guarded call then dies with
-`unknown flag: --staged`. `--fail-on` is registered only on `verify diff`, never
-on `verify`, so grepping the help output for it is what actually separates the
-two.
+**Probe the help TEXT, not the exit status.** Bare `atcr` is itself a command
+(the home view), so on an atcr that predates `diff-smell` cobra treats the
+unknown word as a positional and `--help` short-circuits to the root help,
+exiting `0`. The same trap existed under the old spelling: `verify` is both a
+group and a leaf — it takes an optional `[id-or-path]` — so on an older atcr
+cobra read `diff` as a positional and `--help` showed `verify`'s own help, also
+exit `0`. An exit-status probe therefore reports "new enough" on *every* binary
+ever shipped, and the guarded call then dies with `unknown flag: --staged`.
+`--fail-on` is registered on the scanner, never on the root or on `verify`, so
+grepping the help output for it is what actually separates the two.
 
 **Use `grep … >/dev/null`, not `grep -q`.** `-q` exits at the first match and
 closes the pipe, so `atcr` is killed by `SIGPIPE` and reports `141`. Under the
@@ -356,11 +363,13 @@ directly.
 # .git/hooks/pre-commit — block a staged reward hack before it becomes a commit.
 set -euo pipefail
 
-if ! atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
+if atcr diff-smell --help 2>&1 | grep -- '--fail-on' >/dev/null; then
+  atcr diff-smell --staged --fail-on hard
+elif atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null; then
+  atcr verify diff --staged --fail-on hard   # deprecated alias window
+else
   exit 0   # older atcr: no gate, no failure
 fi
-
-atcr verify diff --staged --fail-on hard
 ```
 
 An empty index exits `0` with a note, so this is a no-op on a
@@ -373,7 +382,7 @@ atcr's analyzer is a **port** of `llm-tools`' `diff-smell`
 the upstream function lives under that module's own `internal/`. Both depend only
 on the Go standard library.
 
-| | upstream `llm-support diff-smell` | `atcr verify diff` |
+| | upstream `llm-support diff-smell` | `atcr diff-smell` |
 |---|---|---|
 | Verdict vocabulary | `clean` / `soft_only` / `hard` | identical |
 | JSON field names | `type`, `severity`, `file`, `line`, `evidence`, … | identical |
@@ -392,7 +401,8 @@ from and every deliberate divergence.
 ## Related documents
 
 - [verification.md](verification.md) — adversarial skeptic verification, the
-  model-driven counterpart that shares the `verify` namespace.
+  model-driven counterpart. The deprecated `atcr verify diff` alias still lives
+  in its `verify` namespace for one minor version.
 - [ci-integration.md](ci-integration.md) — the authoritative exit-code table.
 - [agentic-consumption.md](agentic-consumption.md) — the payload-only stdout rule
   this command obeys.

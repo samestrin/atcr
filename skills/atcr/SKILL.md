@@ -1,6 +1,6 @@
 ---
 name: atcr
-description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, skill, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
+description: The /atcr <command> dispatcher for atcr, a multi-reviewer code-review engine. Routes a request to a single atcr CLI command — review, reconcile, verify, diff-smell, debate, report, quality-report, github, range, status, init, quickstart, serve, doctor, trust, scorecard, leaderboard, benchmark, personas, models, debt, history, audit-report, skill, config, version. The review command fans a git range, branch, or PR out to a reviewer panel, adds a host (+1) review, and reconciles findings into one deduplicated, confidence-scored report. Use when asked to review a branch, PR, or git range, or to run any atcr command.
 ---
 
 # atcr — Agent Team Code Review
@@ -65,6 +65,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr review` | Fan a code change out to the reviewer pool |
 | `atcr reconcile` | Merge findings from all sources into reconciled artifacts |
 | `atcr verify` | Run adversarial skeptics over reconciled findings |
+| `atcr diff-smell` | Scan a unified diff for over-simplification (reward-hack) fingerprints; deterministic and model-free |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge) |
 | `atcr report` | Render md, json, checklist, sarif, axi views over reconciled findings |
 | `atcr quality-report` | Rank persona+model reviewer prompts by dismissal rate from the content-free local quality signal |

@@ -426,7 +426,7 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	} else {
 		// The id leads the row for the same reason it leads `debt list`: this is
 		// the view a human scans for what to fix next, so it is also the view they
-		// copy the `atcr debt resolve --resolve <id>` argument out of. It is NOT
+		// copy the `atcr debt resolve <id>` argument out of. It is NOT
 		// passed through the redactor — an id is a content hash, and scrubbing it
 		// would break the join contract this table exists to serve.
 		//

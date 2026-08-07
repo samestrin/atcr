@@ -204,7 +204,7 @@ func TestDebtCompact_PerformsCompaction(t *testing.T) {
 	require.Len(t, recsAfter, 2)
 
 	// Verify we can still run debt list or resolve list on it
-	resolveOut, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	resolveOut, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, resolveOut, "internal/y/b.go", "open finding 2 must still be listed")
 	assert.NotContains(t, resolveOut, "internal/x/a.go", "resolved finding 1 must not be listed")

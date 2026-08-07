@@ -48,11 +48,12 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlyTwentyFiveSubcommands(t *testing.T) {
+func TestRootCmd_HasExactlyTwentySixSubcommands(t *testing.T) {
 	// The twenty-two prior commands plus `config`, the project-config mutation
 	// namespace (Sprint 28.0), plus `quality-report`, the maintainer-facing
 	// community prompt quality signal (Sprint 30.0), plus `skill`, which installs
-	// the embedded Agent Skill (Epic 35.5).
+	// the embedded Agent Skill (Epic 35.5), plus `diff-smell`, the top-level
+	// promotion of the scanner formerly at `atcr verify diff`.
 	root := NewRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -62,8 +63,8 @@ func TestRootCmd_HasExactlyTwentyFiveSubcommands(t *testing.T) {
 		assert.False(t, names[c.Name()], "subcommand %q is registered more than once", c.Name())
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 25)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config", "skill"} {
+	assert.Len(t, names, 26)
+	for _, sub := range []string{"review", "reconcile", "verify", "diff-smell", "debate", "report", "quality-report", "github", "range", "status", "init", "quickstart", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "models", "debt", "history", "audit-report", "version", "config", "skill"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
@@ -241,6 +242,27 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv())
 	t.Setenv("LOG_LEVEL", "   ")
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
+}
+
+// ATCR_LOG_LEVEL is the canonical, namespaced variable (every atcr-owned env
+// var is ATCR_*); bare LOG_LEVEL remains a deprecated fallback, and the
+// namespaced variable wins when both are set.
+func TestRootCmd_ATCRLogLevelPrecedence(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("ATCR_LOG_LEVEL", "warn")
+	assert.Equal(t, "warn", logLevelFromEnv(), "ATCR_LOG_LEVEL wins when both are set")
+
+	t.Setenv("ATCR_LOG_LEVEL", "")
+	assert.Equal(t, "debug", logLevelFromEnv(), "a blank ATCR_LOG_LEVEL falls back to LOG_LEVEL")
+
+	t.Setenv("ATCR_LOG_LEVEL", "   ")
+	assert.Equal(t, "debug", logLevelFromEnv(), "a whitespace-only ATCR_LOG_LEVEL falls back to LOG_LEVEL")
+}
+
+// The root help text names the canonical variable.
+func TestRootCmd_HelpNamesATCRLogLevel(t *testing.T) {
+	_, out := execCmdCapture(t, "--help")
+	assert.Contains(t, out, "ATCR_LOG_LEVEL", "root help must name the canonical ATCR_LOG_LEVEL variable")
 }
 
 // unsetEnvForTest removes key for the duration of the test, restoring the prior

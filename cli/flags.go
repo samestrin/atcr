@@ -79,7 +79,7 @@ const defaultCloudEndpoint = ""
 // override (Story 4) on cmd. An absent or explicitly empty --cloud-endpoint is
 // refused here at flag-parse time (PreRunE) — this build ships no default
 // destination, so there is nothing to fall back on — EXCEPT on the two paths
-// that never reach a push at all (--preview and --resume), where the refusal
+// that never reach a push at all (--dry-run and --resume), where the refusal
 // would fail an invocation over a destination the path never consults; a supplied endpoint's
 // well-formedness and the presence of ATCR_API_KEY are validated at run time
 // (resolveSyncCloud) (AC 04-01). The PreRunE is chained prev-first (not
@@ -99,10 +99,11 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 				return err
 			}
 		}
-		// --preview is a pure, side-effect-free local render that pushes nothing, so
+		// --dry-run (deprecated alias --preview) is a pure, side-effect-free local
+		// render that pushes nothing, so
 		// the --sync-cloud destination is irrelevant on that path (the preview
 		// short-circuit in RunE bypasses sync entirely). Suppress the refusal when
-		// --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		// --dry-run is set — preview overrides sync-cloud (AC 03-01 EC2).
 		//
 		// --resume is the same shape and gets the same suppression: runReview
 		// returns via runResume BEFORE resolveSyncCloud is reached, so --sync-cloud
@@ -110,7 +111,7 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 		// previously worked, over a destination the resume path never consults. The
 		// no-op is not left silent — the resume branch in runReview says so on
 		// stderr, for the with-endpoint case as much as the absent-destination one.
-		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) && !resumeFlagSet(cmd) {
+		if boolFlag(cmd, "sync-cloud") && !dryRunFlagSet(cmd) && !resumeFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
 			// Refuse rather than warn-and-proceed: this build ships no default
 			// destination, so there is nothing to push to. Reported as a usageError
@@ -134,22 +135,27 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 	}
 }
 
-// previewFlagSet reports whether the --preview flag is registered on cmd AND set.
+// dryRunFlagSet reports whether the show-don't-do flag is registered on cmd AND
+// set — the canonical --dry-run or its deprecated --preview alias, either one.
 // It uses a nil-safe Lookup (not boolFlag) because addSyncCloudFlags may in
-// principle be installed on a command that does not register --preview, and this
+// principle be installed on a command that does not register --dry-run, and this
 // runs in a PreRunE where a panic would abort an unrelated invocation.
-func previewFlagSet(cmd *cobra.Command) bool {
-	if cmd.Flags().Lookup("preview") == nil {
+func dryRunFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("dry-run") == nil && cmd.Flags().Lookup("preview") == nil {
 		return false
 	}
-	v, _ := cmd.Flags().GetBool("preview")
-	return v
+	v, _ := cmd.Flags().GetBool("dry-run")
+	if v {
+		return true
+	}
+	p, _ := cmd.Flags().GetBool("preview")
+	return p
 }
 
 // resumeFlagSet reports whether the --resume flag is registered on cmd AND
 // supplied. It keys on Changed (not the value) because `--resume ""` is still a
 // resume invocation, and it uses a nil-safe Lookup for the same reason
-// previewFlagSet does: reconcile hosts addSyncCloudFlags but registers no
+// dryRunFlagSet does: reconcile hosts addSyncCloudFlags but registers no
 // --resume, and a panic here would abort an unrelated invocation.
 func resumeFlagSet(cmd *cobra.Command) bool {
 	if cmd.Flags().Lookup("resume") == nil {
@@ -158,25 +164,31 @@ func resumeFlagSet(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("resume")
 }
 
-// addQualitySignalFlags declares the --preview flag on cmd (the review and
-// reconcile host commands — Story 6's two Send call sites). --preview renders the
+// addQualitySignalFlags declares the --dry-run flag on cmd (the review and
+// reconcile host commands — Story 6's two Send call sites), with --preview kept
+// as a deprecated hidden alias. --dry-run renders the
 // exact content-free quality-signal payload locally and sends nothing (Story 3);
 // its run-path short-circuit lives in maybePreviewQualitySignal, invoked before any
-// opt-in gate or transport work. It installs no PreRunE: --preview has no
+// opt-in gate or transport work. It installs no PreRunE: --dry-run has no
 // precondition of its own, so the range/sync-cloud hooks installed earlier on cmd
 // already run untouched. Add chaining here only when a precondition genuinely
 // appears — a pass-through wrapper kept "for a future precondition" is dead
 // indirection.
 func addQualitySignalFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+	cmd.Flags().Bool("dry-run", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+	cmd.Flags().Bool("preview", false, "deprecated alias for --dry-run")
+	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why (the
+	// parse-time warning pollutes merged-stream output consumers).
+	_ = cmd.Flags().MarkHidden("preview")
 }
 
-// validateDirFlag validates the Sprint 35.0 `--dir <path>` scoped-baseline flag
-// against the repository root and returns the canonical scope: a slash-normalized,
-// repo-root-relative, cleaned path (or "." for the whole-repo degenerate case).
-// An unset --dir returns ("", nil) — not a directory scan. Every rejection is a
-// usageError (exit 2) surfaced before any payload work begins (AC 02-01):
-//   - empty value → "--dir must not be empty"
+// validateDirFlag validates the Sprint 35.0 `--scope <path>` scoped-baseline flag
+// (and its deprecated --dir alias) against the repository root and returns the
+// canonical scope: a slash-normalized, repo-root-relative, cleaned path (or "."
+// for the whole-repo degenerate case). An unset --scope returns ("", nil) — not
+// a directory scan. Every rejection is a usageError (exit 2) surfaced before
+// any payload work begins (AC 02-01), named after the flag actually supplied:
+//   - empty value → "--scope must not be empty"
 //   - resolves outside root (../ escape, an absolute path outside, OR a symlink
 //     whose real target escapes) → "resolves outside the repository root"
 //   - does-not-exist / not-a-directory → distinct messages via a single os.Stat
@@ -189,23 +201,30 @@ func addQualitySignalFlags(cmd *cobra.Command) {
 // so a purely lexical guard would accept a symlink inside root whose real target
 // escapes (e.g. repo/link -> /etc). Resolving both operands also fixes the macOS
 // false-rejection where root is reached through a symlink (/var -> /private/var)
-// but an absolute --dir is supplied in resolved form. This genuinely mirrors
+// but an absolute --scope is supplied in resolved form. This genuinely mirrors
 // --output-dir's defense: the same symlink-resolution discipline as resolveRedactRoot
 // plus a validation.FilePath system-directory denylist (as outputDirFromFlags runs).
 // A non-existent candidate cannot be symlink-resolved, so the guard falls back to a
 // lexical Rel for that case (which still catches a ../ escape) before os.Stat
 // reports "does not exist".
 func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
-	if !cmd.Flags().Changed("dir") {
+	// --scope is canonical; --dir is the deprecated alias. The canonical flag
+	// wins when both are set, and messages name the flag actually supplied.
+	name := "dir"
+	switch {
+	case cmd.Flags().Changed("scope"):
+		name = "scope"
+	case cmd.Flags().Changed("dir"):
+	default:
 		return "", nil
 	}
-	raw, _ := cmd.Flags().GetString("dir")
+	raw, _ := cmd.Flags().GetString(name)
 	if strings.TrimSpace(raw) == "" {
-		return "", usageError(errors.New("--dir must not be empty"))
+		return "", usageError(fmt.Errorf("--%s must not be empty", name))
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return "", usageError(fmt.Errorf("resolving repository root for --dir: %w", err))
+		return "", usageError(fmt.Errorf("resolving repository root for --%s: %w", name, err))
 	}
 	cand := raw
 	if !filepath.IsAbs(cand) {
@@ -230,18 +249,18 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	}
 	rel, err := filepath.Rel(relBase, relTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", usageError(fmt.Errorf("--dir path %q resolves outside the repository root", raw))
+		return "", usageError(fmt.Errorf("--%s path %q resolves outside the repository root", name, raw))
 	}
 
 	fi, err := os.Stat(cand)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", usageError(fmt.Errorf("--dir path %q does not exist", raw))
+			return "", usageError(fmt.Errorf("--%s path %q does not exist", name, raw))
 		}
-		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--%s path %q: %w", name, raw, err))
 	}
 	if !fi.IsDir() {
-		return "", usageError(fmt.Errorf("--dir path %q is not a directory", raw))
+		return "", usageError(fmt.Errorf("--%s path %q is not a directory", name, raw))
 	}
 
 	// Defense-in-depth system-directory denylist, mirroring outputDirFromFlags'
@@ -249,7 +268,7 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	// (guaranteed to exist and to be inside realRoot by the containment check above),
 	// so this only ever trips for a repo pathologically rooted under a system dir.
 	if err := validation.FilePath(relTarget); err != nil {
-		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--%s path %q: %w", name, raw, err))
 	}
 
 	// Canonical scope: repo-root-relative, slash-normalized. At this point the
@@ -276,11 +295,20 @@ func validateRangeFlags(cmd *cobra.Command) error {
 	head := cmd.Flags().Changed("head")
 	mergeCommit := cmd.Flags().Changed("merge-commit")
 	all := cmd.Flags().Changed("all")
-	dir := cmd.Flags().Changed("dir")
+	// --scope is canonical; --dir is the deprecated alias for the same scoped
+	// baseline scan, so either one trips the baseline exclusion. The message
+	// names the flag actually supplied.
+	scopeName := ""
+	switch {
+	case cmd.Flags().Changed("scope"):
+		scopeName = "--scope"
+	case cmd.Flags().Changed("dir"):
+		scopeName = "--dir"
+	}
 
 	// Baseline exclusions first (TD-001: accurate message wins over range checks).
-	if dir && (base || head || mergeCommit || all) {
-		return usageError(errors.New("--dir cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range"))
+	if scopeName != "" && (base || head || mergeCommit || all) {
+		return usageError(fmt.Errorf("%s cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range", scopeName))
 	}
 	if all && (base || head || mergeCommit) {
 		return usageError(errors.New("--all cannot be combined with --base/--head/--merge-commit: a full-repository scan has no diff range"))

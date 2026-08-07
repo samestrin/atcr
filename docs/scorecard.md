@@ -167,7 +167,7 @@ Flags:
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--since` | `30d` | Time window. `Nd` (days), `Nw` (weeks), `Nm` (30-day months). `N` is a positive integer. |
-| `--model` | _(all)_ | Exact-match model id filter. |
+| `--model` | _(all)_ | Model id filter (case-insensitive substring, matching `personas search --model`; a full exact id always matches). |
 | `--persona` | _(all)_ | Exact-match reviewer/persona filter. |
 | `--export` | off | Emit anonymized public JSON instead of the table (see below). |
 | `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |

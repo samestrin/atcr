@@ -154,7 +154,7 @@ func newSkillExportCmd() *cobra.Command {
 		Short: "Write the embedded skill tree to your agent harness's skills directory",
 		Long: "atcr skill export writes the embedded skill directory to disk, ready to load.\n\n" +
 			"--harness selects a known install convention (default claude). --user switches\n" +
-			"from the project-level path to the user-level one. --dir overrides both and is\n" +
+			"from the project-level path to the user-level one. --dest overrides both and is\n" +
 			"always available for a harness this table does not list.\n\n" +
 			"Note that .claude/skills/ is also read natively by Kimi CLI and opencode, and\n" +
 			"the vendor-neutral .agents/skills/ (--harness agents) is read by Kimi CLI,\n" +
@@ -166,8 +166,12 @@ func newSkillExportCmd() *cobra.Command {
 		"target harness install convention: "+strings.Join(knownHarnesses(), "|"))
 	cmd.Flags().Bool("user", false,
 		"write to the harness's user-level skills directory instead of the project-level one")
-	cmd.Flags().String("dir", "",
+	cmd.Flags().String("dest", "",
 		"write to this directory instead, overriding --harness/--user; it is the skill directory itself, e.g. ~/.foo/skills/atcr")
+	cmd.Flags().String("dir", "", "deprecated alias for --dest")
+	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why (the
+	// parse-time warning pollutes merged-stream output consumers).
+	_ = cmd.Flags().MarkHidden("dir")
 	cmd.Flags().Bool("force", false,
 		"overwrite an existing non-empty destination")
 	return cmd
@@ -183,17 +187,24 @@ func newSkillExportCmd() *cobra.Command {
 // serialize concurrent writers; at this scale a lock file is not warranted.
 func runSkillExport(cmd *cobra.Command, _ []string) error {
 	harness := mustFlag(cmd, "harness")
-	dir := mustFlag(cmd, "dir")
+	// --dest is canonical; --dir is the deprecated alias. The canonical flag wins
+	// when both are set, and the empty-value error names the flag supplied.
+	name, dir := "dest", mustFlag(cmd, "dest")
+	changed := cmd.Flags().Changed("dest")
+	if !changed && cmd.Flags().Changed("dir") {
+		name, dir = "dir", mustFlag(cmd, "dir")
+		changed = true
+	}
 	user, _ := cmd.Flags().GetBool("user")
 	force, _ := cmd.Flags().GetBool("force")
 
-	// A set-but-empty --dir (`--dir "$UNSET_VAR"`) is an invocation mistake, not
-	// "no --dir given": resolveSkillDest treats "" as absent and the export would
+	// A set-but-empty --dest (`--dest "$UNSET_VAR"`) is an invocation mistake, not
+	// "no --dest given": resolveSkillDest treats "" as absent and the export would
 	// silently land on the harness's default path. Changed() is the same idiom
 	// audit_report.go and debt_resolve.go use for set-vs-empty.
-	if cmd.Flags().Changed("dir") && dir == "" {
+	if changed && dir == "" {
 		return usageError(fmt.Errorf(
-			"--dir was supplied empty (an unset variable in --dir \"$VAR\" is the usual cause); omit --dir to use the harness path, or pass a non-empty directory"))
+			"--%s was supplied empty (an unset variable in --%s \"$VAR\" is the usual cause); omit --%s to use the harness path, or pass a non-empty directory", name, name, name))
 	}
 
 	dest, err := resolveSkillDest(harness, user, dir)

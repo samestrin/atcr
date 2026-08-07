@@ -71,13 +71,13 @@ Refuted findings stay in `findings.json` and in the report under a collapsed **R
 `atcr verify` itself has no `--fail-on` or `--require-verified` flag — it only
 computes and persists verdicts. The CI gate that reads those verdicts lives on
 `atcr reconcile` and `atcr review`, and reads verdicts directly: refuted
-findings never block a merge. (The `atcr verify diff` subcommand has its own,
+findings never block a merge. (The `atcr diff-smell` command has its own,
 unrelated `--fail-on` — it gates on diff-smell verdicts, not on finding
 severities. See [diff-smell.md](diff-smell.md).)
 
 - **`--fail-on <severity>`** (on `atcr reconcile` / `atcr review`) — exit `1` if any finding at or above `<severity>` survives, where *survives* means its verdict is **not** `refuted`. Out-of-scope findings are excluded from the count (precedence over the verdict check). Resolved via the shared gate precedence: flag > project config > registry.
 - **`--require-verified`** (on `atcr reconcile` / `atcr review`) — only meaningful with `--fail-on`. Counts only findings whose confidence is `VERIFIED` (i.e. `confirmed`) at or above the threshold — the strictest gate. Using it **without** `--fail-on` is a usage error (`error: --require-verified requires --fail-on`, exit 2). On `atcr reconcile`, if the verify stage never ran, `--require-verified` does **not** refuse — it logs a warning and the gate proceeds (a silently permissive gate is possible). On `atcr review`, `--require-verified` is refused outright unless combined with `--verify` or `--debate` (`error: --require-verified requires --fail-on and --verify or --debate`, exit 2).
-- **`--repo <path>`** — reviewed repository root that skeptics inspect and the redactor relativizes absolute paths against. Defaults to the current working directory; use this to verify findings against a repo other than the CWD or when running `verify` from outside the repo root (Epic 22.1).
+- **`--repo-root <path>`** — reviewed repository root that skeptics inspect and the redactor relativizes absolute paths against. Defaults to the current working directory; use this to verify findings against a repo other than the CWD or when running `verify` from outside the repo root (Epic 22.1). `--repo` remains a deprecated hidden alias; note that on `atcr review` and `atcr github` `--repo` is a different flag — a GitHub `owner/name` slug.
 
 | Finding | v1 confidence | verdict | `--fail-on high` | `--fail-on high --require-verified` |
 |---------|---------------|---------|------------------|-------------------------------------|
@@ -138,8 +138,8 @@ The per-finding `model` (the different-model evidence) lives here, in `verificat
 
 ## Diff-Smell: the deterministic sibling
 
-`atcr verify diff` shares this namespace but does something different, and a
-reader landing here should not assume it spawns models. Skeptic verification asks
+`atcr diff-smell` does something different, and a reader landing here should not
+assume it spawns models. Skeptic verification asks
 *"is this finding real?"* and costs a model call per finding. Diff-smell asks
 *"did this patch cheat?"* — scanning a unified diff for the mechanical
 fingerprints of an over-simplified change (a deleted test, a skipped test, a
@@ -150,13 +150,15 @@ It is the same analyzer that already gates atcr's auto-fix pipeline, exposed as 
 command so an external consumer can call it.
 
 ```bash
-atcr verify diff --staged --fail-on hard
+atcr diff-smell --staged --fail-on hard
 ```
 
-Because `diff` is a subcommand of `verify`, and `verify` also takes an optional
-`[id-or-path]`, a review id or path literally named `diff` is shadowed: cobra
-resolves the subcommand first, so `atcr verify diff` always reaches the scanner.
-Verify such a review by passing it after `--`:
+The command shipped first as `atcr verify diff` and keeps that spelling as a
+hidden deprecated alias for one minor version. While the alias lives, `diff`
+is still a subcommand of `verify`, and `verify` also takes an optional
+`[id-or-path]`, so a review id or path literally named `diff` is shadowed:
+cobra resolves the subcommand first, and `atcr verify diff` reaches the
+scanner. Verify such a review by passing it after `--`:
 
 ```bash
 atcr verify -- diff

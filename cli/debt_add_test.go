@@ -115,7 +115,7 @@ func TestDebtAdd_WarnsWhenTheIDAlreadyCarriesATerminalStatus(t *testing.T) {
 	listed, err := runDebt(t, "list", "--dir", dir)
 	require.NoError(t, err)
 	id := debtIDFromListOutput(t, listed)
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id,
+	_, err = runDebt(t, "resolve", "--dir", dir, id,
 		"--status", "wontfix", "--reason", "not a real finding")
 	require.NoError(t, err)
 
@@ -187,7 +187,7 @@ func TestDebtNamespace_AddListResolveRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	id := debtIDFromListOutput(t, listed)
 
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	_, err = runDebt(t, "resolve", "--dir", dir, id)
 	require.NoError(t, err, "the id read out of `debt list` closes through `debt resolve`")
 
 	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
@@ -309,7 +309,7 @@ func TestDebtAdd_LocationWithoutAPathStaysResolvable(t *testing.T) {
 	// The round trip must still close it.
 	listed, err := runDebt(t, "list", "--dir", dir)
 	require.NoError(t, err)
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", debtIDFromListOutput(t, listed))
+	_, err = runDebt(t, "resolve", "--dir", dir, debtIDFromListOutput(t, listed))
 	require.NoError(t, err)
 
 	open, err := runDebt(t, "list", "--dir", dir, "--status", "open")
@@ -764,7 +764,7 @@ func TestDebtNamespace_DeferredItemIsStillCloseable(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, dash, "**Deferred:** 1", "the dashboard counts it as live debt")
 
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	out, err := runDebt(t, "resolve", "--dir", dir, id)
 	require.NoError(t, err)
 	assert.NotContains(t, strings.ToLower(out), "already closed",
 		"deferred means not now, not done — it must stay closeable")
@@ -774,7 +774,7 @@ func TestDebtNamespace_DeferredItemIsStillCloseable(t *testing.T) {
 	require.Len(t, after, 2, "the resolution is appended")
 
 	// And now it IS settled, so a second attempt no-ops.
-	out, err = runDebt(t, "resolve", "--dir", dir, "--resolve", id)
+	out, err = runDebt(t, "resolve", "--dir", dir, id)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
 }

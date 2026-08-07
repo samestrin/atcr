@@ -787,7 +787,7 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 	// The suppression must actually flow through isClosedStatus: a live `debt resolve
 	// --list` must not show the wontfix'd finding. This assertion locks the wontfix
 	// semantics; removing wontfix from isClosedStatus would make the finding re-appear.
-	out, err := runDebt(t, "resolve", "--list")
+	out, err := runDebt(t, "resolve")
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "no items",
 		"a wontfix-suppressed finding must not appear in the open list")
@@ -958,6 +958,47 @@ func TestReconcileCmd_RepoFlagNonexistentFails(t *testing.T) {
 
 	require.Equal(t, 2, execCmd(t, "reconcile", "r", "--repo", "/nonexistent/path"),
 		"a nonexistent --repo must fail loudly with exit 2")
+}
+
+// --repo-root is the canonical name for the filesystem-repo-root flag on the
+// commands where --repo collided with the owner/name slug flag (review/github);
+// --repo remains a deprecated hidden alias resolving identically.
+func TestRepoRootFlag_CanonicalAndDeprecatedAlias(t *testing.T) {
+	dir := t.TempDir()
+
+	canonical := newReconcileCmd()
+	require.NoError(t, canonical.Flags().Parse([]string{"--repo-root", dir}))
+	gotCanonical, err := normalizeRepoFlag(canonical)
+	require.NoError(t, err)
+
+	alias := newReconcileCmd()
+	require.NoError(t, alias.Flags().Parse([]string{"--repo", dir}))
+	gotAlias, err := normalizeRepoFlag(alias)
+	require.NoError(t, err)
+
+	require.Equal(t, gotAlias, gotCanonical,
+		"--repo-root and the deprecated --repo alias must resolve identically")
+
+	// --repo-root is the documented spelling on all three path-root commands;
+	// the deprecated alias is hidden from help.
+	_, reconcileHelp := execCmdCapture(t, "reconcile", "--help")
+	require.Contains(t, reconcileHelp, "--repo-root")
+	require.NotContains(t, reconcileHelp, "--repo ")
+
+	_, verifyHelp := execCmdCapture(t, "verify", "--help")
+	require.Contains(t, verifyHelp, "--repo-root")
+
+	_, diffHelp := execCmdCapture(t, "verify", "diff", "--help")
+	require.Contains(t, diffHelp, "--repo-root")
+}
+
+// The owner/name slug --repo on review is a different concept from the
+// filesystem --repo-root and must never be interpreted as a path.
+func TestRepoRootFlag_ReviewRepoStaysSlug(t *testing.T) {
+	_, reviewHelp := execCmdCapture(t, "review", "--help")
+	require.Contains(t, reviewHelp, "--repo")
+	require.Contains(t, reviewHelp, "owner/name")
+	require.NotContains(t, reviewHelp, "--repo-root")
 }
 
 // --- Cloud sync (--sync-cloud) end-to-end -----------------------------------
@@ -1448,7 +1489,7 @@ func TestPersistLocalDebt_ReappendsARegressedResolvedID(t *testing.T) {
 	assert.Empty(t, recs[2].Status)
 
 	// And the fold must return it to the open backlog.
-	out, err := runDebt(t, "resolve", "--list")
+	out, err := runDebt(t, "resolve")
 	require.NoError(t, err)
 	assert.Contains(t, out, "a.go", "a resolved-then-regressed id is open again")
 }

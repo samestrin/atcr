@@ -169,6 +169,47 @@ func TestDoctor_AgentsFilterSubset(t *testing.T) {
 	assert.Contains(t, out, "bruce")
 }
 
+// Repeating --agents must accumulate (StringSlice semantics, matching
+// reconcile --sources); a plain String silently keeps only the last
+// occurrence, discarding the first with no warning.
+func TestDoctor_AgentsFlagAccumulatesOnRepeat(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "registry.yaml"),
+		[]byte("agents:\n  team:\n    provider: mock\n    model: test-model\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents:\n  - bruce\n  - team\n"), 0o644))
+
+	agentNames := func(out string) map[string]bool {
+		var parsed struct {
+			Agents []struct {
+				Agent string `json:"agent"`
+			} `json:"agents"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &parsed))
+		names := map[string]bool{}
+		for _, a := range parsed.Agents {
+			names[a.Agent] = true
+		}
+		return names
+	}
+
+	out, err := execute(t, "doctor", "--agents", "bruce", "--agents", "team", "--json")
+	require.NoError(t, err)
+	names := agentNames(out)
+	assert.True(t, names["bruce"], "the first --agents occurrence must not be discarded")
+	assert.True(t, names["team"], "the second --agents occurrence must be honored")
+
+	// Comma-separated callers (the documented form) keep working unchanged.
+	out, err = execute(t, "doctor", "--agents", "bruce,team", "--json")
+	require.NoError(t, err)
+	names = agentNames(out)
+	assert.True(t, names["bruce"])
+	assert.True(t, names["team"])
+}
+
 func TestDoctor_ShowsProjectProvenance(t *testing.T) {
 	// A project-defined agent (on a user provider — no trust needed) self-tests
 	// and is labeled source=project in the doctor report.

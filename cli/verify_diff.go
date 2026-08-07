@@ -15,17 +15,47 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newVerifyDiffCmd builds `atcr verify diff` (epic 35.10): the standalone
-// surface over the diff-smell analyzer. Epic 35.3 ported that analyzer into
+// newDiffSmellCmd builds `atcr diff-smell`: the top-level surface over the
+// diff-smell analyzer. Epic 35.3 ported that analyzer into
 // internal/verify/diffsmell.go but wired it ONLY into the in-process
 // fix-selection gate, explicitly scoping out "any subprocess or CLI shell-out" —
 // so the detection logic could not reach a consumer outside this binary, and a
 // consumer's only alternatives were a second dependency or a third copy of the
 // analyzer. This command adds no analysis: only input resolution, rendering, and
 // an opt-in exit-code gate.
+//
+// The command was promoted from `atcr verify diff` (epic 35.10) to the top
+// level because `verify` names three unrelated operations and is simultaneously
+// a leaf and a group: `atcr verify diff` read as "verify the diff" when it
+// means "scan the diff for over-simplification smells". `diff-smell` is the
+// name the analyzer, the doc (docs/diff-smell.md), the upstream tool, and the
+// command's own error text already used, so the promotion is a rename into
+// existing vocabulary.
+func newDiffSmellCmd() *cobra.Command {
+	return newDiffSmellCmdNamed("diff-smell")
+}
+
+// newVerifyDiffCmd keeps `atcr verify diff` reachable as a hidden deprecated
+// alias of `atcr diff-smell` for one minor version. Cobra's own Deprecated
+// field is unusable here: it prints the warning with c.Printf — STDOUT — which
+// would break the payload-only-stdout guarantee for `--json` consumers (the
+// same reason flag aliases in this repo use MarkHidden, not MarkDeprecated).
+// Hidden plus an explicit stderr note gives the same signal without the leak.
 func newVerifyDiffCmd() *cobra.Command {
+	cmd := newDiffSmellCmdNamed("diff")
+	cmd.Hidden = true
+	inner := cmd.RunE
+	cmd.RunE = func(c *cobra.Command, args []string) error {
+		_, _ = fmt.Fprintln(c.ErrOrStderr(),
+			"note: 'atcr verify diff' is deprecated; use 'atcr diff-smell' instead (alias kept for one minor version)")
+		return inner(c, args)
+	}
+	return cmd
+}
+
+func newDiffSmellCmdNamed(use string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "diff",
+		Use:   use,
 		Short: "Scan a unified diff for over-simplification (reward-hack) fingerprints",
 		Long: "Scan a unified diff for the mechanical fingerprints of an over-simplified " +
 			"(\"reward-hacked\") patch: a change that makes a test pass by deleting the test, " +
@@ -42,9 +72,11 @@ func newVerifyDiffCmd() *cobra.Command {
 		RunE: runVerifyDiff,
 	}
 	cmd.Flags().String("diff", "", "scan a unified diff read from this file, or from stdin when set to \"-\"")
-	cmd.Flags().Bool("staged", false, "scan the staged changes (git diff --cached) in --repo")
-	cmd.Flags().String("rev", "HEAD", "scan a single commit in --repo (the default source)")
-	cmd.Flags().String("repo", ".", "repo root for --staged / --rev (default: current directory)")
+	cmd.Flags().Bool("staged", false, "scan the staged changes (git diff --cached) in --repo-root")
+	cmd.Flags().String("rev", "HEAD", "scan a single commit in --repo-root (the default source)")
+	cmd.Flags().String("repo-root", ".", "repo root for --staged / --rev (default: current directory)")
+	cmd.Flags().String("repo", ".", "deprecated alias for --repo-root")
+	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
 	cmd.Flags().Bool("json", false, "emit the scan as JSON on stdout instead of the text summary")
 	cmd.Flags().String("fail-on", "", "exit 1 when the verdict reaches this level: hard, soft, or none (default: never fail)")
 	return cmd
@@ -121,7 +153,7 @@ func runVerifyDiff(cmd *cobra.Command, _ []string) error {
 // a usage error (exit 2).
 //
 // The empty case matters because it is the shape the "none" affordance was added
-// for: `atcr verify diff --fail-on "$LEVEL"` with LEVEL unset. It is also the
+// for: `atcr diff-smell --fail-on "$LEVEL"` with LEVEL unset. It is also the
 // convention the two sibling threshold readers already share — verifyMinSeverity
 // (cli/verify.go) and gateFlagValue (cli/reconcile.go) both trim and treat
 // whitespace-only as unset. Refusing it here made one command hard-fail CI where
@@ -202,7 +234,7 @@ func readCapped(r io.Reader, source string) (string, error) {
 
 // readDiffInput resolves the single diff source and returns its text plus a
 // human label for the stderr notes. At most one source may be NAMED; naming none
-// falls through to --rev's HEAD default, so a bare `atcr verify diff` scans the
+// falls through to --rev's HEAD default, so a bare `atcr diff-smell` scans the
 // last commit (upstream `diff-smell`'s own default shape).
 func readDiffInput(cmd *cobra.Command) (text, source string, err error) {
 	// --staged is a bool: cobra marks it Changed on ANY assignment, so
@@ -310,7 +342,7 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // --no-textconv ...` and returns stdout. All three are passed at the call site
 // rather than by gitexec because they are diff-command-specific, and each closes
 // a different hole in a repo whose local config the operator does not control —
-// which `--repo <path>` explicitly invites (internal/gitexec's package doc names
+// which `--repo-root <path>` explicitly invites (internal/gitexec's package doc names
 // repo-local config as the surface it does NOT close):
 //
 //   - --no-ext-diff neutralizes a poisoned repo-local `diff.external`.
@@ -328,7 +360,7 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // interrupt is not a bad invocation.
 func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	// Shared with `atcr verify` and `atcr reconcile` so the three commands
-	// normalize --repo identically — including the existence check, which turns
+	// normalize --repo-root identically — including the existence check, which turns
 	// a nonexistent root into the shared usage-error wording instead of a raw
 	// git message.
 	repo, err := normalizeRepoFlag(cmd)

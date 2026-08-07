@@ -32,7 +32,7 @@ func newLeaderboardCmd() *cobra.Command {
 		RunE: runLeaderboard,
 	}
 	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
-	cmd.Flags().String("model", "", "filter to an exact model id")
+	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
 	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table")
 	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")

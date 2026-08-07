@@ -911,13 +911,13 @@ func TestReviewHelpDocumentsPreviewPrecedence(t *testing.T) {
 }
 
 // AC 05-01 Scenario 1 / Edge Case 2: `atcr review --fresh` documents BOTH its
-// --verify meaning (preserved verbatim) and its new --all/--dir hash-skip-bypass
+// --verify meaning (preserved verbatim) and its new --all/--scope hash-skip-bypass
 // meaning, on a single line.
 func TestReviewFreshFlag_UsageDocumentsBothMeanings(t *testing.T) {
 	usage := newReviewCmd().Flags().Lookup("fresh").Usage
 	assert.Contains(t, usage, "with --verify: re-verify findings that already carry a verdict",
 		"the preserved --verify clause must remain verbatim")
-	assert.Contains(t, usage, "with --all/--dir:", "a new clause must name the baseline hash-skip bypass")
+	assert.Contains(t, usage, "with --all/--scope:", "a new clause must name the baseline hash-skip bypass")
 	assert.NotContains(t, usage, "\n", "the usage string must stay single-line (cobra flag-table style)")
 }
 

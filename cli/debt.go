@@ -39,36 +39,45 @@ func newDebtCmd() *cobra.Command {
 	return cmd
 }
 
-// addDebtStoreFlag registers the --dir flag every debt subcommand shares, with
+// addDebtStoreFlag registers the --store flag every debt subcommand shares, with
 // the one default that makes them a single namespace over a single store.
+// --dir is a deprecated hidden alias resolving identically.
 //
 // The DISPLAYED default is cleared after registration: cobra appends
 // "(default X)" to --help whenever DefValue is non-zero, and here X would be the
-// relative ".atcr/debt" — a path no command actually uses, since an unset --dir
-// resolves to <repo root>/.atcr/debt at run time (debtStoreDir). Clearing
+// relative ".atcr/debt" — a path no command actually uses, since an unset
+// --store resolves to <repo root>/.atcr/debt at run time (debtStoreDir). Clearing
 // DefValue touches only the help rendering; the flag's actual default value is
-// unchanged, so Changed("dir")-based resolution is unaffected.
+// unchanged, so Changed("store")-based resolution is unaffected.
 //
-// A set-but-empty --dir is rejected here, at the shared registration point, via
+// A set-but-empty --store is rejected here, at the shared registration point, via
 // a chained PreRunE (prev-first, matching addRangeFlags in cli/flags.go): an
-// explicit `--dir ""` is the shape an unset shell variable produces, and letting
+// explicit `--store ""` is the shape an unset shell variable produces, and letting
 // it through made `debt list` report an empty backlog (exit 0) and `debt add`
 // die on a low-level mkdir error — an invocation mistake masquerading as store
 // state. One hook covers every consumer with no change to debtStoreDir's
 // signature or its call sites.
 //
 // The same hook runs the value through validation.FilePath, which is what the
-// sibling --output on this command family already does. Without it --dir went
-// verbatim to localdebt.Append, which MkdirAlls it: `--dir <repo>/../../escaped`
+// sibling --output on this command family already does. Without it --store went
+// verbatim to localdebt.Append, which MkdirAlls it: `--store <repo>/../../escaped`
 // silently created and wrote a store outside the repo, and a system directory
 // failed only as a raw mkdir permission error. Both the raw value (so a `..`
 // segment is caught as typed, before absolutization collapses it) and its
 // absolute form (so a relative path that lands in /etc is caught too) are
 // checked. Containment inside the repo root is deliberately NOT required:
-// pointing at another repo's store is --dir's documented purpose.
+// pointing at another repo's store is --store's documented purpose.
 func addDebtStoreFlag(cmd *cobra.Command) {
-	cmd.Flags().String("dir", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	cmd.Flags().String("store", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	cmd.Flags().Lookup("store").DefValue = ""
+	cmd.Flags().String("dir", defaultDebtResolveDir, "deprecated alias for --store")
 	cmd.Flags().Lookup("dir").DefValue = ""
+	// Hidden rather than MarkDeprecated: --dir has hundreds of live call sites
+	// (including this repo's own tooling), and pflag's parse-time deprecation
+	// warning pollutes captured stdout in merged-stream harnesses. The alias
+	// stays invisible in --help; docs carry the deprecation. Resolution keys on
+	// Changed(), so the alias's default value is inert.
+	_ = cmd.Flags().MarkHidden("dir")
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		if prev != nil {
@@ -76,30 +85,44 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 				return err
 			}
 		}
-		if !cmd.Flags().Changed("dir") {
+		name, dir := debtStoreFlagValue(cmd)
+		if name == "" {
 			return nil
 		}
-		dir := strings.TrimSpace(mustFlag(cmd, "dir"))
-		if dir == "" {
-			return usageError(fmt.Errorf("--dir must not be empty; omit it to resolve <repo root>/.atcr/debt"))
+		if strings.TrimSpace(dir) == "" {
+			return usageError(fmt.Errorf("--%s must not be empty; omit it to resolve <repo root>/.atcr/debt", name))
 		}
 		if err := validation.FilePath(dir); err != nil {
-			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
+			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
 		}
 		abs, err := filepath.Abs(dir)
 		if err != nil {
-			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
+			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
 		}
 		if err := validation.FilePath(abs); err != nil {
-			return usageError(fmt.Errorf("--dir %q: %w", dir, err))
+			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
 		}
 		return nil
 	}
 }
 
+// debtStoreFlagValue reports the explicitly set store selector: the canonical
+// --store wins over the deprecated --dir alias when both are given. It returns
+// ("", "") when neither flag was supplied.
+func debtStoreFlagValue(cmd *cobra.Command) (string, string) {
+	if cmd.Flags().Changed("store") {
+		return "store", mustFlag(cmd, "store")
+	}
+	if cmd.Flags().Changed("dir") {
+		return "dir", mustFlag(cmd, "dir")
+	}
+	return "", ""
+}
+
 // debtStoreDir resolves the store directory for a debt subcommand: an explicit
-// --dir verbatim, otherwise the store under the repo root that cli/root.go's
-// existing .git/.atcr marker walk finds. Without the walk a bare `atcr debt
+// --store (or its deprecated --dir alias) verbatim, otherwise the store under
+// the repo root that cli/root.go's existing .git/.atcr marker walk finds.
+// Without the walk a bare `atcr debt
 // list` run from a subdirectory reads a DIFFERENT (usually empty) store than the
 // one `atcr reconcile` wrote at the repo root — silently, with no error and no
 // hint. That is the reader half of the split T6 opened when it moved the writer
@@ -114,15 +137,15 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 // repoRoot falls back to the working directory when it finds no marker, so a
 // caller outside a repo keeps exactly today's behavior.
 func debtStoreDir(cmd *cobra.Command) string {
-	dir := mustFlag(cmd, "dir")
-	if cmd.Flags().Changed("dir") {
+	_, dir := debtStoreFlagValue(cmd)
+	if cmd.Flags().Changed("store") || cmd.Flags().Changed("dir") {
 		return dir
 	}
 	root, err := debtRepoRoot()
 	if err != nil {
 		// Getwd failed — there is no better root to offer than the relative
 		// default, which is what every caller used before this walk existed.
-		return dir
+		return defaultDebtResolveDir
 	}
 	return localdebt.DefaultDir(root)
 }
@@ -194,7 +217,7 @@ func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
 // becomes O(distinct ids x Summary) + O(selected ids x Record) instead of
 // O(all history x Record) twice over, which is what ReadAll + FoldRecords cost:
 // measured at 327 MB RSS for `debt list --severity CRITICAL` on a 100k-record /
-// 49 MB store against 145 MB for `debt resolve --list` on the same store.
+// 49 MB store against 145 MB for `debt resolve` on the same store.
 //
 // The filter therefore runs BEFORE materialization rather than after it, so a
 // query returning 25 rows no longer holds all 100k records to produce them.
@@ -271,11 +294,11 @@ func newDebtListCmd() *cobra.Command {
 		RunE:  runDebtList,
 	}
 	addDebtStoreFlag(cmd)
-	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
-	cmd.Flags().String("status", "", "filter by status (open|deferred|resolved|wontfix)")
+	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
+	cmd.Flags().String("status", "", "filter by status (exact: open|deferred|resolved|wontfix)")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
-	cmd.Flags().String("origin", "", "filter by origin (review|manual)")
+	cmd.Flags().String("origin", "", "filter by origin (exact: review|manual)")
 	cmd.Flags().String("sort", sortKeySeverity, "sort key: severity|age|est|file")
 	// Same flag name, type, and help string as `debt resolve --json`, so the two
 	// machine-readable surfaces read identically to a caller.
@@ -629,7 +652,7 @@ func debtIDCell(id string) string {
 // and U+2028/U+2029 are not word separators, they are cursor commands. Store
 // content is model-generated by the reconcile fan-out, so a finding carrying an
 // ANSI sequence would otherwise emit it verbatim and erase or overwrite the row
-// above it in `debt list` — and in `debt resolve --list`, which renders through
+// above it in `debt list` — and in `debt resolve`, which renders through
 // this same helper. Whitespace collapse runs FIRST so a newline still separates
 // words instead of joining them.
 func cell(s string) string {
