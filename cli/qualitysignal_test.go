@@ -224,9 +224,29 @@ func expectedQualityPayload(t *testing.T) []telemetry.QualitySignal {
 	recs, err := localdebt.ReadAll(localdebt.DefaultDir("."), localdebt.ReadOpts{Writer: io.Discard})
 	require.NoError(t, err)
 	rows := localdebt.AggregateQualitySignal(recs)
-	ps := make([]telemetry.QualitySignal, 0, len(rows))
+
+	type key struct{ personaIDHash, model string }
+	groups := map[key]*telemetry.QualitySignal{}
+	order := []key{}
 	for _, r := range rows {
-		ps = append(ps, telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount))
+		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount)
+		if qs.PersonaIDHash == "" {
+			continue
+		}
+		k := key{qs.PersonaIDHash, qs.Model}
+		if existing, ok := groups[k]; ok {
+			existing.DismissedCount += qs.DismissedCount
+			existing.ConfirmedCount += qs.ConfirmedCount
+		} else {
+			qsCopy := qs
+			groups[k] = &qsCopy
+			order = append(order, k)
+		}
+	}
+
+	ps := make([]telemetry.QualitySignal, 0, len(order))
+	for _, k := range order {
+		ps = append(ps, *groups[k])
 	}
 	return ps
 }
@@ -573,6 +593,23 @@ func TestPreview_RegisteredOnReconcile(t *testing.T) {
 	assert.Contains(t, out, "persona_id_hash")
 	_, marker := splitPreview(out)
 	assert.Contains(t, marker, "nothing was transmitted")
+}
+
+// TestBuildQualitySignalPayload_FoldsCaseVariants proves case-variant personas
+// collapse to a single payload entry: AggregateQualitySignal groups by the raw
+// persona name, so "bruce" and "Bruce" produce two rows with an identical
+// (persona_id_hash, model) pair; the payload builder must fold them before mapping
+// to telemetry.QualitySignal.
+func TestBuildQualitySignalPayload_FoldsCaseVariants(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	seedQualityRecord(t, "Bruce", "claude-sonnet-4-6", "resolved", "b.go")
+
+	payload, err := buildQualitySignalPayload(".")
+	require.NoError(t, err)
+	require.Len(t, payload, 1, "case variants of the same persona must fold to one payload entry")
+	assert.Equal(t, 1, payload[0].DismissedCount, "dismissed counts must sum")
+	assert.Equal(t, 1, payload[0].ConfirmedCount, "confirmed counts must sum")
 }
 
 // TestPreview_ByteIdenticalToRealSendMarshal locks the preview JSON to the marshal

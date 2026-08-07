@@ -168,7 +168,57 @@ the **Persona Leaderboard** aggregation, and only ever in **hashed** form.
 
 When a persona identity is included (for the leaderboard, and in the
 `--sync-cloud` payload below), it is transmitted as a **one-way SHA-256 hash** of
-the raw persona/reviewer string — never the raw string itself:
+the canonicalized persona/reviewer name (`strings.ToLower(strings.TrimSpace(name))`) — never the raw string itself:
+
+- **Canonicalized before hashing:** the persona name is reduced to
+  `strings.ToLower(strings.TrimSpace(name))` first, so `bruce`, `Bruce`,
+  `BRUCE`, and `" bruce "` all produce **one** digest.
+
+  For an **ASCII** persona name — which every persona in `personas/community/`
+  is — the exact equivalent a backend can use to reproduce these values is:
+
+  ```js
+  crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")
+  ```
+
+  **The cross-language guarantee is scoped to ASCII, and only ASCII.** Go's
+  `strings.ToLower` is Unicode *simple* case mapping and `strings.TrimSpace` uses
+  `unicode.IsSpace`; JS `toLowerCase`/`trim` apply different rules, and they
+  measurably disagree:
+
+  | Input | Go | JS |
+  |---|---|---|
+  | `ΟΔΥΣΣΕΥΣ` | `οδυσσευσ` | `οδυσσευς` (final sigma) |
+  | `İstanbul` | `istanbul` | `i̇stanbul` (combining dot) |
+  | `<U+FEFF>bruce` | BOM retained | BOM stripped |
+  | `<U+0085>bruce` | NEL stripped → `bruce` | NEL retained → `<U+0085>bruce` |
+
+  Go's `strings.TrimSpace` (via `unicode.IsSpace`) treats U+0085 as whitespace;
+  ECMAScript's `WhiteSpace`/`LineTerminator` productions do not, so JS `trim()`
+  leaves it in place.
+
+  This does **not** create split identities: a stored persona identity MUST always
+  be the digest received from the Go client, and a JS-computed digest is a match
+  key only that must never be written as a storage key. The JS above exists solely
+  to build a *lookup table* of known persona names. So a divergence means a
+  non-ASCII persona simply fails to match that table and is treated as an
+  unrecognized persona — a lookup miss, not a second bucket. Do not rely on the
+  JS form for a non-ASCII name; port the Go semantics if you ever need one.
+
+  It matters more than it looks: an ingestion backend may re-key the received
+  digest under a server-side secret and discard the original, in which case a
+  casing or padding variant becomes a **second permanent identity** for one
+  persona that no later backfill can merge. Canonicalizing client-side is what
+  keeps one persona to one bucket.
+
+  One consequence worth knowing: persona **lookup** is case-sensitive (persona
+  name handling is inconsistent about case across the registry — listing folds
+  case, on-disk resolution depends on the filesystem — while telemetry now always
+  collapses case), but their telemetry collapses to a single digest. That is
+  deliberate and matches the trust-prior key space, which has always been
+  lowercased — but it does mean a custom persona named as a case-variant of a
+  catalog persona reports into the catalog persona's bucket. Give custom personas
+  distinct names, not re-casings.
 
 - **Deterministic:** the same persona always hashes to the same value, so the
   backend can correlate a persona's results across runs without ever learning
@@ -414,7 +464,7 @@ exact bytes before you ever opt in.
 
 The `persona_id_hash` follows the **same** hashing model documented under
 [Persona Leaderboard data](#persona-leaderboard-data): a **one-way, unsalted
-SHA-256** of the raw persona/reviewer name.
+SHA-256** of the canonicalized persona/reviewer name (`strings.ToLower(strings.TrimSpace(name))`).
 
 - **Deterministic and one-way:** the same persona always hashes to the same value
   and the digest is not directly reversible.

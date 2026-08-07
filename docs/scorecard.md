@@ -183,6 +183,26 @@ Behavior:
 - `--output` without `--export` → usage error (exit `2`, "--output requires
   --export"); `--output` only routes the export document.
 
+**Persona digest canonical form.** `scorecard.HashPersonaID` — the function
+behind every `persona_id_hash` — canonicalizes its input to
+`strings.ToLower(strings.TrimSpace(name))` **before** hashing, so `bruce`,
+`Bruce`, and `" bruce "` yield one digest rather than three. A consumer that
+needs to reproduce a digest from a known persona name (for example, to map
+digests received on the telemetry / --sync-cloud path back to the published persona catalog) must apply the same
+transform; for an **ASCII** name — which every catalog persona is — the JS
+equivalent is
+`crypto.createHash("sha256").update(name.trim().toLowerCase()).digest("hex")`.
+That equivalence holds for ASCII only: Go and JS disagree on some non-ASCII
+inputs (final sigma, dotted capital I, a leading BOM), which makes such a name a
+lookup **miss** rather than a second identity — a stored persona identity MUST
+always be the digest received from the Go client, and a JS-computed digest is a
+match key only that must never be written as a storage key. See telemetry.md for
+the divergence table.
+The canonical form and the reasoning behind it are specified in full under
+[telemetry.md](telemetry.md#persona-leaderboard-data); the pinned digests for real
+catalog personas live in `internal/scorecard/telemetry_test.go`
+(`TestHashPersonaID_PinnedPublishedPersonaDigests`).
+
 ### `atcr leaderboard --export [--output path]`
 
 Emit the versioned, anonymized public submission document (the Epic 10.0
