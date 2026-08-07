@@ -53,9 +53,11 @@ const smellCleanDiff = `diff --git a/foo.go b/foo.go
 +func Foo() int { return 1 }
 `
 
-// runSmell executes `atcr verify diff <args...>` with stdin bound to in,
+// runSmell executes `atcr diff-smell <args...>` with stdin bound to in,
 // returning the exit code and stdout/stderr separately. Split streams matter:
 // stdout must stay payload-only, with the clean-input notes on stderr.
+// (The deprecated `atcr verify diff` alias is covered by
+// TestDiffSmellCmd_ParityWithVerifyDiffAlias in diff_smell_cmd_test.go.)
 func runSmell(t *testing.T, in string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	return runSmellContext(context.Background(), t, in, args...)
@@ -67,7 +69,7 @@ func runSmellContext(ctx context.Context, t *testing.T, in string, args ...strin
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRootCmd()
-	root.SetArgs(append([]string{"verify", "diff"}, args...))
+	root.SetArgs(append([]string{"diff-smell"}, args...))
 	root.SetIn(strings.NewReader(in))
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)
@@ -391,7 +393,7 @@ func TestVerifyDiffCmd_InvalidFailOnIsUsageError(t *testing.T) {
 // that as the shared convention.
 //
 // The shape this protects is exactly the one the `--fail-on none` affordance was
-// added for: `atcr verify diff --fail-on "$LEVEL"` with LEVEL unset. Treating it
+// added for: `atcr diff-smell --fail-on "$LEVEL"` with LEVEL unset. Treating it
 // as a usage error hard-fails CI here (exit 2) while being a silent no-op in
 // every sibling command.
 func TestVerifyDiffCmd_EmptyFailOnIsUnset(t *testing.T) {
@@ -729,7 +731,7 @@ func TestVerifyDiffCmd_StagedCleanIndexJSONStdoutIsJSONOnly(t *testing.T) {
 	require.Equal(t, "clean", m["summary"].(map[string]any)["verdict"])
 }
 
-// --rev is the DEFAULT source: a bare `atcr verify diff` scans HEAD.
+// --rev is the DEFAULT source: a bare `atcr diff-smell` scans HEAD.
 func TestVerifyDiffCmd_RevIsDefaultSourceAndScansHEAD(t *testing.T) {
 	isolate(t)
 	initGitRepo(t)

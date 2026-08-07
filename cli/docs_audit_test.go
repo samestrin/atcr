@@ -405,6 +405,33 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	}
 }
 
+// The config-key ↔ flag mapping must be derivable without reading source:
+// documented in one table in the config docs (registry.md) and in root help.
+// Three pairs diverge (payload_mode→--payload, timeout_secs→--timeout,
+// payload_byte_budget→--byte-budget); fail_on and max_parallel match and anchor
+// the convention.
+func TestConfigKeyFlagMappingIsDocumented(t *testing.T) {
+	pairs := [][2]string{
+		{"payload_mode", "--payload"},
+		{"timeout_secs", "--timeout"},
+		{"payload_byte_budget", "--byte-budget"},
+		{"fail_on", "--fail-on"},
+		{"max_parallel", "--max-parallel"},
+	}
+
+	_, helpOut := execCmdCapture(t, "--help")
+	for _, p := range pairs {
+		require.Contains(t, helpOut, p[0], "root help must name config key %s", p[0])
+		require.Contains(t, helpOut, p[1], "root help must name flag %s for config key %s", p[1], p[0])
+	}
+
+	reg := auditedMarkdown(t)["docs/registry.md"]
+	for _, p := range pairs {
+		require.Contains(t, reg, p[0], "registry.md must name config key %s", p[0])
+		require.Contains(t, reg, p[1], "registry.md must map config key %s to %s", p[0], p[1])
+	}
+}
+
 // TestSubcommandValidationSkipsFlags asserts that a bogus subcommand placed
 // after a flag is still rejected (e.g. `atcr benchmark --json frobnicate`).
 func TestSubcommandValidationSkipsFlags(t *testing.T) {
@@ -837,16 +864,22 @@ func TestDocsClaimedFlagsAreReal(t *testing.T) {
 // TestDiffSmellVersionProbeInspectsHelpText pins the documented "is this atcr new
 // enough?" probe against the shape that actually discriminates.
 //
-// `verify` is both a group and a leaf (it takes an optional [id-or-path]), so on
-// an atcr that predates `verify diff` cobra reads "diff" as a POSITIONAL and
-// --help short-circuits to verify's own help — exit 0. A probe keying on the exit
+// Bare `atcr` is itself a command (the home view) with `Args: NoArgs`, so on an
+// atcr that predates `diff-smell` cobra treats the unknown word as a positional
+// and --help short-circuits to the ROOT help — exit 0. The same trap existed
+// under the old `verify diff` spelling: `verify` is both a group and a leaf (it
+// takes an optional [id-or-path]), so cobra read "diff" as a POSITIONAL and
+// --help showed verify's own help, again exit 0. A probe keying on the exit
 // status therefore reports "new enough" on every binary ever shipped, and the
 // guarded call then dies with `unknown flag: --staged`. Under the documented
 // pre-commit hook's `set -euo pipefail` that blocks every commit — the exact
 // failure the probe exists to prevent.
 //
-// The probe must inspect the help TEXT instead. `--fail-on` is registered only on
-// `verify diff`, never on `verify`, so grepping for it separates the two.
+// The probe must inspect the help TEXT instead. `--fail-on` is registered only
+// on the scanner (never on the root or on `verify`), so grepping for it
+// separates the two. The recipe probes the canonical `atcr diff-smell` first
+// and falls back to the deprecated `atcr verify diff` alias, so a hook pasted
+// during the one-minor-version alias window does not silently skip the gate.
 func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 	root := repoRootDir(t)
 	b, err := os.ReadFile(filepath.Join(root, "docs", "diff-smell.md"))
@@ -854,14 +887,18 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 		t.Fatalf("read docs/diff-smell.md: %v", err)
 	}
 	probed := 0
+	canonical := 0
 	for i, ln := range strings.Split(string(b), "\n") {
-		if !strings.Contains(ln, "atcr verify diff --help") {
+		if !strings.Contains(ln, "atcr diff-smell --help") && !strings.Contains(ln, "atcr verify diff --help") {
 			continue
 		}
 		probed++
+		if strings.Contains(ln, "atcr diff-smell --help") {
+			canonical++
+		}
 		if !strings.Contains(ln, "grep") || !strings.Contains(ln, "--fail-on") {
-			t.Errorf("docs/diff-smell.md:%d probes with %q, which exits 0 on an atcr that predates `verify diff`; "+
-				"the probe must inspect the help text, e.g. `atcr verify diff --help 2>&1 | grep -- '--fail-on' >/dev/null`",
+			t.Errorf("docs/diff-smell.md:%d probes with %q, which exits 0 on an atcr that predates the command; "+
+				"the probe must inspect the help text, e.g. `atcr diff-smell --help 2>&1 | grep -- '--fail-on' >/dev/null`",
 				i+1, strings.TrimSpace(ln))
 			continue
 		}
@@ -877,7 +914,10 @@ func TestDiffSmellVersionProbeInspectsHelpText(t *testing.T) {
 		}
 	}
 	if probed == 0 {
-		t.Fatal("docs/diff-smell.md documents no `atcr verify diff --help` version probe; the version-discoverability recipe is the consumer-adoption path and must stay documented")
+		t.Fatal("docs/diff-smell.md documents no version probe; the version-discoverability recipe is the consumer-adoption path and must stay documented")
+	}
+	if canonical == 0 {
+		t.Fatal("docs/diff-smell.md documents no `atcr diff-smell --help` probe; the canonical spelling must be probed first, with the deprecated `atcr verify diff` alias as the fallback")
 	}
 }
 
@@ -1016,13 +1056,17 @@ func TestDiffSubcommandShadowingIsDocumented(t *testing.T) {
 	}
 }
 
-// TestVerifyDiffOwnsFailOnAlone backs the probe above: it is only a valid version
-// discriminator while `--fail-on` is reachable on `verify diff` and NOT on its
-// parent. If a later change adds --fail-on to `verify`, the documented recipe
-// silently starts reporting "new enough" on old binaries again.
+// TestDiffSmellOwnsFailOnAlone backs the probe above: it is only a valid version
+// discriminator while `--fail-on` is reachable on the diff-smell scanner and NOT
+// on the root or on `verify`. If a later change adds --fail-on to `verify`, the
+// documented recipe silently starts reporting "new enough" on old binaries
+// again.
 func TestVerifyDiffOwnsFailOnAlone(t *testing.T) {
+	if !reachableFlags([]string{"diff-smell"})["fail-on"] {
+		t.Error("`atcr diff-smell` must own --fail-on; the documented version probe greps its help text for that flag")
+	}
 	if !reachableFlags([]string{"verify", "diff"})["fail-on"] {
-		t.Error("`atcr verify diff` must own --fail-on; the documented version probe greps its help text for that flag")
+		t.Error("the deprecated `atcr verify diff` alias must keep --fail-on; the probe's fallback greps its help text for that flag")
 	}
 	if reachableFlags([]string{"verify"})["fail-on"] {
 		t.Error("`atcr verify` must NOT expose --fail-on: the documented version probe greps for it to tell a new atcr from an old one, and an inherited/duplicated flag would make an old binary indistinguishable")

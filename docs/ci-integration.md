@@ -25,9 +25,9 @@ Notes:
 - With roadmap stage 3 (adversarial verification), `--fail-on` counts only non-refuted findings, and `--require-verified` restricts the gate to skeptic-confirmed findings.
 - **A `--sync-cloud` authentication failure exits 3** (missing/empty `ATCR_API_KEY` or a remote 401/403), distinct from the usage/config code (2) so CI can detect an auth failure specifically. Note the ordering: `--cloud-endpoint` is **required** (this build compiles in no default destination), and it is validated *before* the credential — so a `--sync-cloud` run that omits the endpoint exits **2**, not 3, even when `ATCR_API_KEY` is also absent.
 
-### `atcr verify diff` — gating is opt-in
+### `atcr diff-smell` — gating is opt-in
 
-`atcr verify diff` (the deterministic diff-smell scanner) reuses the codes above but **inverts the default**: it exits `0` for every verdict unless `--fail-on` is passed. That preserves drop-in parity with the upstream `diff-smell` tool, which never exits nonzero on content.
+`atcr diff-smell` (the deterministic diff-smell scanner, promoted from `atcr verify diff` — still a hidden deprecated alias for one minor version) reuses the codes above but **inverts the default**: it exits `0` for every verdict unless `--fail-on` is passed. That preserves drop-in parity with the upstream `diff-smell` tool, which never exits nonzero on content.
 
 | Condition | Exit |
 |-----------|------|

@@ -411,17 +411,18 @@ The value accepts the `strconv.ParseBool` vocabulary (`true`/`false`, `1`/`0`,
 sibling `telemetry` key untouched, and a **malformed** persisted value fails
 **safe** to disabled — never a silent re-enable.
 
-### `--preview` — see exactly what would be sent, before opting in
+### `--dry-run` — see exactly what would be sent, before opting in
 
-The `review` and `reconcile` commands accept a `--preview` flag that renders the
-exact content-free payload locally and **sends nothing**:
+The `review` and `reconcile` commands accept a `--dry-run` flag that renders the
+exact content-free payload locally and **sends nothing** (`--preview` remains a
+deprecated hidden alias):
 
 ```sh
-atcr review --preview ...
-atcr reconcile --preview ...
+atcr review --dry-run ...
+atcr reconcile --dry-run ...
 ```
 
-`--preview` prints the pretty-printed JSON payload followed by a distinct
+`--dry-run` prints the pretty-printed JSON payload followed by a distinct
 human-readable marker on its own line:
 
 ```json
@@ -440,11 +441,11 @@ The printed JSON is **byte-identical** to the marshaled body a real send would
 transmit — both paths build the payload from a single shared constructor, so the
 preview can never drift from what is actually sent. Key properties:
 
-- It **needs no opt-in**: `--preview` renders whether or not you have enabled the
+- It **needs no opt-in**: `--dry-run` renders whether or not you have enabled the
   signal, and it runs **before** any opt-in gate check.
 - It **makes no network call** and requires **no credential** — it never reads
   `ATCR_API_KEY` and constructs no HTTP client.
-- It **takes precedence over `--sync-cloud`**: `--preview --sync-cloud` together
+- It **takes precedence over `--sync-cloud`**: `--dry-run --sync-cloud` together
   prints the payload and pushes nothing.
 - On a fresh checkout with no dismissal history, it prints an **empty payload**
   (`[]`) rather than failing.
@@ -459,7 +460,7 @@ a hashed persona identifier, a model slug, and two integer counts. It carries **
 source code, no file path, no repository name, and no finding text, title, or
 excerpt** — not by policy but structurally: the payload type cannot embed or
 extend any struct that holds those, and the four-key allowlist is locked by a
-regression test. Nothing is sent by default, and `--preview` lets you inspect the
+regression test. Nothing is sent by default, and `--dry-run` lets you inspect the
 exact bytes before you ever opt in.
 
 The `persona_id_hash` follows the **same** hashing model documented under

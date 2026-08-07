@@ -29,7 +29,7 @@ single source of truth the website build consumes, so it links every doc in
   the `--no-sandbox` opt-out.
 - [Adversarial Verification](verification.md) — skeptic agents that try to
   disprove reconciled findings.
-- [Diff-Smell](diff-smell.md) — `atcr verify diff`, the deterministic, model-free
+- [Diff-Smell](diff-smell.md) — `atcr diff-smell`, the deterministic, model-free
   scanner for over-simplified ("reward-hacked") patches.
 - [Cross-Examination (Debate Stage)](cross-examination.md) — proposer /
   challenger / judge resolution of disputed findings.

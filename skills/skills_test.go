@@ -192,7 +192,7 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // cli/skill_routing_test.go holds the authoritative bidirectional command↔row
 // check; this list is a package-local guard only.
 var dispatcherCommands = []string{
-	"review", "reconcile", "verify", "debate", "report", "quality-report", "github",
+	"review", "reconcile", "verify", "diff-smell", "debate", "report", "quality-report", "github",
 	"range", "status", "init", "quickstart", "serve", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
 	"models", "debt", "history", "audit-report", "skill", "config", "version",

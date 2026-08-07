@@ -1,55 +1,18 @@
 package history
 
 import (
-	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/timewindow"
 )
 
-// ParseSince parses a --since window into a positive duration. It extends Go's
-// time.ParseDuration (which rejects day/week units) with a leading-number `d`
-// (days) and `w` (weeks) form: "30d", "2w". Native composite durations such as
-// "1h30m" still parse. The result must be strictly positive — a zero or negative
-// window is rejected as a usage error.
+// ParseSince parses a --since window into a positive duration. It is a thin
+// alias for timewindow.Parse, which owns the one grammar every window flag in
+// atcr shares — Nd/Nw/Nm plus "all". The alias is kept so this package's callers
+// read in its own vocabulary; it must never grow a grammar of its own again.
 func ParseSince(s string) (time.Duration, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty duration")
-	}
-
-	var d time.Duration
-	switch unit := s[len(s)-1]; unit {
-	case 'd', 'w':
-		n, err := strconv.ParseFloat(s[:len(s)-1], 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: want a number before %q (e.g. 30%c)", s, string(unit), unit)
-		}
-		if math.IsInf(n, 0) || math.IsNaN(n) {
-			return 0, fmt.Errorf("invalid duration %q: must be finite", s)
-		}
-		per := 24 * time.Hour
-		if unit == 'w' {
-			per = 7 * 24 * time.Hour
-		}
-		nanos := n * float64(per)
-		if nanos >= float64(math.MaxInt64) || nanos <= 0 {
-			return 0, fmt.Errorf("duration %q is out of range", s)
-		}
-		d = time.Duration(nanos)
-	default:
-		parsed, err := time.ParseDuration(s)
-		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: use h/m/s or d/w (e.g. 30d, 2w, 48h)", s)
-		}
-		d = parsed
-	}
-
-	if d <= 0 {
-		return 0, fmt.Errorf("duration %q must be positive", s)
-	}
-	return d, nil
+	return timewindow.Parse(s)
 }
 
 // Filter returns the records that fall within the `since` window (Timestamp not

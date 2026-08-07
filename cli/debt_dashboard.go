@@ -32,8 +32,8 @@ func newDebtDashboardCmd() *cobra.Command {
 	// An empty default means stdout. The previous default wrote a file into the
 	// .planning/-scoped tree, which no longer exists as far as atcr is concerned.
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
-	cmd.Flags().Int("top", 10, "number of top-priority items to list (0 suppresses the list)")
-	cmd.Flags().Bool("check", false, "verify the file at --output matches freshly generated output; exit non-zero on drift")
+	cmd.Flags().Int("top", 10, "ranked-display cutoff: how many top-priority items the dashboard's list section shows (0 suppresses the list; every other section still aggregates ALL items). Distinct from debt resolve --max, which caps how many items are selected to act on — and where 0 means no cap, not suppression")
+	cmd.Flags().Bool("check", false, "assert the file at --output matches freshly generated output, exiting non-zero on drift (an assertion against drift, not a --dry-run-style preview)")
 	return cmd
 }
 

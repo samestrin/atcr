@@ -28,16 +28,16 @@ package verify
 // suppressing it. generateFixes uses it as a pre-write gate on executor-produced
 // fixes.
 //
-// A PUBLIC CLI SURFACE EXISTS: `atcr verify diff` (cli/verify_diff.go, epic
-// 35.10) exposes this analyzer to any consumer that can exec the atcr binary,
-// and docs/diff-smell.md is its contract. A downstream tool that needs
-// diff-smell should call that command rather than copying this file a third
-// time — the header below is the standing evidence of what keeping two copies
-// aligned already costs. The result types (Smell, SmellFiles, SmellSummary,
-// SmellResult) and entry points (AnalyzeDiff, LooksLikeUnifiedDiff) carry
-// upstream's own names and snake_case json tags, so output from
-// `atcr verify diff --json` parses with a consumer written against upstream's
-// `diff-smell --json`. The exported result types are that surface's wire
+// A PUBLIC CLI SURFACE EXISTS: `atcr diff-smell` (cli/verify_diff.go, promoted
+// from `atcr verify diff`, epic 35.10) exposes this analyzer to any consumer
+// that can exec the atcr binary, and docs/diff-smell.md is its contract. A
+// downstream tool that needs diff-smell should call that command rather than
+// copying this file a third time — the header below is the standing evidence
+// of what keeping two copies aligned already costs. The result types (Smell,
+// SmellFiles, SmellSummary, SmellResult) and entry points (AnalyzeDiff,
+// LooksLikeUnifiedDiff) carry upstream's own names and snake_case json tags,
+// so output from `atcr diff-smell --json` parses with a consumer written
+// against upstream's `diff-smell --json`. The exported result types are that surface's wire
 // format; changing their json tags is a breaking change (see the contract note
 // on SmellResult and TestSmellResult_GoldenJSON).
 //
@@ -84,7 +84,7 @@ import (
 // line) and File (verbatim from `+++ b/<anything>` via smellHeaderPath, which
 // caps nothing). Both are applied where the Smell is stamped — see
 // smellSanitizeField and the add() funnel in AnalyzeDiff — so they hold for every
-// consumer: the retry prompt, `atcr verify diff`'s text output, and the JSON
+// consumer: the retry prompt, `atcr diff-smell`'s text output, and the JSON
 // payload alike.
 //
 // They serve two purposes at once, and the second is not merely cosmetic:
@@ -147,7 +147,7 @@ const (
 )
 
 // The json tags below are upstream's, and they are a PUBLIC CONTRACT: the
-// moment a consumer pins to `atcr verify diff --json`, this shape is its API.
+// moment a consumer pins to `atcr diff-smell --json`, this shape is its API.
 // Committed: the three top-level keys, the smell object's field names, and the
 // closed verdict set. Adding a new smell TYPE is additive and non-breaking — a
 // consumer keys on Severity and Summary.Verdict, both closed sets — but renaming
@@ -503,7 +503,7 @@ func AnalyzeDiff(diff string) *SmellResult {
 			//     is trailer text rather than content;
 			//   - the NEW-SIDE START seeds newLine, which becomes Smell.Line for the
 			//     added-line detectors. There is a production consumer:
-			//     `atcr verify diff` renders file:line, and a consuming gate pastes
+			//     `atcr diff-smell` renders file:line, and a consuming gate pastes
 			//     that location straight into a technical-debt row.
 			//
 			// Line semantics are pinned in diffsmell_contract_test.go — see

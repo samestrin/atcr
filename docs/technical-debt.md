@@ -19,11 +19,11 @@ rendering of it at a moment in time.
 | Shard key | The `YYYY-MM` prefix of the record's `run_id` |
 | Mutation model | Append-only; one atomic `O_APPEND` write per record, under a mkdir-based cross-process advisory lock |
 
-Every subcommand resolves the store through `--dir`. With no `--dir`, atcr walks
+Every subcommand resolves the store through `--store`. With no `--store`, atcr walks
 up from the working directory to the nearest `.git`/`.atcr` marker and uses that
 repository's `.atcr/debt` — so `atcr debt list` reads the same store from a
-subdirectory as it does from the root. Pass `--dir` to work against another
-checkout or a fixture tree.
+subdirectory as it does from the root. Pass `--store` to work against another
+checkout or a fixture tree. `--dir` remains a deprecated hidden alias.
 
 A resolution never edits a line in place: it appends a new record carrying the
 same id and a terminal status. Reads fold the log to one **effective** record per
@@ -71,7 +71,7 @@ combination means a regression or a fix that never landed.
 
 The id appears in `atcr debt list`, in `atcr debt dashboard`'s Top Priority
 table, and under `id` in `--json` output — the same string in all three, rendered
-untruncated so it pastes verbatim into `atcr debt resolve --resolve <id>`. A
+untruncated so it pastes verbatim into `atcr debt resolve <id>`. A
 record with no id (only reachable by hand-editing the store) renders as `-`
 rather than a fabricated value that `resolve` could not match.
 
@@ -115,7 +115,7 @@ a binary that cannot understand it.
 |--------|----------|-----------|
 | `wontfix` | Terminal | Suppression is the feature; a false positive is stable at a stable location, so its id is stable and permanent dismissal works. Requires a `--reason`. |
 | `resolved` | Re-openable on re-detection | The same id after a fix implies a regression — the thing most worth surfacing. |
-| `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve --list` worklist while it stands, but stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
+| `deferred` | Re-surfaces on re-detection | "Not now" is not "never". A deferred item leaves the `debt resolve` worklist while it stands, but stays in `debt list` and the dashboard as live debt, and stays closeable by id. |
 
 So `atcr debt list` can show an item as `resolved` today and as open again after
 a later `atcr reconcile` re-detects it. Only `wontfix` is final.
@@ -148,9 +148,10 @@ atcr debt list --category correctness --sort age   # oldest correctness debt fir
 atcr debt list --json                           # the same selection, as JSON
 ```
 
-Flags: `--dir`, `--severity`, `--status` (`open|deferred|resolved|wontfix`),
+Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
+`open|deferred|resolved|wontfix`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
-`--origin` (`review|manual`), `--sort` (`severity|age|est|file`), `--json`.
+`--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
 `--status` has no default, so a bare `list` shows every item including closed
 ones, each with its effective status — a resolved item stays visible (as
@@ -159,7 +160,7 @@ asks for the live backlog; it also matches the empty status that open records
 carry on disk.
 
 The `ID` column is the finding id, rendered untruncated so it can be pasted
-straight into `atcr debt resolve --resolve <id>`. The `ORIGIN` column shows
+straight into `atcr debt resolve <id>`. The `ORIGIN` column shows
 each record's effective origin (`review` or `manual`); `--origin` filters
 against that same effective value, so a pre-v3 record with no stored `origin`
 still matches `--origin review`.
@@ -179,7 +180,7 @@ atcr debt add \
 ```
 
 Required in flag mode: `--severity`, `--file`, `--problem`, `--fix`,
-`--category`. Optional: `--dir`, `--status` (default `open`), `--est`.
+`--category`. Optional: `--store`, `--status` (default `open`), `--est`.
 
 `--file` takes a `path:line` location; a purely numeric suffix is parsed into
 the record's line number, and anything else is kept verbatim as the path.
@@ -206,7 +207,7 @@ atcr debt dashboard --top 20                          # the 20 highest-priority 
 atcr debt dashboard --output docs/debt-report.md --check   # exit non-zero if stale
 ```
 
-Flags: `--dir`, `--output`, `--top`, `--check`.
+Flags: `--store`, `--output`, `--top`, `--check`.
 
 `--check` compares against the file named by `--output`, so the two are used
 together; `--check` without `--output` is a usage error.
@@ -223,14 +224,14 @@ Lists the open backlog for a fix cycle and records resolutions as append-only
 status records.
 
 ```bash
-atcr debt resolve --list                       # open items, most severe first
+atcr debt resolve                              # open items, most severe first
 atcr debt resolve --json --max 5               # the same, as JSON, capped
-atcr debt resolve --resolve <id>               # mark it fixed
-atcr debt resolve --resolve <id> --status wontfix --reason "accepted pattern"
+atcr debt resolve <id>                         # mark it fixed
+atcr debt resolve <id> --status wontfix --reason "accepted pattern"
 ```
 
-Flags: `--dir`, `--list`, `--json`, `--severity`, `--max`, `--resolve <id>`,
-`--status` (`resolved|wontfix`), `--reason`. `--status wontfix` requires a
+Flags: `--store`, `--json`, `--severity`, `--max`,
+`--status` (`resolved|wontfix`), `--reason`. The id is positional. `--status wontfix` requires a
 `--reason` — it is a permanent dismissal, so the rationale is recorded with it.
 
 Resolution is append-only: a terminal record is appended, never edited in place,
@@ -303,7 +304,7 @@ $ atcr debt list --json
   }
 ]
 
-$ atcr debt resolve --resolve 8421025ce7cde4d3
+$ atcr debt resolve 8421025ce7cde4d3
 Marked 8421025ce7cde4d3 resolved.
 
 $ atcr debt list --status open
@@ -341,8 +342,8 @@ the run (`--no-local-debt` opts out). The MCP `atcr_reconcile` tool persists
 through the same code path, so a review driven by an editor or agent lands in the
 same backlog a CLI review does.
 
-The store's location resolves by **explicit `--repo` > the review manifest >
-the current working directory**. The repo root recorded in the manifest at review
+The store's location resolves by **explicit `--repo-root` > the review manifest >
+the current working directory** (`--repo` remains a deprecated alias). The repo root recorded in the manifest at review
 time is re-validated before any write (it must exist and look like a repository);
 when it does not — an artifact tree copied to another machine carries a stale
 absolute path — the run warns and persists nothing rather than writing to the
@@ -356,7 +357,7 @@ wrong place.
 > review tree to a PR or bug report, or copying a `--output-dir` result. Strip
 > or rewrite the manifest's `root` field before publishing one. Removing it
 > costs only the manifest tier of the store-root resolution above — pass
-> `--repo` / the MCP `repo` argument instead.
+> `--repo-root` / the MCP `repo` argument instead.
 
 The MCP path has only the first two tiers: **`repo` > the review manifest**, with
 no working-directory fallback. The server's working directory is whatever

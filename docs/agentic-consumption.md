@@ -37,10 +37,10 @@ atcr review --axi > run.toon 2> review.log
 atcr report --format axi > findings.toon 2> report.log
 ```
 
-### `atcr verify diff --json` — payload-only without AXI
+### `atcr diff-smell --json` — payload-only without AXI
 
 One further agent-facing surface is not an AXI mode but obeys the same stdout
-discipline: `atcr verify diff --json` emits a JSON scan result as the **sole**
+discipline: `atcr diff-smell --json` emits a JSON scan result as the **sole**
 content of stdout, with every note and diagnostic on stderr.
 
 It is worth an orchestrator's attention for a reason the AXI surfaces are not:
@@ -51,7 +51,7 @@ diff.
 
 ```bash
 # Gate a patch on reward-hack fingerprints; payload on stdout, notes on stderr.
-atcr verify diff --staged --json > smell.json 2> smell.log
+atcr diff-smell --staged --json > smell.json 2> smell.log
 ```
 
 Two inputs that might look like errors are deliberately not: an empty diff and
@@ -186,7 +186,7 @@ byte-clean file. Under `--axi`:
   review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
-  logs, governed by [`LOG_LEVEL` and `--log-format`](logging.md) and passed
+  logs, governed by [`ATCR_LOG_LEVEL` and `--log-format`](logging.md) and passed
   through the same redaction sink. Structured errors also go to stderr, not
   stdout (axi.md Principle 6 reconciliation), so an agent branches on the exit
   code and never has to parse stdout for an error case.

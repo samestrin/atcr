@@ -284,31 +284,32 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer, storeRoot strin
 	})
 }
 
-// maybePreviewQualitySignal implements the --preview short-circuit for the host
-// commands (review, reconcile). When --preview is set it builds the payload from
+// maybePreviewQualitySignal implements the --dry-run short-circuit (deprecated
+// alias --preview) for the host
+// commands (review, reconcile). When --dry-run is set it builds the payload from
 // the local debt store and renders it (pretty JSON + not-sent marker), returning
 // handled=true so the caller returns from RunE BEFORE any opt-in gate check,
 // transport or HTTP client construction, credential resolution, or --sync-cloud
-// network precondition (AC 03-02) — so --preview never reads or requires
+// network precondition (AC 03-02) — so --dry-run never reads or requires
 // ATCR_API_KEY and never sends, whether or not the user has opted in (AC 03-01
 // EC2). It does NOT bypass cobra's pure flag-relationship validation (the range
 // flags' PreRunE), which runs before RunE under Execute() but performs no I/O,
 // network, gate, or credential access — so an invalid range-flag COMBINATION still
 // fails as a usage error, while the AC-relevant guarantees (no send, no gate, no
-// key) are unaffected. When --preview is unset it returns handled=false and the
+// key) are unaffected. When --dry-run is unset it returns handled=false and the
 // caller proceeds normally. A local-debt read failure FAILS OPEN — the send path
 // silently no-ops on the identical error, so a hard failure here would let the
 // two paths diverge exactly when a user inspects the preview (AC 03-03): the
 // preview renders the empty payload (the same "[]" an empty store prints) and
 // notes the read failure on the command's stderr to keep the user informed.
 //
-// The opt-in env var is validated here too: --preview is where users experiment
+// The opt-in env var is validated here too: --dry-run is where users experiment
 // with opting in, so a misspelled ATCR_QUALITY_SIGNAL warns on the command's
 // stderr on this path exactly as the gated send path warns via the command's
 // stderr. The resolved value is deliberately discarded — the preview renders
 // regardless of the gate outcome (AC 03-02).
 func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
-	if !boolFlag(cmd, "preview") {
+	if !dryRunFlagSet(cmd) {
 		return false, nil
 	}
 	_ = qualitySignalEnabledFromEnv(cmd.ErrOrStderr())
@@ -318,7 +319,7 @@ func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 		// error) so the two paths never diverge on a corrupt store — but keep the
 		// user informed, and render the empty payload. The slice must be non-nil:
 		// a nil slice marshals to "null", not the "[]" an empty store prints.
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: reading local debt store for --preview: %v; rendering empty payload\n", err)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: reading local debt store for --dry-run: %v; rendering empty payload\n", err)
 		payload = []telemetry.QualitySignal{}
 	}
 	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)

@@ -68,7 +68,9 @@ and atcr review --resume honor the config/registry tiers but take no flag.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runReconcile,
 	}
-	cmd.Flags().String("repo", ".", "repo root to validate finding file paths against, and whose .atcr/debt store findings persist to — overrides the root recorded in the review manifest (default: current directory)")
+	cmd.Flags().String("repo-root", ".", "repo root to validate finding file paths against, and whose .atcr/debt store findings persist to — overrides the root recorded in the review manifest (default: current directory)")
+	cmd.Flags().String("repo", ".", "deprecated alias for --repo-root")
+	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().String("consensus", "", "consensus filter level: strict (default), lenient, or off")
@@ -80,21 +82,26 @@ and atcr review --resume honor the config/registry tiers but take no flag.`,
 	return cmd
 }
 
-// normalizeRepoFlag reads the shared --repo flag for the commands that thread a
-// reviewed-repo root (`reconcile` and `verify`), defaults an empty or
-// whitespace-only value to "." (the CWD == repo-root operating assumption), and
-// verifies the result is an existing directory. A nonexistent or non-directory
-// --repo is a usage error (exit 2) so a bad root fails loudly instead of silently
-// degrading path validation (reconcile) or the skeptic snapshot/redaction base
-// (verify), where every finding degrades to unverifiable while the command still
-// exits 0. Shared by both handlers so their normalization cannot drift (Epic 22.1).
+// normalizeRepoFlag reads the shared --repo-root flag for the commands that
+// thread a reviewed-repo root (`reconcile`, `verify`, and `diff-smell`),
+// defaults an empty or whitespace-only value to "." (the CWD == repo-root
+// operating assumption), and verifies the result is an existing directory. A
+// nonexistent or non-directory --repo-root is a usage error (exit 2) so a bad
+// root fails loudly instead of silently degrading path validation (reconcile)
+// or the skeptic snapshot/redaction base (verify), where every finding degrades
+// to unverifiable while the command still exits 0. Shared by all handlers so
+// their normalization cannot drift (Epic 22.1). --repo is a deprecated alias:
+// the canonical --repo-root wins when both are set.
 func normalizeRepoFlag(cmd *cobra.Command) (string, error) {
-	repoRoot, _ := cmd.Flags().GetString("repo")
+	repoRoot, _ := cmd.Flags().GetString("repo-root")
+	if !cmd.Flags().Changed("repo-root") && cmd.Flags().Changed("repo") {
+		repoRoot, _ = cmd.Flags().GetString("repo")
+	}
 	if strings.TrimSpace(repoRoot) == "" {
 		repoRoot = "."
 	}
 	if info, err := os.Stat(repoRoot); err != nil || !info.IsDir() {
-		return "", usageError(fmt.Errorf("--repo %q does not exist or is not a directory", repoRoot))
+		return "", usageError(fmt.Errorf("--repo-root %q does not exist or is not a directory", repoRoot))
 	}
 	return repoRoot, nil
 }
@@ -106,7 +113,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
 
-	// --preview renders the outbound quality-signal payload locally and sends
+	// --dry-run renders the outbound quality-signal payload locally and sends
 	// nothing (Story 3). It short-circuits at the top of RunE — before the
 	// --sync-cloud precondition, the opt-in gate, review-dir resolution, and any
 	// transport/credential resolution — so it works for an undecided user with no
@@ -196,20 +203,23 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 
 	// Resolve the store root BEFORE RunReconcile (TD-024): finding-path
 	// validation must run against the SAME root the findings persist under.
-	// Validating against --repo (default ".", the CWD) while persistence
+	// Validating against --repo-root (default ".", the CWD) while persistence
 	// independently resolved explicit > manifest > CWD meant a reconcile from a
 	// non-repo-root CWD stamped every finding PathWarning and the bridge dropped
 	// all of them — the manifest-resolved store received ZERO records. The
-	// explicit tier is keyed off the RAW --repo flag, not the normalized value:
-	// --repo carries a "." default, so the normalized value is non-empty on every
-	// run and using it here would make the explicit tier always win and the
-	// manifest tier dead code, with the whole feature inert and every test still
-	// green. The TrimSpace guard keeps `--repo ""`'s documented "normalizes to
-	// the default" behavior: a blank flag asserts nothing, so the manifest still
-	// speaks rather than the run being pinned to the CWD.
+	// explicit tier is keyed off the RAW --repo-root flag (or its deprecated
+	// --repo alias), not the normalized value: both carry a "." default, so the
+	// normalized value is non-empty on every run and using it here would make
+	// the explicit tier always win and the manifest tier dead code, with the
+	// whole feature inert and every test still green. The TrimSpace guard keeps
+	// `--repo-root ""`'s documented "normalizes to the default" behavior: a
+	// blank flag asserts nothing, so the manifest still speaks rather than the
+	// run being pinned to the CWD.
 	explicitRepo := ""
-	if raw, _ := cmd.Flags().GetString("repo"); cmd.Flags().Changed("repo") && strings.TrimSpace(raw) != "" {
+	if raw, _ := cmd.Flags().GetString("repo-root"); cmd.Flags().Changed("repo-root") && strings.TrimSpace(raw) != "" {
 		explicitRepo = repoRoot // the normalizeRepoFlag-validated value
+	} else if raw, _ := cmd.Flags().GetString("repo"); cmd.Flags().Changed("repo") && strings.TrimSpace(raw) != "" {
+		explicitRepo = repoRoot // deprecated --repo alias, same validated value
 	}
 	storeRoot, storeOK := localdebt.ResolveStoreRoot(localdebt.RootOpts{
 		Explicit:  explicitRepo,
@@ -310,7 +320,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// to the passive ping above. Its own independent opt-in gate is resolved fresh
 	// inside — short-circuiting before any payload construction when disabled — and
 	// it is fail-open: a transport failure never changes this command's outcome.
-	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
+	// --dry-run (Story 3) short-circuits at the top of runReconcile, so it is never
 	// reached on the preview path. The gate's unrecognized-env-value warning goes to
 	// this command's stderr. storeRoot threads the SAME root the persistence hook
 	// resolved, so the signal aggregates the store this run actually wrote.

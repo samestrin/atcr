@@ -127,6 +127,6 @@
         203
       ]
     },
-    "note": "line numbering across a SECOND hunk: the added-line Line field is public output (atcr verify diff renders file:line) and a naive count-from-the-top implementation gets the 203 wrong"
+    "note": "line numbering across a SECOND hunk: the added-line Line field is public output (atcr diff-smell renders file:line) and a naive count-from-the-top implementation gets the 203 wrong"
   }
 ]

@@ -8,7 +8,7 @@ import (
 )
 
 // diffsmell_contract_test.go guards the PUBLIC shape of the diff-smell result —
-// the JSON a consumer of `atcr verify diff --json` pins to. diffsmell_test.go
+// the JSON a consumer of `atcr diff-smell --json` pins to. diffsmell_test.go
 // and the testdata/diffsmell corpus own the question of what counts as a smell;
 // this file owns only the question of what the answer looks like on the wire.
 
@@ -35,7 +35,7 @@ diff --git a/pkg/auth.go b/pkg/auth.go
 // goldenContractJSON is the exact marshaled form of AnalyzeDiff(contractDiff).
 //
 // THIS IS A PUBLIC CONTRACT, NOT AN IMPLEMENTATION DETAIL. A consumer that pins
-// to `atcr verify diff --json` depends on these key names, the closed verdict
+// to `atcr diff-smell --json` depends on these key names, the closed verdict
 // set, and the omitempty behavior of `line`. If this test fails because a key
 // was renamed, a field removed, or the verdict vocabulary changed, that is a
 // BREAKING change: it needs a CHANGELOG "Breaking" entry and a matching update
@@ -92,7 +92,7 @@ func TestSmellResult_GoldenJSON(t *testing.T) {
 	b, err := json.MarshalIndent(AnalyzeDiff(contractDiff), "", "  ")
 	require.NoError(t, err)
 	require.Equal(t, goldenContractJSON, string(b),
-		"the diff-smell JSON shape is a PUBLIC CONTRACT consumed by `atcr verify diff --json`. "+
+		"the diff-smell JSON shape is a PUBLIC CONTRACT consumed by `atcr diff-smell --json`. "+
 			"A renamed key, a removed field, or a changed verdict vocabulary is BREAKING: it needs a "+
 			"CHANGELOG \"Breaking\" entry and a docs/diff-smell.md update. Adding a new smell type is "+
 			"additive and should not have reached this assertion. The docs half is enforced "+

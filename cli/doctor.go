@@ -29,7 +29,7 @@ func newDoctorCmd() *cobra.Command {
 	cmd.Flags().Int("max-tokens", 2048, "completion budget per self-test call (high enough that thinking models emit the marker)")
 	cmd.Flags().Int("timeout", 60, "per-call timeout in seconds")
 	cmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout instead of the table")
-	cmd.Flags().String("agents", "", "comma-separated subset of listed agents to test (default: all)")
+	cmd.Flags().StringSlice("agents", nil, "subset of listed agents to test (comma-separated or repeated; default: all)")
 	return cmd
 }
 
@@ -40,7 +40,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 	timeoutSecs, _ := cmd.Flags().GetInt("timeout")
 	asJSON, _ := cmd.Flags().GetBool("json")
-	agentsFilter, _ := cmd.Flags().GetString("agents")
+	agentsFilter, _ := cmd.Flags().GetStringSlice("agents")
 
 	if maxTokens <= 0 {
 		return usageError(fmt.Errorf("--max-tokens must be positive"))
@@ -70,7 +70,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return usageError(err)
 	}
 
-	if agentsFilter != "" {
+	if len(agentsFilter) > 0 {
 		proj, err = filterRoster(proj, agentsFilter)
 		if err != nil {
 			return usageError(err)
@@ -120,9 +120,11 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 // filterRoster restricts the roster to the named subset, preserving each
 // agent's original lane. Every requested name must be a directly-listed agent.
-func filterRoster(proj *registry.ProjectConfig, csv string) (*registry.ProjectConfig, error) {
+// --agents is a StringSlice, so names arrives already comma-split and
+// repeat-accumulated by pflag.
+func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.ProjectConfig, error) {
 	want := map[string]bool{}
-	for _, name := range strings.Split(csv, ",") {
+	for _, name := range names {
 		if n := strings.TrimSpace(name); n != "" {
 			want[n] = true
 		}

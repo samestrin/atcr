@@ -9,9 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// defaultHistorySince is the query window used when --since is omitted: wide
-// enough (90 days) to be useful by default, while still bounding the table.
-const defaultHistorySince = 90 * 24 * time.Hour
+// defaultHistorySinceFlag is the query window used when --since is omitted: wide
+// enough (90 days) to be useful by default, while still bounding the table. It is
+// registered as cobra's flag default rather than applied silently in RunE, so
+// `--help` advertises the window the command actually uses.
+const defaultHistorySinceFlag = "90d"
 
 // newHistoryCmd builds `atcr history`: read the append-only finding history —
 // the monthly shards under .atcr/history plus the legacy pre-19.4 flat ledger
@@ -33,18 +35,19 @@ func newHistoryCmd() *cobra.Command {
 		Args:  usageArgs(cobra.NoArgs),
 		RunE:  runHistory,
 	}
-	cmd.Flags().String("since", "", "only include findings within this window: h/m/s or d/w units (e.g. 30d, 2w, 48h); default 90d")
+	cmd.Flags().String("since", defaultHistorySinceFlag, `only include findings within this window: Nd (days), Nw (weeks), Nm (30-day months); "all" disables the window`)
 	cmd.Flags().String("package", "", "only include findings whose package is at or under this path prefix (e.g. internal/registry)")
-	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d); minimum 28d, no default. Note: h/m/s units mean hours/MINUTES/seconds")
+	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d, 6m); minimum 28d, no default")
 	return cmd
 }
 
-// minPruneHorizon is the shortest retention horizon --prune accepts. ParseSince
-// falls back to time.ParseDuration for h/m/s units, where "m" means MINUTES —
-// so `--prune 6m` ("six months") would compute a 6-minute cutoff and
-// irreversibly delete every shard but the current UTC month. A horizon shorter
-// than a month can never be a sane retention policy for monthly shards, so
-// anything below this floor is rejected as a usage error.
+// minPruneHorizon is the shortest retention horizon --prune accepts. The unit
+// hazard it was introduced for is gone at the root: the shared grammar has no
+// clock units, so `--prune 6m` is six months and can no longer compute a
+// 6-minute cutoff that irreversibly deletes every shard but the current UTC
+// month. The floor is kept anyway — a horizon shorter than a month can never be
+// a sane retention policy for monthly shards, so anything below it (`1d`, `2w`)
+// is still rejected as a usage error rather than silently wiping the ledger.
 const minPruneHorizon = 28 * 24 * time.Hour
 
 // formatWindow renders a query/retention window the way the flags accept one, so
@@ -60,13 +63,15 @@ func formatWindow(d time.Duration) string {
 }
 
 func runHistory(cmd *cobra.Command, _ []string) error {
-	since := defaultHistorySince
-	if raw, _ := cmd.Flags().GetString("since"); strings.TrimSpace(raw) != "" {
-		d, err := history.ParseSince(raw)
-		if err != nil {
-			return usageError(err) // bad --since is a usage error (exit 2)
-		}
-		since = d
+	// The default lives on the flag, so this parses unconditionally: an omitted
+	// --since arrives here as "90d" and takes exactly the same path a supplied one
+	// does. A blank or whitespace-only value is now a usage error rather than a
+	// silent fall-back to the default — an explicitly passed empty window is a
+	// mistake worth naming.
+	raw, _ := cmd.Flags().GetString("since")
+	since, err := history.ParseSince(raw)
+	if err != nil {
+		return usageError(fmt.Errorf("--since: %w", err)) // bad --since is a usage error (exit 2)
 	}
 	// Parsed before anything is read or deleted: a bad horizon must fail the
 	// command outright rather than after a partial prune. Gate on the flag being
@@ -79,7 +84,7 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 			return usageError(fmt.Errorf("--prune: %w", err)) // exit 2, nothing deleted
 		}
 		if d < minPruneHorizon {
-			return usageError(fmt.Errorf("--prune: retention horizon %q is below the 28-day minimum (units: d/w = days/weeks, h/m/s = hours/MINUTES/seconds — '6m' is 6 minutes, not 6 months)", raw)) // exit 2, nothing deleted
+			return usageError(fmt.Errorf("--prune: retention horizon %q is below the 28-day minimum (units: Nd days, Nw weeks, Nm 30-day months — e.g. 6m, 365d)", raw)) // exit 2, nothing deleted
 		}
 		horizon = d
 	}

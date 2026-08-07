@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -147,4 +148,40 @@ func TestBenchmarkRunCmd_CheckpointHelpMentionsSymlink(t *testing.T) {
 	f := cmd.Flags().Lookup("checkpoint")
 	require.NotNil(t, f, "benchmark run exposes a --checkpoint flag")
 	require.Contains(t, f.Usage, "symlink", "checkpoint help must document symlink replace-not-follow behavior")
+}
+
+// --output is the canonical run-result destination flag (matching benchmark
+// export and every other output-destination flag); --out remains a deprecated
+// hidden alias resolving identically.
+func TestBenchmarkRunCmd_OutputCanonicalOutAlias(t *testing.T) {
+	_, helpOut := execCmdCapture(t, "benchmark", "run", "--help")
+	require.Contains(t, helpOut, "--output")
+	require.NotContains(t, helpOut, "--out ")
+
+	// The production resolution rule, mirrored: canonical --output wins, the
+	// deprecated --out alias is honored when --output is unset.
+	resolveOut := func(cmd *cobra.Command) string {
+		out, _ := cmd.Flags().GetString("output")
+		if !cmd.Flags().Changed("output") && cmd.Flags().Changed("out") {
+			out, _ = cmd.Flags().GetString("out")
+		}
+		return out
+	}
+
+	canonical := newBenchmarkRunCmd()
+	require.NoError(t, canonical.Flags().Parse([]string{"--suite-path", "s", "--output", "a.json"}))
+	alias := newBenchmarkRunCmd()
+	require.NoError(t, alias.Flags().Parse([]string{"--suite-path", "s", "--out", "a.json"}))
+	require.Equal(t, resolveOut(alias), resolveOut(canonical),
+		"--out and --output must resolve to the same destination")
+}
+
+// pflag's UnquoteUsage reads the first backquoted span in a usage string as the
+// flag's value name, so backquotes around the example command in --in's usage
+// would render `--in atcr benchmark run` instead of `--in string`.
+func TestBenchmarkExport_InFlagRendersStringValueName(t *testing.T) {
+	_, out := execCmdCapture(t, "benchmark", "export", "--help")
+	require.Contains(t, out, "--in string",
+		"--in must render its real value name, not a backquoted example command")
+	require.NotContains(t, out, "--in atcr benchmark run")
 }

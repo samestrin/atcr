@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+### Changed
+
+- **Breaking — the diff-smell scanner is now top-level `atcr diff-smell`.** `verify` names three unrelated operations and is simultaneously a leaf command and a group, so `atcr verify diff` read as "verify the diff" when it actually means "scan the diff for over-simplification smells". The promotion renames into vocabulary the analyzer, the doc, and the upstream tool already used. `atcr verify diff` keeps working as a **hidden deprecated alias for one minor version**: it is gone from `atcr verify --help` and prints a deprecation note on **stderr** at use (cobra's own `Deprecated` field was unusable — it prints to stdout, which would break the payload-only `--json` guarantee). Flags, output, verdicts, and exit codes are identical under both spellings. The version-discoverability recipe in `docs/diff-smell.md` now probes `atcr diff-smell --help` first with an `atcr verify diff` fallback, so CI hooks pasted during the alias window do not silently skip the gate.
+- **Breaking — `--since` and `--prune` now share one grammar.** Two independent `ParseSince` implementations backed the same flag name with different meanings: `atcr history --since 3m` was three MINUTES (it delegated to `time.ParseDuration`), while `atcr leaderboard --since 3m` was three MONTHS. Both accepted the input without a warning and the resulting windows differed by roughly 43,200x. The new `internal/timewindow` package owns the single grammar — `Nd` days, `Nw` weeks, `Nm` 30-day months, or `all` — and both commands parse through it.
+  - `3m` now means three months on **every** command, including `atcr history`.
+  - Clock units and fractional counts are **rejected** rather than reinterpreted: `48h`, `1h30m`, `30s`, and `1.5d` were accepted by `atcr history` and are now usage errors. Express the window in `d`/`w`/`m` (`2d` for `48h`).
+  - `all` now works on `atcr history` as well as `atcr leaderboard`; `atcr history --since all` disables the window.
+  - `atcr history --help` now shows `(default "90d")`. The 90-day default was always applied, but it was registered as an empty cobra default and so never advertised.
+  - `atcr history --prune 6m` now means six months and prunes accordingly. It previously computed a six-MINUTE cutoff, which the 28-day safety floor caught only by rejecting the value outright; the hazard is gone at the root and the floor is retained for genuinely short horizons.
+
+### Fixed
+
+*Technical debt resolved 2026-08-07 — a sweep over the CLI's flag vocabulary, split by what each name actually addresses. Every rename below keeps the old spelling working as a hidden deprecated alias, so no existing invocation breaks.*
+
+- **`--repo` split.** `--repo-root <path>` is now the canonical filesystem-path flag on `atcr verify`, `atcr diff-smell`, and `atcr reconcile`, where `--repo` had collided with the `owner/name` GitHub slug that `atcr review` and `atcr github` spell the same way. `--repo` remains a deprecated alias on the path-taking commands; the slug flag is unchanged.
+- **`--dir` split three ways** by what it addresses: `--store` (the local debt store on `atcr debt`), `--scope` (the reviewed subtree on `atcr review`), and `--dest` (the install target on `atcr skill install`). `--dir` remains a hidden alias on each.
+- **`--fresh` on `atcr review` split** into `--reverify` (with `--verify`: re-verify findings that already carry a verdict) and `--no-file-cache` (with `--all`/`--scope`: bypass the file-hash skip and re-review every in-scope file). One flag name had meant two unrelated things depending on the run's mode. `--fresh` still resolves to whichever the mode implies. `atcr verify --fresh` is a separate flag and is unchanged.
+- **`atcr benchmark run --output`** is canonical, matching every other writer in the CLI; `--out` is a hidden alias.
+- **`--dry-run`** is the canonical show-don't-do flag; `--preview` is a hidden alias.
+- **`atcr debt resolve <id>`** takes the id positionally, replacing the `--resolve <id>` / `--list` flag stutter on a command whose name already said what it does.
+- **`LOG_LEVEL` is now `ATCR_LOG_LEVEL`.** Every other atcr-owned variable is `ATCR_*`-namespaced, and a bare `LOG_LEVEL` set for an unrelated tool in CI would silently retune atcr's logging. Bare `LOG_LEVEL` is honored as a deprecated fallback.
+- **`atcr doctor --agents` is a repeatable string slice**, so `--agents a --agents b` accumulates instead of the last one silently winning.
+- **`atcr benchmark export --in`** no longer loses its help-text placeholder to pflag's backquote capture.
+- **`atcr leaderboard --model` matches as a case-insensitive substring**, documented as such alongside the other filter flags' matching modes.
+- **`atcr debt resolve --max` and `atcr debt dashboard --top` state their distinction in their own help strings** — `--max` is an action cap (`0` = no cap), `--top` is a ranked-display cutoff (`0` suppresses the list). The two read as synonyms and behaved oppositely at `0`.
+- **Docs:** `docs/registry.md` documents the config-key-to-flag mapping; `docs/skill-usage.md` documents each filter flag's matching mode; the README records the singular-noun convention for command groups (`atcr debt`, not `atcr debts`), grandfathering `models` and `personas`.
+
 ## [35.16.1] - 2026-08-06
 
 Canonicalizes the persona digest before telemetry collection begins. `HashPersonaID` performed no normalization, so `bruce`, `Bruce`, and `" bruce "` produced three different digests for one persona. That is normally untidy; here it is permanent — an ingestion backend re-keys the received digest under a never-rotated secret and discards the original, so a variant becomes a second backend identity that no backfill can merge. Landing this before any rows are collected is the whole point of its ordering.

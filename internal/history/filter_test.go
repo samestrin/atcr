@@ -15,10 +15,12 @@ func TestParseSince(t *testing.T) {
 	}{
 		{"30d", 30 * 24 * time.Hour},
 		{"2w", 2 * 7 * 24 * time.Hour},
-		{"48h", 48 * time.Hour},
-		{"90m", 90 * time.Minute},
-		{"1h30m", 90 * time.Minute}, // native Go composite still works
 		{"1d", 24 * time.Hour},
+		// "m" is MONTHS here, as it is on every other window flag. It used to be
+		// minutes in this package alone, which is exactly the divergence the shared
+		// timewindow grammar removed.
+		{"3m", 90 * 24 * time.Hour},
+		{"90m", 90 * 30 * 24 * time.Hour},
 	}
 	for _, c := range cases {
 		got, err := ParseSince(c.in)
@@ -28,14 +30,27 @@ func TestParseSince(t *testing.T) {
 }
 
 func TestParseSince_Invalid(t *testing.T) {
-	for _, in := range []string{"", "  ", "abc", "d", "-5d", "0d", "0", "5x", "w"} {
+	// Clock units and fractional counts are rejected outright rather than
+	// reinterpreted: a window flag that accepted "3m" as both three months and
+	// three minutes is the defect the shared grammar removed, so the ambiguous
+	// spellings now fail loudly instead of resolving to one of the two meanings.
+	for _, in := range []string{"", "  ", "abc", "d", "-5d", "0d", "0", "5x", "w", "48h", "30s", "1h30m", "1.5d"} {
 		_, err := ParseSince(in)
 		assert.Error(t, err, "input %q should be rejected", in)
 	}
 }
 
+// TestParseSince_All: "all" is part of the grammar and means an effectively
+// unbounded window, not a zero one — the bounded readers in this package treat a
+// non-positive window as "select nothing".
+func TestParseSince_All(t *testing.T) {
+	d, err := ParseSince("all")
+	require.NoError(t, err)
+	assert.Greater(t, d.Hours(), float64(100*365*24), `"all" must be effectively unbounded`)
+}
+
 func TestParseSince_OutOfRange(t *testing.T) {
-	for _, in := range []string{"Infd", "1e30d", "200000d"} {
+	for _, in := range []string{"Infd", "1e30d", "200000d", "999999999m"} {
 		_, err := ParseSince(in)
 		assert.Error(t, err, "input %q should be rejected as out of range", in)
 	}
