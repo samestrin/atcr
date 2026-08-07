@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/gitexec"
@@ -105,11 +106,29 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 // compare range GitHub refuses to render). It reproduces the same diff from a
 // blobless clone, which is slower and far heavier on disk.
 type CloneFetcher struct {
-	// WorkDir holds the per-repository clones. Defaults to a temp directory.
+	// WorkDir holds the per-repository clones. Defaults to a temp directory
+	// created once on first use and reused for the rest of the run.
 	WorkDir string
 	// BaseURL overrides the clone host. Defaults to https://github.com; tests
 	// and mirrors point it elsewhere.
 	BaseURL string
+
+	tempOnce sync.Once
+	tempDir  string
+	tempErr  error
+}
+
+// workDir resolves the clone root exactly once. Allocating a fresh temp
+// directory per call would defeat the per-repository clone cache below and
+// leave one full clone on disk for every case ingested.
+func (f *CloneFetcher) workDir() (string, error) {
+	if f.WorkDir != "" {
+		return f.WorkDir, nil
+	}
+	f.tempOnce.Do(func() {
+		f.tempDir, f.tempErr = os.MkdirTemp("", "aacr-clone-")
+	})
+	return f.tempDir, f.tempErr
 }
 
 func (f *CloneFetcher) cloneURL(owner, repo string) string {
@@ -122,13 +141,9 @@ func (f *CloneFetcher) cloneURL(owner, repo string) string {
 
 // FetchDiff implements DiffFetcher by cloning and diffing locally.
 func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head string) ([]byte, error) {
-	work := f.WorkDir
-	if work == "" {
-		var err error
-		work, err = os.MkdirTemp("", "aacr-clone-")
-		if err != nil {
-			return nil, fmt.Errorf("creating clone workdir: %w", err)
-		}
+	work, err := f.workDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating clone workdir: %w", err)
 	}
 	dir := filepath.Join(work, owner+"__"+repo)
 

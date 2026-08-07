@@ -127,6 +127,19 @@ func TestCloneFetcher_ReportsAFailedClone(t *testing.T) {
 	assert.Error(t, err, "a missing upstream fails loudly rather than yielding an empty diff")
 }
 
+func TestCloneFetcher_ReusesOneTempWorkDirAcrossCalls(t *testing.T) {
+	f := &CloneFetcher{}
+
+	first, err := f.workDir()
+	require.NoError(t, err)
+	second, err := f.workDir()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(first) })
+
+	assert.Equal(t, first, second,
+		"a fresh temp dir per call would defeat the clone cache and leave one full clone per case on disk")
+}
+
 func TestCloneFetcher_DefaultsToGitHub(t *testing.T) {
 	f := &CloneFetcher{}
 

@@ -6,20 +6,17 @@
 [extend]
 useDefault = true
 
-[[rules]]
-# Placeholder so the allowlist below applies globally rather than per-rule.
-id = "atcr-noop-placeholder"
-description = "Never matches; present only so this file is a valid ruleset extension."
-regex = '''\$\^atcr-never-matches\$'''
-
 [allowlist]
 description = "Confirmed false positives"
 
+# Scoped to the vendored benchmark suite so it cannot mask a finding anywhere
+# else in the repo. Both conditions must hold for a match to be allowed.
+paths = ['''^benchmarks/standard-v1/.*\.diff$''']
+
 regexes = [
   # TimescaleDB names its internal chunk tables _hyper_<hypertable>_<chunk>_chunk.
-  # These appear verbatim in EXPLAIN-plan output inside vendored benchmark diffs
-  # (benchmarks/standard-v1/timescale-timescaledb-pr-*.diff), where the
-  # generic-api-key entropy rule mistakes them for credentials. They are schema
-  # identifiers from public open-source pull requests, not secrets.
+  # These appear verbatim in EXPLAIN-plan output inside a vendored benchmark diff,
+  # where the generic-api-key entropy rule mistakes them for credentials. They are
+  # schema identifiers from a public open-source pull request, not secrets.
   '''_hyper_\d+_\d+_chunk''',
 ]
