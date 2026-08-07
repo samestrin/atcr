@@ -142,7 +142,7 @@ func newBenchmarkExportCmd() *cobra.Command {
 		Args:  usageArgs(cobra.NoArgs),
 		RunE:  runBenchmarkExport,
 	}
-	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by `atcr benchmark run`)")
+	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
