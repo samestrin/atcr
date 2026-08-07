@@ -361,7 +361,11 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			"                 Set ATCR_LOG_LEVEL=debug to diagnose a failing review.\n" +
 			"                 (Bare LOG_LEVEL is honored as a deprecated fallback.)\n" +
 			"  --log-format   log output format: text or json (default text).\n" +
-			"                 Use json for machine-readable, newline-delimited logs in CI.",
+			"                 Use json for machine-readable, newline-delimited logs in CI.\n\n" +
+			"Config keys -> review flags (.atcr/config.yaml; flag > project config > registry):\n" +
+			"  payload_mode -> --payload, timeout_secs -> --timeout,\n" +
+			"  payload_byte_budget -> --byte-budget. fail_on -> --fail-on and\n" +
+			"  max_parallel -> --max-parallel match. See docs/registry.md for the full reference.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// An unknown subcommand is a usage error (exit 2), not the generic
