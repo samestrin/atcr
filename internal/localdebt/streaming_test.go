@@ -122,7 +122,7 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 
 // TD: `debt list` and `debt dashboard` read every record in full (ReadAll +
 // FoldRecords) — 327/355 MB RSS on a 100k-record store versus 145 MB for
-// `debt resolve --list`, which selects on summaries and hydrates only the
+// `debt resolve`, which selects on summaries and hydrates only the
 // survivors. Selecting the same way needs the fields those two filter and sort
 // on: File and Line (the --component filter and sortDebt's location tiebreak),
 // Category (--category) and EstMinutes (--sort=est). The projection carries

@@ -787,7 +787,7 @@ func TestPersistLocalDebt_WontfixSuppressesReappend(t *testing.T) {
 	// The suppression must actually flow through isClosedStatus: a live `debt resolve
 	// --list` must not show the wontfix'd finding. This assertion locks the wontfix
 	// semantics; removing wontfix from isClosedStatus would make the finding re-appear.
-	out, err := runDebt(t, "resolve", "--list")
+	out, err := runDebt(t, "resolve")
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "no items",
 		"a wontfix-suppressed finding must not appear in the open list")
@@ -1489,7 +1489,7 @@ func TestPersistLocalDebt_ReappendsARegressedResolvedID(t *testing.T) {
 	assert.Empty(t, recs[2].Status)
 
 	// And the fold must return it to the open backlog.
-	out, err := runDebt(t, "resolve", "--list")
+	out, err := runDebt(t, "resolve")
 	require.NoError(t, err)
 	assert.Contains(t, out, "a.go", "a resolved-then-regressed id is open again")
 }

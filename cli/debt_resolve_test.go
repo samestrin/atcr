@@ -84,7 +84,7 @@ func TestDebtResolve_ListsOpenItems(t *testing.T) {
 		openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom"),
 		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
 	)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	out, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, out, "internal/x/a.go")
 	assert.Contains(t, out, "internal/y/b.go")
@@ -103,7 +103,7 @@ func TestDebtResolve_NoFlagDefaultsToList(t *testing.T) {
 
 func TestDebtResolve_EmptyStoreMessageExitsZero(t *testing.T) {
 	dir := t.TempDir() // no shards written -> ReadAll returns (nil, nil)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	out, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err, "empty store must exit 0, never a non-zero exit")
 	assert.Contains(t, strings.ToLower(out), "no items")
 }
@@ -113,14 +113,14 @@ func TestDebtResolve_EmptyStoreMessageExitsZero(t *testing.T) {
 // exactly like an empty backlog, with exit code 0 either way.
 func TestDebtResolve_EmptyListMessageNamesTheStore(t *testing.T) {
 	dir := t.TempDir()
-	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	out, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "no items")
 	assert.Contains(t, out, dir, "the empty-list line names the store it read")
 }
 
 func TestDebtResolve_MissingDirIsNotAnError(t *testing.T) {
-	out, err := runDebt(t, "resolve", "--dir", t.TempDir()+"/does-not-exist", "--list")
+	out, err := runDebt(t, "resolve", "--dir", t.TempDir()+"/does-not-exist")
 	require.NoError(t, err, "a missing .atcr/debt dir is the no-backlog state, not an error")
 	assert.Contains(t, strings.ToLower(out), "no items")
 }
@@ -180,7 +180,7 @@ func TestDebtResolve_SelectionSortsSeverityThenAge(t *testing.T) {
 		openRec("2026-07-04T10:00:00Z-h2", "HIGH", "z/high2.go", 2, "high newer"),
 		openRec("2026-07-01T10:00:00Z-h1", "HIGH", "z/high1.go", 3, "high older"),
 	)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	out, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	iHigh1 := strings.Index(out, "z/high1.go")
 	iHigh2 := strings.Index(out, "z/high2.go")
@@ -242,12 +242,12 @@ func TestDebtResolve_MarkResolvedRemovesItemFromOpenList(t *testing.T) {
 	dir := writeDebtStore(t, rec,
 		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
 	)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "resolved")
 
 	// The append-only resolution record must fold the item out of the open list.
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.NotContains(t, list, "internal/x/a.go", "a resolved item must not appear as open")
 	assert.Contains(t, list, "internal/y/b.go", "the other item stays open")
@@ -257,13 +257,13 @@ func TestDebtResolve_MarkResolvedIsIdempotent(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 
 	// A second resolve of the same id must no-op, not append a duplicate record.
 	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed")
 	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -276,12 +276,12 @@ func TestDebtResolve_AlreadyClosedReportsActualStatus(t *testing.T) {
 	dir := writeDebtStore(t, rec)
 
 	// Mark as wontfix first.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 
 	// A subsequent plain resolve must report the existing terminal status, not
 	// hardcode "already resolved".
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "wontfix", "already-closed message must name the actual terminal status")
 	assert.NotContains(t, strings.ToLower(out), "already resolved", "must not hardcode 'already resolved' when the item is wontfix")
@@ -292,13 +292,13 @@ func TestDebtResolve_MarkWontfixIsIdempotentAgainstResolved(t *testing.T) {
 	dir := writeDebtStore(t, rec)
 
 	// First resolve the item normally.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 
 	// A subsequent wontfix of the same id must no-op and report the actual status.
 	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed as resolved")
 	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -311,13 +311,13 @@ func TestDebtResolve_MarkResolvedIsIdempotentAgainstWontfix(t *testing.T) {
 	dir := writeDebtStore(t, rec)
 
 	// First dismiss the item as wontfix.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 
 	// A subsequent resolved of the same id must no-op and report the actual status.
 	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed as wontfix")
 	after, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -347,7 +347,7 @@ func TestDebtResolve_AlreadyClosedPrefersWontfixOverReadOrder(t *testing.T) {
 	// reader would report "resolved"; only a precedence reader reports "wontfix".
 	dir := writeDebtStore(t, open, wontfix, resolved)
 
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, open.ID)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "already closed as wontfix",
 		"divergent terminal records must report wontfix by precedence, not resolved by read order")
@@ -367,7 +367,7 @@ func TestDebtResolve_ReasonLengthCapRejectsOversized(t *testing.T) {
 	// line is silently dropped on read. Reject oversized justifications up front so a
 	// finding never becomes silently unreadable.
 	huge := strings.Repeat("x", 5000)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", huge)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", huge)
 	require.Error(t, err, "an over-long --reason must be rejected, not stored")
 	assert.NotContains(t, strings.ToLower(out), "marked", "must not report success for a rejected oversized reason")
 
@@ -376,13 +376,13 @@ func TestDebtResolve_ReasonLengthCapRejectsOversized(t *testing.T) {
 	assert.Len(t, after, len(before), "a rejected oversized --reason must not append a record")
 
 	// A reasonable justification still succeeds.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	_, err = runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err, "a normal-length --reason must still be accepted")
 }
 
 func TestDebtResolve_MarkResolvedUnknownIDErrors(t *testing.T) {
 	dir := writeDebtStore(t, openRec("2026-07-01T10:00:00Z-a", "HIGH", "a.go", 1, "x"))
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "deadbeef")
+	_, err := runDebt(t, "resolve", "--dir", dir, "deadbeef")
 	require.Error(t, err, "resolving an unknown id must error, not silently no-op")
 }
 
@@ -396,7 +396,7 @@ func TestDebtResolve_MarkResolvedFilelessRecordReportsDistinctError(t *testing.T
 	fileless.StampID()
 	dir := writeDebtStore(t, fileless)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", fileless.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, fileless.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has no file location and cannot be resolved",
 		"an existing-but-file-less open record must not masquerade as a nonexistent id")
@@ -422,7 +422,7 @@ func TestDebtResolve_WontfixStatusFoldsItemOutOfOpenList(t *testing.T) {
 		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
 	)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
 	assert.Contains(t, list, "internal/y/b.go", "the unrelated open item stays open")
@@ -438,7 +438,7 @@ func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
 	dir := writeDebtStore(t, rec,
 		openRec("2026-07-02T10:00:00Z-b", "LOW", "internal/y/b.go", 34, "leak"),
 	)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(out), "wontfix")
 
@@ -455,7 +455,7 @@ func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
 	require.NotNil(t, wontfixRec, "a wontfix status record must be appended for the id")
 
 	// AC #2: the wontfix item folds out of the open list; the other stays.
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.NotContains(t, list, "internal/x/a.go", "a wontfix item must not appear as open")
 	assert.Contains(t, list, "internal/y/b.go", "the other item stays open")
@@ -464,7 +464,7 @@ func TestDebtResolve_MarkWontfixSetsStatusAndFoldsOut(t *testing.T) {
 func TestDebtResolve_DefaultStatusStaysResolved(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
@@ -480,11 +480,11 @@ func TestDebtResolve_DefaultStatusStaysResolved(t *testing.T) {
 func TestDebtResolve_InvalidStatusIsUsageError(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "bogus")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "bogus")
 	require.Error(t, err, "an unrecognized --status must be a usage error, not a silently non-folding record")
 
 	// The error must report the canonical lowercase form, not the user's casing.
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "BOGUS")
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "BOGUS")
 	require.Error(t, err)
 	assert.Contains(t, out, `invalid --status "bogus"`, "error must show canonical lowercase status")
 	assert.NotContains(t, out, `invalid --status "BOGUS"`, "error must not echo user's uppercase input")
@@ -495,19 +495,19 @@ func TestDebtResolve_WontfixRequiresReasonOrJustification(t *testing.T) {
 	dir := writeDebtStore(t, rec)
 
 	// wontfix with no --reason and no pre-existing justification must be rejected.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix")
 	require.Error(t, err, "wontfix without a reason or existing justification must be a usage error")
 	assert.Equal(t, exitUsage, exitCode(err))
 
 	// wontfix with a --reason is allowed.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	_, err = runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 }
 
 func TestDebtResolve_ReasonPopulatesJustification(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID,
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID,
 		"--status", "wontfix", "--reason", "accepted pattern, reviewer hallucination")
 	require.NoError(t, err)
 
@@ -532,7 +532,7 @@ func TestDebtResolve_WhitespaceReasonPreservesExistingJustification(t *testing.T
 
 	// A whitespace-only --reason is treated as empty and must preserve the existing
 	// justification, just like omitting --reason entirely.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "   ")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "   ")
 	require.NoError(t, err)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
@@ -554,7 +554,7 @@ func TestDebtResolve_ReasonReplacesExistingJustification(t *testing.T) {
 
 	// A supplied --reason replaces any pre-existing justification on the resolved
 	// record (documented behavior); it does not merge with it.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--reason", "replacement note")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--reason", "replacement note")
 	require.NoError(t, err)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
@@ -578,7 +578,7 @@ func TestDebtResolve_NoReasonWithEmptyJustificationStaysEmpty(t *testing.T) {
 	// the terminal record's Justification as the empty string (zero value), not
 	// unset/missing. Use resolved status so the item-6 wontfix-reason guard does
 	// not interfere with this empty-justification edge case.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
@@ -598,7 +598,7 @@ func TestDebtResolve_NoReasonPreservesExistingJustification(t *testing.T) {
 	rec.Justification = "original enrichment note"
 	dir := writeDebtStore(t, rec)
 	// Omitting --reason must not blank an existing justification carried on the item.
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix")
 	require.NoError(t, err)
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
@@ -622,25 +622,25 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 		return strings.ToLower(strings.TrimSpace(parts[0]))
 	}
 
-	// --status without --resolve must not silently fall through to the list view:
+	// --status without an id must not silently fall through to the list view:
 	// it would drop the user's dismissal intent (and skip status validation).
 	out, err := runDebt(t, "resolve", "--dir", dir, "--status", "wontfix")
-	require.Error(t, err, "--status without --resolve must be a usage error, not a silent list")
+	require.Error(t, err, "--status without an id must be a usage error, not a silent list")
 	el := errorLine(out)
 	assert.Contains(t, el, "--status", "error must mention only the supplied flag")
 	assert.NotContains(t, el, "--reason", "error must not mention --reason when only --status was supplied")
 
-	// The explicit default value must also be rejected without --resolve; this
+	// The explicit default value must also be rejected without an id; this
 	// path is distinct from a non-default status and locks the guard behavior.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--status", "resolved")
-	require.Error(t, err, "--status resolved without --resolve must be a usage error")
+	require.Error(t, err, "--status resolved without an id must be a usage error")
 	el = errorLine(out)
 	assert.Contains(t, el, "--status")
 	assert.NotContains(t, el, "--reason")
 
-	// --reason without --resolve is the same footgun.
+	// --reason without an id is the same footgun.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "some note")
-	require.Error(t, err, "--reason without --resolve must be a usage error")
+	require.Error(t, err, "--reason without an id must be a usage error")
 	el = errorLine(out)
 	assert.Contains(t, el, "--reason", "error must mention only the supplied flag")
 	assert.NotContains(t, el, "--status", "error must not mention --status when only --reason was supplied")
@@ -648,7 +648,7 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	// An explicitly empty --reason without --resolve must also be rejected; it
 	// should be governed by Changed("reason"), not by the trimmed value.
 	out, err = runDebt(t, "resolve", "--dir", dir, "--reason", "")
-	require.Error(t, err, "explicit --reason=\"\" without --resolve must be a usage error")
+	require.Error(t, err, "explicit --reason=\"\" without an id must be a usage error")
 	el = errorLine(out)
 	assert.Contains(t, el, "--reason")
 	assert.NotContains(t, el, "--status")
@@ -656,10 +656,10 @@ func TestDebtResolve_StatusOrReasonWithoutResolveIsUsageError(t *testing.T) {
 	// An explicitly empty --status is invalid status anyway, but it must also be
 	// rejected at the guard before falling through to the list view.
 	_, err = runDebt(t, "resolve", "--dir", dir, "--status", "")
-	require.Error(t, err, "explicit --status=\"\" without --resolve must be a usage error")
+	require.Error(t, err, "explicit --status=\"\" without an id must be a usage error")
 
-	// Plain --list (no --status/--reason) still works untouched.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	// A plain no-arg list (no --status/--reason) still works untouched.
+	_, err = runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err, "a plain list must not be affected by the new guard")
 }
 
@@ -687,9 +687,9 @@ func TestDebtResolve_ListFlagsWithResolveAreUsageError(t *testing.T) {
 	}
 
 	// --json/--severity/--max only affect the list renderer, which the mark branch
-	// never reaches; combined with --resolve they would be silently ignored. They
+	// never reaches; combined with an id they would be silently ignored. They
 	// must be rejected as usage errors, symmetric with --status/--reason without
-	// --resolve. Assert against the first output line only — cobra's usage dump on
+	// an id. Assert against the first output line only — cobra's usage dump on
 	// error lists every flag name and would false-positive a Contains on full output.
 	cases := []struct {
 		name string
@@ -703,10 +703,10 @@ func TestDebtResolve_ListFlagsWithResolveAreUsageError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append([]string{"resolve", "--dir", dir, "--resolve", rec.ID}, tc.args...)
+			args := append([]string{"resolve", "--dir", dir, rec.ID}, tc.args...)
 			out, err := runDebt(t, args...)
-			require.Error(t, err, "%s with --resolve must be a usage error, not silently ignored", tc.name)
-			assert.Equal(t, exitUsage, exitCode(err), "exit code must be 2 (usage), like --status without --resolve")
+			require.Error(t, err, "%s with an id must be a usage error, not silently ignored", tc.name)
+			assert.Equal(t, exitUsage, exitCode(err), "exit code must be 2 (usage), like --status without an id")
 			el := errorLine(out)
 			for _, flag := range tc.want {
 				assert.Contains(t, el, flag, "error must name the rejected list-only flag")
@@ -722,27 +722,27 @@ func TestDebtResolve_ListFlagsWithResolveAreUsageError(t *testing.T) {
 		assert.False(t, r.ID == rec.ID && r.Status != "", "rejected invocations must not append a terminal record")
 	}
 
-	// A bare --resolve (no list-only flags) still marks the item, unchanged.
-	_, err = runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
-	require.NoError(t, err, "a plain --resolve without list-only flags must still succeed")
+	// A bare id (no list-only flags) still marks the item, unchanged.
+	_, err = runDebt(t, "resolve", "--dir", dir, rec.ID)
+	require.NoError(t, err, "a plain id without list-only flags must still succeed")
 }
 
-func TestDebtResolve_ExplicitEmptyResolveIsUsageError(t *testing.T) {
+func TestDebtResolve_ExplicitEmptyIDIsUsageError(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
 
-	// --resolve "" is explicitly changed but empty: routing it to the list path would
-	// silently discard the user's mark intent. It must be a usage error (exit 2),
-	// governed by Changed("resolve"), not by the empty value falling through to list.
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", "")
-	require.Error(t, err, `an explicit --resolve "" must be a usage error, not a silent list`)
+	// An explicit empty positional id is a mark attempt with no id: routing it to
+	// the list path would silently discard the user's mark intent. It must be a
+	// usage error (exit 2), not the empty value falling through to list.
+	out, err := runDebt(t, "resolve", "--dir", dir, "")
+	require.Error(t, err, `an explicit "" id must be a usage error, not a silent list`)
 	assert.Equal(t, exitUsage, exitCode(err))
-	assert.Contains(t, strings.ToLower(out), "--resolve", "error must name the --resolve flag")
+	assert.Contains(t, strings.ToLower(out), "non-empty id", "error must name the missing id")
 	assert.NotContains(t, out, "internal/x/a.go", "must not fall through to the list view")
 
-	// Omitting --resolve entirely still lists, untouched by the new guard.
+	// Omitting the id entirely still lists, untouched by the new guard.
 	out, err = runDebt(t, "resolve", "--dir", dir)
-	require.NoError(t, err, "omitting --resolve must still list open items")
+	require.NoError(t, err, "omitting the id must still list open items")
 	assert.Contains(t, out, "internal/x/a.go")
 }
 
@@ -763,7 +763,7 @@ func TestDebtResolve_TerminalRecordUnionsReviewersAcrossOpenRecords(t *testing.T
 	require.Equal(t, first.ID, second.ID, "identical File/Line/Problem must yield the same stable id")
 	dir := writeDebtStore(t, first, second)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, first.ID)
 	require.NoError(t, err)
 
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -807,7 +807,7 @@ func TestDebtResolve_TerminalRecordModelFallsBackToEarlierNonEmpty(t *testing.T)
 	second.Model = ""
 	dir := writeDebtStore(t, first, second)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, first.ID)
 	require.NoError(t, err)
 
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -859,17 +859,17 @@ func TestDebtResolve_ResolvedThenRegressedReopens(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	require.NotContains(t, list, "internal/x/a.go", "the resolution closes it first")
 
 	// A later reconcile re-detects the identical finding.
 	redetect(t, dir, rec)
 
-	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err = runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, list, "internal/x/a.go", "a regressed resolved id returns to the open backlog")
 }
@@ -880,12 +880,12 @@ func TestDebtResolve_WontfixThenRegressedStaysClosed(t *testing.T) {
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	dir := writeDebtStore(t, rec)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix", "--reason", "accepted pattern")
 	require.NoError(t, err)
 
 	redetect(t, dir, rec)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(list), "no items",
 		"a dismissed finding must stay dismissed when it is re-detected")
@@ -901,20 +901,20 @@ func TestDebtResolve_DeferredThenRegressedResurfaces(t *testing.T) {
 	deferred.Status = "deferred"
 	dir := writeDebtStore(t, rec, deferred)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	require.Contains(t, strings.ToLower(list), "no items", "a deferred item is out of the backlog while it stands")
 
 	redetect(t, dir, rec)
 
-	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err = runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, list, "internal/x/a.go", "a re-detected deferred id re-surfaces")
 }
 
 // TD: a deferred item is LIVE to the dashboard (debtIsLive -> IsSettledStatus)
 // and OFF the resolve worklist (selectOpenIDs -> IsClosedStatus), so it renders as
-// a top-priority row while `debt resolve --list` reports nothing to do. The
+// a top-priority row while `debt resolve` reports nothing to do. The
 // divergence is deliberate — deferring means "not now", which keeps the item on
 // the backlog view and off the fix worklist — but nothing asserted it, so a
 // future edit to either predicate could collapse the two views onto one answer
@@ -927,7 +927,7 @@ func TestDebt_DeferredIsLiveToTheDashboardAndOffTheResolveWorklist(t *testing.T)
 	deferred.Status = "deferred"
 	dir := writeDebtStore(t, rec, deferred)
 
-	worklist, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	worklist, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(worklist), "no items",
 		"deferring takes the item off the fix worklist")
@@ -948,7 +948,7 @@ func TestDebt_DeferredIsLiveToTheDashboardAndOffTheResolveWorklist(t *testing.T)
 // refuse to close a regressed id a second time — permanently, since a resolution
 // record for it always exists.
 func TestDebtResolve_CanReResolveAfterARegression(t *testing.T) {
-	// Seeded with fixed past timestamps rather than driven through two `--resolve`
+	// Seeded with fixed past timestamps rather than driven through two mark runs
 	// calls: markDebtResolved stamps the wall clock, so two resolutions in one test
 	// share a timestamp and leave no room for a regression to fall between them.
 	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
@@ -961,13 +961,13 @@ func TestDebtResolve_CanReResolveAfterARegression(t *testing.T) {
 	regressed.Timestamp = regressed.RunID
 	dir := writeDebtStore(t, rec, resolved, regressed)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	require.Contains(t, list, "internal/x/a.go", "the regression re-opened the id")
 
 	before, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 	assert.NotContains(t, strings.ToLower(out), "already closed",
 		"the regression re-opened the id, so it is closeable again")
@@ -977,7 +977,7 @@ func TestDebtResolve_CanReResolveAfterARegression(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, after, len(before)+1, "a second resolution record is appended")
 
-	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err = runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, strings.ToLower(list), "no items")
 }
@@ -991,7 +991,7 @@ func TestDebtNamespace_AddedDeferredItemResurfacesOnRedetection(t *testing.T) {
 		"--severity", "HIGH", "--file", "a.go:3", "--problem", "P", "--fix", "F", "--category", "correctness")
 	require.NoError(t, err)
 
-	list, err := runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err := runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	require.Contains(t, strings.ToLower(list), "no items")
 
@@ -999,7 +999,7 @@ func TestDebtNamespace_AddedDeferredItemResurfacesOnRedetection(t *testing.T) {
 	require.Len(t, filed, 1)
 	redetect(t, dir, filed[0])
 
-	list, err = runDebt(t, "resolve", "--dir", dir, "--list")
+	list, err = runDebt(t, "resolve", "--dir", dir)
 	require.NoError(t, err)
 	assert.Contains(t, list, "a.go", "the deferred item re-surfaces when it is detected again")
 }
@@ -1018,7 +1018,7 @@ func TestDebtResolve_ResolvingADeferredItemKeepsReviewerAttribution(t *testing.T
 	deferred.Model = "claude-sonnet-4-6"
 	dir := writeDebtStore(t, rec, deferred)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", rec.ID)
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID)
 	require.NoError(t, err)
 
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
@@ -1260,7 +1260,7 @@ func TestDebtResolve_ResolutionRecordCarriesNoCounters(t *testing.T) {
 	dir := writeDebtStore(t, first, second)
 	require.Equal(t, 2, localdebt.FoldRecords(readStoreRecords(t, dir))[0].Occurrences)
 
-	_, err := runDebt(t, "resolve", "--dir", dir, "--resolve", first.ID, "--reason", "fixed")
+	_, err := runDebt(t, "resolve", "--dir", dir, first.ID, "--reason", "fixed")
 	require.NoError(t, err)
 
 	recs := readStoreRecords(t, dir)
@@ -1318,7 +1318,7 @@ func TestDebtResolve_ResolutionRecordOverReadCapIsRejected(t *testing.T) {
 	dir := writeDebtStore(t, base)
 	before := readStoreRecords(t, dir)
 
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", base.ID, "--reason", reason)
+	out, err := runDebt(t, "resolve", "--dir", dir, base.ID, "--reason", reason)
 	require.Error(t, err, "a resolution record over the read cap must be rejected, not written invisibly")
 	assert.NotContains(t, out, "Marked", "must not report success for a resolution that cannot be read back")
 
@@ -1339,7 +1339,7 @@ func TestDebtResolve_AlreadyClosedPrintsNormalizedStatus(t *testing.T) {
 	term.Status = "  ReSoLvEd  "
 	dir := writeDebtStore(t, open, term)
 
-	out, err := runDebt(t, "resolve", "--dir", dir, "--resolve", open.ID)
+	out, err := runDebt(t, "resolve", "--dir", dir, open.ID)
 	require.NoError(t, err)
 	assert.Contains(t, out, "already closed as resolved",
 		"the message must print the normalized status the gate matched")

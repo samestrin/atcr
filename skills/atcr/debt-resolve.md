@@ -30,14 +30,14 @@ Every store interaction is a single `atcr debt resolve` invocation — never a d
 file read and never a direct engine call, consistent with the dispatcher contract in
 `SKILL.md`.
 
-- `atcr debt resolve --list` — preview the open items (also the default with no flags).
+- `atcr debt resolve` — preview the open items (browse the full backlog with `atcr debt list`).
 - `atcr debt resolve --json` — the same selection as a JSON array, for machine parsing
   without pulling whole shards into context.
 - `atcr debt resolve --severity <CRITICAL|HIGH|MEDIUM|LOW>` — filter by severity.
 - `atcr debt resolve --max <N>` — cap the selection (default 10).
-- `atcr debt resolve --resolve <id>` — record an append-only resolution once an item is
+- `atcr debt resolve <id>` — record an append-only resolution once an item is
   actually fixed and verified.
-- `atcr debt resolve --resolve <id> --status wontfix --reason "<why this is a false positive/accepted pattern>"` —
+- `atcr debt resolve <id> --status wontfix --reason "<why this is a false positive/accepted pattern>"` —
   dismiss a finding as a false positive or accepted pattern (Epic 24.0). A `wontfix`
   record folds the item out of the open backlog exactly like `resolved`, but records
   the dismissal reason for auditability. `--status wontfix` requires `--reason` (or an
@@ -115,7 +115,7 @@ improve names, remove dead scaffolding, tidy the test. Re-run tests to confirm s
 green.
 
 Only after all four stages pass for an item, record the outcome:
-`atcr debt resolve --resolve <id>`.
+`atcr debt resolve <id>`.
 
 ## Cumulative Adversarial Pass
 

@@ -34,7 +34,7 @@ var resolveSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM"
 // paths, not by an explicit resolve.
 var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
 
-// newDebtResolveCmd builds `atcr debt resolve`: the .atcr/-scoped resolver surface
+// newDebtResolveCmd builds `atcr debt resolve [id]`: the .atcr/-scoped resolver surface
 // the debt-resolve skill route shells out to. It lists open items from the local TD
 // store (deterministically sorted for the skill's selection rule) and records
 // resolution outcomes as append-only status records. The actual fix cycle
@@ -42,41 +42,57 @@ var resolveStatuses = map[string]bool{"resolved": true, "wontfix": true}
 // this subcommand is the store's read/mark-resolved contract, never a code editor.
 func newDebtResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "resolve",
+		Use:   "resolve [id]",
 		Short: "List and mark-resolve items in the local TD store",
 		Long: "atcr debt resolve reads the local technical-debt store (.atcr/debt/,\n" +
 			"populated by atcr reconcile and atcr debt add) and lists open items for the\n" +
 			"debt-resolve skill route to fix — the same store list, add, dashboard, and\n" +
-			"compact read. Use --resolve <id> to record a resolution; the id is the\n" +
-			"leading column of `atcr debt list` and `atcr debt resolve --list`.",
-		Args: usageArgs(cobra.NoArgs),
+			"compact read. Pass the id positionally to record a resolution\n" +
+			"(`atcr debt resolve <id>`); the id is the leading column of `atcr debt list`,\n" +
+			"which is also the command to use for browsing the full backlog.",
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runDebtResolve,
 	}
 	addDebtStoreFlag(cmd)
-	cmd.Flags().Bool("list", false, "list open items (default when no other action is given)")
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
 	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
-	cmd.Flags().String("resolve", "", "mark the item with this id resolved (append-only)")
-	cmd.Flags().String("status", "resolved", "terminal status to record for --resolve (resolved|wontfix)")
-	cmd.Flags().String("reason", "", "justification recorded on the --resolve record; replaces any existing justification (e.g. why a finding is wontfix)")
+	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id (resolved|wontfix)")
+	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification (e.g. why a finding is wontfix)")
+	// The retired flags fail with guidance, not a bare pflag "unknown flag":
+	// --resolve <id> stuttered against the subcommand name and is now the
+	// positional form; --list duplicated `atcr debt list`.
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "unknown flag: --resolve"):
+			return usageError(fmt.Errorf("--resolve was removed: pass the id positionally — `atcr debt resolve <id>`"))
+		case strings.Contains(msg, "unknown flag: --list"):
+			return usageError(fmt.Errorf("--list was removed: browse the backlog with `atcr debt list`"))
+		default:
+			return usageError(err)
+		}
+	})
 	return cmd
 }
 
-func runDebtResolve(cmd *cobra.Command, _ []string) error {
+func runDebtResolve(cmd *cobra.Command, args []string) error {
 	dir := debtStoreDir(cmd)
 
-	id := mustFlag(cmd, "resolve")
-	// --status/--reason only mean something for a mark action; without --resolve they
+	var id string
+	if len(args) > 0 {
+		id = strings.TrimSpace(args[0])
+		// An empty positional (`atcr debt resolve ""`) is a mark attempt with no
+		// id, not a list request: reject it rather than silently falling through
+		// to the list view.
+		if id == "" {
+			return usageError(fmt.Errorf("atcr debt resolve requires a non-empty id"))
+		}
+	}
+	// --status/--reason only mean something for a mark action; without an id they
 	// would be silently ignored (dropping the user's dismissal intent and skipping
 	// --status validation). Reject that combination rather than fall through to list.
 	if id == "" {
-		// An explicitly changed but empty --resolve (--resolve "") is a mark attempt
-		// with no id, not a list request: reject it rather than silently falling
-		// through to the list view.
-		if cmd.Flags().Changed("resolve") {
-			return usageError(fmt.Errorf("--resolve requires a non-empty id"))
-		}
 		var provided []string
 		if cmd.Flags().Changed("status") {
 			provided = append(provided, "--status")
@@ -85,16 +101,16 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 			provided = append(provided, "--reason")
 		}
 		if len(provided) == 1 {
-			return usageError(fmt.Errorf("%s requires --resolve <id>", provided[0]))
+			return usageError(fmt.Errorf("%s requires an id: atcr debt resolve <id>", provided[0]))
 		}
 		if len(provided) > 1 {
-			return usageError(fmt.Errorf("%s require --resolve <id>", strings.Join(provided, ", ")))
+			return usageError(fmt.Errorf("%s require an id: atcr debt resolve <id>", strings.Join(provided, ", ")))
 		}
 	}
 	if id != "" {
 		// --json/--severity/--max only affect the list renderer, which the mark branch
-		// never reaches; combined with --resolve they would be silently ignored. Reject
-		// the combination, symmetric with --status/--reason without --resolve above.
+		// never reaches; combined with an id they would be silently ignored. Reject
+		// the combination, symmetric with --status/--reason without an id above.
 		var listOnly []string
 		for _, name := range []string{"json", "severity", "max"} {
 			if cmd.Flags().Changed(name) {
@@ -102,7 +118,7 @@ func runDebtResolve(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if len(listOnly) > 0 {
-			return usageError(fmt.Errorf("%s cannot be used with --resolve", strings.Join(listOnly, ", ")))
+			return usageError(fmt.Errorf("%s cannot be used when marking an item (atcr debt resolve <id>)", strings.Join(listOnly, ", ")))
 		}
 		status := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "status")))
 		if !resolveStatuses[status] {
@@ -190,7 +206,7 @@ func selectOpenDebt(dir string, severity string, limit int, opts localdebt.ReadO
 // returns the ids of the open backlog in final display order, so the sort applied
 // here — not pass 2's read order — is authoritative.
 //
-// The closed test is isClosedStatus, NOT IsSettledStatus: `debt resolve --list` is
+// The closed test is isClosedStatus, NOT IsSettledStatus: the no-arg `debt resolve` list is
 // the fix WORKLIST, and a deferred item is deliberately off it until something
 // re-detects it — that is what deferring means. A deferred item remains live in
 // `debt list`/`dashboard` and closeable by id; those are different questions,
@@ -238,13 +254,13 @@ func selectOpenIDs(sums []localdebt.Summary, severity string, limit int) []strin
 // A missing store directory is empty, not an error, matching ReadAll.
 //
 // When pass 2 materializes fewer records than pass 1 selected — a concurrent
-// `debt resolve --resolve` or `debt compact` landed between the two reads — it
+// `debt resolve <id>` or `debt compact` landed between the two reads — it
 // notes the shortfall count on opts.Writer (when set), so a short worklist is
 // distinguishable from a short backlog.
 func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]localdebt.Record, error) {
 	// Re-assert pass 1's predicate against pass 2's fold. Normally a no-op — both
 	// folds see the same records and agree. It matters when they do NOT: the two
-	// passes are separate reads, so a concurrent `debt resolve --resolve` or
+	// passes are separate reads, so a concurrent `debt resolve <id>` or
 	// `reconcile` appending between them can make an id's effective record terminal
 	// after pass 1 selected it, and without this the closed item would still be
 	// printed as an open worklist row.
@@ -453,7 +469,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		closedStatus = strings.ToLower(strings.TrimSpace(effective.Status))
 	}
 
-	// The resolution copies the EFFECTIVE record — the same one `--list` rendered
+	// The resolution copies the EFFECTIVE record — the same one the list rendered
 	// and the user acted on — not the first open record in read order. After a
 	// regression those differ: StampID excludes severity so a re-settled severity
 	// keeps the id, and copying the original would stamp the resolution with the
