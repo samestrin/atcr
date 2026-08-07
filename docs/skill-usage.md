@@ -19,7 +19,7 @@ atcr skill export                 # -> .claude/skills/atcr/ (project-local, defa
 atcr skill export --user          # -> ~/.claude/skills/atcr/
 ```
 
-A project-level export path is relative to the **process working directory**, not resolved against the repository root — run the command from your repo root, or pass `--dir <path>` to name the destination explicitly. Running it from a subdirectory writes `<subdir>/.claude/skills/atcr/`, which your harness will not find.
+A project-level export path is relative to the **process working directory**, not resolved against the repository root — run the command from your repo root, or pass `--dest <path>` to name the destination explicitly. Running it from a subdirectory writes `<subdir>/.claude/skills/atcr/`, which your harness will not find.
 
 That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Install the whole directory: `SKILL.md` alone leaves the host-review, adjudication, findings-format, conventions, and debt-resolve references unresolvable at runtime.
 
@@ -43,10 +43,10 @@ That writes `SKILL.md` plus every on-demand secondary `.md` file beside it. Inst
 
 `.claude` ∪ `.agents` ∪ `.codex` covers every harness in the table, so at most three exports are ever needed. Note the table has six `--harness` values but covers five tools: `agents` is a vendor-neutral alias for the `.agents/skills/` path convention, not a sixth tool.
 
-For a harness not listed — or any other location — pass `--dir`. It overrides `--harness`/`--user` entirely and is the skill directory itself, not a parent:
+For a harness not listed — or any other location — pass `--dest`. It overrides `--harness`/`--user` entirely and is the skill directory itself, not a parent:
 
 ```sh
-atcr skill export --dir ~/.someagent/skills/atcr
+atcr skill export --dest ~/.someagent/skills/atcr
 ```
 
 An unrecognized `--harness` exits non-zero and lists the values it knows rather than guessing a path. Export refuses to overwrite an existing non-empty destination; pass `--force` when you mean to replace it.
@@ -66,13 +66,13 @@ Invoke the skill from within a git repository and give it one of:
 | PR URL | `https://github.com/owner/repo/pull/42` | Resolves base/head via `gh`, then reviews |
 | (nothing) | — | Reviews the current branch vs. the default branch |
 | Whole repository | `--all` | Reviews every non-ignored, git-tracked file as a full-repository baseline scan |
-| A subtree | `--dir <path>` | Reviews every non-ignored, git-tracked file under that repo-root-relative directory as a scoped baseline scan |
+| A subtree | `--scope <path>` | Reviews every non-ignored, git-tracked file under that repo-root-relative directory as a scoped baseline scan |
 
-Baseline runs (`--all` / `--dir`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--fresh` to bypass that index and re-review everything in scope. Baseline mode has no diff range — `--all` and `--dir` never combine with `--base`/`--head`/`--merge-commit` or with each other.
+Baseline runs (`--all` / `--scope`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--fresh` to bypass that index and re-review everything in scope. Baseline mode has no diff range — `--all` and `--scope` never combine with `--base`/`--head`/`--merge-commit` or with each other. `--dir` remains a deprecated hidden alias for `--scope`.
 
 The skill then:
 
-1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--dir`), which has no range to resolve.
+1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--scope`), which has no range to resolve.
 2. Starts the pool review in the background (`atcr review`) and polls `atcr status <id>` until it completes (10s interval, 10-minute default timeout).
 3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.txt`.
 4. Reconciles all sources (`atcr reconcile <id>`).

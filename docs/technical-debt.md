@@ -19,11 +19,11 @@ rendering of it at a moment in time.
 | Shard key | The `YYYY-MM` prefix of the record's `run_id` |
 | Mutation model | Append-only; one atomic `O_APPEND` write per record, under a mkdir-based cross-process advisory lock |
 
-Every subcommand resolves the store through `--dir`. With no `--dir`, atcr walks
+Every subcommand resolves the store through `--store`. With no `--store`, atcr walks
 up from the working directory to the nearest `.git`/`.atcr` marker and uses that
 repository's `.atcr/debt` — so `atcr debt list` reads the same store from a
-subdirectory as it does from the root. Pass `--dir` to work against another
-checkout or a fixture tree.
+subdirectory as it does from the root. Pass `--store` to work against another
+checkout or a fixture tree. `--dir` remains a deprecated hidden alias.
 
 A resolution never edits a line in place: it appends a new record carrying the
 same id and a terminal status. Reads fold the log to one **effective** record per
@@ -148,7 +148,7 @@ atcr debt list --category correctness --sort age   # oldest correctness debt fir
 atcr debt list --json                           # the same selection, as JSON
 ```
 
-Flags: `--dir`, `--severity`, `--status` (`open|deferred|resolved|wontfix`),
+Flags: `--store`, `--severity`, `--status` (`open|deferred|resolved|wontfix`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
 `--origin` (`review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
@@ -179,7 +179,7 @@ atcr debt add \
 ```
 
 Required in flag mode: `--severity`, `--file`, `--problem`, `--fix`,
-`--category`. Optional: `--dir`, `--status` (default `open`), `--est`.
+`--category`. Optional: `--store`, `--status` (default `open`), `--est`.
 
 `--file` takes a `path:line` location; a purely numeric suffix is parsed into
 the record's line number, and anything else is kept verbatim as the path.
@@ -206,7 +206,7 @@ atcr debt dashboard --top 20                          # the 20 highest-priority 
 atcr debt dashboard --output docs/debt-report.md --check   # exit non-zero if stale
 ```
 
-Flags: `--dir`, `--output`, `--top`, `--check`.
+Flags: `--store`, `--output`, `--top`, `--check`.
 
 `--check` compares against the file named by `--output`, so the two are used
 together; `--check` without `--output` is a usage error.
@@ -229,7 +229,7 @@ atcr debt resolve --resolve <id>               # mark it fixed
 atcr debt resolve --resolve <id> --status wontfix --reason "accepted pattern"
 ```
 
-Flags: `--dir`, `--list`, `--json`, `--severity`, `--max`, `--resolve <id>`,
+Flags: `--store`, `--list`, `--json`, `--severity`, `--max`, `--resolve <id>`,
 `--status` (`resolved|wontfix`), `--reason`. `--status wontfix` requires a
 `--reason` — it is a permanent dismissal, so the rationale is recorded with it.
 
