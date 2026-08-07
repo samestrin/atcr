@@ -39,13 +39,13 @@ default, so a bare `atcr verify diff` scans the last commit.
 
 | Flag | Source |
 |------|--------|
-| `--rev <rev>` | a single commit in `--repo` (default: `HEAD`) |
-| `--staged` | the staged changes in `--repo` |
+| `--rev <rev>` | a single commit in `--repo-root` (default: `HEAD`) |
+| `--staged` | the staged changes in `--repo-root` |
 | `--diff <path>` | a unified diff read from a file |
 | `--diff -` | a unified diff read from stdin |
 
-`--repo <path>` sets the repository root for the two git-backed sources
-(default: the current directory).
+`--repo-root <path>` sets the repository root for the two git-backed sources
+(default: the current directory). `--repo` remains a deprecated hidden alias.
 
 **Merge commits** are diffed against their **first parent** (`--first-parent -m`),
 so `--rev <merge>` reports what the merge introduces to the branch it lands on. A
@@ -58,7 +58,7 @@ Naming two sources is a usage error (exit `2`) that names both offenders, rather
 than a silent precedence win.
 
 Git is always invoked with `--no-ext-diff`, `--no-textconv`, and `--no-color`.
-The first two matter for safety, not formatting: `--repo <path>` invites pointing
+The first two matter for safety, not formatting: `--repo-root <path>` invites pointing
 the scanner at a tree you do not control, and a repo-local `diff.external` **or**
 a `[diff "x"] textconv = <program>` driver (armed by a worktree `.gitattributes`)
 would otherwise execute an arbitrary program with your privileges. They are
