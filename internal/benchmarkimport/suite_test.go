@@ -18,13 +18,17 @@ import (
 // touches the network. Ingestion is an authoring-time action; only its
 // committed output is exercised by CI.
 type fakeFetcher struct {
-	calls []string
-	diff  string
-	err   error
+	calls       []string
+	diff        string
+	err         error
+	unavailable map[string]bool
 }
 
 func (f *fakeFetcher) FetchDiff(_ context.Context, owner, repo, base, head string) ([]byte, error) {
 	f.calls = append(f.calls, fmt.Sprintf("%s/%s@%s..%s", owner, repo, base, head))
+	if f.unavailable[base] {
+		return nil, fmt.Errorf("compare %s/%s: %w", owner, repo, ErrDiffUnavailable)
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -175,6 +179,23 @@ func TestBuildSuite_FailsWhenEveryRecordIsSkipped(t *testing.T) {
 	})
 
 	assert.Error(t, err, "an empty suite is refused rather than written as a valid-but-useless manifest")
+}
+
+func TestBuildSuite_SkipsRecordsWhoseDiffIsGoneUpstream(t *testing.T) {
+	dir := t.TempDir()
+	recs := loadFixture(t)
+	// A PR whose commits were force-pushed or garbage-collected 404s. That is a
+	// property of that one record, not a broken ingestion, so it must not take
+	// the whole suite down with it.
+	f := &fakeFetcher{unavailable: map[string]bool{recs[0].SourceCommit: true}}
+
+	res, err := BuildSuite(context.Background(), Options{
+		Records: recs, OutDir: dir, Suite: "s", SuiteVersion: "1.0.0", Fetcher: f,
+	})
+	require.NoError(t, err, "one dead upstream PR does not fail the build")
+
+	assert.Equal(t, len(recs)-1, res.CasesWritten, "the remaining records still become cases")
+	assert.Equal(t, 1, res.Unavailable, "the dropped record is counted, not silently lost")
 }
 
 func TestBuildSuite_PropagatesFetchFailure(t *testing.T) {

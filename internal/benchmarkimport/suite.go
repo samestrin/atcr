@@ -3,6 +3,7 @@ package benchmarkimport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,8 +33,17 @@ type Options struct {
 // Result reports what a suite build produced.
 type Result struct {
 	CasesWritten int
-	Skipped      int
+	// Skipped counts records whose categories were all outside ATCR's vocabulary.
+	Skipped int
+	// Unavailable counts records whose diff no longer exists upstream.
+	Unavailable int
 }
+
+// ErrDiffUnavailable marks a record whose diff cannot be retrieved because the
+// upstream commits are gone (force-pushed or garbage-collected). It is a
+// property of that one pull request, so ingestion drops the record and
+// continues; every other fetch error aborts the build.
+var ErrDiffUnavailable = errors.New("diff unavailable upstream")
 
 // categoryMap translates aacr-bench's comment categories into ATCR's reviewer
 // vocabulary (personas/_base.md:44). Keys are lowercased on lookup. Both the
@@ -101,9 +111,11 @@ func CaseID(rec Record) (string, error) {
 
 // BuildSuite writes suite.json plus one diff file per case into OutDir.
 //
-// Every record is fetched and written before the manifest is emitted, and any
+// Every record is fetched and written before the manifest is emitted, and a
 // fetch failure aborts the whole build: a half-written suite would still load,
-// so a partial ingestion must never look like a complete one.
+// so a partial ingestion must never look like a complete one. The one exception
+// is ErrDiffUnavailable — a pull request whose commits are gone upstream is a
+// property of that record, so it is dropped and counted.
 func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	var res Result
 
@@ -137,6 +149,10 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 		}
 
 		diff, err := opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
+		if errors.Is(err, ErrDiffUnavailable) {
+			res.Unavailable++
+			continue
+		}
 		if err != nil {
 			return res, fmt.Errorf("case %q: fetching diff: %w", id, err)
 		}

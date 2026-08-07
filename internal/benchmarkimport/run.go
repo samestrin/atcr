@@ -77,8 +77,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return fail(err)
 	}
 
-	_, _ = fmt.Fprintf(out, "wrote %d case(s) to %s (%d record(s) skipped: no mappable category)\n",
-		res.CasesWritten, *outDir, res.Skipped)
+	_, _ = fmt.Fprintf(out, "wrote %d case(s) to %s (%d skipped: no mappable category; %d unavailable upstream)\n",
+		res.CasesWritten, *outDir, res.Skipped, res.Unavailable)
 	return 0
 }
 

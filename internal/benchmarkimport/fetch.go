@@ -87,6 +87,12 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A 404 here means the compare range no longer resolves — the PR's commits
+	// were force-pushed away or garbage-collected. That is this record's problem
+	// alone, so it is reported as unavailable rather than failing the ingestion.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("compare %s/%s %s...%s: %w", owner, repo, base, head, ErrDiffUnavailable)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("compare %s/%s %s...%s: unexpected status %s", owner, repo, base, head, resp.Status)
 	}

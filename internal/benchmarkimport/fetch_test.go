@@ -90,6 +90,19 @@ func TestCompareAPIFetcher_ReportsNonOKStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "403", "a rate-limit rejection is surfaced, not treated as an empty diff")
 }
 
+func TestCompareAPIFetcher_ReportsAGoneRangeAsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+	_, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+	assert.ErrorIs(t, err, ErrDiffUnavailable,
+		"a 404 compare range is one dead PR, not a broken ingestion, so it must be distinguishable")
+}
+
 func TestCloneFetcher_ProducesTheSameDiffFromALocalRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
