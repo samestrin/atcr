@@ -357,8 +357,9 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			"  write ledger records that `atcr audit-report` and `atcr history` (which walk\n" +
 			"  up to the repo root) will not find.\n\n" +
 			"Logging:\n" +
-			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
-			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +
+			"  ATCR_LOG_LEVEL environment variable: debug, info, warn, error (default info).\n" +
+			"                 Set ATCR_LOG_LEVEL=debug to diagnose a failing review.\n" +
+			"                 (Bare LOG_LEVEL is honored as a deprecated fallback.)\n" +
 			"  --log-format   log output format: text or json (default text).\n" +
 			"                 Use json for machine-readable, newline-delimited logs in CI.",
 		SilenceUsage:  true,
@@ -456,11 +457,18 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	return root
 }
 
-// logLevelFromEnv returns the configured LOG_LEVEL, defaulting to "info" when the
-// variable is unset or blank. LOG_LEVEL is read from the environment (not a flag)
-// so operators can raise verbosity per-invocation without changing the command
-// line; log.LevelFromString validates the value in setupLogger.
+// logLevelFromEnv returns the configured log level, defaulting to "info" when
+// neither variable is set. ATCR_LOG_LEVEL is the canonical variable — every
+// other atcr-owned env var is ATCR_*-namespaced, and a bare LOG_LEVEL in a CI
+// environment may belong to unrelated tooling. Bare LOG_LEVEL is honored as a
+// deprecated fallback (for one minor version); ATCR_LOG_LEVEL wins when both
+// are set. The value is read from the environment (not a flag) so operators can
+// raise verbosity per-invocation without changing the command line;
+// log.LevelFromString validates the value in setupLogger.
 func logLevelFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("ATCR_LOG_LEVEL")); v != "" {
+		return v
+	}
 	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
 		return v
 	}

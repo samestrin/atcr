@@ -186,7 +186,7 @@ byte-clean file. Under `--axi`:
   review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
-  logs, governed by [`LOG_LEVEL` and `--log-format`](logging.md) and passed
+  logs, governed by [`ATCR_LOG_LEVEL` and `--log-format`](logging.md) and passed
   through the same redaction sink. Structured errors also go to stderr, not
   stdout (axi.md Principle 6 reconciliation), so an agent branches on the exit
   code and never has to parse stdout for an error case.

@@ -7,23 +7,26 @@ control logging:
 
 | Setting | Type | Values | Default |
 |---------|------|--------|---------|
-| `LOG_LEVEL` | environment variable | `debug`, `info`, `warn`, `error` | `info` |
+| `ATCR_LOG_LEVEL` | environment variable | `debug`, `info`, `warn`, `error` | `info` |
 | `--log-format` | persistent flag (all subcommands) | `text`, `json` | `text` |
 
-An invalid `LOG_LEVEL` or `--log-format` is a usage error (exit 2) reported
-before any subcommand runs.
+An invalid `ATCR_LOG_LEVEL` or `--log-format` is a usage error (exit 2) reported
+before any subcommand runs. Bare `LOG_LEVEL` is honored as a deprecated fallback
+(with `ATCR_LOG_LEVEL` winning when both are set) for one minor version — every
+other atcr-owned variable is `ATCR_*`-namespaced, and a bare `LOG_LEVEL` in CI
+may belong to unrelated tooling.
 
 ## Levels
 
-`LOG_LEVEL` sets the minimum severity emitted:
+`ATCR_LOG_LEVEL` sets the minimum severity emitted:
 
-- `LOG_LEVEL=debug` — everything, including per-agent diagnostics and provider
+- `ATCR_LOG_LEVEL=debug` — everything, including per-agent diagnostics and provider
   retry detail. Use this to diagnose a failing review.
-- `LOG_LEVEL=info` (default) — normal operational lines.
-- `LOG_LEVEL=warn` — warnings and errors only.
-- `LOG_LEVEL=error` — errors only; info and warn are suppressed.
+- `ATCR_LOG_LEVEL=info` (default) — normal operational lines.
+- `ATCR_LOG_LEVEL=warn` — warnings and errors only.
+- `ATCR_LOG_LEVEL=error` — errors only; info and warn are suppressed.
 
-`LOG_LEVEL` is read from the environment rather than a flag so verbosity can be
+`ATCR_LOG_LEVEL` is read from the environment rather than a flag so verbosity can be
 raised per-invocation without changing the command line.
 
 ## Formats
@@ -39,7 +42,7 @@ every line emitted inside an agent invocation also carries an `agent_name`
 attribute. This lets you grep all activity for one run:
 
 ```bash
-LOG_LEVEL=debug atcr review 2> review.log
+ATCR_LOG_LEVEL=debug atcr review 2> review.log
 grep 'review_id=<id>' review.log          # all lines for one review
 grep 'agent_name=security' review.log     # one agent's activity
 ```
@@ -62,19 +65,19 @@ secret directly.
 Debug a failing review locally:
 
 ```bash
-LOG_LEVEL=debug atcr review
+ATCR_LOG_LEVEL=debug atcr review
 ```
 
 Machine-readable logs for CI:
 
 ```bash
-LOG_LEVEL=debug atcr review --log-format=json 2> review.jsonl
+ATCR_LOG_LEVEL=debug atcr review --log-format=json 2> review.jsonl
 ```
 
 MCP server mode keeps stdout protocol-only; logs still go to stderr:
 
 ```bash
-LOG_LEVEL=debug atcr serve 2> serve.log
+ATCR_LOG_LEVEL=debug atcr serve 2> serve.log
 ```
 
 ## See also
