@@ -200,6 +200,24 @@ func TestBuildSuite_RejectsAnEmptyDiff(t *testing.T) {
 		"a blank diff yields no reviewable content and would fail the entire benchmark run, not just its case")
 }
 
+func TestBuildSuite_RequiresAFetcherAndAnOutputDirectory(t *testing.T) {
+	_, err := BuildSuite(context.Background(), Options{Records: loadFixture(t), OutDir: t.TempDir()})
+	assert.Error(t, err, "a nil fetcher is a caller mistake, caught before any file is written")
+
+	_, err = BuildSuite(context.Background(), Options{Records: loadFixture(t), Fetcher: &fakeFetcher{}})
+	assert.Error(t, err, "an empty output directory would write into the working directory")
+}
+
+func TestBuildSuite_RejectsARecordWithAnUnparsablePullRequestURL(t *testing.T) {
+	_, err := BuildSuite(context.Background(), Options{
+		Records: []Record{{GithubPrURL: "https://example.com/x", SourceCommit: "a", TargetCommit: "b",
+			Comments: []Comment{{Category: "Code Defect"}}}},
+		OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0", Fetcher: &fakeFetcher{},
+	})
+
+	assert.Error(t, err, "a record whose URL yields no case id aborts the build rather than being skipped silently")
+}
+
 func TestBuildSuite_WritesDiffFilesInsideTheSuiteDirectory(t *testing.T) {
 	dir := t.TempDir()
 

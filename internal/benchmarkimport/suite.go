@@ -2,9 +2,20 @@ package benchmarkimport
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/samestrin/atcr/internal/benchmark"
 )
 
 // DiffFetcher retrieves the unified diff between two commits of a GitHub repo.
+// It is an interface so ingestion can be unit-tested without network access:
+// the live implementations live in fetch.go and run only at authoring time.
 type DiffFetcher interface {
 	FetchDiff(ctx context.Context, owner, repo, base, head string) ([]byte, error)
 }
@@ -24,22 +35,158 @@ type Result struct {
 	Skipped      int
 }
 
-// MapCategory translates an aacr-bench category to ATCR's vocabulary.
+// categoryMap translates aacr-bench's comment categories into ATCR's reviewer
+// vocabulary (personas/_base.md:44). Keys are lowercased on lookup. Both the
+// dataset's actual literals and the shorter spellings used in the epic body are
+// accepted, so an upstream wording change degrades to a reported skip rather
+// than a silent mismatch.
+var categoryMap = map[string]string{
+	"code defect":                     "correctness",
+	"security vulnerability":          "security",
+	"security":                        "security",
+	"maintainability and readability": "maintainability",
+	"maintainability":                 "maintainability",
+	"performance":                     "performance",
+}
+
+// prURLPattern captures owner, repo, and PR number from a GitHub PR URL.
+var prURLPattern = regexp.MustCompile(`^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)`)
+
+// slugUnsafe matches everything that must not appear in a case id or filename.
+var slugUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// MapCategory translates an aacr-bench category to ATCR's vocabulary. The bool
+// reports whether the category is known; callers must not guess at a default.
 func MapCategory(in string) (string, bool) {
-	return "", false
+	out, ok := categoryMap[strings.ToLower(strings.TrimSpace(in))]
+	return out, ok
 }
 
 // ExpectedCategories returns the deduped, sorted ATCR categories for a record.
+// Sorting and deduping are required, not cosmetic: the manifest contract
+// rejects a duplicate category within a case, and the reproducibility hash is
+// computed over the category list.
 func ExpectedCategories(rec Record) []string {
-	return nil
+	seen := make(map[string]struct{}, len(rec.Comments))
+	for _, c := range rec.Comments {
+		if mapped, ok := MapCategory(c.Category); ok {
+			seen[mapped] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for cat := range seen {
+		out = append(out, cat)
+	}
+	sort.Strings(out)
+	return out
 }
 
-// CaseID derives a stable, slug-safe case id from a record's PR URL.
+// CaseID derives a stable, slug-safe case id from a record's PR URL. Case ids
+// may legally contain "/" per the manifest contract, but a flat slug keeps the
+// id usable as its own diff filename.
 func CaseID(rec Record) (string, error) {
-	return "", nil
+	m := prURLPattern.FindStringSubmatch(strings.TrimSpace(rec.GithubPrURL))
+	if m == nil {
+		return "", fmt.Errorf("cannot derive a case id from %q: not a GitHub pull-request URL", rec.GithubPrURL)
+	}
+	slug := func(s string) string {
+		return strings.Trim(slugUnsafe.ReplaceAllString(strings.ToLower(s), "-"), "-")
+	}
+	id := fmt.Sprintf("%s-%s-pr-%s", slug(m[1]), slug(m[2]), m[3])
+	if id == "" || strings.HasPrefix(id, "-") {
+		return "", fmt.Errorf("derived an empty case id from %q", rec.GithubPrURL)
+	}
+	return id, nil
 }
 
 // BuildSuite writes suite.json plus one diff file per case into OutDir.
+//
+// Every record is fetched and written before the manifest is emitted, and any
+// fetch failure aborts the whole build: a half-written suite would still load,
+// so a partial ingestion must never look like a complete one.
 func BuildSuite(ctx context.Context, opts Options) (Result, error) {
-	return Result{}, nil
+	var res Result
+
+	if opts.Fetcher == nil {
+		return res, fmt.Errorf("a diff fetcher is required")
+	}
+	if strings.TrimSpace(opts.OutDir) == "" {
+		return res, fmt.Errorf("an output directory is required")
+	}
+	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+		return res, fmt.Errorf("creating suite directory: %w", err)
+	}
+
+	manifest := benchmark.Manifest{Suite: opts.Suite, SuiteVersion: opts.SuiteVersion}
+
+	for _, rec := range opts.Records {
+		cats := ExpectedCategories(rec)
+		if len(cats) == 0 {
+			res.Skipped++
+			continue
+		}
+
+		id, err := CaseID(rec)
+		if err != nil {
+			return res, err
+		}
+
+		owner, repo, err := repoFromPrURL(rec.GithubPrURL)
+		if err != nil {
+			return res, err
+		}
+
+		diff, err := opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
+		if err != nil {
+			return res, fmt.Errorf("case %q: fetching diff: %w", id, err)
+		}
+		// A blank diff produces no reviewable entries, and the benchmark runner
+		// fails the entire run — not just that case — when ingestion yields none.
+		if len(strings.TrimSpace(string(diff))) == 0 {
+			return res, fmt.Errorf("case %q: fetched diff is empty", id)
+		}
+
+		name := id + ".diff"
+		if err := os.WriteFile(filepath.Join(opts.OutDir, name), diff, 0o644); err != nil {
+			return res, fmt.Errorf("case %q: writing diff: %w", id, err)
+		}
+
+		manifest.Cases = append(manifest.Cases, benchmark.Case{
+			ID:                 id,
+			Diff:               name,
+			ExpectedCategories: cats,
+		})
+		res.CasesWritten++
+	}
+
+	if len(manifest.Cases) == 0 {
+		return res, fmt.Errorf("no records yielded a mappable category: refusing to write an empty suite")
+	}
+
+	// Sort by id so the manifest ordering is reproducible regardless of the
+	// order records arrived in.
+	sort.Slice(manifest.Cases, func(i, j int) bool { return manifest.Cases[i].ID < manifest.Cases[j].ID })
+
+	if err := manifest.Validate(); err != nil {
+		return res, fmt.Errorf("emitted manifest is invalid: %w", err)
+	}
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return res, fmt.Errorf("encoding manifest: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Join(opts.OutDir, "suite.json"), data, 0o644); err != nil {
+		return res, fmt.Errorf("writing suite.json: %w", err)
+	}
+
+	return res, nil
+}
+
+func repoFromPrURL(raw string) (owner, repo string, err error) {
+	m := prURLPattern.FindStringSubmatch(strings.TrimSpace(raw))
+	if m == nil {
+		return "", "", fmt.Errorf("cannot parse owner/repo from %q", raw)
+	}
+	return m[1], m[2], nil
 }
