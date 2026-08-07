@@ -113,7 +113,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
 
-	// --preview renders the outbound quality-signal payload locally and sends
+	// --dry-run renders the outbound quality-signal payload locally and sends
 	// nothing (Story 3). It short-circuits at the top of RunE — before the
 	// --sync-cloud precondition, the opt-in gate, review-dir resolution, and any
 	// transport/credential resolution — so it works for an undecided user with no
@@ -320,7 +320,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// to the passive ping above. Its own independent opt-in gate is resolved fresh
 	// inside — short-circuiting before any payload construction when disabled — and
 	// it is fail-open: a transport failure never changes this command's outcome.
-	// --preview (Story 3) short-circuits at the top of runReconcile, so it is never
+	// --dry-run (Story 3) short-circuits at the top of runReconcile, so it is never
 	// reached on the preview path. The gate's unrecognized-env-value warning goes to
 	// this command's stderr. storeRoot threads the SAME root the persistence hook
 	// resolved, so the signal aggregates the store this run actually wrote.

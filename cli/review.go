@@ -55,16 +55,17 @@ func newReviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
 		Short: "Fan a code change out to the reviewer pool",
-		// --preview short-circuits at the very top of runReview (see the comment
+		// --dry-run short-circuits at the very top of runReview (see the comment
 		// there), above the --resume/--force mutual-exclusion check and the
 		// --auto-fix handling — document that silent precedence here, in the
 		// command's Long help, since the flag's own usage string lives in the
 		// shared addQualitySignalFlags registration.
 		Long: "Fan a code change out to the reviewer pool.\n\n" +
-			"--preview prints the content-free quality-signal payload and exits before any\n" +
-			"review work begins. It takes precedence over every action flag: when --preview\n" +
+			"--dry-run prints the content-free quality-signal payload and exits before any\n" +
+			"review work begins. It takes precedence over every action flag: when --dry-run\n" +
 			"is set, flags such as --auto-fix, --resume, and --force are ignored (no resume,\n" +
-			"no overwrite, no fixes — the preview renders and the command exits).",
+			"no overwrite, no fixes — the preview renders and the command exits).\n" +
+			"--preview is a deprecated alias for --dry-run.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runReview,
 	}
@@ -245,7 +246,7 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) (err error) {
-	// --preview renders the outbound quality-signal payload locally and sends
+	// --dry-run renders the outbound quality-signal payload locally and sends
 	// nothing (Story 3). It short-circuits at the top of RunE — before the --resume
 	// branch, the --sync-cloud precondition, the opt-in gate, and any
 	// transport/credential resolution — so it works for an undecided user with no
@@ -259,7 +260,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 
 	// --axi gates every human-oriented stdout write below behind a single mode
 	// value propagated by the root PersistentPreRunE (AC 01-03). Read once here,
-	// immediately after the --preview short-circuit; the auto-fix guard below and
+	// immediately after the --dry-run short-circuit; the auto-fix guard below and
 	// every later write site consult axiMode rather than re-reading the context.
 	axiMode := axiFromContext(cmd.Context())
 
@@ -269,7 +270,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// than silently leaking human text onto the axi stream (fresh path) or silently
 	// dropping --auto-fix (resume path). Placed ABOVE the --resume dispatch so the
 	// guard fires for `review --resume --axi --auto-fix` too (AC 01-03 Edge Case 3,
-	// AC 02-02 Error Scenario 2). --preview wins over both and short-circuits above.
+	// AC 02-02 Error Scenario 2). --dry-run wins over both and short-circuits above.
 	if axiMode && boolFlag(cmd, "auto-fix") {
 		return usageError(errors.New("--axi and --auto-fix are mutually exclusive: --auto-fix drives an interactive write-back/PR flow, not a consumable findings payload"))
 	}
@@ -699,7 +700,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// adjacent to the passive ping above, DEFERRED so it fires at run completion.
 		// Its own independent opt-in gate is resolved fresh inside — short-circuiting
 		// before any payload construction when disabled — and it is fail-open: a
-		// transport failure never changes this command's outcome. --preview (Story 3)
+		// transport failure never changes this command's outcome. --dry-run (Story 3)
 		// short-circuits at the top of runReview, so it is never reached on that path.
 		// The gate's unrecognized-env-value warning goes to this command's stderr.
 		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr(), "")

@@ -79,7 +79,7 @@ const defaultCloudEndpoint = ""
 // override (Story 4) on cmd. An absent or explicitly empty --cloud-endpoint is
 // refused here at flag-parse time (PreRunE) — this build ships no default
 // destination, so there is nothing to fall back on — EXCEPT on the two paths
-// that never reach a push at all (--preview and --resume), where the refusal
+// that never reach a push at all (--dry-run and --resume), where the refusal
 // would fail an invocation over a destination the path never consults; a supplied endpoint's
 // well-formedness and the presence of ATCR_API_KEY are validated at run time
 // (resolveSyncCloud) (AC 04-01). The PreRunE is chained prev-first (not
@@ -99,10 +99,11 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 				return err
 			}
 		}
-		// --preview is a pure, side-effect-free local render that pushes nothing, so
+		// --dry-run (deprecated alias --preview) is a pure, side-effect-free local
+		// render that pushes nothing, so
 		// the --sync-cloud destination is irrelevant on that path (the preview
 		// short-circuit in RunE bypasses sync entirely). Suppress the refusal when
-		// --preview is set — preview overrides sync-cloud (AC 03-01 EC2).
+		// --dry-run is set — preview overrides sync-cloud (AC 03-01 EC2).
 		//
 		// --resume is the same shape and gets the same suppression: runReview
 		// returns via runResume BEFORE resolveSyncCloud is reached, so --sync-cloud
@@ -110,7 +111,7 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 		// previously worked, over a destination the resume path never consults. The
 		// no-op is not left silent — the resume branch in runReview says so on
 		// stderr, for the with-endpoint case as much as the absent-destination one.
-		if boolFlag(cmd, "sync-cloud") && !previewFlagSet(cmd) && !resumeFlagSet(cmd) {
+		if boolFlag(cmd, "sync-cloud") && !dryRunFlagSet(cmd) && !resumeFlagSet(cmd) {
 			endpoint, _ := cmd.Flags().GetString("cloud-endpoint")
 			// Refuse rather than warn-and-proceed: this build ships no default
 			// destination, so there is nothing to push to. Reported as a usageError
@@ -134,22 +135,27 @@ func addSyncCloudFlags(cmd *cobra.Command) {
 	}
 }
 
-// previewFlagSet reports whether the --preview flag is registered on cmd AND set.
+// dryRunFlagSet reports whether the show-don't-do flag is registered on cmd AND
+// set — the canonical --dry-run or its deprecated --preview alias, either one.
 // It uses a nil-safe Lookup (not boolFlag) because addSyncCloudFlags may in
-// principle be installed on a command that does not register --preview, and this
+// principle be installed on a command that does not register --dry-run, and this
 // runs in a PreRunE where a panic would abort an unrelated invocation.
-func previewFlagSet(cmd *cobra.Command) bool {
-	if cmd.Flags().Lookup("preview") == nil {
+func dryRunFlagSet(cmd *cobra.Command) bool {
+	if cmd.Flags().Lookup("dry-run") == nil && cmd.Flags().Lookup("preview") == nil {
 		return false
 	}
-	v, _ := cmd.Flags().GetBool("preview")
-	return v
+	v, _ := cmd.Flags().GetBool("dry-run")
+	if v {
+		return true
+	}
+	p, _ := cmd.Flags().GetBool("preview")
+	return p
 }
 
 // resumeFlagSet reports whether the --resume flag is registered on cmd AND
 // supplied. It keys on Changed (not the value) because `--resume ""` is still a
 // resume invocation, and it uses a nil-safe Lookup for the same reason
-// previewFlagSet does: reconcile hosts addSyncCloudFlags but registers no
+// dryRunFlagSet does: reconcile hosts addSyncCloudFlags but registers no
 // --resume, and a panic here would abort an unrelated invocation.
 func resumeFlagSet(cmd *cobra.Command) bool {
 	if cmd.Flags().Lookup("resume") == nil {
@@ -158,17 +164,22 @@ func resumeFlagSet(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("resume")
 }
 
-// addQualitySignalFlags declares the --preview flag on cmd (the review and
-// reconcile host commands — Story 6's two Send call sites). --preview renders the
+// addQualitySignalFlags declares the --dry-run flag on cmd (the review and
+// reconcile host commands — Story 6's two Send call sites), with --preview kept
+// as a deprecated hidden alias. --dry-run renders the
 // exact content-free quality-signal payload locally and sends nothing (Story 3);
 // its run-path short-circuit lives in maybePreviewQualitySignal, invoked before any
-// opt-in gate or transport work. It installs no PreRunE: --preview has no
+// opt-in gate or transport work. It installs no PreRunE: --dry-run has no
 // precondition of its own, so the range/sync-cloud hooks installed earlier on cmd
 // already run untouched. Add chaining here only when a precondition genuinely
 // appears — a pass-through wrapper kept "for a future precondition" is dead
 // indirection.
 func addQualitySignalFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+	cmd.Flags().Bool("dry-run", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
+	cmd.Flags().Bool("preview", false, "deprecated alias for --dry-run")
+	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why (the
+	// parse-time warning pollutes merged-stream output consumers).
+	_ = cmd.Flags().MarkHidden("preview")
 }
 
 // validateDirFlag validates the Sprint 35.0 `--scope <path>` scoped-baseline flag
