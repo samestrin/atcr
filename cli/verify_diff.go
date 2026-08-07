@@ -42,9 +42,11 @@ func newVerifyDiffCmd() *cobra.Command {
 		RunE: runVerifyDiff,
 	}
 	cmd.Flags().String("diff", "", "scan a unified diff read from this file, or from stdin when set to \"-\"")
-	cmd.Flags().Bool("staged", false, "scan the staged changes (git diff --cached) in --repo")
-	cmd.Flags().String("rev", "HEAD", "scan a single commit in --repo (the default source)")
-	cmd.Flags().String("repo", ".", "repo root for --staged / --rev (default: current directory)")
+	cmd.Flags().Bool("staged", false, "scan the staged changes (git diff --cached) in --repo-root")
+	cmd.Flags().String("rev", "HEAD", "scan a single commit in --repo-root (the default source)")
+	cmd.Flags().String("repo-root", ".", "repo root for --staged / --rev (default: current directory)")
+	cmd.Flags().String("repo", ".", "deprecated alias for --repo-root")
+	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
 	cmd.Flags().Bool("json", false, "emit the scan as JSON on stdout instead of the text summary")
 	cmd.Flags().String("fail-on", "", "exit 1 when the verdict reaches this level: hard, soft, or none (default: never fail)")
 	return cmd
@@ -310,7 +312,7 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // --no-textconv ...` and returns stdout. All three are passed at the call site
 // rather than by gitexec because they are diff-command-specific, and each closes
 // a different hole in a repo whose local config the operator does not control —
-// which `--repo <path>` explicitly invites (internal/gitexec's package doc names
+// which `--repo-root <path>` explicitly invites (internal/gitexec's package doc names
 // repo-local config as the surface it does NOT close):
 //
 //   - --no-ext-diff neutralizes a poisoned repo-local `diff.external`.
@@ -328,7 +330,7 @@ func revArg(cmd *cobra.Command, name string) (string, error) {
 // interrupt is not a bad invocation.
 func gitText(cmd *cobra.Command, sub string, extra ...string) (string, error) {
 	// Shared with `atcr verify` and `atcr reconcile` so the three commands
-	// normalize --repo identically — including the existence check, which turns
+	// normalize --repo-root identically — including the existence check, which turns
 	// a nonexistent root into the shared usage-error wording instead of a raw
 	// git message.
 	repo, err := normalizeRepoFlag(cmd)
