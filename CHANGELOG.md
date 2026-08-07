@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+## [35.16.1] - 2026-08-06
+
+Canonicalizes the persona digest before telemetry collection begins. `HashPersonaID` performed no normalization, so `bruce`, `Bruce`, and `" bruce "` produced three different digests for one persona. That is normally untidy; here it is permanent — an ingestion backend re-keys the received digest under a never-rotated secret and discards the original, so a variant becomes a second backend identity that no backfill can merge. Landing this before any rows are collected is the whole point of its ordering.
+
+### Changed
+
+- `scorecard.HashPersonaID` now reduces its input to `strings.ToLower(strings.TrimSpace(raw))` before hashing, so every casing and padding variant of one persona yields one digest. **Digests produced by earlier releases will not match digests produced by this one** for any name that was not already lowercase and trimmed (i.e., free of leading/trailing whitespace).
+- `telemetry.NewQualitySignal` applies the identical transform to its inlined hash, and evaluates its empty-persona sentinel on the **canonical** value — so a whitespace-only persona (e.g. `"   "`) now canonicalizes to the empty string and returns the zero sentinel, instead of previously hashing the literal whitespace value (`sha256("   ")`) as if it were a legitimate persona identity.
+- `--sync-cloud` persona digests change with the same transform: `cloudsync.go` is the second consumer of `HashPersonaID`, and its call-site `TrimSpace` remains as defense in depth (its empty-agent gate still depends on it).
+- `docs/telemetry.md` and `docs/scorecard.md` document the canonical form and the JS a backend uses to reproduce it. That cross-language equivalence is **scoped to ASCII**, which is what the `personas/community/` catalog contains: Go and JS disagree on Greek final sigma, dotted capital I, and a leading BOM. A divergence there is a dictionary **miss** (the persona reads as unrecognized), never a split identity — digests are only ever produced by the Go client.
+
+### Added
+
+- `TestHashPersonaID_PinnedPublishedPersonaDigests` pins the digests of real catalog personas against values computed **independently in node**, so the cross-language contract is verified rather than assumed.
+- `TestHashPersonaID_GoJSDivergenceIsASCIIScoped` pins the known limits of that contract so a future change cannot silently re-assert a total equivalence that does not hold.
+- `TestQualitySignal_PersonaHashedNotRaw` now exercises **non-canonical** inputs. With only canonical fixtures the two producers agreed whether or not either canonicalized, so the anti-drift guard was vacuous; it now fails if either producer is changed alone.
+
+*Shipped via /execute-epic (epic 35.16.1)*
+
 ## [35.15.0] - 2026-08-06
 
 Puts `atcr leaderboard` on the windowed scorecard read Epic 35.11 built. The leaderboard is the one surface with a user-facing time window — `--since` defaults to 30 days — yet it read every month file the store had ever written and then filtered in memory, so displaying one month of data cost the whole history. The window now selects month files before opening them.
