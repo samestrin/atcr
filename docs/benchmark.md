@@ -240,9 +240,10 @@ production run can never be passed off as a suite submission. A run-result is:
 }
 ```
 
-`atcr benchmark run --out <path>` produces a conforming run-result; you can also
+`atcr benchmark run --output <path>` produces a conforming run-result; you can also
 supply one by hand. `export` reuses the run-result's `generated_at` as the
 submission's `submitted_at`, so the same run-result always exports identically.
+(`--out` remains a deprecated hidden alias for `--output`.)
 
 Behavior:
 - Missing/malformed run-result, or one missing `suite`/`suite_version` → error.

@@ -89,7 +89,11 @@ func newBenchmarkRunCmd() *cobra.Command {
 		RunE:  runBenchmarkRun,
 	}
 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
-	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().String("output", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().String("out", "", "deprecated alias for --output")
+	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why (the
+	// parse-time warning pollutes merged-stream output consumers).
+	_ = cmd.Flags().MarkHidden("out")
 	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
@@ -99,7 +103,12 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// Cobra GetString errors are unreachable: all flags are registered above
 	// ("suite-path" is MarkFlagRequired). Project-wide convention.
 	suitePath, _ := cmd.Flags().GetString("suite-path")
-	out, _ := cmd.Flags().GetString("out")
+	// --output is canonical; --out is the deprecated alias (honored when --output
+	// is unset).
+	out, _ := cmd.Flags().GetString("output")
+	if !cmd.Flags().Changed("output") && cmd.Flags().Changed("out") {
+		out, _ = cmd.Flags().GetString("out")
+	}
 	checkpoint, _ := cmd.Flags().GetString("checkpoint")
 
 	// Discover config the same way `atcr review` does (registry + project config
