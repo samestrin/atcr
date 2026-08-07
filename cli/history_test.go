@@ -523,6 +523,29 @@ func TestHistoryCmd_NoWarningWhenPruneHorizonCoversReportWindow(t *testing.T) {
 		"a horizon wider than the window removes nothing the report would show")
 }
 
+// `--since all` is newly accepted by history (it was leaderboard-only). It
+// resolves to timewindow.All, so the cutoff lands ~292 years back — exercise the
+// whole path, not just the parse, since that arithmetic and the shard-selection
+// predicate it feeds are what an unbounded window actually touches.
+func TestHistoryCmd_SinceAllReadsBeyondTheDefaultWindow(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour) // well outside the 90d default
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "ancient/pkg", "severity": "HIGH",
+		"id": "old1", "file": "ancient/a.go", "category": "C",
+	})
+
+	out, err := runHistoryIn(t, root, "--since", "all")
+	require.NoError(t, err)
+	assert.Contains(t, out, "ancient/pkg", `--since all must reach records the default 90d window hides`)
+
+	// Control: the same record is invisible under the default window, so the
+	// assertion above is about "all" and not about the fixture always showing up.
+	outDefault, err := runHistoryIn(t, root)
+	require.NoError(t, err)
+	assert.NotContains(t, outDefault, "ancient/pkg", "a 400-day-old record is outside the 90d default")
+}
+
 // A destructive retention horizon must be long enough that it cannot plausibly
 // be a mistyped query window. The unit hazard this floor was introduced for is
 // gone at the root — the shared timewindow grammar has no clock units, so "30s"
