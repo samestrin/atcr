@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Changed
+
+- **Breaking — `--since` and `--prune` now share one grammar.** Two independent `ParseSince` implementations backed the same flag name with different meanings: `atcr history --since 3m` was three MINUTES (it delegated to `time.ParseDuration`), while `atcr leaderboard --since 3m` was three MONTHS. Both accepted the input without a warning and the resulting windows differed by roughly 43,200x. The new `internal/timewindow` package owns the single grammar — `Nd` days, `Nw` weeks, `Nm` 30-day months, or `all` — and both commands parse through it.
+  - `3m` now means three months on **every** command, including `atcr history`.
+  - Clock units and fractional counts are **rejected** rather than reinterpreted: `48h`, `1h30m`, `30s`, and `1.5d` were accepted by `atcr history` and are now usage errors. Express the window in `d`/`w`/`m` (`2d` for `48h`).
+  - `all` now works on `atcr history` as well as `atcr leaderboard`; `atcr history --since all` disables the window.
+  - `atcr history --help` now shows `(default "90d")`. The 90-day default was always applied, but it was registered as an empty cobra default and so never advertised.
+  - `atcr history --prune 6m` now means six months and prunes accordingly. It previously computed a six-MINUTE cutoff, which the 28-day safety floor caught only by rejecting the value outright; the hazard is gone at the root and the floor is retained for genuinely short horizons.
+
 ## [35.16.1] - 2026-08-06
 
 Canonicalizes the persona digest before telemetry collection begins. `HashPersonaID` performed no normalization, so `bruce`, `Bruce`, and `" bruce "` produced three different digests for one persona. That is normally untidy; here it is permanent — an ingestion backend re-keys the received digest under a never-rotated secret and discards the original, so a variant becomes a second backend identity that no backfill can merge. Landing this before any rows are collected is the whole point of its ordering.

@@ -2,11 +2,11 @@ package scorecard
 
 import (
 	"fmt"
-	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/timewindow"
 )
 
 // FilterOpts narrows the record set before aggregation. An empty field means "no
@@ -36,49 +36,19 @@ type LeaderboardRow struct {
 	AvgLatencyMS           int64
 }
 
-// ParseSince parses a leaderboard window string into a duration: "Nd" days, "Nw"
-// weeks, "Nm" months (30-day months). N must be a positive integer. An
-// unrecognized unit, a non-integer count, or a non-positive value is an error
-// with actionable guidance — the message is shown to the user verbatim.
+// ParseSince parses a leaderboard window string into a duration. It is a thin
+// alias for timewindow.Parse, which owns the one grammar every window flag in
+// atcr shares — Nd (days), Nw (weeks), Nm (30-day months), plus "all". The alias
+// is kept so this package's callers read in its own vocabulary; it must never
+// grow a grammar of its own again.
 func ParseSince(s string) (time.Duration, error) {
-	s = strings.TrimSpace(s)
-	if len(s) < 2 {
-		return 0, invalidSinceErr(s)
-	}
-	unit := s[len(s)-1]
-	n, err := strconv.Atoi(s[:len(s)-1])
+	d, err := timewindow.Parse(s)
 	if err != nil {
-		return 0, invalidSinceErr(s)
+		// Name the flag: timewindow is shared by several window flags, so the
+		// grammar error alone does not tell the user which input to correct.
+		return 0, fmt.Errorf("--since: %w", err)
 	}
-	var per time.Duration
-	switch unit {
-	case 'd':
-		per = 24 * time.Hour
-	case 'w':
-		per = 7 * 24 * time.Hour
-	case 'm':
-		// "Nm" is a fixed 30-day month, independent of the calendar. This is a
-		// deliberate approximation: --since defines a rolling time window, so a
-		// "1m" window is always exactly 30 days. It intentionally does NOT match
-		// the on-disk month-file rotation (monthFromRunID / monthsToScan), which
-		// uses real calendar months (28-31 days); the two "month" notions can
-		// therefore disagree by a few days at a month edge. Window semantics and
-		// storage rotation are independent concerns and are not unified here.
-		per = 30 * 24 * time.Hour
-	default:
-		return 0, invalidSinceErr(s)
-	}
-	if n <= 0 {
-		return 0, fmt.Errorf("--since must be a positive duration")
-	}
-	if int64(n) > math.MaxInt64/int64(per) {
-		return 0, invalidSinceErr(s)
-	}
-	return time.Duration(n) * per, nil
-}
-
-func invalidSinceErr(s string) error {
-	return fmt.Errorf("invalid --since value %q: supported formats are Nd (days), Nw (weeks), Nm (months), e.g. 30d, 2w, 3m", s)
+	return d, nil
 }
 
 // ApplyFilters returns the per-reviewer records (aggregate records are dropped)

@@ -134,10 +134,12 @@ func TestHistoryCmd_MergesLegacyAndShards(t *testing.T) {
 	// Verify merged record ordering: legacy precedes shards in the result of the
 	// windowed loader the command itself uses (LoadAllSince over the default
 	// window) — the unwindowed LoadAll is never invoked by runHistory.
+	defaultWindow, err := history.ParseSince(defaultHistorySinceFlag)
+	require.NoError(t, err)
 	recs, err := history.LoadAllSince(
 		filepath.Join(root, ".atcr", "history"),
 		legacyPath,
-		defaultHistorySince,
+		defaultWindow,
 		time.Now(),
 	)
 	require.NoError(t, err)
@@ -522,13 +524,13 @@ func TestHistoryCmd_NoWarningWhenPruneHorizonCoversReportWindow(t *testing.T) {
 }
 
 // A destructive retention horizon must be long enough that it cannot plausibly
-// be a mistyped query window: ParseSince's fallback is time.ParseDuration, where
-// "m" means MINUTES, so `--prune 6m` ("six months") would otherwise compute a
-// 6-minute cutoff and irreversibly delete every shard but the current month.
-// Sub-floor horizons are a usage error that names the unit meanings, and nothing
-// is removed.
+// be a mistyped query window. The unit hazard this floor was introduced for is
+// gone at the root — the shared timewindow grammar has no clock units, so "30s"
+// and "1h" no longer parse at all and `--prune 6m` is unambiguously six months
+// (see TestHistoryCmd_PruneMonthsAreMonths below). Sub-floor horizons expressed
+// in the accepted units are still a usage error, and nothing is removed.
 func TestHistoryCmd_PruneBelowSafetyFloorIsUsageErrorAndDeletesNothing(t *testing.T) {
-	for _, horizon := range []string{"6m", "30s", "1h"} {
+	for _, horizon := range []string{"1d", "2w", "27d", "30s", "1h"} {
 		t.Run(horizon, func(t *testing.T) {
 			root := t.TempDir()
 			old := time.Now().Add(-400 * 24 * time.Hour)
@@ -559,6 +561,31 @@ func TestHistoryCmd_PruneBelowSafetyFloorIsUsageErrorAndDeletesNothing(t *testin
 		require.NoError(t, err)
 		assert.NoFileExists(t, shard)
 	})
+}
+
+// `--prune 6m` means six MONTHS, the only reading a user typing it intends. It
+// used to compute a six-MINUTE cutoff (time.ParseDuration's units), which the
+// 28-day floor caught only by rejecting the value outright; now it parses to a
+// real 180-day horizon and prunes what is genuinely older than that.
+func TestHistoryCmd_PruneMonthsAreMonths(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-400 * 24 * time.Hour)
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	writeHistoryShard(t, root, old, map[string]any{
+		"ts": old.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "old1", "file": "p/a.go", "category": "C",
+	})
+	writeHistoryShard(t, root, recent, map[string]any{
+		"ts": recent.UTC().Format(time.RFC3339), "package": "p", "severity": "HIGH",
+		"id": "new1", "file": "p/b.go", "category": "C",
+	})
+	oldShard := filepath.Join(root, ".atcr", "history", old.UTC().Format("2006-01")+".jsonl")
+	newShard := filepath.Join(root, ".atcr", "history", recent.UTC().Format("2006-01")+".jsonl")
+
+	_, err := runHistoryIn(t, root, "--prune", "6m")
+	require.NoError(t, err, "6m is six months — well above the 28-day floor")
+	assert.NoFileExists(t, oldShard, "a 400-day-old shard is outside a six-month horizon")
+	assert.FileExists(t, newShard, "a 2-day-old shard is inside a six-month horizon; a 6-MINUTE cutoff would have deleted it")
 }
 
 // The prune failure path (cli/history.go: on a PruneShards error the command
