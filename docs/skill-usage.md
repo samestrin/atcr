@@ -68,7 +68,7 @@ Invoke the skill from within a git repository and give it one of:
 | Whole repository | `--all` | Reviews every non-ignored, git-tracked file as a full-repository baseline scan |
 | A subtree | `--scope <path>` | Reviews every non-ignored, git-tracked file under that repo-root-relative directory as a scoped baseline scan |
 
-Baseline runs (`--all` / `--scope`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--fresh` to bypass that index and re-review everything in scope. Baseline mode has no diff range — `--all` and `--scope` never combine with `--base`/`--head`/`--merge-commit` or with each other. `--dir` remains a deprecated hidden alias for `--scope`.
+Baseline runs (`--all` / `--scope`) consult a per-file content-hash index and skip any in-scope file unchanged since it was last reviewed; pass `--no-file-cache` to bypass that index and re-review everything in scope (`--fresh` remains a deprecated alias). Baseline mode has no diff range — `--all` and `--scope` never combine with `--base`/`--head`/`--merge-commit` or with each other. `--dir` remains a deprecated hidden alias for `--scope`.
 
 The skill then:
 

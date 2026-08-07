@@ -49,6 +49,28 @@ func writeAuditRecord(stderr io.Writer, ctx context.Context, auditPath, reviewDi
 	return n
 }
 
+// reviewReverifyRequested reports whether the verify stage should re-verify
+// findings that already carry a verdict: the intent-named --reverify, or the
+// deprecated polysemous --fresh resolving by context (--fresh + --verify).
+func reviewReverifyRequested(cmd *cobra.Command) bool {
+	if boolFlag(cmd, "reverify") {
+		return true
+	}
+	return boolFlag(cmd, "fresh") && boolFlag(cmd, "verify")
+}
+
+// reviewNoFileCacheRequested reports whether a baseline scan should bypass the
+// file-hash skip: the intent-named --no-file-cache, or the deprecated
+// polysemous --fresh resolving by context (--fresh with --all/--scope, --dir
+// being --scope's own deprecated alias).
+func reviewNoFileCacheRequested(cmd *cobra.Command) bool {
+	if boolFlag(cmd, "no-file-cache") {
+		return true
+	}
+	return boolFlag(cmd, "fresh") &&
+		(cmd.Flags().Changed("all") || cmd.Flags().Changed("scope") || cmd.Flags().Changed("dir"))
+}
+
 // newReviewCmd builds `atcr review`: resolve the git range, build payloads,
 // create the review directory, and fan out to the persona pool.
 func newReviewCmd() *cobra.Command {
@@ -78,7 +100,9 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
-	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict; with --all/--scope: bypass the file-hash skip and re-review every in-scope file")
+	cmd.Flags().Bool("reverify", false, "with --verify: re-verify findings that already carry a verdict (the verify meaning of the deprecated --fresh)")
+	cmd.Flags().Bool("no-file-cache", false, "with --all/--scope: bypass the file-hash skip and re-review every in-scope file (the baseline meaning of the deprecated --fresh)")
+	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict; with --all/--scope: bypass the file-hash skip and re-review every in-scope file (deprecated: resolves to --reverify with --verify, to --no-file-cache with --all/--scope)")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
@@ -522,12 +546,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		Dir:            dirScope,
 		SprintPlanPath: sprintPlanPath(cmd),
 		PRNumber:       prNumberFromFlags(cmd),
-		// --fresh bypasses the incremental file-hash skip on a baseline scan (Sprint
-		// 35.0 Story 5). ONLY --fresh does this: --force keeps its unrelated
+		// --no-file-cache (or its deprecated --fresh alias on a baseline scan)
+		// bypasses the incremental file-hash skip on a baseline scan (Sprint
+		// 35.0 Story 5). ONLY that flag does this: --force keeps its unrelated
 		// overwrite-existing-review-directory meaning and is never a skip-bypass alias
 		// (AC 05-03 EC1). Read unconditionally; only the baseline prepare paths consume
 		// it, so it is an inert no-op on a diff-range review (AC 04-04 S2).
-		Fresh: boolFlag(cmd, "fresh"),
+		Fresh: reviewNoFileCacheRequested(cmd),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
@@ -803,7 +828,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// findings — a refuted or overturned finding never blocks the gate.
 		if verifyFlag {
 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
-				Fresh:             boolFlag(cmd, "fresh"),
+				Fresh:             reviewReverifyRequested(cmd),
 				Thorough:          boolFlag(cmd, "thorough"),
 				MinSeverity:       verifyMinSev,
 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
