@@ -55,7 +55,7 @@ func newDebtResolveCmd() *cobra.Command {
 	}
 	addDebtStoreFlag(cmd)
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
-	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
+	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
 	cmd.Flags().Int("max", 10, "cap the number of selected items (0 = no cap)")
 	cmd.Flags().String("status", "resolved", "terminal status to record for the positional id (resolved|wontfix)")
 	cmd.Flags().String("reason", "", "justification recorded on the resolution record; replaces any existing justification (e.g. why a finding is wontfix)")

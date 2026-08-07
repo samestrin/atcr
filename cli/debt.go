@@ -294,11 +294,11 @@ func newDebtListCmd() *cobra.Command {
 		RunE:  runDebtList,
 	}
 	addDebtStoreFlag(cmd)
-	cmd.Flags().String("severity", "", "filter by severity (CRITICAL|HIGH|MEDIUM|LOW)")
-	cmd.Flags().String("status", "", "filter by status (open|deferred|resolved|wontfix)")
+	cmd.Flags().String("severity", "", "filter by severity (exact, case-insensitive: CRITICAL|HIGH|MEDIUM|LOW)")
+	cmd.Flags().String("status", "", "filter by status (exact: open|deferred|resolved|wontfix)")
 	cmd.Flags().String("category", "", "filter by category (substring match)")
 	cmd.Flags().String("component", "", "filter by component (path prefix, e.g. internal/autofix)")
-	cmd.Flags().String("origin", "", "filter by origin (review|manual)")
+	cmd.Flags().String("origin", "", "filter by origin (exact: review|manual)")
 	cmd.Flags().String("sort", sortKeySeverity, "sort key: severity|age|est|file")
 	// Same flag name, type, and help string as `debt resolve --json`, so the two
 	// machine-readable surfaces read identically to a caller.

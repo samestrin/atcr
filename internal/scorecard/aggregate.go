@@ -11,7 +11,8 @@ import (
 
 // FilterOpts narrows the record set before aggregation. An empty field means "no
 // restriction" for that dimension. Since is a duration string (Nd/Nw/Nm); Model
-// and Persona are exact-match strings.
+// is a case-insensitive substring match (a full id always matches, so exact-id
+// callers are unaffected); Persona is an exact-match string.
 type FilterOpts struct {
 	Since   string
 	Model   string
@@ -102,7 +103,11 @@ func ApplyFilters(records []Record, opts FilterOpts, now time.Time) ([]Record, e
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
-		if opts.Model != "" && r.Model != opts.Model {
+		// Model is a case-insensitive substring, matching `personas search
+		// --model` (the two commands previously disagreed: leaderboard was
+		// exact-only). A full exact id still matches, so exact-id callers are
+		// unaffected; only previously impossible fragment queries change.
+		if opts.Model != "" && !strings.Contains(strings.ToLower(r.Model), strings.ToLower(opts.Model)) {
 			continue
 		}
 		if opts.Persona != "" && r.Reviewer != opts.Persona {

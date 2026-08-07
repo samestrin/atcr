@@ -148,9 +148,10 @@ atcr debt list --category correctness --sort age   # oldest correctness debt fir
 atcr debt list --json                           # the same selection, as JSON
 ```
 
-Flags: `--store`, `--severity`, `--status` (`open|deferred|resolved|wontfix`),
+Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
+`open|deferred|resolved|wontfix`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
-`--origin` (`review|manual`), `--sort` (`severity|age|est|file`), `--json`.
+`--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`.
 
 `--status` has no default, so a bare `list` shows every item including closed
 ones, each with its effective status — a resolved item stays visible (as
