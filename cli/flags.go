@@ -171,12 +171,13 @@ func addQualitySignalFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("preview", false, "print the exact content-free quality-signal payload that would be transmitted, then exit without sending anything (needs no opt-in and makes no network call)")
 }
 
-// validateDirFlag validates the Sprint 35.0 `--dir <path>` scoped-baseline flag
-// against the repository root and returns the canonical scope: a slash-normalized,
-// repo-root-relative, cleaned path (or "." for the whole-repo degenerate case).
-// An unset --dir returns ("", nil) — not a directory scan. Every rejection is a
-// usageError (exit 2) surfaced before any payload work begins (AC 02-01):
-//   - empty value → "--dir must not be empty"
+// validateDirFlag validates the Sprint 35.0 `--scope <path>` scoped-baseline flag
+// (and its deprecated --dir alias) against the repository root and returns the
+// canonical scope: a slash-normalized, repo-root-relative, cleaned path (or "."
+// for the whole-repo degenerate case). An unset --scope returns ("", nil) — not
+// a directory scan. Every rejection is a usageError (exit 2) surfaced before
+// any payload work begins (AC 02-01), named after the flag actually supplied:
+//   - empty value → "--scope must not be empty"
 //   - resolves outside root (../ escape, an absolute path outside, OR a symlink
 //     whose real target escapes) → "resolves outside the repository root"
 //   - does-not-exist / not-a-directory → distinct messages via a single os.Stat
@@ -189,23 +190,30 @@ func addQualitySignalFlags(cmd *cobra.Command) {
 // so a purely lexical guard would accept a symlink inside root whose real target
 // escapes (e.g. repo/link -> /etc). Resolving both operands also fixes the macOS
 // false-rejection where root is reached through a symlink (/var -> /private/var)
-// but an absolute --dir is supplied in resolved form. This genuinely mirrors
+// but an absolute --scope is supplied in resolved form. This genuinely mirrors
 // --output-dir's defense: the same symlink-resolution discipline as resolveRedactRoot
 // plus a validation.FilePath system-directory denylist (as outputDirFromFlags runs).
 // A non-existent candidate cannot be symlink-resolved, so the guard falls back to a
 // lexical Rel for that case (which still catches a ../ escape) before os.Stat
 // reports "does not exist".
 func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
-	if !cmd.Flags().Changed("dir") {
+	// --scope is canonical; --dir is the deprecated alias. The canonical flag
+	// wins when both are set, and messages name the flag actually supplied.
+	name := "dir"
+	switch {
+	case cmd.Flags().Changed("scope"):
+		name = "scope"
+	case cmd.Flags().Changed("dir"):
+	default:
 		return "", nil
 	}
-	raw, _ := cmd.Flags().GetString("dir")
+	raw, _ := cmd.Flags().GetString(name)
 	if strings.TrimSpace(raw) == "" {
-		return "", usageError(errors.New("--dir must not be empty"))
+		return "", usageError(fmt.Errorf("--%s must not be empty", name))
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return "", usageError(fmt.Errorf("resolving repository root for --dir: %w", err))
+		return "", usageError(fmt.Errorf("resolving repository root for --%s: %w", name, err))
 	}
 	cand := raw
 	if !filepath.IsAbs(cand) {
@@ -230,18 +238,18 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	}
 	rel, err := filepath.Rel(relBase, relTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", usageError(fmt.Errorf("--dir path %q resolves outside the repository root", raw))
+		return "", usageError(fmt.Errorf("--%s path %q resolves outside the repository root", name, raw))
 	}
 
 	fi, err := os.Stat(cand)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", usageError(fmt.Errorf("--dir path %q does not exist", raw))
+			return "", usageError(fmt.Errorf("--%s path %q does not exist", name, raw))
 		}
-		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--%s path %q: %w", name, raw, err))
 	}
 	if !fi.IsDir() {
-		return "", usageError(fmt.Errorf("--dir path %q is not a directory", raw))
+		return "", usageError(fmt.Errorf("--%s path %q is not a directory", name, raw))
 	}
 
 	// Defense-in-depth system-directory denylist, mirroring outputDirFromFlags'
@@ -249,7 +257,7 @@ func validateDirFlag(cmd *cobra.Command, root string) (string, error) {
 	// (guaranteed to exist and to be inside realRoot by the containment check above),
 	// so this only ever trips for a repo pathologically rooted under a system dir.
 	if err := validation.FilePath(relTarget); err != nil {
-		return "", usageError(fmt.Errorf("--dir path %q: %w", raw, err))
+		return "", usageError(fmt.Errorf("--%s path %q: %w", name, raw, err))
 	}
 
 	// Canonical scope: repo-root-relative, slash-normalized. At this point the
@@ -276,11 +284,20 @@ func validateRangeFlags(cmd *cobra.Command) error {
 	head := cmd.Flags().Changed("head")
 	mergeCommit := cmd.Flags().Changed("merge-commit")
 	all := cmd.Flags().Changed("all")
-	dir := cmd.Flags().Changed("dir")
+	// --scope is canonical; --dir is the deprecated alias for the same scoped
+	// baseline scan, so either one trips the baseline exclusion. The message
+	// names the flag actually supplied.
+	scopeName := ""
+	switch {
+	case cmd.Flags().Changed("scope"):
+		scopeName = "--scope"
+	case cmd.Flags().Changed("dir"):
+		scopeName = "--dir"
+	}
 
 	// Baseline exclusions first (TD-001: accurate message wins over range checks).
-	if dir && (base || head || mergeCommit || all) {
-		return usageError(errors.New("--dir cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range"))
+	if scopeName != "" && (base || head || mergeCommit || all) {
+		return usageError(fmt.Errorf("%s cannot be combined with --base/--head/--merge-commit/--all: a scoped baseline scan has no diff range", scopeName))
 	}
 	if all && (base || head || mergeCommit) {
 		return usageError(errors.New("--all cannot be combined with --base/--head/--merge-commit: a full-repository scan has no diff range"))
