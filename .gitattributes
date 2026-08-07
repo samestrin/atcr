@@ -1,0 +1,7 @@
+# The benchmark suite's reproducibility hash is computed over raw diff-file
+# bytes (internal/benchmark/benchmark.go), so any line-ending rewrite on
+# checkout changes the hash and breaks comparison against a published run.
+# One vendored diff already carries mixed CRLF/LF from its upstream project.
+# -text disables all EOL conversion, including core.autocrlf=true (the
+# Git-for-Windows default).
+benchmarks/standard-v1/** -text

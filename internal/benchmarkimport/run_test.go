@@ -54,7 +54,7 @@ func TestRun_DefaultsAreTheCommittedSuitesParameters(t *testing.T) {
 	// suite unreproducible.
 	code, _, stderr := runIngest(t, "-dataset", fixturePath, "-limit", "1", "-h")
 
-	assert.Equal(t, 1, code, "-h exits without ingesting")
+	assert.Equal(t, 0, code, "-h is a successful usage request, not a failure")
 	assert.Contains(t, stderr, "benchmarks/standard-v1", "default output directory")
 	assert.Contains(t, stderr, "20260807", "default seed")
 	assert.Contains(t, stderr, "standard-v1", "default suite identity")

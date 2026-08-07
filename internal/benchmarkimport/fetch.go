@@ -5,18 +5,24 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // DatasetURL is the canonical location of aacr-bench's expert-verified
 // positive samples (Apache-2.0). See benchmarks/standard-v1/NOTICE.md.
-const DatasetURL = "https://raw.githubusercontent.com/alibaba/aacr-bench/main/dataset/positive_samples.json"
+//
+// Pinned to an immutable commit rather than main: Sample() shuffles the whole
+// record pool, so a single record added or removed upstream would change the
+// entire selection and make the committed suite unreproducible.
+const DatasetURL = "https://raw.githubusercontent.com/alibaba/aacr-bench/b3072489eace26efca8bcf2b1ac6a24ba64f82c1/dataset/positive_samples.json"
 
 // maxDatasetBytes bounds the dataset download. The real file is ~1.1 MB; the
 // ceiling keeps a redirect to something unexpected from being read into memory.
@@ -71,7 +77,10 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 	if host == "" {
 		host = "https://api.github.com"
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", strings.TrimSuffix(host, "/"), owner, repo, base, head)
+	// Escaped so a crafted owner/repo value in the dataset cannot redirect the
+	// call with "../" segments.
+	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", strings.TrimSuffix(host, "/"),
+		neturl.PathEscape(owner), neturl.PathEscape(repo), neturl.PathEscape(base), neturl.PathEscape(head))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -98,7 +107,17 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("compare %s/%s %s...%s: unexpected status %s", owner, repo, base, head, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	// Bounded so an oversized PR fails here, at the record that caused it,
+	// rather than after the suite is written and committed.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, benchmark.MaxDiffBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("compare %s/%s: reading diff: %w", owner, repo, err)
+	}
+	if int64(len(body)) > benchmark.MaxDiffBytes {
+		return nil, fmt.Errorf("compare %s/%s %s...%s: diff exceeds the %d-byte runner ceiling",
+			owner, repo, base, head, benchmark.MaxDiffBytes)
+	}
+	return body, nil
 }
 
 // CloneFetcher is the documented fallback for when the compare API is
@@ -156,13 +175,19 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 	}
 
 	// PR head commits are frequently unreachable from any branch tip, so fetch
-	// the exact objects rather than relying on the default refspec.
-	fetch := gitexec.CommandContextFn(ctx, "-C", dir, "fetch", "--depth=1", "origin", base, head)
+	// the exact objects rather than relying on the default refspec. The depth is
+	// not pinned to 1: the three-dot diff below needs the merge base, which a
+	// single-commit fetch cannot supply.
+	fetch := gitexec.CommandContextFn(ctx, "-C", dir, "fetch", "origin", base, head)
 	if out, err := fetch.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, err, strings.TrimSpace(string(out)))
 	}
 
-	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", base+".."+head)
+	// Three-dot, matching the compare API's base...head semantics. Two-dot would
+	// inject the reverse of base-side commits whenever the base branch moved
+	// after the fork point, producing different bytes — and therefore a
+	// different reproducibility hash — than the primary fetcher.
+	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", base+"..."+head)
 	out, err := diff.Output()
 	if err != nil {
 		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)

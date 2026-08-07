@@ -10,9 +10,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// commitSHAPattern bounds the commit fields to a plain hex object name.
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
 // Comment is one expert-verified review comment attached to a PR record.
 type Comment struct {
@@ -61,8 +65,12 @@ func ParseDataset(raw []byte) ([]Record, error) {
 			return nil, fmt.Errorf("record %d duplicates record %d: %s", i, prev, r.GithubPrURL)
 		}
 		seen[r.GithubPrURL] = i
-		if strings.TrimSpace(r.SourceCommit) == "" || strings.TrimSpace(r.TargetCommit) == "" {
-			return nil, fmt.Errorf("record %d (%s): both source_commit and target_commit are required", i, r.GithubPrURL)
+		// Commit values arrive from downloaded third-party JSON and are passed to
+		// git as bare arguments and interpolated into an API path. A value
+		// starting with "-" would be read by git as an option (--upload-pack=...),
+		// so the shape is constrained here rather than trusted.
+		if !commitSHAPattern.MatchString(r.SourceCommit) || !commitSHAPattern.MatchString(r.TargetCommit) {
+			return nil, fmt.Errorf("record %d (%s): source_commit and target_commit must each be a 7-40 character hex SHA", i, r.GithubPrURL)
 		}
 		if len(r.Comments) == 0 {
 			return nil, fmt.Errorf("record %d (%s): no comments, so it carries no ground truth", i, r.GithubPrURL)

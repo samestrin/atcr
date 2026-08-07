@@ -2,6 +2,7 @@ package benchmarkimport
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	)
 
 	if err := fs.Parse(args); err != nil {
+		// -h/-help is a successful request for usage, not a parse failure.
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 

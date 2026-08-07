@@ -152,9 +152,9 @@ func TestBuildSuite_IsByteReproducible(t *testing.T) {
 func TestBuildSuite_SkipsRecordsWithNoMappableCategory(t *testing.T) {
 	dir := t.TempDir()
 	recs := []Record{
-		{GithubPrURL: "https://github.com/o/r/pull/1", SourceCommit: "a", TargetCommit: "b",
+		{GithubPrURL: "https://github.com/o/r/pull/1", SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
 			Comments: []Comment{{Category: "Documentation Update"}}},
-		{GithubPrURL: "https://github.com/o/r/pull/2", SourceCommit: "a", TargetCommit: "b",
+		{GithubPrURL: "https://github.com/o/r/pull/2", SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
 			Comments: []Comment{{Category: "Code Defect"}}},
 	}
 
@@ -170,7 +170,7 @@ func TestBuildSuite_SkipsRecordsWithNoMappableCategory(t *testing.T) {
 func TestBuildSuite_FailsWhenEveryRecordIsSkipped(t *testing.T) {
 	dir := t.TempDir()
 	recs := []Record{
-		{GithubPrURL: "https://github.com/o/r/pull/1", SourceCommit: "a", TargetCommit: "b",
+		{GithubPrURL: "https://github.com/o/r/pull/1", SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
 			Comments: []Comment{{Category: "Documentation Update"}}},
 	}
 
@@ -231,7 +231,7 @@ func TestBuildSuite_RequiresAFetcherAndAnOutputDirectory(t *testing.T) {
 
 func TestBuildSuite_RejectsARecordWithAnUnparsablePullRequestURL(t *testing.T) {
 	_, err := BuildSuite(context.Background(), Options{
-		Records: []Record{{GithubPrURL: "https://example.com/x", SourceCommit: "a", TargetCommit: "b",
+		Records: []Record{{GithubPrURL: "https://example.com/x", SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
 			Comments: []Comment{{Category: "Code Defect"}}}},
 		OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0", Fetcher: &fakeFetcher{},
 	})

@@ -25,8 +25,11 @@ reviewer vocabulary:
 | `Maintainability and Readability` | `maintainability` |
 | `Performance` | `performance` |
 
-No upstream comment text is redistributed here — only the category ground truth
-and the diffs themselves.
+No upstream comment text is redistributed *in this directory* — only the
+category ground truth and the diffs themselves. (A small excerpt of upstream
+records, including truncated `note` text, is vendored separately as a test
+fixture at `internal/benchmarkimport/testdata/positive_samples_fixture.json`;
+it is covered by the same Apache-2.0 attribution recorded here.)
 
 ## Scope of this notice
 

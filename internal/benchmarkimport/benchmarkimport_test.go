@@ -47,12 +47,34 @@ func TestParseDataset_RejectsEmptyAndMalformed(t *testing.T) {
 }
 
 func TestParseDataset_RejectsRecordMissingCommitPair(t *testing.T) {
-	_, err := ParseDataset([]byte(`[{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"","target_commit":"b","comments":[{"category":"Code Defect","path":"a.go"}]}]`))
+	_, err := ParseDataset([]byte(`[{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"","target_commit":"bbbbbbb","comments":[{"category":"Code Defect","path":"a.go"}]}]`))
 	assert.Error(t, err, "a record without both commits cannot produce a diff, so it is refused at parse time")
 }
 
+func TestParseDataset_RejectsCommitValuesThatAreNotHexSHAs(t *testing.T) {
+	// These reach git as bare arguments and the compare URL as path segments, so
+	// an option-shaped or traversal-shaped value must never get that far.
+	for _, bad := range []string{"--upload-pack=touch /tmp/pwned", "-n", "../../etc/passwd", "not a sha", ""} {
+		payload := `[{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"` + bad +
+			`","target_commit":"aaaaaaa","comments":[{"category":"Code Defect","path":"a.go"}]}]`
+
+		_, err := ParseDataset([]byte(payload))
+
+		assert.Error(t, err, "commit value %q must be rejected before it reaches git", bad)
+	}
+}
+
+func TestParseDataset_AcceptsShortAndFullHexSHAs(t *testing.T) {
+	payload := `[{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"1fae8db",` +
+		`"target_commit":"ed57db2b34c2a7a955b2dc76583dce7ace02e628","comments":[{"category":"Code Defect","path":"a.go"}]}]`
+
+	_, err := ParseDataset([]byte(payload))
+
+	assert.NoError(t, err, "both abbreviated and full object names are legitimate upstream values")
+}
+
 func TestParseDataset_RejectsDuplicatePullRequestURLs(t *testing.T) {
-	rec := `{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"a","target_commit":"b","comments":[{"category":"Code Defect","path":"a.go"}]}`
+	rec := `{"githubPrUrl":"https://github.com/o/r/pull/1","source_commit":"aaaaaaa","target_commit":"bbbbbbb","comments":[{"category":"Code Defect","path":"a.go"}]}`
 
 	_, err := ParseDataset([]byte("[" + rec + "," + rec + "]"))
 

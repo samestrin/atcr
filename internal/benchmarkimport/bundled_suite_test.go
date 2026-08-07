@@ -3,6 +3,8 @@ package benchmarkimport_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,15 +43,70 @@ func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, len(distinct), 3, "the suite must span at least 3 categories, got %v", distinct)
 
-	// Every category must be one a reviewer can actually emit (personas/_base.md),
-	// or its recall is structurally zero no matter how good the reviewer is.
-	emittable := map[string]bool{
-		"security": true, "correctness": true, "performance": true,
-		"maintainability": true, "testing": true, "style": true, "docs": true,
-	}
+	// Every category must be one a reviewer is actually prompted to emit, or its
+	// recall is structurally zero no matter how good the reviewer is. The
+	// vocabulary is read from the live prompt rather than copied here, so
+	// reverting the personas/_base.md edit this suite depends on fails the guard.
+	emittable := baseCategoryVocabulary(t)
 	for cat := range distinct {
-		assert.True(t, emittable[cat], "%q is not in the reviewer CATEGORY vocabulary, so it can never be matched", cat)
+		assert.Contains(t, emittable, cat,
+			"%q is not in personas/_base.md's CATEGORY vocabulary, so no reviewer is prompted to emit it", cat)
 	}
+}
+
+// baseCategoryVocabulary parses the CATEGORY word list out of the shared base
+// persona prompt.
+func baseCategoryVocabulary(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile("../../personas/_base.md")
+	require.NoError(t, err)
+
+	m := regexp.MustCompile(`CATEGORY is a single lowercase word \(([^)]*)\)`).FindSubmatch(raw)
+	require.NotNil(t, m, "personas/_base.md must still declare the CATEGORY vocabulary in the expected form")
+
+	var out []string
+	for _, w := range strings.Split(string(m[1]), ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			out = append(out, w)
+		}
+	}
+	require.NotEmpty(t, out)
+	return out
+}
+
+func TestBundledSuite_CaseIdsAreTheGoldenSeededSelection(t *testing.T) {
+	// The committed suite is the -seed 20260807 / -limit 18 selection. Pinning
+	// the exact ids catches a silent re-sample: an upstream record added or
+	// removed, or a change in Go's math/rand stream, would shift the whole
+	// selection while every other assertion here still passed.
+	want := []string{
+		"bluewave-labs-checkmate-pr-2883",
+		"cherryhq-cherry-studio-pr-5637",
+		"cline-cline-pr-4786",
+		"cline-cline-pr-5955",
+		"dotnet-aspnetcore-pr-62734",
+		"elastic-elasticsearch-pr-118183",
+		"elastic-elasticsearch-pr-124403",
+		"electron-electron-pr-46982",
+		"freecad-freecad-pr-18688",
+		"freecad-freecad-pr-20825",
+		"juspay-hyperswitch-pr-7353",
+		"lvgl-lvgl-pr-7602",
+		"n8n-io-n8n-pr-20188",
+		"openai-codex-pr-3212",
+		"timescale-timescaledb-pr-7632",
+		"vllm-project-vllm-pr-12608",
+		"vllm-project-vllm-pr-17425",
+	}
+
+	m, err := benchmark.Load(suiteDir)
+	require.NoError(t, err)
+
+	got := make([]string, 0, len(m.Cases))
+	for _, c := range m.Cases {
+		got = append(got, c.ID)
+	}
+	assert.Equal(t, want, got, "the committed suite is no longer the golden seeded selection")
 }
 
 func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
