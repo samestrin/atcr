@@ -28,6 +28,10 @@ const DatasetURL = "https://raw.githubusercontent.com/alibaba/aacr-bench/b307248
 // ceiling keeps a redirect to something unexpected from being read into memory.
 const maxDatasetBytes = 64 << 20
 
+// maxDiffBytes bounds a fetched diff. It mirrors benchmark.MaxDiffBytes — the
+// runner's per-diff ceiling — and is a var so tests can lower it.
+var maxDiffBytes = benchmark.MaxDiffBytes
+
 // FetchDataset downloads positive_samples.json. This is an authoring-time
 // action — the suite it produces is committed, so no test and no benchmark run
 // depends on this reaching the network.

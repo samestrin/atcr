@@ -150,6 +150,24 @@ func TestCloneFetcher_DiffIgnoresAPoisonedExternalDiffDriver(t *testing.T) {
 		"every diff-family call site must pass --no-ext-diff; these bytes land in a committed benchmark diff")
 }
 
+func TestCloneFetcher_RejectsAnOversizedDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root, base, head := seedRepo(t)
+
+	orig := maxDiffBytes
+	maxDiffBytes = 4 // the seeded diff is larger than this
+	t.Cleanup(func() { maxDiffBytes = orig })
+
+	f := &CloneFetcher{WorkDir: t.TempDir(), BaseURL: root}
+	_, err := f.FetchDiff(context.Background(), "o", "r", base, head)
+
+	require.Error(t, err,
+		"an oversized diff fails at the record that caused it, not after being written and committed")
+	assert.Contains(t, err.Error(), "exceeds", "the runner ceiling is named so the size problem is diagnosable")
+}
+
 func TestCloneFetcher_ReportsAFailedClone(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
