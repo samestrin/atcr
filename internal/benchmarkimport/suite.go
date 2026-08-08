@@ -52,6 +52,16 @@ type Result struct {
 	// record was kept. Without it a partial miss is invisible, and the shrunken
 	// expected set inflates the recall scored against the suite.
 	UnmappedCategories int
+	// Dropped itemizes the records that did not become cases. The counts above
+	// say a suite is 17 of 18; only this says WHICH one dropped and why, which
+	// is what makes the gap auditable after the fact.
+	Dropped []DroppedRecord
+}
+
+// DroppedRecord names one record that did not become a case, and why.
+type DroppedRecord struct {
+	PrURL  string `json:"pr_url"`
+	Reason string `json:"reason"`
 }
 
 // ErrDiffUnavailable marks a record whose diff cannot be retrieved because the

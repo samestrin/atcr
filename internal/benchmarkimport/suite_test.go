@@ -341,6 +341,56 @@ func TestBuildSuite_ResumesFromTheDiffCacheWithoutRefetching(t *testing.T) {
 		"the two diffs the first run already fetched are served from the cache, not re-fetched")
 }
 
+func TestBuildSuite_RecordsWhichRecordsDroppedAndWhy(t *testing.T) {
+	// "17 of 18" with no record of which PR dropped, or why, is unauditable: a
+	// reader cannot tell a dead upstream PR from a category-mapping gap, and
+	// cannot re-check either one later.
+	dir := t.TempDir()
+	recs := loadFixture(t)
+	gone := recs[0]
+	unmappable := Record{
+		GithubPrURL:  "https://github.com/o/r/pull/999",
+		SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
+		Comments: []Comment{{Category: "Documentation Update"}},
+	}
+
+	res, err := BuildSuite(context.Background(), Options{
+		Records: append(append([]Record{}, recs...), unmappable),
+		OutDir:  dir, Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: &fakeFetcher{unavailable: map[string]bool{gone.SourceCommit: true}},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, res.Dropped, 2, "every dropped record is itemized, not just counted")
+	byURL := map[string]string{}
+	for _, d := range res.Dropped {
+		byURL[d.PrURL] = d.Reason
+	}
+	assert.Contains(t, byURL[gone.GithubPrURL], "unavailable",
+		"a PR whose commits are gone upstream says so")
+	assert.Contains(t, byURL[unmappable.GithubPrURL], "category",
+		"a record dropped for having no mappable category says so")
+
+	// And it survives the run, so the committed suite carries its own provenance.
+	raw, err := os.ReadFile(filepath.Join(dir, "dropped.json"))
+	require.NoError(t, err, "the drop list is persisted alongside the suite")
+	assert.Contains(t, string(raw), gone.GithubPrURL)
+	assert.Contains(t, string(raw), unmappable.GithubPrURL)
+}
+
+func TestBuildSuite_WritesNoDropListWhenNothingDropped(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := BuildSuite(context.Background(), Options{
+		Records: loadFixture(t), OutDir: dir, Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: &fakeFetcher{},
+	})
+	require.NoError(t, err)
+
+	assert.NoFileExists(t, filepath.Join(dir, "dropped.json"),
+		"a complete build leaves no empty provenance file to explain")
+}
+
 func TestBuildSuite_StopsWhenTheContextIsCancelled(t *testing.T) {
 	// What Ctrl-C reaches. The fetchers pass ctx to net/http and to git, but a
 	// cached or already-satisfied record never touches either, so the record
