@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -481,7 +482,7 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 // runWith is Run against an already-resolved binary. Preflight uses it so its
 // verification run spawns the exact path it just validated — toolPath has not
 // been pinned at that point, and must not be until the verification succeeds.
-func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (RunResult, error) {
+func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (res RunResult, err error) {
 	args, err := osLevelRunArgs(b.platform(), b.cfg, spec)
 	if err != nil {
 		return RunResult{}, err
@@ -577,10 +578,18 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	cmd.Stderr = lw
 
 	runErr := cmd.Run()
-	res := RunResult{
+	res = RunResult{
 		Command: cmdStr,
 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
 	}
+	// One audit record per executed run, emitted from a defer so it reports the
+	// FINAL outcome. DockerBackend logs its equivalent line immediately here
+	// (docker.go:289-294), before the timeout and exit-code branches have run, so
+	// its audit trail records exit_code=0/timed_out=false for every run including
+	// the killed and faulted ones. The evidence trail for model-authored code is
+	// the wrong place to carry that inaccuracy. Registered after cmd.Run so the
+	// pre-spawn refusals above never emit a record for a run that never happened.
+	defer func() { auditRun(logger, res) }()
 
 	// A cancellation-class end (deadline exceeded OR parent cancellation) is
 	// folded into TimedOut so it is never misreported as a spurious non-zero
@@ -617,8 +626,20 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 		// is a display budget and must not decide a security question.
 		return b.classifyRunError(ctx, res, tool, cmdStr, buf.String(), runErr)
 	}
-	logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
 	return res, nil
+}
+
+// auditRun emits the single structured record of an executed sandbox run:
+// which backend, what was executed, how it ended. It is the evidence trail for
+// code an LLM wrote, so all four fields are always present — a record missing
+// timed_out cannot distinguish "exited 0" from "killed before it finished".
+func auditRun(logger *slog.Logger, res RunResult) {
+	logger.Info("sandbox exec",
+		"backend", osLevelBackendName,
+		"command", res.Command,
+		"exit_code", res.ExitCode,
+		"timed_out", res.TimedOut,
+	)
 }
 
 // osLevelWaitGrace bounds how long cmd.Wait blocks after the sandboxed process
@@ -792,7 +813,6 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 			return res, fmt.Errorf("os-level sandbox run: %s: runtime error: %s: %w", tool, reason, runErr)
 		}
 		res.ExitCode = code
-		logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
 		return res, nil
 	}
 	// Not an exit status: spawn failure, binary vanished, I/O error — a fault.

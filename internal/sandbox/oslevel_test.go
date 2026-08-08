@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -952,4 +955,132 @@ func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = b.Run(context.Background(), spec) }()
 	}
 	wg.Wait()
+}
+
+// ---------------------------------------------------------------------------
+// AC 01-05: fake-shim unit coverage — concurrency capping and structured logging.
+//
+// SCOPE OF PROOF (32.3/Q7): every test below drives a POSIX shell shim that
+// exits however the test tells it to, with no regard for what filesystem or
+// network access it "would" have had. They therefore prove only that the backend
+// bounds its own spawns and records what it did. They prove NOTHING about kernel
+// enforcement — that proof exists only in the //go:build integration tests
+// (AC 02-03/02-04) against the real sandbox-exec/bwrap binary, and a green run
+// here must never be read as containment evidence.
+// ---------------------------------------------------------------------------
+
+// fakeOSLevelSerializationBody returns a shim that brackets a short sleep with
+// two markers appended to logPath. Running two of these concurrently makes the
+// semaphore observable: serialized runs interleave as start/end/start/end, while
+// an unbounded backend produces start/start/end/end.
+//
+// The path is baked into the script rather than passed through the environment
+// because Run hands the workload an explicit allowlist — an env-var hook would be
+// scrubbed before the shim saw it (see TestOSLevelBackendRun_DoesNotLeakParentEnvironment).
+func fakeOSLevelSerializationBody(logPath string) string {
+	return fmt.Sprintf(`echo start >> %q
+sleep 0.3
+echo end >> %q`, logPath, logPath)
+}
+
+func TestOSLevelBackend_ConcurrencyCapSerializesRunsBeyondLimit(t *testing.T) {
+	// AC 01-05 Scenario 3. The cap must actually BLOCK the (MaxConcurrent+1)th
+	// spawn, not merely queue it silently past the limit: MaxConcurrent is the
+	// bound that stops a large finding set — each skeptic running its own tools —
+	// from exhausting the host. Asserting cap(b.sem) alone would stay green if
+	// Run stopped acquiring a slot, which is exactly the regression that already
+	// happened once (1.5.A MEDIUM, semaphore dead on the live path).
+	logPath := filepath.Join(t.TempDir(), "order.log")
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSerializationBody(logPath))
+	cfg.MaxConcurrent = 1
+	b := withContainment(t, NewOSLevelBackend(cfg))
+
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := b.Run(context.Background(), spec)
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"start", "end", "start", "end"}, strings.Fields(string(raw)),
+		"with MaxConcurrent=1 the second Run must block until the first releases its slot")
+}
+
+func TestOSLevelBackendRun_EmitsAuditLog(t *testing.T) {
+	// AC 01-05 Scenario 5. The evidence trail for an executed run is the only
+	// record of what model-authored code was spawned and how it ended, so all
+	// four fields are pinned — mirroring TestDockerBackendRun_EmitsAuditLog
+	// (sandbox_test.go:461) and DockerBackend's own call (docker.go:289-294).
+	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(3))
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	res, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.Equal(t, 3, res.ExitCode)
+
+	out := buf.String()
+	assert.Contains(t, out, "backend=os-level")
+	assert.Contains(t, out, `command="go test"`)
+	// The exit code must be the REAL one. Docker's audit line is emitted before
+	// classification and always records exit_code=0 (docker.go:289 runs ahead of
+	// :331); repeating that here would make the audit trail claim every run
+	// succeeded.
+	assert.Contains(t, out, "exit_code=3")
+	assert.Contains(t, out, "timed_out=false")
+}
+
+func TestOSLevelBackendRun_AuditLogReportsTimeoutAccurately(t *testing.T) {
+	// A killed run is the case the audit trail matters most for, and it is the
+	// one Docker's ahead-of-classification placement cannot report: timed_out
+	// must be true and exit_code the conventional 124, not the zero values the
+	// result carried before the timeout branch ran.
+	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody(filepath.Join(t.TempDir(), "never")))
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	res, err := b.Run(ctx, RunSpec{
+		Command:     []string{"sleep"},
+		SnapshotDir: t.TempDir(),
+		Timeout:     200 * time.Millisecond,
+	})
+	require.NoError(t, err, "a timeout is a result, not a backend fault")
+	require.True(t, res.TimedOut)
+
+	out := buf.String()
+	assert.Contains(t, out, "backend=os-level")
+	assert.Contains(t, out, "timed_out=true")
+	assert.Contains(t, out, fmt.Sprintf("exit_code=%d", timeoutExitCode))
+}
+
+func TestOSLevelBackendRun_AuditLogRecordsAToolFault(t *testing.T) {
+	// A backend fault returns a non-nil error, and the run still happened — the
+	// audit record must exist for it. An audit trail that goes silent exactly
+	// when containment failed is worse than none, because its silence reads as
+	// "no run occurred".
+	body := fmt.Sprintf(`echo %q >&2
+exit 1`, bwrapDiagnosticPrefix+"setting up uid map: Permission denied")
+	b := newFakeOSLevelBackend(t, body)
+	b.goos = "linux"
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	_, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err, "a tool fault must never be folded into ExitCode")
+
+	out := buf.String()
+	assert.Contains(t, out, "backend=os-level")
+	assert.Contains(t, out, `command="go test"`)
+	assert.Contains(t, out, "timed_out=false")
 }
