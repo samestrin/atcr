@@ -85,6 +85,21 @@ func TestExpectedCategories_IsDedupedAndSorted(t *testing.T) {
 		"categories are deduped and sorted; the manifest contract rejects duplicates")
 }
 
+func TestExpectedCategories_RetainsAIProposedCategories(t *testing.T) {
+	// Policy: is_ai_comment is provenance, not a filter. Model-proposed labels
+	// are kept as ground truth exactly as upstream published them (see
+	// benchmarks/standard-v1/NOTICE.md); this test pins that decision.
+	rec := Record{Comments: []Comment{
+		{Category: "Code Defect", IsAIComment: true, SourceModel: "GPT-5.2"},
+		{Category: "Performance", IsAIComment: false},
+	}}
+
+	got := ExpectedCategories(rec)
+
+	assert.Equal(t, []string{"correctness", "performance"}, got,
+		"an AI-proposed label counts toward ground truth exactly as a human one does")
+}
+
 func TestCaseID_IsDerivedFromThePullRequest(t *testing.T) {
 	got, err := CaseID(Record{GithubPrURL: "https://github.com/alibaba/spring-ai-alibaba/pull/869"})
 

@@ -16,7 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/gitexec"
 )
 
-// DatasetURL is the canonical location of aacr-bench's expert-verified
+// DatasetURL is the canonical location of aacr-bench's review-comment
 // positive samples (Apache-2.0). See benchmarks/standard-v1/NOTICE.md.
 //
 // Pinned to an immutable commit rather than main: Sample() shuffles the whole

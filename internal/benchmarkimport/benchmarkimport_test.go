@@ -30,7 +30,7 @@ func TestParseDataset_ReadsRealFixtureShape(t *testing.T) {
 	assert.NotEmpty(t, first.SourceCommit, "source_commit is the compare base")
 	assert.NotEmpty(t, first.TargetCommit, "target_commit is the compare head")
 	assert.NotEmpty(t, first.ProjectMainLanguage, "language travels with the record")
-	assert.NotEmpty(t, first.Comments, "each record carries its expert-verified comments")
+	assert.NotEmpty(t, first.Comments, "each record carries its ground-truth comments")
 	assert.NotEmpty(t, first.Comments[0].Category, "each comment carries a source category")
 	assert.NotEmpty(t, first.Comments[0].Path, "each comment cites a file path")
 }

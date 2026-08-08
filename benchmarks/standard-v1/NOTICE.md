@@ -3,9 +3,13 @@
 This directory contains content derived from **[`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench)**,
 licensed under the **Apache License 2.0**.
 
-- **Upstream dataset:** `dataset/positive_samples.json` — 1,505 expert-verified
-  code-review comments across 196 pull requests, 50 open-source repositories, and
-  10 languages.
+- **Upstream dataset:** `dataset/positive_samples.json` — 1,505 review
+  comments across 196 pull requests, 50 open-source repositories, and 10
+  languages. Upstream's own framing is that these are expert-verified —
+  **retained after human review, not human-authored**: a majority of the
+  comments carry `is_ai_comment: true` with a recorded `source_model`, so the
+  category labels this suite uses as ground truth are model-proposed and
+  expert-retained (see SPOT-CHECK.md).
 - **Paper:** [arXiv:2601.19494](https://arxiv.org/abs/2601.19494)
 - **Mirror:** [huggingface.co/datasets/Alibaba-Aone/aacr-bench](https://huggingface.co/datasets/Alibaba-Aone/aacr-bench)
 

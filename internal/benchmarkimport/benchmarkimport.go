@@ -18,7 +18,11 @@ import (
 // commitSHAPattern bounds the commit fields to a plain hex object name.
 var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
-// Comment is one expert-verified review comment attached to a PR record.
+// Comment is one review comment attached to a PR record. Upstream flags
+// LLM-proposed comments via is_ai_comment and source_model — a majority of the
+// dataset's comments are model-proposed and retained after human review, not
+// human-authored (see benchmarks/standard-v1/NOTICE.md). IsAIComment is decoded
+// for provenance but deliberately does not filter ExpectedCategories.
 type Comment struct {
 	IsAIComment bool   `json:"is_ai_comment"`
 	Note        string `json:"note"`
