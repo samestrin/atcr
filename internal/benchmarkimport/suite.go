@@ -29,6 +29,11 @@ type Options struct {
 	Suite        string
 	SuiteVersion string
 	Fetcher      DiffFetcher
+	// Force permits rebuilding over an existing suite.json that already carries
+	// SuiteVersion. Without it that case is refused: a published version's cases
+	// are content-hashed, so rewriting them in place invalidates the hash anyone
+	// who already compared against it holds.
+	Force bool
 }
 
 // Result reports what a suite build produced.
@@ -162,11 +167,17 @@ func uniqueCaseID(rec Record, taken map[string]string) (string, error) {
 
 // BuildSuite writes suite.json plus one diff file per case into OutDir.
 //
-// Every record is fetched and written before the manifest is emitted, and a
-// fetch failure aborts the whole build: a half-written suite would still load,
-// so a partial ingestion must never look like a complete one. The one exception
-// is ErrDiffUnavailable — a pull request whose commits are gone upstream is a
-// property of that record, so it is dropped and counted.
+// Every record is fetched and written into a staging directory before anything
+// reaches OutDir, and a fetch failure aborts the whole build: a half-written
+// suite would still load, so a partial ingestion must never look like a
+// complete one. The one exception is ErrDiffUnavailable — a pull request whose
+// commits are gone upstream is a property of that record, so it is dropped and
+// counted.
+//
+// Publishing is the last act and reconciles rather than swaps: diffs are moved
+// in, diffs the new manifest does not reference are removed, and suite.json
+// lands last. A wholesale directory swap would also delete the hand-written
+// files a suite carries (NOTICE.md), which are not this builder's to manage.
 func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	var res Result
 
@@ -186,9 +197,22 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	if strings.TrimSpace(opts.SuiteVersion) == "" {
 		return res, fmt.Errorf("a suite version is required")
 	}
+	// Checked before the first fetch, for the same reason: the default -out is
+	// the committed suite, so an accidental re-run must cost nothing and change
+	// nothing.
+	if err := guardPublishedVersion(opts); err != nil {
+		return res, err
+	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return res, fmt.Errorf("creating suite directory: %w", err)
 	}
+
+	// Staged as a sibling of OutDir so publishing is a same-filesystem rename.
+	stage, err := os.MkdirTemp(filepath.Dir(filepath.Clean(opts.OutDir)), ".atcr-suite-")
+	if err != nil {
+		return res, fmt.Errorf("creating staging directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(stage) }()
 
 	manifest := benchmark.Manifest{Suite: opts.Suite, SuiteVersion: opts.SuiteVersion}
 
@@ -234,7 +258,7 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 		}
 
 		name := id + ".diff"
-		if err := os.WriteFile(filepath.Join(opts.OutDir, name), diff, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(stage, name), diff, 0o644); err != nil {
 			return res, fmt.Errorf("case %q: writing diff: %w", id, err)
 		}
 
@@ -263,11 +287,66 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 		return res, fmt.Errorf("encoding manifest: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(filepath.Join(opts.OutDir, "suite.json"), data, 0o644); err != nil {
-		return res, fmt.Errorf("writing suite.json: %w", err)
+
+	if err := publish(stage, opts.OutDir, manifest, data); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// guardPublishedVersion refuses a rebuild that would rewrite the cases of a
+// suite version already on disk. A version bump, a different output directory,
+// or an explicit Force all pass.
+func guardPublishedVersion(opts Options) error {
+	raw, err := os.ReadFile(filepath.Join(opts.OutDir, "suite.json"))
+	if err != nil {
+		// No existing suite is the common case; an unreadable one is left for
+		// the write path to report against the real operation.
+		return nil
+	}
+	var existing benchmark.Manifest
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return nil
+	}
+	if existing.SuiteVersion != opts.SuiteVersion || opts.Force {
+		return nil
+	}
+	return fmt.Errorf("%s already holds suite_version %s: its cases are content-hashed, so rebuilding them in place "+
+		"would invalidate the published hash — bump the version, write elsewhere, or pass -force",
+		opts.OutDir, opts.SuiteVersion)
+}
+
+// publish moves a completed staging build into dst, removes diff files the new
+// manifest does not reference, and writes suite.json last so the manifest is
+// never the thing that arrives early.
+func publish(stage, dst string, manifest benchmark.Manifest, data []byte) error {
+	referenced := make(map[string]bool, len(manifest.Cases))
+	for _, c := range manifest.Cases {
+		referenced[c.Diff] = true
+		if err := os.Rename(filepath.Join(stage, c.Diff), filepath.Join(dst, c.Diff)); err != nil {
+			return fmt.Errorf("publishing %s: %w", c.Diff, err)
+		}
 	}
 
-	return res, nil
+	entries, err := os.ReadDir(dst)
+	if err != nil {
+		return fmt.Errorf("reading suite directory: %w", err)
+	}
+	for _, e := range entries {
+		// Only *.diff is this builder's to prune. NOTICE.md and anything else a
+		// suite carries by hand stays.
+		if e.IsDir() || filepath.Ext(e.Name()) != ".diff" || referenced[e.Name()] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dst, e.Name())); err != nil {
+			return fmt.Errorf("removing orphaned %s: %w", e.Name(), err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(dst, "suite.json"), data, 0o644); err != nil {
+		return fmt.Errorf("writing suite.json: %w", err)
+	}
+	return nil
 }
 
 func repoFromPrURL(raw string) (owner, repo string, err error) {
