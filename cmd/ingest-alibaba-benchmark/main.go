@@ -13,10 +13,26 @@ package main
 import (
 	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/samestrin/atcr/internal/benchmarkimport"
 )
 
 func main() {
-	os.Exit(benchmarkimport.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+	// The context is threaded through FetchDataset, FetchDiff, the retry backoff,
+	// and gitexec's git children. Without a signal handler it can never be
+	// cancelled, so Ctrl-C during a multi-gigabyte clone kills this process
+	// outright and orphans the clone tree. NotifyContext converts the signal
+	// into a cancellation those callees already honor, letting the run unwind
+	// and exit non-zero through Run's own fail path.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	code := benchmarkimport.Run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+
+	// Before os.Exit, which would skip a defer. Restoring the default signal
+	// disposition also means a signal arriving during teardown terminates
+	// normally instead of being swallowed.
+	stop()
+	os.Exit(code)
 }

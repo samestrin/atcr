@@ -341,6 +341,25 @@ func TestBuildSuite_ResumesFromTheDiffCacheWithoutRefetching(t *testing.T) {
 		"the two diffs the first run already fetched are served from the cache, not re-fetched")
 }
 
+func TestBuildSuite_StopsWhenTheContextIsCancelled(t *testing.T) {
+	// What Ctrl-C reaches. The fetchers pass ctx to net/http and to git, but a
+	// cached or already-satisfied record never touches either, so the record
+	// loop has to check cancellation itself — otherwise an interrupt is only
+	// noticed at the next network call, if ever.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	f := &fakeFetcher{}
+	_, err := BuildSuite(ctx, Options{
+		Records: loadFixture(t), OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: f,
+	})
+
+	require.ErrorIs(t, err, context.Canceled,
+		"an interrupted run must surface as a failed run, not finish building a partial suite")
+	assert.Empty(t, f.calls, "cancellation is noticed before any further fetch is issued")
+}
+
 func TestBuildSuite_IgnoresAnEmptyCachedDiff(t *testing.T) {
 	// A cache entry truncated by a crash mid-write must not be mistaken for a
 	// completed fetch — a blank diff fails the whole build downstream.
