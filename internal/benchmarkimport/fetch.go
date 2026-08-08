@@ -217,8 +217,11 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 	// Three-dot, matching the compare API's base...head semantics. Two-dot would
 	// inject the reverse of base-side commits whenever the base branch moved
 	// after the fork point, producing different bytes — and therefore a
-	// different reproducibility hash — than the primary fetcher.
-	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", base+"..."+head)
+	// different reproducibility hash — than the primary fetcher. The hardening
+	// flags are the repo-wide convention for diff-family call sites (see
+	// internal/gitexec's package doc): the bytes produced here land in a
+	// committed benchmark diff and its published hash.
+	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", "--no-ext-diff", "--no-color", "--no-textconv", base+"..."+head)
 	out, err := diff.Output()
 	if err != nil {
 		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
