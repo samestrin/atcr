@@ -543,9 +543,31 @@ func TestBuildSuite_WritesDiffFilesInsideTheSuiteDirectory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Asserting only that the entries already inside dir are files pins "the
+	// suite is flat", not "diffs stay inside the suite directory": an
+	// implementation writing every diff to ../ would leave dir holding just
+	// suite.json and still pass. Containment has to be asserted from the
+	// manifest's own Diff values.
+	m, err := benchmark.Load(dir)
+	require.NoError(t, err)
+	require.NotEmpty(t, m.Cases)
+
+	onDisk := map[string]bool{}
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	for _, e := range entries {
 		assert.False(t, e.IsDir(), "the suite is flat: %s", e.Name())
+		if filepath.Ext(e.Name()) == ".diff" {
+			onDisk[e.Name()] = true
+		}
 	}
+
+	referenced := map[string]bool{}
+	for _, c := range m.Cases {
+		assert.Equal(t, dir, filepath.Dir(filepath.Join(dir, c.Diff)),
+			"case %q resolves outside the suite directory: %q", c.ID, c.Diff)
+		referenced[c.Diff] = true
+	}
+	assert.Equal(t, referenced, onDisk,
+		"the *.diff files on disk and the diffs the manifest names must be the same set")
 }
