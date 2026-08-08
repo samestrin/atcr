@@ -140,6 +140,40 @@ func TestParseDataset_RejectsAMalformedPullRequestURL(t *testing.T) {
 	assert.Error(t, err, "the PR URL is validated at the parse boundary alongside the commit SHAs")
 }
 
+func TestUniqueCaseID_DisambiguatesOnlyAGenuineCollision(t *testing.T) {
+	taken := map[string]string{}
+	issue := func(url string) string {
+		t.Helper()
+		id, err := uniqueCaseID(Record{GithubPrURL: url}, taken)
+		require.NoError(t, err)
+		taken[id] = url
+		return id
+	}
+
+	plain := issue("https://github.com/foo/bar-baz/pull/7")
+	assert.Equal(t, "foo-bar-baz-pr-7", plain, "the plain format is kept when there is no collision — committed ids are immutable")
+
+	colliding := issue("https://github.com/foo-bar/baz/pull/7")
+	assert.NotEqual(t, plain, colliding,
+		"foo-bar/baz and foo/bar-baz derive the same slug; the second must be disambiguated before any write")
+
+	dotted := issue("https://github.com/foo/bar.baz/pull/7")
+	assert.NotEqual(t, plain, dotted)
+	assert.NotEqual(t, colliding, dotted)
+}
+
+func TestUniqueCaseID_RejectsADuplicateRecordBeforeWriting(t *testing.T) {
+	taken := map[string]string{}
+	rec := Record{GithubPrURL: "https://github.com/foo/bar/pull/7"}
+
+	id, err := uniqueCaseID(rec, taken)
+	require.NoError(t, err)
+	taken[id] = rec.GithubPrURL
+
+	_, err = uniqueCaseID(rec, taken)
+	assert.Error(t, err, "the same record twice would silently overwrite its own diff")
+}
+
 func TestBuildSuite_WritesAManifestTheContractAccepts(t *testing.T) {
 	dir := t.TempDir()
 	recs := loadFixture(t)

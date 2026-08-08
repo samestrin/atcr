@@ -2,6 +2,7 @@ package benchmarkimport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,6 +111,11 @@ func ExpectedCategories(rec Record) (cats []string, unmapped int) {
 // CaseID derives a stable, slug-safe case id from a record's PR URL. Case ids
 // may legally contain "/" per the manifest contract, but a flat slug keeps the
 // id usable as its own diff filename.
+//
+// The slug is NOT injective: it erases the owner/repo boundary, so
+// foo-bar/baz, foo/bar-baz, and foo/bar.baz all derive the same id. Callers
+// writing files keyed by id must go through uniqueCaseID, which resolves
+// collisions without disturbing the committed suite's ids.
 func CaseID(rec Record) (string, error) {
 	m := prURLPattern.FindStringSubmatch(strings.TrimSpace(rec.GithubPrURL))
 	if m == nil {
@@ -121,6 +127,35 @@ func CaseID(rec Record) (string, error) {
 	id := fmt.Sprintf("%s-%s-pr-%s", slug(m[1]), slug(m[2]), m[3])
 	if id == "" || strings.HasPrefix(id, "-") {
 		return "", fmt.Errorf("derived an empty case id from %q", rec.GithubPrURL)
+	}
+	return id, nil
+}
+
+// uniqueCaseID resolves rec's case id against the ids already issued in this
+// build. CaseID's dash-slug erases the owner/repo boundary — foo-bar/baz,
+// foo/bar-baz, and foo/bar.baz all derive the same id — so a collision must
+// never reach the diff write: the second record's bytes would overwrite the
+// first's on disk before manifest.Validate could complain. The committed
+// suite's ids are immutable (they are pinned golden and content-hashed), so
+// the plain format is kept whenever possible and only a genuine collision is
+// disambiguated, deterministically, with a short hash of the full URL.
+func uniqueCaseID(rec Record, taken map[string]string) (string, error) {
+	id, err := CaseID(rec)
+	if err != nil {
+		return "", err
+	}
+	prev, dup := taken[id]
+	if !dup {
+		return id, nil
+	}
+	if prev == rec.GithubPrURL {
+		return "", fmt.Errorf("case id %q: record %q appears twice in the input", id, rec.GithubPrURL)
+	}
+	sum := sha256.Sum256([]byte(rec.GithubPrURL))
+	id = fmt.Sprintf("%s-%x", id, sum[:4])
+	if other, stillDup := taken[id]; stillDup {
+		return "", fmt.Errorf("case id collision between %q and %q persists after disambiguation (%q already holds it)",
+			prev, rec.GithubPrURL, other)
 	}
 	return id, nil
 }
@@ -147,6 +182,7 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 
 	manifest := benchmark.Manifest{Suite: opts.Suite, SuiteVersion: opts.SuiteVersion}
 
+	seenIDs := make(map[string]string, len(opts.Records))
 	for _, rec := range opts.Records {
 		// Records may be constructed programmatically, bypassing ParseDataset's
 		// commit validation; re-assert it at the trust boundary so an
@@ -162,10 +198,11 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			continue
 		}
 
-		id, err := CaseID(rec)
+		id, err := uniqueCaseID(rec, seenIDs)
 		if err != nil {
 			return res, err
 		}
+		seenIDs[id] = rec.GithubPrURL
 
 		owner, repo, err := repoFromPrURL(rec.GithubPrURL)
 		if err != nil {
