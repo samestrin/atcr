@@ -57,7 +57,9 @@ func TestRun_DefaultsAreTheCommittedSuitesParameters(t *testing.T) {
 	assert.Equal(t, 0, code, "-h is a successful usage request, not a failure")
 	assert.Contains(t, stderr, "benchmarks/standard-v1", "default output directory")
 	assert.Contains(t, stderr, "20260807", "default seed")
-	assert.Contains(t, stderr, "standard-v1", "default suite identity")
+	assert.Contains(t, stderr, "default 18", "default sample size — the committed suite is the 18-record selection")
+	assert.Contains(t, stderr, `default "1.0.0"`, "default suite_version — pinned by the bundled-suite manifest assertion")
+	assert.Contains(t, stderr, `default "standard-v1"`, "default suite identity (quoted form, distinct from the output path)")
 }
 
 func TestGithubToken_PrefersGitHubTokenThenGhToken(t *testing.T) {
