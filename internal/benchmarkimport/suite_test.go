@@ -212,9 +212,12 @@ func TestBuildSuite_WritesAManifestTheContractAccepts(t *testing.T) {
 func TestBuildSuite_ProducesThePinnedHashAndIdenticalBytes(t *testing.T) {
 	// Comparing two runs to each other only catches Go map-iteration order,
 	// which sort.Strings already removes — it cannot fail on a real regression.
-	// The golden pin is what notices a changed sort key, a changed id format, a
-	// changed manifest encoding, or a reordered case list.
-	const wantHash = "REPLACE_WITH_ACTUAL"
+	// The golden pin is what notices a changed case-id format, a changed
+	// category mapping, or changed diff content. Manifest case ORDER is
+	// deliberately outside the pin (ReproHashManifest re-sorts by id); the
+	// byte-equality assertion below is what covers ordering, by failing if two
+	// runs of the same records ever emit different suite.json bytes.
+	const wantHash = "50d620ddd8629d52555780705b2835747d3064e3c0657e5f7c0919381228510b"
 
 	recs := loadFixture(t)
 
