@@ -20,4 +20,10 @@ regexes = [
   # generic-api-key entropy rule mistakes them for credentials. They are schema
   # identifiers from a public open-source pull request, not secrets.
   '''_hyper_\d+_\d+_chunk''',
+
+  # internal/log/redact_test.go feeds a deliberately fake OpenAI-shaped key to
+  # the redactor to prove the sk- pattern stops at the JSON token boundary. The
+  # literal must stay in the source for the test to mean anything, so the one
+  # fixture string is allowlisted rather than the file.
+  '''sk-abc123DEF''',
 ]
