@@ -944,8 +944,15 @@ func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 	// concurrent use, so that write must be synchronized — a torn read would
 	// decide which binary is spawned to contain untrusted code. Meaningful under
 	// `go test -race`.
-	b := (newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
-	b.cfg.MaxConcurrent = 4
+	// MaxConcurrent is set at construction, not mutated afterwards: the
+	// constructor sizes sem from cfg and semOnce only allocates when sem is nil,
+	// so a post-construction cfg edit would leave cap(sem) at the old value and
+	// this test would quietly exercise concurrency 1 while claiming 4.
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelExecBody())
+	cfg.MaxConcurrent = 4
+	b := withContainment(t, NewOSLevelBackend(cfg))
+	require.Equal(t, 4, cap(b.sem), "cfg.MaxConcurrent and cap(sem) must not diverge")
 	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
 
 	var wg sync.WaitGroup
@@ -1028,15 +1035,17 @@ func TestOSLevelBackendRun_EmitsAuditLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, res.ExitCode)
 
-	out := buf.String()
-	assert.Contains(t, out, "backend=os-level")
-	assert.Contains(t, out, `command="go test"`)
+	rec := auditRecord(t, buf.String())
+	assert.Contains(t, rec, "backend=os-level")
+	assert.Contains(t, rec, `command="go test"`)
+	assert.Contains(t, rec, "tool="+b.cfg.ToolPath, "the record must name the binary that contained the run")
 	// The exit code must be the REAL one. Docker's audit line is emitted before
 	// classification and always records exit_code=0 (docker.go:289 runs ahead of
 	// :331); repeating that here would make the audit trail claim every run
 	// succeeded.
-	assert.Contains(t, out, "exit_code=3")
-	assert.Contains(t, out, "timed_out=false")
+	assert.Contains(t, rec, "exit_code=3")
+	assert.Contains(t, rec, "timed_out=false")
+	assert.Contains(t, rec, "fault=false", "an ordinary non-zero workload exit is evidence, not a fault")
 }
 
 func TestOSLevelBackendRun_AuditLogReportsTimeoutAccurately(t *testing.T) {
@@ -1057,10 +1066,11 @@ func TestOSLevelBackendRun_AuditLogReportsTimeoutAccurately(t *testing.T) {
 	require.NoError(t, err, "a timeout is a result, not a backend fault")
 	require.True(t, res.TimedOut)
 
-	out := buf.String()
-	assert.Contains(t, out, "backend=os-level")
-	assert.Contains(t, out, "timed_out=true")
-	assert.Contains(t, out, fmt.Sprintf("exit_code=%d", timeoutExitCode))
+	rec := auditRecord(t, buf.String())
+	assert.Contains(t, rec, "backend=os-level")
+	assert.Contains(t, rec, "timed_out=true")
+	assert.Contains(t, rec, fmt.Sprintf("exit_code=%d", timeoutExitCode))
+	assert.Contains(t, rec, "fault=false", "a timeout is an outcome, not a backend fault")
 }
 
 func TestOSLevelBackendRun_AuditLogRecordsAToolFault(t *testing.T) {
@@ -1079,8 +1089,53 @@ exit 1`, bwrapDiagnosticPrefix+"setting up uid map: Permission denied")
 	_, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
 	require.Error(t, err, "a tool fault must never be folded into ExitCode")
 
-	out := buf.String()
-	assert.Contains(t, out, "backend=os-level")
-	assert.Contains(t, out, `command="go test"`)
-	assert.Contains(t, out, "timed_out=false")
+	// Assert against the audit record ITSELF, not the whole buffer: `backend=`
+	// and `command=` also appear on the "sandbox exec start" and "runtime error"
+	// lines, so buffer-wide substring checks would pass even if auditRun never
+	// ran. The record must also be distinguishable from a clean exit-0 run —
+	// `exit_code=0` is what a fault carries (TD-005), so `fault=true` is the
+	// field doing that work.
+	rec := auditRecord(t, buf.String())
+	assert.Contains(t, rec, "backend=os-level")
+	assert.Contains(t, rec, `command="go test"`)
+	assert.Contains(t, rec, "timed_out=false")
+	assert.Contains(t, rec, "fault=true", "a containment failure must not render as a clean run")
+	assert.Contains(t, rec, "level=ERROR")
+}
+
+func TestOSLevelBackendRun_AuditLogRecordsARunThatNeverSpawned(t *testing.T) {
+	// A fork/exec failure (binary missing, not executable) means no process was
+	// ever created. The run was still announced, so it must still be accounted
+	// for — and it must not read as a successful exit 0.
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
+	b := withContainment(t, NewOSLevelBackend(cfg))
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	_, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err)
+
+	rec := auditRecord(t, buf.String())
+	assert.Contains(t, rec, "fault=true")
+	assert.Contains(t, rec, "tool=/nonexistent/os-sandbox-binary-xyz",
+		"the record must name the binary that was supposed to contain the run")
+}
+
+// auditRecord returns the single `msg="sandbox exec"` line from captured log
+// output, failing the test if there is not exactly one. Matching the record
+// rather than the whole buffer is deliberate: `backend=`/`command=` appear on
+// the start and diagnostic lines too, so a buffer-wide assertion can pass while
+// the audit record itself is missing or wrong.
+func auditRecord(t *testing.T, out string) string {
+	t.Helper()
+	var found []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, `msg="sandbox exec"`) {
+			found = append(found, line)
+		}
+	}
+	require.Len(t, found, 1, "expected exactly one audit record, got:\n%s", out)
+	return found[0]
 }

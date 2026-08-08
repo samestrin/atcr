@@ -533,7 +533,19 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	}
 	logger := log.FromContext(ctx)
 	cmdStr := renderCommand(spec)
-	logger.Info("sandbox exec start", "backend", osLevelBackendName, "command", cmdStr)
+	logger.Info("sandbox exec start", "backend", osLevelBackendName, "tool", tool, "command", cmdStr)
+	// Exactly one terminal record per start line, emitted from a defer so it
+	// reports the FINAL outcome. Registered immediately after the start line, so
+	// every path that announced a run also accounts for it — including the ones
+	// that fail before the process is created. The pre-spawn refusals ABOVE this
+	// point (no containment argv, Writable, a queued cancellation) never log a
+	// start, so they correctly produce no record at all.
+	//
+	// DockerBackend logs its equivalent line inline (docker.go:289-294) before the
+	// timeout and exit-code branches run, so its trail records
+	// exit_code=0/timed_out=false for every run including the killed and faulted
+	// ones. The evidence trail for model-authored code should not carry that.
+	defer func() { auditRun(logger, tool, res, err) }()
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -552,7 +564,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// allowlist has to be built here. Phase 2 adds bwrap's --clearenv on top.
 	scratchDir, err := os.MkdirTemp("", "atcr-oslevel-scratch-*")
 	if err != nil {
-		return RunResult{}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
+		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(scratchDir) }()
 	cmd.Env = sandboxEnv(scratchDir)
@@ -582,14 +594,6 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 		Command: cmdStr,
 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
 	}
-	// One audit record per executed run, emitted from a defer so it reports the
-	// FINAL outcome. DockerBackend logs its equivalent line immediately here
-	// (docker.go:289-294), before the timeout and exit-code branches have run, so
-	// its audit trail records exit_code=0/timed_out=false for every run including
-	// the killed and faulted ones. The evidence trail for model-authored code is
-	// the wrong place to carry that inaccuracy. Registered after cmd.Run so the
-	// pre-spawn refusals above never emit a record for a run that never happened.
-	defer func() { auditRun(logger, res) }()
 
 	// A cancellation-class end (deadline exceeded OR parent cancellation) is
 	// folded into TimedOut so it is never misreported as a spurious non-zero
@@ -629,17 +633,38 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	return res, nil
 }
 
-// auditRun emits the single structured record of an executed sandbox run:
-// which backend, what was executed, how it ended. It is the evidence trail for
-// code an LLM wrote, so all four fields are always present — a record missing
-// timed_out cannot distinguish "exited 0" from "killed before it finished".
-func auditRun(logger *slog.Logger, res RunResult) {
-	logger.Info("sandbox exec",
+// auditRun emits the single structured record of a sandbox run: which backend
+// and which binary contained it, what was executed, and how it ended.
+//
+// It is the evidence trail for code an LLM wrote, so every field is always
+// present. Two of them are load-bearing rather than decorative:
+//
+//   - fault distinguishes "the workload ran under containment and exited 0" from
+//     "containment was never established, so nothing about this run is vouched
+//     for". Without it the two render identically: RunResult.ExitCode stays 0 on
+//     every fault path (a fault has no program exit status to report, and the
+//     non-nil error is the caller's signal — see TD-005), so exit_code alone
+//     reads a containment failure as a clean success. A fault is also logged at
+//     ERROR, so the distinction survives a reader who scans levels rather than
+//     attributes.
+//   - tool names the binary that actually did the containing. Which binary runs
+//     is the security decision in this file (see toolPath), and an operator's
+//     tool_path override and the Preflight-pinned default are indistinguishable
+//     from the workload command alone.
+func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error) {
+	attrs := []any{
 		"backend", osLevelBackendName,
+		"tool", tool,
 		"command", res.Command,
 		"exit_code", res.ExitCode,
 		"timed_out", res.TimedOut,
-	)
+		"fault", runErr != nil,
+	}
+	if runErr != nil {
+		logger.Error("sandbox exec", append(attrs, "error", runErr)...)
+		return
+	}
+	logger.Info("sandbox exec", attrs...)
 }
 
 // osLevelWaitGrace bounds how long cmd.Wait blocks after the sandboxed process
