@@ -209,11 +209,17 @@ func TestBuildSuite_WritesAManifestTheContractAccepts(t *testing.T) {
 	}
 }
 
-func TestBuildSuite_IsByteReproducible(t *testing.T) {
+func TestBuildSuite_ProducesThePinnedHashAndIdenticalBytes(t *testing.T) {
+	// Comparing two runs to each other only catches Go map-iteration order,
+	// which sort.Strings already removes — it cannot fail on a real regression.
+	// The golden pin is what notices a changed sort key, a changed id format, a
+	// changed manifest encoding, or a reordered case list.
+	const wantHash = "REPLACE_WITH_ACTUAL"
+
 	recs := loadFixture(t)
 
-	hashes := make([]string, 2)
-	for i := range hashes {
+	build := func() (string, map[string]string) {
+		t.Helper()
 		dir := t.TempDir()
 		_, err := BuildSuite(context.Background(), Options{
 			Records: recs, OutDir: dir, Suite: "standard-v1", SuiteVersion: "1.0.0",
@@ -222,11 +228,17 @@ func TestBuildSuite_IsByteReproducible(t *testing.T) {
 		require.NoError(t, err)
 		h, err := benchmark.ReproHash(dir)
 		require.NoError(t, err)
-		hashes[i] = h
+		return h, dirListing(t, dir)
 	}
 
-	assert.Equal(t, hashes[0], hashes[1],
-		"two ingestions of the same records produce an identical reproducibility hash")
+	hashA, bytesA := build()
+	hashB, bytesB := build()
+
+	assert.Equal(t, wantHash, hashA,
+		"this fixture must keep producing the pinned hash; a change here is a reproducibility regression, not a test to update reflexively")
+	assert.Equal(t, hashA, hashB, "two ingestions of the same records agree")
+	assert.Equal(t, bytesA, bytesB,
+		"and agree byte-for-byte across every emitted file, which is what this test's name claims")
 }
 
 func TestBuildSuite_RefusesToRebuildOverTheSameSuiteVersion(t *testing.T) {
