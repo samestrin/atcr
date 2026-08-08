@@ -111,16 +111,19 @@ const execWrapperFile = "internal/gitexec/gitexec.go"
 //
 //   - internal/verify/localvalidate.go execs the user's validate command via argv[0].
 //   - internal/sandbox/docker.go execs the docker binary via b.cfg.DockerPath.
+//   - internal/sandbox/oslevel.go execs the platform sandboxing binary
+//     (sandbox-exec on macOS, bwrap on Linux) via the path toolPath() resolves.
 //
 // The AC4 scan flags every indirected exec (a `git`-via-variable call is exactly the
-// snapshot.go form found and migrated in the Phase 1 gate), so these two must be
+// snapshot.go form found and migrated in the Phase 1 gate), so these must be
 // allowlisted or they would false-positive. This is a deliberate, documented trust
-// grant on two specific files — narrow, and reviewed the same way this list is edited.
+// grant on specific files — narrow, and reviewed the same way this list is edited.
 // Note a literal "git" is an offender EVEN in these files (see classifyExecCall): the
 // allowlist excuses only their known non-git indirected form, not a bare git call.
 var indirectNonGitExecFiles = map[string]bool{
 	"internal/verify/localvalidate.go": true,
 	"internal/sandbox/docker.go":       true,
+	"internal/sandbox/oslevel.go":      true,
 }
 
 // gitExecMigratedSites are every production file that was migrated to construct

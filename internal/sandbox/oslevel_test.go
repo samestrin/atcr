@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,14 +166,16 @@ func writeFakeOSLevel(t *testing.T, body string) string {
 	return p
 }
 
-// fakeOSLevelExitBody returns a shim body that exits with the code in
-// OSLEVEL_EXIT_CODE, mirroring fakeDockerExitBody's DOCKER_EXIT_CODE hook.
-func fakeOSLevelExitBody() string {
-	return `if [ -n "$OSLEVEL_EXIT_CODE" ]; then
-  echo "fake os-level tool exit $OSLEVEL_EXIT_CODE" >&2
-  exit "$OSLEVEL_EXIT_CODE"
-fi
-exit 0`
+// fakeOSLevelExitBody returns a shim body that exits with code.
+//
+// The value is baked into the script rather than read from an env var (as
+// fakeDockerExitBody does with DOCKER_EXIT_CODE) because Run hands the workload
+// an explicit environment allowlist — an env-var hook would be scrubbed away
+// before the shim ever saw it. That scrub is the point; see
+// TestOSLevelBackendRun_DoesNotLeakParentEnvironment.
+func fakeOSLevelExitBody(code int) string {
+	return fmt.Sprintf(`echo "fake os-level tool exit %d" >&2
+exit %d`, code, code)
 }
 
 func newFakeOSLevelBackend(t *testing.T, body string) *osLevelBackend {
@@ -187,12 +189,11 @@ func newFakeOSLevelBackend(t *testing.T, body string) *osLevelBackend {
 func TestOSLevelBackendRun_NormalExitIsResultNotError(t *testing.T) {
 	// Backend.Run's contract (sandbox.go:112-114): a non-zero program exit is
 	// reported via ExitCode, never as a Go error.
-	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody())
 	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
 
 	for _, code := range []int{0, 1, 3, 42} {
 		t.Run(fmt.Sprintf("exit-%d", code), func(t *testing.T) {
-			t.Setenv("OSLEVEL_EXIT_CODE", strconv.Itoa(code))
+			b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(code))
 			res, err := b.Run(context.Background(), spec)
 			require.NoError(t, err, "a program exit must never surface as a backend error")
 			assert.Equal(t, code, res.ExitCode)
@@ -202,7 +203,7 @@ func TestOSLevelBackendRun_NormalExitIsResultNotError(t *testing.T) {
 }
 
 func TestOSLevelBackendRun_RendersCommandForEvidence(t *testing.T) {
-	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody())
+	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(0))
 	res, err := b.Run(context.Background(), RunSpec{
 		Command:     []string{"go", "test", "./..."},
 		SnapshotDir: t.TempDir(),
@@ -212,22 +213,26 @@ func TestOSLevelBackendRun_RendersCommandForEvidence(t *testing.T) {
 		"RunResult.Command feeds the evidence_exec block and the report")
 }
 
-// fakeOSLevelSleepBody sleeps past any test deadline, then touches the file named
-// by OSLEVEL_MARKER. The marker is the proof of the kill: if it appears, the
-// workload outlived its deadline instead of being killed.
-func fakeOSLevelSleepBody() string {
-	return `sleep 30
-touch "$OSLEVEL_MARKER"`
+// fakeOSLevelSleepBody sleeps, then touches the file named by OSLEVEL_MARKER.
+//
+// The sleep is deliberately SHORTER than the observation window the kill test
+// waits out: the marker must be reachable in the absence of a kill, otherwise
+// asserting its absence proves nothing. A background subshell writes a second
+// marker so the assertion also covers a grandchild that the direct-child kill
+// alone would leave running — the case the process group exists for.
+func fakeOSLevelSleepBody(marker string) string {
+	return fmt.Sprintf(`( sleep 2; touch %q ) &
+sleep 2
+touch %q`, marker+".child", marker)
 }
 
-func TestOSLevelBackendRun_TimeoutKillsAndReports124(t *testing.T) {
+func TestOSLevelBackendRun_TimeoutKillsWholeProcessGroupAndReports124(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "survived")
-	t.Setenv("OSLEVEL_MARKER", marker)
-	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody())
+	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody(marker))
 
 	start := time.Now()
 	res, err := b.Run(context.Background(), RunSpec{
-		Command:     []string{"sleep", "30"},
+		Command:     []string{"sleep", "2"},
 		SnapshotDir: t.TempDir(),
 		Timeout:     300 * time.Millisecond,
 	})
@@ -238,15 +243,19 @@ func TestOSLevelBackendRun_TimeoutKillsAndReports124(t *testing.T) {
 	assert.Equal(t, timeoutExitCode, res.ExitCode)
 	assert.Less(t, elapsed, 10*time.Second, "Run must not hang past its deadline")
 
-	time.Sleep(200 * time.Millisecond)
+	// Outlast the shim's own 2s sleep. Both markers would exist by now if the
+	// workload had been allowed to finish, so their absence is real evidence of
+	// the kill rather than a race the test always wins.
+	time.Sleep(3 * time.Second)
 	assert.NoFileExists(t, marker, "the sandboxed workload must be killed, not left running")
+	assert.NoFileExists(t, marker+".child",
+		"a forked grandchild must be reaped too — that is what the process group is for")
 }
 
 func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
 	// A cancellation must never be misreported as a spurious non-zero exit or a
 	// backend fault, matching docker.go:301.
-	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody())
-	t.Setenv("OSLEVEL_MARKER", filepath.Join(t.TempDir(), "survived"))
+	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody(filepath.Join(t.TempDir(), "survived")))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -264,10 +273,9 @@ func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
 func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
 	// docker.go:252-255 equivalent: an unset RunSpec.Timeout uses cfg.Timeout.
 	cfg := DefaultOSLevelConfig()
-	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSleepBody())
+	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSleepBody(filepath.Join(t.TempDir(), "survived")))
 	cfg.Timeout = 300 * time.Millisecond
 	b := NewOSLevelBackend(cfg)
-	t.Setenv("OSLEVEL_MARKER", filepath.Join(t.TempDir(), "survived"))
 
 	start := time.Now()
 	res, err := b.Run(context.Background(), RunSpec{
@@ -283,11 +291,11 @@ func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
 
 func TestOSLevelBackendRun_TruncatesCombinedOutput(t *testing.T) {
 	// Both streams are captured and bounded, mirroring docker.go:279-287.
-	b := newFakeOSLevelBackend(t, `
+	b := newFakeOSLevelBackend(t, `echo "stdout-marker"
+echo "stderr-marker" >&2
 i=0
 while [ $i -lt 400 ]; do
-  echo "stdout-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  echo "stderr-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" >&2
+  echo "filler-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   i=$((i + 1))
 done
 exit 0`)
@@ -300,7 +308,126 @@ exit 0`)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(res.Output), 512, "output must be truncated to MaxOutputBytes")
 	assert.Contains(t, res.Output, "truncated")
-	assert.Contains(t, res.Output, "stdout-", "stdout must be captured")
+	// Both markers are emitted first, so they sit inside the retained prefix.
+	// Asserting stderr explicitly means dropping `cmd.Stderr = lw` — which would
+	// silently erase every diagnostic from a failing workload — fails the test.
+	assert.Contains(t, res.Output, "stdout-marker", "stdout must be captured")
+	assert.Contains(t, res.Output, "stderr-marker", "stderr must be captured")
+}
+
+func TestOSLevelRunArgs_ModesAndValidation(t *testing.T) {
+	cfg := DefaultOSLevelConfig()
+	snap := t.TempDir()
+
+	t.Run("command mode passes argv through verbatim", func(t *testing.T) {
+		args, err := osLevelRunArgs(cfg, RunSpec{Command: []string{"go", "test", "./..."}, SnapshotDir: snap})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"go", "test", "./..."}, args)
+	})
+
+	t.Run("script mode feeds sh -s over stdin", func(t *testing.T) {
+		args, err := osLevelRunArgs(cfg, RunSpec{Script: "echo hi", SnapshotDir: snap})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/bin/sh", "-s"}, args)
+		assert.NotContains(t, strings.Join(args, " "), "echo hi",
+			"the script body must never reach argv — it travels as stdin data")
+	})
+
+	t.Run("rejects a malformed spec before building anything", func(t *testing.T) {
+		for name, spec := range map[string]RunSpec{
+			"neither command nor script": {SnapshotDir: snap},
+			"both command and script":    {Command: []string{"true"}, Script: "echo hi", SnapshotDir: snap},
+			"missing snapshot dir":       {Command: []string{"true"}},
+			"relative snapshot dir":      {Command: []string{"true"}, SnapshotDir: "relative/path"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				args, err := osLevelRunArgs(cfg, spec)
+				require.Error(t, err)
+				assert.Nil(t, args)
+			})
+		}
+	})
+}
+
+// fakeOSLevelEchoStdinBody makes the shim cat its stdin, so a test can observe
+// exactly what Run streams to `sh -s` — the only way to assert stdin content.
+func fakeOSLevelEchoStdinBody() string { return `cat` }
+
+func TestOSLevelBackendRun_ScriptTravelsAsStdinNotArgv(t *testing.T) {
+	// The injection-safety guarantee (sandbox.go:51-56) is that a script body is
+	// program source delivered over stdin, never a shell argument.
+	b := newFakeOSLevelBackend(t, fakeOSLevelEchoStdinBody())
+	script := "echo 'quoted; $(whoami) `id`'"
+
+	res, err := b.Run(context.Background(), RunSpec{Script: script, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.Contains(t, res.Output, script, "the script body must reach the tool over stdin")
+
+	args, err := osLevelRunArgs(b.cfg, RunSpec{Script: script, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	for _, a := range args {
+		assert.NotContains(t, a, "whoami", "no script token may be interpolated into argv")
+	}
+}
+
+func TestOSLevelBackendRun_RunsInsideTheSnapshotDir(t *testing.T) {
+	// Leaving cmd.Dir unset would run model-authored code in atcr's own working
+	// directory — the operator's live repo — rather than the snapshot.
+	snap := t.TempDir()
+	b := newFakeOSLevelBackend(t, `pwd`)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"pwd"}, SnapshotDir: snap})
+	require.NoError(t, err)
+	// macOS resolves TempDir under /private; compare resolved paths.
+	wantDir, err := filepath.EvalSymlinks(snap)
+	require.NoError(t, err)
+	gotDir, err := filepath.EvalSymlinks(strings.TrimSpace(res.Output))
+	require.NoError(t, err)
+	assert.Equal(t, wantDir, gotDir)
+}
+
+func TestOSLevelBackendRun_DoesNotLeakParentEnvironment(t *testing.T) {
+	// Inheriting os.Environ() would hand every credential in the operator's
+	// shell to LLM-generated code. Neither sandbox-exec nor bwrap scrubs the
+	// environment on its own, so the allowlist has to hold here.
+	t.Setenv("ATCR_TEST_FAKE_SECRET", "super-secret-token")
+	b := newFakeOSLevelBackend(t, `env`)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"env"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.NotContains(t, res.Output, "super-secret-token",
+		"a parent-environment secret must never reach the sandboxed workload")
+	assert.NotContains(t, res.Output, "ATCR_TEST_FAKE_SECRET")
+	assert.Contains(t, res.Output, "PATH=", "the allowlist must still provide PATH")
+}
+
+func TestOSLevelBackendRun_RefusesWritableOverlay(t *testing.T) {
+	// Writable asks for an ephemeral copy so the snapshot stays read-only. This
+	// backend has no overlay yet, and silently ignoring the flag would run the
+	// workload directly against the operator's snapshot.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(0))
+	_, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: t.TempDir(),
+		Writable:    true,
+	})
+	require.Error(t, err, "an unhonored isolation flag must fail closed, not be ignored")
+	assert.Contains(t, err.Error(), "Writable")
+}
+
+func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {
+	// A struct-literal backend bypasses NewOSLevelBackend and leaves sem nil;
+	// the lazy alloc must still enforce a cap rather than failing open
+	// (mirrors TestDockerBackend_StructLiteral_AppliesConcurrencyCap).
+	b := &osLevelBackend{cfg: OSLevelConfig{
+		ToolPath:       writeFakeOSLevel(t, fakeOSLevelExitBody(0)),
+		Timeout:        5 * time.Second,
+		MaxOutputBytes: 1024,
+		MaxConcurrent:  2,
+	}}
+	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.Equal(t, 2, cap(b.sem), "the nil-sem bypass must not silently disable the cap")
 }
 
 func TestOSLevelToolFor_SupportedPlatforms(t *testing.T) {
