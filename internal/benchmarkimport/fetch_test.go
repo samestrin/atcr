@@ -2,6 +2,7 @@ package benchmarkimport
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -296,6 +297,90 @@ func TestCloneFetcher_DefaultsToGitHub(t *testing.T) {
 
 	assert.Equal(t, "https://github.com/o/r.git", f.cloneURL("o", "r"),
 		"the fallback targets github.com unless explicitly redirected")
+}
+
+func TestCloneFetcher_DiffFormatIsPinnedAgainstLocalGitConfig(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root, base, head := seedFormatRepo(t)
+
+	// The three knobs a git config can turn that silently change the diff bytes
+	// committed into a benchmark suite. gitexec neutralizes system and global
+	// config, but not env-injected config, and never the clone's own local
+	// config — so the format has to be pinned at the call site.
+	t.Setenv("GIT_CONFIG_COUNT", "3")
+	t.Setenv("GIT_CONFIG_KEY_0", "diff.context")
+	t.Setenv("GIT_CONFIG_VALUE_0", "7")
+	t.Setenv("GIT_CONFIG_KEY_1", "diff.noprefix")
+	t.Setenv("GIT_CONFIG_VALUE_1", "true")
+	t.Setenv("GIT_CONFIG_KEY_2", "diff.renames")
+	t.Setenv("GIT_CONFIG_VALUE_2", "false")
+
+	f := &CloneFetcher{WorkDir: t.TempDir(), BaseURL: root}
+	got, err := f.FetchDiff(context.Background(), "o", "r", base, head)
+
+	require.NoError(t, err)
+	out := string(got)
+
+	// line 10 of a 20-line file changed: three lines of context each side is
+	// @@ -7,7 +7,7 @@; seven would be @@ -3,15 +3,15 @@.
+	assert.Contains(t, out, "@@ -7,7 +7,7 @@",
+		"context width must be pinned at the call site — diff.context changes the committed bytes and the reproducibility hash")
+	assert.Contains(t, out, "+++ b/wide.txt",
+		"a/ and b/ prefixes must be pinned — diff.noprefix rewrites every file header")
+	assert.Contains(t, out, "rename from old.txt",
+		"rename detection must be pinned ON: the compare API emits `similarity index`/`rename from`, so disabling it diverges from the primary fetcher")
+}
+
+// seedFormatRepo builds a repository whose diff exposes the config-sensitive
+// parts of git's output: a change with enough surrounding lines to distinguish
+// context widths, and a pure rename to distinguish rename detection.
+func seedFormatRepo(t *testing.T) (root, base, head string) {
+	t.Helper()
+	root = t.TempDir()
+	dir := filepath.Join(root, "o", "r.git")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	wide := func(line10 string) []byte {
+		lines := make([]string, 0, 20)
+		for i := 1; i <= 20; i++ {
+			if i == 10 {
+				lines = append(lines, line10)
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("line %d", i))
+		}
+		return []byte(strings.Join(lines, "\n") + "\n")
+	}
+
+	run("init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "wide.txt"), wide("line 10"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "old.txt"), []byte("moved unchanged\n"), 0o644))
+	run("add", "wide.txt", "old.txt")
+	run("commit", "-q", "-m", "one")
+	base = run("rev-parse", "HEAD")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "wide.txt"), wide("changed line 10"), 0o644))
+	run("mv", "old.txt", "new.txt")
+	run("add", "wide.txt")
+	run("commit", "-q", "-m", "two")
+	head = run("rev-parse", "HEAD")
+
+	run("config", "uploadpack.allowAnySHA1InWant", "true")
+	return root, base, head
 }
 
 // seedRepo builds a two-commit git repository laid out as <root>/o/r.git so a
