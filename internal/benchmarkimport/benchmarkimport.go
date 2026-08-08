@@ -85,17 +85,22 @@ func ParseDataset(raw []byte) ([]Record, error) {
 
 // Sample selects a deterministic subset of size n for the given seed.
 //
-// Records are canonicalized by URL before shuffling so the selection depends on
-// the seed alone — a reordered upstream release yields the same sample. The
-// result is sorted for the same reason: the emitted suite, and therefore its
+// Records are canonicalized before shuffling so the selection depends on the
+// seed alone — a reordered upstream release yields the same sample. The result
+// is sorted for the same reason: the emitted suite, and therefore its
 // reproducibility hash, must not vary with input ordering.
+//
+// The uniqueness invariant that makes URLs a safe primary key is owned by
+// ParseDataset, which rejects duplicate PR URLs. Sample is exported and
+// callable with arbitrary records, so its comparator is total (URL, then the
+// commit pair): the documented order independence holds even without it.
 func Sample(recs []Record, n int, seed int64) ([]Record, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("sample size must be positive, got %d", n)
 	}
 	pool := make([]Record, len(recs))
 	copy(pool, recs)
-	sort.Slice(pool, func(i, j int) bool { return pool[i].GithubPrURL < pool[j].GithubPrURL })
+	sort.Slice(pool, func(i, j int) bool { return recordLess(pool[i], pool[j]) })
 
 	if n > len(pool) {
 		n = len(pool)
@@ -105,6 +110,18 @@ func Sample(recs []Record, n int, seed int64) ([]Record, error) {
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
 
 	out := pool[:n]
-	sort.Slice(out, func(i, j int) bool { return out[i].GithubPrURL < out[j].GithubPrURL })
+	sort.Slice(out, func(i, j int) bool { return recordLess(out[i], out[j]) })
 	return out, nil
+}
+
+// recordLess orders records canonically: PR URL first, then the commit pair,
+// so the order is total even when two records share a URL.
+func recordLess(a, b Record) bool {
+	if a.GithubPrURL != b.GithubPrURL {
+		return a.GithubPrURL < b.GithubPrURL
+	}
+	if a.SourceCommit != b.SourceCommit {
+		return a.SourceCommit < b.SourceCommit
+	}
+	return a.TargetCommit < b.TargetCommit
 }
