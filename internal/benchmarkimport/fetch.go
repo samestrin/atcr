@@ -1,6 +1,7 @@
 package benchmarkimport
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -119,13 +120,13 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 	}
 	// Bounded so an oversized PR fails here, at the record that caused it,
 	// rather than after the suite is written and committed.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, benchmark.MaxDiffBytes+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDiffBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("compare %s/%s: reading diff: %w", owner, repo, err)
 	}
-	if int64(len(body)) > benchmark.MaxDiffBytes {
+	if int64(len(body)) > maxDiffBytes {
 		return nil, fmt.Errorf("compare %s/%s %s...%s: diff exceeds the %d-byte runner ceiling",
-			owner, repo, base, head, benchmark.MaxDiffBytes)
+			owner, repo, base, head, maxDiffBytes)
 	}
 	return body, nil
 }
@@ -226,9 +227,31 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 	// internal/gitexec's package doc): the bytes produced here land in a
 	// committed benchmark diff and its published hash.
 	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", "--no-ext-diff", "--no-color", "--no-textconv", base+"..."+head)
-	out, err := diff.Output()
+	var stderr bytes.Buffer
+	diff.Stderr = &stderr
+	stdout, err := diff.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
+	}
+	if err := diff.Start(); err != nil {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, maxDiffBytes+1))
+	waitErr := diff.Wait()
+	if readErr != nil {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: reading diff: %w", base, head, owner, repo, readErr)
+	}
+	if waitErr != nil {
+		// git's own stderr is the diagnostic (e.g. "no merge base" on a partial
+		// clone); a bare "exit status 128" sends the operator nowhere.
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w: %s", base, head, owner, repo, waitErr, strings.TrimSpace(stderr.String()))
+	}
+	// Bounded like the compare fetcher, so an oversized PR fails at the record
+	// that caused it instead of exhausting memory or being committed and
+	// failing later inside ReproHashManifest.
+	if int64(len(out)) > maxDiffBytes {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: diff exceeds the %d-byte runner ceiling",
+			base, head, owner, repo, maxDiffBytes)
 	}
 	return out, nil
 }
