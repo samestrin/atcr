@@ -165,7 +165,7 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 		if scratch, err = profileSafePath("ScratchDir", cfg.ScratchDir); err != nil {
 			return "", err
 		}
-		if err := assertUsableWritableRoot("ScratchDir", scratch); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinSystemReadDirs); err != nil {
 			return "", err
 		}
 		if err := assertDisjointPaths(snapshot, scratch); err != nil {
@@ -323,12 +323,12 @@ func profileSafePath(field, path string) (string, error) {
 // ~/.ssh and wrote into $HOME from inside the sandbox. It is checked explicitly
 // rather than left to the disjointness math, because it is the one value whose
 // blast radius is total.
-func assertUsableWritableRoot(field, path string) error {
+func assertUsableWritableRoot(field, path string, protected []string) error {
 	if path == string(filepath.Separator) {
 		return fmt.Errorf("sandbox: %s must not be the filesystem root: a writable carve-out at %q "+
 			"grants the whole filesystem and overrides the deny-default", field, path)
 	}
-	for _, dir := range darwinSystemReadDirs {
+	for _, dir := range protected {
 		if pathContains(path, dir) {
 			return fmt.Errorf("sandbox: %s %q must not contain the system directory %q: "+
 				"a writable carve-out there would let a run modify the toolchain that validates it",
@@ -379,4 +379,187 @@ func pathContains(parent, child string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// Sandbox mount points, matching dockerRunArgs (docker.go:172-189) exactly:
+// the snapshot is the working tree at /work when read-only, and moves to /src
+// with a writable copy at /work when RunSpec.Writable is set. Reusing Docker's
+// mount points is what lets a workload that hardcodes /work behave identically
+// on either backend, which is the point of Backend being a drop-in interface.
+const (
+	bwrapWorkDir = "/work"
+	bwrapSrcDir  = "/src"
+)
+
+// linuxRequiredRoots must be visible or nothing can execute inside the
+// namespaces — there is no dynamic loader, no shell, and no toolchain without
+// /usr. It is bound read-only at its own path.
+var linuxRequiredRoots = []string{"/usr"}
+
+// linuxOptionalRoots are bound read-only with --ro-bind-try, which skips a path
+// that does not exist instead of aborting the sandbox. Most modern distributions
+// symlink /bin, /sbin, /lib and /lib64 into /usr (usrmerge), so on those hosts
+// these are absent as real directories and a hard --ro-bind would fail every
+// run. /etc carries the resolver and passwd databases some toolchains stat at
+// startup; it is read-only, and the network namespace makes its resolver
+// configuration inert anyway.
+var linuxOptionalRoots = []string{"/bin", "/sbin", "/lib", "/lib64", "/etc"}
+
+// bwrapArgs builds the bubblewrap argument list for spec: full namespace
+// isolation, a read-only view of the toolchain and the snapshot, an ephemeral
+// /tmp, and write access confined to the scratch directory.
+//
+// bwrap's model is the inverse of sandbox-exec's. There is no profile and no
+// deny-default clause to write: nothing is visible inside the namespaces unless
+// it is explicitly bound in, so the containment IS the bind set. That is why
+// the tests assert the PRESENCE of --unshare-net rather than the absence of a
+// network allow — there is no "deny network" flag to assert against, and a
+// missing --unshare-net is itself the containment failure.
+//
+// Like sandboxExecProfile this is pure: no filesystem access, no spawn, so the
+// argv can be asserted without bwrap installed. Every path is a discrete argv
+// element and the list is handed to os/exec with no shell, so a path containing
+// spaces or shell metacharacters carries no injection risk.
+func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+	if err := spec.validate(); err != nil {
+		return nil, err
+	}
+	snapshot := filepath.Clean(spec.SnapshotDir)
+	scratch := ""
+	if cfg.ScratchDir != "" {
+		if !filepath.IsAbs(cfg.ScratchDir) {
+			return nil, fmt.Errorf("sandbox: ScratchDir must be an absolute path, got %q", cfg.ScratchDir)
+		}
+		scratch = filepath.Clean(cfg.ScratchDir)
+		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots()); err != nil {
+			return nil, err
+		}
+		if err := assertDisjointPaths(snapshot, scratch); err != nil {
+			return nil, err
+		}
+	}
+	if spec.Writable && scratch == "" {
+		return nil, fmt.Errorf("sandbox: RunSpec.Writable requires a ScratchDir to back the writable %s tree", bwrapWorkDir)
+	}
+
+	args := []string{
+		// Network isolation. --unshare-net removes every interface but loopback,
+		// which blocks all socket families rather than just TCP — stronger in
+		// scope than Docker's --network none.
+		"--unshare-net",
+		// PID/IPC/UTS isolation, so the workload cannot see, signal, or reach
+		// host processes and shared memory.
+		"--unshare-pid",
+		"--unshare-ipc",
+		"--unshare-uts",
+		// Reap the sandbox if atcr dies, so a workload cannot outlive the
+		// process that is supposed to bound it.
+		"--die-with-parent",
+		// A separate session, so the workload cannot inject keystrokes into the
+		// operator's terminal with TIOCSTI.
+		"--new-session",
+		// A private /proc is required once the PID namespace is unshared —
+		// without it the workload sees the host's process table.
+		"--proc", "/proc",
+		// A minimal device tree: null, zero, random, urandom, tty. Not a bind of
+		// the host /dev, so no block device or raw hardware node is reachable.
+		"--dev", "/dev",
+	}
+
+	// Read-only mounts first. bwrap applies binds in argv order, so everything
+	// read-only is established before any writable mount, and the shadowing
+	// check below proves no later writable mount covers one of them.
+	for _, dir := range linuxRequiredRoots {
+		args = append(args, "--ro-bind", dir, dir)
+	}
+	for _, dir := range linuxOptionalRoots {
+		args = append(args, "--ro-bind-try", dir, dir)
+	}
+	// An ephemeral /tmp rather than a bind of the host's. A shared host /tmp
+	// exposes the run to other processes' temp files and to the predictable-path
+	// and symlink-race preconditions that come with a world-writable directory;
+	// a fresh tmpfs closes both by construction and dies with the sandbox. This
+	// continues DockerBackend's ephemeral --tmpfs /scratch precedent, and is
+	// deliberately stronger than the macOS side, where sandbox-exec can only
+	// allow the real /tmp.
+	args = append(args, "--tmpfs", "/tmp")
+
+	if spec.Writable {
+		args = append(args, "--ro-bind", snapshot, bwrapSrcDir)
+	} else {
+		args = append(args, "--ro-bind", snapshot, bwrapWorkDir)
+	}
+	if scratch != "" {
+		// Bound at its own host path, because Run points HOME, TMPDIR, GOCACHE
+		// and the XDG cache at that path (sandboxEnv, oslevel.go) — a toolchain
+		// with an unreachable HOME fails before it starts.
+		args = append(args, "--bind", scratch, scratch)
+		if spec.Writable {
+			// And again at /work, which is the writable tree the Docker mount
+			// convention promises. Two mounts of one source is how bwrap
+			// expresses "visible in both places"; there is no aliasing risk
+			// because both are the same writable directory.
+			args = append(args, "--bind", scratch, bwrapWorkDir)
+		}
+	}
+	args = append(args, "--chdir", bwrapWorkDir)
+
+	// The shadowing check runs on the ASSEMBLED argv rather than on the inputs,
+	// so it holds however the bind set above is later rearranged. bwrap applies
+	// binds in order, so a writable mount covering an earlier read-only one
+	// silently widens access — the containment failure AC 02-02 Error Scenario 2
+	// requires an error for rather than a silently-wider argv.
+	if err := assertNoBindShadowing(args); err != nil {
+		return nil, err
+	}
+	return args, nil
+}
+
+// linuxProtectedRoots are the mounts a writable scratch directory must not
+// contain: the toolchain the validation command runs from.
+func linuxProtectedRoots() []string {
+	roots := append([]string{}, linuxRequiredRoots...)
+	return append(roots, linuxOptionalRoots...)
+}
+
+// assertNoBindShadowing rejects an argv in which a writable --bind is applied
+// at or above the destination of an earlier read-only mount.
+func assertNoBindShadowing(args []string) error {
+	type mount struct {
+		dest     string
+		writable bool
+		index    int
+	}
+	var mounts []mount
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--bind":
+			if i+2 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: --bind is missing an operand")
+			}
+			mounts = append(mounts, mount{dest: args[i+2], writable: true, index: i})
+			i += 2
+		case "--ro-bind", "--ro-bind-try":
+			if i+2 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+2], index: i})
+			i += 2
+		}
+	}
+	for _, later := range mounts {
+		if !later.writable {
+			continue
+		}
+		for _, earlier := range mounts {
+			if earlier.writable || earlier.index > later.index {
+				continue
+			}
+			if pathContains(later.dest, earlier.dest) {
+				return fmt.Errorf("sandbox: writable bind at %q would shadow the read-only mount at %q "+
+					"(bwrap applies binds in order, so this silently widens access)", later.dest, earlier.dest)
+			}
+		}
+	}
+	return nil
 }

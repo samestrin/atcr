@@ -488,3 +488,275 @@ func TestSandboxExecProfile_ZeroConfigStillProducesASafeProfile(t *testing.T) {
 	assert.Contains(t, profile, `(allow file-read* (subpath "`+spec.SnapshotDir+`"))`)
 	assert.NotContains(t, profile, `(subpath "")`, "an empty scratch dir must be omitted, never emitted as an empty subpath")
 }
+
+// --- AC 02-02: Linux bwrap argv generation (shape) --------------------------
+
+// argvPairs returns every (flag, value) pair for flag in the argv, so a test can
+// assert on the bind SET rather than on positional indices. bwrap takes its
+// bind arguments positionally (--ro-bind SRC DEST), so a pair extractor is the
+// honest way to read them back.
+func argvPairs(t *testing.T, argv []string, flag string) [][2]string {
+	t.Helper()
+	var out [][2]string
+	for i := 0; i < len(argv); i++ {
+		if argv[i] != flag {
+			continue
+		}
+		require.Less(t, i+2, len(argv)+1, "%s must be followed by SRC and DEST: %v", flag, argv)
+		require.Less(t, i+2, len(argv), "%s is missing its DEST operand: %v", flag, argv)
+		out = append(out, [2]string{argv[i+1], argv[i+2]})
+		i += 2
+	}
+	return out
+}
+
+func TestBwrapArgs_AlwaysUnsharesNetworkAndPID(t *testing.T) {
+	// AC 02-02 Security Considerations. bwrap has no "deny network" flag to
+	// assert against — the ABSENCE of --unshare-net IS the containment failure,
+	// so its presence is asserted directly, for every Writable value. The
+	// network namespace blocks all socket families, not just TCP, which is
+	// stronger in scope than Docker's --network none.
+	cfg, spec := profileFixture(t)
+
+	for _, writable := range []bool{false, true} {
+		spec := spec
+		spec.Writable = writable
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
+
+		assert.Contains(t, argv, "--unshare-net", "no network namespace means no containment of egress")
+		assert.Contains(t, argv, "--unshare-pid")
+		assert.Contains(t, argv, "--die-with-parent",
+			"a workload that outlives the sandbox process is not contained by it")
+	}
+}
+
+func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
+	// bwrap's model is allow-list — nothing is visible unless bound in — so the
+	// equivalent of deny-default is that no bind exposes / or a home directory.
+	cfg, spec := profileFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+
+	for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
+		for _, pair := range argvPairs(t, argv, flag) {
+			assert.NotEqual(t, "/", pair[0], "%s must never take the host root as its source: %v", flag, pair)
+			assert.NotEqual(t, "/", pair[1], "%s must never mount over the sandbox root: %v", flag, pair)
+			assert.False(t, strings.HasPrefix(pair[0], "/home/"),
+				"%s must never expose a home directory: %v", flag, pair)
+			assert.False(t, strings.HasPrefix(pair[0], "/root"),
+				"%s must never expose root's home: %v", flag, pair)
+		}
+	}
+}
+
+func TestBwrapArgs_SnapshotIsReadOnlyAtWorkAndWritableSplitsToSrc(t *testing.T) {
+	// AC 02-02 Scenario 1/2. The mount points mirror dockerRunArgs exactly
+	// (docker.go:172-189): Writable:false binds the snapshot read-only at /work;
+	// Writable:true binds it read-only at /src and puts the writable scratch at
+	// /work. Reusing Docker's mount points is what lets a workload that
+	// hardcodes /work behave the same on either backend.
+	cfg, spec := profileFixture(t)
+
+	t.Run("read-only", func(t *testing.T) {
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
+		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{spec.SnapshotDir, "/work"})
+		for _, pair := range argvPairs(t, argv, "--bind") {
+			assert.NotEqual(t, spec.SnapshotDir, pair[0], "the snapshot must never be bound writable")
+		}
+		assert.Contains(t, argv, "--chdir")
+	})
+
+	t.Run("writable", func(t *testing.T) {
+		spec := spec
+		spec.Writable = true
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
+		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{spec.SnapshotDir, "/src"},
+			"the snapshot stays read-only; only an ephemeral copy is writable")
+		assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{cfg.ScratchDir, "/work"})
+		for _, pair := range argvPairs(t, argv, "--bind") {
+			assert.NotEqual(t, spec.SnapshotDir, pair[0], "the snapshot must never be bound writable")
+		}
+	})
+}
+
+func TestBwrapArgs_TmpIsAnEphemeralTmpfsNotTheHostTmp(t *testing.T) {
+	// Decided in the Phase 2 clarifications: --tmpfs /tmp, not a host bind. A
+	// shared host /tmp exposes the workload to other processes' temp files and
+	// to predictable-path/symlink race preconditions that an ephemeral mount
+	// closes by construction, and it continues DockerBackend's own ephemeral
+	// --tmpfs /scratch precedent.
+	cfg, spec := profileFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+
+	require.Contains(t, argv, "--tmpfs")
+	for i, a := range argv {
+		if a == "--tmpfs" {
+			require.Less(t, i+1, len(argv))
+		}
+	}
+	for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
+		for _, pair := range argvPairs(t, argv, flag) {
+			assert.NotEqual(t, "/tmp", pair[0], "the host /tmp must not be bound into the sandbox: %v", pair)
+		}
+	}
+}
+
+func TestBwrapArgs_ToolchainBindsAreReadOnlyAndNarrow(t *testing.T) {
+	// AC 02-02 Scenario 3. The interpreter and toolchain must be visible or
+	// nothing executes inside the namespaces, but they are read-only and named
+	// rather than a blanket --ro-bind / /.
+	cfg, spec := profileFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+
+	ro := append(argvPairs(t, argv, "--ro-bind"), argvPairs(t, argv, "--ro-bind-try")...)
+	var haveUsr bool
+	for _, pair := range ro {
+		if pair[0] == "/usr" {
+			haveUsr = true
+			assert.Equal(t, "/usr", pair[1], "a toolchain path must be mounted at its own location")
+		}
+	}
+	assert.True(t, haveUsr, "/usr must be visible read-only or no binary can be executed")
+
+	// Nothing under a toolchain path may also be writable.
+	for _, w := range argvPairs(t, argv, "--bind") {
+		for _, r := range ro {
+			assert.False(t, pathContains(w[1], r[1]),
+				"writable bind at %q covers the read-only toolchain mount at %q", w[1], r[1])
+		}
+	}
+}
+
+func TestBwrapArgs_RejectsBindOrderShadowing(t *testing.T) {
+	// AC 02-02 Error Scenario 2. bwrap applies binds in argv order, so a later
+	// writable --bind covering an earlier --ro-bind silently widens access.
+	// The generator must refuse rather than emit such an argv — and the check is
+	// asserted on the emitted argv itself, so it holds however the bind set is
+	// later rearranged.
+	cfg, spec := profileFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+
+	type mount struct {
+		dest     string
+		writable bool
+		index    int
+	}
+	var mounts []mount
+	for i := 0; i < len(argv); i++ {
+		switch argv[i] {
+		case "--bind":
+			mounts = append(mounts, mount{argv[i+2], true, i})
+			i += 2
+		case "--ro-bind", "--ro-bind-try":
+			mounts = append(mounts, mount{argv[i+2], false, i})
+			i += 2
+		}
+	}
+	for _, later := range mounts {
+		if !later.writable {
+			continue
+		}
+		for _, earlier := range mounts {
+			if earlier.writable || earlier.index > later.index {
+				continue
+			}
+			assert.False(t, pathContains(later.dest, earlier.dest),
+				"writable bind at %q (argv %d) shadows the read-only mount at %q (argv %d)",
+				later.dest, later.index, earlier.dest, earlier.index)
+		}
+	}
+}
+
+func TestBwrapArgs_RejectsScratchOverlappingSnapshot(t *testing.T) {
+	// AC 02-02 Edge Case 2, the same decision as the macOS profile: reject, do
+	// not silently relocate. On Linux the overlap is what MAKES the shadowing
+	// above possible, so refusing it at the source is the cheaper guarantee.
+	cfg, spec := profileFixture(t)
+	for name, scratch := range map[string]string{
+		"nested":                     spec.SnapshotDir + "/scratch",
+		"identical":                  spec.SnapshotDir,
+		"snapshot nested in scratch": "/Users/dev",
+		"filesystem root":            "/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := cfg
+			cfg.ScratchDir = scratch
+			argv, err := bwrapArgs(cfg, spec)
+			require.Error(t, err)
+			assert.Nil(t, argv, "no partial argv may be returned alongside an error")
+		})
+	}
+}
+
+func TestBwrapArgs_PathsAreDiscreteArgvElements(t *testing.T) {
+	// AC 02-02 Edge Case 1. bwrap is spawned via os/exec with this argv and no
+	// shell, so a path with a space or a metacharacter is safe as long as this
+	// generator never joins paths into one string. Asserted with a path that
+	// would be re-tokenized by any shell.
+	cfg, base := profileFixture(t)
+	cfg.ScratchDir = "/var/tmp/atcr scratch; rm -rf /"
+	spec := base
+	spec.SnapshotDir = "/home-less/dev/atcr snapshot $(whoami)"
+
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err, "a path with spaces is not an error — it is an argv element")
+
+	assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{spec.SnapshotDir, "/work"},
+		"the path must survive as ONE element, spaces and all")
+	for _, a := range argv {
+		assert.NotContains(t, a, "--ro-bind "+spec.SnapshotDir,
+			"a flag and its operand must never be joined into a single element")
+	}
+}
+
+func TestBwrapArgs_ValidatesSpecFirst(t *testing.T) {
+	// AC 02-02 Error Scenario 1, mirroring dockerRunArgs (docker.go:136-138).
+	cfg, _ := profileFixture(t)
+	for name, spec := range map[string]RunSpec{
+		"neither command nor script": {SnapshotDir: "/srv/snap"},
+		"both command and script":    {Command: []string{"true"}, Script: "echo hi", SnapshotDir: "/srv/snap"},
+		"missing snapshot dir":       {Command: []string{"true"}},
+		"relative snapshot dir":      {Command: []string{"true"}, SnapshotDir: "relative/snap"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			argv, err := bwrapArgs(cfg, spec)
+			require.Error(t, err)
+			assert.Nil(t, argv)
+		})
+	}
+}
+
+func TestBwrapArgs_ZeroConfigStillProducesAContainedArgv(t *testing.T) {
+	// AC 02-02 Edge Case 3. A zero config has no scratch dir; the argv must
+	// still unshare the network and bind the snapshot read-only rather than
+	// degrade into something permissive or malformed.
+	_, spec := profileFixture(t)
+	argv, err := bwrapArgs(OSLevelConfig{}, spec)
+	require.NoError(t, err)
+
+	assert.Contains(t, argv, "--unshare-net")
+	assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{spec.SnapshotDir, "/work"})
+	for _, pair := range argvPairs(t, argv, "--bind") {
+		assert.NotEmpty(t, pair[0], "an empty scratch dir must be omitted, never emitted as an empty bind")
+		assert.NotEmpty(t, pair[1])
+	}
+}
+
+func TestBwrapArgs_ContainmentArgsDoNotIncludeTheWorkload(t *testing.T) {
+	// The generator produces the TOOL's arguments only. osLevelRunArgs appends
+	// the workload after them (oslevel.go:461-466), and the script body travels
+	// over stdin — so a command token appearing here would mean the workload was
+	// being built in two places.
+	cfg, spec := profileFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+	assert.NotContains(t, argv, "go")
+	assert.NotContains(t, argv, "test")
+	assert.NotContains(t, argv, "./...")
+}
