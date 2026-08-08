@@ -29,6 +29,31 @@ reviewer vocabulary:
 | `Maintainability and Readability` | `maintainability` |
 | `Performance` | `performance` |
 
+## Case size distribution
+
+Sampling is deliberately unfiltered by change size, so the 17 cases span two
+orders of magnitude. Diff size is worth knowing when interpreting a score:
+`expected_categories` is the planted-defect subset, not exhaustive ground
+truth, so a reviewer must surface one annotated issue somewhere in the diff to
+score the case. On the largest cases that makes per-case recall a function of
+diff size at least as much as of reviewer quality.
+
+| | bytes | files | expected categories |
+|---|---|---|---|
+| largest (`timescale-timescaledb-pr-7632`) | 106,146 | 12 | 1 |
+| 2nd (`freecad-freecad-pr-18688`) | 93,698 | 105 | 1 |
+| median (`electron-electron-pr-46982`) | 16,717 | 8 | 3 |
+| smallest (`dotnet-aspnetcore-pr-62734`) | 1,046 | 1 | 3 |
+
+The two largest cases each carry a single expected category, so they contribute
+the noisiest signal in the suite; consumers comparing reviewers on a small
+margin may want to weight or stratify by size rather than read the flat mean.
+
+Changing the sample is a `suite_version` bump, never an edit to 1.0.0's cases —
+the hash is content-sensitive, and republishing would break anyone who has
+already compared against it. Reporting per-case diff size alongside the score,
+or stratifying the sample by change size, is left to that future version.
+
 No upstream comment text is redistributed *in this directory* — only the
 category ground truth and the diffs themselves. (A small excerpt of upstream
 records, including truncated `note` text, is vendored separately as a test
