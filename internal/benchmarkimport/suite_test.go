@@ -299,6 +299,52 @@ func TestBuildSuite_LeavesTheOutputDirectoryUntouchedWhenAFetchFails(t *testing.
 		"an aborted build writes nothing into the output directory")
 }
 
+func TestBuildSuite_ResumesFromTheDiffCacheWithoutRefetching(t *testing.T) {
+	// A sustained outage after retries are exhausted still aborts the build. The
+	// cache is what keeps that from costing the whole API budget again: the
+	// second run re-fetches only what the first never got.
+	recs := loadFixture(t)
+	require.Greater(t, len(recs), 2, "the fixture must have enough records to abort partway")
+	cache := t.TempDir()
+
+	first := &fakeFetcher{err: errors.New("502 bad gateway"), failAfter: 2}
+	_, err := BuildSuite(context.Background(), Options{
+		Records: recs, OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: first, CacheDir: cache,
+	})
+	require.Error(t, err, "the first run aborts partway")
+
+	second := &fakeFetcher{}
+	res, err := BuildSuite(context.Background(), Options{
+		Records: recs, OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: second, CacheDir: cache,
+	})
+	require.NoError(t, err, "the second run completes")
+
+	assert.Equal(t, len(recs), res.CasesWritten)
+	assert.Len(t, second.calls, len(recs)-2,
+		"the two diffs the first run already fetched are served from the cache, not re-fetched")
+}
+
+func TestBuildSuite_IgnoresAnEmptyCachedDiff(t *testing.T) {
+	// A cache entry truncated by a crash mid-write must not be mistaken for a
+	// completed fetch — a blank diff fails the whole build downstream.
+	recs := loadFixture(t)
+	cache := t.TempDir()
+	id, err := CaseID(recs[0])
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(cache, id+".diff"), nil, 0o644))
+
+	f := &fakeFetcher{}
+	_, err = BuildSuite(context.Background(), Options{
+		Records: recs, OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: f, CacheDir: cache,
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, f.calls, len(recs), "a zero-byte cache entry is re-fetched, not served")
+}
+
 // seedSuite writes a prior build into dir: a suite.json at the given version
 // plus a diff file no later manifest will reference.
 func seedSuite(t *testing.T, dir, version string) {

@@ -29,6 +29,10 @@ type Options struct {
 	Suite        string
 	SuiteVersion string
 	Fetcher      DiffFetcher
+	// CacheDir, when set, holds fetched diffs keyed by case id so an aborted run
+	// can be resumed without re-spending the API budget on records it already
+	// retrieved. Empty disables caching.
+	CacheDir string
 	// Force permits rebuilding over an existing suite.json that already carries
 	// SuiteVersion. Without it that case is refused: a published version's cases
 	// are content-hashed, so rewriting them in place invalidates the hash anyone

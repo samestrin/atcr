@@ -33,6 +33,15 @@ const maxDatasetBytes = 64 << 20
 // runner's per-diff ceiling — and is a var so tests can lower it.
 var maxDiffBytes = benchmark.MaxDiffBytes
 
+// maxFetchAttempts bounds the retry budget for one compare request, counting
+// the first try. Rate limiting is the anticipated failure mode of a full
+// ingestion run, but a sustained outage must surface rather than spin.
+const maxFetchAttempts = 4
+
+// retryBaseDelay is the first backoff interval; each further attempt doubles
+// it. A var so tests do not pay the real schedule.
+var retryBaseDelay = 2 * time.Second
+
 // FetchDataset downloads positive_samples.json. This is an authoring-time
 // action — the suite it produces is committed, so no test and no benchmark run
 // depends on this reaching the network.

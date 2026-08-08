@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,6 +115,101 @@ func TestCompareAPIFetcher_ReportsAGoneRangeAsUnavailable(t *testing.T) {
 
 	assert.ErrorIs(t, err, ErrDiffUnavailable,
 		"a 404 compare range is one dead PR, not a broken ingestion, so it must be distinguishable")
+}
+
+func TestCompareAPIFetcher_RetriesAThrottledRequestAndHonorsRetryAfter(t *testing.T) {
+	shortenBackoff(t)
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+		case 2:
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			_, _ = w.Write([]byte("real diff"))
+		}
+	}))
+	defer srv.Close()
+
+	f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+	got, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+	require.NoError(t, err,
+		"rate limiting is the anticipated failure mode, not an exotic one: it must not abort an 18-record ingestion")
+	assert.Equal(t, "real diff", string(got))
+	assert.Equal(t, 3, calls, "both the 429 and the 502 are retried")
+}
+
+func TestCompareAPIFetcher_RetriesASecondaryRateLimit403(t *testing.T) {
+	shortenBackoff(t)
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"You have exceeded a secondary rate limit"}`))
+			return
+		}
+		_, _ = w.Write([]byte("real diff"))
+	}))
+	defer srv.Close()
+
+	f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+	got, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+	require.NoError(t, err, "GitHub reports a secondary rate limit as 403, and it is transient")
+	assert.Equal(t, "real diff", string(got))
+	assert.Equal(t, 2, calls)
+}
+
+func TestCompareAPIFetcher_DoesNotRetryAPlainForbidden(t *testing.T) {
+	shortenBackoff(t)
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer srv.Close()
+
+	f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+	_, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+	require.Error(t, err)
+	assert.Equal(t, 1, calls, "a bad token is permanent — retrying it just burns the run's wall clock")
+}
+
+func TestCompareAPIFetcher_GivesUpAfterBoundedRetries(t *testing.T) {
+	shortenBackoff(t)
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+	_, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+	require.Error(t, err, "retry is bounded — a sustained outage must surface, not spin")
+	assert.Contains(t, err.Error(), "429", "the final status is still reported")
+	assert.Equal(t, maxFetchAttempts, calls, "exactly the configured attempt budget is spent")
+}
+
+// shortenBackoff collapses the retry delay so a bounded-retry test costs
+// milliseconds rather than the real backoff schedule.
+func shortenBackoff(t *testing.T) {
+	t.Helper()
+	orig := retryBaseDelay
+	retryBaseDelay = time.Millisecond
+	t.Cleanup(func() { retryBaseDelay = orig })
 }
 
 func TestCompareAPIFetcher_EnforcesTheDiffCeilingExactlyAtTheBoundary(t *testing.T) {
