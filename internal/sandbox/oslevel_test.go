@@ -2,8 +2,10 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -457,4 +459,126 @@ func TestOSLevelToolFor_UnsupportedPlatformFailsClosed(t *testing.T) {
 			assert.Contains(t, err.Error(), "not supported on "+goos)
 		})
 	}
+}
+
+// --- AC 01-03: backend-fault error taxonomy -------------------------------
+
+func TestOSLevelClassifyToolExit_LinuxReservedCodesAreFaults(t *testing.T) {
+	// bwrap exits 125 when bubblewrap itself fails, 126 when the command cannot
+	// be executed, and 127 when it does not exist — none of which are the
+	// workload's own exit status.
+	for _, code := range []int{125, 126, 127} {
+		isFault, reason := classifyToolExit("linux", code, "")
+		assert.True(t, isFault, "linux exit %d is a bwrap fault, not a program result", code)
+		assert.NotEmpty(t, reason, "a fault must carry a reason for the wrapped error")
+	}
+	// Ordinary workload exits must stay results.
+	for _, code := range []int{1, 2, 3, 42, 124} {
+		isFault, _ := classifyToolExit("linux", code, "")
+		assert.False(t, isFault, "linux exit %d is the workload's own status", code)
+	}
+}
+
+func TestOSLevelClassifyToolExit_DarwinUsesStderrSignature(t *testing.T) {
+	// sandbox-exec has no reserved exit-code convention: it returns the child's
+	// status, so exit 1 is genuinely ambiguous between "the workload failed" and
+	// "sandbox-exec refused". Its own failures are identifiable only by the
+	// message it prints, so that is what the classifier keys on.
+	isFault, reason := classifyToolExit("darwin", 1, "sandbox-exec: sandbox_apply: Operation not permitted")
+	assert.True(t, isFault, "a sandbox-exec diagnostic marks a tool fault")
+	assert.NotEmpty(t, reason)
+
+	isFault, _ = classifyToolExit("darwin", 1, "FAIL\tgithub.com/example/pkg\t0.1s")
+	assert.False(t, isFault, "an ordinary failing workload must stay a result")
+
+	isFault, _ = classifyToolExit("darwin", 0, "")
+	assert.False(t, isFault, "a clean exit is never a fault")
+}
+
+func TestOSLevelClassifyToolExit_UnknownPlatformFailsClosed(t *testing.T) {
+	// An exit condition on a platform with no classification rule is ambiguous,
+	// and ambiguity resolves to a fault — never to a silently successful run
+	// (sandbox.go:5-14's containment-first contract).
+	isFault, reason := classifyToolExit("windows", 1, "")
+	assert.True(t, isFault, "an unclassifiable non-zero exit must fail closed")
+	assert.NotEmpty(t, reason)
+
+	isFault, _ = classifyToolExit("windows", 0, "")
+	assert.False(t, isFault, "a clean exit needs no classification rule")
+}
+
+func TestOSLevelBackendRun_ToolFaultIsWrappedErrorNotExitCode(t *testing.T) {
+	// A tool fault must never be folded into RunResult.ExitCode, where a caller
+	// would read it as the workload's own result.
+	faultCode := 125
+	if runtime.GOOS == "darwin" {
+		faultCode = 1
+	}
+	body := fakeOSLevelExitBody(faultCode)
+	if runtime.GOOS == "darwin" {
+		body = `echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2
+exit 1`
+	}
+	b := newFakeOSLevelBackend(t, body)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err, "a sandbox-tool fault must surface as an error")
+	assert.NotEqual(t, faultCode, res.ExitCode,
+		"a tool fault must not be reported as the workload's exit code")
+
+	// The cause must stay reachable: a real %w wrap, never a %v-formatted string.
+	var ee *exec.ExitError
+	assert.True(t, errors.As(err, &ee), "the underlying *exec.ExitError must survive the wrap")
+}
+
+func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
+	b := NewOSLevelBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err)
+	// AC 01-03 Scenario 2 words this as "returns RunResult{}". The result-
+	// bearing fields are indeed zero, but Command stays populated because it is
+	// a rendering of the REQUEST, not an outcome — and DockerBackend does the
+	// same on its spawn-failure path (docker.go:337 returns res, not RunResult{}).
+	// Story 1's whole premise is mirroring that backend, so parity wins over the
+	// AC's literal wording; the property that matters — no outcome a caller
+	// could mistake for a real run — holds either way.
+	assert.Zero(t, res.ExitCode, "a spawn failure yields no exit code")
+	assert.False(t, res.TimedOut)
+	assert.Empty(t, res.Output)
+	assert.True(t, errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound),
+		"the underlying cause must be reachable through the wrap, got %v", err)
+}
+
+func TestOSLevelBackendRun_ValidateRejectsBeforeAnySpawn(t *testing.T) {
+	// spec.validate() must run before the tool is invoked at all, so a malformed
+	// spec can never reach a process (AC 01-03 Edge Case 1).
+	marker := filepath.Join(t.TempDir(), "spawned")
+	b := newFakeOSLevelBackend(t, fmt.Sprintf("touch %q\nexit 0", marker))
+
+	for name, spec := range map[string]RunSpec{
+		"neither command nor script": {SnapshotDir: t.TempDir()},
+		"both command and script":    {Command: []string{"true"}, Script: "echo hi", SnapshotDir: t.TempDir()},
+		"relative snapshot dir":      {Command: []string{"true"}, SnapshotDir: "relative/path"},
+		"colon in snapshot dir":      {Command: []string{"true"}, SnapshotDir: "/tmp/a:b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := b.Run(context.Background(), spec)
+			require.Error(t, err)
+			assert.NoFileExists(t, marker, "no process may be spawned for an invalid spec")
+		})
+	}
+}
+
+func TestOSLevelBackendRun_SignalDeathIsFaultNotExitCode(t *testing.T) {
+	// A signal death reports ExitCode() == -1; surfacing that as a program
+	// result would present an impossible exit status as a real one.
+	b := newFakeOSLevelBackend(t, `kill -9 $$`)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err, "a signal-killed run is a backend fault")
+	assert.GreaterOrEqual(t, res.ExitCode, 0, "a negative exit code must never escape as a result")
+	assert.Contains(t, err.Error(), "signal")
 }

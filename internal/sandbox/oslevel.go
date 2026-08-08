@@ -339,6 +339,70 @@ func sandboxEnv(snapshotDir string) []string {
 	}
 }
 
+// bwrap reserved exit codes. Bubblewrap exits 125 when bubblewrap itself fails,
+// 126 when the command cannot be executed, and 127 when it does not exist —
+// none of which is the workload's own status.
+//
+// These are encoded as named constants rather than inlined so the Phase 3
+// integration leg, which is the first thing in this sprint to run a real bwrap,
+// has one obvious place to correct them if the real binary disagrees.
+const (
+	bwrapFaultExitCode      = 125
+	bwrapCannotExecExitCode = 126
+	bwrapNotFoundExitCode   = 127
+)
+
+// sandboxExecDiagnosticPrefix is how macOS sandbox-exec identifies its own
+// failures on stderr.
+const sandboxExecDiagnosticPrefix = "sandbox-exec:"
+
+// classifyToolExit reports whether a non-zero exit came from the sandboxing tool
+// itself rather than from the workload, and why.
+//
+// The two platforms need different rules, and the difference is the reason this
+// function exists rather than a shared numeric table:
+//
+//   - Linux/bwrap has a Docker-like reserved-code convention (125/126/127), so
+//     classification is a pure exit-code test.
+//   - macOS/sandbox-exec has NO such convention: it execs the child and returns
+//     the child's own status, so exit 1 is genuinely ambiguous between "the
+//     workload failed" and "sandbox-exec refused to apply the profile". The only
+//     signal it gives is the diagnostic it prints, so that is what is matched.
+//     This is deliberately a weaker test than Linux's, and it is the reason AC
+//     01-03 asks for the classification boundary to be written down rather than
+//     inferred: a workload that itself prints a line starting with
+//     "sandbox-exec:" would be misclassified as a fault. That direction is the
+//     safe one — a fault is refused, a missed fault would be reported as a
+//     successful contained run.
+//
+// Any platform without a rule fails closed: an unclassifiable non-zero exit is
+// treated as a fault, never as a successful run, per the package's
+// containment-first contract (sandbox.go:5-14).
+func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
+	if exitCode == 0 {
+		return false, ""
+	}
+	switch goos {
+	case "linux":
+		switch exitCode {
+		case bwrapFaultExitCode:
+			return true, fmt.Sprintf("%s failed to set up the sandbox (exit %d)", linuxSandboxTool, exitCode)
+		case bwrapCannotExecExitCode:
+			return true, fmt.Sprintf("%s could not execute the command (exit %d)", linuxSandboxTool, exitCode)
+		case bwrapNotFoundExitCode:
+			return true, fmt.Sprintf("%s could not find the command (exit %d)", linuxSandboxTool, exitCode)
+		}
+		return false, ""
+	case "darwin":
+		if strings.Contains(output, sandboxExecDiagnosticPrefix) {
+			return true, fmt.Sprintf("%s reported a sandbox error (exit %d)", darwinSandboxTool, exitCode)
+		}
+		return false, ""
+	default:
+		return true, fmt.Sprintf("no exit-code classification rule for %s; treating exit %d as a sandbox fault", goos, exitCode)
+	}
+}
+
 // classifyRunError maps a failed *exec.Cmd run onto the Backend.Run contract: a
 // program exit becomes RunResult.ExitCode with a nil error, anything else is a
 // wrapped backend fault. Platform-specific reserved exit codes are classified in
@@ -352,12 +416,18 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 		// and ExitCode() reports -1 for it. Reporting -1 as a program result
 		// would present an impossible exit status as a real one, so route it to
 		// a fault exactly as the Docker backend routes 128+N (docker.go:323-326).
-		if code := ee.ExitCode(); code < 0 {
+		code := ee.ExitCode()
+		if code < 0 {
 			logger.Error("sandbox exec killed by signal", "backend", osLevelBackendName, "command", cmdStr, "error", runErr)
 			return res, fmt.Errorf("os-level sandbox run: %s: process killed by signal (%s): %w", tool, ee.String(), runErr)
-		} else {
-			res.ExitCode = code
 		}
+		// The sandboxing tool's own failures must not be folded into ExitCode,
+		// where a caller would read them as the workload's result.
+		if isFault, reason := classifyToolExit(runtime.GOOS, code, res.Output); isFault {
+			logger.Error("sandbox exec runtime error", "backend", osLevelBackendName, "command", cmdStr, "exit_code", code, "error", runErr)
+			return res, fmt.Errorf("os-level sandbox run: %s: runtime error: %s: %w", tool, reason, runErr)
+		}
+		res.ExitCode = code
 		logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
 		return res, nil
 	}
