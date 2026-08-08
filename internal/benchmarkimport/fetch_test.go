@@ -179,6 +179,46 @@ func TestCloneFetcher_ReportsAFailedClone(t *testing.T) {
 	assert.Error(t, err, "a missing upstream fails loudly rather than yielding an empty diff")
 }
 
+func TestCloneFetcher_DiffErrorCarriesGitsStderr(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root, base, _ := seedRepo(t)
+	unrelated := seedUnrelatedCommit(t, root)
+
+	f := &CloneFetcher{WorkDir: t.TempDir(), BaseURL: root}
+	_, err := f.FetchDiff(context.Background(), "o", "r", base, unrelated)
+
+	require.Error(t, err, "a range with no shared history cannot yield a three-dot diff")
+	assert.Contains(t, err.Error(), "no merge base",
+		"git's own diagnostic travels with the error; a bare exit status sends the operator nowhere")
+}
+
+// seedUnrelatedCommit adds a root commit with no shared history to the repo
+// seedRepo built, and returns its SHA.
+func seedUnrelatedCommit(t *testing.T, root string) string {
+	t.Helper()
+	dir := filepath.Join(root, "o", "r.git")
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+
+	run("checkout", "-q", "--orphan", "unrelated")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "other.txt"), []byte("elsewhere\n"), 0o644))
+	run("add", "other.txt")
+	run("commit", "-q", "-m", "unrelated root")
+	return run("rev-parse", "HEAD")
+}
+
 func TestCloneFetcher_ReportsAGoneCommitAsUnavailable(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
