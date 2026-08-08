@@ -79,10 +79,12 @@ func TestExpectedCategories_IsDedupedAndSorted(t *testing.T) {
 		{Category: "Documentation Update"}, // unmappable, dropped
 	}}
 
-	got := ExpectedCategories(rec)
+	got, unmapped := ExpectedCategories(rec)
 
 	assert.Equal(t, []string{"correctness", "maintainability", "security"}, got,
 		"categories are deduped and sorted; the manifest contract rejects duplicates")
+	assert.Equal(t, 1, unmapped,
+		"a dropped category is tallied, not silent — a shrunken expected set inflates scored recall")
 }
 
 func TestExpectedCategories_RetainsAIProposedCategories(t *testing.T) {
@@ -94,10 +96,11 @@ func TestExpectedCategories_RetainsAIProposedCategories(t *testing.T) {
 		{Category: "Performance", IsAIComment: false},
 	}}
 
-	got := ExpectedCategories(rec)
+	got, unmapped := ExpectedCategories(rec)
 
 	assert.Equal(t, []string{"correctness", "performance"}, got,
 		"an AI-proposed label counts toward ground truth exactly as a human one does")
+	assert.Zero(t, unmapped)
 }
 
 func TestCaseID_IsDerivedFromThePullRequest(t *testing.T) {
@@ -290,6 +293,23 @@ func TestBuildSuite_RejectsOptionShapedCommitValuesBeforeFetching(t *testing.T) 
 
 	require.Error(t, err, "an option-shaped commit value must be rejected at the boundary")
 	assert.Empty(t, f.calls, "rejection happens before any fetcher call, so git never sees the value")
+}
+
+func TestBuildSuite_CountsPartiallyUnmappedRecords(t *testing.T) {
+	res, err := BuildSuite(context.Background(), Options{
+		Records: []Record{{GithubPrURL: "https://github.com/o/r/pull/1",
+			SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
+			Comments: []Comment{
+				{Category: "Code Defect"},
+				{Category: "Brand New Upstream Vocabulary"},
+			}}},
+		OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0", Fetcher: &fakeFetcher{},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.CasesWritten, "the record is kept on the strength of its mappable comment")
+	assert.Equal(t, 1, res.UnmappedCategories,
+		"the partial drop is reported — a silently shrunken expected set would flatter every scored recall")
 }
 
 func TestBuildSuite_WritesDiffFilesInsideTheSuiteDirectory(t *testing.T) {

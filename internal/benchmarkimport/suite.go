@@ -37,6 +37,11 @@ type Result struct {
 	Skipped int
 	// Unavailable counts records whose diff no longer exists upstream.
 	Unavailable int
+	// UnmappedCategories counts individual comments dropped because their
+	// category had no mapping, even when a sibling comment mapped and the
+	// record was kept. Without it a partial miss is invisible, and the shrunken
+	// expected set inflates the recall scored against the suite.
+	UnmappedCategories int
 }
 
 // ErrDiffUnavailable marks a record whose diff cannot be retrieved because the
@@ -48,8 +53,10 @@ var ErrDiffUnavailable = errors.New("diff unavailable upstream")
 // categoryMap translates aacr-bench's comment categories into ATCR's reviewer
 // vocabulary (personas/_base.md:44). Keys are lowercased on lookup. Both the
 // dataset's actual literals and the shorter spellings used in the epic body are
-// accepted, so an upstream wording change degrades to a reported skip rather
-// than a silent mismatch.
+// accepted. A comment whose category has no mapping is dropped from the
+// expected set — and tallied: ExpectedCategories returns the count so the
+// build can report it, because a silently shrunken expected set would inflate
+// the scored recall of every reviewer run against the suite.
 var categoryMap = map[string]string{
 	"code defect":                     "correctness",
 	"security vulnerability":          "security",
@@ -76,15 +83,20 @@ func MapCategory(in string) (string, bool) {
 	return out, ok
 }
 
-// ExpectedCategories returns the deduped, sorted ATCR categories for a record.
+// ExpectedCategories returns the deduped, sorted ATCR categories for a record
+// plus the number of comments whose category had no mapping and was dropped.
 // Sorting and deduping are required, not cosmetic: the manifest contract
 // rejects a duplicate category within a case, and the reproducibility hash is
-// computed over the category list.
-func ExpectedCategories(rec Record) []string {
+// computed over the category list. The unmapped tally must travel with the
+// result — a partial miss is otherwise invisible, and internal/benchmark
+// computes recall against the shrunken set, flattering every score.
+func ExpectedCategories(rec Record) (cats []string, unmapped int) {
 	seen := make(map[string]struct{}, len(rec.Comments))
 	for _, c := range rec.Comments {
 		if mapped, ok := MapCategory(c.Category); ok {
 			seen[mapped] = struct{}{}
+		} else {
+			unmapped++
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -92,7 +104,7 @@ func ExpectedCategories(rec Record) []string {
 		out = append(out, cat)
 	}
 	sort.Strings(out)
-	return out
+	return out, unmapped
 }
 
 // CaseID derives a stable, slug-safe case id from a record's PR URL. Case ids
@@ -143,7 +155,8 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			return res, fmt.Errorf("record %q: source_commit and target_commit must each be a 7-40 character hex SHA", rec.GithubPrURL)
 		}
 
-		cats := ExpectedCategories(rec)
+		cats, unmapped := ExpectedCategories(rec)
+		res.UnmappedCategories += unmapped
 		if len(cats) == 0 {
 			res.Skipped++
 			continue
