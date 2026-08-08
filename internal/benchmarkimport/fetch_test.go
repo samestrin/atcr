@@ -38,6 +38,18 @@ func TestFetchDataset_ReportsNonOKStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "404", "the status is surfaced so a moved dataset is obvious")
 }
 
+func TestFetchDataset_RejectsAnOversizedDataset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxDatasetBytes+1))
+	}))
+	defer srv.Close()
+
+	_, err := FetchDataset(context.Background(), srv.Client(), srv.URL)
+
+	require.Error(t, err, "a truncated download must not surface later as an opaque JSON parse error")
+	assert.Contains(t, err.Error(), "exceeds", "the operator is told this is a size problem, not a parse problem")
+}
+
 func TestFetchDataset_RejectsAnUnbuildableRequest(t *testing.T) {
 	_, err := FetchDataset(context.Background(), nil, "://not a url")
 
