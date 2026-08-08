@@ -417,7 +417,8 @@ func TestBuildSuite_IgnoresAnEmptyCachedDiff(t *testing.T) {
 	cache := t.TempDir()
 	id, err := CaseID(recs[0])
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(cache, id+".diff"), nil, 0o644))
+	key := cacheKey(id, recs[0].SourceCommit, recs[0].TargetCommit)
+	require.NoError(t, os.WriteFile(filepath.Join(cache, key), nil, 0o644))
 
 	f := &fakeFetcher{}
 	_, err = BuildSuite(context.Background(), Options{
@@ -427,6 +428,35 @@ func TestBuildSuite_IgnoresAnEmptyCachedDiff(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, f.calls, len(recs), "a zero-byte cache entry is re-fetched, not served")
+}
+
+func TestBuildSuite_DoesNotServeACachedDiffForADifferentCommitRange(t *testing.T) {
+	// The case id comes from the PR URL alone, so a dataset revision that moves
+	// a PR's source/target commits must not be handed the previous range's diff
+	// by a cache that persists across runs.
+	recs := loadFixture(t)[:1]
+	cache := t.TempDir()
+
+	warm := &fakeFetcher{}
+	_, err := BuildSuite(context.Background(), Options{
+		Records: recs, OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: warm, CacheDir: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, warm.calls, 1)
+
+	moved := append([]Record{}, recs...)
+	moved[0].TargetCommit = "ffffffff"
+
+	again := &fakeFetcher{}
+	_, err = BuildSuite(context.Background(), Options{
+		Records: moved, OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0",
+		Fetcher: again, CacheDir: cache,
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, again.calls, 1,
+		"a moved commit range is a cache miss, not a stale hit that still hashes cleanly")
 }
 
 // seedSuite writes a prior build into dir: a suite.json at the given version

@@ -269,7 +269,7 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			return res, err
 		}
 
-		diff, cached := cachedDiff(opts.CacheDir, id)
+		diff, cached := cachedDiff(opts.CacheDir, id, rec.SourceCommit, rec.TargetCommit)
 		if !cached {
 			diff, err = opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
 			if errors.Is(err, ErrDiffUnavailable) {
@@ -286,7 +286,7 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			// Cached before the build can abort on a later record, so a run that
 			// dies to a sustained outage does not re-spend the API budget on
 			// everything it already retrieved.
-			if err := storeDiff(opts.CacheDir, id, diff); err != nil {
+			if err := storeDiff(opts.CacheDir, id, rec.SourceCommit, rec.TargetCommit, diff); err != nil {
 				return res, fmt.Errorf("case %q: caching diff: %w", id, err)
 			}
 		}
@@ -358,28 +358,39 @@ func writeDropList(dir string, dropped []DroppedRecord) error {
 	return nil
 }
 
-// cachedDiff returns a previously fetched diff for id. A zero-length entry — a
-// write truncated by a crash — is treated as absent: serving it would fail the
-// whole build on the empty-diff check with a misleading upstream diagnosis.
-func cachedDiff(cacheDir, id string) ([]byte, bool) {
+// cacheKey names a cache entry by case id AND the commit range it was fetched
+// for. The id alone is derived from the PR URL, so a dataset revision that
+// moves a PR's source/target commits would otherwise be served the previous
+// range's diff from a cache that persists across runs — a stale case that still
+// looks valid and still hashes cleanly.
+func cacheKey(id, base, head string) string {
+	sum := sha256.Sum256([]byte(base + ".." + head))
+	return fmt.Sprintf("%s-%x.diff", id, sum[:6])
+}
+
+// cachedDiff returns a previously fetched diff for this case and commit range.
+// A zero-length entry — a write truncated by a crash — is treated as absent:
+// serving it would fail the whole build on the empty-diff check with a
+// misleading upstream diagnosis.
+func cachedDiff(cacheDir, id, base, head string) ([]byte, bool) {
 	if strings.TrimSpace(cacheDir) == "" {
 		return nil, false
 	}
-	b, err := os.ReadFile(filepath.Join(cacheDir, id+".diff"))
+	b, err := os.ReadFile(filepath.Join(cacheDir, cacheKey(id, base, head)))
 	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
 		return nil, false
 	}
 	return b, true
 }
 
-func storeDiff(cacheDir, id string, diff []byte) error {
+func storeDiff(cacheDir, id, base, head string, diff []byte) error {
 	if strings.TrimSpace(cacheDir) == "" {
 		return nil
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(cacheDir, id+".diff"), diff, 0o644)
+	return os.WriteFile(filepath.Join(cacheDir, cacheKey(id, base, head)), diff, 0o644)
 }
 
 // guardPublishedVersion refuses a rebuild that would rewrite the cases of a
