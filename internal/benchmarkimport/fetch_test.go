@@ -2,6 +2,7 @@ package benchmarkimport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -117,7 +118,28 @@ func TestCompareAPIFetcher_ReportsAGoneRangeAsUnavailable(t *testing.T) {
 		"a 404 compare range is one dead PR, not a broken ingestion, so it must be distinguishable")
 }
 
-func TestCompareAPIFetcher_RetriesAThrottledRequestAndHonorsRetryAfter(t *testing.T) {
+func TestRetryDelay_PrefersTheServersRetryAfterOverTheBackoffSchedule(t *testing.T) {
+	// Guessing a delay shorter than the server asked for is how a client earns a
+	// longer ban, so Retry-After has to win over the exponential schedule.
+	throttle := retryableError{err: errors.New("429"), retryAfter: 90 * time.Second}
+	assert.Equal(t, 90*time.Second, retryDelay(2, throttle),
+		"the server's own backoff instruction is used verbatim")
+
+	assert.Equal(t, retryBaseDelay, retryDelay(2, retryableError{err: errors.New("502")}),
+		"without a Retry-After the schedule starts at the base delay")
+	assert.Equal(t, 2*retryBaseDelay, retryDelay(3, retryableError{err: errors.New("502")}),
+		"and doubles per attempt")
+}
+
+func TestParseRetryAfter_ReadsDelaySecondsAndRejectsAnythingElse(t *testing.T) {
+	assert.Equal(t, 30*time.Second, parseRetryAfter("30"))
+	assert.Equal(t, 30*time.Second, parseRetryAfter(" 30 "))
+	assert.Zero(t, parseRetryAfter(""), "an absent header falls back to the exponential schedule")
+	assert.Zero(t, parseRetryAfter("Wed, 21 Oct 2015 07:28:00 GMT"), "the HTTP-date form is not guessed at")
+	assert.Zero(t, parseRetryAfter("-5"), "a negative delay is not turned into an immediate retry")
+}
+
+func TestCompareAPIFetcher_RetriesAThrottledRequest(t *testing.T) {
 	shortenBackoff(t)
 
 	var calls int
@@ -125,7 +147,6 @@ func TestCompareAPIFetcher_RetriesAThrottledRequestAndHonorsRetryAfter(t *testin
 		calls++
 		switch calls {
 		case 1:
-			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
 		case 2:
 			w.WriteHeader(http.StatusBadGateway)
