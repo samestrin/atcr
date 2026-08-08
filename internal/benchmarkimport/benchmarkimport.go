@@ -94,17 +94,24 @@ func ParseDataset(raw []byte) ([]Record, error) {
 // ParseDataset, which rejects duplicate PR URLs. Sample is exported and
 // callable with arbitrary records, so its comparator is total (URL, then the
 // commit pair): the documented order independence holds even without it.
+//
+// A request the pool cannot satisfy — a non-positive n, an empty pool, or
+// n larger than the pool — is an error, never a silent clamp: an undersized
+// suite must fail loudly rather than ship under its requested label.
 func Sample(recs []Record, n int, seed int64) ([]Record, error) {
 	if n <= 0 {
 		return nil, fmt.Errorf("sample size must be positive, got %d", n)
+	}
+	if len(recs) == 0 {
+		return nil, fmt.Errorf("dataset holds no records to sample")
+	}
+	if n > len(recs) {
+		return nil, fmt.Errorf("sample size %d exceeds the %d-record pool", n, len(recs))
 	}
 	pool := make([]Record, len(recs))
 	copy(pool, recs)
 	sort.Slice(pool, func(i, j int) bool { return recordLess(pool[i], pool[j]) })
 
-	if n > len(pool) {
-		n = len(pool)
-	}
 	//nolint:gosec // deterministic reproducibility is the point; this is not a security context.
 	rng := rand.New(rand.NewSource(seed))
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
