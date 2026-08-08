@@ -116,6 +116,62 @@ func TestInvokeSlot_AllTruncatedEmpty_SlotFails(t *testing.T) {
 	assert.True(t, r.ResponseTruncated, "the surviving failed result stays marked truncated")
 }
 
+// --- Empty response: the unambiguous "produced nothing" case -----------------
+
+// A reviewer that returns no content at all is not a clean review. It is the
+// one null-findings shape that carries no ambiguity — there is nothing to have
+// parsed — so it fails over even without a truncation flag. This is the case
+// agent brad hit on four cases of the 35.16.2 dry-run while kai, which DID set
+// the truncation flag, failed over correctly.
+func TestInvokeSlot_EmptyResponse_FailsAndFallsBackWithoutATruncationFlag(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary":  {Content: "", Truncated: false},
+		"fallback": {Content: "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{
+		Primary:   Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "brad-backup", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	r := e.invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, StatusOK, r.Status, "the backup rescued the slot")
+	assert.True(t, r.FallbackUsed,
+		"an empty response must fail over: scoring it as a clean zero-finding review is indistinguishable from a real one")
+	assert.Equal(t, "brad", r.Agent, "attribution follows the slot's primary")
+}
+
+// The ambiguous shape — the model said something, none of it parsed as a
+// finding — is deliberately NOT failed over: that is what a genuine clean
+// review looks like, and routing it to the backup would burn the backup model
+// on every no-findings case. It is recorded instead.
+func TestInvokeSlot_UnparseableNonEmptyResponse_StaysOKAndIsRecorded(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "I reviewed the diff and found nothing worth reporting.", Truncated: false},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}}
+	r := e.invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, StatusOK, r.Status, "a clean review is a legitimate outcome, not a failure")
+	assert.False(t, r.FallbackUsed, "the backup model is not spent on a plausible clean review")
+	assert.True(t, r.UnparseableResponse,
+		"but it is recorded distinctly, so 'produced nothing parseable' is not silently equal to 'found nothing'")
+}
+
+// An empty response with no fallback configured fails the slot outright rather
+// than reporting a clean review.
+func TestInvokeSlot_EmptyResponseWithNoFallback_FailsTheSlot(t *testing.T) {
+	c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+		"primary": {Content: "", Truncated: false},
+	}}
+	e := NewEngine(c, WithTruncationFailover())
+	slot := Slot{Primary: Agent{Name: "brad", Invocation: llmclient.Invocation{Model: "primary"}}}
+	r := e.invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, StatusFailed, r.Status, "no content and nowhere to fail over to is a failed slot")
+}
+
 // --- Task 2 / AC scenario (b): truncated + >=1 finding -> StatusOK + marker ---
 
 func TestInvokeSlot_TruncatedWithFindings_StaysOKWithMarker(t *testing.T) {

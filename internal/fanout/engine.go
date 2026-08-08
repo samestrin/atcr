@@ -248,6 +248,16 @@ type Result struct {
 	// statusFor surfaces it as the per-agent response_truncated marker (Epic 19.5).
 	ResponseTruncated bool
 
+	// UnparseableResponse marks a StatusOK reviewer response that carried content
+	// but yielded zero parseable findings. It is deliberately NOT a failure: that
+	// is exactly what a genuine clean review looks like, and failing it over
+	// would spend the backup model on every no-findings case. It exists so a
+	// reader can tell "reviewed and found nothing" from "produced nothing a
+	// parser could use" — on a leaderboard those score identically but mean
+	// opposite things. The unambiguous shape (no content at all) is handled by
+	// the failover gate instead, and never sets this.
+	UnparseableResponse bool
+
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
