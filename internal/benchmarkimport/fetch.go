@@ -48,9 +48,15 @@ func FetchDataset(ctx context.Context, client *http.Client, url string) ([]byte,
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("downloading dataset: unexpected status %s", resp.Status)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDatasetBytes))
+	// Bounded so an oversized payload fails here as a size problem rather than
+	// surfacing downstream as an opaque "unexpected end of JSON input" from
+	// ParseDataset — the same +1 pattern the compare fetcher uses below.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDatasetBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading dataset: %w", err)
+	}
+	if len(body) > maxDatasetBytes {
+		return nil, fmt.Errorf("dataset exceeds the %d-byte ceiling", maxDatasetBytes)
 	}
 	return body, nil
 }
