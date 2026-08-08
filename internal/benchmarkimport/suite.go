@@ -176,6 +176,16 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	if strings.TrimSpace(opts.OutDir) == "" {
 		return res, fmt.Errorf("an output directory is required")
 	}
+	// Suite identity is validated up front: a typo'd flag must fail before any
+	// network fetch or file write, not after the API budget is spent and the
+	// output directory is littered (manifest.Validate would only catch it at
+	// the end).
+	if strings.TrimSpace(opts.Suite) == "" {
+		return res, fmt.Errorf("a suite name is required")
+	}
+	if strings.TrimSpace(opts.SuiteVersion) == "" {
+		return res, fmt.Errorf("a suite version is required")
+	}
 	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
 		return res, fmt.Errorf("creating suite directory: %w", err)
 	}
