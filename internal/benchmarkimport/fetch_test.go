@@ -115,6 +115,37 @@ func TestCompareAPIFetcher_ReportsAGoneRangeAsUnavailable(t *testing.T) {
 		"a 404 compare range is one dead PR, not a broken ingestion, so it must be distinguishable")
 }
 
+func TestCompareAPIFetcher_EnforcesTheDiffCeilingExactlyAtTheBoundary(t *testing.T) {
+	// The off-by-one here is what distinguishes "at the limit" from "truncated":
+	// a flipped +1 or >= accepts a truncated diff or rejects a legal one.
+	for _, tc := range []struct {
+		name    string
+		size    int64
+		wantErr bool
+	}{
+		{"exactly at the ceiling", maxDiffBytes, false},
+		{"one byte over the ceiling", maxDiffBytes + 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(make([]byte, tc.size))
+			}))
+			defer srv.Close()
+
+			f := &CompareAPIFetcher{Client: srv.Client(), baseURL: srv.URL}
+			got, err := f.FetchDiff(context.Background(), "o", "r", "a", "b")
+
+			if tc.wantErr {
+				require.Error(t, err, "a truncated read must not be accepted as a complete diff")
+				assert.Contains(t, err.Error(), "exceeds", "the operator is told this is a size problem")
+			} else {
+				require.NoError(t, err, "a diff exactly at the ceiling is legal")
+				assert.Len(t, got, int(tc.size), "the full at-ceiling body is returned")
+			}
+		})
+	}
+}
+
 func TestCloneFetcher_ProducesTheSameDiffFromALocalRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
