@@ -139,6 +139,20 @@ func TestCloneFetcher_ReportsAFailedClone(t *testing.T) {
 	assert.Error(t, err, "a missing upstream fails loudly rather than yielding an empty diff")
 }
 
+func TestCloneFetcher_ReportsAGoneCommitAsUnavailable(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root, base, _ := seedRepo(t)
+	gone := "0123456789abcdef0123456789abcdef01234567"
+
+	f := &CloneFetcher{WorkDir: t.TempDir(), BaseURL: root}
+	_, err := f.FetchDiff(context.Background(), "o", "r", base, gone)
+
+	assert.ErrorIs(t, err, ErrDiffUnavailable,
+		"a force-pushed or garbage-collected PR is one dead record, not a broken ingestion — it must be skippable like the compare fetcher's 404")
+}
+
 func TestCloneFetcher_ReusesOneTempWorkDirAcrossCalls(t *testing.T) {
 	f := &CloneFetcher{}
 
