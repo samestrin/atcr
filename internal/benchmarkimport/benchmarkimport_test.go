@@ -153,12 +153,17 @@ func TestSample_OutputIsStablySorted(t *testing.T) {
 	}
 }
 
-func TestSample_ClampsToAvailableRecords(t *testing.T) {
+func TestSample_RejectsAnOversizedRequest(t *testing.T) {
 	recs := loadFixture(t)
 
-	got, err := Sample(recs, 500, 42)
-	require.NoError(t, err)
-	assert.Len(t, got, len(recs), "asking for more records than exist yields every record")
+	_, err := Sample(recs, len(recs)+1, 42)
+	assert.Error(t, err,
+		"asking for more records than the pool holds is a caller mistake, not a silent clamp")
+}
+
+func TestSample_RejectsAnEmptyPool(t *testing.T) {
+	_, err := Sample(nil, 5, 1)
+	assert.Error(t, err, "an empty pool cannot satisfy any sample")
 }
 
 func TestSample_RejectsNonPositiveSize(t *testing.T) {
