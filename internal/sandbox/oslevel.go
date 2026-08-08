@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -29,10 +30,10 @@ const (
 // Platform selection is a runtime switch rather than build-tagged files on
 // purpose. .goreleaser.yaml ships windows/amd64 and windows/arm64 while CI runs
 // on ubuntu-latest only, so a GOOS the build-tagged layout forgot would stay
-// invisible until a release tag — and internal/verify and cli/ reference
-// NewOSLevelBackend, so that gap would break their builds too. One file that
-// compiles everywhere cannot have that hole, and taking the GOOS as a parameter
-// makes every platform's decision assertable from any host.
+// invisible until a release tag — and Phase 4 will wire NewOSLevelBackend into
+// internal/verify and cli/, so that gap would then break their builds too. One
+// file that compiles everywhere cannot have that hole, and taking the GOOS as a
+// parameter makes every platform's decision assertable from any host.
 //
 // An unsupported platform fails closed: it returns an error rather than a
 // best-effort passthrough. A backend that "succeeded" without a sandbox would
@@ -80,16 +81,20 @@ func DefaultOSLevelConfig() OSLevelConfig {
 // sandbox — sandbox-exec on macOS, bwrap on Linux — as a second Backend
 // implementation alongside DockerBackend, for hosts without a Docker daemon.
 //
-// It is unexported: callers reach it through the Backend interface returned by
-// NewOSLevelBackend, so no sandbox-exec/bwrap-specific type ever crosses the
-// interface boundary.
+// It is unexported so no sandbox-exec/bwrap-specific type crosses the Backend
+// boundary; consumers hold it as a sandbox.Backend. NewOSLevelBackend returns
+// the concrete type (mirroring NewDockerBackend) purely so in-package tests can
+// reach cfg — see TD-002 if a cross-package assertion is ever needed.
 type osLevelBackend struct {
 	cfg OSLevelConfig
 	// sem bounds concurrent sandbox spawns to cfg.MaxConcurrent (buffered slots).
+	// NewOSLevelBackend allocates it; a struct-literal backend leaves it nil.
 	sem chan struct{}
-	// semOnce lazily allocates sem on first Run so a backend built as a struct
-	// literal (bypassing NewOSLevelBackend) still enforces the cap instead of
-	// failing open. Safe under concurrent Run.
+	// semOnce will lazily allocate sem on first Run so a struct-literal backend
+	// (bypassing NewOSLevelBackend) still enforces the cap instead of failing
+	// open, as DockerBackend does at docker.go:237-245. NOT YET WIRED: Run does
+	// not acquire a slot until task 2.2, so today the cap is constructor-only.
+	// Do not read this field as a live mitigation before then.
 	semOnce sync.Once
 }
 
@@ -136,10 +141,25 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 }
 
 // toolPath resolves the binary this backend invokes: an explicit cfg.ToolPath
-// override (the test-shim seam) wins, otherwise the running platform's tool.
+// override wins, otherwise the running platform's tool.
+//
+// The override is both the test-shim seam and the field an operator config
+// would populate, so it is the seam through which containment can be replaced
+// by a no-op. An override must therefore be an absolute path: a relative or
+// bare name would be resolved through $PATH at spawn time, letting any
+// user-writable $PATH entry shadow the real sandbox binary. Existence and
+// executability are Preflight's checks (task 1.11) — this function is pure so
+// it can be asserted without touching the filesystem.
+//
+// The platform default is still returned as a bare name here and resolved by
+// exec; pinning it to an absolute path via exec.LookPath is TD-003, scheduled
+// for Preflight where an I/O check is already in scope.
 func (b *osLevelBackend) toolPath() (string, error) {
-	if b.cfg.ToolPath != "" {
-		return b.cfg.ToolPath, nil
+	if b.cfg.ToolPath == "" {
+		return osLevelToolFor(runtime.GOOS)
 	}
-	return osLevelToolFor(runtime.GOOS)
+	if !filepath.IsAbs(b.cfg.ToolPath) {
+		return "", fmt.Errorf("sandbox: os-level tool_path must be absolute, got %q", b.cfg.ToolPath)
+	}
+	return b.cfg.ToolPath, nil
 }

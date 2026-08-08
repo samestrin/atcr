@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -28,7 +30,10 @@ func TestOSLevelBackendName_MatchesFallbackConfigValue(t *testing.T) {
 	assert.Equal(t, "os-level", osLevelBackendName)
 }
 
-func TestDefaultOSLevelConfig_IsSafe(t *testing.T) {
+func TestDefaultOSLevelConfig_BoundsAreNonZero(t *testing.T) {
+	// Scoped deliberately: this asserts the three bounds OSLevelConfig actually
+	// carries, NOT that the defaults are "safe" in the package-contract sense —
+	// there are no memory/CPU/PID/uid caps to assert (TD-001).
 	cfg := DefaultOSLevelConfig()
 	assert.Positive(t, cfg.Timeout, "an unbounded default timeout is a resource-exhaustion risk")
 	assert.Positive(t, cfg.MaxOutputBytes)
@@ -46,6 +51,10 @@ func TestNewOSLevelBackend_ZeroValueConfigGetsSafeDefaults(t *testing.T) {
 	assert.Equal(t, def.MaxOutputBytes, b.cfg.MaxOutputBytes)
 	assert.Equal(t, def.MaxConcurrent, b.cfg.MaxConcurrent)
 	assert.Equal(t, def.Timeout, b.Timeout())
+	// The semaphore must be sized from the FLOORED value. Sizing it from the
+	// caller's pre-floor zero would leave an unbuffered channel that deadlocks
+	// the first Run, while b.cfg.MaxConcurrent still asserted green.
+	assert.Equal(t, def.MaxConcurrent, cap(b.sem))
 }
 
 func TestNewOSLevelBackend_FloorsNonPositiveConfig(t *testing.T) {
@@ -62,6 +71,7 @@ func TestNewOSLevelBackend_FloorsNonPositiveConfig(t *testing.T) {
 	assert.Equal(t, def.Timeout, b.cfg.Timeout)
 	assert.Equal(t, def.MaxOutputBytes, b.cfg.MaxOutputBytes)
 	assert.Equal(t, def.MaxConcurrent, b.cfg.MaxConcurrent)
+	assert.Equal(t, def.MaxConcurrent, cap(b.sem))
 }
 
 func TestNewOSLevelBackend_PreservesExplicitConfig(t *testing.T) {
@@ -79,6 +89,56 @@ func TestNewOSLevelBackend_PreservesExplicitConfig(t *testing.T) {
 	assert.Equal(t, 7*time.Second, b.cfg.Timeout)
 	assert.Equal(t, 99, b.cfg.MaxOutputBytes)
 	assert.Equal(t, 2, b.cfg.MaxConcurrent)
+}
+
+func TestOSLevelBackend_ToolPath_ExplicitAbsoluteOverrideWins(t *testing.T) {
+	// The override is the test-shim seam AND the field an operator config would
+	// populate — i.e. the seam through which containment could be swapped for a
+	// no-op — so its precedence is asserted explicitly rather than assumed.
+	b := NewOSLevelBackend(OSLevelConfig{ToolPath: "/opt/custom/bwrap"})
+	got, err := b.toolPath()
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/custom/bwrap", got)
+}
+
+func TestOSLevelBackend_ToolPath_RejectsNonAbsoluteOverride(t *testing.T) {
+	// A relative or bare name would be resolved through $PATH at spawn time,
+	// letting any user-writable $PATH entry shadow the real sandbox binary.
+	for _, bad := range []string{"bwrap", "./bwrap", "../bin/sandbox-exec"} {
+		t.Run(bad, func(t *testing.T) {
+			b := NewOSLevelBackend(OSLevelConfig{ToolPath: bad})
+			got, err := b.toolPath()
+			require.Error(t, err, "a non-absolute tool_path must be rejected")
+			assert.Empty(t, got)
+			assert.Contains(t, err.Error(), "must be absolute")
+		})
+	}
+}
+
+func TestOSLevelBackend_ToolPath_EmptyOverrideDelegatesToPlatform(t *testing.T) {
+	b := NewOSLevelBackend(OSLevelConfig{})
+	got, err := b.toolPath()
+	want, wantErr := osLevelToolFor(runtime.GOOS)
+	if wantErr != nil {
+		// Unsupported host: the error must propagate, never a silent fallback.
+		require.Error(t, err)
+		assert.Empty(t, got)
+		return
+	}
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestOSLevelBackend_StubsFailClosed(t *testing.T) {
+	// Preflight and Run are stubs until tasks 1.11 and 1.5. Pin them to fail
+	// closed now: a partial implementation that returns nil on an unhandled
+	// branch would otherwise pass the whole suite, handing a caller a backend
+	// that reports success while providing no containment.
+	b := NewOSLevelBackend(DefaultOSLevelConfig())
+	assert.Error(t, b.Preflight(context.Background()),
+		"Preflight must never report success before it verifies the sandbox")
+	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	assert.Error(t, err, "Run must never report success before it sandboxes anything")
 }
 
 func TestOSLevelToolFor_SupportedPlatforms(t *testing.T) {
