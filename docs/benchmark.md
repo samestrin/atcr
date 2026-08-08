@@ -282,4 +282,5 @@ the suite identity (`source`, `suite`, `suite_version`).
 - [`benchmarks/standard-v1/`](../benchmarks/standard-v1/) — the curated
   `standard-v1` suite content bundled in this repo, with its attribution in
   [`NOTICE.md`](../benchmarks/standard-v1/NOTICE.md). Regenerate it with
-  `go run ./cmd/ingest-alibaba-benchmark`.
+  `go run ./cmd/ingest-alibaba-benchmark` — which refuses to rebuild over an
+  already-published `suite_version` unless you pass `-force`.

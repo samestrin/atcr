@@ -48,8 +48,15 @@ which each source repository's license continues to govern. Every case's
 ## Regenerating
 
 ```
-go run ./cmd/ingest-alibaba-benchmark -out benchmarks/standard-v1
+go run ./cmd/ingest-alibaba-benchmark -out <a fresh directory>
 ```
+
+Pointing `-out` at this directory is **refused** while it holds `suite_version`
+1.0.0: a published version's cases are content-hashed, so rewriting them in
+place invalidates the hash anyone who already compared against it holds. Bump
+`-suite-version`, write elsewhere, or pass `-force` if you genuinely mean to
+republish. A build that does run stages every diff first and only publishes
+after the manifest validates, so an aborted run leaves this directory untouched.
 
 The default seed and sample size reproduce this exact suite, provided the
 upstream compare ranges still resolve. `suite_version` pins reproducibility and
