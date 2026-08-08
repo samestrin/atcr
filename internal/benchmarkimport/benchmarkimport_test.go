@@ -120,6 +120,27 @@ func TestSample_IsIndependentOfInputOrdering(t *testing.T) {
 		"sampling canonicalizes order first, so a reshuffled source file yields the same sample")
 }
 
+func TestSample_IsOrderIndependentEvenWithDuplicateURLs(t *testing.T) {
+	// ParseDataset owns the duplicate-URL rejection, but Sample is exported and
+	// callable with arbitrary records; its comparator must be total so the
+	// documented order independence does not hinge on a sibling function.
+	mk := func(commit string) Record {
+		return Record{GithubPrURL: "https://github.com/o/r/pull/1", SourceCommit: commit, TargetCommit: "bbbbbbb"}
+	}
+
+	a, err := Sample([]Record{mk("aaaaaaa"), mk("ccccccc")}, 2, 7)
+	require.NoError(t, err)
+	b, err := Sample([]Record{mk("ccccccc"), mk("aaaaaaa")}, 2, 7)
+	require.NoError(t, err)
+
+	require.Len(t, a, 2)
+	require.Len(t, b, 2)
+	assert.Equal(t, a[0].SourceCommit, b[0].SourceCommit,
+		"duplicate sort keys must not make output order-dependent (sort.Slice is unstable)")
+	assert.Equal(t, a[1].SourceCommit, b[1].SourceCommit,
+		"duplicate sort keys must not make output order-dependent (sort.Slice is unstable)")
+}
+
 func TestSample_OutputIsStablySorted(t *testing.T) {
 	recs := loadFixture(t)
 
