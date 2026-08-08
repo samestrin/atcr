@@ -175,6 +175,13 @@ func (f *CloneFetcher) cloneURL(owner, repo string) string {
 	return fmt.Sprintf("%s/%s/%s.git", strings.TrimSuffix(base, "/"), owner, repo)
 }
 
+// isUnavailableRef reports whether git's fetch output means the requested
+// object no longer exists upstream, as opposed to a network or auth failure.
+func isUnavailableRef(msg string) bool {
+	return strings.Contains(msg, "couldn't find remote ref") ||
+		strings.Contains(msg, "not our ref")
+}
+
 // FetchDiff implements DiffFetcher by cloning and diffing locally.
 func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head string) ([]byte, error) {
 	work, err := f.workDir()
@@ -197,7 +204,14 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 	// single-commit fetch cannot supply.
 	fetch := gitexec.CommandContextFn(ctx, "-C", dir, "fetch", "origin", base, head)
 	if out, err := fetch.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, err, strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(string(out))
+		// A ref the remote no longer has is this record's problem alone — the
+		// PR was force-pushed or garbage-collected — so it is reported as
+		// unavailable and skipped, mirroring the compare fetcher's 404.
+		if isUnavailableRef(msg) {
+			return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, ErrDiffUnavailable, msg)
+		}
+		return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, err, msg)
 	}
 
 	// Three-dot, matching the compare API's base...head semantics. Two-dot would
