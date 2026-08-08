@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,6 +79,59 @@ func TestSandboxExecProfile_BlocksNetworkEgress(t *testing.T) {
 	}
 }
 
+// writeAllowSubpaths extracts the subpath of every ALLOW rule granting
+// file-write in the profile. Deny rules are excluded deliberately: this is the
+// set of paths the profile makes writable, which is the set the invariants
+// below are about.
+func writeAllowSubpaths(t *testing.T, profile string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(profile, "\n") {
+		if !strings.HasPrefix(line, "(allow ") || !strings.Contains(line, "file-write") {
+			continue
+		}
+		start := strings.Index(line, `(subpath "`)
+		if start < 0 {
+			continue // a (literal "...") rule, e.g. /dev/null
+		}
+		rest := line[start+len(`(subpath "`):]
+		end := strings.Index(rest, `"`)
+		require.GreaterOrEqual(t, end, 0, "malformed subpath clause: %s", line)
+		out = append(out, rest[:end])
+	}
+	return out
+}
+
+// assertPathNotWritable is the invariant form of "the snapshot is read-only":
+// no write-allow rule may cover it, whether by naming it or by naming any
+// ancestor of it. The earlier string-matching version of this check inspected
+// only lines containing the snapshot path, so a `/private/tmp` write rule
+// covering a `/private/tmp/...` snapshot was invisible to it — and that is
+// where os.MkdirTemp actually puts snapshots.
+// A snapshot under /tmp IS covered by the unconditional /tmp write-allow, and
+// that cannot be avoided without refusing the most common snapshot location
+// there is. What makes it read-only anyway is sandbox-exec's last-match-wins
+// evaluation: the trailing deny is the final rule, so it overrides every
+// covering allow above it. The invariant is therefore about ORDER, not about
+// the absence of a covering allow — verified against the real binary, where a
+// write to a /private/tmp snapshot fails with "Operation not permitted" while a
+// write to the scratch dir succeeds.
+func assertPathNotWritable(t *testing.T, profile, path string) {
+	t.Helper()
+	assert.Contains(t, profile, `(deny file-write* (subpath "`+path+`"))`,
+		"the trailing deny is what re-asserts read-only under last-match-wins")
+	lastDeny := strings.LastIndex(profile, `(deny file-write* (subpath "`+path+`"))`)
+	for _, granted := range writeAllowSubpaths(t, profile) {
+		// Anchor on "(allow ": when the snapshot IS a writable root (a snapshot
+		// at /private/tmp itself), the deny line also contains
+		// `file-write* (subpath "…")`, and a bare substring search would find
+		// the deny and compare it against itself.
+		idx := strings.LastIndex(profile, `(allow file-read* file-write* (subpath "`+granted+`")`)
+		assert.Less(t, idx, lastDeny,
+			"sandbox-exec applies the last matching rule, so the snapshot deny must come after every write allow")
+	}
+}
+
 func TestSandboxExecProfile_SnapshotIsReadOnlyForBothWritableValues(t *testing.T) {
 	// The corrected AC 02-01 Scenario 1 (2026-08-08): RunSpec.Writable is the
 	// single source of truth for writability, and Writable:false means the
@@ -85,24 +139,149 @@ func TestSandboxExecProfile_SnapshotIsReadOnlyForBothWritableValues(t *testing.T
 	// (docker.go:172-189) and sandbox.go:9 makes it a package MUST. The original
 	// scenario granted file-write* on the snapshot for Writable:false, which
 	// would have let model-authored code mutate the operator's work tree.
-	cfg, spec := profileFixture(t)
+	//
+	// Parameterised over where a snapshot REALLY lands, not just a tidy fixture:
+	// os.MkdirTemp("", …) returns a path under /var/folders on a normal macOS
+	// host and under /tmp whenever TMPDIR is unset (launchd, cron, CI), and both
+	// of those sit inside a writable root.
+	cfg, base := profileFixture(t)
 
-	for name, writable := range map[string]bool{"read-only": false, "writable": true} {
-		t.Run(name, func(t *testing.T) {
-			spec := spec
-			spec.Writable = writable
+	snapshots := map[string]string{
+		"home-style fixture":  "/Users/dev/atcr-snapshot-abc123",
+		"under /tmp":          "/tmp/atcr-snapshot-abc123",
+		"under /private/tmp":  "/private/tmp/atcr-snapshot-abc123",
+		"under TMPDIR alias":  "/var/folders/qq/T/atcr-snapshot-abc123",
+		"inside the tmp root": "/private/tmp",
+	}
+	for name, snapshot := range snapshots {
+		for _, writable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/writable=%t", name, writable), func(t *testing.T) {
+				spec := base
+				spec.SnapshotDir = snapshot
+				spec.Writable = writable
+				profile, err := sandboxExecProfile(cfg, spec)
+				require.NoError(t, err)
+
+				// The emitted path is the RESOLVED one: sandbox-exec matches
+				// resolved paths, so a rule naming /var/... or /tmp/... matches
+				// nothing at all and the carve-out silently does not exist.
+				resolved := snapshot
+				for prefix, target := range map[string]string{"/tmp": "/private/tmp", "/var": "/private/var"} {
+					if resolved == prefix {
+						resolved = target
+					} else if strings.HasPrefix(resolved, prefix+"/") {
+						resolved = target + strings.TrimPrefix(resolved, prefix)
+					}
+				}
+				assert.Contains(t, profile, `(allow file-read* (subpath "`+resolved+`"))`,
+					"the snapshot rule must name the resolved path or it grants nothing")
+				assertPathNotWritable(t, profile, resolved)
+			})
+		}
+	}
+}
+
+func TestSandboxExecProfile_NoRuleIsRootedAtTheFilesystemRoot(t *testing.T) {
+	// (subpath "/") grants the whole filesystem and, under last-match-wins,
+	// overrides the deny-default entirely. This asserts the invariant against
+	// the inputs that can actually produce it — the previous version asserted it
+	// only against a fixture that never could, so the guard was untested and in
+	// fact broken: ScratchDir="/" passed the nesting check and emitted exactly
+	// this rule.
+	cfg, base := profileFixture(t)
+
+	for _, scratch := range []string{"/", "//", "/.", "/usr", "/usr/bin", "/private"} {
+		t.Run("scratch="+scratch, func(t *testing.T) {
+			cfg := cfg
+			cfg.ScratchDir = scratch
+			profile, err := sandboxExecProfile(cfg, base)
+			require.Error(t, err, "a writable root at or above the system tier must be rejected")
+			assert.Empty(t, profile)
+		})
+	}
+
+	// And the invariant itself, on the accepted path.
+	profile, err := sandboxExecProfile(cfg, base)
+	require.NoError(t, err)
+	for _, granted := range writeAllowSubpaths(t, profile) {
+		assert.NotEqual(t, "/", granted, "no write rule may be rooted at /")
+	}
+	assert.NotContains(t, profile, `(subpath "/")`,
+		"the root must be granted as a (literal \"/\"), which is the directory entry alone, never as a subtree")
+}
+
+func TestSandboxExecProfile_ResolvesSymlinkedSystemPrefixes(t *testing.T) {
+	// sandbox-exec matches resolved paths. On a normal macOS host TMPDIR is
+	// /var/folders/... and /var is a symlink to /private/var, so an unresolved
+	// rule grants nothing — Preflight would still go green while the snapshot
+	// carve-out was dead. Prefix normalization is pure (no filesystem access),
+	// which is what keeps the generator assertable without a real host.
+	cfg, base := profileFixture(t)
+	for input, want := range map[string]string{
+		"/tmp/snap":            "/private/tmp/snap",
+		"/var/folders/qq/snap": "/private/var/folders/qq/snap",
+		"/etc/snap":            "/private/etc/snap",
+		"/private/tmp/snap":    "/private/tmp/snap",
+		"/Users/dev/snap":      "/Users/dev/snap",
+	} {
+		t.Run(input, func(t *testing.T) {
+			spec := base
+			spec.SnapshotDir = input
 			profile, err := sandboxExecProfile(cfg, spec)
 			require.NoError(t, err)
-
-			assert.Contains(t, profile, `(allow file-read* (subpath "`+spec.SnapshotDir+`"))`,
-				"the snapshot must be readable")
-			for _, line := range strings.Split(profile, "\n") {
-				if strings.Contains(line, spec.SnapshotDir) {
-					assert.NotContains(t, line, "file-write",
-						"no rule may grant write access to the snapshot: %s", line)
-				}
-			}
+			assert.Contains(t, profile, `(allow file-read* (subpath "`+want+`"))`)
 		})
+	}
+}
+
+func TestSandboxExecProfile_ScopesMetadataReadsAwayFromUserData(t *testing.T) {
+	// An unscoped (allow file-read-metadata) let a workload stat
+	// ~/.ssh/id_ed25519 and read back its size and mtime. No content, but enough
+	// to enumerate which secrets an operator holds — and the code comment
+	// claimed the opposite ("nothing here covers user data").
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	for _, line := range strings.Split(profile, "\n") {
+		if !strings.Contains(line, "file-read-metadata") {
+			continue
+		}
+		assert.Contains(t, line, "(subpath ", "metadata reads must be path-scoped, not global: %s", line)
+		assert.NotContains(t, line, `(subpath "/")`, "a root subtree scope is not a scope")
+	}
+}
+
+func TestSandboxExecProfile_GrantsTheDevicesAToolchainNeeds(t *testing.T) {
+	// Without /dev/null a shell redirect fails outright and `go vet` aborts
+	// before running — a sandbox that cannot run the project's validate commands
+	// is broken, not conservative. /dev/null takes file-write-data (writing into
+	// the device) rather than file-write* (creating or unlinking device nodes).
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	assert.Contains(t, profile, `(allow file-read* file-write-data (literal "/dev/null"))`)
+	assert.Contains(t, profile, `(allow file-read* (literal "/dev/urandom"))`)
+	assert.NotContains(t, profile, `(subpath "/dev")`+"\n", "the whole /dev tree is not a device allowlist")
+}
+
+func TestSandboxExecProfile_GrantsTheToolchainPrefixesReadOnly(t *testing.T) {
+	// Measured: without these, `git`, `make`, `python3` and `go vet` all fail
+	// under the profile (`unable to load libxcrun`). They are read-only — being
+	// able to READ /opt/homebrew is what lets the workload run its tools, while
+	// the absence of a write rule keeps a compromised run from modifying the
+	// operator's toolchain.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	for _, dir := range []string{"/Library/Developer/CommandLineTools", "/opt/homebrew", "/usr/local"} {
+		assert.Contains(t, profile, `(allow file-read* (subpath "`+dir+`"))`)
+		for _, granted := range writeAllowSubpaths(t, profile) {
+			assert.False(t, pathContains(granted, dir),
+				"write-allow on %q covers the toolchain path %q", granted, dir)
+		}
 	}
 }
 
@@ -116,22 +295,21 @@ func TestSandboxExecProfile_WritableRootsAreScratchAndTmpOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	permitted := []string{cfg.ScratchDir, "/tmp", "/private/tmp"}
-	var writeRules int
-	for _, line := range strings.Split(profile, "\n") {
-		if !strings.Contains(line, "file-write") {
-			continue
-		}
-		writeRules++
-		var ok bool
-		for _, root := range permitted {
-			if strings.Contains(line, `(subpath "`+root+`")`) {
-				ok = true
-				break
-			}
-		}
-		assert.True(t, ok, "write rule outside the permitted roots %v: %s", permitted, line)
+	granted := writeAllowSubpaths(t, profile)
+	for _, g := range granted {
+		assert.Contains(t, permitted, g, "write-allow on a subtree outside the permitted roots %v: %q", permitted, g)
 	}
-	assert.GreaterOrEqual(t, writeRules, 2, "the scratch dir and /tmp must both be writable")
+	assert.GreaterOrEqual(t, len(granted), 2, "the scratch dir and /tmp must both be writable")
+
+	// The only non-subtree write is the /dev/null device, and it is write-DATA
+	// (writing into the device), never write* (creating or unlinking nodes).
+	assert.Contains(t, profile, `(allow file-read* file-write-data (literal "/dev/null"))`)
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.HasPrefix(line, "(allow ") && strings.Contains(line, "(literal ") && strings.Contains(line, "file-write") {
+			assert.Contains(t, line, "/dev/null", "the only literal write target is /dev/null: %s", line)
+			assert.NotContains(t, line, "file-write*", "a device literal must not carry file-write*: %s", line)
+		}
+	}
 
 	// /tmp is a symlink to /private/tmp on macOS, so a (subpath "/tmp") rule
 	// alone resolves to nothing and the carve-out silently does not exist.
