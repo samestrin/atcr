@@ -66,7 +66,9 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 	var fetcher DiffFetcher
 	if *useGit {
-		fetcher = &CloneFetcher{}
+		cf := &CloneFetcher{}
+		defer func() { _ = cf.Cleanup() }()
+		fetcher = cf
 	} else {
 		fetcher = &CompareAPIFetcher{Token: githubToken()}
 	}

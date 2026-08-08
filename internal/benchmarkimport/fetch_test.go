@@ -152,6 +152,20 @@ func TestCloneFetcher_ReusesOneTempWorkDirAcrossCalls(t *testing.T) {
 		"a fresh temp dir per call would defeat the clone cache and leave one full clone per case on disk")
 }
 
+func TestCloneFetcher_CleanupRemovesOnlyASelfAllocatedWorkDir(t *testing.T) {
+	f := &CloneFetcher{}
+	selfAlloc, err := f.workDir()
+	require.NoError(t, err)
+
+	require.NoError(t, f.Cleanup())
+	assert.NoDirExists(t, selfAlloc, "a self-allocated clone root is removed at end of run")
+
+	supplied := t.TempDir()
+	g := &CloneFetcher{WorkDir: supplied}
+	require.NoError(t, g.Cleanup())
+	assert.DirExists(t, supplied, "a caller-supplied WorkDir is the caller's to manage, never removed")
+}
+
 func TestCloneFetcher_DefaultsToGitHub(t *testing.T) {
 	f := &CloneFetcher{}
 

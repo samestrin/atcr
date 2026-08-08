@@ -156,6 +156,17 @@ func (f *CloneFetcher) workDir() (string, error) {
 	return f.tempDir, f.tempErr
 }
 
+// Cleanup removes the self-allocated temp clone root — blobless clones run to
+// gigabytes, so leaving one per repository on disk permanently is not an
+// option. Call once at the end of the run. A caller-supplied WorkDir is the
+// caller's to manage and is never touched.
+func (f *CloneFetcher) Cleanup() error {
+	if f.WorkDir != "" || f.tempDir == "" {
+		return nil
+	}
+	return os.RemoveAll(f.tempDir)
+}
+
 func (f *CloneFetcher) cloneURL(owner, repo string) string {
 	base := f.BaseURL
 	if base == "" {
