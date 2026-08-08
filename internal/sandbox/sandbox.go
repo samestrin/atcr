@@ -7,8 +7,26 @@
 //
 //   - no network (the run cannot exfiltrate or call out),
 //   - a read-only view of the snapshot (the run cannot mutate the work tree),
-//   - resource caps (memory, CPU, PIDs) so a run cannot exhaust the host,
-//   - non-root, dropped capabilities, and no-new-privileges.
+//   - a bounded wall-clock duration and a cap on concurrent runs,
+//   - the minimum privilege its isolation mechanism can express.
+//
+// Those are the universal MUSTs. The following are guaranteed by DockerBackend
+// and NOT by every backend, because they depend on a mechanism the host may not
+// provide:
+//
+//   - memory, CPU, and PID caps,
+//   - a non-root user, dropped capabilities, and no-new-privileges.
+//
+// osLevelBackend (oslevel.go) is the exception: it wraps the platform's native
+// process sandbox — macOS sandbox-exec, Linux bwrap — which, once its profile
+// generators land, isolates the filesystem and network but shares the host kernel and has no image, no rootfs
+// remount, and no capability set to drop. bwrap supplies a PID namespace;
+// neither tool caps memory or CPU without additional cgroup/rlimit plumbing.
+// A caller that needs the full list must require DockerBackend specifically
+// rather than any Backend. This distinction is stated here rather than left
+// implicit because the OS-level backend is operator-selectable, and an operator
+// choosing it is accepting a genuinely weaker containment posture than Docker's
+// in exchange for not needing a daemon.
 //
 // The package never enables itself: callers opt in via `--exec` and a backend
 // that passes Preflight. Bare-metal execution is intentionally unsupported.
@@ -100,14 +118,19 @@ type RunResult struct {
 	TimedOut bool
 }
 
-// Backend is a pluggable sandbox executor. Docker is the only implementation in
-// Epic 11.0; the interface keeps Podman (or a remote runner) a drop-in later.
+// Backend is a pluggable sandbox executor. DockerBackend (docker.go) and
+// osLevelBackend (oslevel.go) implement it; the interface keeps Podman (or a
+// remote runner) a drop-in later. See the package doc for which containment
+// guarantees are universal and which are Docker-only.
 type Backend interface {
 	// Name identifies the backend for diagnostics and the evidence trail.
 	Name() string
-	// Preflight verifies the backend is usable: runtime installed, daemon
-	// reachable, base image present, and a trivial container runs to completion.
-	// It MUST pass before Run is used; the CLI refuses `--exec` otherwise.
+	// Preflight verifies the backend is usable: its mechanism is installed and
+	// reachable, its prerequisites are met, and a trivial workload runs to
+	// completion under it. (For Docker that is the daemon, the base image, and a
+	// throwaway container; for the OS-level backend, the sandboxing binary, the
+	// host's namespace support, and a probe run.) It MUST pass before Run is
+	// used; the CLI refuses `--exec` otherwise.
 	Preflight(ctx context.Context) error
 	// Run executes spec in isolation and returns the captured result. err is
 	// reserved for backend faults (spawn failure, malformed spec); a non-zero

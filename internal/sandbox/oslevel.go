@@ -61,8 +61,12 @@ func osLevelToolFor(goos string) (string, error) {
 // use DefaultOSLevelConfig and override fields as needed.
 type OSLevelConfig struct {
 	// ToolPath is the platform sandboxing binary to invoke (sandbox-exec on
-	// macOS, bwrap on Linux). Empty resolves the platform default on PATH;
-	// tests inject a fake shim here, mirroring DockerConfig.DockerPath.
+	// macOS, bwrap on Linux). A non-empty value MUST be an absolute path.
+	//
+	// Empty means Preflight resolves the platform default from a fixed list of
+	// system directories — never from $PATH, which the operator's environment
+	// controls — and pins the result; Run refuses until that has happened.
+	// Tests inject a fake shim here, mirroring DockerConfig.DockerPath.
 	ToolPath string
 	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
 	Timeout time.Duration
@@ -76,7 +80,8 @@ type OSLevelConfig struct {
 }
 
 // DefaultOSLevelConfig returns a conservative default configuration. ToolPath is
-// left empty so it resolves to the running platform's tool on PATH.
+// left empty so Preflight resolves the running platform's tool from the trusted
+// system directories.
 func DefaultOSLevelConfig() OSLevelConfig {
 	return OSLevelConfig{
 		Timeout:        60 * time.Second,
@@ -117,6 +122,11 @@ type osLevelBackend struct {
 	// sysctls from. Empty means "/". Injectable so the check is assertable from
 	// a macOS dev box, not only on whichever Linux host CI happens to use.
 	procRoot string
+	// trustedDirs overrides the directories the platform default binary is
+	// resolved from. Nil means trustedToolDirs. Injectable so the
+	// trusted-directory control is assertable from a fixture rather than
+	// depending on whether the host happens to have the real tool installed.
+	trustedDirs []string
 
 	// mu guards pinnedTool. Preflight and Run may be called concurrently — the
 	// type is explicitly built for concurrent use (see MaxConcurrent/sem) — and
@@ -185,20 +195,16 @@ func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // is DockerBackend.Preflight's reason for spawning a trivial container
 // (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
 func (b *osLevelBackend) Preflight(ctx context.Context) error {
-	// 0. The backend must be able to contain something before it may report
-	//    itself usable. Preflight is what gates --exec, so returning nil while
-	//    the containment argv is empty would enable execution of model-authored
-	//    code with no isolation at all — the exposure this backend exists to
-	//    remove. Fail closed until Phase 2 supplies the profile generators.
-	contain, err := osLevelContainmentArgs(b.platform(), b.cfg, RunSpec{})
-	if err != nil {
-		return fmt.Errorf("sandbox preflight: cannot build containment arguments: %w", err)
-	}
-	if len(contain) == 0 {
-		return fmt.Errorf("sandbox preflight: %w (platform %s)", ErrOSLevelNoContainment, b.platform())
-	}
-
 	// 1. Binary present and executable.
+	//
+	//    There is deliberately no separate containment pre-check here. The gate
+	//    lives in osLevelRunArgs, on the real argv path, so step 3's trivial run
+	//    inherits the refusal (ErrOSLevelNoContainment surfaces through the
+	//    wrap) — and, unlike a check in this function, it also covers a caller
+	//    that skips Preflight entirely. A pre-check here would additionally have
+	//    to invent a RunSpec, and Phase 2's generators are spec-dependent
+	//    (bwrap binds SnapshotDir; the sandbox-exec profile names it), so a
+	//    zero-value probe would break the moment they land.
 	resolved, err := b.resolveToolPath()
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: os-level sandbox binary not usable: %w", err)
@@ -289,12 +295,18 @@ const preflightRunTimeout = 30 * time.Second
 // it exists and is executable. Unlike toolPath it performs I/O, so it belongs to
 // Preflight rather than the pure argv path.
 func (b *osLevelBackend) resolveToolPath() (string, error) {
-	tool, err := b.toolPath()
+	tool, err := b.platformToolName()
 	if err != nil {
 		return "", err
 	}
-	if filepath.IsAbs(tool) {
-		return tool, verifyExecutable(tool)
+	if b.cfg.ToolPath != "" {
+		if !filepath.IsAbs(b.cfg.ToolPath) {
+			return "", fmt.Errorf("sandbox: os-level tool_path must be absolute, got %q", b.cfg.ToolPath)
+		}
+		if err := verifyExecutable(b.cfg.ToolPath); err != nil {
+			return "", err
+		}
+		return b.cfg.ToolPath, nil
 	}
 	// Resolve the platform default from a fixed list of system directories
 	// rather than the inherited $PATH. exec.LookPath honours $PATH verbatim —
@@ -304,31 +316,51 @@ func (b *osLevelBackend) resolveToolPath() (string, error) {
 	// contain nothing. An operator who needs a different location sets an
 	// absolute tool_path, which is a deliberate act rather than an inherited
 	// environment value.
-	for _, dir := range trustedToolDirs {
+	dirs := b.trustedDirs
+	if dirs == nil {
+		dirs = trustedToolDirs
+	}
+	for _, dir := range dirs {
 		candidate := filepath.Join(dir, tool)
 		if err := verifyExecutable(candidate); err == nil {
 			return candidate, nil
 		}
 	}
 	return "", fmt.Errorf("%s not found in %v (is it installed? set an absolute tool_path to override)",
-		tool, trustedToolDirs)
+		tool, dirs)
 }
 
 // trustedToolDirs are the system directories the platform default binary may be
-// resolved from.
-var trustedToolDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
+// resolved from. /usr/local/bin is deliberately absent: it is the conventional
+// admin/user-managed prefix (user-owned under Intel-macOS Homebrew), so trusting
+// it would reintroduce the substitution this list exists to prevent. An operator
+// whose tool lives elsewhere sets an absolute tool_path — a deliberate act
+// rather than an inherited environment value.
+var trustedToolDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 
-// verifyExecutable reports whether path is a regular, executable file.
+// verifyExecutable reports whether path is a regular, executable, non-symlink
+// file that is not group- or world-writable.
+//
+// Lstat rather than Stat: os.Stat follows symlinks, so a symlink in a trusted
+// directory pointing at an attacker-controlled file elsewhere would pass. The
+// writability check is what makes "trusted directory" mean something — a
+// world-writable binary in /usr/bin is not more trustworthy than one in /tmp.
 func verifyExecutable(path string) error {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; refusing to resolve the sandbox binary through one", path)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file", path)
 	}
 	if info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("%s is not executable", path)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s is group- or world-writable", path)
 	}
 	return nil
 }
@@ -402,11 +434,32 @@ func checkHostPrerequisite(ctx context.Context, goos, procRoot string) error {
 // unit test without either binary installed. The script body is NOT included
 // here: it is streamed over stdin to `sh -s` by Run, never interpolated into
 // argv, preserving RunSpec's injection-safety guarantee (sandbox.go:51-56).
-func osLevelRunArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+func osLevelRunArgs(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
-	var args []string
+	// The containment arguments come first and the workload last. This call is
+	// wired now, while it returns nothing, so Phase 2 only has to fill in the
+	// generator — no signature change, no new call site, and the argv-ordering
+	// tests already pin the shape the generator must produce.
+	contain, err := osLevelContainmentArgs(goos, cfg, spec)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: cannot build containment arguments: %w", err)
+	}
+	// Refuse to build an argv that contains nothing. This is the gate, and it
+	// lives here rather than in Preflight so it covers EVERY spawn: a caller
+	// that set tool_path and skipped Preflight would otherwise run
+	// model-authored code with the sandboxing binary present but no isolation
+	// arguments at all — the binary would simply exec the workload.
+	if len(contain) == 0 {
+		return nil, fmt.Errorf("%w (platform %s)", ErrOSLevelNoContainment, goos)
+	}
+	// Copy before appending. A Phase 2 generator that returns a slice with spare
+	// capacity — a cached base profile, a make([]string, 0, N) builder — would
+	// otherwise have two concurrent runs append into the same backing array,
+	// and argv is what decides containment.
+	args := make([]string, 0, len(contain)+len(spec.Command)+2)
+	args = append(args, contain...)
 	if spec.Script != "" {
 		return append(args, "/bin/sh", "-s"), nil
 	}
@@ -429,7 +482,7 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 // verification run spawns the exact path it just validated — toolPath has not
 // been pinned at that point, and must not be until the verification succeeds.
 func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (RunResult, error) {
-	args, err := osLevelRunArgs(b.cfg, spec)
+	args, err := osLevelRunArgs(b.platform(), b.cfg, spec)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -459,7 +512,15 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	case b.sem <- struct{}{}:
 		defer func() { <-b.sem }()
 	case <-ctx.Done():
-		return RunResult{}, ctx.Err()
+		// A cancellation while queued is still a cancellation, not a backend
+		// fault — report it the same way a cancellation after spawn is reported,
+		// so a caller keying on err != nil does not treat a user's ctrl-C on a
+		// queued run as a sandbox failure.
+		return RunResult{
+			Command:  renderCommand(spec),
+			ExitCode: timeoutExitCode,
+			TimedOut: true,
+		}, nil
 	}
 
 	timeout := spec.Timeout
@@ -757,27 +818,50 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 // Preflight's checks (task 1.11) — this function stays pure so it can be
 // asserted without touching the filesystem.
 //
-// The platform default is still returned as a bare name here and resolved by
-// exec; pinning it to an absolute path via exec.LookPath is TD-003, scheduled
-// for Preflight where an I/O check is already in scope.
+// With neither a pin nor an absolute override, this returns
+// errOSLevelNotPreflighted rather than a bare name. Returning a name would have
+// exec resolve it through the inherited $PATH at spawn time, bypassing
+// resolveToolPath's trusted-directory control — so the one decision that picks
+// the binary containing untrusted code would be the one with no check on it.
 func (b *osLevelBackend) toolPath() (string, error) {
+	// The platform gate runs first and unconditionally, so an unsupported GOOS
+	// is refused even when tool_path is set.
+	if _, err := osLevelToolFor(b.platform()); err != nil {
+		return "", err
+	}
 	// A successful Preflight pinned an absolute, verified path; reuse it so no
-	// later Run re-resolves a bare name.
+	// later Run re-resolves a name.
 	b.mu.Lock()
 	pinned := b.pinnedTool
 	b.mu.Unlock()
 	if pinned != "" {
 		return pinned, nil
 	}
-	platformTool, err := osLevelToolFor(b.platform())
-	if err != nil {
-		return "", err
+	if b.cfg.ToolPath != "" {
+		if !filepath.IsAbs(b.cfg.ToolPath) {
+			return "", fmt.Errorf("sandbox: os-level tool_path must be absolute, got %q", b.cfg.ToolPath)
+		}
+		return b.cfg.ToolPath, nil
 	}
-	if b.cfg.ToolPath == "" {
-		return platformTool, nil
-	}
-	if !filepath.IsAbs(b.cfg.ToolPath) {
-		return "", fmt.Errorf("sandbox: os-level tool_path must be absolute, got %q", b.cfg.ToolPath)
-	}
-	return b.cfg.ToolPath, nil
+	// Neither pinned nor explicitly configured. Returning the bare platform name
+	// here would have exec resolve it through the inherited $PATH at spawn time,
+	// bypassing resolveToolPath's trusted-directory control entirely — so the
+	// one code path that decides which binary contains untrusted code would be
+	// the one path with no check on it. Refuse instead: Preflight is where the
+	// default is resolved, and Backend.Preflight is documented as mandatory
+	// before Run (sandbox.go:108-111). This makes that contract enforced by the
+	// type rather than merely stated.
+	return "", errOSLevelNotPreflighted
+}
+
+// errOSLevelNotPreflighted is returned when Run is reached without a resolved
+// binary — either Preflight was never called, or it failed.
+var errOSLevelNotPreflighted = errors.New(
+	"sandbox: os-level backend has no resolved sandbox binary; Preflight must pass before Run")
+
+// platformToolName returns the bare name of the platform's sandboxing binary,
+// for Preflight's trusted-directory resolution. Unlike toolPath it does not
+// require a pin, because resolving that name is exactly what it is used for.
+func (b *osLevelBackend) platformToolName() (string, error) {
+	return osLevelToolFor(b.platform())
 }
