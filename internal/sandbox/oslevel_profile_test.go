@@ -147,11 +147,10 @@ func TestSandboxExecProfile_SnapshotIsReadOnlyForBothWritableValues(t *testing.T
 	cfg, base := profileFixture(t)
 
 	snapshots := map[string]string{
-		"home-style fixture":  "/Users/dev/atcr-snapshot-abc123",
-		"under /tmp":          "/tmp/atcr-snapshot-abc123",
-		"under /private/tmp":  "/private/tmp/atcr-snapshot-abc123",
-		"under TMPDIR alias":  "/var/folders/qq/T/atcr-snapshot-abc123",
-		"inside the tmp root": "/private/tmp",
+		"home-style fixture": "/Users/dev/atcr-snapshot-abc123",
+		"under /tmp":         "/tmp/atcr-snapshot-abc123",
+		"under /private/tmp": "/private/tmp/atcr-snapshot-abc123",
+		"under TMPDIR alias": "/var/folders/qq/T/atcr-snapshot-abc123",
 	}
 	for name, snapshot := range snapshots {
 		for _, writable := range []bool{false, true} {
@@ -900,4 +899,147 @@ func TestBwrapArgs_ContainmentArgsDoNotIncludeTheWorkload(t *testing.T) {
 	assert.NotContains(t, argv, "go")
 	assert.NotContains(t, argv, "test")
 	assert.NotContains(t, argv, "./...")
+}
+
+// --- Phase 2 gate fixes -----------------------------------------------------
+
+func TestSandboxExecProfile_GrantsTheSymlinkNodesInFrontOfPrivate(t *testing.T) {
+	// Normalizing a path onto /private is not enough on its own: sandbox-exec
+	// resolves the target but still needs metadata permission on each
+	// intermediate symlink node. os.MkdirTemp returns /var/folders/... on a
+	// stock macOS host, so without the /var node every snapshot read and every
+	// GOCACHE write fails ("mkdir: /var: Operation not permitted"), which would
+	// make Phase 3's positive controls impossible and its negative controls pass
+	// vacuously.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	var metadataLine string
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.Contains(line, "file-read-metadata") {
+			metadataLine = line
+		}
+	}
+	require.NotEmpty(t, metadataLine)
+	for _, alias := range []string{"/var", "/etc", "/tmp"} {
+		assert.Contains(t, metadataLine, `(literal "`+alias+`")`,
+			"the %s symlink node must be traversable or every aliased path dies at the first component", alias)
+	}
+}
+
+func TestGenerators_RejectAWritableRootOverAHomeOrSystemTree(t *testing.T) {
+	// The writable guard had been handed only the read tier, so a scratch dir at
+	// $HOME was accepted — a gate review then read ~/.ssh/id_ed25519 and wrote
+	// into the home directory from inside the sandbox, the exact outcome this
+	// package exists to prevent. Both platforms are asserted together so they
+	// cannot drift apart again.
+	t.Run("darwin", func(t *testing.T) {
+		cfg, spec := profileFixture(t)
+		for _, bad := range []string{"/Users", "/Users/samestrin", "/private/etc", "/etc", "/Applications", "/System", "/Library", "/private/var/root"} {
+			cfg := cfg
+			cfg.ScratchDir = bad
+			profile, err := sandboxExecProfile(cfg, spec)
+			require.Error(t, err, "ScratchDir %q must be refused", bad)
+			assert.Empty(t, profile)
+		}
+	})
+	t.Run("linux", func(t *testing.T) {
+		cfg, spec := bwrapFixture(t)
+		for _, bad := range []string{"/home", "/home/dev", "/root", "/etc", "/usr", "/proc"} {
+			cfg := cfg
+			cfg.ScratchDir = bad
+			argv, err := bwrapArgs(cfg, spec)
+			require.Error(t, err, "ScratchDir %q must be refused", bad)
+			assert.Nil(t, argv)
+		}
+	})
+}
+
+func TestSandboxExecProfile_RejectsTheSameSnapshotValuesAsLinux(t *testing.T) {
+	// The two source guards had drifted: Linux refused /etc, /proc and /dev
+	// while darwin accepted them, and darwin additionally accepted /private/tmp,
+	// where the trailing snapshot deny silently revokes the unconditional /tmp
+	// carve-out and leaves the run with nowhere writable at all.
+	cfg, base := profileFixture(t)
+	for _, bad := range []string{"/", "/Users", "/private/etc", "/dev", "/tmp", "/private/tmp", "/usr/lib"} {
+		spec := base
+		spec.SnapshotDir = bad
+		profile, err := sandboxExecProfile(cfg, spec)
+		require.Error(t, err, "SnapshotDir %q must be refused", bad)
+		assert.Empty(t, profile)
+	}
+	// A snapshot INSIDE a home or a temp dir stays ordinary.
+	for _, ok := range []string{"/Users/dev/project", "/private/tmp/atcr-snapshot-x", "/var/folders/qq/T/atcr-snapshot-x"} {
+		spec := base
+		spec.SnapshotDir = ok
+		_, err := sandboxExecProfile(cfg, spec)
+		require.NoError(t, err, "SnapshotDir %q is the normal case", ok)
+	}
+}
+
+func TestSandboxExecArgs_WrapsTheProfileAndTerminatesOptions(t *testing.T) {
+	// The phase-exit contract: both platforms return a ready-to-splice argv, so
+	// Phase 3's integration tests and Phase 4's wiring consume them identically
+	// instead of re-deriving the darwin flags at each call site.
+	cfg, spec := profileFixture(t)
+	argv, err := sandboxExecArgs(cfg, spec)
+	require.NoError(t, err)
+	require.Len(t, argv, 3)
+
+	assert.Equal(t, "-p", argv[0])
+	assert.Contains(t, argv[1], "(deny default)", "the profile travels as one discrete argv element")
+	assert.Equal(t, "--", argv[2], "the workload is appended after this and must never be read as an option")
+
+	_, err = sandboxExecArgs(cfg, RunSpec{SnapshotDir: "/Users/dev/snap"})
+	require.Error(t, err, "a generator error must propagate rather than yield a partial argv")
+}
+
+func TestGenerators_BothRejectWritableWithoutAScratchDir(t *testing.T) {
+	// RunSpec.Writable asks for an ephemeral copy to be the writable tree, and
+	// with no scratch dir that copy has nowhere to live on either platform. The
+	// two generators had disagreed, which would have forced a cross-platform
+	// matrix to carry per-platform expectations for one input.
+	_, darwinSpec := profileFixture(t)
+	darwinSpec.Writable = true
+	_, err := sandboxExecProfile(OSLevelConfig{}, darwinSpec)
+	require.Error(t, err)
+
+	_, linuxSpec := bwrapFixture(t)
+	linuxSpec.Writable = true
+	_, err = bwrapArgs(OSLevelConfig{}, linuxSpec)
+	require.Error(t, err)
+}
+
+func TestSandboxExecProfile_GrantsMetadataOnAncestorsOfTheCarveOuts(t *testing.T) {
+	// os.MkdirAll — which every Go build performs on GOCACHE — walks the
+	// ancestor chain, so without metadata on each ancestor it fails on the first
+	// unreadable one rather than on the target. Measured under the real binary
+	// as "mkdir: /var: Operation not permitted" with both the snapshot and
+	// scratch subpaths already granted.
+	cfg := DefaultOSLevelConfig()
+	cfg.ScratchDir = "/private/var/folders/4h/T/atcr-scratch"
+	spec := RunSpec{Command: []string{"go", "build"}, SnapshotDir: "/private/var/folders/4h/T/atcr-snap"}
+
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	var metadataLine string
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.Contains(line, "file-read-metadata") {
+			metadataLine = line
+		}
+	}
+	require.NotEmpty(t, metadataLine)
+	for _, ancestor := range []string{"/private", "/private/var", "/private/var/folders", "/private/var/folders/4h", "/private/var/folders/4h/T"} {
+		assert.Contains(t, metadataLine, `(literal "`+ancestor+`")`,
+			"an ancestor must be traversable, or mkdir -p fails before reaching the carve-out")
+	}
+	// An ancestor is granted as a directory ENTRY, never as a subtree — the
+	// distinction between (literal) and (subpath) is the whole containment
+	// boundary here.
+	for _, ancestor := range []string{"/private", "/private/var", "/private/var/folders"} {
+		assert.NotContains(t, profile, `(subpath "`+ancestor+`")`,
+			"an ancestor must never be granted as a subtree")
+	}
 }

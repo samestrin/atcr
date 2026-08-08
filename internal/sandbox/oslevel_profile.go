@@ -125,6 +125,44 @@ var darwinDeviceReads = []string{"/dev/urandom", "/dev/random", "/dev/zero"}
 // emitted.
 var darwinTmpDirs = []string{"/tmp", "/private/tmp"}
 
+// darwinSymlinkAliases are the symlink NODES that stand in front of the
+// /private tree. Normalizing a path onto its resolved form is not sufficient on
+// its own: sandbox-exec resolves the target but still needs metadata permission
+// on each intermediate symlink node, so a rule naming only /private/var leaves
+// every access spelled /var/... failing at the first component.
+//
+// This is not hypothetical. os.MkdirTemp returns /var/folders/... on a stock
+// macOS host, which is what SnapshotDir and the scratch dir hold, and a gate
+// review measured the consequence under the real binary: reading a file in the
+// snapshot gave "Operation not permitted", and `mkdir -p $GOCACHE` failed with
+// "mkdir: /var: Operation not permitted" — while adding the /var node alone
+// fixed it. /tmp never showed the symptom only because darwinTmpDirs already
+// happens to emit both spellings.
+var darwinSymlinkAliases = []string{"/var", "/etc", "/tmp"}
+
+// darwinWritableProtectedDirs are the trees a WRITABLE root may not overlap. It
+// is deliberately wider than darwinSystemReadDirs: reusing the read tier left
+// $HOME, /private/etc and /Applications acceptable as scratch directories, and
+// a gate review set ScratchDir to $HOME and then read ~/.ssh/id_ed25519 and
+// wrote into the home directory from inside the sandbox — the exact outcome
+// this file claims to prevent. It mirrors linuxProtectedRoots so the two
+// platforms refuse the same inputs.
+func darwinWritableProtectedDirs() []string {
+	dirs := append([]string{}, darwinSystemReadDirs...)
+	return append(dirs, "/private/etc", "/Applications", "/System", "/Library")
+}
+
+// darwinSourceProtectedDirs are the trees a snapshot may not be or contain,
+// mirroring the Linux list so a cross-platform matrix does not disagree with
+// itself. The tmp roots are included because a snapshot AT /private/tmp makes
+// the trailing deny revoke the unconditional /tmp carve-out for the whole run,
+// leaving no writable location at all and no error to say so.
+func darwinSourceProtectedDirs() []string {
+	dirs := append([]string{}, darwinSystemReadDirs...)
+	dirs = append(dirs, darwinTmpDirs...)
+	return append(dirs, "/private/etc", "/dev")
+}
+
 // sandboxExecProfile builds the macOS sandbox-exec profile for spec: deny by
 // default, an explicit network denial, a read-only view of the snapshot and of
 // the system/toolchain tier, and write access confined to cfg.ScratchDir and
@@ -161,19 +199,30 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// without this the profile would emit (allow file-read* (subpath "/")) and
 	// grant a full-filesystem read, exactly the root-subtree grant this file
 	// warns about.
-	if err := assertUsableSource("SnapshotDir", snapshot,
-		append(append([]string{}, darwinSystemReadDirs...), darwinHomeRoots...)); err != nil {
+	if err := assertUsableSource("SnapshotDir", snapshot, darwinSourceProtectedDirs()); err != nil {
+		return "", err
+	}
+	if err := assertNotAHomeTree("SnapshotDir", snapshot, darwinHomeContainers, darwinHomeDirs); err != nil {
 		return "", err
 	}
 	// An empty scratch dir is valid: it yields no scratch carve-out. That is no
 	// ADDITIONAL access beyond the unconditional /tmp roots — not zero writable
 	// access, which the previous wording implied.
+	if spec.Writable && cfg.ScratchDir == "" {
+		// Parity with bwrapArgs: RunSpec.Writable asks for an ephemeral copy to
+		// be the writable tree, and with no scratch dir that copy has nowhere to
+		// live on either platform.
+		return "", fmt.Errorf("sandbox: RunSpec.Writable requires a ScratchDir to hold the ephemeral copy")
+	}
 	var scratch string
 	if cfg.ScratchDir != "" {
 		if scratch, err = profileSafePath("ScratchDir", cfg.ScratchDir); err != nil {
 			return "", err
 		}
-		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinSystemReadDirs, nil); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinWritableProtectedDirs(), darwinTmpDirs); err != nil {
+			return "", err
+		}
+		if err := assertNotAHomeTree("ScratchDir", scratch, darwinHomeContainers, darwinHomeDirs); err != nil {
 			return "", err
 		}
 		if err := assertDisjointPaths(snapshot, scratch); err != nil {
@@ -203,7 +252,27 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// workload stat ~/.ssh/id_ed25519 and read back its size and mtime — no
 	// content, but enough to enumerate an operator's secrets. Measured: scoping
 	// it to the same directories still satisfies dyld's path resolution.
-	b.WriteString("(allow file-read-metadata " + profileLiteral("/") + " " +
+	metadataLiterals := []string{profileLiteral("/")}
+	for _, alias := range darwinSymlinkAliases {
+		metadataLiterals = append(metadataLiterals, profileLiteral(alias))
+	}
+	// Every ancestor of the snapshot and scratch directories, as literals: the
+	// directory entry alone, never the subtree. Without them `mkdir -p` and
+	// os.MkdirAll — which every Go build performs on GOCACHE — fail on the first
+	// unreadable ancestor rather than on the target, measured as
+	// "mkdir: /var: Operation not permitted" even with the snapshot and scratch
+	// subpaths granted. Granting an ancestor's metadata reveals that the
+	// directory exists and nothing about its contents, so this does not widen
+	// the read surface the way a subpath rule would.
+	for _, dir := range []string{snapshot, scratch} {
+		if dir == "" {
+			continue
+		}
+		for _, ancestor := range pathAncestors(dir) {
+			metadataLiterals = append(metadataLiterals, profileLiteral(ancestor))
+		}
+	}
+	b.WriteString("(allow file-read-metadata " + strings.Join(metadataLiterals, " ") + " " +
 		strings.Join(profileSubpaths(metadataScope), " ") + ")\n")
 	b.WriteString(profileAllowRootRead + "\n")
 	for _, dir := range darwinSystemReadDirs {
@@ -224,6 +293,32 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// including a /tmp rule covering a snapshot that lives under /tmp.
 	b.WriteString("(deny file-write* " + profileSubpath(snapshot) + ")\n")
 	return b.String(), nil
+}
+
+// sandboxExecArgs returns the macOS containment ARGV — the profile wrapped in
+// the flags sandbox-exec needs, terminated so nothing after it is read as an
+// option.
+//
+// It exists so both platforms hand back the same shape. bwrapArgs already
+// returns a ready-to-splice []string; without this, every Phase 3 integration
+// test and the Phase 4 wiring would each have to re-derive `{"-p", profile,
+// "--"}` for darwin, and `osLevelContainmentArgs` could not simply switch on
+// GOOS.
+//
+// The terminator carries the same weight here as it does for bwrap: the
+// model-authored workload is appended immediately after these arguments. A
+// command beginning with -p or -f would otherwise be read as a second profile
+// selector. That currently fails closed — sandbox-exec exits 64 ("Exactly one
+// of -f, -n, -p must be specified"), which classifyToolExit already treats as a
+// fault — but relying on a usage error for a security property is not a
+// guarantee, and `sandbox-exec -p <profile> -- /bin/echo hi` was measured to
+// work, so the terminator is simply emitted.
+func sandboxExecArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+	profile, err := sandboxExecProfile(cfg, spec)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"-p", profile, sandboxArgvTerminator}, nil
 }
 
 func profileReadRule(dir string) string {
@@ -362,6 +457,41 @@ func assertUsableWritableRoot(field, path string, protected, mountPoints []strin
 	return nil
 }
 
+// assertNotAHomeTree rejects a path that is a whole home directory — the
+// container of every user's home (/Users, /home), or one user's entire home.
+//
+// It is deliberately NOT the bidirectional containment rule used for system
+// directories. A scratch or snapshot INSIDE a home is the overwhelmingly normal
+// case (that is where repositories live), so rejecting everything under /Users
+// would refuse ordinary configurations. What must be refused is granting the
+// tree itself: a gate review set ScratchDir to $HOME and read
+// ~/.ssh/id_ed25519 out of the resulting sandbox, because the writable
+// carve-out covered the whole home.
+func assertNotAHomeTree(field, path string, containers, homes []string) error {
+	// A container of homes (/Users, /home): the tree itself is refused, and so
+	// is one level below it, because that level IS a whole user home.
+	for _, root := range containers {
+		if pathContains(path, root) {
+			return fmt.Errorf("sandbox: %s %q is or contains %q, the tree holding every user's home: "+
+				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path, root)
+		}
+		if filepath.Dir(path) == root {
+			return fmt.Errorf("sandbox: %s %q is a user's home directory: "+
+				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path)
+		}
+	}
+	// A home directory that is not under a container (/root): the tree itself is
+	// refused, but a project inside it is ordinary, exactly as it is under
+	// /home/<user>/.
+	for _, home := range homes {
+		if pathContains(path, home) {
+			return fmt.Errorf("sandbox: %s %q is or contains the home directory %q: "+
+				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path, home)
+		}
+	}
+	return nil
+}
+
 // assertUsableSource rejects a path that must never be exposed inside the
 // sandbox even read-only: the filesystem root, a system tree, or a directory
 // holding every user's home.
@@ -410,6 +540,16 @@ func assertDisjointPaths(snapshot, scratch string) error {
 			"the writable carve-out would cover the whole read-only snapshot", snapshot, scratch)
 	}
 	return nil
+}
+
+// pathAncestors returns every proper ancestor of an absolute path, nearest
+// first, excluding the filesystem root (which is granted separately).
+func pathAncestors(path string) []string {
+	var out []string
+	for parent := filepath.Dir(path); parent != string(filepath.Separator) && parent != "."; parent = filepath.Dir(parent) {
+		out = append(out, parent)
+	}
+	return out
 }
 
 // pathContains reports whether child is parent or lies beneath it.
@@ -479,14 +619,22 @@ var linuxOptionalFiles = []string{
 // /proc/1/cmdline and 702 host PIDs from inside the sandbox.
 var linuxPseudoMounts = []string{"/proc", "/dev", "/tmp"}
 
-// linuxHomeRoots must never be the snapshot: binding one of them in would
+// linuxHomeContainers must never be the snapshot: binding one of them in would
 // expose every user's home read-only inside the sandbox. A snapshot INSIDE a
 // home directory is ordinary and stays allowed — it is the tree itself that is
 // refused.
-var linuxHomeRoots = []string{"/home", "/root"}
+var linuxHomeContainers = []string{"/home"}
 
-// darwinHomeRoots is the macOS counterpart of linuxHomeRoots.
-var darwinHomeRoots = []string{"/Users", "/private/var/root"}
+// linuxHomeDirs are home directories that are not under a container. /root is
+// root's own home: /root is refused, /root/project is not.
+var linuxHomeDirs = []string{"/root"}
+
+// darwinHomeContainers is the macOS counterpart of linuxHomeContainers.
+var darwinHomeContainers = []string{"/Users"}
+
+// darwinHomeDirs are home directories that are not under a container, so a
+// project inside one is ordinary while the directory itself is not.
+var darwinHomeDirs = []string{"/private/var/root"}
 
 // sandboxArgvTerminator ends the sandboxing tool's own options so that
 // everything after it is the workload, never another flag.
@@ -524,8 +672,10 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	// so without this a SnapshotDir of "/" would emit `--ro-bind / /work` and
 	// hand the run the entire host filesystem. A review did exactly that and
 	// read the operator's SSH private key out of /work.
-	if err := assertUsableSource("SnapshotDir", snapshot,
-		append(linuxProtectedRoots(), linuxHomeRoots...)); err != nil {
+	if err := assertUsableSource("SnapshotDir", snapshot, linuxProtectedRoots()); err != nil {
+		return nil, err
+	}
+	if err := assertNotAHomeTree("SnapshotDir", snapshot, linuxHomeContainers, linuxHomeDirs); err != nil {
 		return nil, err
 	}
 	scratch := ""
@@ -535,6 +685,9 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		}
 		scratch = filepath.Clean(cfg.ScratchDir)
 		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots(), linuxPseudoMounts); err != nil {
+			return nil, err
+		}
+		if err := assertNotAHomeTree("ScratchDir", scratch, linuxHomeContainers, linuxHomeDirs); err != nil {
 			return nil, err
 		}
 		if err := assertDisjointPaths(snapshot, scratch); err != nil {
@@ -673,13 +826,17 @@ func assertNoBindShadowing(args []string) error {
 	var mounts []mount
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--bind":
+		case "--bind", "--bind-try", "--dev-bind", "--dev-bind-try":
+			// Every writable bind variant bwrap accepts, not just the one this
+			// generator currently emits: an untracked variant would both escape
+			// the shadowing check and leave its two operands to be re-scanned as
+			// if they were flags.
 			if i+2 >= len(args) {
-				return fmt.Errorf("sandbox: malformed bwrap argv: --bind is missing an operand")
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
 			}
 			mounts = append(mounts, mount{dest: args[i+2], writable: true, index: i})
 			i += 2
-		case "--ro-bind", "--ro-bind-try":
+		case "--ro-bind", "--ro-bind-try", "--ro-bind-data":
 			if i+2 >= len(args) {
 				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
 			}
