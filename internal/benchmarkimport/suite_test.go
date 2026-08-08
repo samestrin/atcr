@@ -2,6 +2,7 @@ package benchmarkimport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,10 @@ type fakeFetcher struct {
 	diff        string
 	err         error
 	unavailable map[string]bool
+	// failAfter delays err until this many calls have succeeded, reproducing the
+	// realistic failure — a rate limit or 502 partway through a run — rather than
+	// one that fires before anything has been written.
+	failAfter int
 }
 
 func (f *fakeFetcher) FetchDiff(_ context.Context, owner, repo, base, head string) ([]byte, error) {
@@ -29,7 +34,7 @@ func (f *fakeFetcher) FetchDiff(_ context.Context, owner, repo, base, head strin
 	if f.unavailable[base] {
 		return nil, fmt.Errorf("compare %s/%s: %w", owner, repo, ErrDiffUnavailable)
 	}
-	if f.err != nil {
+	if f.err != nil && len(f.calls) > f.failAfter {
 		return nil, f.err
 	}
 	if f.diff != "" {
@@ -222,6 +227,109 @@ func TestBuildSuite_IsByteReproducible(t *testing.T) {
 
 	assert.Equal(t, hashes[0], hashes[1],
 		"two ingestions of the same records produce an identical reproducibility hash")
+}
+
+func TestBuildSuite_RefusesToRebuildOverTheSameSuiteVersion(t *testing.T) {
+	// The default -out is the committed benchmarks/standard-v1 at 1.0.0. Without
+	// a guard, any casual re-run silently rewrites shipped cases and invalidates
+	// the published hash — the one invariant the suite exists to hold.
+	dir := t.TempDir()
+	seedSuite(t, dir, "1.0.0")
+
+	_, err := BuildSuite(context.Background(), Options{
+		Records: loadFixture(t), OutDir: dir, Suite: "standard-v1", SuiteVersion: "1.0.0",
+		Fetcher: &fakeFetcher{},
+	})
+
+	require.Error(t, err, "rebuilding over an existing suite at the same suite_version must be refused")
+	assert.Contains(t, err.Error(), "1.0.0", "the operator is told which version is already published")
+	assert.Contains(t, err.Error(), "force", "the error names the escape hatch")
+
+	kept, readErr := os.ReadFile(filepath.Join(dir, "orphan.diff"))
+	require.NoError(t, readErr, "a refused build must not have touched the directory")
+	assert.Equal(t, "stale\n", string(kept))
+}
+
+func TestBuildSuite_PrunesDiffsTheNewManifestDoesNotReference(t *testing.T) {
+	// Orphans from a prior, larger sample are not covered by ReproHash and are
+	// invisible to benchmark.Load, so they ride into a commit unnoticed.
+	dir := t.TempDir()
+	seedSuite(t, dir, "0.9.0")
+
+	_, err := BuildSuite(context.Background(), Options{
+		Records: loadFixture(t), OutDir: dir, Suite: "standard-v1", SuiteVersion: "1.0.0",
+		Fetcher: &fakeFetcher{},
+	})
+	require.NoError(t, err, "a different suite_version is a legitimate rebuild")
+
+	assert.NoFileExists(t, filepath.Join(dir, "orphan.diff"),
+		"a diff the new manifest does not reference is removed, not left to be committed")
+
+	m, err := benchmark.Load(dir)
+	require.NoError(t, err)
+	referenced := make(map[string]bool, len(m.Cases))
+	for _, c := range m.Cases {
+		referenced[c.Diff] = true
+	}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".diff" {
+			continue
+		}
+		assert.True(t, referenced[e.Name()], "%s is on disk but absent from the manifest", e.Name())
+	}
+}
+
+func TestBuildSuite_LeavesTheOutputDirectoryUntouchedWhenAFetchFails(t *testing.T) {
+	// A 403 or 502 on the last record must not leave freshly-written diff bytes
+	// beside the OLD suite.json — that combination silently stops matching the
+	// published hash while still loading as a valid suite.
+	dir := t.TempDir()
+	seedSuite(t, dir, "0.9.0")
+	before := dirListing(t, dir)
+
+	_, err := BuildSuite(context.Background(), Options{
+		Records: loadFixture(t), OutDir: dir, Suite: "standard-v1", SuiteVersion: "1.0.0",
+		Fetcher: &fakeFetcher{err: errors.New("502 bad gateway"), failAfter: 1},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, before, dirListing(t, dir),
+		"an aborted build writes nothing into the output directory")
+}
+
+// seedSuite writes a prior build into dir: a suite.json at the given version
+// plus a diff file no later manifest will reference.
+func seedSuite(t *testing.T, dir, version string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "orphan.diff"), []byte("stale\n"), 0o644))
+	prior := benchmark.Manifest{
+		Suite:        "standard-v1",
+		SuiteVersion: version,
+		Cases:        []benchmark.Case{{ID: "orphan", Diff: "orphan.diff", ExpectedCategories: []string{"correctness"}}},
+	}
+	data, err := json.MarshalIndent(prior, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), append(data, '\n'), 0o644))
+}
+
+// dirListing returns name+content for every regular file in dir, so a test can
+// assert the directory is byte-for-byte unchanged.
+func dirListing(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		require.NoError(t, err)
+		out[e.Name()] = string(b)
+	}
+	return out
 }
 
 func TestBuildSuite_SkipsRecordsWithNoMappableCategory(t *testing.T) {
