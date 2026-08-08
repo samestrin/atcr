@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -110,9 +111,24 @@ type osLevelBackend struct {
 	// prerequisiteCheck verifies a host-specific precondition beyond the binary
 	// being present (on Linux, that unprivileged user namespaces are usable).
 	// It is an injectable seam because a real userns failure cannot be forced
-	// through a shell shim. Nil means the platform default. RED stub — wired in
-	// task 1.11.
+	// through a shell shim. Nil means the platform default.
 	prerequisiteCheck func(context.Context) error
+	// procRoot overrides the filesystem root the Linux prerequisite check reads
+	// sysctls from. Empty means "/". Injectable so the check is assertable from
+	// a macOS dev box, not only on whichever Linux host CI happens to use.
+	procRoot string
+
+	// mu guards pinnedTool. Preflight and Run may be called concurrently — the
+	// type is explicitly built for concurrent use (see MaxConcurrent/sem) — and
+	// an unsynchronized write here would be a data race on the decision of
+	// WHICH binary is spawned to contain untrusted code.
+	mu sync.Mutex
+	// pinnedTool is the absolute binary path a successful Preflight resolved.
+	// It is deliberately NOT written back into cfg.ToolPath: cfg.ToolPath means
+	// "the operator chose this binary", so overwriting it would turn a resolved
+	// default into an apparent override, and a retried Preflight would then
+	// re-validate a stale pin instead of resolving afresh.
+	pinnedTool string
 }
 
 // platform reports the GOOS this backend classifies against.
@@ -169,48 +185,100 @@ func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // is DockerBackend.Preflight's reason for spawning a trivial container
 // (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
 func (b *osLevelBackend) Preflight(ctx context.Context) error {
-	// 1. Binary present and executable. Resolving here also PINS the absolute
-	//    path on the backend, so every later Run spawns that exact binary
-	//    instead of re-resolving a bare name through $PATH — closing the window
-	//    in which a user-writable $PATH entry could shadow the real sandbox
-	//    binary between preflight and spawn (TD-003).
+	// 0. The backend must be able to contain something before it may report
+	//    itself usable. Preflight is what gates --exec, so returning nil while
+	//    the containment argv is empty would enable execution of model-authored
+	//    code with no isolation at all — the exposure this backend exists to
+	//    remove. Fail closed until Phase 2 supplies the profile generators.
+	contain, err := osLevelContainmentArgs(b.platform(), b.cfg, RunSpec{})
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: cannot build containment arguments: %w", err)
+	}
+	if len(contain) == 0 {
+		return fmt.Errorf("sandbox preflight: %w (platform %s)", ErrOSLevelNoContainment, b.platform())
+	}
+
+	// 1. Binary present and executable.
 	resolved, err := b.resolveToolPath()
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: os-level sandbox binary not usable: %w", err)
 	}
-	b.cfg.ToolPath = resolved
 
 	// 2. Host prerequisite, checked after the cheap binary test and before any
 	//    spawn, so an unmet precondition fails fast with a specific message
 	//    rather than surfacing as an opaque trivial-run failure.
 	check := b.prerequisiteCheck
 	if check == nil {
-		check = func(ctx context.Context) error { return checkHostPrerequisite(ctx, b.platform()) }
+		check = func(ctx context.Context) error { return checkHostPrerequisite(ctx, b.platform(), b.procRoot) }
 	}
 	if err := check(ctx); err != nil {
 		return fmt.Errorf("sandbox preflight: host prerequisite unmet: %w", err)
 	}
 
-	// 3. A trivial command actually runs through the real Run path, so a
-	//    malformed argv or an unusable profile is caught here rather than
-	//    mid-review.
+	// 3. A trivial command actually runs through the real Run path AND proves
+	//    the workload itself executed. Asserting only "exit 0" would pass for
+	//    any binary that swallows its argv and exits 0 — including a shim that
+	//    never runs the command — so the probe echoes a nonce that must come
+	//    back in the output.
 	tmpDir, err := os.MkdirTemp("", "atcr-oslevel-preflight-*")
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: cannot create throwaway snapshot dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
+	nonce := "atcr-preflight-" + randHex(8)
 	runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
 	defer cancel()
-	res, err := b.Run(runCtx, RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir})
+	res, err := b.runWith(runCtx, resolved, RunSpec{
+		Command:     []string{"/bin/sh", "-c", "echo " + nonce},
+		SnapshotDir: tmpDir,
+	})
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: trivial run failed: %w", err)
 	}
 	if res.TimedOut || res.ExitCode != 0 {
-		return fmt.Errorf("sandbox preflight: trivial run failed: exit %d (timed_out=%t): %s",
-			res.ExitCode, res.TimedOut, strings.TrimSpace(res.Output))
+		return fmt.Errorf("sandbox preflight: trivial run exited %d (timed_out=%t): %w",
+			res.ExitCode, res.TimedOut, errPreflightTrivialRun)
 	}
+	if !strings.Contains(res.Output, nonce) {
+		return fmt.Errorf("sandbox preflight: trivial run exited 0 but never executed the command "+
+			"(nonce absent from output — %s may not be a sandboxing tool): %w",
+			resolved, errPreflightTrivialRun)
+	}
+
+	// Pin only here, on the success path, so a failed Preflight leaves the
+	// backend's configuration exactly as the operator set it. Every later Run
+	// then spawns this exact binary instead of re-resolving a name, closing the
+	// window between preflight and spawn (TD-003).
+	b.mu.Lock()
+	b.pinnedTool = resolved
+	b.mu.Unlock()
 	return nil
+}
+
+// ErrOSLevelNoContainment is returned by Preflight while the platform
+// containment argv generator is unimplemented. It is a sentinel so a caller can
+// branch on "this backend cannot contain anything yet" with errors.Is rather
+// than by matching message text.
+var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containment yet")
+
+// errPreflightTrivialRun marks a preflight failure at the trivial-run step, so a
+// caller can tell "the sandbox could not run" from "the binary was missing"
+// without matching message text.
+var errPreflightTrivialRun = errors.New("trivial sandbox run did not complete cleanly")
+
+// osLevelContainmentArgs returns the tool arguments that actually establish
+// containment — the deny-by-default sandbox-exec profile flags on macOS, the
+// bind-mount and namespace flags on Linux.
+//
+// Phase 1 returns none, and that emptiness is load-bearing: Preflight refuses
+// while this is empty, so the backend cannot report itself usable before it can
+// contain anything. Phase 2 (oslevel_profile.go) fills it in, and Preflight
+// begins passing as a consequence rather than needing a separate flag flip.
+// It is a variable, not a plain function, solely so Phase 1 tests can exercise
+// Preflight's later steps; production code never reassigns it.
+var osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+	return nil, nil
 }
 
 // preflightRunTimeout bounds the trivial verification run, matching the 30s
@@ -226,24 +294,43 @@ func (b *osLevelBackend) resolveToolPath() (string, error) {
 		return "", err
 	}
 	if filepath.IsAbs(tool) {
-		info, statErr := os.Stat(tool)
-		if statErr != nil {
-			return "", fmt.Errorf("%s: %w", tool, statErr)
+		return tool, verifyExecutable(tool)
+	}
+	// Resolve the platform default from a fixed list of system directories
+	// rather than the inherited $PATH. exec.LookPath honours $PATH verbatim —
+	// including an empty element, which Go maps to "." — and during a review the
+	// working directory is the repository under review, so an executable named
+	// "bwrap" committed to that repo could otherwise become "the sandbox" and
+	// contain nothing. An operator who needs a different location sets an
+	// absolute tool_path, which is a deliberate act rather than an inherited
+	// environment value.
+	for _, dir := range trustedToolDirs {
+		candidate := filepath.Join(dir, tool)
+		if err := verifyExecutable(candidate); err == nil {
+			return candidate, nil
 		}
-		if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
-			return "", fmt.Errorf("%s is not an executable file", tool)
-		}
-		return tool, nil
 	}
-	resolved, err := exec.LookPath(tool)
+	return "", fmt.Errorf("%s not found in %v (is it installed? set an absolute tool_path to override)",
+		tool, trustedToolDirs)
+}
+
+// trustedToolDirs are the system directories the platform default binary may be
+// resolved from.
+var trustedToolDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
+
+// verifyExecutable reports whether path is a regular, executable file.
+func verifyExecutable(path string) error {
+	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("%s not found on PATH (is it installed?): %w", tool, err)
+		return fmt.Errorf("%s: %w", path, err)
 	}
-	abs, err := filepath.Abs(resolved)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", resolved, err)
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
 	}
-	return abs, nil
+	if info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%s is not executable", path)
+	}
+	return nil
 }
 
 // checkHostPrerequisite verifies the platform-specific precondition the
@@ -258,26 +345,47 @@ func (b *osLevelBackend) resolveToolPath() (string, error) {
 //
 // macOS needs no equivalent: sandbox-exec is part of the base system and has no
 // separately-disablable kernel feature behind it.
-func checkHostPrerequisite(ctx context.Context, goos string) error {
+func checkHostPrerequisite(ctx context.Context, goos, procRoot string) error {
 	if goos != "linux" {
 		return nil
 	}
-	// A value of 0 means unprivileged userns creation is blocked outright.
-	if v, err := os.ReadFile("/proc/sys/user/max_user_namespaces"); err == nil {
-		if strings.TrimSpace(string(v)) == "0" {
-			return errors.New("unprivileged user namespaces are disabled " +
-				"(user.max_user_namespaces=0); bwrap cannot isolate without them")
-		}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if v, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
-		if strings.TrimSpace(string(v)) == "0" {
-			return errors.New("unprivileged user namespaces are disabled " +
-				"(kernel.unprivileged_userns_clone=0); bwrap cannot isolate without them")
+	if procRoot == "" {
+		procRoot = "/"
+	}
+	// Both knobs are optional — unprivileged_userns_clone is Debian/Ubuntu-
+	// specific and absent on mainline kernels — so a MISSING file is not a
+	// failure. A file that exists but cannot be read or parsed IS: an unreadable
+	// gate is not evidence that the gate is open, and the hosts most likely to
+	// restrict /proc are the same ones most likely to restrict namespaces.
+	for _, knob := range []struct{ path, sysctl string }{
+		{filepath.Join(procRoot, "proc/sys/user/max_user_namespaces"), "user.max_user_namespaces"},
+		{filepath.Join(procRoot, "proc/sys/kernel/unprivileged_userns_clone"), "kernel.unprivileged_userns_clone"},
+	} {
+		raw, err := os.ReadFile(knob.path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("cannot read %s to verify unprivileged user namespaces: %w", knob.sysctl, err)
+		}
+		text := strings.TrimSpace(string(raw))
+		n, convErr := strconv.Atoi(text)
+		if convErr != nil {
+			return fmt.Errorf("cannot parse %s (%q) to verify unprivileged user namespaces: %w",
+				knob.sysctl, text, convErr)
+		}
+		if n <= 0 {
+			return fmt.Errorf("unprivileged user namespaces are disabled (%s=%d); "+
+				"%s cannot isolate without them", knob.sysctl, n, linuxSandboxTool)
 		}
 	}
 	// AppArmor's restriction (Ubuntu 24.04+) does not block namespace creation
-	// outright, so it cannot be rejected here — an unprofiled binary is still
-	// refused at uid-map time. The trivial run in step 3 catches that case.
+	// outright — an AppArmor-profiled bwrap still works — so it cannot be
+	// rejected from the sysctl alone. An unprofiled binary fails at uid-map
+	// time, which the step-3 trivial run catches.
 	return nil
 }
 
@@ -314,6 +422,13 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 	if err != nil {
 		return RunResult{}, err
 	}
+	return b.runWith(ctx, tool, spec)
+}
+
+// runWith is Run against an already-resolved binary. Preflight uses it so its
+// verification run spawns the exact path it just validated — toolPath has not
+// been pinned at that point, and must not be until the verification succeeds.
+func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (RunResult, error) {
 	args, err := osLevelRunArgs(b.cfg, spec)
 	if err != nil {
 		return RunResult{}, err
@@ -646,6 +761,14 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 // exec; pinning it to an absolute path via exec.LookPath is TD-003, scheduled
 // for Preflight where an I/O check is already in scope.
 func (b *osLevelBackend) toolPath() (string, error) {
+	// A successful Preflight pinned an absolute, verified path; reuse it so no
+	// later Run re-resolves a bare name.
+	b.mu.Lock()
+	pinned := b.pinnedTool
+	b.mu.Unlock()
+	if pinned != "" {
+		return pinned, nil
+	}
 	platformTool, err := osLevelToolFor(b.platform())
 	if err != nil {
 		return "", err

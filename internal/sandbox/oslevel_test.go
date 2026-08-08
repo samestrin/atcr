@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,20 +142,19 @@ func TestOSLevelBackend_FailsClosedWithoutAUsableSandbox(t *testing.T) {
 	// pinned to fail closed rather than trusted to.
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
 
-	// Phase 1 supplies no sandbox profile, so the real tool cannot actually
-	// contain anything yet — and Preflight must say so rather than report a
-	// usable sandbox. Verified against the real binary on this host: it resolves
-	// /usr/bin/sandbox-exec, runs it, gets exit 64 ("usage error"), classifies
-	// that as a tool fault, and refuses. Once Phase 2 lands the profile
-	// generators this becomes a genuine containment check rather than a
-	// missing-argument one, and the assertion still holds for the right reason.
-	assert.Error(t, b.Preflight(context.Background()),
-		"Preflight must never report a usable sandbox before it verifies one")
+	// Phase 1 generates no containment arguments, so the backend cannot isolate
+	// anything and Preflight refuses at its step-0 gate. Asserting the sentinel
+	// rather than "some error" keeps this honest: on a host lacking the platform
+	// binary entirely, a bare require.Error would be satisfied by the
+	// missing-binary path and would prove nothing about containment.
+	err := b.Preflight(context.Background())
+	require.Error(t, err, "Preflight must never report a usable sandbox before it verifies one")
+	assert.ErrorIs(t, err, ErrOSLevelNoContainment)
 
 	// Run refuses a malformed spec before spawning anything (AC 01-03 Edge
-	// Case 1). This assertion outlives the stub window.
-	_, err := b.Run(context.Background(), RunSpec{})
-	assert.Error(t, err, "Run must reject a spec with neither Command nor Script")
+	// Case 1).
+	_, runErr := b.Run(context.Background(), RunSpec{})
+	assert.Error(t, runErr, "Run must reject a spec with neither Command nor Script")
 }
 
 // writeFakeOSLevel writes an executable shell script that impersonates the
@@ -680,27 +680,76 @@ func TestOSLevelBackendRun_SignalDeathIsFaultNotExitCode(t *testing.T) {
 
 // --- AC 01-04: Preflight fail-closed ---------------------------------------
 
+// withContainment makes Preflight's step-0 containment gate pass, so a test can
+// exercise steps 1-3. Phase 2 makes osLevelContainmentArgs non-empty for real
+// and this helper disappears.
+func withContainment(t *testing.T, b *osLevelBackend) *osLevelBackend {
+	t.Helper()
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(string, OSLevelConfig, RunSpec) ([]string, error) {
+		return []string{"--fake-containment"}, nil
+	}
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
+	return b
+}
+
+// fakeOSLevelExecBody makes the shim behave like a real sandboxing tool: it
+// execs the workload argv it was handed. A shim that merely `exit 0`s would not
+// satisfy Preflight's nonce probe — which is the point of that probe.
+func fakeOSLevelExecBody() string { return `exec "$@"` }
+
+func TestOSLevelBackend_Preflight_RefusesWhileThereIsNoContainment(t *testing.T) {
+	// Phase 1 generates no containment arguments, so the backend cannot isolate
+	// anything. Preflight gates --exec, so it must refuse rather than report a
+	// usable sandbox — otherwise model-authored code would run uncontained.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOSLevelNoContainment)
+}
+
 func TestOSLevelBackend_Preflight_MissingBinary(t *testing.T) {
 	// Direct analog of TestDockerBackend_Preflight_MissingBinary
 	// (sandbox_test.go:440), the template this AC names.
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
-	b := NewOSLevelBackend(cfg)
+	b := withContainment(t, NewOSLevelBackend(cfg))
 
 	err := b.Preflight(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sandbox preflight")
+	assert.True(t, errors.Is(err, os.ErrNotExist),
+		"the underlying cause must survive the wrap, got %v", err)
 }
 
-func TestOSLevelBackend_Preflight_PassesWhenBinaryAndTrivialRunSucceed(t *testing.T) {
-	b := newFakeOSLevelBackend(t, `exit 0`)
-	assert.NoError(t, b.Preflight(context.Background()))
+func TestOSLevelBackend_Preflight_PassesWhenSandboxActuallyRunsTheWorkload(t *testing.T) {
+	b := withContainment(t, newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
+	require.NoError(t, b.Preflight(context.Background()))
+
+	// A successful Preflight pins the verified absolute path without disturbing
+	// the operator's own configuration.
+	assert.NotEmpty(t, b.pinnedTool)
+	assert.Equal(t, b.cfg.ToolPath, b.pinnedTool)
+}
+
+func TestOSLevelBackend_Preflight_RejectsToolThatNeverRunsTheWorkload(t *testing.T) {
+	// A binary that swallows its argv and exits 0 is indistinguishable from a
+	// working sandbox if Preflight only checks the exit status — and it would
+	// contain nothing. The nonce probe is what catches it.
+	b := withContainment(t, newFakeOSLevelBackend(t, `exit 0`))
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err, "a tool that never executes the command must not pass preflight")
+	assert.ErrorIs(t, err, errPreflightTrivialRun)
+	assert.Contains(t, err.Error(), "never executed the command")
+	assert.Empty(t, b.pinnedTool, "a failed preflight must not pin anything")
 }
 
 func TestOSLevelBackend_Preflight_UnsupportedPlatformFailsClosed(t *testing.T) {
 	// Nothing — not even an operator-set tool_path — may make the backend
 	// usable on a platform with no sandboxing mechanism.
-	b := newFakeOSLevelBackend(t, `exit 0`)
+	b := withContainment(t, newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
 	b.goos = "windows"
 
 	err := b.Preflight(context.Background())
@@ -710,10 +759,10 @@ func TestOSLevelBackend_Preflight_UnsupportedPlatformFailsClosed(t *testing.T) {
 
 func TestOSLevelBackend_Preflight_ChecksRunInDocumentedOrder(t *testing.T) {
 	// Binary presence -> host prerequisite -> trivial run, each short-circuiting
-	// (docker.go:346-398's ordered early-return pattern). The order is asserted
-	// by making the FIRST check fail and proving the later ones never ran.
+	// (docker.go:346-398's ordered early-return pattern). Asserted by making the
+	// FIRST check fail and proving the later ones never ran.
 	var ran []string
-	b := newFakeOSLevelBackend(t, `exit 0`)
+	b := withContainment(t, newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
 	b.cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
 	b.prerequisiteCheck = func(context.Context) error {
 		ran = append(ran, "prerequisite")
@@ -726,10 +775,10 @@ func TestOSLevelBackend_Preflight_ChecksRunInDocumentedOrder(t *testing.T) {
 
 func TestOSLevelBackend_Preflight_PrerequisiteFailureIsSpecificAndBeforeTrivialRun(t *testing.T) {
 	// A real bwrap user-namespace failure cannot be forced through a shell shim,
-	// so the prerequisite check is an injectable seam. Marker file proves the
-	// trivial run never happened once the prerequisite failed.
+	// so the prerequisite check is an injectable seam. The marker file proves
+	// the trivial run never happened once the prerequisite failed.
 	marker := filepath.Join(t.TempDir(), "trivial-run-happened")
-	b := newFakeOSLevelBackend(t, fmt.Sprintf("touch %q\nexit 0", marker))
+	b := withContainment(t, newFakeOSLevelBackend(t, fmt.Sprintf("touch %q\nexec \"$@\"", marker)))
 	b.prerequisiteCheck = func(context.Context) error {
 		return errors.New("unprivileged user namespaces are disabled")
 	}
@@ -738,32 +787,101 @@ func TestOSLevelBackend_Preflight_PrerequisiteFailureIsSpecificAndBeforeTrivialR
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unprivileged user namespaces",
 		"the error must name the unmet prerequisite, not a generic failure")
-	assert.NotContains(t, err.Error(), "not found",
-		"a prerequisite failure must not be reported as a missing binary")
 	assert.NoFileExists(t, marker, "the trivial run must not be attempted after a failed prerequisite")
 }
 
 func TestOSLevelBackend_Preflight_TrivialRunFailureFailsPreflight(t *testing.T) {
 	// Preflight must not report success on binary presence alone
 	// (docker.go:382-397).
-	b := newFakeOSLevelBackend(t, `echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2
-exit 65`)
+	b := withContainment(t, newFakeOSLevelBackend(t, `echo "sandbox-exec: syntax error: expecting ')'" >&2
+exit 65`))
 	b.goos = "darwin"
 
 	err := b.Preflight(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trivial run")
+	assert.Empty(t, b.pinnedTool)
 }
 
-func TestOSLevelBackend_Preflight_WrapsCauseForInspection(t *testing.T) {
-	// Every failure is wrapped with %w so a caller can reach the cause, matching
-	// docker.go's "sandbox preflight: ...: %w" convention.
-	cfg := DefaultOSLevelConfig()
-	cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
-	b := NewOSLevelBackend(cfg)
+func TestOSLevelBackend_Preflight_ResolvesOnlyFromTrustedDirs(t *testing.T) {
+	// exec.LookPath would honour $PATH verbatim, and Go maps an empty PATH
+	// element to "." — the repository under review. A binary planted there must
+	// never become "the sandbox".
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bwrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", dir+":")
 
-	err := b.Preflight(context.Background())
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound),
-		"the underlying cause must survive the wrap, got %v", err)
+	b := withContainment(t, NewOSLevelBackend(DefaultOSLevelConfig()))
+	b.goos = "linux"
+
+	_, err := b.resolveToolPath()
+	require.Error(t, err, "a $PATH-planted binary must not be accepted as the sandbox tool")
+	assert.Contains(t, err.Error(), "not found in")
+}
+
+func TestCheckHostPrerequisite_LinuxUsernsSysctls(t *testing.T) {
+	// Table-driven against an injected /proc root so every branch is assertable
+	// from a macOS dev box, not only on whichever Linux host CI happens to use.
+	write := func(t *testing.T, rel, content string, mode os.FileMode) string {
+		t.Helper()
+		root := t.TempDir()
+		full := filepath.Join(root, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte(content), mode))
+		return root
+	}
+	const maxNS = "proc/sys/user/max_user_namespaces"
+
+	t.Run("positive value passes", func(t *testing.T) {
+		root := write(t, maxNS, "642130\n", 0o644)
+		assert.NoError(t, checkHostPrerequisite(context.Background(), "linux", root))
+	})
+	t.Run("zero is refused", func(t *testing.T) {
+		root := write(t, maxNS, "0\n", 0o644)
+		err := checkHostPrerequisite(context.Background(), "linux", root)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "user namespaces are disabled")
+	})
+	t.Run("absent knob is not a failure", func(t *testing.T) {
+		assert.NoError(t, checkHostPrerequisite(context.Background(), "linux", t.TempDir()))
+	})
+	t.Run("unparseable value fails closed", func(t *testing.T) {
+		root := write(t, maxNS, "not-a-number\n", 0o644)
+		err := checkHostPrerequisite(context.Background(), "linux", root)
+		require.Error(t, err, "an unreadable gate is not evidence the gate is open")
+		assert.Contains(t, err.Error(), "cannot parse")
+	})
+	t.Run("unreadable file fails closed", func(t *testing.T) {
+		root := write(t, maxNS, "1\n", 0o000)
+		err := checkHostPrerequisite(context.Background(), "linux", root)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot read")
+	})
+	t.Run("non-linux needs no check", func(t *testing.T) {
+		root := write(t, maxNS, "0\n", 0o644)
+		assert.NoError(t, checkHostPrerequisite(context.Background(), "darwin", root))
+	})
+	t.Run("honours context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		assert.Error(t, checkHostPrerequisite(ctx, "linux", t.TempDir()))
+	})
+}
+
+func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
+	// Preflight writes the pinned path while Run reads it. The type is built for
+	// concurrent use, so that write must be synchronized — a torn read would
+	// decide which binary is spawned to contain untrusted code. Meaningful under
+	// `go test -race`.
+	b := withContainment(t, newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
+	b.cfg.MaxConcurrent = 4
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = b.Preflight(context.Background()) }()
+		go func() { defer wg.Done(); _, _ = b.Run(context.Background(), spec) }()
+	}
+	wg.Wait()
 }
