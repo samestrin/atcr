@@ -104,6 +104,21 @@ func TestSample_DiffersAcrossSeeds(t *testing.T) {
 	assert.NotEqual(t, urls(a), urls(b), "a different seed selects a different subset")
 }
 
+func TestSample_MatchesTheGoldenSelection(t *testing.T) {
+	recs := loadFixture(t)
+
+	got, err := Sample(recs, 4, 1337)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"https://github.com/CherryHQ/cherry-studio/pull/5540",
+		"https://github.com/FreeCAD/FreeCAD/pull/18688",
+		"https://github.com/alibaba/spring-ai-alibaba/pull/869",
+		"https://github.com/appwrite/appwrite/pull/9999",
+	}, urls(got),
+		"the exact selection is pinned: seed sensitivity, order independence, and cross-version stream stability in one assertion")
+}
+
 func TestSample_IsIndependentOfInputOrdering(t *testing.T) {
 	recs := loadFixture(t)
 	reversed := make([]Record, len(recs))
