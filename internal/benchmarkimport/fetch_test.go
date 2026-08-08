@@ -128,6 +128,28 @@ func TestCloneFetcher_ProducesTheSameDiffFromALocalRepo(t *testing.T) {
 	assert.Contains(t, string(got), "+added line", "the fallback yields the same content the compare API would")
 }
 
+func TestCloneFetcher_DiffIgnoresAPoisonedExternalDiffDriver(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root, base, head := seedRepo(t)
+
+	// diff.external supplied through env config, which gitexec's system/global
+	// hardening does not cover: without --no-ext-diff at the call site git would
+	// execute it and its output would replace the real diff bytes.
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "diff.external")
+	t.Setenv("GIT_CONFIG_VALUE_0", "echo PWNED-EXTERNAL-DIFF")
+
+	f := &CloneFetcher{WorkDir: t.TempDir(), BaseURL: root}
+	got, err := f.FetchDiff(context.Background(), "o", "r", base, head)
+
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "+added line", "the real diff bytes are returned")
+	assert.NotContains(t, string(got), "PWNED-EXTERNAL-DIFF",
+		"every diff-family call site must pass --no-ext-diff; these bytes land in a committed benchmark diff")
+}
+
 func TestCloneFetcher_ReportsAFailedClone(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
