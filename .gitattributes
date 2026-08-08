@@ -4,4 +4,8 @@
 # One vendored diff already carries mixed CRLF/LF from its upstream project.
 # -text disables all EOL conversion, including core.autocrlf=true (the
 # Git-for-Windows default).
-benchmarks/standard-v1/** -text
+#
+# Scoped to benchmarks/** rather than one suite directory: the hash is a
+# property of the manifest contract, which every suite under benchmarks/ uses,
+# so a standard-v2/ or a contributed suite inherits the guard automatically.
+benchmarks/** -text
