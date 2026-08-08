@@ -199,10 +199,10 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// without this the profile would emit (allow file-read* (subpath "/")) and
 	// grant a full-filesystem read, exactly the root-subtree grant this file
 	// warns about.
-	if err := assertUsableSource("SnapshotDir", snapshot, darwinSourceProtectedDirs()); err != nil {
+	if err := assertUsableSource("SnapshotDir", snapshot, darwinSourceProtectedDirs(), true); err != nil {
 		return "", err
 	}
-	if err := assertNotAHomeTree("SnapshotDir", snapshot, darwinHomeContainers, darwinHomeDirs); err != nil {
+	if err := assertNotAHomeTree("SnapshotDir", snapshot, darwinHomeContainers, darwinHomeDirs, true); err != nil {
 		return "", err
 	}
 	// An empty scratch dir is valid: it yields no scratch carve-out. That is no
@@ -219,13 +219,13 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 		if scratch, err = profileSafePath("ScratchDir", cfg.ScratchDir); err != nil {
 			return "", err
 		}
-		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinWritableProtectedDirs(), darwinTmpDirs); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinWritableProtectedDirs(), darwinTmpDirs, true); err != nil {
 			return "", err
 		}
-		if err := assertNotAHomeTree("ScratchDir", scratch, darwinHomeContainers, darwinHomeDirs); err != nil {
+		if err := assertNotAHomeTree("ScratchDir", scratch, darwinHomeContainers, darwinHomeDirs, true); err != nil {
 			return "", err
 		}
-		if err := assertDisjointPaths(snapshot, scratch); err != nil {
+		if err := assertDisjointPaths(snapshot, scratch, true); err != nil {
 			return "", err
 		}
 	}
@@ -264,11 +264,19 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// subpaths granted. Granting an ancestor's metadata reveals that the
 	// directory exists and nothing about its contents, so this does not widen
 	// the read surface the way a subpath rule would.
+	seenAncestor := map[string]bool{}
 	for _, dir := range []string{snapshot, scratch} {
 		if dir == "" {
 			continue
 		}
 		for _, ancestor := range pathAncestors(dir) {
+			// Deduped: the snapshot and the scratch dir routinely share a
+			// /private/var/folders prefix, and emitting the chain twice doubles
+			// this section of a profile that travels as one argv element.
+			if seenAncestor[ancestor] {
+				continue
+			}
+			seenAncestor[ancestor] = true
 			metadataLiterals = append(metadataLiterals, profileLiteral(ancestor))
 		}
 	}
@@ -364,6 +372,13 @@ var darwinSymlinkedPrefixes = map[string]string{
 	"/tmp": "/private/tmp",
 	"/var": "/private/var",
 	"/etc": "/private/etc",
+	// APFS firmlink. /System/Volumes/Data/Users/x and /Users/x are the same
+	// directory, and sandbox-exec canonicalizes to the latter — so a rule
+	// naming the firmlink spelling grants nothing at all, and the home-tree
+	// guard never sees a /Users to refuse. Mapping it to the empty prefix
+	// rewrites it onto the canonical form, which both fixes the dead carve-out
+	// and routes the path back through the guards.
+	"/system/volumes/data": "",
 }
 
 // profileSafePath validates a path before it is interpolated into a profile
@@ -405,12 +420,20 @@ func profileSafePath(field, path string) (string, error) {
 		}
 	}
 	clean := filepath.Clean(path)
+	// Prefix matching folds case for the same reason the containment guards do:
+	// the macOS filesystem is case-insensitive, so /VAR/folders is /var/folders
+	// and must normalize identically. The REMAINDER keeps the caller's original
+	// bytes — only the matched prefix is rewritten to its canonical spelling.
+	lower := strings.ToLower(clean)
 	for prefix, resolved := range darwinSymlinkedPrefixes {
-		if clean == prefix {
+		if lower == prefix {
+			if resolved == "" {
+				return string(filepath.Separator), nil
+			}
 			return resolved, nil
 		}
-		if strings.HasPrefix(clean, prefix+string(filepath.Separator)) {
-			return resolved + strings.TrimPrefix(clean, prefix), nil
+		if strings.HasPrefix(lower, prefix+string(filepath.Separator)) {
+			return resolved + clean[len(prefix):], nil
 		}
 	}
 	return clean, nil
@@ -426,7 +449,7 @@ func profileSafePath(field, path string) (string, error) {
 // ~/.ssh and wrote into $HOME from inside the sandbox. It is checked explicitly
 // rather than left to the disjointness math, because it is the one value whose
 // blast radius is total.
-func assertUsableWritableRoot(field, path string, protected, mountPoints []string) error {
+func assertUsableWritableRoot(field, path string, protected, mountPoints []string, fold bool) error {
 	if path == string(filepath.Separator) {
 		return fmt.Errorf("sandbox: %s must not be the filesystem root: a writable carve-out at %q "+
 			"grants the whole filesystem and overrides the deny-default", field, path)
@@ -437,7 +460,7 @@ func assertUsableWritableRoot(field, path string, protected, mountPoints []strin
 	// review exercised by writing a file into /usr/local from inside the
 	// sandbox while this function returned nil.
 	for _, dir := range protected {
-		if pathContains(path, dir) || pathContains(dir, path) {
+		if pathContainsFold(path, dir, fold) || pathContainsFold(dir, path, fold) {
 			return fmt.Errorf("sandbox: %s %q overlaps the system directory %q: "+
 				"a writable carve-out there would let a run modify the toolchain that validates it",
 				field, path, dir)
@@ -449,7 +472,7 @@ func assertUsableWritableRoot(field, path string, protected, mountPoints []strin
 	// re-binds the host's /tmp over that tmpfs and undoes the isolation it
 	// exists for.
 	for _, dir := range mountPoints {
-		if pathContains(path, dir) {
+		if pathContainsFold(path, dir, fold) {
 			return fmt.Errorf("sandbox: %s %q would replace the sandbox's own %q mount with a host bind",
 				field, path, dir)
 		}
@@ -467,15 +490,15 @@ func assertUsableWritableRoot(field, path string, protected, mountPoints []strin
 // tree itself: a gate review set ScratchDir to $HOME and read
 // ~/.ssh/id_ed25519 out of the resulting sandbox, because the writable
 // carve-out covered the whole home.
-func assertNotAHomeTree(field, path string, containers, homes []string) error {
+func assertNotAHomeTree(field, path string, containers, homes []string, fold bool) error {
 	// A container of homes (/Users, /home): the tree itself is refused, and so
 	// is one level below it, because that level IS a whole user home.
 	for _, root := range containers {
-		if pathContains(path, root) {
+		if pathContainsFold(path, root, fold) {
 			return fmt.Errorf("sandbox: %s %q is or contains %q, the tree holding every user's home: "+
 				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path, root)
 		}
-		if filepath.Dir(path) == root {
+		if pathEqualFold(filepath.Dir(path), root, fold) {
 			return fmt.Errorf("sandbox: %s %q is a user's home directory: "+
 				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path)
 		}
@@ -484,7 +507,7 @@ func assertNotAHomeTree(field, path string, containers, homes []string) error {
 	// refused, but a project inside it is ordinary, exactly as it is under
 	// /home/<user>/.
 	for _, home := range homes {
-		if pathContains(path, home) {
+		if pathContainsFold(path, home, fold) {
 			return fmt.Errorf("sandbox: %s %q is or contains the home directory %q: "+
 				"a carve-out covering it exposes ~/.ssh and every other credential in it", field, path, home)
 		}
@@ -504,13 +527,13 @@ func assertNotAHomeTree(field, path string, containers, homes []string) error {
 // Containment is one-directional here: the snapshot must not BE or CONTAIN one
 // of these trees. A snapshot inside a home directory is the normal case for a
 // developer's repository and stays allowed.
-func assertUsableSource(field, path string, mustNotContain []string) error {
+func assertUsableSource(field, path string, mustNotContain []string, fold bool) error {
 	if path == string(filepath.Separator) {
 		return fmt.Errorf("sandbox: %s must not be the filesystem root: binding %q into the sandbox "+
 			"exposes the entire host filesystem to the run", field, path)
 	}
 	for _, dir := range mustNotContain {
-		if pathContains(path, dir) {
+		if pathContainsFold(path, dir, fold) {
 			return fmt.Errorf("sandbox: %s %q is or contains %q, which must never be exposed inside the sandbox",
 				field, path, dir)
 		}
@@ -527,15 +550,15 @@ func assertUsableSource(field, path string, mustNotContain []string) error {
 // overlap makes a later writable --bind shadow an earlier --ro-bind. Moving the
 // caller's scratch path would change where a workload's output lands without
 // telling anyone.
-func assertDisjointPaths(snapshot, scratch string) error {
+func assertDisjointPaths(snapshot, scratch string, fold bool) error {
 	switch {
-	case snapshot == scratch:
+	case pathEqualFold(snapshot, scratch, fold):
 		return fmt.Errorf("sandbox: ScratchDir must not be the snapshot directory itself (%q): "+
 			"the writable carve-out would cover the read-only snapshot", scratch)
-	case pathContains(snapshot, scratch):
+	case pathContainsFold(snapshot, scratch, fold):
 		return fmt.Errorf("sandbox: ScratchDir %q must not be inside SnapshotDir %q: "+
 			"the writable carve-out would cover part of the read-only snapshot", scratch, snapshot)
-	case pathContains(scratch, snapshot):
+	case pathContainsFold(scratch, snapshot, fold):
 		return fmt.Errorf("sandbox: SnapshotDir %q must not be inside ScratchDir %q: "+
 			"the writable carve-out would cover the whole read-only snapshot", snapshot, scratch)
 	}
@@ -550,6 +573,37 @@ func pathAncestors(path string) []string {
 		out = append(out, parent)
 	}
 	return out
+}
+
+// pathEqualFold compares two paths for equality, case-folding when the
+// platform's filesystem is case-insensitive.
+func pathEqualFold(a, b string, fold bool) bool {
+	if fold {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// pathContainsFold is pathContains with optional case folding.
+//
+// macOS filesystems are case-insensitive by default (APFS, HFS+), so
+// /users/samestrin and /Users/samestrin are THE SAME DIRECTORY — but
+// filepath.Rel compares bytes, so a byte-wise guard sees two unrelated paths.
+// A gate review changed one character of ScratchDir to /users/samestrin, was
+// accepted by every darwin guard, and then read the operator's real
+// ~/.ssh/id_ed25519 and wrote into their real home from inside the sandbox.
+// The kernel resolves the alias even though the guard did not.
+//
+// Folding is applied on darwin ONLY. Linux filesystems are genuinely
+// case-sensitive, so folding there would refuse legitimate distinct paths.
+// Only the COMPARISON folds — the profile still receives the caller's original
+// bytes.
+func pathContainsFold(parent, child string, fold bool) bool {
+	if fold {
+		parent = strings.ToLower(parent)
+		child = strings.ToLower(child)
+	}
+	return pathContains(parent, child)
 }
 
 // pathContains reports whether child is parent or lies beneath it.
@@ -672,10 +726,10 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	// so without this a SnapshotDir of "/" would emit `--ro-bind / /work` and
 	// hand the run the entire host filesystem. A review did exactly that and
 	// read the operator's SSH private key out of /work.
-	if err := assertUsableSource("SnapshotDir", snapshot, linuxProtectedRoots()); err != nil {
+	if err := assertUsableSource("SnapshotDir", snapshot, linuxProtectedRoots(), false); err != nil {
 		return nil, err
 	}
-	if err := assertNotAHomeTree("SnapshotDir", snapshot, linuxHomeContainers, linuxHomeDirs); err != nil {
+	if err := assertNotAHomeTree("SnapshotDir", snapshot, linuxHomeContainers, linuxHomeDirs, false); err != nil {
 		return nil, err
 	}
 	scratch := ""
@@ -684,13 +738,13 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 			return nil, fmt.Errorf("sandbox: ScratchDir must be an absolute path, got %q", cfg.ScratchDir)
 		}
 		scratch = filepath.Clean(cfg.ScratchDir)
-		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots(), linuxPseudoMounts); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots(), linuxPseudoMounts, false); err != nil {
 			return nil, err
 		}
-		if err := assertNotAHomeTree("ScratchDir", scratch, linuxHomeContainers, linuxHomeDirs); err != nil {
+		if err := assertNotAHomeTree("ScratchDir", scratch, linuxHomeContainers, linuxHomeDirs, false); err != nil {
 			return nil, err
 		}
-		if err := assertDisjointPaths(snapshot, scratch); err != nil {
+		if err := assertDisjointPaths(snapshot, scratch, false); err != nil {
 			return nil, err
 		}
 	}

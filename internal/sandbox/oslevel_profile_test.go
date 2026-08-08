@@ -1043,3 +1043,63 @@ func TestSandboxExecProfile_GrantsMetadataOnAncestorsOfTheCarveOuts(t *testing.T
 			"an ancestor must never be granted as a subtree")
 	}
 }
+
+func TestGenerators_DarwinGuardsFoldCaseButLinuxGuardsDoNot(t *testing.T) {
+	// macOS filesystems are case-insensitive by default, so /users/samestrin and
+	// /Users/samestrin are the SAME directory — but filepath.Rel compares bytes.
+	// A gate review changed one character of ScratchDir to /users/samestrin, was
+	// accepted by every darwin guard, and then read the operator's real
+	// ~/.ssh/id_ed25519 and wrote into their real home from inside the sandbox.
+	// Every darwin guard folded the same way, so the whole protected list was
+	// one keystroke deep.
+	t.Run("darwin refuses case variants", func(t *testing.T) {
+		cfg, spec := profileFixture(t)
+		for _, bad := range []string{
+			"/users/dev", "/USERS/dev", "/Users/DEV",
+			"/applications", "/SYSTEM", "/library",
+			"/private/ETC", "/usr/LIB", "/OPT/homebrew", "/private/TMP",
+		} {
+			cfg := cfg
+			cfg.ScratchDir = bad
+			profile, err := sandboxExecProfile(cfg, spec)
+			require.Error(t, err, "ScratchDir %q is the same directory as its canonical spelling", bad)
+			assert.Empty(t, profile)
+		}
+	})
+
+	t.Run("darwin normalizes case variants of the symlinked prefixes", func(t *testing.T) {
+		cfg, base := profileFixture(t)
+		spec := base
+		spec.SnapshotDir = "/VAR/folders/qq/T/atcr-snap"
+		profile, err := sandboxExecProfile(cfg, spec)
+		require.NoError(t, err)
+		assert.Contains(t, profile, `(subpath "/private/var/folders/qq/T/atcr-snap")`,
+			"a case variant of /var must normalize onto /private/var like any other spelling")
+	})
+
+	t.Run("darwin normalizes the APFS firmlink spelling", func(t *testing.T) {
+		// /System/Volumes/Data/Users/x IS /Users/x. sandbox-exec canonicalizes,
+		// so a rule naming the firmlink spelling grants nothing — and the
+		// home-tree guard never sees a /Users to refuse.
+		cfg, base := profileFixture(t)
+		spec := base
+		spec.SnapshotDir = "/System/Volumes/Data/Users/dev/project"
+		profile, err := sandboxExecProfile(cfg, spec)
+		require.NoError(t, err)
+		assert.Contains(t, profile, `(subpath "/Users/dev/project")`)
+
+		spec.SnapshotDir = "/System/Volumes/Data/Users/dev"
+		_, err = sandboxExecProfile(cfg, spec)
+		require.Error(t, err, "the firmlink spelling of a home directory must be refused like the canonical one")
+	})
+
+	t.Run("linux does not fold", func(t *testing.T) {
+		// Linux filesystems are genuinely case-sensitive: /Home is not /home,
+		// and refusing it would reject a legitimate distinct directory.
+		cfg, spec := bwrapFixture(t)
+		cfg.ScratchDir = "/Home/dev"
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err, "/Home is a different directory from /home on a case-sensitive filesystem")
+		assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{"/Home/dev", "/Home/dev"})
+	})
+}
