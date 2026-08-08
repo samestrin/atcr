@@ -463,36 +463,83 @@ func TestOSLevelToolFor_UnsupportedPlatformFailsClosed(t *testing.T) {
 
 // --- AC 01-03: backend-fault error taxonomy -------------------------------
 
-func TestOSLevelClassifyToolExit_LinuxReservedCodesAreFaults(t *testing.T) {
-	// bwrap exits 125 when bubblewrap itself fails, 126 when the command cannot
-	// be executed, and 127 when it does not exist — none of which are the
-	// workload's own exit status.
-	for _, code := range []int{125, 126, 127} {
-		isFault, reason := classifyToolExit("linux", code, "")
-		assert.True(t, isFault, "linux exit %d is a bwrap fault, not a program result", code)
+func TestOSLevelClassifyToolExit_LinuxKeysOnBwrapDiagnostic(t *testing.T) {
+	// MEASURED against bubblewrap 0.9.0: every bwrap fault exits 1 and prints a
+	// "bwrap: " diagnostic (or "usage: bwrap" when given no command). bwrap does
+	// NOT reserve 125/126/127 — it passes the workload's status through verbatim
+	// — so the exit code alone cannot separate the two and the diagnostic is the
+	// only reliable signal.
+	faults := []struct {
+		code   int
+		output string
+	}{
+		{1, "bwrap: setting up uid map: Permission denied"},
+		{1, "bwrap: Unknown option --not-a-real-flag"},
+		{1, "bwrap: execvp /nonexistent-binary-xyz: No such file or directory"},
+		{1, "usage: bwrap [OPTIONS...] [--] COMMAND [ARGS...]"},
+	}
+	for _, f := range faults {
+		isFault, reason := classifyToolExit("linux", f.code, f.output)
+		assert.True(t, isFault, "a bwrap diagnostic marks a tool fault: %q", f.output)
 		assert.NotEmpty(t, reason, "a fault must carry a reason for the wrapped error")
 	}
-	// Ordinary workload exits must stay results.
-	for _, code := range []int{1, 2, 3, 42, 124} {
-		isFault, _ := classifyToolExit("linux", code, "")
-		assert.False(t, isFault, "linux exit %d is the workload's own status", code)
+
+	// Workload statuses bwrap passed through verbatim must stay results. 126 and
+	// 127 especially: they are sh's not-executable/not-found codes and the most
+	// common outcome for a command referencing an uninstalled tool.
+	for _, code := range []int{1, 2, 3, 42, 124, 125, 126, 127} {
+		isFault, _ := classifyToolExit("linux", code, "/bin/sh: 1: nosuchcmd: not found")
+		assert.False(t, isFault, "linux exit %d without a bwrap diagnostic is the workload's own status", code)
 	}
 }
 
-func TestOSLevelClassifyToolExit_DarwinUsesStderrSignature(t *testing.T) {
-	// sandbox-exec has no reserved exit-code convention: it returns the child's
-	// status, so exit 1 is genuinely ambiguous between "the workload failed" and
-	// "sandbox-exec refused". Its own failures are identifiable only by the
-	// message it prints, so that is what the classifier keys on.
-	isFault, reason := classifyToolExit("darwin", 1, "sandbox-exec: sandbox_apply: Operation not permitted")
-	assert.True(t, isFault, "a sandbox-exec diagnostic marks a tool fault")
-	assert.NotEmpty(t, reason)
+func TestOSLevelClassifyToolExit_DarwinUsesSysexitsAndDiagnostic(t *testing.T) {
+	// MEASURED on macOS 25.2: sandbox-exec returns sysexits values for its own
+	// failures and passes the workload's status through otherwise.
+	//
+	// Exit 64 is why the exit codes are checked and not only the message: its
+	// output is "Usage: sandbox-exec ..." and contains no "sandbox-exec:" token
+	// at all, so a message-only rule would let a run that never applied a
+	// profile be reported as a merely-failing workload.
+	faults := []struct {
+		code   int
+		output string
+	}{
+		{64, "Usage: sandbox-exec [options] command [args]"},
+		{65, "sandbox-exec: syntax error: expecting ')'"},
+		{71, "sandbox-exec: execvp() of '/bin/echo' failed: Operation not permitted"},
+	}
+	for _, f := range faults {
+		isFault, reason := classifyToolExit("darwin", f.code, f.output)
+		assert.True(t, isFault, "sandbox-exec exit %d is a tool fault", f.code)
+		assert.NotEmpty(t, reason)
+	}
 
-	isFault, _ = classifyToolExit("darwin", 1, "FAIL\tgithub.com/example/pkg\t0.1s")
-	assert.False(t, isFault, "an ordinary failing workload must stay a result")
+	// A diagnostic at an unexpected code is still a fault.
+	isFault, _ := classifyToolExit("darwin", 3, "sandbox-exec: sandbox_apply: Operation not permitted")
+	assert.True(t, isFault)
+
+	// Ordinary workload failures stay results.
+	for _, code := range []int{1, 2, 3, 42, 127} {
+		isFault, _ := classifyToolExit("darwin", code, "FAIL\tgithub.com/example/pkg\t0.1s")
+		assert.False(t, isFault, "darwin exit %d with no sandbox-exec diagnostic is a workload result", code)
+	}
 
 	isFault, _ = classifyToolExit("darwin", 0, "")
 	assert.False(t, isFault, "a clean exit is never a fault")
+}
+
+func TestOSLevelClassifyToolExit_SignalRangeIsAlwaysFault(t *testing.T) {
+	// bwrap propagates 128+signal for a signal-killed child, and once Phase 2
+	// lands a policy kill arrives the same way. A kernel kill is not a program
+	// result, so it is a fault on every platform (docker.go:323-326 parity).
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, code := range []int{137, 159, 128} {
+			isFault, reason := classifyToolExit(goos, code, "")
+			assert.True(t, isFault, "%s exit %d is a signal death", goos, code)
+			assert.Contains(t, reason, "signal")
+		}
+	}
 }
 
 func TestOSLevelClassifyToolExit_UnknownPlatformFailsClosed(t *testing.T) {
@@ -508,27 +555,69 @@ func TestOSLevelClassifyToolExit_UnknownPlatformFailsClosed(t *testing.T) {
 }
 
 func TestOSLevelBackendRun_ToolFaultIsWrappedErrorNotExitCode(t *testing.T) {
-	// A tool fault must never be folded into RunResult.ExitCode, where a caller
-	// would read it as the workload's own result.
-	faultCode := 125
-	if runtime.GOOS == "darwin" {
-		faultCode = 1
+	// Driven as a table over BOTH platforms via the goos seam, so the darwin
+	// rule is exercised on ubuntu CI and the linux rule on a macOS dev box —
+	// neither branch is dead code on the machine that could have tested it.
+	cases := map[string]struct {
+		goos     string
+		exitCode int
+		stderr   string
+	}{
+		"linux bwrap setup failure": {"linux", 1, "bwrap: setting up uid map: Permission denied"},
+		"linux bwrap usage":         {"linux", 1, "usage: bwrap [OPTIONS...] [--] COMMAND [ARGS...]"},
+		"darwin sandbox-exec usage": {"darwin", 64, "Usage: sandbox-exec [options] command [args]"},
+		"darwin bad profile":        {"darwin", 65, "sandbox-exec: syntax error: expecting ')'"},
+		"darwin execvp denied":      {"darwin", 71, "sandbox-exec: execvp() of '/bin/echo' failed"},
 	}
-	body := fakeOSLevelExitBody(faultCode)
-	if runtime.GOOS == "darwin" {
-		body = `echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2
-exit 1`
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			b := newFakeOSLevelBackend(t, fmt.Sprintf("echo %q >&2\nexit %d", tc.stderr, tc.exitCode))
+			b.goos = tc.goos
+
+			res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+			require.Error(t, err, "a sandbox-tool fault must surface as an error")
+			assert.Zero(t, res.ExitCode, "a tool fault must never be folded into the workload's exit code")
+			assert.False(t, res.TimedOut, "a fault must not be laundered through the timeout path")
+
+			// The cause must stay reachable: a real %w wrap, never a %v string.
+			var ee *exec.ExitError
+			assert.True(t, errors.As(err, &ee), "the underlying *exec.ExitError must survive the wrap")
+		})
 	}
-	b := newFakeOSLevelBackend(t, body)
+}
+
+func TestOSLevelBackendRun_WorkloadExitStaysAResultOnBothPlatforms(t *testing.T) {
+	// The inverse guard: an ordinary failing workload — including sh's 126/127
+	// for an uninstalled tool — must stay evidence, not be escalated to a hard
+	// backend fault that aborts the review.
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, code := range []int{1, 2, 126, 127} {
+			t.Run(fmt.Sprintf("%s-exit-%d", goos, code), func(t *testing.T) {
+				b := newFakeOSLevelBackend(t, fmt.Sprintf("echo '/bin/sh: 1: nosuchcmd: not found' >&2\nexit %d", code))
+				b.goos = goos
+
+				res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+				require.NoError(t, err, "a workload exit must never surface as a backend error")
+				assert.Equal(t, code, res.ExitCode)
+			})
+		}
+	}
+}
+
+func TestOSLevelBackendRun_ClassifiesOnUntruncatedOutput(t *testing.T) {
+	// The fault diagnostic must survive a small display budget. Classifying the
+	// truncated string would let MaxOutputBytes decide a security question: the
+	// "sandbox-exec:" token is destroyed below ~41 bytes, silently turning a
+	// containment failure into a reported workload exit.
+	b := newFakeOSLevelBackend(t, `echo "sandbox-exec: syntax error: expecting ')'" >&2
+exit 65`)
+	b.goos = "darwin"
+	b.cfg.MaxOutputBytes = 16
 
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
-	require.Error(t, err, "a sandbox-tool fault must surface as an error")
-	assert.NotEqual(t, faultCode, res.ExitCode,
-		"a tool fault must not be reported as the workload's exit code")
-
-	// The cause must stay reachable: a real %w wrap, never a %v-formatted string.
-	var ee *exec.ExitError
-	assert.True(t, errors.As(err, &ee), "the underlying *exec.ExitError must survive the wrap")
+	require.Error(t, err, "a tiny output budget must not hide a sandbox fault")
+	assert.Zero(t, res.ExitCode)
+	assert.LessOrEqual(t, len(res.Output), 16, "display truncation still applies to the reported output")
 }
 
 func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
@@ -579,6 +668,7 @@ func TestOSLevelBackendRun_SignalDeathIsFaultNotExitCode(t *testing.T) {
 
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.Error(t, err, "a signal-killed run is a backend fault")
-	assert.GreaterOrEqual(t, res.ExitCode, 0, "a negative exit code must never escape as a result")
+	assert.Zero(t, res.ExitCode, "a signal death must never escape as a workload exit code")
+	assert.False(t, res.TimedOut)
 	assert.Contains(t, err.Error(), "signal")
 }

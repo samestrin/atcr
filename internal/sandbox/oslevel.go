@@ -97,12 +97,24 @@ type osLevelBackend struct {
 	// sem bounds concurrent sandbox spawns to cfg.MaxConcurrent (buffered slots).
 	// NewOSLevelBackend allocates it; a struct-literal backend leaves it nil.
 	sem chan struct{}
-	// semOnce will lazily allocate sem on first Run so a struct-literal backend
+	// semOnce lazily allocates sem on first Run so a struct-literal backend
 	// (bypassing NewOSLevelBackend) still enforces the cap instead of failing
-	// open, as DockerBackend does at docker.go:237-245. NOT YET WIRED: Run does
-	// not acquire a slot until task 2.2, so today the cap is constructor-only.
-	// Do not read this field as a live mitigation before then.
+	// open, as DockerBackend does at docker.go:237-245.
 	semOnce sync.Once
+	// goos overrides the platform the fault classifier reasons about. Empty
+	// means runtime.GOOS. It exists so both platforms' classification can be
+	// exercised from either host: CI is ubuntu-only and development is on
+	// macOS, so without it each platform's branch would be dead code on the
+	// machine that could have tested it.
+	goos string
+}
+
+// platform reports the GOOS this backend classifies against.
+func (b *osLevelBackend) platform() string {
+	if b.goos != "" {
+		return b.goos
+	}
+	return runtime.GOOS
 }
 
 var _ Backend = (*osLevelBackend)(nil)
@@ -234,7 +246,12 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 	// this for free from a fresh container plus an -e allowlist (docker.go:165-169);
 	// neither sandbox-exec nor bwrap scrubs the environment on its own, so the
 	// allowlist has to be built here. Phase 2 adds bwrap's --clearenv on top.
-	cmd.Env = sandboxEnv(spec.SnapshotDir)
+	scratchDir, err := os.MkdirTemp("", "atcr-oslevel-scratch-*")
+	if err != nil {
+		return RunResult{}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(scratchDir) }()
+	cmd.Env = sandboxEnv(scratchDir)
 	// Put the sandbox in its own process group and make cancellation kill the
 	// whole group, so a workload that forked is reaped rather than left running
 	// past the deadline. WaitDelay is the backstop for a grandchild that escaped
@@ -291,7 +308,11 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 		return res, nil
 	}
 	if runErr != nil {
-		return b.classifyRunError(ctx, res, tool, cmdStr, runErr)
+		// The RAW buffer is handed to the classifier, not res.Output: a small
+		// MaxOutputBytes would truncate the tool's diagnostic away and silently
+		// turn a containment failure into a reported workload exit. Truncation
+		// is a display budget and must not decide a security question.
+		return b.classifyRunError(ctx, res, tool, cmdStr, buf.String(), runErr)
 	}
 	logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
 	return res, nil
@@ -320,81 +341,121 @@ func ranToCompletion(runErr error) bool {
 
 // sandboxEnv builds the minimal environment handed to a sandboxed workload. It
 // is an allowlist, not a filter: anything not named here never reaches
-// model-authored code. HOME/TMPDIR and the Go/XDG cache vars point at the
-// snapshot so toolchains that must write have somewhere to do it, mirroring the
-// intent of docker.go:165-169.
-func sandboxEnv(snapshotDir string) []string {
+// model-authored code.
+//
+// HOME/TMPDIR and the Go/XDG cache vars point at an ephemeral scratch directory
+// OUTSIDE the snapshot, mirroring docker.go:165-169's /scratch tmpfs. Pointing
+// them at the snapshot would aim every toolchain write at the very tree the
+// package contract says a run must not mutate (sandbox.go:9) — and would break
+// outright once Phase 2 makes the snapshot read-only, since a Go build cannot
+// run with an unwritable HOME/GOCACHE.
+func sandboxEnv(scratchDir string) []string {
 	path := os.Getenv("PATH")
 	if path == "" {
 		path = "/usr/bin:/bin:/usr/sbin:/sbin"
 	}
 	return []string{
 		"PATH=" + path,
-		"HOME=" + snapshotDir,
-		"TMPDIR=" + snapshotDir,
-		"XDG_CACHE_HOME=" + filepath.Join(snapshotDir, ".cache"),
-		"GOCACHE=" + filepath.Join(snapshotDir, ".gocache"),
-		"GOTMPDIR=" + snapshotDir,
+		"HOME=" + scratchDir,
+		"TMPDIR=" + scratchDir,
+		"XDG_CACHE_HOME=" + filepath.Join(scratchDir, ".cache"),
+		"GOCACHE=" + filepath.Join(scratchDir, ".gocache"),
+		"GOTMPDIR=" + scratchDir,
 		"LANG=C",
 	}
 }
 
-// bwrap reserved exit codes. Bubblewrap exits 125 when bubblewrap itself fails,
-// 126 when the command cannot be executed, and 127 when it does not exist —
-// none of which is the workload's own status.
+// Sandbox-tool fault markers. These are MEASURED against the real binaries, not
+// inferred from convention — an earlier revision of this file assumed bwrap used
+// Docker's 125/126/127 reserved-code scheme and was wrong in the fail-open
+// direction, reporting failed containment as a merely-failing workload.
 //
-// These are encoded as named constants rather than inlined so the Phase 3
-// integration leg, which is the first thing in this sprint to run a real bwrap,
-// has one obvious place to correct them if the real binary disagrees.
+// Measured 2026-08-08:
+//
+//	bubblewrap 0.9.0 (orchestrator.lan)
+//	  bwrap --bind / / /bin/sh -c 'exit 7'        -> 7   (workload, passed through)
+//	  bwrap ... /bin/sh -c 'nosuchcmd'            -> 127 (workload's sh, passed through)
+//	  bwrap --ro-bind /definitely/not/here ...    -> 1   "bwrap: setting up uid map: ..."
+//	  bwrap --not-a-real-flag /bin/true           -> 1   "bwrap: Unknown option ..."
+//	  bwrap ... /nonexistent-binary-xyz           -> 1   "bwrap: execvp ...: No such file..."
+//	  bwrap --bind / /            (no command)    -> 1   "usage: bwrap [OPTIONS...] ..."
+//
+//	sandbox-exec, macOS 25.2 (this host)
+//	  sandbox-exec -p '(version 1)(allow default)' sh -c 'exit 7' -> 7  (passed through)
+//	  sandbox-exec -p '<valid>'    (no command)   -> 64  "Usage: sandbox-exec ..."
+//	  sandbox-exec -p '<malformed>' /bin/echo hi  -> 65  "sandbox-exec: syntax error: ..."
+//	  sandbox-exec -p '(deny default)' /bin/echo  -> 71  "sandbox-exec: execvp() ... failed"
+//
+// The consequence is that on BOTH platforms the exit code alone cannot separate a
+// tool fault from a workload result — bwrap's fault code (1) is the most common
+// workload failure code there is. The tool's own stderr diagnostic is the reliable
+// signal, so that is what these match.
 const (
-	bwrapFaultExitCode      = 125
-	bwrapCannotExecExitCode = 126
-	bwrapNotFoundExitCode   = 127
+	// bwrapDiagnosticPrefix prefixes every bubblewrap error (utils.c's die()).
+	bwrapDiagnosticPrefix = "bwrap: "
+	// bwrapUsagePrefix is what bwrap prints when given no command at all.
+	bwrapUsagePrefix = "usage: bwrap"
+	// sandboxExecDiagnosticPrefix is how sandbox-exec labels its own failures.
+	sandboxExecDiagnosticPrefix = "sandbox-exec:"
+	// sandboxExecUsagePrefix is sandbox-exec's marker-free usage error (exit 64),
+	// which carries no "sandbox-exec:" token at all.
+	sandboxExecUsagePrefix = "Usage: sandbox-exec"
 )
 
-// sandboxExecDiagnosticPrefix is how macOS sandbox-exec identifies its own
-// failures on stderr.
-const sandboxExecDiagnosticPrefix = "sandbox-exec:"
+// sandboxExecFaultCodes are the sysexits values sandbox-exec returns for its own
+// failures (64 EX_USAGE, 65 EX_DATAERR, 71 EX_OSERR). A workload could in
+// principle exit with one of these itself and be misclassified as a fault — that
+// is the safe direction: a fault is refused, whereas a MISSED fault would report
+// an uncontained run as a contained one.
+var sandboxExecFaultCodes = map[int]string{
+	64: "usage error (profile or command argument rejected)",
+	65: "profile could not be read or parsed",
+	71: "could not execute the command under the profile",
+}
+
+// signalExitBase is the shell/waitpid convention for a signal-killed child:
+// 128 + signal number. bwrap propagates it (propagate_exit_status), and Docker
+// treats the same range as a fault (docker.go:323-326).
+const signalExitBase = 128
 
 // classifyToolExit reports whether a non-zero exit came from the sandboxing tool
 // itself rather than from the workload, and why.
 //
-// The two platforms need different rules, and the difference is the reason this
-// function exists rather than a shared numeric table:
+// Classification keys on the tool's stderr diagnostic rather than its exit code,
+// because neither platform reserves exit codes for its own failures (see the
+// measurements above). A signal-range exit (>= 128) is also a fault on both
+// platforms: it means the kernel killed the process — an OOM kill, an external
+// SIGKILL, or once Phase 2 lands, the sandbox policy itself enforcing — none of
+// which is a program result the caller can act on.
 //
-//   - Linux/bwrap has a Docker-like reserved-code convention (125/126/127), so
-//     classification is a pure exit-code test.
-//   - macOS/sandbox-exec has NO such convention: it execs the child and returns
-//     the child's own status, so exit 1 is genuinely ambiguous between "the
-//     workload failed" and "sandbox-exec refused to apply the profile". The only
-//     signal it gives is the diagnostic it prints, so that is what is matched.
-//     This is deliberately a weaker test than Linux's, and it is the reason AC
-//     01-03 asks for the classification boundary to be written down rather than
-//     inferred: a workload that itself prints a line starting with
-//     "sandbox-exec:" would be misclassified as a fault. That direction is the
-//     safe one — a fault is refused, a missed fault would be reported as a
-//     successful contained run.
+// Any platform without a rule fails closed: an unclassifiable non-zero exit is a
+// fault, never a successful run, per the package's containment-first contract
+// (sandbox.go:5-14). Ambiguity always resolves toward refusing the run.
 //
-// Any platform without a rule fails closed: an unclassifiable non-zero exit is
-// treated as a fault, never as a successful run, per the package's
-// containment-first contract (sandbox.go:5-14).
+// output MUST be the untruncated capture. Classifying the display-truncated
+// string would let a small MaxOutputBytes cut the diagnostic off and silently
+// turn a containment failure into a reported workload exit.
 func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	if exitCode == 0 {
 		return false, ""
 	}
+	if exitCode >= signalExitBase {
+		return true, fmt.Sprintf("process killed by signal %d (exit %d)", exitCode-signalExitBase, exitCode)
+	}
 	switch goos {
 	case "linux":
-		switch exitCode {
-		case bwrapFaultExitCode:
+		if strings.Contains(output, bwrapDiagnosticPrefix) || strings.Contains(output, bwrapUsagePrefix) {
 			return true, fmt.Sprintf("%s failed to set up the sandbox (exit %d)", linuxSandboxTool, exitCode)
-		case bwrapCannotExecExitCode:
-			return true, fmt.Sprintf("%s could not execute the command (exit %d)", linuxSandboxTool, exitCode)
-		case bwrapNotFoundExitCode:
-			return true, fmt.Sprintf("%s could not find the command (exit %d)", linuxSandboxTool, exitCode)
 		}
+		// Everything else is bwrap passing the workload's own status through
+		// verbatim — including 126/127 from `sh`, the most common outcome for a
+		// command referencing an uninstalled tool.
 		return false, ""
 	case "darwin":
-		if strings.Contains(output, sandboxExecDiagnosticPrefix) {
+		if reason, ok := sandboxExecFaultCodes[exitCode]; ok {
+			return true, fmt.Sprintf("%s %s (exit %d)", darwinSandboxTool, reason, exitCode)
+		}
+		if strings.Contains(output, sandboxExecDiagnosticPrefix) || strings.Contains(output, sandboxExecUsagePrefix) {
 			return true, fmt.Sprintf("%s reported a sandbox error (exit %d)", darwinSandboxTool, exitCode)
 		}
 		return false, ""
@@ -407,7 +468,7 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 // program exit becomes RunResult.ExitCode with a nil error, anything else is a
 // wrapped backend fault. Platform-specific reserved exit codes are classified in
 // task 1.8; this is the exit-vs-fault split only.
-func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, tool, cmdStr string, runErr error) (RunResult, error) {
+func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, tool, cmdStr, rawOutput string, runErr error) (RunResult, error) {
 	logger := log.FromContext(ctx)
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
@@ -423,7 +484,7 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 		}
 		// The sandboxing tool's own failures must not be folded into ExitCode,
 		// where a caller would read them as the workload's result.
-		if isFault, reason := classifyToolExit(runtime.GOOS, code, res.Output); isFault {
+		if isFault, reason := classifyToolExit(b.platform(), code, rawOutput); isFault {
 			logger.Error("sandbox exec runtime error", "backend", osLevelBackendName, "command", cmdStr, "exit_code", code, "error", runErr)
 			return res, fmt.Errorf("os-level sandbox run: %s: runtime error: %s: %w", tool, reason, runErr)
 		}
