@@ -43,7 +43,7 @@ Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
 
 SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
+Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
 HIGH|go.mod:6|crypto bumped to an unvetted pre-release major (v2.0.0-rc1), a breaking API and supply-chain risk|Pin to the latest vetted stable release and review the v2 migration before adopting|dependency|20|github.com/example/crypto v2.0.0-rc1+incompatible

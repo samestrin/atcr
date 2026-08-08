@@ -25,6 +25,14 @@ import (
 // fallback chain (Epic 19.5).
 var errTruncatedZeroFindings = errors.New("response truncated (finish_reason=length) with zero parsed findings")
 
+// errEmptyResponse marks a slot demoted because the reviewer returned no
+// content at all. Unlike a truncated runaway it carries no provider flag, so
+// without this gate nothing notices it: the slot is recorded as a clean
+// zero-finding review, which on a leaderboard is the opposite of what happened.
+// This is the case agent brad hit on four cases of the 35.16.2 dry-run while
+// kai, which DID set the truncation flag, failed over correctly.
+var errEmptyResponse = errors.New("reviewer returned an empty response")
+
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
 // tests (deterministic concurrency/fallback assertions) while production uses
 // *llmclient.Client. The engine consumes the interface; the client returns a
@@ -669,6 +677,40 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.Err = errTruncatedZeroFindings
 			log.FromContext(ctx).Warn("reviewer response truncated with zero findings; failing over",
 				"agent", a.Name, "model", a.Invocation.Model)
+		}
+		// The same runaway with no flag on it: a provider that returns a null or
+		// empty completion without ever setting finish_reason=length slips past
+		// the gate above and is recorded as a clean review. Demote it too — there
+		// is no content that could have parsed, so nothing distinguishes it from a
+		// dead call.
+		//
+		// This overrides the prompt contract's "if there are no findings, emit
+		// nothing" (personas/_base.md:48): a clean review must now be positively
+		// signalled rather than inferred from silence, because silence is also
+		// what a failed call looks like. See the TD row filed alongside this
+		// change for the prompt-side follow-up.
+		//
+		// Scoped deliberately to EMPTY content. The adjacent shape — content
+		// present, nothing parseable — is left alone: routing that through
+		// failover would spend the backup model on every plausible clean review.
+		// It is recorded instead, just below.
+		if e.truncationFailover && r.Status == StatusOK && r.Content == "" {
+			r.Status = StatusFailed
+			r.Err = errEmptyResponse
+			log.FromContext(ctx).Warn("reviewer returned an empty response; failing over",
+				"agent", a.Name, "model", a.Invocation.Model)
+		}
+		// Recorded, never failed — the ambiguous half of the same signal. Its
+		// findings_count is 0 either way, so this marker is the only thing
+		// separating "reviewed and found nothing" from "emitted prose no parser
+		// could use": identical scores, opposite meanings.
+		//
+		// The clean-review sentinel is excluded: it IS the specified way to report
+		// nothing, so flagging it would mark every clean review as anomalous and
+		// destroy the distinction this marker exists to draw.
+		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 &&
+			!stream.IsNoFindings(r.Content) {
+			r.UnparseableResponse = true
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()
