@@ -24,6 +24,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		seed    = fs.Int64("seed", 20260807, "sampling seed; the same seed always selects the same records")
 		useGit  = fs.Bool("clone", false, "use the git-clone fallback instead of the GitHub compare API")
 		force   = fs.Bool("force", false, "rebuild even if -out already holds this suite_version (rewrites published cases)")
+		cache   = fs.String("cache", "", "directory to cache fetched diffs in, so an aborted run resumes without re-fetching")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -81,6 +82,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		SuiteVersion: *version,
 		Fetcher:      fetcher,
 		Force:        *force,
+		CacheDir:     *cache,
 	})
 	if err != nil {
 		return fail(err)

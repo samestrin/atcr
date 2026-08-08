@@ -247,13 +247,22 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			return res, err
 		}
 
-		diff, err := opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
-		if errors.Is(err, ErrDiffUnavailable) {
-			res.Unavailable++
-			continue
-		}
-		if err != nil {
-			return res, fmt.Errorf("case %q: fetching diff: %w", id, err)
+		diff, cached := cachedDiff(opts.CacheDir, id)
+		if !cached {
+			diff, err = opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
+			if errors.Is(err, ErrDiffUnavailable) {
+				res.Unavailable++
+				continue
+			}
+			if err != nil {
+				return res, fmt.Errorf("case %q: fetching diff: %w", id, err)
+			}
+			// Cached before the build can abort on a later record, so a run that
+			// dies to a sustained outage does not re-spend the API budget on
+			// everything it already retrieved.
+			if err := storeDiff(opts.CacheDir, id, diff); err != nil {
+				return res, fmt.Errorf("case %q: caching diff: %w", id, err)
+			}
 		}
 		// A blank diff produces no reviewable entries, and the benchmark runner
 		// fails the entire run — not just that case — when ingestion yields none.
@@ -296,6 +305,30 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 		return res, err
 	}
 	return res, nil
+}
+
+// cachedDiff returns a previously fetched diff for id. A zero-length entry — a
+// write truncated by a crash — is treated as absent: serving it would fail the
+// whole build on the empty-diff check with a misleading upstream diagnosis.
+func cachedDiff(cacheDir, id string) ([]byte, bool) {
+	if strings.TrimSpace(cacheDir) == "" {
+		return nil, false
+	}
+	b, err := os.ReadFile(filepath.Join(cacheDir, id+".diff"))
+	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
+		return nil, false
+	}
+	return b, true
+}
+
+func storeDiff(cacheDir, id string, diff []byte) error {
+	if strings.TrimSpace(cacheDir) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(cacheDir, id+".diff"), diff, 0o644)
 }
 
 // guardPublishedVersion refuses a rebuild that would rewrite the cases of a

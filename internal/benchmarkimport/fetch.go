@@ -3,12 +3,14 @@ package benchmarkimport
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +104,66 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", strings.TrimSuffix(host, "/"),
 		neturl.PathEscape(owner), neturl.PathEscape(repo), neturl.PathEscape(base), neturl.PathEscape(head))
 
+	// Throttling is the anticipated failure mode of a full ingestion run, so a
+	// 429/5xx/secondary-403 is retried rather than aborting the build and
+	// discarding every diff fetched before it.
+	var lastErr error
+	for attempt := 1; attempt <= maxFetchAttempts; attempt++ {
+		if attempt > 1 {
+			if err := sleepCtx(ctx, retryDelay(attempt, lastErr)); err != nil {
+				return nil, fmt.Errorf("compare %s/%s: %w", owner, repo, err)
+			}
+		}
+		body, err := f.attemptDiff(ctx, client, url, owner, repo, base, head)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		var retry retryableError
+		if !errors.As(err, &retry) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// retryableError marks a compare failure that a later attempt may survive. It
+// carries the server's Retry-After so backoff can honor it instead of guessing.
+type retryableError struct {
+	err        error
+	retryAfter time.Duration
+}
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
+// retryDelay prefers the server's Retry-After and otherwise doubles the base
+// delay per attempt.
+func retryDelay(attempt int, lastErr error) time.Duration {
+	var retry retryableError
+	if errors.As(lastErr, &retry) && retry.retryAfter > 0 {
+		return retry.retryAfter
+	}
+	return retryBaseDelay << (attempt - 2)
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// attemptDiff performs one compare request. A failure that a retry may survive
+// is wrapped in retryableError; everything else is terminal.
+func (f *CompareAPIFetcher) attemptDiff(ctx context.Context, client *http.Client, url, owner, repo, base, head string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building compare request: %w", err)
@@ -114,7 +176,13 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("compare %s/%s: %w", owner, repo, err)
+		// A transport error mid-run is exactly what a retry is for; a cancelled
+		// context is not, and must not be spun on.
+		wrapped := fmt.Errorf("compare %s/%s: %w", owner, repo, err)
+		if ctx.Err() != nil {
+			return nil, wrapped
+		}
+		return nil, retryableError{err: wrapped}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -125,7 +193,11 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 		return nil, fmt.Errorf("compare %s/%s %s...%s: %w", owner, repo, base, head, ErrDiffUnavailable)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("compare %s/%s %s...%s: unexpected status %s", owner, repo, base, head, resp.Status)
+		statusErr := fmt.Errorf("compare %s/%s %s...%s: unexpected status %s", owner, repo, base, head, resp.Status)
+		if throttled(resp) {
+			return nil, retryableError{err: statusErr, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
+		}
+		return nil, statusErr
 	}
 	// Bounded so an oversized PR fails here, at the record that caused it,
 	// rather than after the suite is written and committed.
@@ -138,6 +210,37 @@ func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, he
 			owner, repo, base, head, maxDiffBytes)
 	}
 	return body, nil
+}
+
+// throttled reports whether a non-OK response is transient. A plain 403 is a
+// permanent credentials problem; GitHub's secondary rate limit is also a 403
+// but says so in the body, so the two are distinguished on that text rather
+// than retried alike.
+func throttled(resp *http.Response) bool {
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return true
+	case resp.StatusCode >= 500:
+		return true
+	case resp.StatusCode == http.StatusForbidden:
+		// Bounded read: this body is a short JSON error, and the response is
+		// discarded either way.
+		peek, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return strings.Contains(strings.ToLower(string(peek)), "secondary rate limit")
+	default:
+		return false
+	}
+}
+
+// parseRetryAfter reads the delay-seconds form of Retry-After. The HTTP-date
+// form is not used by GitHub's rate limiter; an unparsable value falls back to
+// the exponential schedule.
+func parseRetryAfter(v string) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // CloneFetcher is the documented fallback for when the compare API is
