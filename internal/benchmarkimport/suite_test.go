@@ -114,6 +114,29 @@ func TestCaseID_RejectsAnUnparsablePullRequestURL(t *testing.T) {
 	assert.Error(t, err, "a URL that is not a GitHub PR cannot yield a stable id")
 }
 
+func TestCaseID_RejectsLoosePullRequestURLs(t *testing.T) {
+	// The dataset is third-party JSON; owner/repo flow into a compare-API path
+	// and an unescaped clone URL, so only the canonical bare-PR shape parses.
+	for _, bad := range []string{
+		"https://github.com/o/r/pull/12/files#discussion_r1", // trailing path must not alias the bare PR
+		"https://github.com/o/r/pull/12?tab=files",           // query string
+		"https://github.com/../r/pull/12",                    // traversal-shaped owner
+		"https://github.com/o/r/pull/12 extra",               // trailing junk
+		"https://github.com/o/r/pull/12x",                    // the number is the last segment
+	} {
+		_, err := CaseID(Record{GithubPrURL: bad})
+		assert.Error(t, err, "%q must not parse as a bare PR URL", bad)
+	}
+}
+
+func TestParseDataset_RejectsAMalformedPullRequestURL(t *testing.T) {
+	payload := `[{"githubPrUrl":"https://github.com/o/r/pull/12/files","source_commit":"aaaaaaa","target_commit":"bbbbbbb","comments":[{"category":"Code Defect","path":"a.go"}]}]`
+
+	_, err := ParseDataset([]byte(payload))
+
+	assert.Error(t, err, "the PR URL is validated at the parse boundary alongside the commit SHAs")
+}
+
 func TestBuildSuite_WritesAManifestTheContractAccepts(t *testing.T) {
 	dir := t.TempDir()
 	recs := loadFixture(t)
