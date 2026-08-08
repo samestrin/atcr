@@ -157,6 +157,14 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// RunSpec.validate accepts "/" — it only checks absolute and colon-free — so
+	// without this the profile would emit (allow file-read* (subpath "/")) and
+	// grant a full-filesystem read, exactly the root-subtree grant this file
+	// warns about.
+	if err := assertUsableSource("SnapshotDir", snapshot,
+		append(append([]string{}, darwinSystemReadDirs...), darwinHomeRoots...)); err != nil {
+		return "", err
+	}
 	// An empty scratch dir is valid: it yields no scratch carve-out. That is no
 	// ADDITIONAL access beyond the unconditional /tmp roots — not zero writable
 	// access, which the previous wording implied.
@@ -165,7 +173,7 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 		if scratch, err = profileSafePath("ScratchDir", cfg.ScratchDir); err != nil {
 			return "", err
 		}
-		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinSystemReadDirs); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, darwinSystemReadDirs, nil); err != nil {
 			return "", err
 		}
 		if err := assertDisjointPaths(snapshot, scratch); err != nil {
@@ -323,15 +331,57 @@ func profileSafePath(field, path string) (string, error) {
 // ~/.ssh and wrote into $HOME from inside the sandbox. It is checked explicitly
 // rather than left to the disjointness math, because it is the one value whose
 // blast radius is total.
-func assertUsableWritableRoot(field, path string, protected []string) error {
+func assertUsableWritableRoot(field, path string, protected, mountPoints []string) error {
 	if path == string(filepath.Separator) {
 		return fmt.Errorf("sandbox: %s must not be the filesystem root: a writable carve-out at %q "+
 			"grants the whole filesystem and overrides the deny-default", field, path)
 	}
+	// Bidirectional. Rejecting only "path contains dir" catches ScratchDir=/usr
+	// but misses ScratchDir=/usr/local/atcr-scratch — the direction that
+	// actually punches a writable hole in the read-only toolchain, and the one a
+	// review exercised by writing a file into /usr/local from inside the
+	// sandbox while this function returned nil.
 	for _, dir := range protected {
-		if pathContains(path, dir) {
-			return fmt.Errorf("sandbox: %s %q must not contain the system directory %q: "+
+		if pathContains(path, dir) || pathContains(dir, path) {
+			return fmt.Errorf("sandbox: %s %q overlaps the system directory %q: "+
 				"a writable carve-out there would let a run modify the toolchain that validates it",
+				field, path, dir)
+		}
+	}
+	// One direction only for the mount points the sandbox establishes itself: a
+	// scratch dir INSIDE /tmp is ordinary (that is where os.MkdirTemp puts it,
+	// and it lands inside the fresh tmpfs), while a scratch dir that IS /tmp
+	// re-binds the host's /tmp over that tmpfs and undoes the isolation it
+	// exists for.
+	for _, dir := range mountPoints {
+		if pathContains(path, dir) {
+			return fmt.Errorf("sandbox: %s %q would replace the sandbox's own %q mount with a host bind",
+				field, path, dir)
+		}
+	}
+	return nil
+}
+
+// assertUsableSource rejects a path that must never be exposed inside the
+// sandbox even read-only: the filesystem root, a system tree, or a directory
+// holding every user's home.
+//
+// RunSpec.validate requires SnapshotDir to be absolute and colon-free
+// (sandbox.go:97-102) and stops there, so nothing else refuses SnapshotDir="/".
+// A review passed exactly that and read the operator's private SSH key out of
+// the resulting sandbox at /work.
+//
+// Containment is one-directional here: the snapshot must not BE or CONTAIN one
+// of these trees. A snapshot inside a home directory is the normal case for a
+// developer's repository and stays allowed.
+func assertUsableSource(field, path string, mustNotContain []string) error {
+	if path == string(filepath.Separator) {
+		return fmt.Errorf("sandbox: %s must not be the filesystem root: binding %q into the sandbox "+
+			"exposes the entire host filesystem to the run", field, path)
+	}
+	for _, dir := range mustNotContain {
+		if pathContains(path, dir) {
+			return fmt.Errorf("sandbox: %s %q is or contains %q, which must never be exposed inside the sandbox",
 				field, path, dir)
 		}
 	}
@@ -400,10 +450,55 @@ var linuxRequiredRoots = []string{"/usr"}
 // that does not exist instead of aborting the sandbox. Most modern distributions
 // symlink /bin, /sbin, /lib and /lib64 into /usr (usrmerge), so on those hosts
 // these are absent as real directories and a hard --ro-bind would fail every
-// run. /etc carries the resolver and passwd databases some toolchains stat at
-// startup; it is read-only, and the network namespace makes its resolver
-// configuration inert anyway.
-var linuxOptionalRoots = []string{"/bin", "/sbin", "/lib", "/lib64", "/etc"}
+// run.
+var linuxOptionalRoots = []string{"/bin", "/sbin", "/lib", "/lib64"}
+
+// linuxOptionalFiles are the individual /etc entries a toolchain reads at
+// startup. They are named one by one rather than binding /etc wholesale: a
+// review measured 296 entries under /etc on a real host, including
+// operator-readable service credentials (`/etc/fail2ban/action.d/*token*.conf`),
+// and "everything the operator's uid may read" is not the "limited to what
+// execution requires, not a blanket" standard this file holds itself to. DAC
+// still protects /etc/shadow, but DAC is not this sandbox's contribution.
+//
+// /etc/resolv.conf is deliberately absent: with the network namespace unshared
+// there is nothing to resolve.
+var linuxOptionalFiles = []string{
+	"/etc/passwd",
+	"/etc/group",
+	"/etc/nsswitch.conf",
+	"/etc/localtime",
+	"/etc/ssl/certs",
+	"/etc/alternatives",
+}
+
+// linuxPseudoMounts are the mount points bwrap establishes itself (--proc,
+// --dev, --tmpfs). A bind over one of them replaces it with the host's, which
+// is how a scratch dir at /proc turns a private procfs back into the host's
+// process table — a review reproduced exactly that, reading
+// /proc/1/cmdline and 702 host PIDs from inside the sandbox.
+var linuxPseudoMounts = []string{"/proc", "/dev", "/tmp"}
+
+// linuxHomeRoots must never be the snapshot: binding one of them in would
+// expose every user's home read-only inside the sandbox. A snapshot INSIDE a
+// home directory is ordinary and stays allowed — it is the tree itself that is
+// refused.
+var linuxHomeRoots = []string{"/home", "/root"}
+
+// darwinHomeRoots is the macOS counterpart of linuxHomeRoots.
+var darwinHomeRoots = []string{"/Users", "/private/var/root"}
+
+// sandboxArgvTerminator ends the sandboxing tool's own options so that
+// everything after it is the workload, never another flag.
+//
+// This is load-bearing, not cosmetic. osLevelRunArgs appends RunSpec.Command
+// directly after the containment arguments (oslevel.go), and RunSpec.Command is
+// model-authored. Without the terminator, bwrap parses those tokens as ITS
+// options: a review appended `--bind / /host --share-net` to the generated
+// prefix on a real bubblewrap 0.9.0 and read ~/.ssh and wrote into the
+// operator's home from inside the "sandbox". With the terminator the same argv
+// fails closed — `bwrap: execvp --bind: No such file or directory`.
+const sandboxArgvTerminator = "--"
 
 // bwrapArgs builds the bubblewrap argument list for spec: full namespace
 // isolation, a read-only view of the toolchain and the snapshot, an ephemeral
@@ -425,13 +520,21 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		return nil, err
 	}
 	snapshot := filepath.Clean(spec.SnapshotDir)
+	// RunSpec.validate accepts "/" — absolute and colon-free is all it checks —
+	// so without this a SnapshotDir of "/" would emit `--ro-bind / /work` and
+	// hand the run the entire host filesystem. A review did exactly that and
+	// read the operator's SSH private key out of /work.
+	if err := assertUsableSource("SnapshotDir", snapshot,
+		append(linuxProtectedRoots(), linuxHomeRoots...)); err != nil {
+		return nil, err
+	}
 	scratch := ""
 	if cfg.ScratchDir != "" {
 		if !filepath.IsAbs(cfg.ScratchDir) {
 			return nil, fmt.Errorf("sandbox: ScratchDir must be an absolute path, got %q", cfg.ScratchDir)
 		}
 		scratch = filepath.Clean(cfg.ScratchDir)
-		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots()); err != nil {
+		if err := assertUsableWritableRoot("ScratchDir", scratch, linuxProtectedRoots(), linuxPseudoMounts); err != nil {
 			return nil, err
 		}
 		if err := assertDisjointPaths(snapshot, scratch); err != nil {
@@ -447,11 +550,30 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		// which blocks all socket families rather than just TCP — stronger in
 		// scope than Docker's --network none.
 		"--unshare-net",
-		// PID/IPC/UTS isolation, so the workload cannot see, signal, or reach
-		// host processes and shared memory.
+		// PID/IPC/UTS/cgroup isolation, so the workload cannot see, signal, or
+		// reach host processes, shared memory, or the host's cgroup tree.
 		"--unshare-pid",
 		"--unshare-ipc",
 		"--unshare-uts",
+		"--unshare-cgroup-try",
+		// The user namespace is requested EXPLICITLY rather than left to bwrap's
+		// "may be automatically implied if not setuid" behaviour. A review ran
+		// the generated argv on a real host and found the workload sharing the
+		// host user namespace (`readlink /proc/self/ns/user` identical to the
+		// host's) while net and pid were fresh — so on a setuid installation, or
+		// when atcr itself runs as root, the implication does not hold and the
+		// run keeps the invoking user's privileges. Stating it in the argv makes
+		// the posture a property of what we asked for, not of how the binary
+		// happens to be installed.
+		// The hard form, not --unshare-user-try: --disable-userns below refuses
+		// to start without it ("bwrap: --disable-userns requires
+		// --unshare-user", measured on bubblewrap 0.9.0), and a sandbox that
+		// cannot guarantee its own user namespace is not one this backend should
+		// silently fall back to.
+		"--unshare-user",
+		// Refuse nested user namespaces, which are the usual route from inside a
+		// sandbox to a kernel LPE primitive.
+		"--disable-userns",
 		// Reap the sandbox if atcr dies, so a workload cannot outlive the
 		// process that is supposed to bound it.
 		"--die-with-parent",
@@ -475,6 +597,9 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	for _, dir := range linuxOptionalRoots {
 		args = append(args, "--ro-bind-try", dir, dir)
 	}
+	for _, path := range linuxOptionalFiles {
+		args = append(args, "--ro-bind-try", path, path)
+	}
 	// An ephemeral /tmp rather than a bind of the host's. A shared host /tmp
 	// exposes the run to other processes' temp files and to the predictable-path
 	// and symlink-race preconditions that come with a world-writable directory;
@@ -490,19 +615,29 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		args = append(args, "--ro-bind", snapshot, bwrapWorkDir)
 	}
 	if scratch != "" {
-		// Bound at its own host path, because Run points HOME, TMPDIR, GOCACHE
-		// and the XDG cache at that path (sandboxEnv, oslevel.go) — a toolchain
-		// with an unreachable HOME fails before it starts.
+		// Bound at its own host path so the scratch directory is reachable at
+		// the same path inside the sandbox as outside it. That is what lets Run
+		// point HOME, TMPDIR, GOCACHE and the XDG cache at a host path
+		// (sandboxEnv, oslevel.go) — a toolchain with an unreachable HOME fails
+		// before it starts. NOTE: Run does not yet populate cfg.ScratchDir with
+		// the directory it creates, so this bind is only exercised by callers
+		// that set it explicitly; wiring the two together is Phase 3/4 work.
 		args = append(args, "--bind", scratch, scratch)
-		if spec.Writable {
+		if spec.Writable && scratch != bwrapWorkDir {
 			// And again at /work, which is the writable tree the Docker mount
 			// convention promises. Two mounts of one source is how bwrap
 			// expresses "visible in both places"; there is no aliasing risk
-			// because both are the same writable directory.
+			// because both are the same writable directory. Skipped when the
+			// scratch dir IS /work, which would emit the identical bind twice.
 			args = append(args, "--bind", scratch, bwrapWorkDir)
 		}
 	}
 	args = append(args, "--chdir", bwrapWorkDir)
+	// Terminate bwrap's options. osLevelRunArgs appends the model-authored
+	// workload immediately after these arguments, and without the terminator
+	// bwrap parses those tokens as its own flags — a review used that to rebind
+	// the host root and re-share the network from a RunSpec.Command.
+	args = append(args, sandboxArgvTerminator)
 
 	// The shadowing check runs on the ASSEMBLED argv rather than on the inputs,
 	// so it holds however the bind set above is later rearranged. bwrap applies
@@ -519,7 +654,12 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 // contain: the toolchain the validation command runs from.
 func linuxProtectedRoots() []string {
 	roots := append([]string{}, linuxRequiredRoots...)
-	return append(roots, linuxOptionalRoots...)
+	roots = append(roots, linuxOptionalRoots...)
+	roots = append(roots, "/etc")
+	// The pseudo-filesystems the sandbox mounts itself. A writable bind over one
+	// of them replaces it with the host's — a review bound the host /proc back
+	// over the private one and read /proc/1/cmdline and 702 host PIDs.
+	return append(roots, "/sys", "/run", "/proc", "/dev")
 }
 
 // assertNoBindShadowing rejects an argv in which a writable --bind is applied
@@ -545,6 +685,17 @@ func assertNoBindShadowing(args []string) error {
 			}
 			mounts = append(mounts, mount{dest: args[i+2], index: i})
 			i += 2
+		case "--proc", "--dev", "--tmpfs", "--mqueue":
+			// The mounts bwrap makes itself take a single DEST operand. They are
+			// tracked because a later writable bind covering one of them
+			// replaces it with a host directory — the private /proc becoming the
+			// host's process table is the case a review demonstrated, and it was
+			// invisible to a check that only knew about bind flags.
+			if i+1 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing its destination", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+1], index: i})
+			i++
 		}
 	}
 	for _, later := range mounts {

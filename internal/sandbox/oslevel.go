@@ -573,7 +573,12 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// GITHUB_TOKEN, cloud tokens) straight to LLM-generated code. Docker gets
 	// this for free from a fresh container plus an -e allowlist (docker.go:165-169);
 	// neither sandbox-exec nor bwrap scrubs the environment on its own, so the
-	// allowlist has to be built here. Phase 2 adds bwrap's --clearenv on top.
+	// allowlist has to be built here — and here is the ONLY place it is built.
+	// bwrap's --clearenv is deliberately not used: bwrap inherits exactly this
+	// cmd.Env and passes it through, so --clearenv would wipe the allowlist
+	// rather than reinforce it, and every var would have to be re-stated as a
+	// --setenv pair. The scrub is cmd.Env's alone; a future caller that leaves
+	// cmd.Env nil would leak the whole parent environment.
 	scratchDir, err := os.MkdirTemp("", "atcr-oslevel-scratch-*")
 	if err != nil {
 		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)

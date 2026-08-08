@@ -502,10 +502,194 @@ func argvPairs(t *testing.T, argv []string, flag string) [][2]string {
 		if argv[i] != flag {
 			continue
 		}
-		require.Less(t, i+2, len(argv)+1, "%s must be followed by SRC and DEST: %v", flag, argv)
-		require.Less(t, i+2, len(argv), "%s is missing its DEST operand: %v", flag, argv)
+		require.Less(t, i+2, len(argv), "%s must be followed by SRC and DEST: %v", flag, argv)
 		out = append(out, [2]string{argv[i+1], argv[i+2]})
 		i += 2
+	}
+	return out
+}
+
+// bwrapFixture is deliberately separate from profileFixture: the macOS fixture
+// supplies /Users and /private/var paths, and driving a Linux generator with
+// them made three "never expose the host root or a home" assertions vacuous —
+// no argv built from those inputs can ever equal "/" or start with /home. The
+// CRITICALs that reached review lived precisely in the inputs the fixture could
+// not produce.
+func bwrapFixture(t *testing.T) (OSLevelConfig, RunSpec) {
+	t.Helper()
+	cfg := DefaultOSLevelConfig()
+	cfg.ScratchDir = "/var/tmp/atcr-scratch-abc123"
+	return cfg, RunSpec{
+		Command:     []string{"go", "test", "./..."},
+		SnapshotDir: "/srv/atcr-snapshot-abc123",
+	}
+}
+
+func TestBwrapArgs_TerminatesItsOwnOptions(t *testing.T) {
+	// The workload argv is appended directly after these arguments by
+	// osLevelRunArgs, and it is MODEL-AUTHORED. Without a terminator bwrap
+	// parses those tokens as its own options: a review appended
+	// `--bind / /host --share-net` to the generated prefix on a real bubblewrap
+	// 0.9.0, then read ~/.ssh and wrote into the operator's home from inside the
+	// "sandbox". With the terminator the same argv fails closed with
+	// `bwrap: execvp --bind: No such file or directory`.
+	cfg, spec := bwrapFixture(t)
+	for _, writable := range []bool{false, true} {
+		spec := spec
+		spec.Writable = writable
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
+		require.NotEmpty(t, argv)
+		assert.Equal(t, "--", argv[len(argv)-1],
+			"the containment argv must end with the option terminator, or the workload becomes bwrap flags")
+	}
+
+	// And end to end through the real assembly path: a hostile command must
+	// land after the terminator, never as a flag bwrap would honour.
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(_ string, c OSLevelConfig, s RunSpec) ([]string, error) { return bwrapArgs(c, s) }
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
+
+	hostile := []string{"--bind", "/", "/host", "--share-net", "/bin/sh"}
+	args, err := osLevelRunArgs("linux", cfg, RunSpec{Command: hostile, SnapshotDir: spec.SnapshotDir})
+	require.NoError(t, err)
+	term := -1
+	for i, a := range args {
+		if a == "--" {
+			term = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, term, 0, "no terminator in the assembled argv: %v", args)
+	assert.Equal(t, hostile, args[term+1:], "every workload token must sit after the terminator")
+}
+
+func TestBwrapArgs_RejectsASnapshotThatWouldExposeTheHost(t *testing.T) {
+	// RunSpec.validate only checks absolute and colon-free, so nothing else
+	// refuses SnapshotDir="/". A review passed exactly that, got
+	// `--ro-bind / /work`, and read the operator's SSH private key out of the
+	// sandbox. A snapshot INSIDE a home directory is the normal case for a
+	// developer's repo and must stay allowed.
+	cfg, base := bwrapFixture(t)
+
+	for _, bad := range []string{"/", "//", "/.", "/home", "/root", "/usr", "/etc", "/proc"} {
+		t.Run("reject "+bad, func(t *testing.T) {
+			spec := base
+			spec.SnapshotDir = bad
+			argv, err := bwrapArgs(cfg, spec)
+			require.Error(t, err, "a snapshot at %q would expose the host filesystem", bad)
+			assert.Nil(t, argv)
+		})
+	}
+	for _, ok := range []string{"/home/dev/project", "/root/project", "/srv/snap", "/tmp/atcr-snapshot-x"} {
+		t.Run("allow "+ok, func(t *testing.T) {
+			spec := base
+			spec.SnapshotDir = ok
+			argv, err := bwrapArgs(cfg, spec)
+			require.NoError(t, err, "a snapshot inside a home or temp dir is ordinary")
+			assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{ok, "/work"})
+		})
+	}
+}
+
+func TestBwrapArgs_RejectsAScratchThatSubvertsAMount(t *testing.T) {
+	// Three separate holes a review reached through this one parameter.
+	cfg, spec := bwrapFixture(t)
+
+	bad := map[string]string{
+		"is the host /tmp, replacing the ephemeral tmpfs": "/tmp",
+		"is /proc, restoring the host process table":      "/proc",
+		"is /dev":                           "/dev",
+		"is inside the read-only toolchain": "/usr/local/atcr-scratch",
+		"is inside /etc":                    "/etc/atcr",
+		"is the filesystem root":            "/",
+	}
+	for name, scratch := range bad {
+		t.Run(name, func(t *testing.T) {
+			cfg := cfg
+			cfg.ScratchDir = scratch
+			argv, err := bwrapArgs(cfg, spec)
+			require.Error(t, err)
+			assert.Nil(t, argv)
+		})
+	}
+
+	// Inside /tmp is fine and must stay fine: that is where os.MkdirTemp puts
+	// it, and the bind lands inside the fresh tmpfs rather than replacing it.
+	cfg.ScratchDir = "/tmp/atcr-oslevel-scratch-xyz"
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err, "a scratch dir nested in /tmp is the normal case")
+	assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{"/tmp/atcr-oslevel-scratch-xyz", "/tmp/atcr-oslevel-scratch-xyz"})
+}
+
+func TestBwrapArgs_IsolatesTheUserAndCgroupNamespaces(t *testing.T) {
+	// bwrap's user-namespace unshare is only "automatically implied if not
+	// setuid". A review ran the generated argv on a real host and found the
+	// workload sharing the HOST user namespace while net and pid were fresh, so
+	// the implication cannot be relied on — it is requested explicitly.
+	cfg, spec := bwrapFixture(t)
+	argv, err := bwrapArgs(cfg, spec)
+	require.NoError(t, err)
+
+	assert.Contains(t, argv, "--unshare-user",
+		"the try form is not enough: --disable-userns refuses to start without the hard unshare")
+	assert.Contains(t, argv, "--unshare-cgroup-try")
+	assert.Contains(t, argv, "--disable-userns", "a nested userns is the usual route to a kernel LPE primitive")
+	assert.Contains(t, argv, "--new-session")
+	assert.Contains(t, argv, "--unshare-ipc")
+	assert.Contains(t, argv, "--unshare-uts")
+	assert.Contains(t, argvPairs2(t, argv, "--proc"), "/proc")
+	assert.Contains(t, argvPairs2(t, argv, "--dev"), "/dev")
+}
+
+func TestBwrapArgs_RejectsAShadowingArgvItWasHandedDirectly(t *testing.T) {
+	// The generator's own output is checked by assertNoBindShadowing, so a test
+	// that re-derives the same loop over that output is a tautology. This drives
+	// the guard directly with argvs the generator would not produce, which is
+	// the only way to prove it can fail at all.
+	for name, argv := range map[string][]string{
+		"writable bind over an earlier ro-bind": {"--ro-bind", "/usr", "/usr", "--bind", "/x", "/usr"},
+		"writable bind over a parent":           {"--ro-bind", "/usr/lib", "/usr/lib", "--bind", "/x", "/usr"},
+		"writable bind over the private proc":   {"--proc", "/proc", "--bind", "/x", "/proc"},
+		"writable bind over the tmpfs":          {"--tmpfs", "/tmp", "--bind", "/x", "/tmp"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, assertNoBindShadowing(argv))
+		})
+	}
+
+	for name, argv := range map[string][]string{
+		"writable bind nested inside is not shadowing": {"--ro-bind", "/usr", "/usr", "--bind", "/x", "/tmp/x"},
+		"read-only after writable is not shadowing":    {"--bind", "/x", "/x", "--ro-bind", "/usr", "/usr"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, assertNoBindShadowing(argv))
+		})
+	}
+
+	for name, argv := range map[string][]string{
+		"bind missing an operand":  {"--ro-bind", "/usr"},
+		"tmpfs missing a operand":  {"--tmpfs"},
+		"proc missing its operand": {"--proc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, assertNoBindShadowing(argv), "a truncated argv must be an error, never a panic")
+		})
+	}
+}
+
+// argvPairs2 returns the destination operand of every single-operand mount
+// flag (--proc, --dev, --tmpfs) in the argv.
+func argvPairs2(t *testing.T, argv []string, flag string) []string {
+	t.Helper()
+	var out []string
+	for i := 0; i < len(argv); i++ {
+		if argv[i] != flag {
+			continue
+		}
+		require.Less(t, i+1, len(argv), "%s is missing its destination: %v", flag, argv)
+		out = append(out, argv[i+1])
+		i++
 	}
 	return out
 }
@@ -516,7 +700,7 @@ func TestBwrapArgs_AlwaysUnsharesNetworkAndPID(t *testing.T) {
 	// so its presence is asserted directly, for every Writable value. The
 	// network namespace blocks all socket families, not just TCP, which is
 	// stronger in scope than Docker's --network none.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 
 	for _, writable := range []bool{false, true} {
 		spec := spec
@@ -534,7 +718,7 @@ func TestBwrapArgs_AlwaysUnsharesNetworkAndPID(t *testing.T) {
 func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
 	// bwrap's model is allow-list — nothing is visible unless bound in — so the
 	// equivalent of deny-default is that no bind exposes / or a home directory.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 	argv, err := bwrapArgs(cfg, spec)
 	require.NoError(t, err)
 
@@ -556,7 +740,7 @@ func TestBwrapArgs_SnapshotIsReadOnlyAtWorkAndWritableSplitsToSrc(t *testing.T) 
 	// Writable:true binds it read-only at /src and puts the writable scratch at
 	// /work. Reusing Docker's mount points is what lets a workload that
 	// hardcodes /work behave the same on either backend.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 
 	t.Run("read-only", func(t *testing.T) {
 		argv, err := bwrapArgs(cfg, spec)
@@ -588,16 +772,14 @@ func TestBwrapArgs_TmpIsAnEphemeralTmpfsNotTheHostTmp(t *testing.T) {
 	// to predictable-path/symlink race preconditions that an ephemeral mount
 	// closes by construction, and it continues DockerBackend's own ephemeral
 	// --tmpfs /scratch precedent.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 	argv, err := bwrapArgs(cfg, spec)
 	require.NoError(t, err)
 
-	require.Contains(t, argv, "--tmpfs")
-	for i, a := range argv {
-		if a == "--tmpfs" {
-			require.Less(t, i+1, len(argv))
-		}
-	}
+	// Assert the DESTINATION, not merely that a --tmpfs appears somewhere: a
+	// tmpfs mounted anywhere else would leave /tmp unmounted while this test
+	// stayed green.
+	assert.Equal(t, []string{"/tmp"}, argvPairs2(t, argv, "--tmpfs"))
 	for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
 		for _, pair := range argvPairs(t, argv, flag) {
 			assert.NotEqual(t, "/tmp", pair[0], "the host /tmp must not be bound into the sandbox: %v", pair)
@@ -609,7 +791,7 @@ func TestBwrapArgs_ToolchainBindsAreReadOnlyAndNarrow(t *testing.T) {
 	// AC 02-02 Scenario 3. The interpreter and toolchain must be visible or
 	// nothing executes inside the namespaces, but they are read-only and named
 	// rather than a blanket --ro-bind / /.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 	argv, err := bwrapArgs(cfg, spec)
 	require.NoError(t, err)
 
@@ -632,56 +814,15 @@ func TestBwrapArgs_ToolchainBindsAreReadOnlyAndNarrow(t *testing.T) {
 	}
 }
 
-func TestBwrapArgs_RejectsBindOrderShadowing(t *testing.T) {
-	// AC 02-02 Error Scenario 2. bwrap applies binds in argv order, so a later
-	// writable --bind covering an earlier --ro-bind silently widens access.
-	// The generator must refuse rather than emit such an argv — and the check is
-	// asserted on the emitted argv itself, so it holds however the bind set is
-	// later rearranged.
-	cfg, spec := profileFixture(t)
-	argv, err := bwrapArgs(cfg, spec)
-	require.NoError(t, err)
-
-	type mount struct {
-		dest     string
-		writable bool
-		index    int
-	}
-	var mounts []mount
-	for i := 0; i < len(argv); i++ {
-		switch argv[i] {
-		case "--bind":
-			mounts = append(mounts, mount{argv[i+2], true, i})
-			i += 2
-		case "--ro-bind", "--ro-bind-try":
-			mounts = append(mounts, mount{argv[i+2], false, i})
-			i += 2
-		}
-	}
-	for _, later := range mounts {
-		if !later.writable {
-			continue
-		}
-		for _, earlier := range mounts {
-			if earlier.writable || earlier.index > later.index {
-				continue
-			}
-			assert.False(t, pathContains(later.dest, earlier.dest),
-				"writable bind at %q (argv %d) shadows the read-only mount at %q (argv %d)",
-				later.dest, later.index, earlier.dest, earlier.index)
-		}
-	}
-}
-
 func TestBwrapArgs_RejectsScratchOverlappingSnapshot(t *testing.T) {
 	// AC 02-02 Edge Case 2, the same decision as the macOS profile: reject, do
 	// not silently relocate. On Linux the overlap is what MAKES the shadowing
 	// above possible, so refusing it at the source is the cheaper guarantee.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 	for name, scratch := range map[string]string{
 		"nested":                     spec.SnapshotDir + "/scratch",
 		"identical":                  spec.SnapshotDir,
-		"snapshot nested in scratch": "/Users/dev",
+		"snapshot nested in scratch": "/srv",
 		"filesystem root":            "/",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -699,7 +840,7 @@ func TestBwrapArgs_PathsAreDiscreteArgvElements(t *testing.T) {
 	// shell, so a path with a space or a metacharacter is safe as long as this
 	// generator never joins paths into one string. Asserted with a path that
 	// would be re-tokenized by any shell.
-	cfg, base := profileFixture(t)
+	cfg, base := bwrapFixture(t)
 	cfg.ScratchDir = "/var/tmp/atcr scratch; rm -rf /"
 	spec := base
 	spec.SnapshotDir = "/home-less/dev/atcr snapshot $(whoami)"
@@ -717,7 +858,7 @@ func TestBwrapArgs_PathsAreDiscreteArgvElements(t *testing.T) {
 
 func TestBwrapArgs_ValidatesSpecFirst(t *testing.T) {
 	// AC 02-02 Error Scenario 1, mirroring dockerRunArgs (docker.go:136-138).
-	cfg, _ := profileFixture(t)
+	cfg, _ := bwrapFixture(t)
 	for name, spec := range map[string]RunSpec{
 		"neither command nor script": {SnapshotDir: "/srv/snap"},
 		"both command and script":    {Command: []string{"true"}, Script: "echo hi", SnapshotDir: "/srv/snap"},
@@ -736,7 +877,7 @@ func TestBwrapArgs_ZeroConfigStillProducesAContainedArgv(t *testing.T) {
 	// AC 02-02 Edge Case 3. A zero config has no scratch dir; the argv must
 	// still unshare the network and bind the snapshot read-only rather than
 	// degrade into something permissive or malformed.
-	_, spec := profileFixture(t)
+	_, spec := bwrapFixture(t)
 	argv, err := bwrapArgs(OSLevelConfig{}, spec)
 	require.NoError(t, err)
 
@@ -753,7 +894,7 @@ func TestBwrapArgs_ContainmentArgsDoNotIncludeTheWorkload(t *testing.T) {
 	// the workload after them (oslevel.go:461-466), and the script body travels
 	// over stdin — so a command token appearing here would mean the workload was
 	// being built in two places.
-	cfg, spec := profileFixture(t)
+	cfg, spec := bwrapFixture(t)
 	argv, err := bwrapArgs(cfg, spec)
 	require.NoError(t, err)
 	assert.NotContains(t, argv, "go")
