@@ -107,6 +107,12 @@ type osLevelBackend struct {
 	// macOS, so without it each platform's branch would be dead code on the
 	// machine that could have tested it.
 	goos string
+	// prerequisiteCheck verifies a host-specific precondition beyond the binary
+	// being present (on Linux, that unprivileged user namespaces are usable).
+	// It is an injectable seam because a real userns failure cannot be forced
+	// through a shell shim. Nil means the platform default. RED stub — wired in
+	// task 1.11.
+	prerequisiteCheck func(context.Context) error
 }
 
 // platform reports the GOOS this backend classifies against.
@@ -149,9 +155,130 @@ func (b *osLevelBackend) Name() string { return osLevelBackendName }
 // operator's configured timeout cannot otherwise be asserted.
 func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
-// Preflight implements Backend. Implemented in task 1.11.
+// Preflight implements Backend. It verifies, in strict order and
+// short-circuiting on the first failure:
+//
+//  1. the platform is supported and its sandboxing binary is present and
+//     executable (cheapest, so it runs first),
+//  2. the host-specific prerequisite holds (on Linux, that unprivileged user
+//     namespaces are usable — bwrap cannot isolate without them),
+//  3. a trivial no-op Run actually completes through the real Run path.
+//
+// Step 3 matters: reporting success on binary presence alone would let the CLI
+// enable --exec against a sandbox that cannot actually contain anything, which
+// is DockerBackend.Preflight's reason for spawning a trivial container
+// (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
 func (b *osLevelBackend) Preflight(ctx context.Context) error {
-	return errors.New("sandbox: os-level Preflight not implemented")
+	// 1. Binary present and executable. Resolving here also PINS the absolute
+	//    path on the backend, so every later Run spawns that exact binary
+	//    instead of re-resolving a bare name through $PATH — closing the window
+	//    in which a user-writable $PATH entry could shadow the real sandbox
+	//    binary between preflight and spawn (TD-003).
+	resolved, err := b.resolveToolPath()
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: os-level sandbox binary not usable: %w", err)
+	}
+	b.cfg.ToolPath = resolved
+
+	// 2. Host prerequisite, checked after the cheap binary test and before any
+	//    spawn, so an unmet precondition fails fast with a specific message
+	//    rather than surfacing as an opaque trivial-run failure.
+	check := b.prerequisiteCheck
+	if check == nil {
+		check = func(ctx context.Context) error { return checkHostPrerequisite(ctx, b.platform()) }
+	}
+	if err := check(ctx); err != nil {
+		return fmt.Errorf("sandbox preflight: host prerequisite unmet: %w", err)
+	}
+
+	// 3. A trivial command actually runs through the real Run path, so a
+	//    malformed argv or an unusable profile is caught here rather than
+	//    mid-review.
+	tmpDir, err := os.MkdirTemp("", "atcr-oslevel-preflight-*")
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: cannot create throwaway snapshot dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
+	defer cancel()
+	res, err := b.Run(runCtx, RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir})
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: trivial run failed: %w", err)
+	}
+	if res.TimedOut || res.ExitCode != 0 {
+		return fmt.Errorf("sandbox preflight: trivial run failed: exit %d (timed_out=%t): %s",
+			res.ExitCode, res.TimedOut, strings.TrimSpace(res.Output))
+	}
+	return nil
+}
+
+// preflightRunTimeout bounds the trivial verification run, matching the 30s
+// budget DockerBackend.Preflight gives its trivial container (docker.go:394).
+const preflightRunTimeout = 30 * time.Second
+
+// resolveToolPath returns the absolute path of the sandboxing binary, verifying
+// it exists and is executable. Unlike toolPath it performs I/O, so it belongs to
+// Preflight rather than the pure argv path.
+func (b *osLevelBackend) resolveToolPath() (string, error) {
+	tool, err := b.toolPath()
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(tool) {
+		info, statErr := os.Stat(tool)
+		if statErr != nil {
+			return "", fmt.Errorf("%s: %w", tool, statErr)
+		}
+		if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			return "", fmt.Errorf("%s is not an executable file", tool)
+		}
+		return tool, nil
+	}
+	resolved, err := exec.LookPath(tool)
+	if err != nil {
+		return "", fmt.Errorf("%s not found on PATH (is it installed?): %w", tool, err)
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", resolved, err)
+	}
+	return abs, nil
+}
+
+// checkHostPrerequisite verifies the platform-specific precondition the
+// sandboxing tool needs beyond simply being installed.
+//
+// On Linux that is unprivileged user namespaces: bwrap builds its mount,
+// network, and PID isolation out of them, so without them it cannot contain
+// anything — it fails with "setting up uid map: Permission denied" (measured on
+// a host with kernel.apparmor_restrict_unprivileged_userns=1). Checking the
+// sysctls here turns that into a specific, actionable message instead of an
+// opaque trivial-run failure.
+//
+// macOS needs no equivalent: sandbox-exec is part of the base system and has no
+// separately-disablable kernel feature behind it.
+func checkHostPrerequisite(ctx context.Context, goos string) error {
+	if goos != "linux" {
+		return nil
+	}
+	// A value of 0 means unprivileged userns creation is blocked outright.
+	if v, err := os.ReadFile("/proc/sys/user/max_user_namespaces"); err == nil {
+		if strings.TrimSpace(string(v)) == "0" {
+			return errors.New("unprivileged user namespaces are disabled " +
+				"(user.max_user_namespaces=0); bwrap cannot isolate without them")
+		}
+	}
+	if v, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone"); err == nil {
+		if strings.TrimSpace(string(v)) == "0" {
+			return errors.New("unprivileged user namespaces are disabled " +
+				"(kernel.unprivileged_userns_clone=0); bwrap cannot isolate without them")
+		}
+	}
+	// AppArmor's restriction (Ubuntu 24.04+) does not block namespace creation
+	// outright, so it cannot be rejected here — an unprofiled binary is still
+	// refused at uid-map time. The trivial run in step 3 catches that case.
+	return nil
 }
 
 // osLevelRunArgs builds the argv for the platform sandboxing tool: the tool's
@@ -519,7 +646,7 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 // exec; pinning it to an absolute path via exec.LookPath is TD-003, scheduled
 // for Preflight where an I/O check is already in scope.
 func (b *osLevelBackend) toolPath() (string, error) {
-	platformTool, err := osLevelToolFor(runtime.GOOS)
+	platformTool, err := osLevelToolFor(b.platform())
 	if err != nil {
 		return "", err
 	}

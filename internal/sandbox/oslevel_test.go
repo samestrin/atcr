@@ -141,10 +141,15 @@ func TestOSLevelBackend_FailsClosedWithoutAUsableSandbox(t *testing.T) {
 	// pinned to fail closed rather than trusted to.
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
 
-	// Preflight is a stub until task 1.11; it must error until it genuinely
-	// verifies the sandbox, never return a permissive nil.
+	// Phase 1 supplies no sandbox profile, so the real tool cannot actually
+	// contain anything yet — and Preflight must say so rather than report a
+	// usable sandbox. Verified against the real binary on this host: it resolves
+	// /usr/bin/sandbox-exec, runs it, gets exit 64 ("usage error"), classifies
+	// that as a tool fault, and refuses. Once Phase 2 lands the profile
+	// generators this becomes a genuine containment check rather than a
+	// missing-argument one, and the assertion still holds for the right reason.
 	assert.Error(t, b.Preflight(context.Background()),
-		"Preflight must never report success before it verifies the sandbox")
+		"Preflight must never report a usable sandbox before it verifies one")
 
 	// Run refuses a malformed spec before spawning anything (AC 01-03 Edge
 	// Case 1). This assertion outlives the stub window.
@@ -671,4 +676,94 @@ func TestOSLevelBackendRun_SignalDeathIsFaultNotExitCode(t *testing.T) {
 	assert.Zero(t, res.ExitCode, "a signal death must never escape as a workload exit code")
 	assert.False(t, res.TimedOut)
 	assert.Contains(t, err.Error(), "signal")
+}
+
+// --- AC 01-04: Preflight fail-closed ---------------------------------------
+
+func TestOSLevelBackend_Preflight_MissingBinary(t *testing.T) {
+	// Direct analog of TestDockerBackend_Preflight_MissingBinary
+	// (sandbox_test.go:440), the template this AC names.
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
+	b := NewOSLevelBackend(cfg)
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sandbox preflight")
+}
+
+func TestOSLevelBackend_Preflight_PassesWhenBinaryAndTrivialRunSucceed(t *testing.T) {
+	b := newFakeOSLevelBackend(t, `exit 0`)
+	assert.NoError(t, b.Preflight(context.Background()))
+}
+
+func TestOSLevelBackend_Preflight_UnsupportedPlatformFailsClosed(t *testing.T) {
+	// Nothing — not even an operator-set tool_path — may make the backend
+	// usable on a platform with no sandboxing mechanism.
+	b := newFakeOSLevelBackend(t, `exit 0`)
+	b.goos = "windows"
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported on windows")
+}
+
+func TestOSLevelBackend_Preflight_ChecksRunInDocumentedOrder(t *testing.T) {
+	// Binary presence -> host prerequisite -> trivial run, each short-circuiting
+	// (docker.go:346-398's ordered early-return pattern). The order is asserted
+	// by making the FIRST check fail and proving the later ones never ran.
+	var ran []string
+	b := newFakeOSLevelBackend(t, `exit 0`)
+	b.cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
+	b.prerequisiteCheck = func(context.Context) error {
+		ran = append(ran, "prerequisite")
+		return nil
+	}
+
+	require.Error(t, b.Preflight(context.Background()))
+	assert.Empty(t, ran, "the host prerequisite must not be checked once the binary is missing")
+}
+
+func TestOSLevelBackend_Preflight_PrerequisiteFailureIsSpecificAndBeforeTrivialRun(t *testing.T) {
+	// A real bwrap user-namespace failure cannot be forced through a shell shim,
+	// so the prerequisite check is an injectable seam. Marker file proves the
+	// trivial run never happened once the prerequisite failed.
+	marker := filepath.Join(t.TempDir(), "trivial-run-happened")
+	b := newFakeOSLevelBackend(t, fmt.Sprintf("touch %q\nexit 0", marker))
+	b.prerequisiteCheck = func(context.Context) error {
+		return errors.New("unprivileged user namespaces are disabled")
+	}
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unprivileged user namespaces",
+		"the error must name the unmet prerequisite, not a generic failure")
+	assert.NotContains(t, err.Error(), "not found",
+		"a prerequisite failure must not be reported as a missing binary")
+	assert.NoFileExists(t, marker, "the trivial run must not be attempted after a failed prerequisite")
+}
+
+func TestOSLevelBackend_Preflight_TrivialRunFailureFailsPreflight(t *testing.T) {
+	// Preflight must not report success on binary presence alone
+	// (docker.go:382-397).
+	b := newFakeOSLevelBackend(t, `echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2
+exit 65`)
+	b.goos = "darwin"
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trivial run")
+}
+
+func TestOSLevelBackend_Preflight_WrapsCauseForInspection(t *testing.T) {
+	// Every failure is wrapped with %w so a caller can reach the cause, matching
+	// docker.go's "sandbox preflight: ...: %w" convention.
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
+	b := NewOSLevelBackend(cfg)
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound),
+		"the underlying cause must survive the wrap, got %v", err)
 }
