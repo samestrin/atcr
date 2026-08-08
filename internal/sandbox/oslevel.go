@@ -1,13 +1,18 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // osLevelBackendName identifies the backend in diagnostics and the evidence
@@ -135,9 +140,159 @@ func (b *osLevelBackend) Preflight(ctx context.Context) error {
 	return errors.New("sandbox: os-level Preflight not implemented")
 }
 
-// Run implements Backend. Implemented in task 1.5.
+// osLevelRunArgs builds the argv for the platform sandboxing tool: the tool's
+// own containment arguments, then the workload.
+//
+// Phase 1 scope: the containment arguments are empty. The deny-by-default
+// sandbox-exec profile and the bwrap bind-mount/namespace argument list are
+// generated in Phase 2 (oslevel_profile.go) and slot in here. Until they do,
+// this backend provides NO containment — which is why nothing wires it into a
+// resolver until Phase 4, and why Preflight refuses.
+//
+// Like dockerRunArgs, this is pure (no I/O) so the argv can be asserted in a
+// unit test without either binary installed. The script body is NOT included
+// here: it is streamed over stdin to `sh -s` by Run, never interpolated into
+// argv, preserving RunSpec's injection-safety guarantee (sandbox.go:51-56).
+func osLevelRunArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+	if err := spec.validate(); err != nil {
+		return nil, err
+	}
+	var args []string
+	if spec.Script != "" {
+		return append(args, "/bin/sh", "-s"), nil
+	}
+	return append(args, spec.Command...), nil
+}
+
+// Run implements Backend. It reproduces DockerBackend.Run's three-way outcome
+// taxonomy: a normal exit (zero or not) is a RunResult with a nil error, a
+// timeout or parent cancellation is TimedOut/124 with a nil error, and a
+// genuine backend fault is a wrapped error.
 func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
-	return RunResult{}, errors.New("sandbox: os-level Run not implemented")
+	tool, err := b.toolPath()
+	if err != nil {
+		return RunResult{}, err
+	}
+	args, err := osLevelRunArgs(b.cfg, spec)
+	if err != nil {
+		return RunResult{}, err
+	}
+
+	timeout := spec.Timeout
+	if timeout <= 0 {
+		timeout = b.cfg.Timeout
+	}
+	if timeout <= 0 {
+		timeout = DefaultOSLevelConfig().Timeout
+	}
+	logger := log.FromContext(ctx)
+	cmdStr := renderCommand(spec)
+	logger.Info("sandbox exec start", "backend", osLevelBackendName, "command", cmdStr)
+
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, tool, args...)
+	// Run the sandbox in its own process group so a timeout can kill the whole
+	// tree. exec.CommandContext only signals the direct child; a workload that
+	// forked (a build spawning a compiler, a test spawning a server) would
+	// otherwise keep consuming host resources after the deadline — the same
+	// leak DockerBackend closes by explicitly killing its container
+	// (docker.go:305-311). On Linux bwrap's own PID namespace will reap the
+	// tree as well; the process group makes the guarantee platform-independent
+	// and covers the pre-namespace window.
+	setProcessGroup(cmd)
+	if spec.Script != "" {
+		// The script is stdin DATA to `sh -s`, never argv and never inside a
+		// `sh -c "..."` string, so the script body IS the program source rather
+		// than an argument — there is no shell-injection vector.
+		cmd.Stdin = strings.NewReader(spec.Script)
+	}
+	var buf bytes.Buffer
+	// Cap the captured buffer so a chatty workload cannot exhaust host memory
+	// before truncation, with headroom for rune-boundary backup.
+	lw := &limitedWriter{w: &buf, n: int64(b.cfg.MaxOutputBytes) + 4096}
+	cmd.Stdout = lw
+	cmd.Stderr = lw
+
+	if err := cmd.Start(); err != nil {
+		logger.Error("sandbox exec backend fault", "backend", osLevelBackendName, "command", cmdStr, "error", err)
+		return RunResult{}, fmt.Errorf("os-level sandbox run: %s: %w", tool, err)
+	}
+	runErr := b.waitOrKill(runCtx, cmd)
+
+	res := RunResult{
+		Command: cmdStr,
+		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
+	}
+
+	// A cancellation-class end (deadline exceeded OR parent cancellation) is
+	// folded into TimedOut so it is never misreported as a spurious non-zero
+	// program exit or a backend fault, mirroring docker.go:301.
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
+		res.TimedOut = true
+		res.ExitCode = timeoutExitCode
+		logger.Warn("sandbox exec timed out", "backend", osLevelBackendName, "command", cmdStr, "timeout", timeout)
+		return res, nil
+	}
+	if runErr != nil {
+		return b.classifyRunError(ctx, res, tool, cmdStr, runErr)
+	}
+	logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
+	return res, nil
+}
+
+// waitOrKill waits for cmd, killing its whole process group if ctx ends first.
+// exec.CommandContext's own Cancel would signal only the direct child, leaving
+// a forked workload alive past the deadline.
+func (b *osLevelBackend) waitOrKill(ctx context.Context, cmd *exec.Cmd) error {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		b.killGroup(ctx, cmd)
+		// Reap the child so it does not linger as a zombie; the Wait error is
+		// discarded because the caller already classifies this as a timeout.
+		<-done
+		return ctx.Err()
+	}
+}
+
+// killGroup SIGKILLs the command's process group, falling back to the single
+// process if the group kill fails. A failure is logged rather than swallowed so
+// an operator can detect an orphaned sandbox process (docker.go:308-310).
+func (b *osLevelBackend) killGroup(ctx context.Context, cmd *exec.Cmd) {
+	if cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	if err := killProcessGroup(pid); err != nil {
+		log.FromContext(ctx).Warn("sandbox exec kill-on-timeout failed",
+			"backend", osLevelBackendName, "pid", pid, "error", err)
+		if err := cmd.Process.Kill(); err != nil {
+			log.FromContext(ctx).Warn("sandbox exec fallback kill failed",
+				"backend", osLevelBackendName, "pid", pid, "error", err)
+		}
+	}
+}
+
+// classifyRunError maps a failed *exec.Cmd run onto the Backend.Run contract: a
+// program exit becomes RunResult.ExitCode with a nil error, anything else is a
+// wrapped backend fault. Platform-specific reserved exit codes are classified in
+// task 1.8; this is the exit-vs-fault split only.
+func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, tool, cmdStr string, runErr error) (RunResult, error) {
+	logger := log.FromContext(ctx)
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) {
+		res.ExitCode = ee.ExitCode()
+		logger.Info("sandbox exec done", "backend", osLevelBackendName, "command", cmdStr, "exit_code", res.ExitCode)
+		return res, nil
+	}
+	// Not an exit status: spawn failure, binary vanished, I/O error — a fault.
+	logger.Error("sandbox exec backend fault", "backend", osLevelBackendName, "command", cmdStr, "error", runErr)
+	return res, fmt.Errorf("os-level sandbox run: %s: %w", tool, runErr)
 }
 
 // toolPath resolves the binary this backend invokes: an explicit cfg.ToolPath

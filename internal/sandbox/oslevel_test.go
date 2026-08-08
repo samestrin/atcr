@@ -2,7 +2,11 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -129,16 +133,174 @@ func TestOSLevelBackend_ToolPath_EmptyOverrideDelegatesToPlatform(t *testing.T) 
 	assert.Equal(t, want, got)
 }
 
-func TestOSLevelBackend_StubsFailClosed(t *testing.T) {
-	// Preflight and Run are stubs until tasks 1.11 and 1.5. Pin them to fail
-	// closed now: a partial implementation that returns nil on an unhandled
-	// branch would otherwise pass the whole suite, handing a caller a backend
-	// that reports success while providing no containment.
+func TestOSLevelBackend_FailsClosedWithoutAUsableSandbox(t *testing.T) {
+	// A backend that reports success while providing no containment is the
+	// exact --no-sandbox exposure this epic removes, so both entry points are
+	// pinned to fail closed rather than trusted to.
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
+
+	// Preflight is a stub until task 1.11; it must error until it genuinely
+	// verifies the sandbox, never return a permissive nil.
 	assert.Error(t, b.Preflight(context.Background()),
 		"Preflight must never report success before it verifies the sandbox")
-	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
-	assert.Error(t, err, "Run must never report success before it sandboxes anything")
+
+	// Run refuses a malformed spec before spawning anything (AC 01-03 Edge
+	// Case 1). This assertion outlives the stub window.
+	_, err := b.Run(context.Background(), RunSpec{})
+	assert.Error(t, err, "Run must reject a spec with neither Command nor Script")
+}
+
+// writeFakeOSLevel writes an executable shell script that impersonates the
+// platform sandboxing binary (sandbox-exec / bwrap) so Run and Preflight can be
+// exercised deterministically on any host, with neither real tool installed.
+// It mirrors writeFakeDocker (sandbox_test.go:25); the returned path is absolute,
+// which cfg.ToolPath requires.
+func writeFakeOSLevel(t *testing.T, body string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake os-level shell shim is POSIX-only")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "fake-os-sandbox")
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
+	return p
+}
+
+// fakeOSLevelExitBody returns a shim body that exits with the code in
+// OSLEVEL_EXIT_CODE, mirroring fakeDockerExitBody's DOCKER_EXIT_CODE hook.
+func fakeOSLevelExitBody() string {
+	return `if [ -n "$OSLEVEL_EXIT_CODE" ]; then
+  echo "fake os-level tool exit $OSLEVEL_EXIT_CODE" >&2
+  exit "$OSLEVEL_EXIT_CODE"
+fi
+exit 0`
+}
+
+func newFakeOSLevelBackend(t *testing.T, body string) *osLevelBackend {
+	t.Helper()
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, body)
+	cfg.MaxConcurrent = 1
+	return NewOSLevelBackend(cfg)
+}
+
+func TestOSLevelBackendRun_NormalExitIsResultNotError(t *testing.T) {
+	// Backend.Run's contract (sandbox.go:112-114): a non-zero program exit is
+	// reported via ExitCode, never as a Go error.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody())
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
+
+	for _, code := range []int{0, 1, 3, 42} {
+		t.Run(fmt.Sprintf("exit-%d", code), func(t *testing.T) {
+			t.Setenv("OSLEVEL_EXIT_CODE", strconv.Itoa(code))
+			res, err := b.Run(context.Background(), spec)
+			require.NoError(t, err, "a program exit must never surface as a backend error")
+			assert.Equal(t, code, res.ExitCode)
+			assert.False(t, res.TimedOut)
+		})
+	}
+}
+
+func TestOSLevelBackendRun_RendersCommandForEvidence(t *testing.T) {
+	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody())
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"go", "test", "./..."},
+		SnapshotDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "go test ./...", res.Command,
+		"RunResult.Command feeds the evidence_exec block and the report")
+}
+
+// fakeOSLevelSleepBody sleeps past any test deadline, then touches the file named
+// by OSLEVEL_MARKER. The marker is the proof of the kill: if it appears, the
+// workload outlived its deadline instead of being killed.
+func fakeOSLevelSleepBody() string {
+	return `sleep 30
+touch "$OSLEVEL_MARKER"`
+}
+
+func TestOSLevelBackendRun_TimeoutKillsAndReports124(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "survived")
+	t.Setenv("OSLEVEL_MARKER", marker)
+	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody())
+
+	start := time.Now()
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"sleep", "30"},
+		SnapshotDir: t.TempDir(),
+		Timeout:     300 * time.Millisecond,
+	})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "a timeout is an outcome, not a backend fault")
+	assert.True(t, res.TimedOut)
+	assert.Equal(t, timeoutExitCode, res.ExitCode)
+	assert.Less(t, elapsed, 10*time.Second, "Run must not hang past its deadline")
+
+	time.Sleep(200 * time.Millisecond)
+	assert.NoFileExists(t, marker, "the sandboxed workload must be killed, not left running")
+}
+
+func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
+	// A cancellation must never be misreported as a spurious non-zero exit or a
+	// backend fault, matching docker.go:301.
+	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody())
+	t.Setenv("OSLEVEL_MARKER", filepath.Join(t.TempDir(), "survived"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+	defer cancel()
+
+	res, err := b.Run(ctx, RunSpec{Command: []string{"sleep", "30"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.True(t, res.TimedOut)
+	assert.Equal(t, timeoutExitCode, res.ExitCode)
+}
+
+func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
+	// docker.go:252-255 equivalent: an unset RunSpec.Timeout uses cfg.Timeout.
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSleepBody())
+	cfg.Timeout = 300 * time.Millisecond
+	b := NewOSLevelBackend(cfg)
+	t.Setenv("OSLEVEL_MARKER", filepath.Join(t.TempDir(), "survived"))
+
+	start := time.Now()
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"sleep", "30"},
+		SnapshotDir: t.TempDir(),
+	})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.True(t, res.TimedOut, "cfg.Timeout must bound a run with no spec timeout")
+	assert.Less(t, elapsed, 10*time.Second)
+}
+
+func TestOSLevelBackendRun_TruncatesCombinedOutput(t *testing.T) {
+	// Both streams are captured and bounded, mirroring docker.go:279-287.
+	b := newFakeOSLevelBackend(t, `
+i=0
+while [ $i -lt 400 ]; do
+  echo "stdout-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  echo "stderr-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" >&2
+  i=$((i + 1))
+done
+exit 0`)
+	b.cfg.MaxOutputBytes = 512
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"noisy"},
+		SnapshotDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(res.Output), 512, "output must be truncated to MaxOutputBytes")
+	assert.Contains(t, res.Output, "truncated")
+	assert.Contains(t, res.Output, "stdout-", "stdout must be captured")
 }
 
 func TestOSLevelToolFor_SupportedPlatforms(t *testing.T) {
