@@ -43,34 +43,60 @@ func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, len(distinct), 3, "the suite must span at least 3 categories, got %v", distinct)
 
-	// Every category must be one a reviewer is actually prompted to emit, or its
-	// recall is structurally zero no matter how good the reviewer is. The
-	// vocabulary is read from the live prompt rather than copied here, so
-	// reverting the personas/_base.md edit this suite depends on fails the guard.
-	emittable := baseCategoryVocabulary(t)
-	for cat := range distinct {
-		assert.Contains(t, emittable, cat,
-			"%q is not in personas/_base.md's CATEGORY vocabulary, so no reviewer is prompted to emit it", cat)
+	// Every category must be emittable under the prompt each reviewer actually
+	// receives. The shipped personas resolve to their own files — never
+	// personas/_base.md, which registry.ResolvePersona reaches only as a
+	// fallback for agents with no persona file of their own — so this guard
+	// reads the personas' own prompts. A persona that declares no CATEGORY
+	// enumeration is unconstrained (any lowercase word is emittable); one that
+	// declares an explicit list must cover every suite category, or that
+	// reviewer's recall on it is structurally zero.
+	for _, pf := range shippedPersonaFiles(t) {
+		raw, err := os.ReadFile(pf)
+		require.NoError(t, err)
+		vocab := declaredCategoryVocabulary(raw)
+		if len(vocab) == 0 {
+			continue
+		}
+		for cat := range distinct {
+			assert.Contains(t, vocab, cat,
+				"%q is excluded by %s's CATEGORY vocabulary, so that reviewer is never prompted to emit it", cat, filepath.Base(pf))
+		}
 	}
 }
 
-// baseCategoryVocabulary parses the CATEGORY word list out of the shared base
-// persona prompt.
-func baseCategoryVocabulary(t *testing.T) []string {
+// shippedPersonaFiles returns the prompts reviewers actually receive: every
+// top-level personas/*.md except _base.md, the resolution fallback no shipped
+// persona consults.
+func shippedPersonaFiles(t *testing.T) []string {
 	t.Helper()
-	raw, err := os.ReadFile("../../personas/_base.md")
+	files, err := filepath.Glob("../../personas/*.md")
 	require.NoError(t, err)
 
-	m := regexp.MustCompile(`CATEGORY is a single lowercase word \(([^)]*)\)`).FindSubmatch(raw)
-	require.NotNil(t, m, "personas/_base.md must still declare the CATEGORY vocabulary in the expected form")
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if filepath.Base(f) != "_base.md" {
+			out = append(out, f)
+		}
+	}
+	require.NotEmpty(t, out, "the shipped panel must resolve to persona files of its own")
+	return out
+}
 
+// declaredCategoryVocabulary extracts an explicit CATEGORY allowlist from a
+// prompt, or nil when the prompt constrains CATEGORY only to a lowercase word
+// — in which case every category is emittable.
+func declaredCategoryVocabulary(raw []byte) []string {
+	m := regexp.MustCompile(`CATEGORY is a single lowercase word \(([^)]*)\)`).FindSubmatch(raw)
+	if m == nil {
+		return nil
+	}
 	var out []string
 	for _, w := range strings.Split(string(m[1]), ",") {
 		if w = strings.TrimSpace(w); w != "" {
 			out = append(out, w)
 		}
 	}
-	require.NotEmpty(t, out)
 	return out
 }
 
