@@ -222,6 +222,14 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 
 	seenIDs := make(map[string]string, len(opts.Records))
 	for _, rec := range opts.Records {
+		// An interrupt has to be noticed here, not only at the next network call:
+		// a cache hit or a skipped record touches neither HTTP nor git, so the
+		// loop would otherwise run to completion and publish a suite the operator
+		// cancelled.
+		if err := ctx.Err(); err != nil {
+			return res, fmt.Errorf("ingestion interrupted: %w", err)
+		}
+
 		// Records may be constructed programmatically, bypassing ParseDataset's
 		// commit validation; re-assert it at the trust boundary so an
 		// option-shaped value can never reach git or the compare API path.
