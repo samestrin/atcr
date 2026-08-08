@@ -135,6 +135,19 @@ func TestBundledSuite_CaseIdsAreTheGoldenSeededSelection(t *testing.T) {
 	assert.Equal(t, want, got, "the committed suite is no longer the golden seeded selection")
 }
 
+func TestBundledSuite_ReproHashIsPinned(t *testing.T) {
+	// The published reproducibility hash. .gitattributes keeps raw diff bytes
+	// stable across checkouts, but a `git add --renormalize`, a contributor on
+	// core.autocrlf=true, or a single-byte edit to any committed .diff changes
+	// the hash silently — this pin is the only thing that notices.
+	const want = "07b047c221422e198060d8ed1e1ca39b1e1803e8b7ce5de24abf531ac394dd1d"
+
+	got, err := benchmark.ReproHash(suiteDir)
+	require.NoError(t, err)
+	assert.Equal(t, want, got,
+		"the committed suite's raw bytes changed; the published hash no longer reproduces")
+}
+
 func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
 	m, err := benchmark.Load(suiteDir)
 	require.NoError(t, err)
