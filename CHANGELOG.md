@@ -4,7 +4,7 @@
 
 - **`standard-v1` benchmark suite content is now bundled at `benchmarks/standard-v1/`.** `docs/benchmark.md` previously pointed at an external `github.com/atcr/benchmark-suite` repo that was never created, so `atcr benchmark verify`/`run`/`export` had nothing real to run against — only the 2-case unit-test fixtures. The suite ships 17 cases spanning `correctness`, `maintainability`, `performance`, and `security`, drawn from a seeded sample of [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0, arXiv:2601.19494) — 1,505 review comments over 196 real pull requests across 50 repositories and 10 languages. Attribution is in `benchmarks/standard-v1/NOTICE.md`; the suite is content-addressed by `suite_version` 1.0.0 and a reproducibility hash.
 - **`cmd/ingest-alibaba-benchmark`** regenerates that suite from the upstream dataset. It is an authoring-time tool — its output is committed, so neither CI nor a benchmark run reaches the network. Diffs come from GitHub's compare API by default, with a `-clone` fallback for when that is unavailable. The dataset URL is pinned to an immutable commit so a record added upstream cannot silently reshuffle the seeded selection.
-- **`maintainability` joins the reviewer `CATEGORY` vocabulary** in `personas/_base.md`, so the dominant ground-truth category in the new suite is one reviewers are prompted to emit. Note this reaches only personas that inherit the shared base prompt; personas shipping their own prompt file declare their own rules line.
+- **`otto`'s worked example now labels a readability defect `maintainability`**, matching the dominant ground-truth category in the new suite. It previously emitted `style` for exactly that defect shape — the only shipped persona whose example did — which made recall on `maintainability` noisy across the panel.
 
 ### Changed
 
@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- **The reviewer `CATEGORY` vocabulary was never an allowlist, and `personas/_base.md` is not a shared prefix.** An earlier revision of this epic added `maintainability` to the vocabulary line in `personas/_base.md` on the premise that reviewers had to be prompted to emit it. That edit reached zero panel members and has been reverted: `_base.md` is a resolution *fallback* (`internal/registry/persona.go` levels 4-5), consulted only for an agent that has no persona file of its own, and all nine shipped personas resolve to their own file. Those files carry no category enumeration at all, so `maintainability` was always emittable — there is no allowlist to widen. Adding one to nine live production prompts would be a new behavioral restriction the epic never scoped, so the constraint stays absent and this note is the record of that decision.
 - `.gitattributes` marks the suite `-text`. The reproducibility hash is computed over raw diff bytes and one vendored diff carries mixed CRLF/LF, so a checkout with `core.autocrlf=true` would otherwise produce a different hash than the published one.
 
 *Shipped via /execute-epic (epic 35.16.2)*

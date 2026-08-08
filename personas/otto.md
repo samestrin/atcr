@@ -38,7 +38,7 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
 
 Example:
-MEDIUM|util/slug.go:14|sanitize() also truncates and lowercases|Split into sanitize, truncate, lower or rename to normalizeSlug|style|10|function body does three unrelated transforms
+MEDIUM|util/slug.go:14|sanitize() also truncates and lowercases|Split into sanitize, truncate, lower or rename to normalizeSlug|maintainability|10|function body does three unrelated transforms
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

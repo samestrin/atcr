@@ -41,7 +41,7 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules:
 - SEVERITY is one of CRITICAL, HIGH, MEDIUM, LOW — nothing else starts a finding line
 - Replace any literal | inside a field with /
-- CATEGORY is a single lowercase word (security, correctness, performance, maintainability, testing, style, docs)
+- CATEGORY is a single lowercase word (security, correctness, performance, testing, style, docs)
 - EST_MINUTES is an integer estimate to fix
 - FILE:LINE must be a real, exact location copied from the diff — never approximate, guess, or invent it
 - EVIDENCE quotes or paraphrases the code that proves the problem
