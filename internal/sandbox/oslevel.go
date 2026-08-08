@@ -73,6 +73,18 @@ type OSLevelConfig struct {
 	Timeout time.Duration
 	// MaxOutputBytes truncates captured combined stdout+stderr.
 	MaxOutputBytes int
+	// ScratchDir is the per-run writable directory the containment profile/argv
+	// carves out — the only place outside /tmp a run may write, and where
+	// sandboxEnv points HOME/TMPDIR/GOCACHE. It MUST be absolute and MUST NOT
+	// overlap RunSpec.SnapshotDir, or the writable carve-out would subsume the
+	// read-only snapshot guarantee; the generators reject both cases.
+	//
+	// It lives on the config rather than RunSpec because it is a property of the
+	// backend's execution environment, not of the caller's request: Run creates
+	// one per run and passes a copy of the config carrying it, so the generators
+	// stay pure functions of (cfg, spec). Empty means no writable carve-out
+	// beyond /tmp — more restrictive, not less.
+	ScratchDir string
 	// MaxConcurrent bounds the number of sandboxed processes running at once
 	// across this backend, mirroring DockerConfig.MaxConcurrent: a review
 	// verifies findings concurrently and each skeptic may run many tools, so
