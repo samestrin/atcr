@@ -221,12 +221,30 @@ func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head st
 
 	// Three-dot, matching the compare API's base...head semantics. Two-dot would
 	// inject the reverse of base-side commits whenever the base branch moved
-	// after the fork point, producing different bytes — and therefore a
-	// different reproducibility hash — than the primary fetcher. The hardening
-	// flags are the repo-wide convention for diff-family call sites (see
-	// internal/gitexec's package doc): the bytes produced here land in a
-	// committed benchmark diff and its published hash.
-	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff", "--no-ext-diff", "--no-color", "--no-textconv", base+"..."+head)
+	// after the fork point, producing a diff of different content than the
+	// primary fetcher. The hardening flags are the repo-wide convention for
+	// diff-family call sites (see internal/gitexec's package doc): the bytes
+	// produced here land in a committed benchmark diff and its published hash.
+	//
+	// The format flags pin every knob a git config can turn — gitexec neutralizes
+	// system and global config but not GIT_CONFIG_* env config, and never the
+	// clone's own local config. Their values are git's defaults, which is what
+	// the compare API emits: three context lines, a/ and b/ prefixes, rename
+	// detection on (GitHub's diffs carry `similarity index`/`rename from`), and
+	// the myers algorithm.
+	//
+	// This makes the output independent of the operator's environment. It does
+	// NOT make it byte-identical to the compare API: the `index <sha>..<sha>`
+	// line carries GitHub's own abbreviation width (11 hex in the committed
+	// suite), while locally that width is derived from the object database of a
+	// --filter=blob:none partial clone. So a clone-produced suite is
+	// semantically equivalent to a compare-produced one, not byte-identical, and
+	// is not expected to reproduce the committed hash — see
+	// benchmarks/standard-v1/NOTICE.md.
+	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff",
+		"--no-ext-diff", "--no-color", "--no-textconv",
+		"-U3", "--src-prefix=a/", "--dst-prefix=b/", "--find-renames", "--diff-algorithm=myers",
+		base+"..."+head)
 	var stderr bytes.Buffer
 	diff.Stderr = &stderr
 	stdout, err := diff.StdoutPipe()

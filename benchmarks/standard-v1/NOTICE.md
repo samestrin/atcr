@@ -55,3 +55,11 @@ The default seed and sample size reproduce this exact suite, provided the
 upstream compare ranges still resolve. `suite_version` pins reproducibility and
 the suite's hash is content-sensitive — expanding or re-sampling the suite is a
 version bump, never an edit to `1.0.0`'s existing cases.
+
+These diffs came from GitHub's compare API. The clone fallback (used when the
+compare API is unavailable) pins its diff format so the output does not depend
+on the operator's git configuration, but it produces a **semantically
+equivalent, not byte-identical** diff: the `index <sha>..<sha>` line carries
+GitHub's own abbreviation width, which a local `--filter=blob:none` clone cannot
+reproduce. A clone-produced suite is therefore not expected to match the
+committed reproducibility hash.
