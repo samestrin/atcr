@@ -304,6 +304,25 @@ func TestBuildSuite_RequiresAFetcherAndAnOutputDirectory(t *testing.T) {
 	assert.Error(t, err, "an empty output directory would write into the working directory")
 }
 
+func TestBuildSuite_ValidatesSuiteIdentityBeforeFetching(t *testing.T) {
+	// A typo'd -suite or -suite-version must fail before any network fetch or
+	// file write, not after the whole API budget is spent (manifest.Validate
+	// would only catch it at the end).
+	for _, opts := range []Options{
+		{Records: loadFixture(t), OutDir: t.TempDir(), Suite: "", SuiteVersion: "1.0.0"},
+		{Records: loadFixture(t), OutDir: t.TempDir(), Suite: "   ", SuiteVersion: "1.0.0"},
+		{Records: loadFixture(t), OutDir: t.TempDir(), Suite: "s", SuiteVersion: ""},
+	} {
+		f := &fakeFetcher{}
+		opts.Fetcher = f
+
+		_, err := BuildSuite(context.Background(), opts)
+
+		require.Error(t, err, "suite identity %q/%q is required up front", opts.Suite, opts.SuiteVersion)
+		assert.Empty(t, f.calls, "validation happens before any fetcher call")
+	}
+}
+
 func TestBuildSuite_RejectsARecordWithAnUnparsablePullRequestURL(t *testing.T) {
 	_, err := BuildSuite(context.Background(), Options{
 		Records: []Record{{GithubPrURL: "https://example.com/x", SourceCommit: "aaaaaaa", TargetCommit: "bbbbbbb",
