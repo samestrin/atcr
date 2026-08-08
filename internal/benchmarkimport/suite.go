@@ -251,6 +251,10 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 		res.UnmappedCategories += unmapped
 		if len(cats) == 0 {
 			res.Skipped++
+			res.Dropped = append(res.Dropped, DroppedRecord{
+				PrURL:  rec.GithubPrURL,
+				Reason: "no comment category maps into ATCR's vocabulary",
+			})
 			continue
 		}
 
@@ -270,6 +274,10 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 			diff, err = opts.Fetcher.FetchDiff(ctx, owner, repo, rec.SourceCommit, rec.TargetCommit)
 			if errors.Is(err, ErrDiffUnavailable) {
 				res.Unavailable++
+				res.Dropped = append(res.Dropped, DroppedRecord{
+					PrURL:  rec.GithubPrURL,
+					Reason: "diff unavailable upstream (commits force-pushed or garbage-collected)",
+				})
 				continue
 			}
 			if err != nil {
@@ -322,7 +330,32 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	if err := publish(stage, opts.OutDir, manifest, data); err != nil {
 		return res, err
 	}
+	if err := writeDropList(opts.OutDir, res.Dropped); err != nil {
+		return res, err
+	}
 	return res, nil
+}
+
+// writeDropList persists the itemized drops beside the suite so the gap between
+// the requested sample size and the shipped case count stays auditable after
+// the run's stderr is gone. A complete build removes any stale list rather than
+// leaving an empty file to explain.
+func writeDropList(dir string, dropped []DroppedRecord) error {
+	path := filepath.Join(dir, "dropped.json")
+	if len(dropped) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stale drop list: %w", err)
+		}
+		return nil
+	}
+	data, err := json.MarshalIndent(dropped, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding drop list: %w", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("writing drop list: %w", err)
+	}
+	return nil
 }
 
 // cachedDiff returns a previously fetched diff for id. A zero-length entry — a

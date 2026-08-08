@@ -88,6 +88,12 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return fail(err)
 	}
 
+	// Named, not just counted: "17 of 18" leaves no way to tell which PR dropped
+	// or whether its reason was transient.
+	for _, d := range res.Dropped {
+		_, _ = fmt.Fprintf(errOut, "ingest: dropped %s — %s\n", d.PrURL, d.Reason)
+	}
+
 	_, _ = fmt.Fprintf(out, "wrote %d case(s) to %s (%d skipped: no mappable category; %d unavailable upstream; %d unmapped comment categories dropped)\n",
 		res.CasesWritten, *outDir, res.Skipped, res.Unavailable, res.UnmappedCategories)
 	return 0
