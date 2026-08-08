@@ -62,6 +62,12 @@ func ParseDataset(raw []byte) ([]Record, error) {
 		if strings.TrimSpace(r.GithubPrURL) == "" {
 			return nil, fmt.Errorf("record %d: githubPrUrl is required", i)
 		}
+		// The URL is validated at the parse boundary alongside the commit SHAs:
+		// owner/repo reach the compare API as path segments and the clone URL
+		// unescaped, so only the canonical bare-PR shape is accepted.
+		if !prURLPattern.MatchString(strings.TrimSpace(r.GithubPrURL)) {
+			return nil, fmt.Errorf("record %d: githubPrUrl is not a canonical GitHub PR URL: %s", i, r.GithubPrURL)
+		}
 		// The PR URL is the sample's sort key and the case id's basis. A duplicate
 		// would make sampling order-dependent (sort.Slice is not stable) and would
 		// emit two cases with the same id, which the manifest contract rejects.

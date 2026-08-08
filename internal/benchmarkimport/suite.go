@@ -59,8 +59,12 @@ var categoryMap = map[string]string{
 	"performance":                     "performance",
 }
 
-// prURLPattern captures owner, repo, and PR number from a GitHub PR URL.
-var prURLPattern = regexp.MustCompile(`^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)`)
+// prURLPattern captures owner, repo, and PR number from a GitHub PR URL. It is
+// anchored and constrained to GitHub's real namespace charset: the dataset is
+// third-party JSON, and owner/repo flow into a compare-API path and an
+// unescaped clone URL, so a loose match would admit traversal- and query-shaped
+// values the consumers cannot safely carry.
+var prURLPattern = regexp.MustCompile(`^https?://github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/pull/(\d+)/?$`)
 
 // slugUnsafe matches everything that must not appear in a case id or filename.
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
