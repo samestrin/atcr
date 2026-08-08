@@ -132,6 +132,13 @@ func BuildSuite(ctx context.Context, opts Options) (Result, error) {
 	manifest := benchmark.Manifest{Suite: opts.Suite, SuiteVersion: opts.SuiteVersion}
 
 	for _, rec := range opts.Records {
+		// Records may be constructed programmatically, bypassing ParseDataset's
+		// commit validation; re-assert it at the trust boundary so an
+		// option-shaped value can never reach git or the compare API path.
+		if !commitSHAPattern.MatchString(rec.SourceCommit) || !commitSHAPattern.MatchString(rec.TargetCommit) {
+			return res, fmt.Errorf("record %q: source_commit and target_commit must each be a 7-40 character hex SHA", rec.GithubPrURL)
+		}
+
 		cats := ExpectedCategories(rec)
 		if len(cats) == 0 {
 			res.Skipped++
