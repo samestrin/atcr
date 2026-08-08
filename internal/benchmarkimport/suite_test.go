@@ -254,6 +254,21 @@ func TestBuildSuite_RejectsARecordWithAnUnparsablePullRequestURL(t *testing.T) {
 	assert.Error(t, err, "a record whose URL yields no case id aborts the build rather than being skipped silently")
 }
 
+func TestBuildSuite_RejectsOptionShapedCommitValuesBeforeFetching(t *testing.T) {
+	// Options.Records can be constructed programmatically, bypassing
+	// ParseDataset's validation; the trust boundary must hold by construction.
+	f := &fakeFetcher{}
+	_, err := BuildSuite(context.Background(), Options{
+		Records: []Record{{GithubPrURL: "https://github.com/o/r/pull/1",
+			SourceCommit: "--upload-pack=touch /tmp/pwned", TargetCommit: "bbbbbbb",
+			Comments: []Comment{{Category: "Code Defect"}}}},
+		OutDir: t.TempDir(), Suite: "s", SuiteVersion: "1.0.0", Fetcher: f,
+	})
+
+	require.Error(t, err, "an option-shaped commit value must be rejected at the boundary")
+	assert.Empty(t, f.calls, "rejection happens before any fetcher call, so git never sees the value")
+}
+
 func TestBuildSuite_WritesDiffFilesInsideTheSuiteDirectory(t *testing.T) {
 	dir := t.TempDir()
 
