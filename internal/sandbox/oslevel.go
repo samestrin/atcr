@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -290,14 +291,172 @@ var errPreflightTrivialRun = errors.New("trivial sandbox run did not complete cl
 // containment — the deny-by-default sandbox-exec profile flags on macOS, the
 // bind-mount and namespace flags on Linux.
 //
-// Phase 1 returns none, and that emptiness is load-bearing: Preflight refuses
-// while this is empty, so the backend cannot report itself usable before it can
-// contain anything. Phase 2 (oslevel_profile.go) fills it in, and Preflight
-// begins passing as a consequence rather than needing a separate flag flip.
-// It is a variable, not a plain function, solely so Phase 1 tests can exercise
-// Preflight's later steps; production code never reassigns it.
+// This is the single seam between the backend and the pure generators in
+// oslevel_profile.go, and it dispatches rather than deriving: re-deriving
+// `{"-p", profile, "--"}` here would put a second copy of the argv shape on the
+// path that decides containment. While it returned nothing, EVERY generator in
+// that file was unreachable from Run — osLevelRunArgs' empty-argv gate refused,
+// Preflight inherited the refusal, and the feature would have shipped inert with
+// every phase gate green (the generators are unit-tested directly). Filling it
+// in is what flips Preflight from refusing to probing; there is no separate flag.
+//
+// An unsupported platform returns an error rather than an empty slice. Empty
+// would still be refused by the gate, but as a generic "no containment"
+// message that hides which platform was actually asked for.
+//
+// It is a variable, not a plain function, solely so tests can exercise Run and
+// Preflight against a fake shim without either real binary installed;
+// production code never reassigns it.
 var osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, error) {
-	return nil, nil
+	switch goos {
+	case "darwin":
+		return sandboxExecArgs(cfg, spec)
+	case "linux":
+		return bwrapArgs(cfg, spec)
+	default:
+		return nil, fmt.Errorf("sandbox: os-level sandbox is not supported on %s", goos)
+	}
+}
+
+// osLevelMaxWritableCopyBytes and osLevelMaxWritableCopyEntries bound the
+// ephemeral copy a Writable run seeds into its scratch directory.
+//
+// An unbounded copy is a host disk-exhaustion vector on the very machine atcr
+// is running on: the snapshot is the tree under review, and a workload from a
+// previous run (or a repository containing a large fixture) decides its size.
+// The Docker backend gets this bound for free from the container's own storage
+// limits; here it has to be stated. They are variables rather than constants so
+// the bound itself is testable without writing a multi-gigabyte fixture.
+var (
+	osLevelMaxWritableCopyBytes   int64 = 512 << 20 // 512 MiB
+	osLevelMaxWritableCopyEntries       = 200_000
+)
+
+// seedWritableCopy copies the snapshot tree into a run's writable scratch
+// directory, so a Writable run mutates a throwaway copy and never the host
+// snapshot (sandbox.go:59-67).
+//
+// The copy is performed host-side, in Go, before the spawn — NOT with a `cp -R`
+// injected into the workload the way DockerBackend does it
+// (writableSetupExec/writableSetupPrefix, docker.go:124-130). Docker has no
+// other way to reach inside a container; this backend spawns a child process on
+// the same filesystem, so no shell needs to enter the picture and RunSpec's
+// injection-safety guarantee (sandbox.go:51-56) is left intact rather than
+// re-implemented on a new surface.
+//
+// Symlinks are never dereferenced. The snapshot is model-adjacent input, so a
+// dereferencing copy would pull an arbitrary host file — ~/.ssh/id_ed25519 is
+// the standing example in this package — INTO the writable, workload-readable
+// scratch tree, re-opening the exact exfiltration path the containment profile
+// closes. A symlink that stays inside the snapshot is recreated as a symlink;
+// one that escapes (absolute, or climbing out via ..) is dropped. Dropping is
+// safe in the direction that matters: the workload sees a missing path rather
+// than a host secret. Irregular entries (devices, sockets, FIFOs) are dropped
+// for the same reason — they are not source code and cannot be meaningfully
+// copied.
+func seedWritableCopy(src, dst string) error {
+	var copiedBytes int64
+	var entries int
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		entries++
+		if entries > osLevelMaxWritableCopyEntries {
+			return fmt.Errorf("sandbox: snapshot is too large to copy into the writable scratch tree "+
+				"(more than %d entries)", osLevelMaxWritableCopyEntries)
+		}
+		target := filepath.Join(dst, rel)
+
+		switch {
+		case d.IsDir():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return os.MkdirAll(target, info.Mode().Perm())
+		case d.Type()&os.ModeSymlink != 0:
+			return copySymlinkIfContained(src, path, dst, target)
+		case d.Type().IsRegular():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			copiedBytes += info.Size()
+			if copiedBytes > osLevelMaxWritableCopyBytes {
+				return fmt.Errorf("sandbox: snapshot is too large to copy into the writable scratch tree "+
+					"(exceeds %d bytes)", osLevelMaxWritableCopyBytes)
+			}
+			return copyRegularFile(path, target, info.Mode().Perm())
+		default:
+			// Device, socket, FIFO: dropped deliberately. See the doc comment.
+			return nil
+		}
+	})
+}
+
+// copySymlinkIfContained recreates a symlink only when it resolves inside the
+// snapshot; otherwise it drops it. The link is recreated with its ORIGINAL
+// (relative) target rather than a rewritten one, so the copy keeps the same
+// internal shape the snapshot had.
+func copySymlinkIfContained(src, path, dst, target string) error {
+	linkTarget, err := os.Readlink(path)
+	if err != nil {
+		return err
+	}
+	// Resolve against the link's own directory, exactly as the kernel would,
+	// then check containment against the SNAPSHOT root. An absolute target is
+	// resolved as-is and will fail this check unless it genuinely points back
+	// inside the snapshot.
+	resolved := linkTarget
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(filepath.Dir(path), resolved)
+	}
+	if !pathContainsFold(src, filepath.Clean(resolved), false) {
+		return nil // escapes the snapshot: drop it
+	}
+	if filepath.IsAbs(linkTarget) {
+		// An absolute in-snapshot target would still point at the ORIGINAL
+		// read-only snapshot from inside the copy. Rewrite it to the equivalent
+		// path inside the copy so the link stays self-consistent.
+		rel, err := filepath.Rel(src, filepath.Clean(resolved))
+		if err != nil {
+			return nil
+		}
+		linkTarget = filepath.Join(dst, rel)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	return os.Symlink(linkTarget, target)
+}
+
+// copyRegularFile copies one file's contents, preserving its permission bits.
+func copyRegularFile(path, target string, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	in, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // preflightRunTimeout bounds the trivial verification run, matching the 30s
@@ -495,17 +654,11 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 // verification run spawns the exact path it just validated — toolPath has not
 // been pinned at that point, and must not be until the verification succeeds.
 func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (res RunResult, err error) {
-	args, err := osLevelRunArgs(b.platform(), b.cfg, spec)
-	if err != nil {
+	// Validate up front. The argv is no longer built here — it needs the scratch
+	// directory, which is created below — so without this a malformed spec would
+	// take a concurrency slot and create a temp tree before being refused.
+	if err := spec.validate(); err != nil {
 		return RunResult{}, err
-	}
-	// Writable asks for an ephemeral copy-on-write overlay so the snapshot stays
-	// read-only while the run still gets a writable tree (sandbox.go:41-60). The
-	// OS-level backend has no overlay mechanism yet, and silently ignoring the
-	// flag would run the workload directly against the operator's snapshot — the
-	// opposite of what the caller asked for. Refuse instead.
-	if spec.Writable {
-		return RunResult{}, fmt.Errorf("os-level sandbox run: RunSpec.Writable is not supported by the %s backend", osLevelBackendName)
 	}
 
 	// Bound concurrent sandbox spawns; block until a slot frees or ctx is done.
@@ -562,12 +715,58 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, tool, args...)
+	// The scratch directory is created BEFORE the argv is built, and travels to
+	// the generators on a per-run COPY of the config. Both halves matter:
+	//
+	//   - Before: the generators carve out cfg.ScratchDir, and sandboxEnv points
+	//     HOME/TMPDIR/GOCACHE at it. Creating it afterwards (as this function
+	//     originally did) left cfg.ScratchDir empty on every real run, so the
+	//     profile permitted nothing for the toolchain to write to while the
+	//     environment still pointed there — a Go build cannot run with an
+	//     unwritable HOME/GOCACHE. That was TD-014.
+	//   - A copy: the directory is per-RUN, and this backend is explicitly built
+	//     for concurrent use. Writing it into b.cfg would have two concurrent
+	//     runs each permitting the other's scratch tree.
+	scratchDir, err := os.MkdirTemp("", "atcr-oslevel-scratch-*")
+	if err != nil {
+		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(scratchDir) }()
+
 	// Run inside the snapshot. RunSpec.validate already requires SnapshotDir to
 	// be absolute, and the Docker backend mounts it as the working directory —
 	// leaving cmd.Dir unset here would instead run model-authored code in atcr's
 	// own working directory, i.e. the operator's live repo.
-	cmd.Dir = spec.SnapshotDir
+	workDir := spec.SnapshotDir
+	if spec.Writable {
+		// Seed the throwaway copy the run may mutate, so the host snapshot stays
+		// read-only (sandbox.go:59-67). A failed seed is a FAULT: falling through
+		// would run the workload against a partial or empty tree and report its
+		// exit code as a validation verdict.
+		if seedErr := seedWritableCopy(spec.SnapshotDir, scratchDir); seedErr != nil {
+			return RunResult{Command: cmdStr},
+				fmt.Errorf("os-level sandbox run: writable copy failed: %w", seedErr)
+		}
+		if b.platform() != "linux" {
+			// On darwin the run must execute IN the copy: sandbox-exec applies a
+			// policy to paths and cannot remap them, so there is no way to make
+			// the copy appear at the snapshot's path. On Linux bwrapArgs already
+			// emits --ro-bind snap /src + --bind scratch /work + --chdir /work,
+			// so cmd.Dir stays the host snapshot for the bwrap process itself and
+			// the remap happens inside the mount namespace.
+			workDir = scratchDir
+		}
+	}
+
+	runCfg := b.cfg
+	runCfg.ScratchDir = scratchDir
+	args, err := osLevelRunArgs(b.platform(), runCfg, spec)
+	if err != nil {
+		return RunResult{Command: cmdStr}, err
+	}
+
+	cmd := exec.CommandContext(runCtx, tool, args...)
+	cmd.Dir = workDir
 	// Hand the workload an explicit, minimal environment. Inheriting os.Environ()
 	// would pass every credential in the operator's shell (LITELLM_API_KEY,
 	// GITHUB_TOKEN, cloud tokens) straight to LLM-generated code. Docker gets
@@ -579,11 +778,10 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// rather than reinforce it, and every var would have to be re-stated as a
 	// --setenv pair. The scrub is cmd.Env's alone; a future caller that leaves
 	// cmd.Env nil would leak the whole parent environment.
-	scratchDir, err := os.MkdirTemp("", "atcr-oslevel-scratch-*")
-	if err != nil {
-		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(scratchDir) }()
+	//
+	// The scratch dir is the one created above, so the directory the containment
+	// profile/argv carves out and the directory HOME/TMPDIR/GOCACHE point at are
+	// the same directory by construction rather than by coincidence.
 	cmd.Env = sandboxEnv(scratchDir)
 	// Put the sandbox in its own process group and make cancellation kill the
 	// whole group, so a workload that forked is reaped rather than left running

@@ -160,22 +160,317 @@ func TestOSLevelBackend_FailsClosedWithoutAUsableSandbox(t *testing.T) {
 	// A backend that reports success while providing no containment is the
 	// exact --no-sandbox exposure this epic removes, so both entry points are
 	// pinned to fail closed rather than trusted to.
+	//
+	// The binary is deliberately unresolvable (an empty trusted directory), so
+	// this asserts the missing-binary refusal specifically. Before task 3.0 the
+	// refusal came from ErrOSLevelNoContainment instead — the generator seam was
+	// empty, so EVERY host refused. Now that the seam is filled, a host WITH the
+	// real tool legitimately passes Preflight, and pinning that sentinel here
+	// would assert the feature is still inert.
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
+	b.trustedDirs = []string{t.TempDir()}
 
-	// Phase 1 generates no containment arguments, so the backend cannot isolate
-	// anything, so the argv builder refuses and Preflight inherits that refusal
-	// through its trivial run. Asserting the sentinel
-	// rather than "some error" keeps this honest: on a host lacking the platform
-	// binary entirely, a bare require.Error would be satisfied by the
-	// missing-binary path and would prove nothing about containment.
 	err := b.Preflight(context.Background())
 	require.Error(t, err, "Preflight must never report a usable sandbox before it verifies one")
-	assert.ErrorIs(t, err, ErrOSLevelNoContainment)
+	assert.NotErrorIs(t, err, ErrOSLevelNoContainment,
+		"the containment generator is wired now; a refusal must name the real cause")
+	assert.Contains(t, err.Error(), "not usable")
 
 	// Run refuses a malformed spec before spawning anything (AC 01-03 Edge
 	// Case 1).
 	_, runErr := b.Run(context.Background(), RunSpec{})
 	assert.Error(t, runErr, "Run must reject a spec with neither Command nor Script")
+}
+
+// ---------------------------------------------------------------------------
+// Task 3.0 (RED): the containment seam is wired, the scratch dir reaches the
+// generators (TD-014), and RunSpec.Writable is honored instead of refused.
+// ---------------------------------------------------------------------------
+
+func TestOSLevelContainmentArgs_DispatchesOnGOOS(t *testing.T) {
+	// osLevelContainmentArgs is the single seam between the backend and the
+	// pure generators. Until it dispatched, every generator in
+	// oslevel_profile.go was unreachable from Run — the feature would have
+	// shipped inert with every phase gate green.
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
+	cfg := DefaultOSLevelConfig()
+
+	t.Run("darwin routes to sandboxExecArgs", func(t *testing.T) {
+		args, err := osLevelContainmentArgs("darwin", cfg, spec)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(args), 3)
+		assert.Equal(t, "-p", args[0], "sandbox-exec takes the profile via -p")
+		assert.Contains(t, args[1], "(version 1)", "args[1] must be the generated profile")
+		assert.Equal(t, sandboxArgvTerminator, args[len(args)-1],
+			"the option list must be terminated before the model-authored workload")
+
+		want, wantErr := sandboxExecArgs(cfg, spec)
+		require.NoError(t, wantErr)
+		assert.Equal(t, want, args, "the seam must not re-derive the argv, only dispatch")
+	})
+
+	t.Run("linux routes to bwrapArgs", func(t *testing.T) {
+		args, err := osLevelContainmentArgs("linux", cfg, spec)
+		require.NoError(t, err)
+		assert.Contains(t, args, "--unshare-net")
+		assert.Equal(t, sandboxArgvTerminator, args[len(args)-1])
+
+		want, wantErr := bwrapArgs(cfg, spec)
+		require.NoError(t, wantErr)
+		assert.Equal(t, want, args, "the seam must not re-derive the argv, only dispatch")
+	})
+
+	t.Run("unsupported platform fails closed", func(t *testing.T) {
+		// Returning (nil, nil) would hit osLevelRunArgs' empty-argv gate and
+		// still refuse, but the error a caller sees must name the platform
+		// rather than claim the generator is unimplemented.
+		args, err := osLevelContainmentArgs("windows", cfg, spec)
+		require.Error(t, err)
+		assert.Nil(t, args)
+		assert.Contains(t, err.Error(), "windows")
+	})
+
+	t.Run("a generator error propagates rather than yielding an empty argv", func(t *testing.T) {
+		// An empty return would be caught by the gate, but as a generic
+		// "no containment" message that hides WHY the profile was rejected.
+		bad := RunSpec{Command: []string{"true"}, SnapshotDir: "/"}
+		for _, goos := range []string{"darwin", "linux"} {
+			args, err := osLevelContainmentArgs(goos, cfg, bad)
+			require.Error(t, err, goos)
+			assert.Nil(t, args, goos)
+		}
+	})
+}
+
+func TestOSLevelRunArgs_NoLongerRefusesOnceTheGeneratorIsWired(t *testing.T) {
+	// The ErrOSLevelNoContainment gate stays in place for a genuinely empty
+	// argv, but the real generators must satisfy it on both platforms — that
+	// flip is what makes Preflight start passing, with no separate flag.
+	spec := RunSpec{Command: []string{"go", "test", "./..."}, SnapshotDir: t.TempDir()}
+
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			args, err := osLevelRunArgs(goos, DefaultOSLevelConfig(), spec)
+			require.NoError(t, err)
+			assert.NotErrorIs(t, err, ErrOSLevelNoContainment)
+			require.GreaterOrEqual(t, len(args), len(spec.Command))
+			assert.Equal(t, spec.Command, args[len(args)-len(spec.Command):],
+				"the workload stays last, after the containment arguments")
+		})
+	}
+}
+
+// captureContainmentCfg replaces the containment seam with a recorder that
+// still delegates to the real dispatcher, so a test can assert WHAT the
+// generators were handed without weakening the argv the run actually uses.
+func captureContainmentCfg(t *testing.T, got *OSLevelConfig) {
+	t.Helper()
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+		*got = cfg
+		return []string{"--fake-containment"}, nil
+	}
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
+}
+
+func TestOSLevelBackendRun_PassesThePerRunScratchDirToTheGenerators(t *testing.T) {
+	// TD-014: Run created its scratch dir AFTER building the argv and never
+	// wrote it into the config, so cfg.ScratchDir was empty on every real run
+	// and the generators carved out nothing for HOME/TMPDIR/GOCACHE. The
+	// directory the profile permits and the directory the environment points at
+	// must be the same one.
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "HOME=$HOME"
+echo "TMPDIR=$TMPDIR"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, seen.ScratchDir, "the generators must receive the per-run scratch dir")
+	assert.True(t, filepath.IsAbs(seen.ScratchDir))
+	assert.Contains(t, res.Output, "HOME="+seen.ScratchDir,
+		"the carved-out directory and the workload's HOME must be the same directory")
+	assert.Contains(t, res.Output, "TMPDIR="+seen.ScratchDir)
+
+	// The per-run value must not leak back into the backend's own config: two
+	// concurrent runs each get their own scratch dir, and a sticky value would
+	// have the second run's profile permit the first run's directory.
+	assert.Empty(t, b.cfg.ScratchDir, "the scratch dir travels on a per-run copy, not the backend config")
+}
+
+func TestOSLevelBackendRun_ScratchDirIsRemovedAfterTheRun(t *testing.T) {
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.NotEmpty(t, seen.ScratchDir)
+	assert.NoDirExists(t, seen.ScratchDir, "the ephemeral scratch tree must not outlive the run")
+}
+
+func TestOSLevelBackendRun_WritableSeedsAnEphemeralCopyInsteadOfRefusing(t *testing.T) {
+	// RunSpec.Writable was refused outright while no copy mechanism existed.
+	// ResolveAutoFixSandbox's caller hardcodes Writable:true
+	// (internal/verify/sandboxvalidate.go:72), so refusing it would ship an
+	// --auto-fix fallback that fails on every real validation run.
+	var seen OSLevelConfig
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "file.txt"), []byte("original"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshot, "pkg", "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "pkg", "sub", "deep.txt"), []byte("deep"), 0o644))
+
+	cfg := DefaultOSLevelConfig()
+	// The scratch tree is removed when Run returns, so the copy is inspected
+	// from INSIDE the run, by the shim itself. sandboxEnv points HOME at the
+	// scratch dir, which makes this assertion identical on both platforms even
+	// though only darwin also sets cmd.Dir to it.
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "PWD=$(pwd)"
+echo "SEEDED=$(cat "$HOME/file.txt")"
+echo "SEEDED_DEEP=$(cat "$HOME/pkg/sub/deep.txt")"
+echo "MUTATED" > "$HOME/file.txt"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: snapshot,
+		Writable:    true,
+	})
+	require.NoError(t, err, "Writable must be honored, not refused")
+	require.NotEmpty(t, seen.ScratchDir)
+
+	assert.Contains(t, res.Output, "SEEDED=original", "the snapshot must be seeded into the scratch copy")
+	assert.Contains(t, res.Output, "SEEDED_DEEP=deep", "the copy must be recursive")
+
+	// On darwin the workload runs IN the scratch copy, because sandbox-exec
+	// cannot remap paths the way bwrap's --ro-bind /src + --bind /work split does.
+	if runtime.GOOS == "darwin" {
+		assert.Contains(t, res.Output, "PWD="+resolvePath(t, seen.ScratchDir),
+			"on darwin the writable run must execute inside the scratch copy")
+	}
+
+	// The host snapshot is never mutated — the whole point of copying. The
+	// workload wrote MUTATED into its own copy above; the original must be intact.
+	onDisk, err := os.ReadFile(filepath.Join(snapshot, "file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(onDisk), "a writable run must never mutate the host snapshot")
+}
+
+func TestOSLevelSeedWritableCopy_CopiesTreeWithoutFollowingSymlinksOut(t *testing.T) {
+	// A snapshot is model-adjacent input: it is the tree under review. A copy
+	// that dereferenced symlinks would pull an arbitrary host file (~/.ssh/id_*)
+	// INTO the writable, workload-readable scratch dir — re-opening the exact
+	// exfiltration path the profile closes.
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("SUPER-SECRET-KEY"), 0o600))
+
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "keep.txt"), []byte("keep"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshot, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "nested", "inner.txt"), []byte("inner"), 0o600))
+	require.NoError(t, os.Symlink(secret, filepath.Join(snapshot, "link-out")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(snapshot, "dir-out")))
+
+	dst := filepath.Join(t.TempDir(), "scratch")
+	require.NoError(t, os.MkdirAll(dst, 0o700))
+	require.NoError(t, seedWritableCopy(snapshot, dst))
+
+	// Regular files come across, with their contents and their mode.
+	body, err := os.ReadFile(filepath.Join(dst, "keep.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(body))
+	inner, err := os.ReadFile(filepath.Join(dst, "nested", "inner.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "inner", string(inner))
+
+	// The escaping symlinks must NOT have become real copies of the host file.
+	assertNoDereferencedSecret := func(name string) {
+		t.Helper()
+		p := filepath.Join(dst, name)
+		info, statErr := os.Lstat(p)
+		if os.IsNotExist(statErr) {
+			return // skipped entirely: also a safe outcome
+		}
+		require.NoError(t, statErr)
+		require.NotEqual(t, 0, int(info.Mode()&os.ModeSymlink),
+			"%s must not have been dereferenced into a real file", name)
+		// Even preserved as a symlink it must not resolve outside the copy.
+		target, readErr := os.Readlink(p)
+		require.NoError(t, readErr)
+		assert.False(t, filepath.IsAbs(target) && !pathContainsFold(dst, target, false),
+			"%s must not point outside the scratch copy (got %q)", name, target)
+	}
+	assertNoDereferencedSecret("link-out")
+	assertNoDereferencedSecret("dir-out")
+
+	// Belt and braces: the secret's bytes must not appear anywhere in the copy.
+	require.NoError(t, filepath.WalkDir(dst, func(p string, d os.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		b, readErr := os.ReadFile(p)
+		if readErr != nil {
+			return readErr
+		}
+		assert.NotContains(t, string(b), "SUPER-SECRET-KEY", "secret leaked into %s", p)
+		return nil
+	}))
+}
+
+func TestOSLevelSeedWritableCopy_RefusesAnOversizedSnapshot(t *testing.T) {
+	// An unbounded copy turns a large repository (or a workload-authored file)
+	// into a host disk-exhaustion vector, on the same host atcr is running on.
+	orig := osLevelMaxWritableCopyBytes
+	osLevelMaxWritableCopyBytes = 32
+	t.Cleanup(func() { osLevelMaxWritableCopyBytes = orig })
+
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "big.bin"), bytes.Repeat([]byte("x"), 4096), 0o644))
+
+	dst := filepath.Join(t.TempDir(), "scratch")
+	require.NoError(t, os.MkdirAll(dst, 0o700))
+
+	err := seedWritableCopy(snapshot, dst)
+	require.Error(t, err, "the copy must be bounded")
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestOSLevelBackendRun_WritableCopyFailureIsAFaultNotASuccess(t *testing.T) {
+	// A failed seed must never fall through to running the workload against a
+	// partially-populated (or empty) tree and reporting the exit code as a
+	// result — the caller would read that as a validation verdict.
+	orig := osLevelMaxWritableCopyBytes
+	osLevelMaxWritableCopyBytes = 1
+	t.Cleanup(func() { osLevelMaxWritableCopyBytes = orig })
+
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "big.bin"), bytes.Repeat([]byte("x"), 1024), 0o644))
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+	b := withContainment(t, NewOSLevelBackend(cfg))
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: snapshot,
+		Writable:    true,
+	})
+	require.Error(t, err, "a failed seed is a backend fault, not a workload result")
+	assert.Contains(t, err.Error(), "writable copy")
+	assert.Zero(t, res.ExitCode,
+		"a fault carries no program exit status; the non-nil error is the caller's signal (TD-005)")
 }
 
 // writeFakeOSLevel writes an executable shell script that impersonates the
@@ -366,6 +661,15 @@ func TestOSLevelRunArgs_RefusesAnArgvWithNoContainment(t *testing.T) {
 	// so it covers EVERY spawn — including a caller that set tool_path and
 	// skipped Preflight, which would otherwise run model-authored code with the
 	// sandboxing binary present but no isolation arguments at all.
+	//
+	// The generator is wired now (task 3.0), so the empty case has to be forced
+	// rather than being the ambient state. The gate must NOT be deleted along
+	// with the emptiness it was written for: it is the last check standing
+	// between a future generator regression and an uncontained spawn.
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(string, OSLevelConfig, RunSpec) ([]string, error) { return nil, nil }
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
+
 	args, err := osLevelRunArgs(runtime.GOOS, DefaultOSLevelConfig(),
 		RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.Error(t, err)
@@ -478,18 +782,53 @@ func TestOSLevelBackendRun_DoesNotLeakParentEnvironment(t *testing.T) {
 	assert.Contains(t, res.Output, "PATH=", "the allowlist must still provide PATH")
 }
 
-func TestOSLevelBackendRun_RefusesWritableOverlay(t *testing.T) {
-	// Writable asks for an ephemeral copy so the snapshot stays read-only. This
-	// backend has no overlay yet, and silently ignoring the flag would run the
-	// workload directly against the operator's snapshot.
-	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(0))
-	_, err := b.Run(context.Background(), RunSpec{
+func TestOSLevelBackendRun_WritableNeverRunsAgainstTheOperatorSnapshot(t *testing.T) {
+	// Writable asks for an ephemeral copy so the snapshot stays read-only. Until
+	// task 3.0 this backend had no copy mechanism and refused the flag outright,
+	// and this test pinned that refusal. The refusal was never the point — the
+	// guarantee it protected was "never run the workload directly against the
+	// operator's snapshot". Now that the copy exists, that same guarantee is
+	// asserted positively: the writable tree the workload is handed must be the
+	// ephemeral copy, never the snapshot itself.
+	var seen OSLevelConfig
+	snapshot := t.TempDir()
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "HOME=$HOME"
+echo "PWD=$(pwd)"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{
 		Command:     []string{"true"},
-		SnapshotDir: t.TempDir(),
+		SnapshotDir: snapshot,
 		Writable:    true,
 	})
-	require.Error(t, err, "an unhonored isolation flag must fail closed, not be ignored")
-	assert.Contains(t, err.Error(), "Writable")
+	require.NoError(t, err)
+	require.NotEmpty(t, seen.ScratchDir)
+	assert.NotEqual(t, snapshot, seen.ScratchDir,
+		"the writable carve-out must never be the snapshot itself")
+	assert.NotContains(t, res.Output, "HOME="+snapshot)
+	if runtime.GOOS == "darwin" {
+		assert.NotContains(t, res.Output, "PWD="+resolvePath(t, snapshot),
+			"a writable run must not execute in the operator's snapshot")
+	}
+}
+
+// resolvePath returns path with every symlink resolved, which is what a shell's
+// `pwd` reports. On macOS the per-user temp root is reached through /var, a
+// symlink to /private/var, so a raw string comparison against a t.TempDir() or
+// os.MkdirTemp path fails for a reason that has nothing to do with the code
+// under test.
+//
+// The leaf may already be gone by assertion time — a run's scratch tree is
+// deliberately removed when Run returns — so only the PARENT is resolved and the
+// final element is re-appended.
+func resolvePath(t *testing.T, path string) string {
+	t.Helper()
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	require.NoError(t, err)
+	return filepath.Join(parent, filepath.Base(path))
 }
 
 func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {
@@ -765,15 +1104,23 @@ exec "$@"`
 }
 
 func TestOSLevelBackend_Preflight_RefusesWhileThereIsNoContainment(t *testing.T) {
-	// Phase 1 generates no containment arguments, so the backend cannot isolate
-	// anything. Preflight gates --exec, so it must refuse rather than report a
-	// usable sandbox — otherwise model-authored code would run uncontained.
+	// A backend that cannot isolate anything must not report itself usable:
+	// Preflight gates --exec, so reporting success would run model-authored code
+	// uncontained.
 	//
-	// Built without newFakeOSLevelBackend on purpose: that helper supplies
-	// containment, which is exactly what this test must NOT have.
+	// Before task 3.0 this was the ambient state on every host, because the
+	// containment seam returned nothing. Now that the seam dispatches to the real
+	// generators, the emptiness is forced — the property under test is Preflight
+	// INHERITING the argv-path refusal through its trivial run, which is what
+	// makes the gate cover a caller that skips Preflight too, and that property
+	// is unchanged.
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelExecBody())
 	b := NewOSLevelBackend(cfg)
+
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(string, OSLevelConfig, RunSpec) ([]string, error) { return nil, nil }
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
 
 	err := b.Preflight(context.Background())
 	require.Error(t, err)
