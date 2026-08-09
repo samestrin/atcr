@@ -650,7 +650,10 @@ func TestBwrapArgs_RejectsASnapshotThatWouldExposeTheHost(t *testing.T) {
 	// developer's repo and must stay allowed.
 	cfg, base := bwrapFixture(t)
 
-	for _, bad := range []string{"/", "//", "/.", "/home", "/root", "/usr", "/etc", "/proc"} {
+	// /var/home is the ostree spelling (Fedora Silverblue/Kinoite, openSUSE
+	// MicroOS): there /home is a SYMLINK to /var/home, so a guard that knows only
+	// the /home spelling is bypassed by naming the real container directly.
+	for _, bad := range []string{"/", "//", "/.", "/home", "/var/home", "/root", "/usr", "/etc", "/proc"} {
 		t.Run("reject "+bad, func(t *testing.T) {
 			spec := base
 			spec.SnapshotDir = bad
