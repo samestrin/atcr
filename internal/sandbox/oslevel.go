@@ -386,6 +386,14 @@ const (
 // .git is deliberately copied, because an operator's validate_command may
 // legitimately shell out to git.
 //
+// A TD review proposed a .gitignore-aware exclusion set and/or reporting an
+// overrun as a degraded-but-flagged run; both were considered and rejected.
+// Exclusions would silently drop something a validate_command legitimately
+// depends on (the sizing above already accounts for build output, caches and
+// vendored dependencies), and a validation step that cannot even copy the
+// tree must fail loud — a degraded run would report a verdict derived from a
+// partial tree.
+//
 // They are variables rather than constants so the bound itself is testable
 // without writing a multi-gigabyte fixture.
 var (
@@ -1319,6 +1327,14 @@ const signalExitBase = 128
 // bwrap's fault code is 1, the most common workload exit code there is, and
 // sandbox-exec's diagnostic branch exists precisely for codes outside the
 // measured sysexits set.)
+//
+// The stderr-split alternative was tried and measured, not just argued: commit
+// b6fcf8c classified on a line-anchored stderr-only tail, and 669bd23 reverted
+// it the same day — separate copy goroutines destroyed inter-stream chronology
+// and let a newline-less stdout flood bury a real stderr diagnostic
+// (TestOSLevelBackendRun_TruncatesCombinedOutput flaked), a fail-open
+// regression judged worse than the spoof. This TD row is closed as an
+// accepted residual on that record.
 func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	if exitCode == 0 {
 		return false, ""
