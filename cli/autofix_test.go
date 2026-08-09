@@ -1903,6 +1903,27 @@ func TestHiddenCause_CarriesTheSentinelWithoutContributingText(t *testing.T) {
 	assert.ErrorIs(t, wrapped, sentinel)
 }
 
+// TestValidateAutoFixBackend_RefusalChainHasNoEmptyError walks the gate
+// refusal's whole Unwrap chain and requires every link to describe itself. An
+// error whose Error() is "" (hiddenCause) renders as a blank hole for any
+// consumer that unwraps and prints — errors.Unwrap(err).Error(), errors.Join,
+// a %v on an intermediate cause, a structured logger walking the chain — which
+// breaks the contract that Error() describes the error.
+func TestValidateAutoFixBackend_RefusalChainHasNoEmptyError(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, fmt.Errorf("--auto-fix sandbox preflight failed: docker: daemon unreachable: %w", verify.ErrSandboxNoUsableBackend))
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--auto-fix cannot run: sandbox:",
+		"the operator-facing message must stay byte-identical in shape")
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		assert.NotEmpty(t, e.Error(),
+			"every link in the refusal chain must describe itself; an empty Error() renders as a blank hole inside %q", err.Error())
+	}
+}
+
 // pflag's UnquoteUsage lifts the first backquoted span out of a usage string and
 // renders it as the flag's value name, so a bool flag whose help text mentions an
 // example command in backquotes renders as if it took an argument. The
