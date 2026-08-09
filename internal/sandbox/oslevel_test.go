@@ -1217,6 +1217,24 @@ exit 1`)
 	assert.Zero(t, res.ExitCode, "a tool fault has no program exit status to report")
 }
 
+func TestOSLevelBackendRun_RefusalIsLoggedAndCarriesTheCommand(t *testing.T) {
+	// Run's first action is b.toolPath(), which returns before any logger is
+	// obtained: a run refused with errOSLevelNotPreflighted produced NO log
+	// record and a zero-value RunResult, so neither the requested command nor
+	// the refusal appeared in the evidence trail.
+	b := NewOSLevelBackend(DefaultOSLevelConfig()) // no ToolPath, no preflight: refused
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	res, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.ErrorIs(t, err, errOSLevelNotPreflighted)
+	assert.Equal(t, "go test", res.Command, "a refusal must still name the command it refused")
+	assert.Contains(t, buf.String(), "sandbox exec refused",
+		"a refused run must appear in the evidence trail")
+	assert.Contains(t, buf.String(), `command="go test"`)
+}
+
 func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
