@@ -926,8 +926,18 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
 	// before truncation, with headroom for rune-boundary backup.
 	lw := &limitedWriter{w: &buf, n: int64(b.cfg.MaxOutputBytes) + 4096}
-	cmd.Stdout = lw
-	cmd.Stderr = lw
+	// Both streams ALSO feed a dedicated tail buffer for fault classification.
+	// The display buffer keeps the HEAD of the combined capture, so a workload
+	// flooding output before the tool reports its own failure would push the
+	// diagnostic past the capture cap — and with it the one signal that
+	// separates a tool fault from a workload exit. The tail keeps the capture's
+	// final bytes, which is where a failing tool's diagnostic lives. One shared
+	// writer value for both streams keeps os/exec's single-goroutine drain
+	// (same-writer fast path), so interleave order is unchanged and the buffer
+	// needs no locking.
+	capture := &combinedCapture{lw: lw}
+	cmd.Stdout = capture
+	cmd.Stderr = capture
 
 	runErr := cmd.Run()
 	res = RunResult{
@@ -964,11 +974,12 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		return res, nil
 	}
 	if runErr != nil {
-		// The RAW buffer is handed to the classifier, not res.Output: a small
-		// MaxOutputBytes would truncate the tool's diagnostic away and silently
-		// turn a containment failure into a reported workload exit. Truncation
-		// is a display budget and must not decide a security question.
-		return b.classifyRunError(ctx, res, tool, cmdStr, buf.String(), runErr)
+		// The capture TAIL is handed to the classifier, not res.Output and not
+		// the head-capped display buffer: a small MaxOutputBytes or an output
+		// flood would push the tool's diagnostic out of the retained head and
+		// silently turn a containment failure into a reported workload exit.
+		// Truncation is a display budget and must not decide a security question.
+		return b.classifyRunError(ctx, res, tool, cmdStr, capture.Tail(), runErr)
 	}
 	return res, nil
 }
@@ -1010,6 +1021,47 @@ func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error) {
 // osLevelWaitGrace bounds how long cmd.Wait blocks after the sandboxed process
 // exits while a lingering grandchild still holds its output pipes open.
 const osLevelWaitGrace = 5 * time.Second
+
+// osLevelCaptureTailBytes caps the tail of the combined output capture that
+// fault classification reads. Every measured tool diagnostic (bwrap's die()
+// lines, sandbox-exec's usage/syntax errors) is well under 1 KiB; 8 KiB leaves
+// generous headroom without giving a chatty workload an unbounded buffer.
+const osLevelCaptureTailBytes = 8 << 10
+
+// tailBuffer keeps only the LAST osLevelCaptureTailBytes written to it. Fault
+// classification needs the end of the capture — that is where a failing
+// sandbox tool prints its diagnostic — not the head the display buffer
+// preserves.
+type tailBuffer struct {
+	data []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.data = append(t.data, p...)
+	if len(t.data) > osLevelCaptureTailBytes {
+		t.data = t.data[len(t.data)-osLevelCaptureTailBytes:]
+	}
+	return len(p), nil
+}
+
+// combinedCapture fans the workload's combined stdout+stderr into the bounded
+// display buffer and the classification tail. A run assigns the SAME value to
+// cmd.Stdout and cmd.Stderr, so os/exec drains both pipes from one goroutine
+// (its same-writer fast path) and the writes below never race.
+type combinedCapture struct {
+	lw   *limitedWriter
+	tail tailBuffer
+}
+
+func (c *combinedCapture) Write(p []byte) (int, error) {
+	n, err := c.lw.Write(p)
+	_, _ = c.tail.Write(p)
+	return n, err
+}
+
+// Tail returns the retained trailing bytes of the capture, for fault
+// classification.
+func (c *combinedCapture) Tail() string { return string(c.tail.data) }
 
 // runCtxDone reports whether the run's context ended in a cancellation class
 // (deadline or explicit cancel).
@@ -1121,9 +1173,10 @@ const signalExitBase = 128
 // fault, never a successful run, per the package's containment-first contract
 // (sandbox.go:5-14). Ambiguity always resolves toward refusing the run.
 //
-// output MUST be the untruncated capture. Classifying the display-truncated
-// string would let a small MaxOutputBytes cut the diagnostic off and silently
-// turn a containment failure into a reported workload exit.
+// output is the tail of the run's captured output (see combinedCapture), never
+// the display-truncated string: a small MaxOutputBytes would cut the
+// diagnostic off and silently turn a containment failure into a reported
+// workload exit.
 func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	if exitCode == 0 {
 		return false, ""
