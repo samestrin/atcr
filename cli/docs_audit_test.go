@@ -1251,7 +1251,7 @@ func TestAutoFixDocsDocumentSandboxFallback(t *testing.T) {
 // already says "opt-in" about `--exec` in its opening paragraph, so a
 // whole-file substring check would pass vacuously.
 func markdownSection(ref string, re *regexp.Regexp) (string, bool) {
-	reHeading := regexp.MustCompile(`^(#{2,3})\s+(.*)$`)
+	reHeading := regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
 	var body []string
 	level := 0
 	for _, ln := range strings.Split(ref, "\n") {
@@ -1277,7 +1277,7 @@ func markdownSection(ref string, re *regexp.Regexp) (string, bool) {
 // content from a sibling section, which is the bug that would let a scoped prose
 // assertion pass vacuously again.
 func TestMarkdownSectionScopesToItsOwnHeading(t *testing.T) {
-	doc := "## Intro\nopt-in prose here\n\n## Target\nwanted body\n\n### Nested\nalso wanted\n\n## After\nunwanted"
+	doc := "## Intro\nopt-in prose here\n\n## Target\nwanted body\n\n### Nested\nalso wanted\n\n# After\nunwanted"
 	body, ok := markdownSection(doc, regexp.MustCompile(`Target`))
 	if !ok {
 		t.Fatal("markdownSection did not find the Target section")
