@@ -259,8 +259,23 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// workload stat ~/.ssh/id_ed25519 and read back its size and mtime — no
 	// content, but enough to enumerate an operator's secrets. Measured: scoping
 	// it to the same directories still satisfies dyld's path resolution.
+	// seenAncestor is seeded with the literals emitted BEFORE the ancestor loop —
+	// the root and the symlink aliases — not just with the ancestors themselves.
+	// The dedup below justifies itself by profile size in a single argv element,
+	// and a map that starts empty dedups the ancestor chains against each other
+	// while leaving them free to re-emit a literal this block already wrote. No
+	// input reaches that today (profileSafePath rewrites every alias spelling to
+	// its /private form, so a normalized ancestor chain cannot contain one, and
+	// pathAncestors excludes the root), but the map's contract is "every literal
+	// in this clause, once" and seeding it is what makes that true by
+	// construction rather than by a normalization invariant enforced elsewhere.
+	seenAncestor := map[string]bool{"/": true}
 	metadataLiterals := []string{profileLiteral("/")}
 	for _, alias := range darwinSymlinkAliases {
+		if seenAncestor[alias] {
+			continue
+		}
+		seenAncestor[alias] = true
 		metadataLiterals = append(metadataLiterals, profileLiteral(alias))
 	}
 	// Every ancestor of the snapshot and scratch directories, as literals: the
@@ -271,7 +286,6 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// subpaths granted. Granting an ancestor's metadata reveals that the
 	// directory exists and nothing about its contents, so this does not widen
 	// the read surface the way a subpath rule would.
-	seenAncestor := map[string]bool{}
 	for _, dir := range []string{snapshot, scratch} {
 		if dir == "" {
 			continue

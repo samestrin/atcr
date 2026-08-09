@@ -296,6 +296,37 @@ func TestSandboxExecProfile_ScopesMetadataReadsAwayFromUserData(t *testing.T) {
 	}
 }
 
+func TestSandboxExecProfile_MetadataLiteralsAreEmittedOnce(t *testing.T) {
+	// The clause's dedup justifies itself by profile size in ONE argv element, so
+	// "deduped" has to mean every literal in the clause, not only the ancestor
+	// chains deduped against each other. Swept over inputs whose ancestor chains
+	// overlap each other and overlap the symlink-alias and root literals emitted
+	// ahead of them.
+	for _, tc := range []struct{ name, snapshot, scratch string }{
+		{"shared /private/tmp prefix", "/tmp/atcr-snap", "/private/tmp/atcr-scratch"},
+		{"shared /var/folders prefix", "/var/folders/qq/snap", "/var/folders/qq/scratch"},
+		{"alias-spelled inputs", "/etc/x/snap", "/tmp/scratch"},
+		{"disjoint trees", "/Users/dev/snap", "/private/var/folders/scratch"},
+		{"no scratch carve-out", "/tmp/atcr-snap", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultOSLevelConfig()
+			cfg.ScratchDir = tc.scratch
+			profile, err := sandboxExecProfile(cfg, RunSpec{Command: []string{"true"}, SnapshotDir: tc.snapshot})
+			require.NoError(t, err)
+
+			seen := map[string]int{}
+			for _, lit := range clauseOperands(t, profile, "file-read-metadata", "literal") {
+				seen[lit]++
+			}
+			require.NotEmpty(t, seen, "the clause must carry the root and ancestor literals")
+			for lit, n := range seen {
+				assert.Equal(t, 1, n, "literal %q emitted %d times in the metadata clause", lit, n)
+			}
+		})
+	}
+}
+
 func TestSandboxExecProfile_GrantsTheDevicesAToolchainNeeds(t *testing.T) {
 	// Without /dev/null a shell redirect fails outright and `go vet` aborts
 	// before running — a sandbox that cannot run the project's validate commands
