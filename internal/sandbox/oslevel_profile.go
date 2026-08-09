@@ -930,22 +930,55 @@ func assertNoBindShadowing(args []string) error {
 	var mounts []mount
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--bind", "--bind-try", "--dev-bind", "--dev-bind-try":
-			// Every writable bind variant bwrap accepts, not just the one this
-			// generator currently emits: an untracked variant would both escape
-			// the shadowing check and leave its two operands to be re-scanned as
-			// if they were flags.
+		case "--":
+			// The terminator ends bwrap's own options: everything after it is
+			// the model-authored workload, and scanning it would read the run's
+			// command line as mount flags.
+			i = len(args)
+		case "--bind", "--bind-try", "--dev-bind", "--dev-bind-try", "--bind-fd":
+			// Two-operand writable binds. --bind-fd's first operand is an fd
+			// number, the second the destination, same as the path forms.
 			if i+2 >= len(args) {
 				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
 			}
 			mounts = append(mounts, mount{dest: args[i+2], writable: true, index: i})
 			i += 2
-		case "--ro-bind", "--ro-bind-try", "--ro-bind-data":
+		case "--overlay":
+			// SRC RWSRC WORKDIR DEST — a writable overlay at DEST.
+			if i+4 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+4], writable: true, index: i})
+			i += 4
+		case "--tmp-overlay", "--dir":
+			// Single-operand writable mounts: a tmpfs-backed overlay / a fresh
+			// empty directory at DEST.
+			if i+1 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing its destination", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+1], writable: true, index: i})
+			i++
+		case "--file", "--symlink":
+			// --file FD DEST creates a file at DEST; --symlink SRC DEST creates
+			// a link at DEST. Both mutate the mount tree at DEST, so a DEST at
+			// or above a read-only mount is shadowing.
+			if i+2 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+2], writable: true, index: i})
+			i += 2
+		case "--ro-bind", "--ro-bind-try", "--ro-bind-data", "--ro-bind-fd":
 			if i+2 >= len(args) {
 				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
 			}
 			mounts = append(mounts, mount{dest: args[i+2], index: i})
 			i += 2
+		case "--ro-overlay":
+			if i+1 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing its destination", args[i])
+			}
+			mounts = append(mounts, mount{dest: args[i+1], index: i})
+			i++
 		case "--proc", "--dev", "--tmpfs", "--mqueue":
 			// The mounts bwrap makes itself take a single DEST operand. They are
 			// tracked because a later writable bind covering one of them
@@ -957,6 +990,31 @@ func assertNoBindShadowing(args []string) error {
 			}
 			mounts = append(mounts, mount{dest: args[i+1], index: i})
 			i++
+		case "--unshare-net", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+			"--unshare-cgroup", "--unshare-cgroup-try", "--unshare-user",
+			"--unshare-user-try", "--unshare-all", "--share-net",
+			"--disable-userns", "--die-with-parent", "--new-session",
+			"--clearenv", "--as-pid-1", "--level-prefix":
+			// Namespace and process flags with no mount operand.
+		case "--chdir", "--uid", "--gid", "--hostname", "--unsetenv",
+			"--seccomp", "--remount-ro", "--info-fd", "--json-status-fd", "--sync-fd":
+			// Single-operand control flags that establish no mount.
+			if i+1 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing its operand", args[i])
+			}
+			i++
+		case "--setenv":
+			// Two operands (NAME VALUE), no mount.
+			if i+2 >= len(args) {
+				return fmt.Errorf("sandbox: malformed bwrap argv: %s is missing an operand", args[i])
+			}
+			i += 2
+		default:
+			// Fail closed: an untracked bwrap flag is a containment decision
+			// this guard cannot vouch for — it might establish a writable mount
+			// (the case the switch exists to catch), so it is a refusal rather
+			// than a silent pass.
+			return fmt.Errorf("sandbox: untracked bwrap flag %q: the bind-shadowing guard cannot vouch for it", args[i])
 		}
 	}
 	for _, later := range mounts {
