@@ -1369,4 +1369,17 @@ func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
 			t.Errorf("the OS-level section of docs/execution.md must state that %q is not provided", want)
 		}
 	}
+	// The bind set and /tmp distinction are the positive guarantees that make the
+	// negative claims meaningful; losing them would let the section silently drift.
+	for _, want := range []string{"/usr", "/bin", "/lib"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the OS-level section of docs/execution.md must name the Linux bind root %q", want)
+		}
+	}
+	if !strings.Contains(section, "On Linux `/tmp` is a fresh tmpfs") {
+		t.Errorf("the OS-level section of docs/execution.md must distinguish Linux /tmp from macOS /tmp")
+	}
+	if !strings.Contains(section, "No network egress") {
+		t.Errorf("the OS-level section of docs/execution.md must state that network egress is blocked")
+	}
 }
