@@ -324,8 +324,16 @@ func TestIntegration_AutoFixFallback_NetworkEgressIsBlocked(t *testing.T) {
 	)
 	require.NoError(t, runErr)
 	assert.False(t, res.TimedOut, "a timeout is not evidence of a blocked connection")
-	assert.NotContains(t, res.Stdout+res.Stderr, "CONNECTED",
+	require.NotEqual(t, 97, res.ExitCode,
+		"nc was missing or unexecutable INSIDE the sandbox, so a blocked dial proves nothing")
+	assert.NotEqual(t, 0, res.ExitCode,
 		"outbound egress to a live listener must be blocked under the fallback")
+
+	// Post-run control: the listener must still be reachable unsandboxed, or the
+	// blocked dial above is attributable to a listener that died mid-test.
+	postCode, postOut := runUnsandboxed(t, probe)
+	require.Equal(t, 0, postCode,
+		"the test's own listener died mid-test, so the blocked dial proves nothing: %s", postOut)
 }
 
 // TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable records the
