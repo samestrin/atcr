@@ -1440,6 +1440,15 @@ func (b *osLevelBackend) platformToolName() (string, error) {
 // always takes — and cleans up after itself, so a caller can treat a nil return
 // as "the generators will accept this path".
 func CheckSnapshotUsable(cfg OSLevelConfig, snapshotDir string, writable bool) error {
+	return checkSnapshotUsableFor(runtime.GOOS, cfg, snapshotDir, writable)
+}
+
+// checkSnapshotUsableFor is CheckSnapshotUsable against an explicit GOOS. The
+// seam mirrors osLevelBackend.platform(): CI is ubuntu-only and development is
+// on macOS, so without it the exported pre-check is the one containment-
+// relevant decision that cannot be asserted for the other platform — and it
+// silently diverges from the backend whose behavior it claims to predict.
+func checkSnapshotUsableFor(goos string, cfg OSLevelConfig, snapshotDir string, writable bool) error {
 	if cfg.ScratchDir == "" {
 		// Run creates the scratch dir before building the argv and sets it on the
 		// per-run config for BOTH Writable values, so this mirrors it
@@ -1458,7 +1467,7 @@ func CheckSnapshotUsable(cfg OSLevelConfig, snapshotDir string, writable bool) e
 		SnapshotDir: snapshotDir,
 		Writable:    writable,
 	}
-	if _, err := osLevelContainmentArgs(runtime.GOOS, cfg, spec); err != nil {
+	if _, err := osLevelContainmentArgs(goos, cfg, spec); err != nil {
 		return err
 	}
 	return nil

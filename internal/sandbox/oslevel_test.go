@@ -1571,6 +1571,50 @@ func TestCheckHostPrerequisite_LinuxUsernsSysctls(t *testing.T) {
 	})
 }
 
+func TestCheckSnapshotUsableFor_BothPlatformsFromEitherHost(t *testing.T) {
+	// CheckSnapshotUsable routes through runtime.GOOS, so on any one host it
+	// could only ever be asserted for that host's platform — the one
+	// containment-relevant decision with no cross-platform test. The goos seam
+	// (mirroring osLevelBackend.platform()) makes both platforms' guard
+	// decisions assertable from either host.
+	valid := t.TempDir()
+	cases := []struct {
+		name     string
+		snapshot string
+		wantErr  bool
+	}{
+		{"ordinary snapshot accepted", valid, false},
+		{"filesystem root refused", "/", true},
+	}
+	for _, goos := range []string{"darwin", "linux"} {
+		home := "/Users/someone"
+		if goos == "linux" {
+			home = "/home/someone"
+		}
+		platformCases := append(append([]struct {
+			name     string
+			snapshot string
+			wantErr  bool
+		}{}, cases...), struct {
+			name     string
+			snapshot string
+			wantErr  bool
+		}{"a whole user home refused", home, true})
+		t.Run(goos, func(t *testing.T) {
+			for _, tc := range platformCases {
+				t.Run(tc.name, func(t *testing.T) {
+					err := checkSnapshotUsableFor(goos, DefaultOSLevelConfig(), tc.snapshot, true)
+					if tc.wantErr {
+						assert.Error(t, err, "%s must refuse %q", goos, tc.snapshot)
+					} else {
+						assert.NoError(t, err, "%s must accept %q", goos, tc.snapshot)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 	// Preflight writes the pinned path while Run reads it. The type is built for
 	// concurrent use, so that write must be synchronized — a torn read would
