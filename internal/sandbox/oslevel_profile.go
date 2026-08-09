@@ -157,10 +157,17 @@ func darwinWritableProtectedDirs() []string {
 // itself. The tmp roots are included because a snapshot AT /private/tmp makes
 // the trailing deny revoke the unconditional /tmp carve-out for the whole run,
 // leaving no writable location at all and no error to say so.
+//
+// /System, /Library, /Applications and /Volumes are named EXPLICITLY, not
+// inherited from darwinSystemReadDirs' contents: the read tier only covers
+// them incidentally (one sub-entry each), so deleting such an entry for an
+// unrelated reason would silently widen this guard — and /Volumes accepted as
+// a snapshot exposes every mounted external disk and network share read-only
+// to model-authored code.
 func darwinSourceProtectedDirs() []string {
 	dirs := append([]string{}, darwinSystemReadDirs...)
 	dirs = append(dirs, darwinTmpDirs...)
-	return append(dirs, "/private/etc", "/dev")
+	return append(dirs, "/private/etc", "/dev", "/System", "/Library", "/Applications", "/Volumes")
 }
 
 // sandboxExecProfile builds the macOS sandbox-exec profile for spec: deny by
