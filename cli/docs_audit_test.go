@@ -1250,12 +1250,34 @@ func TestAutoFixDocsDocumentSandboxFallback(t *testing.T) {
 // prose assertion can be scoped to the section under test: docs/auto-fix.md
 // already says "opt-in" about `--exec` in its opening paragraph, so a
 // whole-file substring check would pass vacuously.
+//
+// Lines inside a fenced code block are never treated as headings. Almost every
+// YAML example in docs/ opens with a `# path/to/file` comment, and reading that
+// as an H1 outranks any `##` section heading and ends the section at its first
+// fence — silently, because the caller still gets a body and still runs its
+// assertions, just against a fraction of the prose. That is exactly what
+// happened to docs/auto-fix.md's `sandbox.fallback: os-level` section, whose
+// example begins `# .atcr/config.yaml`: the section was cut off six lines in and
+// TestAutoFixDocsStateFallbackIsOptIn reported prose missing that was four
+// paragraphs below the cut.
 func markdownSection(ref string, re *regexp.Regexp) (string, bool) {
 	reHeading := regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	reFence := regexp.MustCompile("^\\s*(```|~~~)")
 	var body []string
 	level := 0
+	inFence := false
 	for _, ln := range strings.Split(ref, "\n") {
-		m := reHeading.FindStringSubmatch(ln)
+		if reFence.MatchString(ln) {
+			inFence = !inFence
+			if level > 0 {
+				body = append(body, ln)
+			}
+			continue
+		}
+		var m []string
+		if !inFence {
+			m = reHeading.FindStringSubmatch(ln)
+		}
 		if level == 0 {
 			if m != nil && re.MatchString(m[2]) {
 				level = len(m[1])
