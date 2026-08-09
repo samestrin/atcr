@@ -360,24 +360,33 @@ func TestSandboxExecProfile_GrantsTheToolchainPrefixesReadOnly(t *testing.T) {
 	}
 }
 
-func TestSandboxExecProfile_WritableRootsAreScratchAndTmpOnly(t *testing.T) {
-	// Every file-write* rule must name one of the permitted writable roots. This
-	// is asserted as an exhaustive sweep rather than a presence check: a
-	// presence check stays green when an EXTRA, wider write rule is added, which
-	// is the regression that actually matters.
+func TestSandboxExecProfile_TheScratchDirIsTheOnlyWritableRoot(t *testing.T) {
+	// Every file-write* rule must name the per-run scratch dir and nothing else.
+	// Asserted as an exhaustive sweep rather than a presence check: a presence
+	// check stays green when an EXTRA, wider write rule is added, which is the
+	// regression that actually matters.
+	//
+	// The host /tmp used to be an unconditional writable root here, which handed
+	// every run read AND write over a world-writable directory shared with every
+	// other process on the machine — the predictable-path and symlink-race
+	// surface, plus visibility of other processes' temp files. The Linux side
+	// never had it (bwrapArgs mounts a fresh --tmpfs /tmp), so this also closes
+	// a real cross-platform posture gap rather than merely narrowing macOS.
+	// sandboxEnv points HOME/TMPDIR/GOTMPDIR/GOCACHE/XDG_CACHE_HOME at the
+	// scratch tree, so a toolchain following the environment has everywhere it
+	// needs; one that hardcodes bare /tmp now fails closed, which is the safe
+	// direction and is measured against the real binary in the integration
+	// suite rather than assumed here.
 	cfg, spec := profileFixture(t)
 	profile, err := sandboxExecProfile(cfg, spec)
 	require.NoError(t, err)
 
-	permitted := []string{cfg.ScratchDir, "/tmp", "/private/tmp"}
 	granted := writeAllowSubpaths(t, profile)
-	for _, g := range granted {
-		assert.Contains(t, permitted, g, "write-allow on a subtree outside the permitted roots %v: %q", permitted, g)
+	assert.Equal(t, []string{cfg.ScratchDir}, granted,
+		"the scratch carve-out must be the one and only writable subtree")
+	for _, tmp := range darwinTmpDirs {
+		assert.NotContains(t, granted, tmp, "the host temp roots must not be writable")
 	}
-	// Presence, not length: the generator always emits both /tmp spellings, so
-	// a count stays green even with the scratch carve-out deleted entirely.
-	assert.Contains(t, granted, cfg.ScratchDir, "the scratch carve-out must be emitted")
-	assert.Contains(t, granted, "/private/tmp", "the resolved /tmp carve-out must be emitted")
 
 	// The only non-subtree write is the /dev/null device, and it is write-DATA
 	// (writing into the device), never write* (creating or unlinking nodes).
@@ -388,11 +397,49 @@ func TestSandboxExecProfile_WritableRootsAreScratchAndTmpOnly(t *testing.T) {
 			assert.NotContains(t, line, "file-write*", "a device literal must not carry file-write*: %s", line)
 		}
 	}
+}
 
-	// /tmp is a symlink to /private/tmp on macOS, so a (subpath "/tmp") rule
-	// alone resolves to nothing and the carve-out silently does not exist.
-	assert.Contains(t, profile, `(subpath "/private/tmp")`,
-		"the /tmp carve-out must name the resolved path or it matches nothing")
+func TestSandboxExecProfile_HostTempRootsKeepTheirNonWriteRoles(t *testing.T) {
+	// Removing the /tmp WRITE rule must not quietly remove the three other jobs
+	// darwinTmpDirs does. Each is a separate guarantee and each has its own
+	// failure mode if it goes with the write rule:
+	//
+	//   - metadata scope: path resolution through /private/tmp
+	//   - darwinSymlinkAliases: the (literal "/tmp") symlink NODE, without which
+	//     every access spelled /tmp/... fails at the first component even when
+	//     the resolved target is granted
+	//   - the guards: a snapshot or scratch that IS a host temp root
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	metadata := clauseOperands(t, profile, "file-read-metadata", "subpath")
+	for _, tmp := range darwinTmpDirs {
+		assert.Contains(t, metadata, tmp,
+			"the host temp roots must keep metadata scope for path resolution")
+	}
+	assert.Contains(t, clauseOperands(t, profile, "file-read-metadata", "literal"), "/tmp",
+		"the /tmp symlink NODE literal is now the only thing resolving that spelling and must survive")
+
+	// A scratch dir that IS a host temp root is still refused: it would grant
+	// write over the whole shared directory, which is what this change removed.
+	for _, tmp := range darwinTmpDirs {
+		cfg := cfg
+		cfg.ScratchDir = tmp
+		_, err := sandboxExecProfile(cfg, spec)
+		require.Error(t, err, "ScratchDir %q must still be refused", tmp)
+	}
+	// And a snapshot that IS one is still refused.
+	for _, tmp := range darwinTmpDirs {
+		spec := spec
+		spec.SnapshotDir = tmp
+		_, err := sandboxExecProfile(cfg, spec)
+		require.Error(t, err, "SnapshotDir %q must still be refused", tmp)
+	}
+	// A scratch INSIDE one stays ordinary — that is where os.MkdirTemp puts it.
+	cfg.ScratchDir = "/private/tmp/atcr-oslevel-scratch-xyz"
+	_, err = sandboxExecProfile(cfg, spec)
+	require.NoError(t, err, "a scratch dir inside a temp root is the ordinary case")
 }
 
 func TestSandboxExecProfile_SystemReadTierIsNarrowAndReadOnly(t *testing.T) {
