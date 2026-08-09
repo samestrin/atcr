@@ -775,7 +775,14 @@ func osLevelRunArgs(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, err
 func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	tool, err := b.toolPath()
 	if err != nil {
-		return RunResult{}, err
+		// A refusal must still appear in the evidence trail, with the command
+		// it refused: runWith's audit deferral never runs on this path, so an
+		// unlogged refusal would leave no record of what was asked for or why
+		// nothing ran.
+		cmdStr := renderCommand(spec)
+		log.FromContext(ctx).Error("sandbox exec refused",
+			"backend", osLevelBackendName, "command", cmdStr, "error", err)
+		return RunResult{Command: cmdStr}, err
 	}
 	return b.runWith(ctx, tool, spec, false)
 }
@@ -849,9 +856,11 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Exactly one terminal record per start line, emitted from a defer so it
 	// reports the FINAL outcome. Registered immediately after the start line, so
 	// every path that announced a run also accounts for it — including the ones
-	// that fail before the process is created. Only the refusals that genuinely
-	// precede this point produce no record at all: spec validation and a
-	// cancellation while queued for a concurrency slot. The argv build moved
+	// that fail before the process is created. The only run outcomes with no
+	// record at all are a spec-validation refusal and a cancellation while
+	// queued for a concurrency slot (both precede any announcement); a toolPath
+	// refusal never reaches runWith and is logged by Run itself as
+	// "sandbox exec refused". The argv build moved
 	// BELOW this line (it needs the scratch dir), so a containment-generator
 	// refusal and a failed writable copy now do announce a start and are
 	// accounted for with fault=true — which is the right way round, since both
