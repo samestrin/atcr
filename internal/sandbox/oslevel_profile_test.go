@@ -300,7 +300,10 @@ func TestSandboxExecProfile_WritableRootsAreScratchAndTmpOnly(t *testing.T) {
 	for _, g := range granted {
 		assert.Contains(t, permitted, g, "write-allow on a subtree outside the permitted roots %v: %q", permitted, g)
 	}
-	assert.GreaterOrEqual(t, len(granted), 2, "the scratch dir and /tmp must both be writable")
+	// Presence, not length: the generator always emits both /tmp spellings, so
+	// a count stays green even with the scratch carve-out deleted entirely.
+	assert.Contains(t, granted, cfg.ScratchDir, "the scratch carve-out must be emitted")
+	assert.Contains(t, granted, "/private/tmp", "the resolved /tmp carve-out must be emitted")
 
 	// The only non-subtree write is the /dev/null device, and it is write-DATA
 	// (writing into the device), never write* (creating or unlinking nodes).
