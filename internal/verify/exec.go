@@ -130,7 +130,17 @@ func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig,
 // empty list, which reads as "nothing was unenforced" while the fallback in fact
 // discards every hardened DockerConfig default (docker.go:62-76). What is lost
 // is a property of the backend, not of the config file, so it is stated as one.
-const osLevelUnenforcedDefaults = "memory/cpu/pid caps, cap-drop ALL, no-new-privileges, read-only rootfs, uid 65534; host /tmp is readable and writable"
+// The trailing clause was "host /tmp is readable and writable" until 2026-08-09.
+// That became FALSE when the unconditional host-temp grant was removed (5f6a952):
+// darwinTmpDirs now carries metadata scope only and Linux mounts an ephemeral
+// --tmpfs /tmp, so the host's /tmp is unreachable on both platforms. It is
+// replaced rather than dropped because the sentence's job is to name what this
+// backend does NOT isolate, and the host read tier is the real remaining answer:
+// the workload reads the operator's actual system and toolchain directories
+// (darwinSystemReadDirs / the Linux binds) instead of a container image's
+// filesystem. Overstating a weakness is still a false statement in a security
+// notice.
+const osLevelUnenforcedDefaults = "memory/cpu/pid caps, cap-drop ALL, no-new-privileges, read-only rootfs, uid 65534; host system and toolchain directories are readable (no image isolation)"
 
 // truncateCause bounds a preflight error before it is logged. Docker's failure
 // text carries the daemon's raw stderr and, on the timeout branch, the full

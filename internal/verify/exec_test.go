@@ -421,7 +421,8 @@ func TestFallbackWarning_NamesLostDefaultsEvenWhenNothingWasConfigured(t *testin
 
 	out := buf.String()
 	assert.Contains(t, out, "uid 65534")
-	assert.Contains(t, out, "host /tmp is readable and writable")
+	assert.Contains(t, out, "host system and toolchain directories are readable",
+		"the notice must name what this backend genuinely does not isolate; it claimed a host /tmp carve-out that was removed in 5f6a952")
 	assert.Contains(t, out, "cap-drop ALL")
 }
 

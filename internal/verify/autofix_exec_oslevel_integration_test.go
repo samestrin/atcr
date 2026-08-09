@@ -358,24 +358,29 @@ func TestIntegration_AutoFixFallback_NetworkEgressIsBlocked(t *testing.T) {
 		"the test's own listener died mid-test, so the blocked dial proves nothing: %s", postOut)
 }
 
-// TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable records the
-// /tmp carve-out relative to the Docker backend, deliberately, as a passing
-// assertion rather than a comment — per platform, because the carve-out itself
-// is per platform.
+// TestIntegration_AutoFixFallback_HostTmpIsNotReachable pins the host /tmp
+// boundary relative to the Docker backend, as a passing assertion rather than a
+// comment, so a future widening breaks a test instead of passing silently.
 //
-// Docker's /tmp is a container tmpfs. On darwin the os-level profile grants the
-// host's real /tmp read and write, as the invoking user. On Linux bwrapArgs
-// mounts --tmpfs /tmp unconditionally (oslevel_profile.go), so the host's /tmp
-// is INVISIBLE inside the sandbox and a sandboxed /tmp write lands in the
-// ephemeral tmpfs — asserting the darwin shape there made this test unpassable
-// on Linux (green only because CI never builds this tag). The darwin exposure
-// is a documented property of the platform profile (Phase 2), not a defect
-// introduced here — but it is a difference an operator opting into the fallback
-// inherits, and the 4.8.A review found it invisible: named in no warning and
-// probed by no test, so a future widening could not be told apart from it.
-// Pinning it means a change to the carve-out breaks a test instead of passing
-// silently. See TD-025.
-func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) {
+// Docker's /tmp is a container tmpfs. Under the os-level fallback the host's
+// /tmp is out of reach on BOTH platforms, by two different mechanisms:
+//
+//   - Linux: bwrapArgs mounts --tmpfs /tmp unconditionally, so the host's /tmp is
+//     invisible and a sandboxed /tmp write lands in the ephemeral tmpfs.
+//   - darwin: darwinTmpDirs grants the host temp roots METADATA scope only —
+//     enough for path resolution, not read-data and not write. The per-run
+//     scratch tree is the only writable subtree, and TMPDIR points into it.
+//
+// HISTORY, kept because it is the reason this test exists in this shape: darwin
+// originally granted the host's real /tmp read AND write, and this test asserted
+// that. The unconditional write grant was removed on 2026-08-09 (5f6a952), and
+// internal/sandbox's sibling subtest was aligned with it (3ee6b12) — but this one
+// was not, so the two packages disagreed about the containment boundary while
+// both suites stayed green, because no CI job built the integration tag. The
+// original comment's own instruction for that situation was "a behavior change to
+// document, not a test to delete", which is what the darwin branch below now
+// does. See TD-025.
+func TestIntegration_AutoFixFallback_HostTmpIsNotReachable(t *testing.T) {
 	requireResolvableSandboxTool(t)
 
 	snapshot := t.TempDir()
@@ -415,13 +420,41 @@ func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) 
 	require.NoError(t, readErr)
 
 	if runtime.GOOS == "darwin" {
-		assert.Equal(t, 0, res.ExitCode,
-			"host /tmp is readable under the os-level fallback — if this now FAILS the carve-out changed, which is a behavior change to document, not a test to delete")
-		assert.Contains(t, res.Stdout, "HOSTTMP")
-		assert.Equal(t, 0, writeRes.ExitCode,
-			"host /tmp is writable under the os-level fallback — same carve-out, same rule")
-		assert.Contains(t, string(hostBody), "SANDBOXED-WRITE",
-			"the sandboxed write must land on the host's real /tmp")
+		// The carve-out this test was written against is GONE, and its own
+		// instruction for that case was "a behavior change to document, not a test
+		// to delete" — so it is documented here rather than deleted.
+		//
+		// darwinTmpDirs (oslevel_profile.go) now grants the host temp roots
+		// METADATA scope only: enough for path resolution, not read-data and not
+		// write. The per-run scratch tree is the only writable subtree. Measured
+		// against the real sandbox-exec: `cat /tmp/<marker>` returns
+		// "Operation not permitted".
+		//
+		// internal/sandbox's sibling subtest was aligned when the grant was dropped
+		// (3ee6b12); this one was missed, so the two packages disagreed about the
+		// containment boundary until a CI job ran both.
+		assert.NotEqual(t, 0, res.ExitCode,
+			"host /tmp carries metadata scope only — a read of its CONTENT must fail closed; output: %s", res.Stdout)
+		assert.NotContains(t, res.Stdout, "HOSTTMP")
+		assert.NotEqual(t, 0, writeRes.ExitCode,
+			"host /tmp has no write rule — a write must fail closed; output: %s", writeRes.Stdout)
+		assert.NotContains(t, string(hostBody), "SANDBOXED-WRITE",
+			"a sandboxed write reached the host's real /tmp — containment breach")
+
+		// Paired positive control: without it, a backend that denied EVERYTHING
+		// (including exec) would satisfy every assertion above vacuously. A
+		// workload following the environment must still be able to write.
+		envRes, envErr := RunSandboxedValidation(
+			context.Background(),
+			backend,
+			[]string{"/bin/sh", "-c", `printf 'SCRATCH-OK\n' > "$TMPDIR/atcr-fallback-scratch.txt" && cat "$TMPDIR/atcr-fallback-scratch.txt"`},
+			snapshot,
+			60*time.Second,
+		)
+		require.NoError(t, envErr)
+		assert.Equal(t, 0, envRes.ExitCode,
+			"a write through TMPDIR (the scratch tree) must succeed; output: %s", envRes.Stdout)
+		assert.Contains(t, envRes.Stdout, "SCRATCH-OK")
 	} else if runtime.GOOS == "linux" {
 		assert.NotEqual(t, 0, res.ExitCode,
 			"on Linux the host /tmp hides behind an ephemeral tmpfs — the marker must NOT be readable")
