@@ -815,9 +815,23 @@ exit %d`, code, code)
 // guards.
 func newFakeOSLevelBackend(t *testing.T, body string) *OSLevelBackend {
 	t.Helper()
+	return newFakeOSLevelBackendConfigured(t, body, func(*OSLevelConfig) {})
+}
+
+// newFakeOSLevelBackendConfigured applies the caller's config overrides BEFORE
+// construction. Mutating b.cfg after NewOSLevelBackend works only because these
+// tests are single-goroutine: the backend is documented for concurrent use and
+// its mu exists because Preflight and Run race over cfg, so a post-construction
+// edit is a latent data race the first t.Parallel() variant would trip — build
+// the config first, the way TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig
+// does. The goos/prerequisiteCheck/trustedDirs seams still exist for injection
+// and are still set post-construction.
+func newFakeOSLevelBackendConfigured(t *testing.T, body string, configure func(*OSLevelConfig)) *OSLevelBackend {
+	t.Helper()
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = writeFakeOSLevel(t, body)
 	cfg.MaxConcurrent = 1
+	configure(&cfg)
 	b := NewOSLevelBackend(cfg)
 	return withContainment(t, b)
 }
@@ -977,15 +991,14 @@ func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
 
 func TestOSLevelBackendRun_TruncatesCombinedOutput(t *testing.T) {
 	// Both streams are captured and bounded, mirroring docker.go:279-287.
-	b := newFakeOSLevelBackend(t, `echo "stdout-marker"
+	b := newFakeOSLevelBackendConfigured(t, `echo "stdout-marker"
 echo "stderr-marker" >&2
 i=0
 while [ $i -lt 400 ]; do
   echo "filler-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   i=$((i + 1))
 done
-exit 0`)
-	b.cfg.MaxOutputBytes = 512
+exit 0`, func(cfg *OSLevelConfig) { cfg.MaxOutputBytes = 512 })
 
 	res, err := b.Run(context.Background(), RunSpec{
 		Command:     []string{"noisy"},
@@ -1563,10 +1576,9 @@ func TestOSLevelBackendRun_ClassifiesOnUntruncatedOutput(t *testing.T) {
 	// truncated string would let MaxOutputBytes decide a security question: the
 	// "sandbox-exec:" token is destroyed below ~41 bytes, silently turning a
 	// containment failure into a reported workload exit.
-	b := newFakeOSLevelBackend(t, `echo "sandbox-exec: syntax error: expecting ')'" >&2
-exit 65`)
+	b := newFakeOSLevelBackendConfigured(t, `echo "sandbox-exec: syntax error: expecting ')'" >&2
+exit 65`, func(cfg *OSLevelConfig) { cfg.MaxOutputBytes = 16 })
 	b.goos = "darwin"
-	b.cfg.MaxOutputBytes = 16
 
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.Error(t, err, "a tiny output budget must not hide a sandbox fault")
@@ -1580,11 +1592,10 @@ func TestOSLevelBackendRun_ClassifiesOnStderrSurvivingAStdoutFlood(t *testing.T)
 	// its own failure pushes the diagnostic past the capture cap — the combined
 	// buffer keeps the HEAD, so the tool's stderr line is exactly what is lost.
 	// Classification must read a dedicated stderr capture instead.
-	b := newFakeOSLevelBackend(t, `head -c 200000 /dev/zero | tr '\0' 'x'
+	b := newFakeOSLevelBackendConfigured(t, `head -c 200000 /dev/zero | tr '\0' 'x'
 echo "bwrap: setting up uid map: Permission denied" >&2
-exit 1`)
+exit 1`, func(cfg *OSLevelConfig) { cfg.MaxOutputBytes = 1024 })
 	b.goos = "linux"
-	b.cfg.MaxOutputBytes = 1024
 
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.Error(t, err,
@@ -1598,8 +1609,7 @@ func TestOSLevelBackendRun_LoggedCommandIsTruncatedToTheOutputBudget(t *testing.
 	// while the workload's own Output is carefully capped — a model-authored
 	// script is unbounded input and must not push megabytes into the log.
 	script := "echo " + strings.Repeat("x", 1<<20)
-	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
-	b.cfg.MaxOutputBytes = 1024
+	b := newFakeOSLevelBackendConfigured(t, fakeOSLevelExecBody(), func(cfg *OSLevelConfig) { cfg.MaxOutputBytes = 1024 })
 
 	var buf bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
@@ -1888,8 +1898,8 @@ func TestOSLevelBackend_Preflight_ChecksRunInDocumentedOrder(t *testing.T) {
 	// (docker.go:346-398's ordered early-return pattern). Asserted by making the
 	// FIRST check fail and proving the later ones never ran.
 	var ran []string
-	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
-	b.cfg.ToolPath = "/nonexistent/sandbox-tool-xyz"
+	b := newFakeOSLevelBackendConfigured(t, fakeOSLevelExecBody(),
+		func(cfg *OSLevelConfig) { cfg.ToolPath = "/nonexistent/sandbox-tool-xyz" })
 	b.prerequisiteCheck = func(context.Context) error {
 		ran = append(ran, "prerequisite")
 		return nil
