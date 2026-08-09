@@ -5,16 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	reclib "github.com/samestrin/atcr/reconcile"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
+	reclib "github.com/samestrin/atcr/reconcile"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -331,4 +335,67 @@ func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
 	isolate(t)
 	_, help := execCmdCapture(t, "verify", "--help")
 	require.Contains(t, help, "--repo")
+}
+
+// --- 03-04: "neither backend usable" surfacing (--exec side) ----------------
+
+// TestResolveExec_NeitherBackendUsableIsAUsageErrorNamingBoth pins the --exec
+// half of the cross-resolver consistency requirement: the same combined failure
+// must reach the operator through the same shape it does on --auto-fix — a
+// refusal naming both attempted backends, exit 2, with the sentinel still
+// matchable through the CLI's error wrapping.
+//
+// The seam is stubbed rather than driven by real binaries because the outcome
+// under test is "neither backend is usable", which on a host that HAS a working
+// sandbox-exec/bwrap cannot be produced at all — the fallback would succeed.
+func TestResolveExec_NeitherBackendUsableIsAUsageErrorNamingBoth(t *testing.T) {
+	combined := fmt.Errorf("--exec preflight failed: docker: daemon unreachable; os-level fallback also failed: sandbox-exec not found: %w", verify.ErrSandboxNoUsableBackend)
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return nil, nil, 0, combined
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "matching the pre-existing single-backend refusal's exit code")
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+	assert.ErrorIs(t, err, verify.ErrSandboxNoUsableBackend,
+		"the sentinel must survive the CLI's usageError wrap, or callers must resort to substring matching")
+	assert.Nil(t, backend, "never a backend alongside a refusal")
+	assert.Nil(t, testCmd)
+	assert.Zero(t, timeout)
+}
+
+// TestResolveExec_PreStoryRefusalIsUnchanged is the non-regression bar: an
+// operator who never configured a fallback sees the identical message, exit
+// code, and (absence of) sentinel as before this story.
+func TestResolveExec_PreStoryRefusalIsUnchanged(t *testing.T) {
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return nil, nil, 0, errors.New("--exec preflight failed: docker daemon unreachable")
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	_, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+	assert.Equal(t, "--exec preflight failed: docker daemon unreachable", err.Error())
+	assert.NotContains(t, err.Error(), "os-level")
+	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
 }

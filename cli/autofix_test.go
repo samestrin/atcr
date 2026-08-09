@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,9 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1742,4 +1745,68 @@ func TestValidateAutoFixBackend_AllowConfigEditsDefaultsFalseOnBackend(t *testin
 	be, err := validateAutoFixBackend(cmd, proj, root)
 	require.NoError(t, err)
 	require.False(t, be.allowConfigEdits, "allowConfigEdits must default false when the flag is unset")
+}
+
+// --- 03-04: "neither backend usable" surfacing (--auto-fix side) ------------
+
+// stubResolveSandboxErr installs a resolver stand-in returning err, so the CLI's
+// surfacing of a combined neither-usable failure can be asserted without
+// depending on whether this runner has docker or a platform sandbox binary.
+func stubResolveSandboxErr(t *testing.T, err error) {
+	t.Helper()
+	orig := resolveAutoFixSandboxFn
+	resolveAutoFixSandboxFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, error) {
+		return nil, err
+	}
+	t.Cleanup(func() { resolveAutoFixSandboxFn = orig })
+}
+
+func autoFixGateFixture(t *testing.T) (*registry.ProjectConfig, *cobra.Command, string) {
+	t.Helper()
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateCommand: []string{"go", "build", "./..."}},
+		Sandbox: sandboxConfig(fakeDockerShim(t, false)),
+	}
+	return proj, autoFixCmd(t, "o/r", "tok", ""), root
+}
+
+// TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth: the combined
+// error reaches the operator through the SAME missing-slice mechanism every
+// other gate check uses, with both attempted backends named — and it is a
+// refusal, never a warn-and-proceed-unsandboxed path.
+func TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, fmt.Errorf("--auto-fix sandbox preflight failed: docker: daemon unreachable; os-level fallback also failed: bwrap not found: %w", verify.ErrSandboxNoUsableBackend))
+
+	be, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "a neither-usable outcome is a usage-error refusal")
+	assert.Contains(t, err.Error(), "sandbox:")
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+	assert.Nil(t, be.sandboxBackend, "no backend may be carried out of a failed gate")
+	assert.False(t, be.noSandbox,
+		"a broken fallback must NEVER be conflated with the operator's explicit --no-sandbox opt-out")
+}
+
+// TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged is the
+// non-regression bar for operators who never configured a fallback: the message
+// and exit code must be exactly what they were before the fallback existed.
+func TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, errors.New("--auto-fix sandbox preflight failed: docker daemon unreachable"))
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+	assert.Contains(t, err.Error(), "sandbox: --auto-fix sandbox preflight failed: docker daemon unreachable")
+	assert.NotContains(t, err.Error(), "os-level",
+		"an operator who never opted in must not see a fallback mentioned at all")
+	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
 }

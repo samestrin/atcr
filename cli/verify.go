@@ -61,12 +61,27 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if proj == nil || proj.Sandbox == nil {
 		return nil, nil, 0, usageError(errors.New("--exec requires a project config with a sandbox block"))
 	}
-	backend, testCmd, timeout, err := verify.ResolveExecBackend(cmd.Context(), true, proj.Sandbox)
+	backend, testCmd, timeout, err := resolveExecBackendFn(cmd.Context(), true, proj.Sandbox)
 	if err != nil {
+		// Deliberately unchanged: every resolver error — the pre-existing
+		// single-backend refusal and the combined neither-usable one alike — is a
+		// usage error here. The resolver already decided WHICH refusal this is and
+		// said so in the message; re-deciding it at this layer would duplicate that
+		// judgement in a second place, and branching on the sentinel to print
+		// something different is exactly the divergence AC 03-04 forbids. The
+		// sentinel travels intact because codedError implements Unwrap.
 		return nil, nil, 0, usageError(err)
 	}
 	return backend, testCmd, timeout, nil
 }
+
+// resolveExecBackendFn is the seam through which resolveExec reaches the
+// resolver, mirroring autofix.go's `var resolveAutoFixSandboxFn`. It exists so a
+// test can produce the neither-backend-usable outcome, which cannot be staged
+// with real binaries: on a host that HAS a working sandbox-exec or bwrap the
+// fallback succeeds, so the very case that must be surfaced correctly is the one
+// a real-binary test can never reach.
+var resolveExecBackendFn = verify.ResolveExecBackend
 
 // newRedactor is the seam through which runVerify constructs the exec-evidence
 // redactor. A package var (not a direct log.NewRedactor call) so a test can
