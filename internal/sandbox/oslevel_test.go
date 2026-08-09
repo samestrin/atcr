@@ -1429,6 +1429,34 @@ func TestOSLevelBackend_Preflight_PassesWhenSandboxActuallyRunsTheWorkload(t *te
 	assert.Equal(t, b.cfg.ToolPath, b.pinnedTool)
 }
 
+func TestOSLevelBackend_Preflight_ProbesBothCommandAndScriptPaths(t *testing.T) {
+	// RunSpec.Command and RunSpec.Script are NOT two spellings of one path:
+	// osLevelRunArgs builds different argv for each (spec.Command... vs
+	// "/bin/sh" "-s"), and Script additionally drives the stdin delivery
+	// mechanism (runWith's cmd.Stdin) that Command never touches. A green
+	// Preflight is what the resolver acts on, so both shapes must be proven
+	// live, under the real Run path, before --exec is enabled.
+	logPath := filepath.Join(t.TempDir(), "argv.log")
+	body := fmt.Sprintf(`while [ $# -gt 0 ]; do
+  case "$1" in
+    --*) shift ;;
+    *) break ;;
+  esac
+done
+printf '%%s\n' "$*" >> %q
+exec "$@"`, logPath)
+	b := newFakeOSLevelBackend(t, body)
+
+	require.NoError(t, b.Preflight(context.Background()))
+
+	logBytes, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	log := string(logBytes)
+	assert.Contains(t, log, "/bin/sh -c ", "the Command argv builder must be probed")
+	assert.Contains(t, log, "/bin/sh -s",
+		"the Script argv builder and its stdin delivery path must be probed too")
+}
+
 func TestOSLevelBackend_Preflight_RejectsToolThatNeverRunsTheWorkload(t *testing.T) {
 	// A binary that swallows its argv and exits 0 is indistinguishable from a
 	// working sandbox if Preflight only checks the exit status — and it would

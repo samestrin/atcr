@@ -255,7 +255,11 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	//    the workload itself executed. Asserting only "exit 0" would pass for
 	//    any binary that swallows its argv and exits 0 — including a shim that
 	//    never runs the command — so the probe echoes a nonce that must come
-	//    back in the output.
+	//    back in the output. Both RunSpec shapes are probed: Command and Script
+	//    build different argv (osLevelRunArgs appends spec.Command... vs
+	//    "/bin/sh" "-s"), and Script additionally drives the stdin delivery in
+	//    runWith that Command never exercises — a green Preflight gates --exec
+	//    for both.
 	tmpDir, err := os.MkdirTemp("", "atcr-oslevel-preflight-*")
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: cannot create throwaway snapshot dir: %w", err)
@@ -270,32 +274,37 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	// would then land after --auto-fix had already applied its patch.
 	for _, writable := range []bool{false, true} {
 		nonce := "atcr-preflight-" + randHex(8)
-		runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
-		res, err := b.runWith(runCtx, resolved, RunSpec{
-			Command:     []string{"/bin/sh", "-c", "echo " + nonce},
-			SnapshotDir: tmpDir,
-			Writable:    writable,
-		}, true)
-		cancel()
-		if err != nil {
-			// The tool's own stderr travels with the error. Without it the caller
-			// sees only "bwrap failed to set up the sandbox (exit 1)" — bwrap
-			// exits 1 for every one of its failures, so that message cannot
-			// distinguish "this host forbids user namespaces" (an operator
-			// problem with a known remedy) from "our argv is wrong" (our bug).
-			// Both the operator's diagnostics and the integration suite's
-			// skip-vs-fail decision depend on this text.
-			return fmt.Errorf("sandbox preflight: trivial run failed (writable=%t): %w (tool output: %s)",
-				writable, err, strings.TrimSpace(res.Output))
+		probes := []struct {
+			kind string
+			spec RunSpec
+		}{
+			{"command", RunSpec{Command: []string{"/bin/sh", "-c", "echo " + nonce}, SnapshotDir: tmpDir, Writable: writable}},
+			{"script", RunSpec{Script: "echo " + nonce, SnapshotDir: tmpDir, Writable: writable}},
 		}
-		if res.TimedOut || res.ExitCode != 0 {
-			return fmt.Errorf("sandbox preflight: trivial run exited %d (timed_out=%t, writable=%t, tool output: %s): %w",
-				res.ExitCode, res.TimedOut, writable, strings.TrimSpace(res.Output), errPreflightTrivialRun)
-		}
-		if !strings.Contains(res.Output, nonce) {
-			return fmt.Errorf("sandbox preflight: trivial run exited 0 but never executed the command "+
-				"(nonce absent from output — %s may not be a sandboxing tool): %w",
-				resolved, errPreflightTrivialRun)
+		for _, probe := range probes {
+			runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
+			res, err := b.runWith(runCtx, resolved, probe.spec, true)
+			cancel()
+			if err != nil {
+				// The tool's own stderr travels with the error. Without it the caller
+				// sees only "bwrap failed to set up the sandbox (exit 1)" — bwrap
+				// exits 1 for every one of its failures, so that message cannot
+				// distinguish "this host forbids user namespaces" (an operator
+				// problem with a known remedy) from "our argv is wrong" (our bug).
+				// Both the operator's diagnostics and the integration suite's
+				// skip-vs-fail decision depend on this text.
+				return fmt.Errorf("sandbox preflight: trivial run failed (probe=%s, writable=%t): %w (tool output: %s)",
+					probe.kind, writable, err, strings.TrimSpace(res.Output))
+			}
+			if res.TimedOut || res.ExitCode != 0 {
+				return fmt.Errorf("sandbox preflight: trivial run exited %d (timed_out=%t, probe=%s, writable=%t, tool output: %s): %w",
+					res.ExitCode, res.TimedOut, probe.kind, writable, strings.TrimSpace(res.Output), errPreflightTrivialRun)
+			}
+			if !strings.Contains(res.Output, nonce) {
+				return fmt.Errorf("sandbox preflight: trivial run exited 0 but never executed the command "+
+					"(nonce absent from %s-probe output — %s may not be a sandboxing tool): %w",
+					probe.kind, resolved, errPreflightTrivialRun)
+			}
 		}
 	}
 
