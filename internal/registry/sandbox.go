@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -117,23 +118,36 @@ func (s *SandboxConfig) Validate() error {
 // docker run --memory/--cpus, so a typo that parses at config load but faults
 // the container at runtime (or silently weakens the cap) must fail here instead.
 // An empty value inherits the hardened default; a valid value is a positive
-// number with an optional b/k/m/g unit suffix (e.g. "512m", "1.5g", or a bare
-// byte count). "0", "abc", and "512x" are rejected.
+// plain decimal with an optional b/k/m/g unit suffix, where the unit may itself
+// be followed by an optional "b" (e.g. "512m", "512mb", "1.5g", or a bare byte
+// count). Exponents, signs, and unknown units are rejected.
 func validateMemory(mem string) error {
 	m := strings.TrimSpace(mem)
 	if m == "" {
 		return nil
 	}
 	num := m
-	switch m[len(m)-1] {
-	case 'b', 'k', 'm', 'g', 'B', 'K', 'M', 'G':
-		num = m[:len(m)-1]
+	switch num[len(num)-1] {
+	case 'b', 'B':
+		num = num[:len(num)-1]
+	}
+	switch num[len(num)-1] {
+	case 'k', 'm', 'g', 'K', 'M', 'G':
+		num = num[:len(num)-1]
+	}
+	if !plainDecimalRegexp.MatchString(num) {
+		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
 	}
 	if v, err := strconv.ParseFloat(num, 64); err != nil || v <= 0 {
 		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
 	}
 	return nil
 }
+
+// plainDecimalRegexp matches a plain unsigned decimal number: digits with an
+// optional fractional part. It rejects exponents and signs so that values
+// docker --memory would not accept fail at config load.
+var plainDecimalRegexp = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
 
 // validateCPUs rejects a non-empty CPUs that docker's --cpus would not accept.
 // An empty value inherits the hardened default; otherwise it must be a positive
