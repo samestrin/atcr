@@ -486,6 +486,34 @@ func TestResolveExec_RunsTheSnapshotPreCheckToo(t *testing.T) {
 	assert.Equal(t, wantRoot, gotDir, "the checked directory must be the resolved repo root")
 }
 
+// TestResolveExec_CheapPathCheckRunsBeforeBackendResolution pins the ordering
+// contract from validateAutoFixBackend: a bad --repo-root must refuse before the
+// resolver spawns a docker preflight container. A backend resolution that runs
+// first would make this test see the backend error instead.
+func TestResolveExec_CheapPathCheckRunsBeforeBackendResolution(t *testing.T) {
+	var backendCalled bool
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		backendCalled = true
+		return nil, nil, 0, errors.New("backend should not be reached")
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	require.NoError(t, cmd.Flags().Set("repo-root", "/does/not/exist"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	_, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist or is not a directory")
+	assert.False(t, backendCalled, "cheap path check must run before backend resolution")
+}
+
 // nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
 // pre-check dispatches on that and nothing else runs it.
 type nameOnlyBackend struct{ name string }

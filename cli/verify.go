@@ -71,17 +71,6 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	backend, testCmd, timeout, err := resolveExecBackendFn(ctx, true, proj.Sandbox)
-	if err != nil {
-		// Deliberately unchanged: every resolver error — the pre-existing
-		// single-backend refusal and the combined neither-usable one alike — is a
-		// usage error here. The resolver already decided WHICH refusal this is and
-		// said so in the message; re-deciding it at this layer would duplicate that
-		// judgement in a second place, and branching on the sentinel to print
-		// something different is exactly the divergence AC 03-04 forbids. The
-		// sentinel travels intact because codedError implements Unwrap.
-		return nil, nil, 0, usageError(err)
-	}
 	// The same TD-019 pre-check --auto-fix runs as its gate check (5), applied
 	// here so the two resolvers do not drift: under the os-level fallback a repo
 	// at $HOME, at /tmp, or at a path carrying a sandbox-exec profile
@@ -103,6 +92,17 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	absRoot, absErr := filepath.Abs(root)
 	if absErr != nil {
 		return nil, nil, 0, usageError(absErr)
+	}
+	backend, testCmd, timeout, err := resolveExecBackendFn(ctx, true, proj.Sandbox)
+	if err != nil {
+		// Deliberately unchanged: every resolver error — the pre-existing
+		// single-backend refusal and the combined neither-usable one alike — is a
+		// usage error here. The resolver already decided WHICH refusal this is and
+		// said so in the message; re-deciding it at this layer would duplicate that
+		// judgement in a second place, and branching on the sentinel to print
+		// something different is exactly the divergence AC 03-04 forbids. The
+		// sentinel travels intact because codedError implements Unwrap.
+		return nil, nil, 0, usageError(err)
 	}
 	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, absRoot, false); err != nil {
 		return nil, nil, 0, usageError(err)

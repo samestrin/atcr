@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
@@ -144,7 +145,11 @@ func truncateCause(err error) string {
 	if len(msg) <= max {
 		return msg
 	}
-	return msg[:max] + "… (truncated)"
+	n := max
+	for n > 0 && !utf8.ValidString(msg[:n]) {
+		n--
+	}
+	return msg[:n] + "… (truncated)"
 }
 
 // ResolveExecBackend implements the execution gate. When execEnabled is false it
