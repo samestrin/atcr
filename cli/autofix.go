@@ -54,7 +54,7 @@ func addAutoFixFlags(cmd *cobra.Command) {
 			"If branch/commit creation succeeds and a later step fails, the remote branch (and possibly commit) is left behind and must be deleted manually.")
 	cmd.Flags().Bool("no-sandbox", false,
 		"DANGER: disables container isolation for --auto-fix validation. By default --auto-fix runs the "+
-			"validation command (e.g. `go build`/`npm test`) inside a sandbox container so LLM-generated code "+
+			"validation command (e.g. go build/npm test) inside a sandbox container so LLM-generated code "+
 			"cannot touch the host. Passing --no-sandbox runs that LLM-generated validation directly on the host "+
 			"machine with your privileges, with no isolation — only use it where Docker is unavailable and you "+
 			"accept the risk. Meaningless without --auto-fix. Prints a security warning to stderr on every run.")
