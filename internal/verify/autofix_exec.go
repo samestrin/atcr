@@ -162,6 +162,28 @@ var checkSnapshotUsableFn = sandbox.CheckSnapshotUsable
 // three, which is exactly the failure mode AC 03-03 names. The caller already
 // holds the resolved target, so passing it here costs nothing.
 //
+// WHY sc IS A PARAMETER even though no field of it changes the verdict today.
+// This looked like a dead argument and an earlier review proposed deleting it;
+// it is inert by DESIGN, not by oversight, and the design is load-bearing:
+//
+//   - The config is reconstructed HERE, via osLevelFallbackConfig(sc), rather
+//     than accepted pre-built from the caller. So the day OSLevelConfig gains a
+//     config-sourced field (a ToolPath or ScratchDir from the operator's sandbox
+//     block), this check picks it up automatically, with no edit here and — the
+//     part that matters — no change to either resolver's signature.
+//   - Dropping the parameter would pin the check to DefaultOSLevelConfig forever.
+//     The gate would then keep reporting success while silently validating
+//     something other than what the run uses: a fail-OPEN drift, and the exact
+//     future risk the TD row that proposed the deletion named itself.
+//   - Accepting the resolver's already-built OSLevelConfig instead would require
+//     ResolveExecBackend/ResolveAutoFixSandbox to RETURN it, changing the return
+//     shapes AC 03-03 pins. Reconstructing from sc gets the same guarantee at no
+//     such cost.
+//
+// TestCheckOSLevelSnapshotUsable_ThreadsOperatorConfigIntoTheCheck is the
+// mechanical proof that the operator's value reaches the checker, so this wiring
+// cannot rot unobserved.
+//
 // The gap this closes (TD-019): Preflight probes its own temp snapshot, so a
 // green preflight says nothing about the caller's repository root. A repo
 // checked out at $HOME, or at a path containing a sandbox-exec profile
