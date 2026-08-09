@@ -1509,6 +1509,23 @@ func TestOSLevelBackend_ConcurrencyCapSerializesRunsBeyondLimit(t *testing.T) {
 		"with MaxConcurrent=1 the second Run must block until the first releases its slot")
 }
 
+func TestOSLevelBackend_Preflight_AuditRecordIsDistinguishableFromAWorkloadRun(t *testing.T) {
+	// Preflight's verification runs go through runWith, so their audit records
+	// are structurally identical to a real workload run's. The evidence trail
+	// must separate a readiness probe from an executed workload without
+	// command-string matching.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	require.NoError(t, b.Preflight(ctx))
+	assert.Contains(t, buf.String(), "sandbox preflight probe",
+		"a preflight verification run must be labeled as a probe in the audit trail")
+	assert.NotContains(t, buf.String(), "msg=\"sandbox exec\"",
+		"a probe must not emit the workload-run audit message")
+}
+
 func TestOSLevelBackendRun_EmitsAuditLog(t *testing.T) {
 	// AC 01-05 Scenario 5. The evidence trail for an executed run is the only
 	// record of what model-authored code was spawned and how it ended, so all
