@@ -1240,3 +1240,40 @@ var errOSLevelNotPreflighted = errors.New(
 func (b *osLevelBackend) platformToolName() (string, error) {
 	return osLevelToolFor(b.platform())
 }
+
+// CheckSnapshotUsable reports whether snapshotDir would survive the containment
+// generators' path guards, WITHOUT spawning anything.
+//
+// It exists because Preflight cannot answer this question. Preflight probes
+// against its own os.MkdirTemp snapshot, while a real run is handed the caller's
+// directory — the repository root for --auto-fix. The generators reject a
+// snapshot that is a user's home tree, or whose path carries a sandbox-exec
+// profile metacharacter, and without this they reject it only at Run: after a
+// resolver already selected the backend and, for --auto-fix, after a patch was
+// already applied (TD-019).
+//
+// It is exported solely for that pre-check. The dry-build mirrors a real run's
+// shape — including a scratch dir, since the Writable argv is the one --auto-fix
+// always takes — and cleans up after itself, so a caller can treat a nil return
+// as "the generators will accept this path".
+func CheckSnapshotUsable(cfg OSLevelConfig, snapshotDir string, writable bool) error {
+	if writable && cfg.ScratchDir == "" {
+		// Run creates the scratch dir before building the argv; mirror that here,
+		// or the Writable generators refuse for a reason the caller cannot act on.
+		scratch, err := os.MkdirTemp("", "atcr-oslevel-precheck-*")
+		if err != nil {
+			return fmt.Errorf("sandbox: cannot stage an os-level containment check: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(scratch) }()
+		cfg.ScratchDir = scratch
+	}
+	spec := RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: snapshotDir,
+		Writable:    writable,
+	}
+	if _, err := osLevelContainmentArgs(runtime.GOOS, cfg, spec); err != nil {
+		return err
+	}
+	return nil
+}

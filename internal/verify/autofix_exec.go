@@ -128,3 +128,34 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	}
 	return backend, nil
 }
+
+// CheckOSLevelSnapshotUsable pre-validates the directory a sandboxed validation
+// will actually be handed, when — and only when — the os-level backend was
+// selected. It returns nil for every other backend, including a nil one.
+//
+// It is a SIBLING of ResolveAutoFixSandbox rather than a parameter on it. The
+// resolver's three pinned regression tests call it in its two-argument shape, so
+// threading the apply target through the resolver would force edits to all
+// three, which is exactly the failure mode AC 03-03 names. The caller already
+// holds the resolved target, so passing it here costs nothing.
+//
+// The gap this closes (TD-019): Preflight probes its own temp snapshot, so a
+// green preflight says nothing about the caller's repository root. A repo
+// checked out at $HOME, or at a path containing a sandbox-exec profile
+// metacharacter, passes resolution and then fails at Run — for --auto-fix, after
+// the patch has already been applied, surfacing as an opaque "validation could
+// not run". Refusing here turns that into the generator's own specific message,
+// before anything is touched.
+func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxConfig, snapshotDir string) error {
+	if backend == nil || backend.Name() != registry.SandboxFallbackOSLevel {
+		return nil
+	}
+	// Writable: true is not a choice here — RunSandboxedValidation hardcodes it
+	// for every --auto-fix validation, so it is the only argv shape this path
+	// ever builds, and checking the read-only shape would validate a run that
+	// never happens.
+	if err := sandbox.CheckSnapshotUsable(osLevelFallbackConfig(sc), snapshotDir, true); err != nil {
+		return fmt.Errorf("os-level sandbox cannot contain this directory: %w", err)
+	}
+	return nil
+}

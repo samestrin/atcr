@@ -312,3 +312,51 @@ func TestResolveAutoFixSandbox_CanceledContextDoesNotAttemptFallback(t *testing.
 	assert.Equal(t, 0, *calls)
 	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
 }
+
+// --- TD-019: os-level snapshot pre-check ------------------------------------
+//
+// Preflight probes against its OWN temp snapshot, but RunSandboxedValidation
+// passes the resolved applyTarget — the repository root. The generators apply
+// their path guards to that value at Run time, so a repo checked out at $HOME,
+// or at a path carrying a profile metacharacter, is refused only on the real
+// run: after the fallback was selected AND after --auto-fix already applied its
+// patch, surfacing as the opaque "auto-fix sandbox validation could not run".
+//
+// The pre-check is a SIBLING of ResolveAutoFixSandbox, never a new parameter on
+// it: the three pinned regression tests call that resolver in its two-argument
+// shape, and a signature change would force edits to all three.
+
+func TestCheckOSLevelSnapshotUsable_RefusesAHomeDirectorySnapshot(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	fake := &fakeOSLevel{}
+
+	err = CheckOSLevelSnapshotUsable(fake, nil, home)
+
+	require.Error(t, err, "a repo checked out at $HOME must be refused BEFORE a patch is applied")
+	assert.Contains(t, err.Error(), "os-level")
+}
+
+func TestCheckOSLevelSnapshotUsable_AcceptsAnOrdinaryRepoPath(t *testing.T) {
+	assert.NoError(t, CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, t.TempDir()))
+}
+
+func TestCheckOSLevelSnapshotUsable_IsANoOpForOtherBackends(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	// A nil backend (the --no-sandbox shape) and a docker backend must both be
+	// untouched by this check — it exists only to pre-validate what the os-level
+	// generators will later be handed.
+	assert.NoError(t, CheckOSLevelSnapshotUsable(nil, nil, home))
+	assert.NoError(t, CheckOSLevelSnapshotUsable(sandbox.NewDockerBackend(sandbox.DefaultDockerConfig()), nil, home))
+}
+
+func TestCheckOSLevelSnapshotUsable_RefusesAProfileMetacharacterPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo(1)")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	err := CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, dir)
+
+	require.Error(t, err, "a path the generator would reject must be caught up front")
+}

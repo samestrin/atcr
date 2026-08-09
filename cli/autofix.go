@@ -93,6 +93,11 @@ func (h hiddenCause) Unwrap() error { return h.err }
 // points at the real verify.ResolveAutoFixSandbox.
 var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
 
+// checkOSLevelSnapshotFn is gate check (5)'s seam, mirroring the resolver seam
+// above so a test can stage a refusal without needing a repo actually checked
+// out at $HOME.
+var checkOSLevelSnapshotFn = verify.CheckOSLevelSnapshotUsable
+
 // warnNoSandbox writes the --no-sandbox security warning to out. It is
 // deliberately NOT memoized — no sync.Once, no package-level "seen" bool, no
 // env/state gate — which is the exact opposite of the read-once ATCR_TELEMETRY
@@ -344,6 +349,20 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 			sandboxErr = err
 		} else {
 			be.sandboxBackend = backend
+			// (5) Snapshot usability — only bites when the os-level fallback was
+			// selected, and is a no-op for docker. The resolver's Preflight probes
+			// its OWN temp snapshot, so it cannot vouch for the directory the
+			// validation will actually be handed: this repo root. A repo checked out
+			// at $HOME, or whose path carries a profile metacharacter, would
+			// otherwise pass this gate and refuse at Run — after --auto-fix had
+			// already applied its patch (TD-019). Joining the same `missing` slice
+			// keeps it a fail-closed gate refusal like the other four, not a new
+			// error path.
+			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget); err != nil {
+				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+				sandboxErr = err
+				be.sandboxBackend = nil
+			}
 		}
 	}
 

@@ -1829,3 +1829,51 @@ func TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged(t *testing.T) {
 	// trivially for every error, including the one it is meant to exclude.
 	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
 }
+
+// --- TD-019: gate check (5), os-level snapshot pre-check --------------------
+
+// TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch pins the
+// whole point of check (5): the refusal lands at the GATE, alongside the other
+// four checks, rather than at the first real validation run — which for
+// --auto-fix happens only after a patch has already been applied.
+func TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true)) // docker works; no fallback involved
+	orig := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(sandbox.Backend, *registry.SandboxConfig, string) error {
+		return errors.New("os-level sandbox cannot contain this directory: SnapshotDir is a user's home directory")
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
+
+	be, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "an unusable snapshot is a gate refusal like any other")
+	assert.Contains(t, err.Error(), "home directory",
+		"the generator's own specific message must reach the operator, not an opaque 'validation could not run'")
+	assert.Nil(t, be.sandboxBackend, "a backend that cannot serve this directory must not be carried forward")
+}
+
+// TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget
+// pins WHICH path is checked. Checking the raw configured value instead of the
+// resolved absolute one would validate a different directory than the one the
+// validation is handed, which is the exact class of bug TD-019 describes.
+func TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true))
+	var got string
+	orig := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string) error {
+		got = dir
+		return nil
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(got), "the check must receive an absolute path, got %q", got)
+	wantRoot, absErr := filepath.Abs(root)
+	require.NoError(t, absErr)
+	assert.Equal(t, wantRoot, got, "the checked directory must be the resolved apply target the validation will use")
+}
