@@ -47,6 +47,10 @@ func TestSandboxConfig_Validate(t *testing.T) {
 		{"valid cpus float", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "1.5"}, true, ""},
 		{"invalid cpus non-numeric", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "abc"}, false, "must be a positive number"},
 		{"invalid cpus zero", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, CPUs: "0"}, false, "must be a positive number"},
+		{"valid docker_path absolute", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, DockerPath: "/usr/local/bin/docker"}, true, ""},
+		{"whitespace-only docker_path", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, DockerPath: "   "}, false, "docker_path must not be whitespace-only"},
+		{"relative docker_path bare name", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, DockerPath: "docker"}, false, "docker_path must be an absolute path"},
+		{"relative docker_path with separator", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, DockerPath: "bin/docker"}, false, "docker_path must be an absolute path"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,6 +64,23 @@ func TestSandboxConfig_Validate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSandboxConfig_Validate_TrimsImageAndDockerPath pins the write-back
+// normalization Validate() owes the sibling resolvers: they test these fields
+// for raw non-emptiness and copy them verbatim (internal/verify/exec.go:
+// `sc.DockerPath != ""`, `sc.Image != ""`), so operator padding must not survive
+// config load — a padded Image or DockerPath would reach exec with its
+// whitespace intact. Same contract the Fallback trim documents in Validate().
+func TestSandboxConfig_Validate_TrimsImageAndDockerPath(t *testing.T) {
+	cfg := &SandboxConfig{
+		Image:       "  golang:1.25  ",
+		TestCommand: []string{"go", "test"},
+		DockerPath:  "  /usr/local/bin/docker  ",
+	}
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, "golang:1.25", cfg.Image, "Image must be trimmed in place")
+	assert.Equal(t, "/usr/local/bin/docker", cfg.DockerPath, "DockerPath must be trimmed in place")
 }
 
 // TestSandboxConfig_Validate_AutoFixTensionUnchanged pins the open design tension
