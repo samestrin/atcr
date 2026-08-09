@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -393,6 +394,72 @@ func TestIntegration_OSLevelDarwin_NetworkEgressIsBlocked(t *testing.T) {
 	require.Equal(t, 0, after.exitCode,
 		"the listener stopped accepting during the test, so the sandboxed failure is not attributable to containment; output: %s",
 		after.output)
+
+	// UDP and unix-domain socket probes, same control discipline. (deny
+	// network*) currently covers every family, but nothing stops a future edit
+	// narrowing it to network-outbound over IP — and a TCP-only probe would not
+	// notice. On Linux --unshare-net makes the single TCP probe structurally
+	// sufficient (no route exists for ANY family), so the Linux leg needs no
+	// second protocol; on macOS the denial is a profile RULE, so the families
+	// are probed separately here.
+	udpListener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = udpListener.Close() })
+	udpPort := fmt.Sprintf("%d", udpListener.LocalAddr().(*net.UDPAddr).Port)
+	udpProbe := "command -v nc >/dev/null 2>&1 || exit 97; exec nc -u -z -w 2 127.0.0.1 " + udpPort
+
+	if control := runUnsandboxed(t, udpProbe); control.exitCode != 0 {
+		skipOrFail(t, "unsandboxed UDP control could not reach the loopback listener (exit %d, %q); "+
+			"cannot distinguish sandbox denial from host policy", control.exitCode, strings.TrimSpace(control.output))
+	} else {
+		udpRes, udpErr := b.Run(context.Background(), RunSpec{
+			Command:     []string{"/bin/sh", "-c", udpProbe},
+			SnapshotDir: t.TempDir(),
+			Timeout:     15 * time.Second,
+		})
+		require.NoError(t, udpErr, "output: %s", udpRes.Output)
+		require.NotEqual(t, probeMissingCode, udpRes.ExitCode,
+			"the UDP probe binary was unreachable inside the sandbox; output: %s", udpRes.Output)
+		assert.NotEqual(t, 0, udpRes.ExitCode,
+			"UDP egress was NOT blocked — a profile edit narrowing (deny network*) to IP/TCP would leak here; output: %s",
+			udpRes.Output)
+	}
+
+	// Unix-domain connect: the listener's socket node lives in the SnapshotDir
+	// so the profile's read grant makes it VISIBLE — the connect attempt then
+	// reaches the network layer, and only (deny network*) refusing it keeps the
+	// run contained. A socket in an ordinary fixture dir would fail on path
+	// visibility instead and prove nothing about the network rule. The dir sits
+	// directly under /tmp because t.TempDir()'s /var/folders path blows the
+	// ~104-byte unix socket path limit (measured: bind: invalid argument).
+	sockDir, err := os.MkdirTemp("/tmp", "atcr-usk-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "egress.sock")
+	sockListener, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sockListener.Close() })
+	// Apple's nc exits 1 on an immediate stdin EOF even when the connect
+	// SUCCEEDED, and -z does not change that for -U (both measured on this
+	// host) — so the probe pipes a byte, making exit 0 mean "connected".
+	unixProbe := "command -v nc >/dev/null 2>&1 || exit 97; echo atcr-egress-probe | exec nc -U -w 2 " + sockPath
+
+	if control := runUnsandboxed(t, unixProbe); control.exitCode != 0 {
+		skipOrFail(t, "unsandboxed unix-socket control could not reach the listener (exit %d, %q); "+
+			"cannot distinguish sandbox denial from host policy", control.exitCode, strings.TrimSpace(control.output))
+	} else {
+		unixRes, unixErr := b.Run(context.Background(), RunSpec{
+			Command:     []string{"/bin/sh", "-c", unixProbe},
+			SnapshotDir: sockDir,
+			Timeout:     15 * time.Second,
+		})
+		require.NoError(t, unixErr, "output: %s", unixRes.Output)
+		require.NotEqual(t, probeMissingCode, unixRes.ExitCode,
+			"the unix-socket probe binary was unreachable inside the sandbox; output: %s", unixRes.Output)
+		assert.NotEqual(t, 0, unixRes.ExitCode,
+			"unix-domain socket connect was NOT blocked — a profile edit narrowing (deny network*) would leak here; output: %s",
+			unixRes.Output)
+	}
 }
 
 func TestIntegration_OSLevelDarwin_SnapshotIsReadOnly(t *testing.T) {
