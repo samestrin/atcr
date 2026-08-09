@@ -104,9 +104,38 @@ func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig,
 	}
 	log.FromContext(ctx).Warn("os-level sandbox fallback engaged",
 		"backend", registry.SandboxFallbackOSLevel,
-		"docker_preflight_error", cause.Error(),
+		"docker_preflight_error", truncateCause(cause),
 		"unenforced_config", strings.Join(dropped, ","),
+		"unenforced_defaults", osLevelUnenforcedDefaults,
 		"runs_as", "invoking user (not uid 65534)")
+}
+
+// osLevelUnenforcedDefaults names the containment the OS-level backend cannot
+// provide, INDEPENDENT of what the operator wrote down.
+//
+// The `unenforced_config` attribute alone lists only explicitly-set keys, so the
+// most common config — image + test_command, all Validate() requires — logged an
+// empty list, which reads as "nothing was unenforced" while the fallback in fact
+// discards every hardened DockerConfig default (docker.go:62-76). What is lost
+// is a property of the backend, not of the config file, so it is stated as one.
+const osLevelUnenforcedDefaults = "memory/cpu/pid caps, cap-drop ALL, no-new-privileges, read-only rootfs, uid 65534; host /tmp is readable and writable"
+
+// truncateCause bounds a preflight error before it is logged. Docker's failure
+// text carries the daemon's raw stderr and, on the timeout branch, the full
+// `docker run` argv — so it can be long, and can echo an operator's DOCKER_HOST
+// endpoint. The root redactor only matches Bearer/sk- shapes, so credentials
+// embedded in a URL would pass straight through into stderr and CI logs
+// (TD-026). Bounding it is the cheap half; the redactor is the real fix.
+func truncateCause(err error) string {
+	const max = 300
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if len(msg) <= max {
+		return msg
+	}
+	return msg[:max] + "… (truncated)"
 }
 
 // ResolveExecBackend implements the execution gate. When execEnabled is false it

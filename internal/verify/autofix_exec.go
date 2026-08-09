@@ -44,7 +44,17 @@ var ErrAutoFixSandboxUnconfigured = errors.New("--auto-fix requires a [sandbox] 
 // as the backend's fallback default and can never silently shrink the operator's
 // validation budget.
 //
-// Writable /work overlay (non-Go validators supported): the validation runs with
+// Writable /work overlay (non-Go validators supported) — WHEN THE DOCKER BACKEND
+// IS RETURNED. Since the os-level fallback landed, this function has two return
+// shapes and only the paragraph below describes the Docker one. Under the
+// os-level backend none of its mechanics hold: the copy is a host-side Go walk
+// (sandbox.seedWritableCopy), there is no image and no /work mount on darwin
+// (the run chdirs into the scratch copy instead), and the requirement is that
+// the HOST's PATH carries the toolchain rather than the image. The guarantee
+// that survives on both is the one that matters to a caller: the snapshot is not
+// mutated and the writable copy is ephemeral.
+//
+// Docker backend specifics: the validation runs with
 // the patched working tree mounted read-only at /src and copied via `cp -a` into a
 // writable /work tmpfs (RunSandboxedValidation sets RunSpec.Writable; see internal/
 // sandbox/docker.go). A validate_command that writes UNDER the project dir — npm

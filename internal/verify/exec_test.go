@@ -1,14 +1,18 @@
 package verify
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/stretchr/testify/assert"
@@ -283,4 +287,114 @@ func TestResolveExecBackend_FallbackIrrelevantWhenExecDisabled(t *testing.T) {
 	assert.Nil(t, b)
 	assert.Equal(t, 0, *calls,
 		"the fallback lives entirely inside the execEnabled path")
+}
+
+// --- fallback-engagement warning -------------------------------------------
+
+// captureWarnings installs a logger into the context and returns the buffer, so
+// the fallback warning can be asserted rather than assumed. It is the only
+// operator-visible signal that the isolation model changed, and before this it
+// was covered by no test at all.
+func captureWarnings(t *testing.T) (context.Context, *bytes.Buffer) {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	return log.NewContext(context.Background(), logger), buf
+}
+
+func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) {
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Memory = "512m"
+	sc.CPUs = "1.5"
+	pids := 256
+	sc.PidsLimit = &pids
+
+	_, _, _, err := ResolveExecBackend(ctx, true, sc)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "os-level sandbox fallback engaged")
+	assert.Contains(t, out, "sandbox.memory")
+	assert.Contains(t, out, "sandbox.cpus")
+	assert.Contains(t, out, "sandbox.pids_limit")
+	assert.Contains(t, out, "sandbox.image")
+	assert.Equal(t, 1, strings.Count(out, "os-level sandbox fallback engaged"),
+		"exactly one warning per engagement")
+}
+
+// TestFallbackWarning_NamesLostDefaultsEvenWhenNothingWasConfigured covers the
+// common config — image + test_command only — where the explicitly-set list is
+// nearly empty yet every hardened Docker default is still discarded.
+func TestFallbackWarning_NamesLostDefaultsEvenWhenNothingWasConfigured(t *testing.T) {
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc := &registry.SandboxConfig{
+		DockerPath:  fakeDocker(t, "exit 1"),
+		TestCommand: []string{"go", "test"},
+		Fallback:    registry.SandboxFallbackOSLevel,
+	}
+
+	_, _, _, err := ResolveExecBackend(ctx, true, sc)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "uid 65534")
+	assert.Contains(t, out, "host /tmp is readable and writable")
+	assert.Contains(t, out, "cap-drop ALL")
+}
+
+func TestFallbackWarning_SilentWhenDockerSucceedsOrFallbackFails(t *testing.T) {
+	t.Run("docker succeeds", func(t *testing.T) {
+		stubOSLevel(t, nil)
+		ctx, buf := captureWarnings(t)
+		sc := &registry.SandboxConfig{
+			DockerPath: fakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+exit 0`),
+			TestCommand: []string{"go", "test"},
+			Fallback:    registry.SandboxFallbackOSLevel,
+		}
+		_, _, _, err := ResolveExecBackend(ctx, true, sc)
+		require.NoError(t, err)
+		assert.NotContains(t, buf.String(), "fallback engaged",
+			"a working primary backend must never warn")
+	})
+
+	t.Run("fallback also fails", func(t *testing.T) {
+		stubOSLevel(t, errors.New("bwrap missing"))
+		ctx, buf := captureWarnings(t)
+		_, _, _, err := ResolveExecBackend(ctx, true, fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel))
+		require.Error(t, err)
+		assert.NotContains(t, buf.String(), "fallback engaged",
+			"nothing was engaged, so the refusal is the whole signal")
+	})
+}
+
+func TestFallbackWarning_AutoFixResolverWarnsIdentically(t *testing.T) {
+	// Cross-resolver consistency, asserted mechanically rather than by review:
+	// an operator must not learn the isolation model changed on --exec and be
+	// left uninformed on --auto-fix.
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Image = "alpine:3.20"
+
+	_, err := ResolveAutoFixSandbox(ctx, true, sc)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "os-level sandbox fallback engaged")
+	assert.Contains(t, buf.String(), "uid 65534")
+}
+
+func TestTruncateCause_BoundsAnUnboundedDaemonMessage(t *testing.T) {
+	assert.Equal(t, "", truncateCause(nil))
+	short := errors.New("docker daemon unreachable")
+	assert.Equal(t, "docker daemon unreachable", truncateCause(short))
+	long := errors.New(strings.Repeat("x", 500))
+	got := truncateCause(long)
+	assert.Less(t, len(got), 500)
+	assert.Contains(t, got, "truncated")
 }
