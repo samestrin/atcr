@@ -144,7 +144,11 @@ var checkSnapshotUsableFn = sandbox.CheckSnapshotUsable
 
 // CheckOSLevelSnapshotUsable pre-validates the directory a sandboxed validation
 // will actually be handed, when — and only when — the os-level backend was
-// selected. It returns nil for every other backend, including a nil one.
+// selected. It returns nil for a nil backend (sandboxing off) and for the
+// docker backend (which enforces its own mounts), and REFUSES any other
+// backend it cannot positively identify: dispatching on name alone is
+// fail-open for a decorating wrapper, which reports its own Name() and would
+// otherwise turn this gate into a silent no-op.
 //
 // It is a SIBLING of ResolveAutoFixSandbox rather than a parameter on it. The
 // resolver's three pinned regression tests call it in its two-argument shape, so
@@ -160,8 +164,17 @@ var checkSnapshotUsableFn = sandbox.CheckSnapshotUsable
 // not run". Refusing here turns that into the generator's own specific message,
 // before anything is touched.
 func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxConfig, snapshotDir string, writable bool) error {
-	if backend == nil || backend.Name() != registry.SandboxFallbackOSLevel {
+	// Fail-closed dispatch: nil (sandboxing off) and the docker backend (it
+	// enforces its own mounts) are the recognized no-check shapes; the os-level
+	// backend gets the snapshot check below. ANY other name is refused outright
+	// rather than passed — a decorating wrapper reports its own Name(), so
+	// name-based pass-through would silently no-op the gate for exactly the
+	// backend shape it exists to check.
+	if backend == nil || backend.Name() == registry.SandboxBackendDocker {
 		return nil
+	}
+	if backend.Name() != registry.SandboxFallbackOSLevel {
+		return fmt.Errorf("unrecognized sandbox backend %q: refusing to skip the os-level snapshot check (fail-closed)", backend.Name())
 	}
 	// writable is a parameter, not a hardcoded true, because the two call sites
 	// genuinely differ and the shapes are NOT interchangeable — measured: for
