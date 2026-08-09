@@ -424,19 +424,42 @@ func profileSafePath(field, path string) (string, error) {
 	// the macOS filesystem is case-insensitive, so /VAR/folders is /var/folders
 	// and must normalize identically. The REMAINDER keeps the caller's original
 	// bytes — only the matched prefix is rewritten to its canonical spelling.
-	lower := strings.ToLower(clean)
-	for prefix, resolved := range darwinSymlinkedPrefixes {
-		if lower == prefix {
-			if resolved == "" {
-				return string(filepath.Separator), nil
+	//
+	// The rewrite loops to a fixed point: one pass maps the firmlink prefix
+	// onto /tmp, /var or /etc, which are THEMSELVES symlinked prefixes, and a
+	// rule written against a half-resolved spelling matches nothing in either
+	// direction — measured against the real sandbox-exec, a trailing deny
+	// written against /tmp/zz-snap did not stop a write through
+	// /private/tmp/zz-snap. The bound makes a future cyclic map entry an error
+	// rather than an infinite loop.
+	for i := 0; i <= len(darwinSymlinkedPrefixes); i++ {
+		lower := strings.ToLower(clean)
+		rewritten := ""
+		matched := false
+		for prefix, resolved := range darwinSymlinkedPrefixes {
+			if lower == prefix {
+				if resolved == "" {
+					rewritten = string(filepath.Separator)
+				} else {
+					rewritten = resolved
+				}
+				matched = true
+				break
 			}
-			return resolved, nil
+			if strings.HasPrefix(lower, prefix+string(filepath.Separator)) {
+				rewritten = resolved + clean[len(prefix):]
+				matched = true
+				break
+			}
 		}
-		if strings.HasPrefix(lower, prefix+string(filepath.Separator)) {
-			return resolved + clean[len(prefix):], nil
+		if !matched {
+			return clean, nil
 		}
+		clean = rewritten
 	}
-	return clean, nil
+	return "", fmt.Errorf("sandbox: %s could not be canonicalized (still %q after %d rewrites of %q): "+
+		"a profile rule written against an unresolved alias matches nothing in either direction",
+		field, clean, len(darwinSymlinkedPrefixes)+1, path)
 }
 
 // assertUsableWritableRoot rejects a writable root that is the filesystem root
