@@ -93,14 +93,22 @@ func skipOrFail(t *testing.T, format string, args ...any) {
 // its placement is then asserted. That is what makes every denial in this file
 // mean anything.
 //
-// os.MkdirTemp("", …) resolves through os.TempDir(), i.e. $TMPDIR else /tmp —
-// and /tmp is an UNCONDITIONALLY allowed writable root of this very profile
-// (darwinTmpDirs, oslevel_profile.go:126). Measured: running this suite with
-// `env -u TMPDIR` put the stand-in in /tmp and three tests FAILED as false
-// alarms, reporting a "containment breach" for writes the sandbox was correct
-// to permit — including the secret being readable. TMPDIR-unset is exactly the
-// launchd/cron/CI shape. The inverse is worse: a test whose premise is invalid
-// in the other direction passes while proving nothing.
+// os.MkdirTemp("", …) resolves through os.TempDir(), i.e. $TMPDIR else /tmp.
+// When /tmp was still an unconditionally allowed WRITABLE root of this profile,
+// that was an active hazard: running this suite with `env -u TMPDIR` put the
+// stand-in in /tmp and three tests FAILED as false alarms, reporting a
+// "containment breach" for writes the sandbox was correct to permit — including
+// the secret being readable. TMPDIR-unset is exactly the launchd/cron/CI shape,
+// and the inverse is worse: a test whose premise is invalid in the other
+// direction passes while proving nothing.
+//
+// The /tmp write rule has since been removed (the per-run scratch dir is now the
+// only writable subtree), so that specific false-alarm shape is closed. The
+// explicit /var/tmp placement stays anyway: the temp roots retain METADATA scope
+// (darwinTmpDirs, oslevel_profile.go) and the read tier is unchanged, so a
+// stand-in under /tmp would still not be the clean outside-every-allow-rule
+// fixture this file's denials need. Pinning the location is cheaper than
+// re-deriving that argument each time the allow set moves.
 //
 // /var/tmp is world-writable on macOS and appears in no allow rule — not in
 // darwinSystemReadDirs, not in darwinTmpDirs — so absence there is the profile

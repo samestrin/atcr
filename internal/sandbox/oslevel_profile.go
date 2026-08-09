@@ -119,10 +119,22 @@ var darwinSystemReadDirs = []string{
 // device is required, creating or unlinking device nodes is not.
 var darwinDeviceReads = []string{"/dev/urandom", "/dev/random", "/dev/zero"}
 
-// darwinTmpDirs are the writable temp roots. /tmp is a symlink to /private/tmp
-// on macOS and sandbox-exec matches on the RESOLVED path, so a rule naming only
-// /tmp matches nothing and the carve-out silently does not exist. Both are
-// emitted.
+// darwinTmpDirs are the host temp roots. They are NOT writable roots — the
+// per-run scratch dir is the only writable subtree (see sandboxExecProfile's
+// write section for why the unconditional /tmp write grant was removed). Three
+// jobs remain, and each is a separate guarantee that must not be dropped along
+// with the write rule:
+//
+//   - metadata scope, so path resolution through them works
+//   - darwinSourceProtectedDirs, so a snapshot cannot BE one
+//   - assertUsableWritableRoot's mount-point guard, so a scratch dir cannot BE
+//     one (a scratch INSIDE one is ordinary — that is where os.MkdirTemp puts it)
+//
+// /tmp is a symlink to /private/tmp on macOS and sandbox-exec matches on the
+// RESOLVED path, so a rule naming only /tmp matches nothing. Both spellings are
+// listed. The separate darwinSymlinkAliases "/tmp" entry is what grants the
+// symlink NODE itself and is now the only thing making that spelling resolve —
+// it must not be deleted as a duplicate of this list.
 var darwinTmpDirs = []string{"/tmp", "/private/tmp"}
 
 // darwinSymlinkAliases are the symlink NODES that stand in front of the
@@ -315,11 +327,22 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	if scratch != "" {
 		b.WriteString(profileWriteRule(scratch) + "\n")
 	}
-	for _, dir := range darwinTmpDirs {
-		b.WriteString(profileWriteRule(dir) + "\n")
-	}
-	// LAST, so last-match-wins re-asserts it over every carve-out above,
-	// including a /tmp rule covering a snapshot that lives under /tmp.
+	// The per-run scratch dir is the ONLY writable subtree. The host temp roots
+	// deliberately do not get a write rule: they are world-writable directories
+	// shared with every other process on the machine, so granting them handed
+	// each run the predictable-path and symlink-race surface that comes with
+	// one, plus write access to other processes' temp files. bwrapArgs has never
+	// granted the host /tmp — it mounts a fresh --tmpfs /tmp — so this closes a
+	// cross-platform posture gap rather than merely narrowing macOS.
+	//
+	// sandboxEnv points HOME, TMPDIR, GOTMPDIR, GOCACHE and XDG_CACHE_HOME at
+	// the scratch tree, so a toolchain that follows the environment has
+	// everywhere it needs. One that hardcodes bare /tmp now fails closed under
+	// the deny-default, which is the safe direction. Measured against the real
+	// sandbox-exec on macOS 25.2 with git, go build/test, python3 and node: all
+	// four run clean with no /tmp write rule.
+	//
+	// LAST, so last-match-wins re-asserts it over every carve-out above.
 	b.WriteString("(deny file-write* " + profileSubpath(snapshot) + ")\n")
 	return b.String(), nil
 }
