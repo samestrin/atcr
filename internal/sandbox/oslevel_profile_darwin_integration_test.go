@@ -287,22 +287,37 @@ func TestIntegration_OSLevelDarwin_WriteInsideAllowedRootsSucceeds(t *testing.T)
 	})
 
 	t.Run("tmp", func(t *testing.T) {
-		// The second permitted root. /tmp is a symlink to /private/tmp on macOS,
-		// and a previous review round found a profile that silently matched
-		// nothing because only one spelling was granted — so this control is
-		// specifically load-bearing, not decorative.
+		// /tmp is a symlink to /private/tmp on macOS, and a previous review round
+		// found a profile that silently matched nothing because only one spelling
+		// was granted — so the /tmp spelling's resolution stays load-bearing.
+		// What the grant carries changed on 2026-08-09 (5f6a952): the host temp
+		// roots deliberately have NO write rule — the scratch tree is the only
+		// writable subtree and TMPDIR points inside it. A workload hardcoding
+		// bare /tmp fails CLOSED; one following the environment writes fine.
+		// Both halves are asserted.
 		marker := filepath.Join("/tmp", "atcr-sbx-proof-"+randHex(8)+".txt")
-		t.Cleanup(func() { _ = os.Remove(marker) })
 
 		res, err := b.Run(context.Background(), RunSpec{
-			Command:     []string{"/bin/sh", "-c", "echo ok > " + marker + " && cat " + marker},
+			Command:     []string{"/bin/sh", "-c", "echo ok > " + marker + " 2>&1"},
 			SnapshotDir: t.TempDir(),
 			Timeout:     10 * time.Second,
 		})
 		require.NoError(t, err, "output: %s", res.Output)
-		require.Equal(t, 0, res.ExitCode, "a write into /tmp must succeed; output: %s", res.Output)
-		assert.Contains(t, res.Output, "ok")
-		assert.FileExists(t, marker)
+		assert.NotEqual(t, 0, res.ExitCode,
+			"a write to bare /tmp must fail closed — the host temp roots carry no write rule; output: %s", res.Output)
+		assertDeniedByProfile(t, res.Output, marker)
+		assert.NoFileExists(t, marker,
+			"a write to bare /tmp reached the host — containment breach")
+
+		envRes, envErr := b.Run(context.Background(), RunSpec{
+			Command:     []string{"/bin/sh", "-c", "echo ok > \"$TMPDIR/atcr-sbx-proof.txt\" && cat \"$TMPDIR/atcr-sbx-proof.txt\""},
+			SnapshotDir: t.TempDir(),
+			Timeout:     10 * time.Second,
+		})
+		require.NoError(t, envErr, "output: %s", envRes.Output)
+		require.Equal(t, 0, envRes.ExitCode,
+			"a write through TMPDIR (the scratch tree) must succeed; output: %s", envRes.Output)
+		assert.Contains(t, envRes.Output, "ok")
 	})
 }
 
