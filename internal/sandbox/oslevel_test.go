@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1087,17 +1088,27 @@ exit 0`),
 
 func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {
 	// A struct-literal backend bypasses NewOSLevelBackend and leaves sem nil;
-	// the lazy alloc must still enforce a cap rather than failing open
+	// the lazy alloc must still ENFORCE a cap rather than failing open
 	// (mirrors TestDockerBackend_StructLiteral_AppliesConcurrencyCap).
+	//
+	// The enforcement is what is asserted, not the allocation. An earlier
+	// revision checked only cap(b.sem) == 2 after a single Run — which stays
+	// green if Run stops acquiring a slot entirely, since semOnce.Do would still
+	// have allocated the channel. That made the one path named for the bypass
+	// the one path with no enforcement proof, while the only real enforcement
+	// assertion went through NewOSLevelBackend.
+	logPath := filepath.Join(t.TempDir(), "order.log")
 	b := withContainment(t, &OSLevelBackend{cfg: OSLevelConfig{
-		ToolPath:       writeFakeOSLevel(t, fakeOSLevelExitBody(0)),
-		Timeout:        5 * time.Second,
+		ToolPath:       writeFakeOSLevel(t, fakeOSLevelSerializationBody(logPath)),
+		Timeout:        30 * time.Second,
 		MaxOutputBytes: 1024,
-		MaxConcurrent:  2,
+		MaxConcurrent:  1,
 	}})
-	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
-	require.NoError(t, err)
-	assert.Equal(t, 2, cap(b.sem), "the nil-sem bypass must not silently disable the cap")
+
+	assertSerializedRuns(t, b, logPath)
+
+	// Secondary: the lazy allocation itself, sized from the struct literal.
+	assert.Equal(t, 1, cap(b.sem), "the nil-sem bypass must not silently disable the cap")
 }
 
 func TestOSLevelToolFor_SupportedPlatforms(t *testing.T) {
@@ -1859,6 +1870,11 @@ func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 // here must never be read as containment evidence.
 // ---------------------------------------------------------------------------
 
+// osLevelSerializationSleep is the shim's per-run stall. The serialization
+// assertions below derive their expected wall clock from it rather than
+// hardcoding a second constant that could drift away from the script.
+const osLevelSerializationSleep = 300 * time.Millisecond
+
 // fakeOSLevelSerializationBody returns a shim that brackets a short sleep with
 // two markers appended to logPath. Running two of these concurrently makes the
 // semaphore observable: serialized runs interleave as start/end/start/end, while
@@ -1867,10 +1883,20 @@ func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 // The path is baked into the script rather than passed through the environment
 // because Run hands the workload an explicit allowlist — an env-var hook would be
 // scrubbed before the shim saw it (see TestOSLevelBackendRun_DoesNotLeakParentEnvironment).
+//
+// The sleep is guarded with `|| exit 97`. A fractional operand is a GNU/BSD
+// extension POSIX does not require, and the discriminating power of every
+// assertion built on this shim rests entirely on the stall actually happening:
+// an unchecked `sleep 0.3` that a strict /bin/sh rejects turns both runs into
+// ~5ms fork/exec pairs, at which point the start/end ordering degrades from a
+// proof into a coin flip that often passes with no semaphore at all. Failing
+// loudly with a distinctive status is what keeps that degradation visible
+// instead of silent — and the callers assert the exit code and the elapsed
+// wall clock so a stall that did not happen cannot read as a pass.
 func fakeOSLevelSerializationBody(logPath string) string {
 	return fmt.Sprintf(`echo start >> %q
-sleep 0.3
-echo end >> %q`, logPath, logPath)
+sleep %s || exit 97
+echo end >> %q`, logPath, strconv.FormatFloat(osLevelSerializationSleep.Seconds(), 'f', -1, 64), logPath)
 }
 
 func TestOSLevelBackend_ConcurrencyCapSerializesRunsBeyondLimit(t *testing.T) {
@@ -1886,22 +1912,42 @@ func TestOSLevelBackend_ConcurrencyCapSerializesRunsBeyondLimit(t *testing.T) {
 	cfg.MaxConcurrent = 1
 	b := withContainment(t, NewOSLevelBackend(cfg))
 
+	assertSerializedRuns(t, b, logPath)
+}
+
+// assertSerializedRuns drives two concurrent Runs through b and asserts the
+// semaphore actually blocked the second one.
+//
+// Two independent signals, because the ordering alone is not enough: if the
+// shim's stall does not happen, both runs collapse to a few milliseconds and
+// start/end/start/end can still fall out by luck. The elapsed wall clock cannot
+// — two serialized stalls take at least two stalls' worth of time — so it is
+// what turns the ordering from a likely outcome into a proof.
+func assertSerializedRuns(t *testing.T, b *OSLevelBackend, logPath string) {
+	t.Helper()
 	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
 	var wg sync.WaitGroup
+	start := time.Now()
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := b.Run(context.Background(), spec)
+			res, err := b.Run(context.Background(), spec)
 			assert.NoError(t, err)
+			// 97 is the shim's own "sleep rejected my operand" status; anything
+			// else non-zero is a shim that did not run as written.
+			assert.Equal(t, 0, res.ExitCode, "the serialization shim must run to completion: %s", res.Output)
 		}()
 	}
 	wg.Wait()
+	elapsed := time.Since(start)
 
 	raw, err := os.ReadFile(logPath)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"start", "end", "start", "end"}, strings.Fields(string(raw)),
 		"with MaxConcurrent=1 the second Run must block until the first releases its slot")
+	assert.GreaterOrEqual(t, elapsed, 2*osLevelSerializationSleep,
+		"two serialized runs must take at least two stalls; %s means the shim never stalled and the ordering above proves nothing", elapsed)
 }
 
 func TestOSLevelBackend_Preflight_AuditRecordIsDistinguishableFromAWorkloadRun(t *testing.T) {
