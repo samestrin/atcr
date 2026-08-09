@@ -86,6 +86,15 @@ func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 // fallback explicitly, and refusing on a set cap would turn an opt-in into a
 // config error for the exact hosts the feature exists to serve. It is also not
 // the neither-backend-usable path, which stays a hard refusal.
+//
+// KNOWN ASYMMETRY with its sibling bypass warning, deliberately recorded rather
+// than silently accepted: warnNoSandbox writes unconditionally to the command's
+// stderr, so it cannot be lost. This one goes through the context logger, so
+// ATCR_LOG_LEVEL=error silences it, and an embedder whose context carries no
+// logger discards it entirely. That is defensible — --no-sandbox accepts
+// UNSANDBOXED host execution while this substitutes a still-contained backend,
+// so the two do not warrant identical insistence — but Phase 5's docs must state
+// that the notice is log-level-suppressible rather than imply a guarantee.
 func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig, cause error) {
 	dropped := make([]string, 0, 4)
 	if sc != nil {

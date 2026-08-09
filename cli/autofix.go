@@ -358,7 +358,7 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 			// already applied its patch (TD-019). Joining the same `missing` slice
 			// keeps it a fail-closed gate refusal like the other four, not a new
 			// error path.
-			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget); err != nil {
+			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget, true); err != nil {
 				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
 				sandboxErr = err
 				be.sandboxBackend = nil

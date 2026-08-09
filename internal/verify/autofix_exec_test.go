@@ -331,14 +331,14 @@ func TestCheckOSLevelSnapshotUsable_RefusesAHomeDirectorySnapshot(t *testing.T) 
 	require.NoError(t, err)
 	fake := &fakeOSLevel{}
 
-	err = CheckOSLevelSnapshotUsable(fake, nil, home)
+	err = CheckOSLevelSnapshotUsable(fake, nil, home, true)
 
 	require.Error(t, err, "a repo checked out at $HOME must be refused BEFORE a patch is applied")
 	assert.Contains(t, err.Error(), "os-level")
 }
 
 func TestCheckOSLevelSnapshotUsable_AcceptsAnOrdinaryRepoPath(t *testing.T) {
-	assert.NoError(t, CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, t.TempDir()))
+	assert.NoError(t, CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, t.TempDir(), true))
 }
 
 func TestCheckOSLevelSnapshotUsable_IsANoOpForOtherBackends(t *testing.T) {
@@ -348,15 +348,52 @@ func TestCheckOSLevelSnapshotUsable_IsANoOpForOtherBackends(t *testing.T) {
 	// A nil backend (the --no-sandbox shape) and a docker backend must both be
 	// untouched by this check — it exists only to pre-validate what the os-level
 	// generators will later be handed.
-	assert.NoError(t, CheckOSLevelSnapshotUsable(nil, nil, home))
-	assert.NoError(t, CheckOSLevelSnapshotUsable(sandbox.NewDockerBackend(sandbox.DefaultDockerConfig()), nil, home))
+	assert.NoError(t, CheckOSLevelSnapshotUsable(nil, nil, home, true))
+	assert.NoError(t, CheckOSLevelSnapshotUsable(sandbox.NewDockerBackend(sandbox.DefaultDockerConfig()), nil, home, true))
 }
 
 func TestCheckOSLevelSnapshotUsable_RefusesAProfileMetacharacterPath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "repo(1)")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 
-	err := CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, dir)
+	err := CheckOSLevelSnapshotUsable(&fakeOSLevel{}, nil, dir, true)
 
 	require.Error(t, err, "a path the generator would reject must be caught up front")
+}
+
+// TestCheckOSLevelSnapshotUsable_BothShapesAreCheckedFaithfully pins the
+// `writable` argument and the fix behind it.
+//
+// The Phase 4 gate found two related defects: flipping the argument left the
+// whole suite green, AND the read-only shape was systematically more permissive
+// than the run it predicts, because the dry-build created a scratch dir only
+// when writable — skipping the generators' ScratchDir guards that a real
+// read-only run does exercise. Measured then: os.TempDir() PASSED read-only and
+// failed writable. A repo in that blind spot would clear the gate and then fault
+// at Run, which is precisely what the pre-check exists to prevent.
+//
+// Both shapes now refuse it, for the same reason a real run would: the per-run
+// scratch dir would land inside the snapshot.
+//
+// LIMIT OF THIS TEST, stated so it is not read as proving more than it does:
+// with the read-only shape now faithful, no measured path produces DIFFERENT
+// verdicts for the two values, so hardcoding the argument would not fail here.
+// What pins the call sites' intent is the assertion at each of them —
+// cli/verify_test.go requires --exec passes false, cli/autofix_test.go's gate
+// test covers the --auto-fix side passing true. If a future generator change
+// makes the shapes diverge, those call sites are already correct.
+func TestCheckOSLevelSnapshotUsable_BothShapesAreCheckedFaithfully(t *testing.T) {
+	fake := &fakeOSLevel{}
+
+	for _, writable := range []bool{false, true} {
+		err := CheckOSLevelSnapshotUsable(fake, nil, os.TempDir(), writable)
+		require.Error(t, err, "writable=%v must refuse a snapshot that would contain the scratch dir", writable)
+		assert.Contains(t, err.Error(), "ScratchDir")
+	}
+
+	// ...and an ordinary repo path is accepted in both shapes, so the check is
+	// not simply refusing everything.
+	ordinary := t.TempDir()
+	assert.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, false))
+	assert.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, true))
 }

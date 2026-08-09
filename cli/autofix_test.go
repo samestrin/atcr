@@ -1821,7 +1821,11 @@ func TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err))
-	assert.Contains(t, err.Error(), "sandbox: --auto-fix sandbox preflight failed: docker daemon unreachable")
+	// assert.Equal, NOT Contains: the gate proved a mutation that duplicated the
+	// message ("...unreachable--auto-fix sandbox preflight failed: docker daemon
+	// unreachable") still satisfied a Contains assertion, so the byte-identical
+	// bar this test exists to hold was not actually held.
+	assert.Equal(t, "--auto-fix cannot run: sandbox: --auto-fix sandbox preflight failed: docker daemon unreachable", err.Error())
 	assert.NotContains(t, err.Error(), "os-level",
 		"an operator who never opted in must not see a fallback mentioned at all")
 	// Meaningful only because the combined case above proves the sentinel DOES
@@ -1840,7 +1844,7 @@ func TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch(t *testing
 	proj, cmd, root := autoFixGateFixture(t)
 	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true)) // docker works; no fallback involved
 	orig := checkOSLevelSnapshotFn
-	checkOSLevelSnapshotFn = func(sandbox.Backend, *registry.SandboxConfig, string) error {
+	checkOSLevelSnapshotFn = func(sandbox.Backend, *registry.SandboxConfig, string, bool) error {
 		return errors.New("os-level sandbox cannot contain this directory: SnapshotDir is a user's home directory")
 	}
 	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
@@ -1863,7 +1867,7 @@ func TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget(t
 	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true))
 	var got string
 	orig := checkOSLevelSnapshotFn
-	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string) error {
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, _ bool) error {
 		got = dir
 		return nil
 	}
@@ -1876,4 +1880,20 @@ func TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget(t
 	wantRoot, absErr := filepath.Abs(root)
 	require.NoError(t, absErr)
 	assert.Equal(t, wantRoot, got, "the checked directory must be the resolved apply target the validation will use")
+}
+
+// TestHiddenCause_CarriesTheSentinelWithoutContributingText pins the mechanism
+// that keeps --auto-fix output byte-identical for operators who never opted in.
+// It had no test at all: mutating Error() to return the wrapped message left the
+// whole suite green while every operator saw the message twice.
+func TestHiddenCause_CarriesTheSentinelWithoutContributingText(t *testing.T) {
+	sentinel := errors.New("boom")
+	h := hiddenCause{err: sentinel}
+
+	assert.Equal(t, "", h.Error(), "it must contribute NO text; the rendered message already carries it")
+	assert.ErrorIs(t, h, sentinel, "...while still carrying the cause for errors.Is")
+
+	wrapped := fmt.Errorf("gate refused: %s%w", "a; b", h)
+	assert.Equal(t, "gate refused: a; b", wrapped.Error(), "wrapping must not alter the message")
+	assert.ErrorIs(t, wrapped, sentinel)
 }

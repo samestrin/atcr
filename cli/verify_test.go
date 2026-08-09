@@ -445,3 +445,51 @@ func TestResolveExec_NilContextDoesNotPanic(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestResolveExec_RunsTheSnapshotPreCheckToo closes the resolver-drift the
+// Phase 4 gate identified: the TD-019 pre-check was wired into --auto-fix only,
+// so under the fallback an unusable repo path was discovered by --exec only when
+// a skeptic's first run_tests call faulted — which the reviewing model can
+// misread as a failing test and turn into a false finding.
+func TestResolveExec_RunsTheSnapshotPreCheckToo(t *testing.T) {
+	var gotWritable bool
+	var gotDir string
+	origCheck := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, writable bool) error {
+		gotDir, gotWritable = dir, writable
+		return errors.New("os-level sandbox cannot contain this directory: SnapshotDir is a user's home directory")
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = origCheck })
+
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: registry.SandboxFallbackOSLevel}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err, "an unusable repo path must refuse at the gate, not at the first tool call")
+	assert.Equal(t, 2, exitCode(err))
+	assert.Contains(t, err.Error(), "home directory")
+	assert.Nil(t, backend)
+	assert.False(t, gotWritable, "--exec call sites leave RunSpec.Writable false, so the read-only shape is the one to check")
+	assert.True(t, filepath.IsAbs(gotDir), "the check must receive an absolute path, got %q", gotDir)
+}
+
+// nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
+// pre-check dispatches on that and nothing else runs it.
+type nameOnlyBackend struct{ name string }
+
+func (b *nameOnlyBackend) Name() string                    { return b.name }
+func (b *nameOnlyBackend) Preflight(context.Context) error { return nil }
+func (b *nameOnlyBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
+	return sandbox.RunResult{}, errors.New("nameOnlyBackend does not execute")
+}

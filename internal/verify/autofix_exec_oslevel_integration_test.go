@@ -330,8 +330,16 @@ func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) 
 	requireResolvableSandboxTool(t)
 
 	snapshot := t.TempDir()
-	marker := filepath.Join("/tmp", "atcr-fallback-tmp-probe.txt")
-	require.NoError(t, os.WriteFile(marker, []byte("HOSTTMP\n"), 0o644))
+	// os.CreateTemp, not a fixed name: os.WriteFile follows symlinks, so a
+	// pre-existing symlink at a predictable path in world-writable /tmp would be
+	// overwritten as the invoking user, and two concurrent runs would collide and
+	// delete each other's marker in cleanup.
+	f, err := os.CreateTemp("/tmp", "atcr-fallback-tmp-probe-*.txt")
+	require.NoError(t, err)
+	marker := f.Name()
+	_, err = f.WriteString("HOSTTMP\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 	t.Cleanup(func() { _ = os.Remove(marker) })
 
 	backend := resolveFallbackBackend(t, fallbackConfig(t))

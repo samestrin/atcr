@@ -398,3 +398,38 @@ func TestTruncateCause_BoundsAnUnboundedDaemonMessage(t *testing.T) {
 	assert.Less(t, len(got), 500)
 	assert.Contains(t, got, "truncated")
 }
+
+// TestOSLevelFallbackConfig_UnsetTimeoutInheritsTheHardenedDefaults covers the
+// common config, where sandbox.timeout_secs is absent. Both fallback timeout
+// tests set it explicitly, so the default path was asserted nowhere — and the
+// Phase 4 gate showed that seeding from a zero OSLevelConfig instead of
+// DefaultOSLevelConfig left the whole suite green while returning timeout 0,
+// which makes internal/tools refuse EVERY run_tests/run_script call with
+// "execution timeout not configured": --exec under the fallback silently stops
+// executing anything at all.
+func TestOSLevelFallbackConfig_UnsetTimeoutInheritsTheHardenedDefaults(t *testing.T) {
+	def := sandbox.DefaultOSLevelConfig()
+
+	got := osLevelFallbackConfig(&registry.SandboxConfig{}) // no TimeoutSecs
+
+	assert.Equal(t, def.Timeout, got.Timeout)
+	assert.Positive(t, got.Timeout, "a zero timeout disables execution downstream rather than defaulting it")
+	assert.Equal(t, def.MaxOutputBytes, got.MaxOutputBytes)
+	assert.Positive(t, got.MaxOutputBytes)
+	assert.Equal(t, def.MaxConcurrent, got.MaxConcurrent)
+	assert.Positive(t, got.MaxConcurrent)
+}
+
+// TestResolveExecBackend_FallbackWithoutConfiguredTimeoutStillExecutes is the
+// same guarantee at the resolver's boundary, where the caller consumes it.
+func TestResolveExecBackend_FallbackWithoutConfiguredTimeoutStillExecutes(t *testing.T) {
+	_, gotCfg, _ := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel) // no TimeoutSecs
+
+	_, _, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	assert.Equal(t, sandbox.DefaultOSLevelConfig().Timeout, timeout)
+	assert.Positive(t, timeout, "the caller must never receive a zero timeout from the fallback path")
+	assert.Positive(t, gotCfg.MaxOutputBytes)
+}

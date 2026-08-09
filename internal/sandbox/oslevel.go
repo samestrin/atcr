@@ -1257,9 +1257,12 @@ func (b *osLevelBackend) platformToolName() (string, error) {
 // always takes — and cleans up after itself, so a caller can treat a nil return
 // as "the generators will accept this path".
 func CheckSnapshotUsable(cfg OSLevelConfig, snapshotDir string, writable bool) error {
-	if writable && cfg.ScratchDir == "" {
-		// Run creates the scratch dir before building the argv; mirror that here,
-		// or the Writable generators refuse for a reason the caller cannot act on.
+	if cfg.ScratchDir == "" {
+		// Run creates the scratch dir before building the argv and sets it on the
+		// per-run config for BOTH Writable values, so this mirrors it
+		// unconditionally. Creating it only for the writable shape would skip the
+		// generators' ScratchDir guards on the read-only one, making this helper
+		// systematically more permissive than the run it claims to predict.
 		scratch, err := os.MkdirTemp("", "atcr-oslevel-precheck-*")
 		if err != nil {
 			return fmt.Errorf("sandbox: cannot stage an os-level containment check: %w", err)

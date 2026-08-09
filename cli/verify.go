@@ -82,6 +82,31 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 		// sentinel travels intact because codedError implements Unwrap.
 		return nil, nil, 0, usageError(err)
 	}
+	// The same TD-019 pre-check --auto-fix runs as its gate check (5), applied
+	// here so the two resolvers do not drift: under the os-level fallback a repo
+	// at $HOME, at /tmp, or at a path carrying a sandbox-exec profile
+	// metacharacter is rejected by the generators, and without this it surfaces
+	// only when a skeptic's first run_tests call faults — which the reviewing
+	// model can misread as a failing test and turn into a false finding.
+	//
+	// writable is false: --exec's call sites leave RunSpec.Writable false, and
+	// the read-only and writable shapes accept different paths, so checking the
+	// other one here would validate a run that never happens.
+	//
+	// normalizeRepoFlag is the same resolution runVerify uses; on a command that
+	// registers no repo-root flag (review --verify) it falls back to ".", which
+	// is that path's repo root anyway.
+	root, rootErr := normalizeRepoFlag(cmd)
+	if rootErr != nil {
+		return nil, nil, 0, rootErr
+	}
+	absRoot, absErr := filepath.Abs(root)
+	if absErr != nil {
+		return nil, nil, 0, usageError(absErr)
+	}
+	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, absRoot, false); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
 	return backend, testCmd, timeout, nil
 }
 

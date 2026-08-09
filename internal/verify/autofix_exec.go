@@ -146,15 +146,17 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 // the patch has already been applied, surfacing as an opaque "validation could
 // not run". Refusing here turns that into the generator's own specific message,
 // before anything is touched.
-func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxConfig, snapshotDir string) error {
+func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxConfig, snapshotDir string, writable bool) error {
 	if backend == nil || backend.Name() != registry.SandboxFallbackOSLevel {
 		return nil
 	}
-	// Writable: true is not a choice here — RunSandboxedValidation hardcodes it
-	// for every --auto-fix validation, so it is the only argv shape this path
-	// ever builds, and checking the read-only shape would validate a run that
-	// never happens.
-	if err := sandbox.CheckSnapshotUsable(osLevelFallbackConfig(sc), snapshotDir, true); err != nil {
+	// writable is a parameter, not a hardcoded true, because the two call sites
+	// genuinely differ and the shapes are NOT interchangeable — measured: for
+	// os.TempDir() the read-only check passes while the writable one refuses
+	// (the scratch dir would sit inside the snapshot). --auto-fix always runs
+	// Writable (RunSandboxedValidation hardcodes it); --exec never does. Checking
+	// the wrong shape would validate a run that never happens.
+	if err := sandbox.CheckSnapshotUsable(osLevelFallbackConfig(sc), snapshotDir, writable); err != nil {
 		return fmt.Errorf("os-level sandbox cannot contain this directory: %w", err)
 	}
 	return nil
