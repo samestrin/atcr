@@ -1739,5 +1739,73 @@ func checkSnapshotUsableFor(goos string, cfg OSLevelConfig, snapshotDir string, 
 	if _, err := osLevelContainmentArgs(goos, cfg, spec); err != nil {
 		return err
 	}
+	// A Writable run seeds a copy of the snapshot into scratch, and that copy has
+	// hard bounds enforced only at Run. Without this the gate accepted a tree the
+	// run would refuse: --auto-fix applied the patch, then validation faulted with
+	// the opaque "validation could not run" — the exact failure this pre-check
+	// exists to turn into a specific refusal before anything is touched.
+	//
+	// Read-only runs copy nothing, so the bounds do not apply to them; gating
+	// `--exec` on them would be a false refusal.
+	if writable {
+		if err := checkWritableCopyBounds(canonical); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// checkWritableCopyBounds walks src and reports the same refusal seedWritableCopy
+// would, without copying anything.
+//
+// It deliberately mirrors seedWritableCopy's accounting rather than approximating
+// it: every visited entry counts toward the entry bound (directories and symlinks
+// included), only regular files contribute bytes, and an unreadable entry is
+// skipped rather than fatal — because the snapshot may be the operator's LIVE
+// working tree. A cheaper approximation would make the gate and the run disagree,
+// which is the defect being fixed, one layer up.
+//
+// Cost: one stat walk that seedWritableCopy is about to repeat. That is accepted
+// deliberately — the walk aborts at the first crossed bound, so the pathological
+// tree is the CHEAP case, and paying it buys a refusal before --auto-fix mutates
+// the working tree.
+func checkWritableCopyBounds(src string) error {
+	var copiedBytes int64
+	var entries int
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if path == src {
+				return walkErr
+			}
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil // skipped, exactly as the seed skips it
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		entries++
+		if entries > osLevelMaxWritableCopyEntries {
+			return fmt.Errorf("sandbox: snapshot is too large to copy into the writable scratch tree "+
+				"(more than %d entries)", osLevelMaxWritableCopyEntries)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil // vanished or unreadable between readdir and stat: the seed skips it too
+		}
+		copiedBytes += info.Size()
+		if copiedBytes > osLevelMaxWritableCopyBytes {
+			return fmt.Errorf("sandbox: snapshot is too large to copy into the writable scratch tree "+
+				"(exceeds %d bytes)", osLevelMaxWritableCopyBytes)
+		}
+		return nil
+	})
 }
