@@ -91,10 +91,15 @@ func TestSandboxConfig_Validate_AutoFixTensionUnchanged(t *testing.T) {
 // inside a shared table. Every case pairs the Fallback value with an otherwise
 // valid config so the assertion isolates the fallback branch specifically.
 //
-// The allowlist is exact-match with no case-folding, mirroring Backend's check
-// (sandbox.go:47): a typo'd casing must fail at config load rather than silently
-// no-op'ing at the resolver, where "fallback configured" and "fallback absent"
-// have opposite security meanings.
+// The allowlist is exact-match with no case-folding, mirroring the Backend check
+// in the same function: a typo'd casing must fail at config load rather than
+// silently no-op'ing at the resolver, where "fallback configured" and "fallback
+// absent" have opposite security meanings.
+//
+// Every accepted case asserts the field's value AFTER Validate(), not merely the
+// absence of an error. Without that, a case named "treated as unset" passes on a
+// config whose Fallback still holds "   " — and the resolvers test their config
+// fields for raw non-emptiness, so that leftover reads as "opted in".
 func TestSandboxConfig_Validate_Fallback(t *testing.T) {
 	base := func(fallback string) *SandboxConfig {
 		return &SandboxConfig{
@@ -108,24 +113,31 @@ func TestSandboxConfig_Validate_Fallback(t *testing.T) {
 		name     string
 		fallback string
 		ok       bool
-		wantSub  string
+		// wantStored is the value the field MUST hold after a successful
+		// Validate() — the two-state invariant the resolvers rely on. Only
+		// meaningful for ok==true cases.
+		wantStored string
+		wantSub    string
 	}{
-		{"unset is valid (pre-story configs unchanged)", "", true, ""},
-		{"exact sentinel is valid", SandboxFallbackOSLevel, true, ""},
-		{"whitespace-only is treated as unset", "   ", true, ""},
-		{"tab/newline-only is treated as unset", "\t\n", true, ""},
-		{"surrounding whitespace is trimmed", "  os-level  ", true, ""},
-		{"unsupported value", "always", false, "is unsupported"},
-		{"a backend name is not a fallback value", "docker", false, "is unsupported"},
-		{"upper camel case is rejected (no case folding)", "OS-Level", false, "is unsupported"},
-		{"all caps is rejected (no case folding)", "OS-LEVEL", false, "is unsupported"},
-		{"near-miss spelling is rejected", "oslevel", false, "is unsupported"},
+		{"unset is valid (pre-story configs unchanged)", "", true, "", ""},
+		{"exact sentinel is valid", SandboxFallbackOSLevel, true, SandboxFallbackOSLevel, ""},
+		{"whitespace-only is treated as unset", "   ", true, "", ""},
+		{"tab/newline-only is treated as unset", "\t\n", true, "", ""},
+		{"surrounding whitespace is trimmed", "  os-level  ", true, SandboxFallbackOSLevel, ""},
+		{"unsupported value", "always", false, "", "is unsupported"},
+		{"a backend name is not a fallback value", "docker", false, "", "is unsupported"},
+		{"upper camel case is rejected (no case folding)", "OS-Level", false, "", "is unsupported"},
+		{"all caps is rejected (no case folding)", "OS-LEVEL", false, "", "is unsupported"},
+		{"near-miss spelling is rejected", "oslevel", false, "", "is unsupported"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := base(tc.fallback).Validate()
+			cfg := base(tc.fallback)
+			err := cfg.Validate()
 			if tc.ok {
 				assert.NoError(t, err)
+				assert.Equal(t, tc.wantStored, cfg.Fallback,
+					"after Validate() the field must hold exactly \"\" or the sentinel — a resolver testing it for raw non-emptiness must not see a third state")
 				return
 			}
 			require.Error(t, err)

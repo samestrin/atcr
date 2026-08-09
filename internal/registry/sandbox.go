@@ -91,12 +91,22 @@ func (s *SandboxConfig) Validate() error {
 	// The fallback allowlist is deliberately LAST and self-contained: it shares no
 	// early return with the Image/TestCommand checks above, so configuring a
 	// fallback can neither exempt a block from them nor change which failure an
-	// operator sees for a config broken in two ways. Exact match after trimming,
-	// with no case folding, mirroring Backend at line 47 — "OS-Level" must fail at
-	// config load, because at the resolver a value that misses the sentinel is
-	// indistinguishable from no fallback at all, and silently refusing to fall back
-	// is the opposite of what the operator wrote down.
-	if f := strings.TrimSpace(s.Fallback); f != "" && f != SandboxFallbackOSLevel {
+	// operator sees for a config broken in two ways. Exact match with no case
+	// folding, mirroring the Backend check earlier in this function — "OS-Level"
+	// must fail at config load, because at the resolver a value that misses the
+	// sentinel is indistinguishable from no fallback at all, and silently refusing
+	// to fall back is the opposite of what the operator wrote down.
+	//
+	// The trimmed value is written BACK to the field rather than only compared:
+	// the sibling resolvers test their config fields for raw non-emptiness
+	// (internal/verify/exec.go: `sc.DockerPath != ""`, `sc.Image != ""`), so a
+	// whitespace-only Fallback that this function classified as "unset" would read
+	// as "opted in" to a resolver following that convention — implicit enablement
+	// of a fail-closed bypass, from a value the operator never wrote. Normalizing
+	// here leaves exactly two states reachable downstream: "" or the sentinel.
+	// Safe in place: config load precedes any sharing of the struct.
+	s.Fallback = strings.TrimSpace(s.Fallback)
+	if s.Fallback != "" && s.Fallback != SandboxFallbackOSLevel {
 		return fmt.Errorf("sandbox.fallback %q is unsupported (only %q)", s.Fallback, SandboxFallbackOSLevel)
 	}
 	return nil
