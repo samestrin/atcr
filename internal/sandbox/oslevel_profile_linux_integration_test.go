@@ -531,8 +531,16 @@ func TestIntegration_OSLevelLinux_ArgvTerminatorHoldsAgainstAHostileCommand(t *t
 		Timeout:     10 * time.Second,
 	})
 	// The tokens must be treated as a command to execute (which fails), never
-	// as bwrap options.
-	if err == nil {
+	// as bwrap options. Assert the outcome UNCONDITIONALLY — one of the two
+	// shapes, never neither: bwrap's own "bwrap: execvp --bind: ..." diagnostic
+	// is classified as a FAULT by classifyToolExit (oslevel.go), so err != nil
+	// is the path actually taken, and the old `if err == nil` wrapper meant the
+	// exit-code check NEVER ran — a backend fault for an unrelated reason that
+	// happened to echo the argv would have satisfied the first half.
+	if err != nil {
+		assert.Contains(t, err.Error(), "execvp",
+			"the fault must name the exec failure of the hostile command, not an unrelated backend error; got: %v", err)
+	} else {
 		assert.NotEqual(t, 0, res.ExitCode, "output: %s", res.Output)
 	}
 	combined := res.Output
