@@ -310,7 +310,7 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// pathAncestors excludes the root), but the map's contract is "every literal
 	// in this clause, once" and seeding it is what makes that true by
 	// construction rather than by a normalization invariant enforced elsewhere.
-	ancestorRoots := []string{snapshot, scratch, moduleCache}
+	ancestorRoots := append([]string{snapshot, scratch, moduleCache}, darwinSystemReadDirs...)
 	seenAncestor := map[string]bool{"/": true}
 	metadataLiterals := []string{profileLiteral("/")}
 	for _, alias := range darwinSymlinkAliases {
@@ -328,6 +328,16 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// subpaths granted. Granting an ancestor's metadata reveals that the
 	// directory exists and nothing about its contents, so this does not widen
 	// the read surface the way a subpath rule would.
+	//
+	// darwinSystemReadDirs is in ancestorRoots for the same reason, measured
+	// 2026-08-09 against the real sandbox-exec on macOS 26.2: /usr/bin/python3
+	// is an xcrun shim whose SDK lookup realpaths
+	// /Library/Developer/CommandLineTools/usr/bin, and realpath stats EVERY
+	// ancestor component — the stat on /Library hit the deny-default and
+	// python3 exited 1 before running any user code (": realpath:
+	// /Library/Developer/CommandLineTools/usr/bin/: Operation not
+	// permitted"). git, go and node never stat their read-tier ancestors, so
+	// the gap stayed invisible until a shim that does was measured.
 	for _, dir := range ancestorRoots {
 		if dir == "" {
 			continue
@@ -353,6 +363,13 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 		b.WriteString("(allow file-read* " + profileLiteral(dev) + ")\n")
 	}
 	b.WriteString("(allow file-read* file-write-data " + profileLiteral("/dev/null") + ")\n")
+	// The xcrun shim behind /usr/bin/python3 reads the host OS version from
+	// this plist on every invocation; denied, it prints "unable to read SDK
+	// settings for '/'" and "unable to determine the version of the host OS"
+	// over the workload's stderr. Measured 2026-08-09 on macOS 26.2: granting
+	// this one literal cleared both diagnostics. It discloses the OS version —
+	// already implied by the dyld cryptex paths darwinSystemReadDirs grants.
+	b.WriteString("(allow file-read-data " + profileLiteral("/System/Library/CoreServices/SystemVersion.plist") + ")\n")
 	b.WriteString(profileReadRule(snapshot) + "\n")
 	// READ, never write. A persistent directory the workload could write is a
 	// cache-poisoning primitive that outlives the run and feeds every later
