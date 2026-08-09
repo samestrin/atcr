@@ -1831,3 +1831,9 @@ func checkWritableCopyBounds(src string) error {
 		return nil
 	})
 }
+
+// CheckToolchainReachable reports whether cmd's binary can still be resolved
+// through the PATH the sandboxed workload will actually receive.
+//
+// STUB — wired but deliberately inert; see the RED test.
+func CheckToolchainReachable(cmd []string) error { return nil }
