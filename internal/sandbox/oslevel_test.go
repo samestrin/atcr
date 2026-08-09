@@ -1697,10 +1697,27 @@ func TestOSLevelBackend_Preflight_ResolvesOnlyFromTrustedDirs(t *testing.T) {
 
 	b := withContainment(t, NewOSLevelBackend(DefaultOSLevelConfig()))
 	b.goos = "linux"
+	// The trusted dirs are injected as an EMPTY fixture directory rather than
+	// left nil. Left nil, resolution falls through to the real trustedToolDirs
+	// (/usr/bin, /bin, /usr/sbin, /sbin) and on any host that has bubblewrap
+	// installed — every Linux dev box with it, and the CI job that apt-gets it —
+	// resolveToolPath returns /usr/bin/bwrap with a nil error and this
+	// require.Error fails. The variable under test is the $PATH-planted binary,
+	// so the trusted set must contribute nothing. The t.Setenv above stays as-is:
+	// that IS the variable under test. The seam exists for exactly this
+	// (oslevel.go:147-151) and its sibling below already uses it.
+	trusted := t.TempDir()
+	b.trustedDirs = []string{trusted}
 
 	_, err := b.resolveToolPath()
 	require.Error(t, err, "a $PATH-planted binary must not be accepted as the sandbox tool")
 	assert.Contains(t, err.Error(), "not found in")
+	// The refusal must be attributable to the injected trusted set, not to the
+	// host happening to lack bubblewrap — otherwise this assertion silently
+	// becomes a statement about the CI image.
+	assert.Contains(t, err.Error(), trusted, "resolution must have consulted the injected trusted dirs")
+	assert.NotContains(t, err.Error(), "/usr/bin", "the real system dirs must not have been consulted")
+	assert.NotContains(t, err.Error(), dir, "the $PATH directory must never enter resolution")
 }
 
 func TestCheckHostPrerequisite_LinuxUsernsSysctls(t *testing.T) {
