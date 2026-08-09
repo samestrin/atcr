@@ -313,6 +313,30 @@ func TestResolveAutoFixSandbox_CanceledContextDoesNotAttemptFallback(t *testing.
 	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
 }
 
+// TestResolveAutoFixSandbox_InterruptDuringFallbackPreflightIsNotSentineled
+// mirrors TestResolveExecBackend_InterruptDuringFallbackPreflightIsNotSentineled
+// on the auto-fix resolver: the cross-resolver consistency requirement covers
+// the interrupt path too, not just the happy-path branch shape.
+func TestResolveAutoFixSandbox_InterruptDuringFallbackPreflightIsNotSentineled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fake, _, calls := stubOSLevel(t, context.Canceled)
+	fake.cancel = cancel // the SIGINT lands while the OS-level preflight runs
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Image = "alpine:3.20"
+
+	b, err := ResolveAutoFixSandbox(ctx, true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend,
+		"a ctrl-C during the OS-level preflight is an interrupt, not a broken sandbox config")
+	assert.ErrorIs(t, err, context.Canceled,
+		"the cancellation must stay reachable through the chain")
+}
+
 // --- TD-019: os-level snapshot pre-check ------------------------------------
 //
 // Preflight probes against its OWN temp snapshot, but RunSandboxedValidation
