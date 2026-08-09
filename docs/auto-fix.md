@@ -192,9 +192,14 @@ Concretely, opting in accepts all of the following:
   hardened container default is likewise dropped: `--cap-drop ALL`,
   `--security-opt no-new-privileges`, and the read-only root filesystem.
 - **`sandbox.image` is ignored.** There is no container, so `test_command` /
-  `validate_command` runs against whatever toolchain the **host's** `PATH`
-  provides. If that toolchain is absent the command exits `127`, which a reviewing
-  model can misread as a genuine validation failure rather than a missing tool.
+  `validate_command` runs against the **host's** toolchain rather than the declared
+  image's. If that toolchain is not reachable the command exits `127`, which a
+  reviewing model can misread as a genuine validation failure rather than a missing
+  tool. On Linux, "reachable" is narrower than your `PATH` suggests: the sandbox
+  binds only `/usr` plus `/bin`, `/sbin`, `/lib`, and `/lib64`, so a toolchain
+  installed under `/opt`, `/nix`, `/home/linuxbrew`, or a version-manager shim in
+  `$HOME` (mise, asdf, nvm) is invisible inside the sandbox even though `PATH`
+  still resolves it on the host.
 - **`/tmp` differs by platform.** On Linux the run gets a fresh, ephemeral
   `--tmpfs /tmp`. On macOS `sandbox-exec` cannot provide one, so the run gets the
   **host's real `/tmp`, readable and writable** — where Docker gave a throwaway
