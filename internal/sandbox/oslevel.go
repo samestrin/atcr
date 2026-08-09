@@ -549,6 +549,10 @@ var copySymlinkIfContained = func(src, path, dst, target string) error {
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(filepath.Dir(path), resolved)
 	}
+	// The fold flag is deliberately false even on case-insensitive filesystems:
+	// a case-variant in-snapshot link is then DROPPED rather than recreated,
+	// and dropping is the safe direction — the workload sees a missing path,
+	// never a host file.
 	if !pathContainsFold(src, filepath.Clean(resolved), false) {
 		return nil // escapes the snapshot: drop it
 	}
