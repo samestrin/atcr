@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,6 +115,34 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 		return nil, nil, 0, usageError(err)
 	}
 	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, absRoot, false); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	// absRoot is NOT necessarily the directory the run is handed. buildDispatcher
+	// takes the run's root from tools.NewSnapshotManager(repoRoot).SnapshotFor(head),
+	// and that returns the live worktree ONLY on the clean-tree fast path
+	// (internal/tools/snapshot.go). Any dirty worktree gets a detached copy under
+	// os.MkdirTemp("", "atcr-snapshot-"), whose path is unrelated to absRoot — so
+	// gating absRoot alone could false-refuse (a repo under $HOME rejected even
+	// though the sandboxed dir is an OS temp path) and false-pass (a TMPDIR the
+	// generators would reject, never inspected).
+	//
+	// Both roots are gated, which is what makes the check right on BOTH paths
+	// without needing to know which one this invocation will take.
+	//
+	// os.TempDir() itself, not a predicted leaf: checkSnapshotUsableFor calls
+	// filepath.EvalSymlinks, which errors on a path that does not exist yet, so a
+	// synthesized "atcr-snapshot-XXXX" name would fail for the wrong reason. This
+	// is sound because the containment checks involved are pure path-prefix logic
+	// with no dependence on directory contents, and os.MkdirTemp always nests
+	// under os.TempDir() with a random suffix carrying no profile metacharacters —
+	// so a safe os.TempDir() implies every snapshot leaf beneath it is safe too.
+	//
+	// Deliberately NOT moved into buildDispatcher, which is where SnapshotDir is
+	// finally known: a failure there is returned into the pipeline and degrades
+	// affected findings to unverifiable, whereas a refusal here is a fail-fast
+	// usage error before the review starts — which is the entire reason this
+	// pre-check exists rather than letting the first run_tests call fault.
+	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, os.TempDir(), false); err != nil {
 		return nil, nil, 0, usageError(err)
 	}
 	return backend, testCmd, timeout, nil

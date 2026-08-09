@@ -523,10 +523,16 @@ func TestResolveExec_CheapPathCheckRunsBeforeBackendResolution(t *testing.T) {
 // not a directory", naming a flag review does not have. On this call site the
 // gate's root is the working tree — the root the review run itself uses.
 func TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath(t *testing.T) {
-	var gotDir string
+	// Collect every gated directory, not just the last. resolveExec gates the
+	// repo root AND os.TempDir() (the dirty-worktree snapshot root the run may
+	// actually use), so a single-value capture would silently record whichever
+	// call happened to come last. What this test is about is that review's
+	// --repo owner/name never reaches normalizeRepoFlag — so the assertion is
+	// that the working-tree root is AMONG the gated dirs.
+	var gotDirs []string
 	origCheck := checkOSLevelSnapshotFn
 	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, _ bool) error {
-		gotDir = dir
+		gotDirs = append(gotDirs, dir)
 		return nil
 	}
 	t.Cleanup(func() { checkOSLevelSnapshotFn = origCheck })
@@ -553,7 +559,7 @@ func TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath(t *testing.T) {
 	assert.Equal(t, time.Minute, timeout)
 	wantRoot, wantErr := filepath.Abs(".")
 	require.NoError(t, wantErr)
-	assert.Equal(t, wantRoot, gotDir, "on the review call site the gate checks the working-tree root")
+	assert.Contains(t, gotDirs, wantRoot, "on the review call site the gate checks the working-tree root")
 }
 
 // TestResolveExec_WorkingBackendSurvivesTheSnapshotGate is the happy-path bar
