@@ -1887,19 +1887,22 @@ func TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget(t
 	assert.Equal(t, wantRoot, got, "the checked directory must be the resolved apply target the validation will use")
 }
 
-// TestHiddenCause_CarriesTheSentinelWithoutContributingText pins the mechanism
-// that keeps --auto-fix output byte-identical for operators who never opted in.
-// It had no test at all: mutating Error() to return the wrapped message left the
-// whole suite green while every operator saw the message twice.
-func TestHiddenCause_CarriesTheSentinelWithoutContributingText(t *testing.T) {
+// TestAutoFixRefusal_CarriesTheSentinelBehindTheJoinedText pins the refusal
+// type's contract: the message is the joined list alone (the resolver's text
+// is already rendered into it, so contributing it again would print twice)
+// while the cause stays matchable for errors.Is — and Error() is never empty,
+// so a consumer that unwraps and prints never renders a blank hole. It
+// replaced hiddenCause, whose empty Error() did exactly that.
+func TestAutoFixRefusal_CarriesTheSentinelBehindTheJoinedText(t *testing.T) {
 	sentinel := errors.New("boom")
-	h := hiddenCause{err: sentinel}
+	r := autoFixRefusal{text: "--auto-fix cannot run: a; b", cause: sentinel}
 
-	assert.Equal(t, "", h.Error(), "it must contribute NO text; the rendered message already carries it")
-	assert.ErrorIs(t, h, sentinel, "...while still carrying the cause for errors.Is")
+	assert.Equal(t, "--auto-fix cannot run: a; b", r.Error(),
+		"it must contribute ONLY the joined text; the rendered list already carries the resolver's message")
+	assert.ErrorIs(t, r, sentinel, "...while still carrying the cause for errors.Is")
 
-	wrapped := fmt.Errorf("gate refused: %s%w", "a; b", h)
-	assert.Equal(t, "gate refused: a; b", wrapped.Error(), "wrapping must not alter the message")
+	wrapped := fmt.Errorf("outer: %w", r)
+	assert.Equal(t, "outer: --auto-fix cannot run: a; b", wrapped.Error(), "wrapping must not alter the message")
 	assert.ErrorIs(t, wrapped, sentinel)
 }
 

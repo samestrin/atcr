@@ -71,20 +71,23 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
 }
 
-// hiddenCause carries an error for errors.Is/errors.As WITHOUT contributing any
-// text to the message it is wrapped into. Its Error() is empty by design.
-//
-// It exists for one narrow job: validateAutoFixBackend renders every failed gate
-// check into a joined human-readable list, so the sandbox resolver's message is
-// already present in that string. Wrapping the resolver's error the ordinary way
-// would print it a second time, but NOT wrapping it strips the sentinel — and
-// verify.ErrSandboxNoUsableBackend exists precisely so an errors.Is check means
-// the same thing at the --exec and --auto-fix call sites. This keeps the operator
-// -facing text byte-identical while restoring that parity.
-type hiddenCause struct{ err error }
+// autoFixRefusal is the --auto-fix gate's refusal error. Error() returns the
+// joined human-readable list ONLY — the resolver's message is already rendered
+// into that list, so contributing it here would print it twice — while Unwrap
+// exposes the underlying cause so errors.Is(verify.ErrSandboxNoUsableBackend)
+// means the same thing at the --exec and --auto-fix call sites. Unlike the
+// hiddenCause placeholder it replaced, Error() is never empty: any consumer
+// that unwraps and prints (errors.Unwrap(err).Error(), errors.Join, a %v on an
+// intermediate cause, a structured logger walking the chain) gets real text.
+// It must never escape validateAutoFixBackend's wrapping expression — the
+// joined text alone is only the right message in that one position.
+type autoFixRefusal struct {
+	text  string
+	cause error
+}
 
-func (h hiddenCause) Error() string { return "" }
-func (h hiddenCause) Unwrap() error { return h.err }
+func (e autoFixRefusal) Error() string { return e.text }
+func (e autoFixRefusal) Unwrap() error { return e.cause }
 
 // resolveAutoFixSandboxFn is the sandbox resolver validateAutoFixBackend calls,
 // indirected through a package var (like resolveHeadSHAFn) so a test can count
@@ -385,10 +388,13 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	if len(missing) > 0 {
 		joined := strings.Join(missing, "; ")
 		if sandboxErr != nil {
-			// %w on the resolver's error keeps its sentinel matchable while the
-			// message stays byte-identical: the rendered text is already inside
-			// `joined`, so this wraps for errors.Is without printing it twice.
-			return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s%w", joined, hiddenCause{sandboxErr}))
+			// The refusal's Error() is the joined list alone (the resolver's text
+			// is already rendered into it); Unwrap carries the resolver's error so
+			// the sentinel stays matchable without printing a second time.
+			return autoFixBackend{}, usageError(autoFixRefusal{
+				text:  fmt.Sprintf("--auto-fix cannot run: %s", joined),
+				cause: sandboxErr,
+			})
 		}
 		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", joined))
 	}
