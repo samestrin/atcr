@@ -3,6 +3,7 @@ package sandbox
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -1100,6 +1101,29 @@ func TestGenerators_DarwinGuardsFoldCaseButLinuxGuardsDoNot(t *testing.T) {
 		require.Error(t, err, "the firmlink spelling of a home directory must be refused like the canonical one")
 	})
 
+	t.Run("darwin rewrites every firmlink sub-prefix to a fixed point", func(t *testing.T) {
+		// A single rewrite pass maps /System/Volumes/Data/tmp/x to /tmp/x — an
+		// alias that matches NOTHING in the generated profile in either
+		// direction (measured against the real sandbox-exec: a trailing deny
+		// written against /tmp/zz-snap did not stop a write through
+		// /private/tmp/zz-snap). Every firmlink sub-prefix must normalize all
+		// the way.
+		for _, tc := range []struct{ in, want string }{
+			{"/System/Volumes/Data/tmp/atcr-snap", "/private/tmp/atcr-snap"},
+			{"/System/Volumes/Data/private/tmp/atcr-snap", "/private/tmp/atcr-snap"},
+			{"/System/Volumes/Data/var/folders/qq/T/atcr-snap", "/private/var/folders/qq/T/atcr-snap"},
+			{"/System/Volumes/Data/etc/whatever", "/private/etc/whatever"},
+			{"/System/Volumes/Data/Users/dev/project", "/Users/dev/project"},
+			{"/tmp/atcr-snap", "/private/tmp/atcr-snap"},
+			{"/var/folders/qq", "/private/var/folders/qq"},
+			{"/etc/whatever", "/private/etc/whatever"},
+		} {
+			got, err := profileSafePath("SnapshotDir", tc.in)
+			require.NoError(t, err, "%s", tc.in)
+			assert.Equal(t, tc.want, got, "%s must normalize all the way", tc.in)
+		}
+	})
+
 	t.Run("linux does not fold", func(t *testing.T) {
 		// Linux filesystems are genuinely case-sensitive: /Home is not /home,
 		// and refusing it would reject a legitimate distinct directory.
@@ -1109,6 +1133,30 @@ func TestGenerators_DarwinGuardsFoldCaseButLinuxGuardsDoNot(t *testing.T) {
 		require.NoError(t, err, "/Home is a different directory from /home on a case-sensitive filesystem")
 		assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{"/Home/dev", "/Home/dev"})
 	})
+}
+
+func TestSandboxExecProfile_NeverEmitsAnUnresolvedAlias(t *testing.T) {
+	// Generator-wide post-condition, stated as a property so no mirrored oracle
+	// can satisfy it: no path in the emitted profile may use a spelling
+	// sandbox-exec resolves away — an unresolved alias grants (or denies)
+	// NOTHING in either direction. The exceptions are the metadata literals for
+	// the symlink NODES themselves (/var, /etc, /tmp), which name the node
+	// deliberately: metadata permission on the node is what lets path
+	// resolution traverse it.
+	cfg, spec := profileFixture(t)
+	spec.SnapshotDir = "/System/Volumes/Data/tmp/atcr-snap-property"
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	clauses := regexp.MustCompile(`\((?:subpath|literal) "([^"]+)"\)`).FindAllStringSubmatch(profile, -1)
+	require.NotEmpty(t, clauses)
+	for _, m := range clauses {
+		p := strings.ToLower(m[1])
+		for _, banned := range []string{"/tmp/", "/var/", "/etc/", "/system/volumes/data"} {
+			assert.False(t, strings.HasPrefix(p, banned),
+				"the profile must not name the unresolved alias %q (from %q)", m[1], spec.SnapshotDir)
+		}
+	}
 }
 
 func TestSandboxExecProfile_PinsTheExplicitNetworkDenial(t *testing.T) {
