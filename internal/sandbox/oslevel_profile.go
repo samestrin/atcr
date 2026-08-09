@@ -726,7 +726,16 @@ var linuxPseudoMounts = []string{"/proc", "/dev", "/tmp"}
 // expose every user's home read-only inside the sandbox. A snapshot INSIDE a
 // home directory is ordinary and stays allowed — it is the tree itself that is
 // refused.
-var linuxHomeContainers = []string{"/home"}
+//
+// This is a SPELLING allowlist and assumes the caller hands it a canonical
+// path: the guards are component-wise string tests with no symlink resolution,
+// so a container is only refused under a spelling named here. /var/home is
+// listed because on ostree distributions (Fedora Silverblue/Kinoite, openSUSE
+// MicroOS) it is the real container and /home is a symlink to it — without it,
+// the refusal of /home on those hosts is bypassed simply by spelling the same
+// directory /var/home. /export/home is the Solaris/illumos and NFS-automount
+// layout, and /users the older BSD one.
+var linuxHomeContainers = []string{"/home", "/var/home", "/export/home", "/users"}
 
 // linuxHomeDirs are home directories that are not under a container. /root is
 // root's own home: /root is refused, /root/project is not.

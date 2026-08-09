@@ -662,7 +662,10 @@ func TestBwrapArgs_RejectsASnapshotThatWouldExposeTheHost(t *testing.T) {
 			assert.Nil(t, argv)
 		})
 	}
-	for _, ok := range []string{"/home/dev/project", "/root/project", "/srv/snap", "/tmp/atcr-snapshot-x"} {
+	// The container itself is what is refused; a repo INSIDE one is the ordinary
+	// developer case on every spelling, and over-refusing it would make the
+	// backend unusable on an ostree host rather than safer.
+	for _, ok := range []string{"/home/dev/project", "/var/home/dev/project", "/root/project", "/srv/snap", "/tmp/atcr-snapshot-x"} {
 		t.Run("allow "+ok, func(t *testing.T) {
 			spec := base
 			spec.SnapshotDir = ok
