@@ -399,10 +399,15 @@ var darwinSymlinkedPrefixes = map[string]string{
 // Normalization is prefix-based and therefore pure — the generator does no I/O,
 // which is what lets the containment boundary be asserted without a filesystem.
 // It handles the symlinks macOS actually ships. An ARBITRARY symlink (an
-// operator symlinking their snapshot dir) is still not resolved here, and the
-// residual risk of that is neutralized structurally rather than by detection:
-// the profile's trailing `(deny file-write* <snapshot>)` wins under
-// last-match-wins no matter which alias some other rule was written against.
+// operator symlinking their snapshot dir) is NOT resolved here, and the
+// measured behavior for one is fail-closed in BOTH directions: a rule naming
+// an unresolved alias matches nothing at all — neither as an allow (a
+// (subpath "/tmp/zz-snap") allow granted no read of /private/tmp/zz-snap) nor
+// as a deny (the trailing (deny file-write* <snapshot>) written against the
+// alias did not stop a write through the resolved path). The generators
+// therefore depend on the impure caller canonicalizing SnapshotDir and
+// ScratchDir with filepath.EvalSymlinks before they run (see runWith); this
+// function's purity is exactly why that upstream normalization has to exist.
 func profileSafePath(field, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("sandbox: %s must be an absolute path, got %q", field, path)
@@ -740,6 +745,17 @@ const sandboxArgvTerminator = "--"
 // argv can be asserted without bwrap installed. Every path is a discrete argv
 // element and the list is handed to os/exec with no shell, so a path containing
 // spaces or shell metacharacters carries no injection risk.
+//
+// The purity has a cost the caller must pay: every guard here is a
+// component-wise STRING test on the path as given, while bwrap binds the
+// RESOLVED target — a SnapshotDir that is a symlink to /, /home, /run or /etc
+// passes every refusal and is then --ro-bind'd wholesale, because a bind is
+// not a pattern match. (Darwin fails closed in the same situation — an
+// unresolved rule grants nothing; Linux fails OPEN.) The impure caller
+// (runWith) canonicalizes SnapshotDir and ScratchDir with
+// filepath.EvalSymlinks before this generator runs; the purity is what makes
+// the argv unit-testable, and it is exactly why the normalization cannot live
+// here.
 func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	if err := spec.validate(); err != nil {
 		return nil, err

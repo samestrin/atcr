@@ -927,6 +927,28 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// refuse them ever ran, and a SIGKILL inside that window would leave the
 	// copy on disk.
 	runCfg := b.cfg
+	// Canonicalize both paths before the pure generators see them. Their guards
+	// are component-wise STRING tests and cannot see symlinks: an unresolved
+	// SnapshotDir would be guarded under a spelling the kernel resolves away —
+	// on darwin the emitted rules are then inert (fail closed), on Linux bwrap
+	// binds the RESOLVED target (fail OPEN, the exact outcome the SnapshotDir="/"
+	// guard exists for). The generators' purity is what makes the containment
+	// boundary unit-testable, so the normalization has to live here, at the one
+	// impure call site. The scratch dir needs the same treatment: os.MkdirTemp
+	// returns a /var/folders spelling on macOS.
+	canonicalSnapshot, err := filepath.EvalSymlinks(spec.SnapshotDir)
+	if err != nil {
+		return RunResult{Command: cmdStr},
+			fmt.Errorf("os-level sandbox run: cannot resolve snapshot dir %q: %w", spec.SnapshotDir, err)
+	}
+	spec.SnapshotDir = canonicalSnapshot
+	canonicalScratch, err := filepath.EvalSymlinks(scratchDir)
+	if err != nil {
+		return RunResult{Command: cmdStr},
+			fmt.Errorf("os-level sandbox run: cannot resolve scratch dir %q: %w", scratchDir, err)
+	}
+	scratchDir = canonicalScratch
+	homeDir = filepath.Join(scratchDir, osLevelScratchHomeSubdir)
 	runCfg.ScratchDir = scratchDir
 	args, err := osLevelRunArgs(b.platform(), runCfg, spec)
 	if err != nil {
@@ -1462,9 +1484,17 @@ func checkSnapshotUsableFor(goos string, cfg OSLevelConfig, snapshotDir string, 
 		defer func() { _ = os.RemoveAll(scratch) }()
 		cfg.ScratchDir = scratch
 	}
+	// Mirror runWith's canonicalization: the generators are pure string
+	// functions and cannot see symlinks, so this pre-check must evaluate the
+	// same canonical path the real run will, or a nil return would not mean
+	// "the generators will accept this path".
+	canonical, err := filepath.EvalSymlinks(snapshotDir)
+	if err != nil {
+		return fmt.Errorf("sandbox: cannot resolve snapshot dir %q: %w", snapshotDir, err)
+	}
 	spec := RunSpec{
 		Command:     []string{"true"},
-		SnapshotDir: snapshotDir,
+		SnapshotDir: canonical,
 		Writable:    writable,
 	}
 	if _, err := osLevelContainmentArgs(goos, cfg, spec); err != nil {
