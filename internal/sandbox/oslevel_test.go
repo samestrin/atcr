@@ -1427,11 +1427,20 @@ func TestOSLevelBackend_Preflight_FailedRePreflightRevokesThePinnedTool(t *testi
 	// host changed (binary replaced, userns disabled) returned an error from
 	// Preflight while toolPath kept returning the stale pin, so Run kept
 	// spawning the binary the FAILED preflight just refused to vouch for.
-	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+	// The shim is resolved through the trustedDirs seam rather than cfg.ToolPath
+	// because an explicit operator override is deliberately spawnable without a
+	// preflight (see toolPath's doc) — the revocation defect lives in the pin.
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "bwrap")
+	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\n"+fakeOSLevelExecBody()), 0o755))
+
+	b := withContainment(t, NewOSLevelBackend(DefaultOSLevelConfig()))
+	b.goos = "linux"
+	b.trustedDirs = []string{dir}
 	require.NoError(t, b.Preflight(context.Background()))
 
 	// The host changed: the tool can no longer run the workload.
-	require.NoError(t, os.WriteFile(b.cfg.ToolPath, []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\nexit 1\n"), 0o755))
 	require.Error(t, b.Preflight(context.Background()), "the re-preflight must fail")
 
 	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
