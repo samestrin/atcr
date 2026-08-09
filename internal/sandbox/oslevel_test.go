@@ -20,15 +20,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// osLevelBackend must satisfy Backend exactly as DockerBackend does
+// OSLevelBackend must satisfy Backend exactly as DockerBackend does
 // (sandbox.go:122). oslevel.go carries the production assertion; this one keeps
 // a signature regression attributable to the test suite as well.
-var _ Backend = (*osLevelBackend)(nil)
+var _ Backend = (*OSLevelBackend)(nil)
 
 func TestOSLevelBackend_Name_StableOnStructLiteralAndConstructor(t *testing.T) {
 	// Name() is called from hot logging paths and must not depend on
 	// constructor-populated state (AC 01-01 Scenario 2 / Edge Case 1).
-	assert.Equal(t, osLevelBackendName, (&osLevelBackend{}).Name(),
+	assert.Equal(t, osLevelBackendName, (&OSLevelBackend{}).Name(),
 		"bare struct literal must still report the backend identifier")
 	assert.Equal(t, osLevelBackendName, NewOSLevelBackend(DefaultOSLevelConfig()).Name())
 }
@@ -650,7 +650,7 @@ func writeFakeOSLevel(t *testing.T, body string) string {
 // reasons unrelated to the behavior under test, and on the wrong platform they
 // reject the host's temp paths outright. Tests that mean to exercise the real
 // generators call them directly or drive the integration suite.
-func withContainment(t *testing.T, b *osLevelBackend) *osLevelBackend {
+func withContainment(t *testing.T, b *OSLevelBackend) *OSLevelBackend {
 	t.Helper()
 	orig := osLevelContainmentArgs
 	osLevelContainmentArgs = func(string, OSLevelConfig, RunSpec) ([]string, error) {
@@ -677,7 +677,7 @@ exit %d`, code, code)
 // empty, so a test exercising Run's taxonomy has to supply one; using the fake
 // keeps the taxonomy assertions independent of the real generators' path
 // guards.
-func newFakeOSLevelBackend(t *testing.T, body string) *osLevelBackend {
+func newFakeOSLevelBackend(t *testing.T, body string) *OSLevelBackend {
 	t.Helper()
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = writeFakeOSLevel(t, body)
@@ -1001,7 +1001,7 @@ func TestOSLevelBackendRun_StructLiteralMaxOutputBytesGetsTheDefaultFloor(t *tes
 	// semOnce) and Timeout, but a zero MaxOutputBytes produced a 4096-byte
 	// capture cap with NO truncation marker — truncate's limit<=0 early return
 	// — so output was silently clipped at an undocumented 4096 bytes.
-	b := withContainment(t, &osLevelBackend{cfg: OSLevelConfig{
+	b := withContainment(t, &OSLevelBackend{cfg: OSLevelConfig{
 		ToolPath: writeFakeOSLevel(t, `head -c 200000 /dev/zero | tr '\0' 'x'
 exit 0`),
 		Timeout: 5 * time.Second,
@@ -1018,7 +1018,7 @@ func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {
 	// A struct-literal backend bypasses NewOSLevelBackend and leaves sem nil;
 	// the lazy alloc must still enforce a cap rather than failing open
 	// (mirrors TestDockerBackend_StructLiteral_AppliesConcurrencyCap).
-	b := withContainment(t, &osLevelBackend{cfg: OSLevelConfig{
+	b := withContainment(t, &OSLevelBackend{cfg: OSLevelConfig{
 		ToolPath:       writeFakeOSLevel(t, fakeOSLevelExitBody(0)),
 		Timeout:        5 * time.Second,
 		MaxOutputBytes: 1024,
@@ -1612,7 +1612,7 @@ func TestCheckSnapshotUsableFor_BothPlatformsFromEitherHost(t *testing.T) {
 	// CheckSnapshotUsable routes through runtime.GOOS, so on any one host it
 	// could only ever be asserted for that host's platform — the one
 	// containment-relevant decision with no cross-platform test. The goos seam
-	// (mirroring osLevelBackend.platform()) makes both platforms' guard
+	// (mirroring OSLevelBackend.platform()) makes both platforms' guard
 	// decisions assertable from either host.
 	valid := t.TempDir()
 	cases := []struct {

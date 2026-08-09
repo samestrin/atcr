@@ -44,10 +44,11 @@ var ErrSandboxNoUsableBackend = errors.New("no usable sandbox backend")
 // sandbox-exec nor bwrap installed.
 //
 // It is declared with an explicit sandbox.Backend return type rather than as a
-// bare reference to sandbox.NewOSLevelBackend: that constructor returns the
-// unexported *osLevelBackend (see TD-002), a type no package outside
-// internal/sandbox can name — so a bare reference would compile here but be
-// unassignable from a test, which is the entire point of the seam.
+// bare reference to sandbox.NewOSLevelBackend: the seam's tests substitute
+// fakes that are not *sandbox.OSLevelBackend at all, so the wider interface
+// type keeps the substitution assignable. Callers that need the concrete type
+// (e.g. to assert timeout propagation) can still cast, as the Docker parity
+// test does with *sandbox.DockerBackend.
 var newOSLevelBackendFn = func(cfg sandbox.OSLevelConfig) sandbox.Backend {
 	return sandbox.NewOSLevelBackend(cfg)
 }

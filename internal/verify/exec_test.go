@@ -344,6 +344,11 @@ func TestOSLevelBackendSeam_RealConstructorIsWired(t *testing.T) {
 	require.NotNil(t, b)
 	assert.Equal(t, registry.SandboxFallbackOSLevel, b.Name(),
 		"the backend's name and the config value operators write must not drift apart")
+
+	ob, ok := b.(*sandbox.OSLevelBackend)
+	require.True(t, ok, "the resolver builds a *sandbox.OSLevelBackend")
+	assert.Equal(t, 45*time.Second, ob.Timeout(),
+		"TimeoutSecs override must reach the backend's per-run budget")
 }
 
 func TestResolveExecBackend_FallbackIrrelevantWhenExecDisabled(t *testing.T) {

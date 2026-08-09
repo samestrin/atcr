@@ -104,15 +104,23 @@ func DefaultOSLevelConfig() OSLevelConfig {
 	}
 }
 
-// osLevelBackend runs commands and scripts under the platform's native process
+// OSLevelBackend runs commands and scripts under the platform's native process
 // sandbox — sandbox-exec on macOS, bwrap on Linux — as a second Backend
 // implementation alongside DockerBackend, for hosts without a Docker daemon.
 //
-// It is unexported so no sandbox-exec/bwrap-specific type crosses the Backend
-// boundary; consumers hold it as a sandbox.Backend. NewOSLevelBackend returns
-// the concrete type (mirroring NewDockerBackend) purely so in-package tests can
-// reach cfg — see TD-002 if a cross-package assertion is ever needed.
-type osLevelBackend struct {
+// The type is exported (mirroring DockerBackend's shape, docker.go:80-88: the
+// name is public, every field stays unexported) so a cross-package resolver can
+// assert timeout propagation through a concrete-type cast — internal/verify's
+// parity test does exactly that. Consumers should still hold it as a
+// sandbox.Backend.
+//
+// Unsupported platforms surface at toolPath()/Preflight rather than in
+// NewOSLevelBackend, and that is deliberate: toolPath() re-checks GOOS on every
+// call, so even a caller that skips Preflight and calls Run directly gets an
+// immediate refusal, and the only production caller (internal/verify's
+// ResolveExecBackend) always preflights before returning the backend. An eager
+// constructor gate was considered and rejected as redundant with those two.
+type OSLevelBackend struct {
 	cfg OSLevelConfig
 	// sem bounds concurrent sandbox spawns to cfg.MaxConcurrent (buffered slots).
 	// NewOSLevelBackend allocates it; a struct-literal backend leaves it nil.
@@ -156,21 +164,21 @@ type osLevelBackend struct {
 }
 
 // platform reports the GOOS this backend classifies against.
-func (b *osLevelBackend) platform() string {
+func (b *OSLevelBackend) platform() string {
 	if b.goos != "" {
 		return b.goos
 	}
 	return runtime.GOOS
 }
 
-var _ Backend = (*osLevelBackend)(nil)
+var _ Backend = (*OSLevelBackend)(nil)
 
 // NewOSLevelBackend constructs an OS-level backend from cfg, flooring
 // non-positive values to their defaults. It mirrors NewDockerBackend
 // (docker.go:91-105): a caller must not have to pre-populate every field, and a
 // zero or negative timeout would be an unbounded run — the same
 // resource-exhaustion risk the Docker backend floors.
-func NewOSLevelBackend(cfg OSLevelConfig) *osLevelBackend {
+func NewOSLevelBackend(cfg OSLevelConfig) *OSLevelBackend {
 	def := DefaultOSLevelConfig()
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = def.Timeout
@@ -181,19 +189,19 @@ func NewOSLevelBackend(cfg OSLevelConfig) *osLevelBackend {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = def.MaxConcurrent
 	}
-	return &osLevelBackend{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
+	return &OSLevelBackend{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
 }
 
 // Name implements Backend. It returns a constant, so a struct-literal backend
 // reports the same identifier as a constructed one.
-func (b *osLevelBackend) Name() string { return osLevelBackendName }
+func (b *OSLevelBackend) Name() string { return osLevelBackendName }
 
 // Timeout reports the backend's default per-run wall-clock budget — the value
 // applied when RunSpec.Timeout is zero. Exposed for the same reason
 // DockerBackend.Timeout is (docker.go:115): the value is a context deadline and
 // never appears in the spawned argv, so a resolver's propagation of an
 // operator's configured timeout cannot otherwise be asserted.
-func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
+func (b *OSLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
 // Preflight implements Backend. It verifies, in strict order and
 // short-circuiting on the first failure:
@@ -208,7 +216,7 @@ func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // enable --exec against a sandbox that cannot actually contain anything, which
 // is DockerBackend.Preflight's reason for spawning a trivial container
 // (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
-func (b *osLevelBackend) Preflight(ctx context.Context) error {
+func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	// A re-preflight revokes the earlier pin up front, so a FAILED re-preflight
 	// leaves the backend unrunnable instead of spawning the binary a previous
 	// host state validated — the pin means "verified then", and a failed check
@@ -609,7 +617,7 @@ const preflightRunTimeout = 30 * time.Second
 // resolveToolPath returns the absolute path of the sandboxing binary, verifying
 // it exists and is executable. Unlike toolPath it performs I/O, so it belongs to
 // Preflight rather than the pure argv path.
-func (b *osLevelBackend) resolveToolPath() (string, error) {
+func (b *OSLevelBackend) resolveToolPath() (string, error) {
 	tool, err := b.platformToolName()
 	if err != nil {
 		return "", err
@@ -784,7 +792,7 @@ func osLevelRunArgs(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, err
 // taxonomy: a normal exit (zero or not) is a RunResult with a nil error, a
 // timeout or parent cancellation is TimedOut/124 with a nil error, and a
 // genuine backend fault is a wrapped error.
-func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
+func (b *OSLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	tool, err := b.toolPath()
 	if err != nil {
 		// A refusal must still appear in the evidence trail, with the command
@@ -814,7 +822,7 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 // one. Probes are rare (one backend setup, not per finding) and bounded by
 // preflightRunTimeout, so exempting them does not open the resource hole the
 // semaphore closes.
-func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec, probe bool) (res RunResult, err error) {
+func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec, probe bool) (res RunResult, err error) {
 	// Validate up front. The argv is no longer built here — it needs the scratch
 	// directory, which is created below — so without this a malformed spec would
 	// take a concurrency slot and create a temp tree before being refused.
@@ -1368,7 +1376,7 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 // program exit becomes RunResult.ExitCode with a nil error, anything else is a
 // wrapped backend fault. Platform-specific reserved exit codes are classified in
 // task 1.8; this is the exit-vs-fault split only.
-func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, tool, cmdStr, rawOutput string, runErr error) (RunResult, error) {
+func (b *OSLevelBackend) classifyRunError(ctx context.Context, res RunResult, tool, cmdStr, rawOutput string, runErr error) (RunResult, error) {
 	logger := log.FromContext(ctx)
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
@@ -1419,7 +1427,7 @@ func (b *osLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 // exec resolve it through the inherited $PATH at spawn time, bypassing
 // resolveToolPath's trusted-directory control — so the one decision that picks
 // the binary containing untrusted code would be the one with no check on it.
-func (b *osLevelBackend) toolPath() (string, error) {
+func (b *OSLevelBackend) toolPath() (string, error) {
 	// The platform gate runs first and unconditionally, so an unsupported GOOS
 	// is refused even when tool_path is set.
 	if _, err := osLevelToolFor(b.platform()); err != nil {
@@ -1458,7 +1466,7 @@ var errOSLevelNotPreflighted = errors.New(
 // platformToolName returns the bare name of the platform's sandboxing binary,
 // for Preflight's trusted-directory resolution. Unlike toolPath it does not
 // require a pin, because resolving that name is exactly what it is used for.
-func (b *osLevelBackend) platformToolName() (string, error) {
+func (b *OSLevelBackend) platformToolName() (string, error) {
 	return osLevelToolFor(b.platform())
 }
 
@@ -1482,7 +1490,7 @@ func CheckSnapshotUsable(cfg OSLevelConfig, snapshotDir string, writable bool) e
 }
 
 // checkSnapshotUsableFor is CheckSnapshotUsable against an explicit GOOS. The
-// seam mirrors osLevelBackend.platform(): CI is ubuntu-only and development is
+// seam mirrors OSLevelBackend.platform(): CI is ubuntu-only and development is
 // on macOS, so without it the exported pre-check is the one containment-
 // relevant decision that cannot be asserted for the other platform — and it
 // silently diverges from the backend whose behavior it claims to predict.

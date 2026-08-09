@@ -17,7 +17,7 @@
 //   - memory, CPU, and PID caps,
 //   - a non-root user, dropped capabilities, and no-new-privileges.
 //
-// osLevelBackend (oslevel.go) is the exception: it wraps the platform's native
+// OSLevelBackend (oslevel.go) is the exception: it wraps the platform's native
 // process sandbox — macOS sandbox-exec, Linux bwrap — which isolates the
 // filesystem and network but shares the host kernel and has no image, no
 // rootfs remount, and no capability set to drop. bwrap supplies a PID
@@ -66,7 +66,7 @@ type RunSpec struct {
 	// host file is ever mutated. The package-level read-only-snapshot MUST is
 	// thereby narrowed, not weakened.
 	//
-	// Everything below is DockerBackend-specific mechanics; osLevelBackend
+	// Everything below is DockerBackend-specific mechanics; OSLevelBackend
 	// provides the same guarantee differently (a host-side copy seeded into the
 	// per-run scratch tree before the spawn — no shell wrapper, no image
 	// requirement; see oslevel.go's seedWritableCopy).
@@ -126,7 +126,7 @@ type RunResult struct {
 }
 
 // Backend is a pluggable sandbox executor. DockerBackend (docker.go) and
-// osLevelBackend (oslevel.go) implement it; the interface keeps Podman (or a
+// OSLevelBackend (oslevel.go) implement it; the interface keeps Podman (or a
 // remote runner) a drop-in later. See the package doc for which containment
 // guarantees are universal and which are Docker-only.
 type Backend interface {

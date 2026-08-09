@@ -63,7 +63,7 @@ import (
 //
 // Anything else — a rejected flag, an unbindable path, a workload that cannot
 // exec — is OUR bug, and fails.
-func linuxIntegrationBackend(t *testing.T) *osLevelBackend {
+func linuxIntegrationBackend(t *testing.T) *OSLevelBackend {
 	t.Helper()
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
 	if _, err := b.resolveToolPath(); err != nil {

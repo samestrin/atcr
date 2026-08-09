@@ -25,7 +25,7 @@ import (
 //
 // Two design rules, both from AC 02-03's normative preamble:
 //
-//  1. Drive osLevelBackend.Run, NOT sandboxExecProfile plus a hand-rolled
+//  1. Drive OSLevelBackend.Run, NOT sandboxExecProfile plus a hand-rolled
 //     exec.Command. A test that execs the binary itself would prove the PROFILE
 //     contains while the backend stayed inert — which is exactly the state this
 //     sprint was in until task 3.0 wired osLevelContainmentArgs. Driving Run
@@ -53,7 +53,7 @@ import (
 // So only the HOST-CAPABILITY cause skips: sandbox-exec absent, relocated or
 // removed by a future macOS. If the binary resolves and Preflight still fails,
 // that is our bug and the test fails.
-func darwinIntegrationBackend(t *testing.T) *osLevelBackend {
+func darwinIntegrationBackend(t *testing.T) *OSLevelBackend {
 	t.Helper()
 	b := NewOSLevelBackend(DefaultOSLevelConfig())
 	if _, err := b.resolveToolPath(); err != nil {
