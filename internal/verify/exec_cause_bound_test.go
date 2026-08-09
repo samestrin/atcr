@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,6 +79,30 @@ func TestResolveExecBackend_NeitherUsableCauseIsBounded(t *testing.T) {
 	assert.Contains(t, err.Error(), "docker",
 		"the operator must still learn which backend failed first")
 	assert.Contains(t, err.Error(), "os-level")
+}
+
+// TestBoundedCause_RendersTruncatedButKeepsTheChain pins the property that makes
+// boundedCause the right tool and errors.Join the wrong one: the rendered text
+// is bounded WHILE errors.Is still reaches the wrapped cause. Asserted directly
+// on the type because the resolver tests above can only observe it indirectly —
+// the real docker preflight builds its own error with no sentinel to match on,
+// so "the docker cause is still reachable" is unprovable at that boundary.
+func TestBoundedCause_RendersTruncatedButKeepsTheChain(t *testing.T) {
+	sentinel := errors.New("docker-side sentinel")
+	long := fmt.Errorf("%w: %s", sentinel, strings.Repeat("y", 900)+noisyDaemonTail)
+
+	b := boundedCause{long}
+
+	assert.NotContains(t, b.Error(), noisyDaemonTail, "the rendered form must be bounded")
+	assert.Contains(t, b.Error(), "truncated")
+	assert.ErrorIs(t, b, sentinel, "errors.Is must still reach the wrapped cause")
+	assert.ErrorIs(t, b, long)
+
+	// The property must survive one more %w wrap, which is how both resolvers
+	// actually use it.
+	wrapped := fmt.Errorf("--exec preflight failed: docker: %w", b)
+	assert.NotContains(t, wrapped.Error(), noisyDaemonTail)
+	assert.ErrorIs(t, wrapped, sentinel)
 }
 
 // TestResolveAutoFixSandbox_NeitherUsableCauseIsBounded is the same guarantee at
