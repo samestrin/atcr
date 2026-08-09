@@ -142,6 +142,8 @@ func TestSandboxConfig_Validate_Fallback(t *testing.T) {
 			}
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.wantSub)
+			assert.Equal(t, tc.fallback, cfg.Fallback,
+				"rejected config must leave Fallback unmodified — normalization runs only on the success path")
 			assert.Contains(t, err.Error(), "sandbox.fallback",
 				"the error must name the field it rejected, not a neighbouring one")
 			assert.Contains(t, err.Error(), SandboxFallbackOSLevel,
@@ -178,6 +180,16 @@ func TestSandboxConfig_Validate_FallbackDoesNotWeakenPinnedChecks(t *testing.T) 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "image is required",
 		"the fallback branch must not preempt the unconditional Image/TestCommand checks")
+
+	// Whitespace-only fallback must stay raw when an earlier check rejects the
+	// config: trimming it only on the success path guarantees "   " reads as
+	// "unset" to downstream raw-non-emptiness tests.
+	whitespaceFallback := &SandboxConfig{Fallback: "   "}
+	err = whitespaceFallback.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image is required")
+	assert.Equal(t, "   ", whitespaceFallback.Fallback,
+		"rejected config must leave Fallback unmodified")
 }
 
 // TestSandboxConfig_FallbackYAMLRoundTrip pins the wire form. omitempty is the
