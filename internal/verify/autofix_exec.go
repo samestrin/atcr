@@ -119,6 +119,14 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 		if osLevelFallbackConfigured(sc) && ctx.Err() == nil {
 			osBackend := newOSLevelBackendFn(osLevelFallbackConfig(sc))
 			if osErr := osBackend.Preflight(ctx); osErr != nil {
+				// Same post-preflight interrupt re-check as ResolveExecBackend:
+				// an osErr wrapping context.Canceled means the operator pressed
+				// ctrl-C mid-preflight — an interrupt, not a
+				// neither-backend-usable outcome — so the sentinel stays off and
+				// the both-causes shape is returned without it.
+				if ctx.Err() != nil || errors.Is(osErr, context.Canceled) || errors.Is(osErr, context.DeadlineExceeded) {
+					return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w", err, osErr)
+				}
 				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", err, osErr, ErrSandboxNoUsableBackend)
 			}
 			warnOSLevelFallbackEngaged(ctx, sc, err)

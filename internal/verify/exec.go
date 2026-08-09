@@ -204,6 +204,18 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 			osCfg := osLevelFallbackConfig(sc)
 			osBackend := newOSLevelBackendFn(osCfg)
 			if osErr := osBackend.Preflight(ctx); osErr != nil {
+				// Re-check cancellation AFTER the OS-level preflight: the branch's
+				// ctx.Err() gate only covers a signal arriving BEFORE it, but the
+				// preflight spawns real processes and cli/main.go cancels the root
+				// context on the first SIGINT, so an interrupt can land inside this
+				// window with osErr wrapping context.Canceled. That is an
+				// interrupt, not a neither-backend-usable outcome — attaching
+				// ErrSandboxNoUsableBackend would tell the operator their sandbox
+				// configuration is broken when they simply pressed ctrl-C. Return
+				// the same both-causes shape minus the sentinel instead.
+				if ctx.Err() != nil || errors.Is(osErr, context.Canceled) || errors.Is(osErr, context.DeadlineExceeded) {
+					return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w", err, osErr)
+				}
 				// Both causes are %w-wrapped, not %v-formatted: this is the one path
 				// with two distinct causes to tell apart, so it is the last place a
 				// caller should lose errors.Is on context.Canceled, ErrOSLevelNoContainment,
