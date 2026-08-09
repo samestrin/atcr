@@ -200,10 +200,22 @@ Concretely, opting in accepts all of the following:
   installed under `/opt`, `/nix`, `/home/linuxbrew`, or a version-manager shim in
   `$HOME` (mise, asdf, nvm) is invisible inside the sandbox even though `PATH`
   still resolves it on the host.
-- **`/tmp` differs by platform.** On Linux the run gets a fresh, ephemeral
-  `--tmpfs /tmp`. On macOS `sandbox-exec` cannot provide one, so the run gets the
-  **host's real `/tmp`, readable and writable** — where Docker gave a throwaway
-  container tmpfs.
+- **`/tmp` is not writable on either platform.** On Linux the run gets a fresh,
+  ephemeral `--tmpfs /tmp`. On macOS `sandbox-exec` cannot provide one, so the
+  profile simply grants no write rule for `/tmp` and a write there is denied.
+  `TMPDIR`, `HOME`, `GOCACHE` and `GOTMPDIR` point into the per-run scratch
+  directory, so anything following the environment works; a command that
+  hardcodes bare `/tmp` fails on macOS with `Operation not permitted`.
+- **Go dependency resolution needs a warm module cache.** The sandbox has no
+  network, so a non-vendored dependency cannot be downloaded during a run.
+  `GOMODCACHE` points at a persistent, atcr-owned cache
+  (`<user cache dir>/atcr/oslevel-modcache`) mounted **read-only**, so a cache
+  warmed on the host is reused by every later run — but nothing warms it
+  automatically yet, and until it is warmed a `go build` with an external
+  dependency fails with `dial tcp: ... no such host`. Vendored trees are
+  unaffected. The cache is read-only on purpose: a persistent directory that
+  model-authored code could write would let one run poison what later runs
+  compile.
 - **The platform binary is resolved only from `/usr/bin`, `/bin`, `/usr/sbin`, and
   `/sbin` — never from `$PATH`.** This is deliberate (a `$PATH` lookup is an
   injection surface for the very code being contained), but it means a `bwrap`

@@ -1380,8 +1380,19 @@ func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
 			t.Errorf("the OS-level section of docs/execution.md must name the Linux bind root %q", want)
 		}
 	}
-	if !strings.Contains(section, "On Linux `/tmp` is a fresh tmpfs") {
-		t.Errorf("the OS-level section of docs/execution.md must distinguish Linux /tmp from macOS /tmp")
+	// /tmp is not writable on EITHER platform, but by different mechanisms, and
+	// naming both is what stops a reader assuming macOS silently inherits the
+	// host's. The previous wording pinned here ("On Linux `/tmp` is a fresh
+	// tmpfs") described a profile that still granted the host /tmp on macOS; that
+	// grant has been removed, so this tracks the current guarantee rather than
+	// the sentence that used to state it.
+	// Matched with \s+ between words rather than as a literal: these are prose
+	// sentences in a wrapped markdown bullet, so a literal Contains fails the
+	// moment the phrase straddles a line break — a reflow, not a regression.
+	for _, want := range []string{`fresh\s+` + "`" + `--tmpfs /tmp` + "`", `no\s+write\s+rule\s+for\s+` + "`" + `/tmp` + "`"} {
+		if !regexp.MustCompile(want).MatchString(section) {
+			t.Errorf("the OS-level section of docs/execution.md must distinguish Linux /tmp from macOS /tmp: no match for %q", want)
+		}
 	}
 	if !strings.Contains(section, "No network egress") {
 		t.Errorf("the OS-level section of docs/execution.md must state that network egress is blocked")

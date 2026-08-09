@@ -80,9 +80,12 @@ delivers a genuinely narrower set:
   namespace (Linux).
 - **No access to your personal files.** `$HOME` is not readable, so `~/.ssh` and
   friends stay out of reach of the code being validated.
-- **Writes confined** to the code snapshot copy, `/tmp`, and an ephemeral per-run
-  scratch directory. On Linux `/tmp` is a fresh tmpfs; on macOS it is the host's
-  real `/tmp` (see the caveats link below).
+- **Writes confined** to the code snapshot copy and an ephemeral per-run scratch
+  directory — nothing else. The host's `/tmp` is not writable on either platform:
+  on Linux the run gets a fresh `--tmpfs /tmp`, and on macOS the profile grants no
+  write rule for `/tmp` at all, so a workload that hardcodes it is denied.
+  `TMPDIR`, `HOME`, `GOCACHE` and `GOTMPDIR` all point into the scratch directory,
+  so a tool that follows the environment is unaffected.
 - **Reads confined** to those same paths plus a fixed, read-only system and
   toolchain tier the workload needs in order to run at all — `/usr/lib`,
   `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/share`, the dynamic-loader
