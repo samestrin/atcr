@@ -23,6 +23,7 @@ import (
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1900,4 +1901,31 @@ func TestHiddenCause_CarriesTheSentinelWithoutContributingText(t *testing.T) {
 	wrapped := fmt.Errorf("gate refused: %s%w", "a; b", h)
 	assert.Equal(t, "gate refused: a; b", wrapped.Error(), "wrapping must not alter the message")
 	assert.ErrorIs(t, wrapped, sentinel)
+}
+
+// pflag's UnquoteUsage lifts the first backquoted span out of a usage string and
+// renders it as the flag's value name, so a bool flag whose help text mentions an
+// example command in backquotes renders as if it took an argument. The
+// --no-sandbox usage carried “(e.g. `go build`/`npm test`)“ and `atcr review
+// --help` rendered `--no-sandbox go build` — a DANGER-marked boolean that looked
+// like it requires a `go build` operand, with the second backquoted token left
+// dangling mid-sentence.
+func TestReviewHelp_BoolFlagsRenderWithoutValueName(t *testing.T) {
+	// End-to-end pin: the DANGER flag must render bare (mirrors
+	// TestBenchmarkExport_InFlagRendersStringValueName in benchmark_test.go).
+	_, out := execCmdCapture(t, "review", "--help")
+	require.NotContains(t, out, "--no-sandbox go build",
+		"bool flag --no-sandbox must not render a value name lifted from its usage string")
+
+	// General scan over every registered review flag: for a bool flag the ONLY
+	// source of a rendered value name is a backquoted span in the usage string
+	// (pflag assigns bool no type-derived name), so banning backquotes on bool
+	// flags is exactly "no value name outside pflag's known type set".
+	newReviewCmd().Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.Type() != "bool" {
+			return // value-name types (string, duration, …) legitimately render one
+		}
+		assert.NotContains(t, f.Usage, "`",
+			"bool flag --%s usage must not contain a backquoted span — pflag renders it as a value name", f.Name)
+	})
 }
