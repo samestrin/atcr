@@ -87,7 +87,7 @@ var profileRuntimeAllows = []string{
 // standard AC 02-02 Scenario 3 sets for the Linux binds. Nothing here is
 // writable and nothing here is user data: $HOME is not readable, which is what
 // keeps ~/.ssh out of reach of a prompt-injected Fixer agent.
-var darwinSystemReadDirs = []string{
+var darwinSystemReadDirs = append([]string{
 	"/usr/lib",
 	"/usr/bin",
 	"/bin",
@@ -102,13 +102,60 @@ var darwinSystemReadDirs = []string{
 	// /private/var/db/dyld. A missing path in a read-only allow costs nothing.
 	"/System/Volumes/Preboot/Cryptexes/OS/usr/lib",
 	"/private/var/db/dyld",
-	// Toolchain prefixes. Read-only: /opt/homebrew and /usr/local are
-	// user-writable locations, so being able to READ them is what lets the
-	// workload run its tools, while the absence of any write rule keeps a
-	// compromised run from modifying the operator's toolchain.
+	// Toolchain prefixes are appended from vettedToolchainPrefixes below — the
+	// single declaration of that trust decision, so the profile's read grant and
+	// sanitizeSandboxPath's PATH filter cannot drift apart.
+}, vettedToolchainPrefixes...)
+
+// vettedToolchainPrefixes are the toolchain locations whose group-writability
+// this package has ALREADY reviewed and accepted, in one place, for two
+// consumers: the darwin profile's read tier (above) and sanitizeSandboxPath's
+// PATH filter.
+//
+// The accepted trade, stated once: /opt/homebrew and /usr/local are
+// user-writable locations, so being able to READ them is what lets the workload
+// run its tools, while the absence of any write rule keeps a compromised run
+// from modifying the operator's toolchain.
+//
+// sanitizeSandboxPath consumes the same list because its blanket group/world
+// -writable rejection did not know about this decision, and the two disagreed in
+// a way that broke real hosts: a standard Homebrew install owns /opt/homebrew/bin
+// as 0775 (group `admin`), so the sanitizer dropped it and a sandboxed run could
+// not find `node` at all — it exists ONLY there. `go` survived by accident,
+// because Homebrew also exposes it under a 0755 Cellar bin dir, which made WHICH
+// tools worked depend on each formula's layout.
+//
+// Why exempting these is defensible rather than a hole: an attacker who can write
+// to /opt/homebrew/bin has already replaced the operator's toolchain for every
+// UNSANDBOXED use on that host. The sandbox is not the security boundary for
+// that compromise, the host is — so excluding the directory buys no protection
+// and costs the feature. The exemption is deliberately anchored to these named
+// prefixes rather than to a mode, so it cannot generalize.
+//
+// A variable, not a constant slice, so tests can point it at a fixture tree
+// instead of depending on whether the host has Homebrew installed.
+var vettedToolchainPrefixes = []string{
 	"/Library/Developer/CommandLineTools",
 	"/opt/homebrew",
 	"/usr/local",
+}
+
+// underVettedToolchainPrefix reports whether dir is one of the vetted toolchain
+// prefixes or lives beneath one.
+//
+// Matching is on cleaned, separator-terminated boundaries so a sibling that
+// merely shares a textual prefix (/usr/locale, /opt/homebrewery) is NOT admitted
+// — the bug a bare strings.HasPrefix would introduce, and precisely the
+// plantable-directory shape the sanitizer exists to reject.
+func underVettedToolchainPrefix(dir string, prefixes []string) bool {
+	clean := filepath.Clean(dir)
+	for _, p := range prefixes {
+		cp := filepath.Clean(p)
+		if clean == cp || strings.HasPrefix(clean, cp+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // darwinDeviceReads are the character devices a normal toolchain needs. Without
