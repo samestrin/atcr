@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
 )
@@ -73,6 +74,41 @@ func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 	return cfg
 }
 
+// warnOSLevelFallbackEngaged records that the isolation model changed under the
+// operator, at the moment it changes. Engaging the fallback is not a like-for-
+// like substitution: the OS-level backend runs as the invoking user rather than
+// uid 65534, and honors none of the docker-only knobs — Memory, CPUs, PidsLimit
+// are dropped (the backend has no equivalent; TD-001/TD-021), and Image is
+// unused, so `test_command` meets whatever toolchain the host's PATH provides
+// rather than the declared one (TD-022).
+//
+// This is a log line, deliberately NOT a refusal: the operator asked for this
+// fallback explicitly, and refusing on a set cap would turn an opt-in into a
+// config error for the exact hosts the feature exists to serve. It is also not
+// the neither-backend-usable path, which stays a hard refusal.
+func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig, cause error) {
+	dropped := make([]string, 0, 4)
+	if sc != nil {
+		if strings.TrimSpace(sc.Memory) != "" {
+			dropped = append(dropped, "sandbox.memory")
+		}
+		if strings.TrimSpace(sc.CPUs) != "" {
+			dropped = append(dropped, "sandbox.cpus")
+		}
+		if sc.PidsLimit != nil {
+			dropped = append(dropped, "sandbox.pids_limit")
+		}
+		if strings.TrimSpace(sc.Image) != "" {
+			dropped = append(dropped, "sandbox.image")
+		}
+	}
+	log.FromContext(ctx).Warn("os-level sandbox fallback engaged",
+		"backend", registry.SandboxFallbackOSLevel,
+		"docker_preflight_error", cause.Error(),
+		"unenforced_config", strings.Join(dropped, ","),
+		"runs_as", "invoking user (not uid 65534)")
+}
+
 // ResolveExecBackend implements the execution gate. When execEnabled is false it
 // returns nil (execution off — the normal path). When true it REQUIRES a
 // configured sandbox backend that passes a preflight check; any failure is an
@@ -113,12 +149,21 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 		// restructure of it. When no fallback is configured, the line below runs
 		// exactly as it always has — that untouched path is what keeps
 		// TestResolveExecBackend_PreflightFailureRefuses passing unmodified.
-		if osLevelFallbackConfigured(sc) {
+		if osLevelFallbackConfigured(sc) && ctx.Err() == nil {
+			// ctx.Err() gates the branch because a docker preflight that failed
+			// only because the operator pressed ctrl-C is not evidence that docker
+			// is unusable. Without it, an interrupt spends a temp dir and two more
+			// spawn attempts before reporting itself as "no usable sandbox backend".
 			osCfg := osLevelFallbackConfig(sc)
 			osBackend := newOSLevelBackendFn(osCfg)
 			if osErr := osBackend.Preflight(ctx); osErr != nil {
-				return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %v; os-level fallback also failed: %v: %w", err, osErr, ErrSandboxNoUsableBackend)
+				// Both causes are %w-wrapped, not %v-formatted: this is the one path
+				// with two distinct causes to tell apart, so it is the last place a
+				// caller should lose errors.Is on context.Canceled, ErrOSLevelNoContainment,
+				// or a docker-side sentinel.
+				return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w: %w", err, osErr, ErrSandboxNoUsableBackend)
 			}
+			warnOSLevelFallbackEngaged(ctx, sc, err)
 			return osBackend, sc.TestCommand, osCfg.Timeout, nil
 		}
 		return nil, nil, 0, fmt.Errorf("--exec preflight failed: %w", err)

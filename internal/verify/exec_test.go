@@ -96,6 +96,12 @@ func (f *fakeOSLevel) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, 
 // call count is load-bearing in the negative cases — "Docker succeeded, so the
 // fallback was never attempted" is only provable by counting zero constructions,
 // not by inspecting the returned backend.
+//
+// A test that calls this MUST NOT call t.Parallel(): the seam is a package-level
+// variable written here and read inside the closure with no synchronization, so
+// a parallel caller is a -race data race on the variable that decides which
+// sandbox contains untrusted code, with fake leakage across tests as the
+// failure mode. Serial is sufficient — these tests spawn one shim each.
 func stubOSLevel(t *testing.T, preflightErr error) (*fakeOSLevel, *sandbox.OSLevelConfig, *int) {
 	t.Helper()
 	fake := &fakeOSLevel{preflightErr: preflightErr}
@@ -202,7 +208,8 @@ func TestResolveExecBackend_UnsupportedFallbackValueIsNotAFallback(t *testing.T)
 }
 
 func TestResolveExecBackend_FallbackPreflightFailureRefusesWithoutPartialSuccess(t *testing.T) {
-	fake, _, calls := stubOSLevel(t, errors.New("bwrap: command not found"))
+	osCause := errors.New("bwrap: command not found")
+	fake, _, calls := stubOSLevel(t, osCause)
 	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
 
 	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
@@ -213,6 +220,57 @@ func TestResolveExecBackend_FallbackPreflightFailureRefusesWithoutPartialSuccess
 	assert.Zero(t, timeout)
 	assert.Equal(t, 1, *calls)
 	assert.Equal(t, 1, fake.preflights)
+	assert.ErrorIs(t, err, ErrSandboxNoUsableBackend)
+	assert.ErrorIs(t, err, osCause,
+		"the os-level cause must stay reachable through the chain, not be flattened to text")
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+}
+
+// TestResolveExecBackend_NoFallbackRefusalIsNotSentineled is the other half of
+// the byte-identical guarantee: the pinned test proves the message, this proves
+// an errors.Is caller cannot mistake the untouched refusal for the new
+// combined-failure one. Without it, a CLI branching on the sentinel could
+// silently start treating every pre-story refusal as "a fallback was tried".
+func TestResolveExecBackend_NoFallbackRefusalIsNotSentineled(t *testing.T) {
+	sc := fallbackSandboxConfig(t, "")
+	_, _, _, err := ResolveExecBackend(context.Background(), true, sc)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
+}
+
+// TestResolveExecBackend_CanceledContextDoesNotAttemptFallback pins that an
+// interrupt is not read as evidence Docker is unusable. The real fallback
+// attempt costs a temp dir and two spawns, and reporting a ctrl-C as "no usable
+// sandbox backend" misdirects the operator entirely.
+func TestResolveExecBackend_CanceledContextDoesNotAttemptFallback(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 0, *calls, "a canceled context must not spend a fallback attempt")
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend,
+		"an interrupt is not a neither-backend-usable outcome")
+}
+
+// TestOSLevelBackendSeam_RealConstructorIsWired exercises the UNSTUBBED seam.
+// Every other fallback test replaces it, so without this the production body of
+// newOSLevelBackendFn runs in no test at all, and the identifier contract is
+// asserted only against the fake's hardcoded literal — leaving a drift between
+// sandbox's backend name and registry's config sentinel undetectable. Name() is
+// a constant, so this needs no sandbox binary and runs on every platform.
+func TestOSLevelBackendSeam_RealConstructorIsWired(t *testing.T) {
+	secs := 45
+	sc := &registry.SandboxConfig{TimeoutSecs: &secs}
+	b := newOSLevelBackendFn(osLevelFallbackConfig(sc))
+	require.NotNil(t, b)
+	assert.Equal(t, registry.SandboxFallbackOSLevel, b.Name(),
+		"the backend's name and the config value operators write must not drift apart")
 }
 
 func TestResolveExecBackend_FallbackIrrelevantWhenExecDisabled(t *testing.T) {
