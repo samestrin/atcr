@@ -141,7 +141,7 @@ func TestOSLevelBackend_ToolPath_RefusesUntilPreflightResolvesTheDefault(t *test
 }
 
 func TestOSLevelBackend_ToolPath_UsesPinnedPathAfterPreflight(t *testing.T) {
-	b := (newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
+	b := (newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody()))
 	require.NoError(t, b.Preflight(context.Background()))
 
 	got, err := b.toolPath()
@@ -1452,6 +1452,26 @@ done
 exec "$@"`
 }
 
+// fakeOSLevelContainingExecBody is fakeOSLevelExecBody plus the one behavior
+// Preflight's negative-capability probe exists to detect: it REFUSES the
+// write-into-snapshot probe (exit 1, as a real sandbox's read-only snapshot
+// would), so a positive-Preflight test can stand behind a shim that is honest
+// about containment. Tests that want the dishonest version — the
+// /usr/bin/env-style spoof — use fakeOSLevelExecBody and assert Preflight
+// refuses it (TestOSLevelBackend_Preflight_RefusesAShimThatIgnoresItsContainmentFlags).
+func fakeOSLevelContainingExecBody() string {
+	return fmt.Sprintf(`while [ $# -gt 0 ]; do
+  case "$1" in
+    --*) shift ;;
+    *) break ;;
+  esac
+done
+case "$*" in
+  *%s*) echo "touch: ./probe: Read-only file system" >&2; exit 1 ;;
+esac
+exec "$@"`, osLevelPreflightWriteProbePrefix)
+}
+
 func TestOSLevelBackend_Preflight_RefusesWhileThereIsNoContainment(t *testing.T) {
 	// A backend that cannot isolate anything must not report itself usable:
 	// Preflight gates --exec, so reporting success would run model-authored code
@@ -1491,7 +1511,11 @@ func TestOSLevelBackend_Preflight_MissingBinary(t *testing.T) {
 }
 
 func TestOSLevelBackend_Preflight_PassesWhenSandboxActuallyRunsTheWorkload(t *testing.T) {
-	b := (newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
+	// The shim must be containment-HONEST (fakeOSLevelContainingExecBody):
+	// with the plain exec body this test proved only that execution happened —
+	// its original form is now the spoof case asserted to FAIL in
+	// TestOSLevelBackend_Preflight_RefusesAShimThatIgnoresItsContainmentFlags.
+	b := (newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody()))
 	require.NoError(t, b.Preflight(context.Background()))
 
 	// A successful Preflight pins the verified absolute path without disturbing
@@ -1515,7 +1539,10 @@ func TestOSLevelBackend_Preflight_ProbesBothCommandAndScriptPaths(t *testing.T) 
   esac
 done
 printf '%%s\n' "$*" >> %q
-exec "$@"`, logPath)
+case "$*" in
+  *%s*) echo "touch: ./probe: Read-only file system" >&2; exit 1 ;;
+esac
+exec "$@"`, logPath, osLevelPreflightWriteProbePrefix)
 	b := newFakeOSLevelBackend(t, body)
 
 	require.NoError(t, b.Preflight(context.Background()))
@@ -1538,6 +1565,24 @@ func TestOSLevelBackend_Preflight_RejectsToolThatNeverRunsTheWorkload(t *testing
 	require.Error(t, err, "a tool that never executes the command must not pass preflight")
 	assert.ErrorIs(t, err, errPreflightTrivialRun)
 	assert.Contains(t, err.Error(), "never executed the command")
+	assert.Empty(t, b.pinnedTool, "a failed preflight must not pin anything")
+}
+
+func TestOSLevelBackend_Preflight_RefusesAShimThatIgnoresItsContainmentFlags(t *testing.T) {
+	// fakeOSLevelExecBody strips -p/--bind/--unshare-* and execs the tail of
+	// the argv — exactly what /usr/bin/env does when named as tool_path. Every
+	// execution probe passes against such a shim (the nonce comes back, both
+	// RunSpec shapes run), yet nothing is contained. Before the
+	// negative-capability probe this exact shim PASSED preflight
+	// (TestOSLevelBackend_Preflight_PassesWhenSandboxActuallyRunsTheWorkload's
+	// original form), which would have enabled --exec against a sandbox that
+	// contains nothing — the precise exposure Preflight's doc claims to stop.
+	b := (newFakeOSLevelBackend(t, fakeOSLevelExecBody()))
+
+	err := b.Preflight(context.Background())
+	require.Error(t, err,
+		"a binary that executes everything but refuses nothing is not a sandbox")
+	assert.ErrorIs(t, err, errPreflightUncontained)
 	assert.Empty(t, b.pinnedTool, "a failed preflight must not pin anything")
 }
 
@@ -1604,7 +1649,7 @@ func TestOSLevelBackend_Preflight_DoesNotQueueBehindTheConcurrencyCap(t *testing
 	// on, so it must not queue behind in-flight workload runs: with every slot
 	// held, a queued probe outlives its own timeout and the backend reports
 	// "unhealthy" purely because it is busy.
-	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody()) // MaxConcurrent = 1
+	b := newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody()) // MaxConcurrent = 1
 	// Hold the only slot, as an in-flight workload run would.
 	b.sem <- struct{}{}
 	t.Cleanup(func() { <-b.sem })
@@ -1626,7 +1671,7 @@ func TestOSLevelBackend_Preflight_FailedRePreflightRevokesThePinnedTool(t *testi
 	// preflight (see toolPath's doc) — the revocation defect lives in the pin.
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "bwrap")
-	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\n"+fakeOSLevelExecBody()), 0o755))
+	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\n"+fakeOSLevelContainingExecBody()), 0o755))
 
 	b := withContainment(t, NewOSLevelBackend(DefaultOSLevelConfig()))
 	b.goos = "linux"
@@ -1847,7 +1892,7 @@ func TestOSLevelBackend_Preflight_AuditRecordIsDistinguishableFromAWorkloadRun(t
 	// are structurally identical to a real workload run's. The evidence trail
 	// must separate a readiness probe from an executed workload without
 	// command-string matching.
-	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+	b := newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody())
 
 	var buf bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))

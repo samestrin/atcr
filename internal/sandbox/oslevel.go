@@ -210,12 +210,17 @@ func (b *OSLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 //     executable (cheapest, so it runs first),
 //  2. the host-specific prerequisite holds (on Linux, that unprivileged user
 //     namespaces are usable — bwrap cannot isolate without them),
-//  3. a trivial no-op Run actually completes through the real Run path.
+//  3. a trivial no-op Run actually completes through the real Run path, for
+//     both RunSpec shapes (Command and Script) — and a write into the
+//     read-only snapshot is REFUSED, so a binary that ignores its containment
+//     flags and merely execs its argv (think /usr/bin/env) cannot pass.
 //
 // Step 3 matters: reporting success on binary presence alone would let the CLI
 // enable --exec against a sandbox that cannot actually contain anything, which
 // is DockerBackend.Preflight's reason for spawning a trivial container
-// (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
+// (docker.go:382-397). The execution nonce proves the workload ran; only the
+// negative-capability probe proves it ran UNDER containment. Every failure is
+// wrapped so the cause stays reachable.
 func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	// A re-preflight revokes the earlier pin up front, so a FAILED re-preflight
 	// leaves the backend unrunnable instead of spawning the binary a previous
@@ -308,6 +313,39 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 		}
 	}
 
+	// The execution probes above cannot distinguish a real sandbox from a binary
+	// that ignores its containment flags (-p, --bind, --unshare-*) and simply
+	// execs the tail of its argv — /usr/bin/env passes every one of them. So
+	// step 3 ends with a NEGATIVE-capability probe: a write into the read-only
+	// snapshot MUST be denied (darwin: the deny-default profile; Linux: the
+	// snapshot is a read-only bind at the workload's /work — both platforms make
+	// the snapshot the workload's cwd for a read-only run, so a relative touch
+	// aims at it on either). Only the read-only shape is probed this way: a
+	// writable run's whole point is a writable tree. If the write succeeds,
+	// nothing above proved containment and no pin may happen.
+	probeFile := osLevelPreflightWriteProbePrefix + randHex(8)
+	runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
+	probeRes, probeErr := b.runWith(runCtx, resolved, RunSpec{
+		Command:     []string{"/bin/sh", "-c", "touch ./" + probeFile},
+		SnapshotDir: tmpDir,
+	}, true)
+	cancel()
+	switch {
+	case probeErr != nil:
+		return fmt.Errorf("sandbox preflight: containment write probe failed to run: %w (tool output: %s)",
+			probeErr, strings.TrimSpace(probeRes.Output))
+	case probeRes.TimedOut:
+		return fmt.Errorf("sandbox preflight: containment write probe timed out: %w", errPreflightUncontained)
+	case probeRes.ExitCode == 0:
+		// The write landed in the host snapshot — remove it, then refuse: this
+		// binary ignored its containment flags, and pinning it would enable
+		// --exec against a sandbox that contains nothing.
+		_ = os.Remove(filepath.Join(tmpDir, probeFile))
+		return fmt.Errorf("sandbox preflight: write into the read-only snapshot succeeded — "+
+			"%s ignored its containment flags and is not a sandboxing tool: %w",
+			resolved, errPreflightUncontained)
+	}
+
 	// Pin only here, on the success path, so a failed Preflight never leaves a
 	// pin behind (the re-preflight case is revoked at the top of this
 	// function). Every later Run then spawns this exact binary instead of
@@ -331,6 +369,19 @@ var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containme
 // caller can tell "the sandbox could not run" from "the binary was missing"
 // without matching message text.
 var errPreflightTrivialRun = errors.New("trivial sandbox run did not complete cleanly")
+
+// errPreflightUncontained marks a preflight failure at the negative-capability
+// probe: the candidate binary executed everything it was given but refused
+// nothing — an argv-pass-through like /usr/bin/env, not a sandbox. Named so a
+// caller can tell "not actually a sandboxing tool" apart from "the sandbox
+// could not run" without matching message text.
+var errPreflightUncontained = errors.New("sandbox candidate provided no containment")
+
+// osLevelPreflightWriteProbePrefix names the file Preflight's
+// negative-capability probe attempts to create inside the read-only snapshot.
+// It is a fixed, greppable prefix so the integration suite and the fake-shim
+// tests can recognize the probe in the candidate's argv.
+const osLevelPreflightWriteProbePrefix = "atcr-preflight-write-probe-"
 
 // osLevelContainmentArgs returns the tool arguments that actually establish
 // containment — the deny-by-default sandbox-exec profile flags on macOS, the
