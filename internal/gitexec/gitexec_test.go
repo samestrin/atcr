@@ -120,10 +120,37 @@ const execWrapperFile = "internal/gitexec/gitexec.go"
 // grant on specific files — narrow, and reviewed the same way this list is edited.
 // Note a literal "git" is an offender EVEN in these files (see classifyExecCall): the
 // allowlist excuses only their known non-git indirected form, not a bare git call.
-var indirectNonGitExecFiles = map[string]bool{
-	"internal/verify/localvalidate.go": true,
-	"internal/sandbox/docker.go":       true,
-	"internal/sandbox/oslevel.go":      true,
+//
+// The value is the COUNT of authorized indirected sites, not a bare `true`. A
+// file-granularity boolean exempted the entire file permanently: internal/sandbox/oslevel.go
+// is 1700+ lines and execs an operator-controlled cfg.ToolPath, so it is the
+// highest-value place for the check to stay live — yet any exec.Command(<variable>, ...)
+// added anywhere in it, INCLUDING a git call in exactly the snapshot.go form this
+// scan was written to catch, was silently permitted. Pinning the count means a new
+// indirected exec trips the gate and forces an explicit review of the increment.
+//
+// Counts are exact, not ceilings: see checkIndirectGrants for why a DECREASE fails too.
+var indirectNonGitExecFiles = map[string]int{
+	"internal/verify/localvalidate.go": 1, // argv[0] — the user's validate command
+	"internal/sandbox/docker.go":       4, // b.cfg.DockerPath: run, kill, and two dockerCmd helpers
+	"internal/sandbox/oslevel.go":      1, // toolPath() — sandbox-exec / bwrap
+}
+
+// checkIndirectGrants compares the indirected-exec sites actually found in each
+// allowlisted file against its pinned grant, returning one offender message per
+// mismatch.
+//
+// A count ABOVE the grant is the case the bound exists for: a new indirected exec
+// appeared in a trusted file and nobody reviewed it.
+//
+// A count BELOW the grant fails too, and that is deliberate rather than pedantry.
+// A stale over-grant is the same hole one size smaller — if oslevel.go drops to
+// zero indirected sites and the grant stays at 1, the next one added lands inside
+// the allowance and is never seen. Failing on the decrease keeps the number a
+// statement about the code as it is, and the fix is a one-line edit the failure
+// message names.
+func checkIndirectGrants(counts map[string]int) []string {
+	return nil
 }
 
 // gitExecMigratedSites are every production file that was migrated to construct
@@ -225,6 +252,7 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 	root := repoRoot(t)
 	fset := token.NewFileSet()
 	var offenders []string
+	indirectCounts := map[string]int{}
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -274,10 +302,13 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 				return true // non-git literal (e.g. "open") is fine
 			}
 			// Non-literal command name: could be git-via-variable. Offender unless
-			// this file is a known non-git indirected exec site.
-			if !indirectNonGitExecFiles[rel] {
+			// this file is a known non-git indirected exec site — and even then only
+			// up to its pinned count, which checkIndirectGrants adjudicates below.
+			if _, granted := indirectNonGitExecFiles[rel]; !granted {
 				offenders = append(offenders, rel+":"+line+" (indirected exec — may run git unhardened)")
+				return true
 			}
+			indirectCounts[rel]++
 			return true
 		})
 		return nil
@@ -285,6 +316,10 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk repo: %v", err)
 	}
+
+	// The grant is a budget, not a blanket exemption: a trusted file that grew a
+	// NEW indirected exec is an offender too, even though the file is listed.
+	offenders = append(offenders, checkIndirectGrants(indirectCounts)...)
 
 	if len(offenders) > 0 {
 		t.Fatalf("os/exec git-subprocess construction found outside internal/gitexec "+
@@ -390,4 +425,113 @@ func TestAC4_MigratedSitesReferenceGitexec(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAC4_IndirectGrantIsBounded proves the trust grant is a COUNT and not a
+// permanent file-level exemption.
+//
+// The defect this closes: indirectNonGitExecFiles was map[string]bool, so listing
+// internal/sandbox/oslevel.go exempted all 1700+ of its lines forever. Any
+// exec.Command(<variable>, ...) added anywhere in that file — including a git call
+// in exactly the snapshot.go form the scan exists to catch — was silently
+// permitted, in the one file that also execs an operator-controlled cfg.ToolPath.
+//
+// Synthetic counts, not the real walk: staging the regression for real would mean
+// adding a bogus exec to a production file. This asserts the decision function the
+// walk feeds, the same way TestAC4_MatcherDetectsIndirectedGit asserts the
+// classifier against synthetic source rather than mutating the repo.
+func TestAC4_IndirectGrantIsBounded(t *testing.T) {
+	const target = "internal/sandbox/oslevel.go"
+
+	atGrant := func() map[string]int {
+		m := make(map[string]int, len(indirectNonGitExecFiles))
+		for f, n := range indirectNonGitExecFiles {
+			m[f] = n
+		}
+		return m
+	}
+
+	t.Run("exactly the granted count is clean", func(t *testing.T) {
+		if got := checkIndirectGrants(atGrant()); len(got) != 0 {
+			t.Fatalf("a file at exactly its grant must not be an offender; got %v", got)
+		}
+	})
+
+	t.Run("one more indirected exec than granted is an offender", func(t *testing.T) {
+		counts := atGrant()
+		counts[target]++
+		got := checkIndirectGrants(counts)
+		if len(got) != 1 {
+			t.Fatalf("a NEW indirected exec in a trusted file must trip the gate; got %v", got)
+		}
+		if !strings.Contains(got[0], target) {
+			t.Fatalf("the failure must name the offending file; got %q", got[0])
+		}
+	})
+
+	t.Run("fewer sites than granted is a stale over-grant", func(t *testing.T) {
+		counts := atGrant()
+		counts[target]--
+		got := checkIndirectGrants(counts)
+		if len(got) != 1 {
+			t.Fatalf("a stale over-grant admits the next site added and must be reported; got %v", got)
+		}
+		if !strings.Contains(got[0], target) {
+			t.Fatalf("the failure must name the stale file; got %q", got[0])
+		}
+	})
+
+	t.Run("a file with no grant is not reported here", func(t *testing.T) {
+		counts := atGrant()
+		counts["internal/tools/snapshot.go"] = 3
+		if got := checkIndirectGrants(counts); len(got) != 0 {
+			t.Fatalf("un-granted files are offenders at the call site, not double-reported here; got %v", got)
+		}
+	})
+}
+
+// TestAC4_GrantCountsMatchTheRepository pins the numbers to reality. Without it
+// the grants could drift to any value and every synthetic test above would still
+// pass, which is precisely the stale-over-grant hole in a different place.
+func TestAC4_GrantCountsMatchTheRepository(t *testing.T) {
+	counts := indirectExecCounts(t, repoRoot(t))
+	for file, grant := range indirectNonGitExecFiles {
+		if counts[file] != grant {
+			t.Errorf("%s: granted %d indirected exec site(s), repository has %d", file, grant, counts[file])
+		}
+	}
+}
+
+// indirectExecCounts tallies indirected (non-string-literal) os/exec constructions
+// per allowlisted file, reusing the same classifier the AC4 walk uses so the two
+// can never disagree about what counts as a site.
+func indirectExecCounts(t *testing.T, root string) map[string]int {
+	t.Helper()
+	fset := token.NewFileSet()
+	counts := map[string]int{}
+	for file := range indirectNonGitExecFiles {
+		f, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(file)), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		execPkg := execPkgLocalName(f)
+		if execPkg == "" {
+			continue
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			isExec, nameArg := classifyExecCall(call, execPkg)
+			if !isExec {
+				return true
+			}
+			if _, isLit := stringLiteralValue(nameArg); !isLit {
+				counts[file]++
+			}
+			return true
+		})
+	}
+	return counts
 }
