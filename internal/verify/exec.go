@@ -148,9 +148,13 @@ func truncateCause(err error) string {
 }
 
 // ResolveExecBackend implements the execution gate. When execEnabled is false it
-// returns nil (execution off — the normal path). When true it REQUIRES a
-// configured sandbox backend that passes a preflight check; any failure is an
-// error so the caller refuses the run. It never enables execution implicitly.
+// returns nil (execution off — the normal path). When true it first attempts the
+// configured docker backend and returns it on a passing preflight. If
+// sandbox.fallback is set to "os-level" and the docker preflight fails for a
+// non-interrupt reason, it attempts the OS-level backend and returns it when and
+// only when that backend's own preflight passes. See osLevelUnenforcedDefaults
+// for the containment the OS-level shape does not enforce. It never enables
+// execution implicitly.
 //
 // Returns the ready backend, the resolved test command, and the per-run timeout.
 func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
