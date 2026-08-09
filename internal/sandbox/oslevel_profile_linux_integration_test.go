@@ -631,8 +631,21 @@ func TestIntegration_OSLevelLinux_ScratchBindIsNotAnEscapeHatch(t *testing.T) {
 	// host's /tmp and read another run's — or another process's — files.
 	b := linuxIntegrationBackend(t)
 
-	// A canary in the host's real /tmp, i.e. the scratch dir's parent.
-	canary, err := os.CreateTemp("/tmp", "atcr-scratch-canary-*")
+	// The canary must sit in the scratch dir's REAL parent: the backend takes
+	// its scratch from os.MkdirTemp("") (oslevel.go's runWith), whose parent is
+	// $TMPDIR when set. The previous revision hardcoded /tmp, so under a
+	// developer shell's TMPDIR the canary was never in the scratch parent and
+	// both probes were vacuous — and with TMPDIR unset the walk-out resolved to
+	// the tmpfs bwrap mounts at /tmp, so the canary's absence was explained by
+	// the tmpfs rather than by the bind being narrow. Derive the parent the
+	// same MkdirTemp call would use and assert the placement before trusting
+	// the probes.
+	probeDir, err := os.MkdirTemp("", "atcr-scratch-parent-probe-*")
+	require.NoError(t, err)
+	scratchParent := filepath.Dir(probeDir)
+	require.NoError(t, os.Remove(probeDir))
+
+	canary, err := os.CreateTemp(scratchParent, "atcr-scratch-canary-*")
 	require.NoError(t, err)
 	canaryPath := canary.Name()
 	t.Cleanup(func() { _ = os.Remove(canaryPath) })
@@ -640,11 +653,23 @@ func TestIntegration_OSLevelLinux_ScratchBindIsNotAnEscapeHatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, canary.Close())
 
+	// Positive control: the canary must be readable from the HOST, or its
+	// absence inside the sandbox proves nothing about the bind.
+	hostBody, err := os.ReadFile(canaryPath)
+	require.NoError(t, err)
+	require.Contains(t, string(hostBody), "SCRATCH-PARENT-CANARY",
+		"the canary is not host-readable; the in-sandbox assertions would be vacuous")
+
+	// Two probes, each discriminating bind WIDTH rather than the /tmp tmpfs:
+	// the canary's absolute host path, and a walk out of the scratch tree into
+	// its parent ($HOME/.. — wherever TMPDIR put it, NOT a path through /tmp).
+	// `|| echo PROBE-n-MISS` proves the cat ran and the file was genuinely
+	// absent; a bare NotContains would also pass if the probe never executed.
 	res, runErr := b.Run(context.Background(), RunSpec{
 		Command: []string{"/bin/sh", "-c",
 			"echo HOME_WRITABLE=$(touch \"$HOME/probe\" 2>&1 && echo yes || echo no); " +
-				"cat " + canaryPath + " 2>&1; " +
-				"cat \"$HOME/../..\"/$(basename " + canaryPath + ") 2>&1; true"},
+				"cat " + canaryPath + " 2>/dev/null || echo PROBE-1-MISS; " +
+				"cat \"$HOME/../\"$(basename " + canaryPath + ") 2>/dev/null || echo PROBE-2-MISS; true"},
 		SnapshotDir: t.TempDir(),
 		Timeout:     10 * time.Second,
 	})
@@ -654,5 +679,9 @@ func TestIntegration_OSLevelLinux_ScratchBindIsNotAnEscapeHatch(t *testing.T) {
 		"the scratch tree must be writable, or no toolchain can run; output: %s", res.Output)
 	assert.NotContains(t, res.Output, "SCRATCH-PARENT-CANARY",
 		"a file in the scratch dir's HOST parent was readable from inside the sandbox — the scratch "+
-			"bind is an escape hatch onto the host's /tmp; output: %s", res.Output)
+			"bind is an escape hatch onto the host's temp root; output: %s", res.Output)
+	assert.Contains(t, res.Output, "PROBE-1-MISS",
+		"the absolute-path probe did not run to a genuine miss; output: %s", res.Output)
+	assert.Contains(t, res.Output, "PROBE-2-MISS",
+		"the parent walk-out probe did not run to a genuine miss; output: %s", res.Output)
 }
