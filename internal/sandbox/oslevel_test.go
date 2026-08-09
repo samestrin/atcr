@@ -748,6 +748,22 @@ func writeFakeOSLevel(t *testing.T, body string) string {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fake-os-sandbox")
 	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
+	// Probe: roughly thirty tests in this file exec a shim out of t.TempDir().
+	// On a host with noexec on the temp mount every one of them fails with an
+	// opaque "permission denied" from cmd.Run() — and
+	// TestOSLevelBackendRun_SpawnFailureIsWrappedError would still pass, so
+	// triage would start in the wrong place. Name the environment failure at
+	// the point it occurs instead.
+	//
+	// The probe execs a no-op SIBLING, not the shim itself: shim bodies have
+	// side effects the tests count (marker files, start/end pairs, exit codes),
+	// so a blind probe run corrupts those assertions. A sibling in the same
+	// directory exercises the same mount's exec permission with none of them.
+	probe := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(probe, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	if err := exec.Command(probe).Run(); err != nil && errors.Is(err, os.ErrPermission) {
+		t.Skipf("temp dir is noexec: %v", err)
+	}
 	return p
 }
 
