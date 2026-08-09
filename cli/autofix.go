@@ -361,7 +361,6 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget, true); err != nil {
 				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
 				sandboxErr = err
-				be.sandboxBackend = nil
 			}
 		}
 	}

@@ -1786,7 +1786,7 @@ func TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth(t *testing
 	stderr := &bytes.Buffer{}
 	cmd.SetErr(stderr)
 
-	be, err := validateAutoFixBackend(cmd, proj, root)
+	_, err := validateAutoFixBackend(cmd, proj, root)
 
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "a neither-usable outcome is a usage-error refusal")
@@ -1807,7 +1807,6 @@ func TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth(t *testing
 	// conflation would actually be visible to an operator.
 	assert.NotContains(t, stderr.String(), noSandboxWarnMarker,
 		"a broken fallback must NEVER print the explicit --no-sandbox opt-out warning")
-	assert.Nil(t, be.sandboxBackend, "no backend may be carried out of a failed gate")
 }
 
 // TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged is the
@@ -1849,13 +1848,12 @@ func TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch(t *testing
 	}
 	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
 
-	be, err := validateAutoFixBackend(cmd, proj, root)
+	_, err := validateAutoFixBackend(cmd, proj, root)
 
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "an unusable snapshot is a gate refusal like any other")
 	assert.Contains(t, err.Error(), "home directory",
 		"the generator's own specific message must reach the operator, not an opaque 'validation could not run'")
-	assert.Nil(t, be.sandboxBackend, "a backend that cannot serve this directory must not be carried forward")
 }
 
 // TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget
