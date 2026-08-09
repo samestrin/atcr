@@ -209,6 +209,14 @@ func (b *osLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // is DockerBackend.Preflight's reason for spawning a trivial container
 // (docker.go:382-397). Every failure is wrapped so the cause stays reachable.
 func (b *osLevelBackend) Preflight(ctx context.Context) error {
+	// A re-preflight revokes the earlier pin up front, so a FAILED re-preflight
+	// leaves the backend unrunnable instead of spawning the binary a previous
+	// host state validated — the pin means "verified then", and a failed check
+	// now retracts exactly that claim.
+	b.mu.Lock()
+	b.pinnedTool = ""
+	b.mu.Unlock()
+
 	// 1. Binary present and executable.
 	//
 	//    There is deliberately no separate containment pre-check here. The gate
@@ -283,10 +291,11 @@ func (b *osLevelBackend) Preflight(ctx context.Context) error {
 		}
 	}
 
-	// Pin only here, on the success path, so a failed Preflight leaves the
-	// backend's configuration exactly as the operator set it. Every later Run
-	// then spawns this exact binary instead of re-resolving a name, closing the
-	// window between preflight and spawn (TD-003).
+	// Pin only here, on the success path, so a failed Preflight never leaves a
+	// pin behind (the re-preflight case is revoked at the top of this
+	// function). Every later Run then spawns this exact binary instead of
+	// re-resolving a name, closing the window between preflight and spawn
+	// (TD-003).
 	b.mu.Lock()
 	b.pinnedTool = resolved
 	b.mu.Unlock()
