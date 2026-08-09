@@ -72,6 +72,40 @@ func TestResolveExecBackend_PreflightFailureRefuses(t *testing.T) {
 	assert.Contains(t, err.Error(), "preflight")
 }
 
+// TestResolveExecBackend_FullFieldOverrideAppliedBeforePreflight mirrors
+// TestResolveAutoFixSandbox_FullFieldOverrideAppliedBeforePreflight on the
+// --exec resolver: the two resolvers duplicate the DockerPath/Image/Memory/
+// CPUs/PidsLimit wiring byte-for-byte, and only the auto-fix half was pinned —
+// deleting a cap line from ResolveExecBackend previously left the suite green
+// while running untrusted code at default caps. fakeDockerRecording/
+// runArgsLine need no hoisting: both test files are package verify, so the
+// shim is already shared.
+func TestResolveExecBackend_FullFieldOverrideAppliedBeforePreflight(t *testing.T) {
+	dockerPath, capture := fakeDockerRecording(t)
+	pids := 128
+	secs := 120
+	sc := &registry.SandboxConfig{
+		Backend:     "docker",
+		DockerPath:  dockerPath,
+		Image:       "custom-image:9",
+		Memory:      "256m",
+		CPUs:        "0.5",
+		PidsLimit:   &pids,
+		TimeoutSecs: &secs,
+		TestCommand: []string{"go", "test", "./..."},
+	}
+	b, _, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+	require.NoError(t, err)
+	require.NotNil(t, b)
+
+	run := runArgsLine(t, capture)
+	assert.Contains(t, run, "--memory 256m", "Memory override must reach docker run")
+	assert.Contains(t, run, "--cpus 0.5", "CPUs override must reach docker run")
+	assert.Contains(t, run, "--pids-limit 128", "PidsLimit override must reach docker run")
+	assert.Contains(t, run, "custom-image:9", "Image override must reach docker run")
+	assert.Equal(t, 120*time.Second, timeout, "TimeoutSecs override must reach the caller")
+}
+
 // --- OS-level fallback seam (shared by both resolvers' tests) ---------------
 
 // fakeOSLevel is a sandbox.Backend standing in for the real OS-level backend.
@@ -82,12 +116,20 @@ func TestResolveExecBackend_PreflightFailureRefuses(t *testing.T) {
 type fakeOSLevel struct {
 	preflightErr error
 	preflights   int
+	// cancel, when set, fires inside Preflight to simulate a SIGINT landing
+	// mid-preflight (cli/main.go cancels the root context on the first signal,
+	// and the real OS-level preflight spawns sandbox-exec/bwrap, so the window
+	// is real). Tests pair it with preflightErr=context.Canceled.
+	cancel context.CancelFunc
 }
 
 func (f *fakeOSLevel) Name() string { return "os-level" }
 
 func (f *fakeOSLevel) Preflight(context.Context) error {
 	f.preflights++
+	if f.cancel != nil {
+		f.cancel()
+	}
 	return f.preflightErr
 }
 
@@ -261,6 +303,32 @@ func TestResolveExecBackend_CanceledContextDoesNotAttemptFallback(t *testing.T) 
 	assert.Equal(t, 0, *calls, "a canceled context must not spend a fallback attempt")
 	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend,
 		"an interrupt is not a neither-backend-usable outcome")
+}
+
+// TestResolveExecBackend_InterruptDuringFallbackPreflightIsNotSentineled pins
+// the post-branch half of "an interrupt is not a neither-backend-usable
+// outcome": the ctx.Err() gate covers a ctrl-C arriving BEFORE the OS-level
+// preflight, but nothing re-checks cancellation after osBackend.Preflight
+// returns. A signal landing inside that window must not surface as
+// ErrSandboxNoUsableBackend — the operator pressed ctrl-C; their sandbox
+// configuration is not broken.
+func TestResolveExecBackend_InterruptDuringFallbackPreflightIsNotSentineled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fake, _, calls := stubOSLevel(t, context.Canceled)
+	fake.cancel = cancel // the SIGINT lands while the OS-level preflight runs
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend,
+		"a ctrl-C during the OS-level preflight is an interrupt, not a broken sandbox config")
+	assert.ErrorIs(t, err, context.Canceled,
+		"the cancellation must stay reachable through the chain")
 }
 
 // TestOSLevelBackendSeam_RealConstructorIsWired exercises the UNSTUBBED seam.
