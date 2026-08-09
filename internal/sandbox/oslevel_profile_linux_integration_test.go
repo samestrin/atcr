@@ -685,3 +685,33 @@ func TestIntegration_OSLevelLinux_ScratchBindIsNotAnEscapeHatch(t *testing.T) {
 	assert.Contains(t, res.Output, "PROBE-2-MISS",
 		"the parent walk-out probe did not run to a genuine miss; output: %s", res.Output)
 }
+
+func TestIntegration_OSLevelLinux_EnvironmentIsScrubbed(t *testing.T) {
+	// The Linux leg of the darwin EnvironmentIsScrubbed proof: runWith's
+	// cmd.Env = sandboxEnv(homeDir) is the ONLY thing keeping the operator's
+	// credentials (LITELLM_API_KEY, GITHUB_TOKEN) out of LLM-generated code,
+	// and until now no integration leg executed env inside a real sandbox to
+	// prove a planted secret stays out — only a unit test on sandboxEnv's
+	// return value, exactly the "fake-shim unit test mistaken for proof of
+	// real enforcement" shape the design flags.
+	b := linuxIntegrationBackend(t)
+
+	nonce := "atcr-env-leak-7f3a9c51"
+	t.Setenv("ATCR_ENV_LEAK_CANARY", nonce)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"/bin/sh", "-c", "env"},
+		SnapshotDir: t.TempDir(),
+		Timeout:     10 * time.Second,
+	})
+	require.NoError(t, err, "output: %s", res.Output)
+	require.Equal(t, 0, res.ExitCode, "env must run; output: %s", res.Output)
+	// Paired positive control: an env that never ran cannot satisfy the leak
+	// assertion, so the allowlisted variables must be present.
+	assert.Contains(t, res.Output, "HOME=", "the env dump must exist for the leak assertion to mean anything")
+	assert.Contains(t, res.Output, "PATH=")
+	assert.NotContains(t, res.Output, nonce,
+		"the operator's environment leaked into the sandbox — containment breach; output: %s", res.Output)
+	assert.NotContains(t, res.Output, "ATCR_ENV_LEAK_CANARY",
+		"the canary NAME reached the sandbox — the env was inherited, not scrubbed; output: %s", res.Output)
+}

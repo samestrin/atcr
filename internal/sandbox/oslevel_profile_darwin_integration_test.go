@@ -661,3 +661,33 @@ func TestIntegration_OSLevelDarwin_SensitiveHostPathsAreUnreadable(t *testing.T)
 		})
 	}
 }
+
+func TestIntegration_OSLevelDarwin_EnvironmentIsScrubbed(t *testing.T) {
+	// runWith states that cmd.Env = sandboxEnv(homeDir) is "the ONLY place the
+	// allowlist is built", and that without it every credential in the
+	// operator's shell (LITELLM_API_KEY, GITHUB_TOKEN) reaches LLM-generated
+	// code. Until now only a unit test on sandboxEnv's return VALUE covered
+	// that — a future caller bypassing runWith, or a backend change
+	// reintroducing inheritance, would keep every test green. This drives the
+	// real sandbox-exec with a planted secret in the PARENT environment.
+	b := darwinIntegrationBackend(t)
+
+	nonce := "atcr-env-leak-7f3a9c51"
+	t.Setenv("ATCR_ENV_LEAK_CANARY", nonce)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"/bin/sh", "-c", "env"},
+		SnapshotDir: t.TempDir(),
+		Timeout:     10 * time.Second,
+	})
+	require.NoError(t, err, "output: %s", res.Output)
+	require.Equal(t, 0, res.ExitCode, "env must run; output: %s", res.Output)
+	// Paired positive control: an env that never ran cannot satisfy the leak
+	// assertion, so the allowlisted variables must be present.
+	assert.Contains(t, res.Output, "HOME=", "the env dump must exist for the leak assertion to mean anything")
+	assert.Contains(t, res.Output, "PATH=")
+	assert.NotContains(t, res.Output, nonce,
+		"the operator's environment leaked into the sandbox — containment breach; output: %s", res.Output)
+	assert.NotContains(t, res.Output, "ATCR_ENV_LEAK_CANARY",
+		"the canary NAME reached the sandbox — the env was inherited, not scrubbed; output: %s", res.Output)
+}
