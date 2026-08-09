@@ -2,6 +2,7 @@ package gitexec
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -150,7 +152,24 @@ var indirectNonGitExecFiles = map[string]int{
 // statement about the code as it is, and the fix is a one-line edit the failure
 // message names.
 func checkIndirectGrants(counts map[string]int) []string {
-	return nil
+	var offenders []string
+	for file, grant := range indirectNonGitExecFiles {
+		got := counts[file]
+		switch {
+		case got > grant:
+			offenders = append(offenders, fmt.Sprintf(
+				"%s has %d indirected exec site(s) but is granted %d — review the new site, then raise the grant if it provably runs a non-git binary",
+				file, got, grant))
+		case got < grant:
+			offenders = append(offenders, fmt.Sprintf(
+				"%s has %d indirected exec site(s) but is granted %d — lower the grant; a stale over-grant silently admits the next one added",
+				file, got, grant))
+		}
+	}
+	// Sorted: map iteration order is randomized, and a failure message that
+	// reorders between runs is a diff nobody can review.
+	sort.Strings(offenders)
+	return offenders
 }
 
 // gitExecMigratedSites are every production file that was migrated to construct
