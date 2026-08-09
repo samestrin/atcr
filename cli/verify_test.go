@@ -514,6 +514,48 @@ func TestResolveExec_CheapPathCheckRunsBeforeBackendResolution(t *testing.T) {
 	assert.False(t, backendCalled, "cheap path check must run before backend resolution")
 }
 
+// TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath pins the review
+// call site's flag surface: `atcr review` registers --repo as the GitHub
+// owner/name target and no --repo-root (cli/reconcile_test.go pins that help
+// surface), so resolveExec must not feed that command to normalizeRepoFlag —
+// which treats --repo as the deprecated PATH alias and hard-refuses
+// `--repo owner/name` with "--repo-root \"owner/name\" does not exist or is
+// not a directory", naming a flag review does not have. On this call site the
+// gate's root is the working tree — the root the review run itself uses.
+func TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath(t *testing.T) {
+	var gotDir string
+	origCheck := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, _ bool) error {
+		gotDir = dir
+		return nil
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = origCheck })
+
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: "docker"}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newReviewCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	require.NoError(t, cmd.Flags().Set("repo", "owner/name"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.NoError(t, err, "review's --repo is owner/name, not a path — it must never reach normalizeRepoFlag")
+	require.NotNil(t, backend)
+	assert.Equal(t, []string{"go", "test"}, testCmd)
+	assert.Equal(t, time.Minute, timeout)
+	wantRoot, wantErr := filepath.Abs(".")
+	require.NoError(t, wantErr)
+	assert.Equal(t, wantRoot, gotDir, "on the review call site the gate checks the working-tree root")
+}
+
 // nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
 // pre-check dispatches on that and nothing else runs it.
 type nameOnlyBackend struct{ name string }
