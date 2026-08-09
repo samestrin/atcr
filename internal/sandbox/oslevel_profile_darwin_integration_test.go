@@ -317,8 +317,16 @@ func TestIntegration_OSLevelDarwin_RealToolchainRuns(t *testing.T) {
 	for _, tool := range []struct{ name, argv string }{
 		{"git", "git --version"},
 		{"go", "go version"},
+		{"python3", "python3 -c 'print(\"ok\")'"},
 	} {
 		t.Run(tool.name, func(t *testing.T) {
+			// /usr/bin/python3 exists only with the Command Line Tools installed;
+			// without them there is no shim for the profile to mishandle.
+			if tool.name == "python3" {
+				if _, err := exec.LookPath("python3"); err != nil {
+					skipOrFail(t, "python3 is not installed on this host: %v", err)
+				}
+			}
 			res, err := b.Run(context.Background(), RunSpec{
 				Command:     []string{"/bin/sh", "-c", tool.argv + " 2>&1"},
 				SnapshotDir: t.TempDir(),

@@ -1529,3 +1529,40 @@ func TestSandboxExecProfile_PinsTheExplicitNetworkDenial(t *testing.T) {
 	assert.Contains(t, profile, profileDenyNetwork,
 		"the explicit network denial must stay in the emitted profile even though (deny default) subsumes it")
 }
+
+func TestSandboxExecProfile_ReadTierAncestorsAreStatable(t *testing.T) {
+	// Measured 2026-08-09 against the real sandbox-exec on macOS 26.2:
+	// /usr/bin/python3 is an xcrun shim whose SDK lookup runs realpath on
+	// /Library/Developer/CommandLineTools/usr/bin, and realpath stats EVERY
+	// ancestor component. The metadata clause granted the read-tier subpaths but
+	// not their ancestors, so the stat on /Library failed with EPERM and python3
+	// exited 1 before running any user code (": realpath:
+	// /Library/Developer/CommandLineTools/usr/bin/: Operation not permitted").
+	// file-read-metadata on an ancestor literal reveals that the directory exists
+	// and nothing about its contents — the same posture the snapshot/scratch
+	// ancestor literals already take.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	literals := map[string]bool{}
+	for _, lit := range clauseOperands(t, profile, "file-read-metadata", "literal") {
+		literals[lit] = true
+	}
+	for _, dir := range darwinSystemReadDirs {
+		for _, ancestor := range pathAncestors(dir) {
+			assert.True(t, literals[ancestor],
+				"metadata clause must let a tool stat %q on its way into read-tier dir %q", ancestor, dir)
+		}
+	}
+
+	// Same measurement: with the ancestors statable the shim runs but still prints
+	// "unable to read SDK settings for '/'" and "unable to determine the version
+	// of the host OS" on every invocation — it reads the host OS version from
+	// SystemVersion.plist. The plist discloses the OS version, already implied by
+	// the dyld cryptex paths the read tier grants, and granting it cleared both
+	// diagnostics in the measured run.
+	assert.Contains(t, profile,
+		`(allow file-read-data (literal "/System/Library/CoreServices/SystemVersion.plist"))`,
+		"the xcrun shim behind /usr/bin/python3 reads the host OS version from this plist")
+}
