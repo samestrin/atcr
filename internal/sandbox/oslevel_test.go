@@ -1327,6 +1327,23 @@ exit 65`))
 	assert.Empty(t, b.pinnedTool)
 }
 
+func TestOSLevelBackend_Preflight_DoesNotQueueBehindTheConcurrencyCap(t *testing.T) {
+	// Preflight's verification run goes through runWith, which acquires the
+	// MaxConcurrent semaphore. Preflight is the readiness gate a resolver blocks
+	// on, so it must not queue behind in-flight workload runs: with every slot
+	// held, a queued probe outlives its own timeout and the backend reports
+	// "unhealthy" purely because it is busy.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody()) // MaxConcurrent = 1
+	// Hold the only slot, as an in-flight workload run would.
+	b.sem <- struct{}{}
+	t.Cleanup(func() { <-b.sem })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	require.NoError(t, b.Preflight(ctx),
+		"a preflight probe must not queue behind in-flight workload runs")
+}
+
 func TestOSLevelBackend_Preflight_ResolvesOnlyFromTrustedDirs(t *testing.T) {
 	// exec.LookPath would honour $PATH verbatim, and Go maps an empty PATH
 	// element to "." — the repository under review. A binary planted there must
