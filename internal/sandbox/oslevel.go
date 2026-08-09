@@ -1440,7 +1440,29 @@ func sanitizeSandboxPath(path string) string {
 			continue
 		}
 		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// The writability mask is applied in two tiers rather than as one blanket
+		// rule, because a blanket rule contradicted a decision this package had
+		// already made and reviewed elsewhere.
+		//
+		// Under a vetted toolchain prefix (vettedToolchainPrefixes — the SAME list
+		// the darwin profile's read tier grants) the GROUP-write bit is accepted:
+		// a standard Homebrew install owns /opt/homebrew/bin as 0775, gid `admin`,
+		// and rejecting it meant a sandboxed run could not find `node` at all. An
+		// attacker able to write there has already replaced the operator's
+		// toolchain for every unsandboxed use, so excluding it buys no protection
+		// and costs the feature.
+		//
+		// The WORLD-write bit is rejected everywhere, vetted prefix or not. That is
+		// a strictly larger claim than the group-writable case that was reviewed —
+		// any local user, no group membership needed — and nothing has accepted it.
+		mask := os.FileMode(0o022)
+		if underVettedToolchainPrefix(dir, vettedToolchainPrefixes) {
+			mask = 0o002
+		}
+		if info.Mode().Perm()&mask != 0 {
 			continue
 		}
 		if !seen[dir] {
