@@ -265,3 +265,9 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 	}
 	return backend, sc.TestCommand, timeout, nil
 }
+
+// EmitPendingFallbackWarning fires the fallback-engaged notice a resolver
+// deferred, once the caller has committed to the run.
+//
+// STUB — wired but deliberately inert; see the RED test.
+func EmitPendingFallbackWarning(ctx context.Context, b sandbox.Backend) {}
