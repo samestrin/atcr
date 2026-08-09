@@ -463,8 +463,27 @@ func TestIntegration_OSLevelLinux_HostProcessTableIsInvisible(t *testing.T) {
 	// since the sandbox legitimately contains the shell and its children.
 	b := linuxIntegrationBackend(t)
 
+	// The grep class needs the +: '^[0-9]*$' also matches BLANK lines, so the
+	// old probe counted every empty line ls emitted along with the PIDs.
+	const probe = "ls /proc | grep -c '^[0-9][0-9]*$'"
+
+	// Host-side control, same discipline as the network and path probes: an
+	// in-sandbox count <= 5 proves nothing on a host whose table is not much
+	// larger (a minimal container or quiet CI runner passes this test with
+	// --unshare-pid AND --proc both removed). "Comfortably above" is taken as
+	// at least twice the ceiling.
+	control := runUnsandboxed(t, probe)
+	require.Equal(t, 0, control.exitCode, "the host-side control probe must run; output: %q", control.output)
+	hostN, hostConvErr := strconv.Atoi(strings.TrimSpace(control.output))
+	require.NoError(t, hostConvErr, "the host control must report a PID count; output: %q", control.output)
+	if hostN <= 10 {
+		skipOrFail(t, "host process table has only %d entries — not comfortably above the in-sandbox "+
+			"ceiling, so a small in-sandbox count proves nothing", hostN)
+		return
+	}
+
 	res, err := b.Run(context.Background(), RunSpec{
-		Command:     []string{"/bin/sh", "-c", "ls /proc | grep -c '^[0-9]*$'"},
+		Command:     []string{"/bin/sh", "-c", probe},
 		SnapshotDir: t.TempDir(),
 		Timeout:     10 * time.Second,
 	})
@@ -480,6 +499,8 @@ func TestIntegration_OSLevelLinux_HostProcessTableIsInvisible(t *testing.T) {
 	require.NoError(t, convErr, "the probe must report a PID count; output: %q", res.Output)
 	assert.LessOrEqual(t, n, 5,
 		"a private PID namespace must show a handful of processes, not the host's table (got %d)", n)
+	assert.Less(t, n, hostN,
+		"the in-sandbox table (%d) must be strictly smaller than the host's (%d)", n, hostN)
 }
 
 func TestIntegration_OSLevelLinux_ArgvTerminatorHoldsAgainstAHostileCommand(t *testing.T) {
