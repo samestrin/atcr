@@ -481,7 +481,9 @@ func TestResolveExec_RunsTheSnapshotPreCheckToo(t *testing.T) {
 	assert.Contains(t, err.Error(), "home directory")
 	assert.Nil(t, backend)
 	assert.False(t, gotWritable, "--exec call sites leave RunSpec.Writable false, so the read-only shape is the one to check")
-	assert.True(t, filepath.IsAbs(gotDir), "the check must receive an absolute path, got %q", gotDir)
+	wantRoot, wantErr := filepath.Abs(".")
+	require.NoError(t, wantErr)
+	assert.Equal(t, wantRoot, gotDir, "the checked directory must be the resolved repo root")
 }
 
 // nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
