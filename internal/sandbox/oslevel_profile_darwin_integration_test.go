@@ -480,6 +480,12 @@ func TestIntegration_OSLevelDarwin_ScriptModeIsContainedToo(t *testing.T) {
 	require.NoError(t, err, "output: %s", res.Output)
 	assert.Contains(t, res.Output, "script-ran",
 		"the script body must reach the shell over stdin; output: %s", res.Output)
+	// "script-ran" proves the script executed; it does not prove the READ was
+	// attempted and refused. A cat that never ran — a shell that aborted on an
+	// earlier statement, a missing binary — also prints no canary. Require the
+	// profile's own denial diagnostic naming the secret, as the Command-mode
+	// sibling does.
+	assertDeniedByProfile(t, res.Output, secretPath)
 	assert.NotContains(t, res.Output, "ATCR-INTEGRATION-CANARY",
 		"Script mode must be contained exactly as Command mode is — the secret leaked; output: %s", res.Output)
 }
@@ -505,6 +511,10 @@ func TestIntegration_OSLevelDarwin_WritableOverlayDoesNotWidenTheBoundary(t *tes
 	_, statErr := os.Stat(target)
 	assert.True(t, os.IsNotExist(statErr),
 		"the writable carve-out widened the boundary: %s was created — containment breach", target)
+	// A canary that never printed is not proof the read was refused: a cat that
+	// never ran satisfies it too. Require the profile's denial diagnostic naming
+	// the secret, matching the Linux sibling's assertPathInvisible.
+	assertDeniedByProfile(t, res.Output, secretPath)
 	assert.NotContains(t, res.Output, "ATCR-INTEGRATION-CANARY",
 		"the writable carve-out widened the boundary: the secret was readable — containment breach")
 }
