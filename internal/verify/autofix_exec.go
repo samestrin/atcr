@@ -116,7 +116,11 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 		// This is a different bypass from `enabled == false` above: --no-sandbox
 		// accepts unsandboxed host execution, sandbox.fallback substitutes a
 		// still-contained backend. Neither implies the other.
-		if osLevelFallbackConfigured(sc) && ctx.Err() == nil {
+		// Same three-part gate as ResolveExecBackend, for the same reasons: opted
+		// in, not interrupted, and Docker genuinely unavailable rather than
+		// misconfigured. An operator who learns what --exec does on a Docker-less
+		// host must not find --auto-fix classifying causes differently.
+		if osLevelFallbackConfigured(sc) && ctx.Err() == nil && errors.Is(err, sandbox.ErrDockerUnavailable) {
 			osBackend := newOSLevelBackendFn(osLevelFallbackConfig(sc))
 			if osErr := osBackend.Preflight(ctx); osErr != nil {
 				// Same post-preflight interrupt re-check as ResolveExecBackend:

@@ -216,11 +216,20 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 		// restructure of it. When no fallback is configured, the line below runs
 		// exactly as it always has — that untouched path is what keeps
 		// TestResolveExecBackend_PreflightFailureRefuses passing unmodified.
-		if osLevelFallbackConfigured(sc) && ctx.Err() == nil {
+		if osLevelFallbackConfigured(sc) && ctx.Err() == nil && errors.Is(err, sandbox.ErrDockerUnavailable) {
 			// ctx.Err() gates the branch because a docker preflight that failed
 			// only because the operator pressed ctrl-C is not evidence that docker
 			// is unusable. Without it, an interrupt spends a temp dir and two more
 			// spawn attempts before reporting itself as "no usable sandbox backend".
+			//
+			// ErrDockerUnavailable gates it for the same reason one class further
+			// out: Preflight ALSO fails on operator configuration faults (base image
+			// absent, memory/cpus rejected against the host, invalid
+			// scratch_size/work_size, the trivial hardened container failing). Those
+			// are not evidence Docker is unusable either, and downgrading on them
+			// hands an operator who just tightened a cap a backend that enforces
+			// none of them. Only the unavailable class may fall back; every other
+			// class keeps the pre-existing hard refusal below.
 			osCfg := osLevelFallbackConfig(sc)
 			osBackend := newOSLevelBackendFn(osCfg)
 			if osErr := osBackend.Preflight(ctx); osErr != nil {

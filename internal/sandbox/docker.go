@@ -369,7 +369,7 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	//    Docker itself is missing or down, which is what the os-level fallback is
 	//    for. Every step below is a configuration fault and must refuse instead.
 	if err := b.dockerCmd(ctx, 15*time.Second, "version"); err != nil {
-		return fmt.Errorf("sandbox preflight: docker daemon unreachable (is Docker running?): %w", err)
+		return fmt.Errorf("sandbox preflight: docker daemon unreachable (is Docker running?): %w: %w", err, ErrDockerUnavailable)
 	}
 	// 2. Base image present locally (runs are network-isolated, so the image
 	//    cannot be pulled on demand).
