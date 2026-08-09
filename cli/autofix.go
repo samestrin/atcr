@@ -93,9 +93,12 @@ func (h hiddenCause) Unwrap() error { return h.err }
 // points at the real verify.ResolveAutoFixSandbox.
 var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
 
-// checkOSLevelSnapshotFn is gate check (5)'s seam, mirroring the resolver seam
-// above so a test can stage a refusal without needing a repo actually checked
-// out at $HOME.
+// checkOSLevelSnapshotFn is the seam for the os-level snapshot pre-check used by
+// both gate call sites: --auto-fix's gate check (5) in validateAutoFixBackend
+// (autofix.go) and --exec's resolveExec (verify.go). A single package var is
+// intentional so a test can stage a refusal without needing a repo actually
+// checked out at $HOME, but mutating it affects both gates — any test stubbing
+// it must restore the original value in a cleanup.
 var checkOSLevelSnapshotFn = verify.CheckOSLevelSnapshotUsable
 
 // warnNoSandbox writes the --no-sandbox security warning to out. It is
