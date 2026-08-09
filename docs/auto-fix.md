@@ -91,6 +91,7 @@ sandbox:
   backend: docker            # required for --auto-fix by default (see above)
   image: golang:1.25         # MUST be present locally (runs are network-isolated)
   test_command: [go, test, ./...]
+  fallback: os-level         # OPTIONAL opt-in; omit for today's fail-closed behavior
 auto_fix:
   apply_target: .            # where the patch is applied (default: repo root)
   validate_command: [go, build, ./...]   # post-apply validation argv
@@ -118,8 +119,92 @@ The block has exactly three fields:
 > by default, `--auto-fix` needs a `sandbox:` block (with an `image` and
 > `test_command`) just as `--exec` does — the container image is where your
 > validation command runs. If Docker is genuinely unavailable in your
-> environment, use [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
-> of host execution instead.
+> environment, you have two options, in order of preference: the still-contained
+> [`sandbox.fallback: os-level`](#os-level-fallback-sandboxfallback-os-level)
+> opt-in below, or [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
+> of unsandboxed host execution instead.
+
+## OS-level fallback (`sandbox.fallback: os-level`)
+
+`sandbox.fallback` is an **opt-in** config field that names a second backend to
+try when Docker fails its preflight. It uses the operating system's own process
+confinement — `sandbox-exec` on macOS, `bwrap` (Bubblewrap) on Linux — instead of
+a container, so a machine with no Docker daemon can still run `--auto-fix`
+validation under real containment.
+
+```yaml
+# .atcr/config.yaml
+sandbox:
+  backend: docker            # still the primary; the fallback is only a fallback
+  image: golang:1.25
+  test_command: [go, test, ./...]
+  fallback: os-level         # the ONLY accepted value
+```
+
+**It is never automatic.** ATCR does not infer this from your host — not from a
+missing `docker` binary, not from a CI environment variable. The fallback engages
+only when both of these are true: you wrote `fallback: os-level` in config, **and**
+Docker's preflight has already failed. It is never chosen as a first-choice
+backend while Docker is healthy. Any value other than `os-level` is rejected at
+config-load time.
+
+**With `fallback` unset, nothing changes.** That is the default and the shape of
+every config written before the field existed: a Docker preflight failure remains
+a hard refusal, and `--no-sandbox` remains the only way to run validation outside
+a sandbox. The fail-closed posture described in
+[Sandboxed by default](#sandboxed-by-default) is untouched for anyone who does not
+opt in.
+
+**When neither backend is usable, the run is refused.** If Docker's preflight
+fails and the OS-level backend then fails its own preflight too (no
+`sandbox-exec`/`bwrap`, or the platform cannot provide containment), `--auto-fix`
+hard-errors with a message naming both failures. It does **not** quietly degrade
+to unsandboxed host execution. A configured-but-broken fallback is a refusal, not
+a bypass.
+
+**It logs when it engages.** Switching backends changes your isolation model, so
+ATCR emits a warning naming the backend, the Docker error that triggered it, and
+what is no longer enforced. Note this is a **log line, not a banner**: unlike
+`--no-sandbox`'s unconditional stderr warning, it goes through the context logger
+and is therefore suppressible with `ATCR_LOG_LEVEL=error`.
+
+### What you give up relative to Docker
+
+The OS-level backend is a genuine improvement over `--no-sandbox` — the run still
+gets no network egress and a filesystem scoped to the code snapshot plus `/tmp`.
+It is **not** equivalent to the container backend. It shares the host kernel and
+has no image, no root filesystem to remount, and no capability set to drop, so
+the guarantee list in
+[What the sandbox guarantees](execution.md#what-the-sandbox-guarantees) applies
+only to the Docker backend; that page names the narrower OS-level set separately.
+Concretely, opting in accepts all of the following:
+
+- **Runs as the invoking user**, not as the unprivileged `uid 65534` the container
+  backend uses.
+- **No resource caps.** `sandbox.memory`, `sandbox.cpus`, and `sandbox.pids_limit`
+  still pass config validation but are **not enforced** by this backend. Every
+  hardened container default is likewise dropped: `--cap-drop ALL`,
+  `--security-opt no-new-privileges`, and the read-only root filesystem.
+- **`sandbox.image` is ignored.** There is no container, so `test_command` /
+  `validate_command` runs against whatever toolchain the **host's** `PATH`
+  provides. If that toolchain is absent the command exits `127`, which a reviewing
+  model can misread as a genuine validation failure rather than a missing tool.
+- **`/tmp` differs by platform.** On Linux the run gets a fresh, ephemeral
+  `--tmpfs /tmp`. On macOS `sandbox-exec` cannot provide one, so the run gets the
+  **host's real `/tmp`, readable and writable** — where Docker gave a throwaway
+  container tmpfs.
+- **The platform binary is resolved only from `/usr/bin`, `/bin`, `/usr/sbin`, and
+  `/sbin` — never from `$PATH`.** This is deliberate (a `$PATH` lookup is an
+  injection surface for the very code being contained), but it means a `bwrap`
+  installed under `/usr/local/bin` — a source build, Homebrew-on-Linux, or Nix —
+  is **not** found, and the fallback preflight fails.
+- **Validation cost scales with working-tree size.** Because the validation step
+  needs a writable tree, each run makes a full host-side copy of the snapshot
+  before executing.
+
+`sandbox.fallback` and `--no-sandbox` are **separate, non-overlapping** escape
+hatches, and neither implies the other: the flag accepts fully unsandboxed host
+execution, while this config field substitutes a still-contained backend.
 
 ## Opting out (`--no-sandbox`)
 

@@ -62,7 +62,29 @@ Every run is executed in an ephemeral container with:
 - **Resource caps** — memory, CPU, and PID limits, plus a wall-clock timeout.
 
 Bare-metal execution is intentionally unsupported. The backend is pluggable;
-Docker is the only implementation today (Podman is a future addition).
+Docker is the primary implementation, and an OS-level backend is available as an
+explicit opt-in fallback (see below). Podman is a future addition.
+
+### What the OS-level fallback guarantees instead
+
+The guarantee list above is written in container terms and describes the **Docker
+backend only**. When `--auto-fix` is configured with
+[`sandbox.fallback: os-level`](auto-fix.md#os-level-fallback-sandboxfallback-os-level)
+and Docker's preflight fails, validation runs under the OS's own confinement
+(`sandbox-exec` on macOS, `bwrap` on Linux). That backend shares the host kernel
+and has no image, no root filesystem to remount, and no capability set to drop, so
+it delivers a genuinely narrower set:
+
+- **No network egress** — enforced by the sandbox profile (macOS) or a network
+  namespace (Linux).
+- **Filesystem scoped** to the code snapshot plus `/tmp`; paths outside those
+  roots — `$HOME` and `~/.ssh` included — are neither readable nor writable.
+- **Wall-clock timeout and a concurrency cap**, as with the container backend.
+
+It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
+`--security-opt no-new-privileges`, a non-root user, or memory/CPU/PID caps. The
+per-platform caveats an operator accepts by opting in are listed in full under
+[What you give up relative to Docker](auto-fix.md#what-you-give-up-relative-to-docker).
 
 ### Preflight
 
