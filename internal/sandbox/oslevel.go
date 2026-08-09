@@ -1220,7 +1220,12 @@ func auditRun(logger *slog.Logger, tool, cmdForLog string, res RunResult, runErr
 
 // osLevelWaitGrace bounds how long cmd.Wait blocks after the sandboxed process
 // exits while a lingering grandchild still holds its output pipes open.
-const osLevelWaitGrace = 5 * time.Second
+//
+// A variable rather than a constant so the fail-closed branch it feeds is
+// testable without a five-second test, exactly as osLevelMaxWritableCopyBytes
+// is a variable so its bound can be exercised without a multi-gigabyte fixture.
+// Production code never reassigns it.
+var osLevelWaitGrace = 5 * time.Second
 
 // osLevelCaptureTailBytes caps the tail of the combined output capture that
 // fault classification reads. Every measured tool diagnostic (bwrap's die()

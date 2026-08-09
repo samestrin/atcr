@@ -876,6 +876,42 @@ func TestOSLevelBackendRun_TimeoutKillsWholeProcessGroupAndReports124(t *testing
 	assert.NoDirExists(t, seen.ScratchDir, "the ephemeral scratch tree must not survive a timed-out run")
 }
 
+func TestOSLevelBackendRun_LingeringChildHoldingPipesFailsClosedAsTimeout(t *testing.T) {
+	// The exec.ErrWaitDelay branch: the sandboxed process exited, but a
+	// grandchild that escaped the process group still holds the output pipes, so
+	// cmd.Wait cannot vouch for having seen the run's full output. That is a
+	// fail-closed decision on a security-relevant path — the alternative is
+	// reporting a success derived from a truncated capture — and it had no test
+	// at all: deleting cmd.WaitDelay, or the whole errors.Is(runErr,
+	// exec.ErrWaitDelay) block, left every test green (the error would fall
+	// through to classifyRunError, be classified as a non-ExitError fault, and
+	// nothing would notice).
+	orig := osLevelWaitGrace
+	osLevelWaitGrace = 200 * time.Millisecond
+	t.Cleanup(func() { osLevelWaitGrace = orig })
+
+	// The shim exits IMMEDIATELY; the backgrounded subshell inherits the
+	// inherited stdout pipe and keeps it open well past the lowered grace.
+	b := newFakeOSLevelBackend(t, `(sleep 5) &
+exit 0`)
+
+	start := time.Now()
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: t.TempDir(),
+		// Comfortably longer than the wait grace, so this asserts the WaitDelay
+		// path and not the ordinary deadline path above it.
+		Timeout: 30 * time.Second,
+	})
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "a lingering child is reported as a timeout outcome, not a backend fault")
+	assert.True(t, res.TimedOut, "a run whose output could not be fully collected must fail closed")
+	assert.Equal(t, timeoutExitCode, res.ExitCode)
+	assert.Less(t, elapsed, 5*time.Second,
+		"Run must return on the wait grace, not block until the lingering child exits")
+}
+
 func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
 	// A cancellation must never be misreported as a spurious non-zero exit or a
 	// backend fault, matching docker.go:301.
