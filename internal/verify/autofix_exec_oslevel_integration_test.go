@@ -76,10 +76,10 @@ func requireResolvableSandboxTool(t *testing.T) {
 	case "linux":
 		tool = "bwrap"
 	default:
-		t.Skipf("no os-level sandbox on %s", runtime.GOOS)
+		skipOrFailFallbackProof(t, "no os-level sandbox on %s", runtime.GOOS)
 	}
 	for _, dir := range trustedToolDirs {
-		if info, err := os.Stat(filepath.Join(dir, tool)); err == nil && !info.IsDir() {
+		if info, err := os.Stat(filepath.Join(dir, tool)); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 			return
 		}
 	}
