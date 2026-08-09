@@ -104,6 +104,15 @@ var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
 // it must restore the original value in a cleanup.
 var checkOSLevelSnapshotFn = verify.CheckOSLevelSnapshotUsable
 
+// checkOSLevelToolchainFn is the sibling seam for the os-level toolchain-
+// reachability pre-check, used by the same two gate call sites as
+// checkOSLevelSnapshotFn and subject to the same restore-in-cleanup rule.
+//
+// Separate from the snapshot seam on purpose: the two answer different questions
+// (can the sandbox CONTAIN this directory / can it REACH this tool), fail for
+// unrelated reasons, and a test staging one must not have to stage the other.
+var checkOSLevelToolchainFn = verify.CheckOSLevelToolchainReachable
+
 // warnNoSandbox writes the --no-sandbox security warning to out. It is
 // deliberately NOT memoized — no sync.Once, no package-level "seen" bool, no
 // env/state gate — which is the exact opposite of the read-once ATCR_TELEMETRY
@@ -365,6 +374,20 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 			// keeps it a fail-closed gate refusal like the other four, not a new
 			// error path.
 			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget, true); err != nil {
+				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+				sandboxErr = err
+			}
+			// (5b) Toolchain reachability — the sibling gate. The sandbox sanitizes
+			// the workload's PATH, so a validate_command that runs on the host can be
+			// unreachable inside the run; unchecked, that arrives as `command not
+			// found` AFTER the patch has been applied, which is the same
+			// too-late-to-help shape check (5) exists to prevent.
+			//
+			// be.validateArgv is the RESOLVED argv from check (2), not the raw
+			// config: a project relying on the Go default has no configured command
+			// to inspect, and checking the raw value would silently skip exactly
+			// those projects.
+			if err := checkOSLevelToolchainFn(backend, be.validateArgv); err != nil {
 				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
 				sandboxErr = err
 			}

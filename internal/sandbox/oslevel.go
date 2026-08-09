@@ -1835,5 +1835,79 @@ func checkWritableCopyBounds(src string) error {
 // CheckToolchainReachable reports whether cmd's binary can still be resolved
 // through the PATH the sandboxed workload will actually receive.
 //
-// STUB — wired but deliberately inert; see the RED test.
-func CheckToolchainReachable(cmd []string) error { return nil }
+// The sandbox hands the workload a SANITIZED PATH (sanitizeSandboxPath), so a
+// tool the operator runs fine on the host can be unreachable inside the run. That
+// surfaced as an opaque `command not found` MID-RUN — after the review had
+// started, and for --auto-fix after the patch was already applied — which a
+// reviewing model can then misread as a genuine validation failure rather than a
+// missing tool. Called from the resolver gates, it becomes a refusal before
+// anything is touched.
+//
+// It lives in this package, not at the call site, because sanitizeSandboxPath is
+// unexported and the answer is only meaningful against the exact PATH the run
+// will use. A caller re-deriving that PATH would be a second implementation free
+// to drift from the first.
+//
+// THE REFUSAL IS DELIBERATELY NARROW. It fires only when the tool is present on
+// the host PATH and absent from the sanitized one, because that difference is the
+// only evidence that SANITIZATION is what lost it. Three cases stay silent by
+// design:
+//
+//   - Absent from both: a pre-existing configuration error that already fails
+//     with an accurate message. Relabelling it as a sandbox problem would
+//     misdirect the operator.
+//   - Path-qualified (./scripts/test.sh, bin/validate, /abs/path/tool): resolved
+//     against the run's working directory — the snapshot — never through PATH.
+//     Running these through a PATH lookup is the largest false-refusal class.
+//   - Empty or blank: command SHAPE is registry.SandboxConfig.Validate's job. Two
+//     checks refusing the same config with different messages is worse than one.
+func CheckToolchainReachable(cmd []string) error {
+	if len(cmd) == 0 {
+		return nil
+	}
+	tool := strings.TrimSpace(cmd[0])
+	if tool == "" {
+		return nil
+	}
+	// Any separator means the shell resolves it relative to the working directory
+	// or absolutely, not by walking PATH.
+	if strings.ContainsRune(tool, filepath.Separator) {
+		return nil
+	}
+
+	hostPATH := os.Getenv("PATH")
+	if lookupOnPath(sanitizeSandboxPath(hostPATH), tool) != "" {
+		return nil // reachable inside the sandbox: nothing to say
+	}
+	hostHit := lookupOnPath(hostPATH, tool)
+	if hostHit == "" {
+		return nil // absent everywhere — not sanitization's doing
+	}
+	return fmt.Errorf("os-level sandbox cannot reach %q: it resolves to %s on the host, but that directory is "+
+		"dropped from the sandbox PATH (relative, or group/world-writable outside the vetted toolchain prefixes). "+
+		"Move the tool onto a non-world-writable absolute PATH directory, or tighten that directory's permissions",
+		tool, hostHit)
+}
+
+// lookupOnPath returns the first executable named tool found by walking a
+// colon-separated PATH value, or "" when none matches.
+//
+// Hand-rolled rather than exec.LookPath because LookPath reads the PROCESS
+// environment, and the whole question here is what a DIFFERENT PATH resolves to.
+// Mutating os.Environ to borrow LookPath would be a data race against every other
+// goroutine in the process, in a function whose callers include a concurrent
+// backend.
+func lookupOnPath(path, tool string) string {
+	for _, dir := range strings.Split(path, ":") {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, tool)
+		info, err := os.Stat(candidate) // Stat, not Lstat: a symlinked tool is normal and fine
+		if err != nil || info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}

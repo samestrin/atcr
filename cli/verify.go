@@ -145,6 +145,14 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, os.TempDir(), false); err != nil {
 		return nil, nil, 0, usageError(err)
 	}
+	// The sandbox sanitizes the workload's PATH, so a test_command the operator
+	// runs fine on the host can be unreachable inside the run. Unchecked, that is
+	// a `command not found` arriving mid-review, which a skeptic can misread as a
+	// genuine validation failure rather than a missing tool. Same fail-fast
+	// position and same usage-error class as the snapshot gates above.
+	if err := checkOSLevelToolchainFn(backend, testCmd); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
 	return backend, testCmd, timeout, nil
 }
 

@@ -143,6 +143,36 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	return backend, nil
 }
 
+// checkToolchainReachableFn is the seam CheckOSLevelToolchainReachable uses to
+// reach sandbox.CheckToolchainReachable, mirroring checkSnapshotUsableFn. A test
+// can stage a refusal without needing a host whose PATH actually loses the tool.
+var checkToolchainReachableFn = sandbox.CheckToolchainReachable
+
+// CheckOSLevelToolchainReachable refuses, at the gate, a run whose configured
+// command the sandbox's sanitized PATH cannot resolve — when, and only when, the
+// os-level backend was selected.
+//
+// It is the sibling of CheckOSLevelSnapshotUsable and shares its dispatch rules
+// exactly: nil (sandboxing off) and the docker backend (which supplies its own
+// image PATH) are the recognized no-check shapes, and ANY other backend it cannot
+// positively identify is REFUSED rather than skipped. Dispatching on name alone
+// would be fail-open for a decorating wrapper, which reports its own Name().
+//
+// The gap it closes: the workload's PATH is sanitized, so an operator's
+// `test_command` / `validate_command` can be perfectly runnable on the host and
+// unreachable inside the run. Left to the run, that is a `command not found`
+// arriving mid-review — which a skeptic can misread as a real validation failure
+// — or, under --auto-fix, arriving after the patch has already been applied.
+func CheckOSLevelToolchainReachable(backend sandbox.Backend, cmd []string) error {
+	if backend == nil || backend.Name() == registry.SandboxBackendDocker {
+		return nil
+	}
+	if backend.Name() != registry.SandboxFallbackOSLevel {
+		return fmt.Errorf("unrecognized sandbox backend %q: refusing to skip the os-level toolchain check (fail-closed)", backend.Name())
+	}
+	return checkToolchainReachableFn(cmd)
+}
+
 // checkSnapshotUsableFn is the seam CheckOSLevelSnapshotUsable uses to call
 // sandbox.CheckSnapshotUsable. Tests swap it to assert the writable shape they
 // pass is forwarded unchanged.
