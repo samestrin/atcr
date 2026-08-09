@@ -1620,6 +1620,15 @@ func TestCheckHostPrerequisite_LinuxUsernsSysctls(t *testing.T) {
 		assert.Contains(t, err.Error(), "cannot parse")
 	})
 	t.Run("unreadable file fails closed", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			// Root (CAP_DAC_OVERRIDE) bypasses POSIX mode bits, so the 0o000
+			// read SUCCEEDS under euid 0 and the require.Error below fails for
+			// reasons unrelated to containment — the sprint's own root-run
+			// integration ritual would otherwise report a guaranteed false
+			// failure. Skip only this subtest; the rest of the table is
+			// meaningful under root.
+			t.Skip("root bypasses 0o000 file permissions")
+		}
 		root := write(t, maxNS, "1\n", 0o000)
 		err := checkHostPrerequisite(context.Background(), "linux", root)
 		require.Error(t, err)
