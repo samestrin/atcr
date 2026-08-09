@@ -1848,12 +1848,18 @@ func TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch(t *testing
 	}
 	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
 
-	_, err := validateAutoFixBackend(cmd, proj, root)
+	be, err := validateAutoFixBackend(cmd, proj, root)
 
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "an unusable snapshot is a gate refusal like any other")
 	assert.Contains(t, err.Error(), "home directory",
 		"the generator's own specific message must reach the operator, not an opaque 'validation could not run'")
+	// runAutoFix dispatches on be.sandboxBackend != nil at cli/autofix.go:508. A
+	// backend that already failed the snapshot-usability pre-check must not reach
+	// that path, or sandboxed validation would run against a directory the gate
+	// just refused. The assertion is meaningful here because this test proves the
+	// failure path returns a zero-valued backend, not a populated one.
+	assert.Nil(t, be.sandboxBackend, "a backend that failed the snapshot pre-check must not be carried forward")
 }
 
 // TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget
