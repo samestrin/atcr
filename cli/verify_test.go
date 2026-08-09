@@ -399,3 +399,49 @@ func TestResolveExec_PreStoryRefusalIsUnchanged(t *testing.T) {
 	assert.NotContains(t, err.Error(), "os-level")
 	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
 }
+
+// TestResolveExec_UnstubbedSeamStillReachesTheRealResolver pins the seam to
+// production. Both tests above replace it, and the only other --exec test
+// returns at the nil-Sandbox guard before reaching it — so the 4.11.A reviewer
+// demonstrated that neutering the seam's initializer to return (nil, nil, 0, nil)
+// left the ENTIRE cli suite green, i.e. `--exec` silently downgraded to a
+// non-exec run instead of refusing, undetected.
+//
+// This drives the real verify.ResolveExecBackend with a docker shim that fails
+// preflight, so the refusal can only come from the production resolver.
+func TestResolveExec_UnstubbedSeamStillReachesTheRealResolver(t *testing.T) {
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		DockerPath:  fakeDockerShim(t, false), // daemon unreachable
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test"},
+	}}
+
+	backend, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err, "a failing preflight must refuse through the real resolver")
+	assert.Equal(t, 2, exitCode(err))
+	assert.Contains(t, err.Error(), "preflight")
+	assert.Nil(t, backend)
+}
+
+// TestResolveExec_NilContextDoesNotPanic covers the bare-command shape cobra
+// leaves with a nil context. Production always uses ExecuteContext, so this is
+// defensive — but it became reachable the moment the test above started driving
+// the real resolver, which would otherwise hand nil to exec.CommandContext.
+func TestResolveExec_NilContextDoesNotPanic(t *testing.T) {
+	cmd := newVerifyCmd() // deliberately NOT SetContext
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		DockerPath:  fakeDockerShim(t, false),
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test"},
+	}}
+
+	require.NotPanics(t, func() {
+		_, _, _, err := resolveExec(cmd, proj)
+		require.Error(t, err)
+	})
+}

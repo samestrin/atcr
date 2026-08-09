@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -61,7 +62,16 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if proj == nil || proj.Sandbox == nil {
 		return nil, nil, 0, usageError(errors.New("--exec requires a project config with a sandbox block"))
 	}
-	backend, testCmd, timeout, err := resolveExecBackendFn(cmd.Context(), true, proj.Sandbox)
+	// cmd.Context() is nil on a bare command that was never executed (cobra does
+	// not default it); production always arrives via ExecuteContext. The sibling
+	// call site guards this already (autofix.go), and an unguarded nil reaches
+	// exec.CommandContext(nil, …) inside the docker preflight and panics rather
+	// than refusing — so the two sites guard it identically.
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	backend, testCmd, timeout, err := resolveExecBackendFn(ctx, true, proj.Sandbox)
 	if err != nil {
 		// Deliberately unchanged: every resolver error — the pre-existing
 		// single-backend refusal and the combined neither-usable one alike — is a

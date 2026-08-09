@@ -71,6 +71,21 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
 }
 
+// hiddenCause carries an error for errors.Is/errors.As WITHOUT contributing any
+// text to the message it is wrapped into. Its Error() is empty by design.
+//
+// It exists for one narrow job: validateAutoFixBackend renders every failed gate
+// check into a joined human-readable list, so the sandbox resolver's message is
+// already present in that string. Wrapping the resolver's error the ordinary way
+// would print it a second time, but NOT wrapping it strips the sentinel — and
+// verify.ErrSandboxNoUsableBackend exists precisely so an errors.Is check means
+// the same thing at the --exec and --auto-fix call sites. This keeps the operator
+// -facing text byte-identical while restoring that parity.
+type hiddenCause struct{ err error }
+
+func (h hiddenCause) Error() string { return "" }
+func (h hiddenCause) Unwrap() error { return h.err }
+
 // resolveAutoFixSandboxFn is the sandbox resolver validateAutoFixBackend calls,
 // indirected through a package var (like resolveHeadSHAFn) so a test can count
 // invocations — the load-bearing proof that --no-sandbox skips resolution
@@ -191,6 +206,9 @@ func resolveValidateTimeout(af *registry.AutoFixConfig) (time.Duration, error) {
 func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, repoRoot string) (autoFixBackend, error) {
 	var be autoFixBackend
 	var missing []string
+	// sandboxErr preserves the resolver's error VALUE next to its rendered text in
+	// `missing`, so the refusal below can wrap it and callers can errors.Is it.
+	var sandboxErr error
 
 	var af *registry.AutoFixConfig
 	if proj != nil {
@@ -318,6 +336,12 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		}
 		if backend, err := resolveAutoFixSandboxFn(ctx, true, sandboxConfig); err != nil {
 			missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+			// The error itself is kept alongside its rendered text so the final
+			// refusal can wrap it. Flattening to a string here would strip
+			// verify.ErrSandboxNoUsableBackend, leaving errors.Is true at the
+			// --exec call site and false at this one — two behaviors from the
+			// sentinel that exists precisely so both mean the same thing.
+			sandboxErr = err
 		} else {
 			be.sandboxBackend = backend
 		}
@@ -338,7 +362,14 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	}
 
 	if len(missing) > 0 {
-		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", strings.Join(missing, "; ")))
+		joined := strings.Join(missing, "; ")
+		if sandboxErr != nil {
+			// %w on the resolver's error keeps its sentinel matchable while the
+			// message stays byte-identical: the rendered text is already inside
+			// `joined`, so this wraps for errors.Is without printing it twice.
+			return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s%w", joined, hiddenCause{sandboxErr}))
+		}
+		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", joined))
 	}
 	return be, nil
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1782,16 +1783,31 @@ func TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth(t *testing
 	proj, cmd, root := autoFixGateFixture(t)
 	stubResolveSandboxErr(t, fmt.Errorf("--auto-fix sandbox preflight failed: docker: daemon unreachable; os-level fallback also failed: bwrap not found: %w", verify.ErrSandboxNoUsableBackend))
 
+	stderr := &bytes.Buffer{}
+	cmd.SetErr(stderr)
+
 	be, err := validateAutoFixBackend(cmd, proj, root)
 
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "a neither-usable outcome is a usage-error refusal")
 	assert.Contains(t, err.Error(), "sandbox:")
+	// These two only pin PASS-THROUGH of whatever the resolver produced; the
+	// message's actual content is pinned resolver-side, in
+	// internal/verify/exec_test.go and autofix_exec_test.go.
 	assert.Contains(t, err.Error(), "docker")
 	assert.Contains(t, err.Error(), "os-level")
+	assert.ErrorIs(t, err, verify.ErrSandboxNoUsableBackend,
+		"the sentinel must survive this call site too, or errors.Is means something different on --auto-fix than on --exec")
+
+	// The anti-conflation assertion has to be made on an OBSERVABLE channel.
+	// Asserting be.noSandbox is false proves nothing: a failed gate returns a
+	// zero-valued autoFixBackend by construction, so that holds for any input —
+	// a mutation setting be.noSandbox = true AND printing the --no-sandbox
+	// warning to stderr was shown to leave this test green. stderr is where the
+	// conflation would actually be visible to an operator.
+	assert.NotContains(t, stderr.String(), noSandboxWarnMarker,
+		"a broken fallback must NEVER print the explicit --no-sandbox opt-out warning")
 	assert.Nil(t, be.sandboxBackend, "no backend may be carried out of a failed gate")
-	assert.False(t, be.noSandbox,
-		"a broken fallback must NEVER be conflated with the operator's explicit --no-sandbox opt-out")
 }
 
 // TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged is the
@@ -1808,5 +1824,8 @@ func TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged(t *testing.T) {
 	assert.Contains(t, err.Error(), "sandbox: --auto-fix sandbox preflight failed: docker daemon unreachable")
 	assert.NotContains(t, err.Error(), "os-level",
 		"an operator who never opted in must not see a fallback mentioned at all")
+	// Meaningful only because the combined case above proves the sentinel DOES
+	// reach here when it should; without that pairing this assertion passes
+	// trivially for every error, including the one it is meant to exclude.
 	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
 }
