@@ -522,6 +522,28 @@ func TestOSLevelSeedWritableCopy_CopiesTreeWithoutFollowingSymlinksOut(t *testin
 	}))
 }
 
+func TestOSLevelSeedWritableCopy_ResolvesASymlinkedSnapshotRoot(t *testing.T) {
+	// filepath.WalkDir Lstats the walk root and does NOT dereference it: a
+	// SnapshotDir whose final component is a symlink to a directory (an ordinary
+	// layout — a checkout reached through a symlinked path) walks one entry,
+	// returns skipped=0/err=nil, and runWith's "a failed seed is a FAULT" guard
+	// never fires — so the workload runs against an EMPTY copy and its exit code
+	// is reported as a genuine validation verdict.
+	real := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(real, "file.txt"), []byte("real"), 0o644))
+	link := filepath.Join(t.TempDir(), "snapshot-link")
+	require.NoError(t, os.Symlink(real, link))
+
+	dst := filepath.Join(t.TempDir(), "scratch")
+	require.NoError(t, os.MkdirAll(dst, 0o700))
+	_, err := seedWritableCopy(link, dst)
+	require.NoError(t, err)
+
+	body, readErr := os.ReadFile(filepath.Join(dst, "file.txt"))
+	require.NoError(t, readErr, "a symlinked snapshot root must still seed a populated copy")
+	assert.Equal(t, "real", string(body))
+}
+
 func TestOSLevelSeedWritableCopy_RefusesAnOversizedSnapshot(t *testing.T) {
 	// An unbounded copy turns a large repository (or a workload-authored file)
 	// into a host disk-exhaustion vector, on the same host atcr is running on.
