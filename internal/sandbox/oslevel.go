@@ -1240,12 +1240,8 @@ func ranToCompletion(runErr error) bool {
 // outright once Phase 2 makes the snapshot read-only, since a Go build cannot
 // run with an unwritable HOME/GOCACHE.
 func sandboxEnv(scratchDir string) []string {
-	path := os.Getenv("PATH")
-	if path == "" {
-		path = "/usr/bin:/bin:/usr/sbin:/sbin"
-	}
 	return []string{
-		"PATH=" + path,
+		"PATH=" + sanitizeSandboxPath(os.Getenv("PATH")),
 		"HOME=" + scratchDir,
 		"TMPDIR=" + scratchDir,
 		"XDG_CACHE_HOME=" + filepath.Join(scratchDir, ".cache"),
@@ -1253,6 +1249,51 @@ func sandboxEnv(scratchDir string) []string {
 		"GOTMPDIR=" + scratchDir,
 		"LANG=C",
 	}
+}
+
+// osLevelSandboxFallbackPATH is handed to the workload when the operator's
+// $PATH is empty or nothing in it survives sanitization — the same fixed
+// system directories trustedToolDirs resolves the sandbox binary itself from.
+const osLevelSandboxFallbackPATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+// sanitizeSandboxPath filters the operator's $PATH down to directories the
+// sandboxed workload may resolve its toolchain from.
+//
+// The inheritance itself is deliberate — the workload needs the operator's go,
+// npm, pytest — but the raw value cannot cross the boundary verbatim. libc
+// treats an EMPTY element (a leading/trailing ':' or '::') as the current
+// directory, and runWith sets the child's working directory to the snapshot
+// (or the writable copy of the tree under review), so a repository shipping an
+// executable named `go` becomes the binary the operator's trusted
+// validate_command runs. Relative elements are the same hole spelled
+// differently. A group/world-writable directory is plantable by any user on
+// the host, which is verifyExecutable's writability argument (oslevel.go)
+// applied to directories. Stat, not Lstat: a root-owned symlinked system dir
+// (/bin -> /usr/bin on usrmerge distros) is judged by its target's mode, not
+// rejected for being a link.
+func sanitizeSandboxPath(path string) string {
+	if path == "" {
+		return osLevelSandboxFallbackPATH
+	}
+	var kept []string
+	seen := make(map[string]bool)
+	for _, dir := range strings.Split(path, ":") {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+			continue
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			kept = append(kept, dir)
+		}
+	}
+	if len(kept) == 0 {
+		return osLevelSandboxFallbackPATH
+	}
+	return strings.Join(kept, ":")
 }
 
 // Sandbox-tool fault markers. These are MEASURED against the real binaries, not

@@ -941,6 +941,77 @@ func TestOSLevelBackendRun_DoesNotLeakParentEnvironment(t *testing.T) {
 	assert.Contains(t, res.Output, "PATH=", "the allowlist must still provide PATH")
 }
 
+// sandboxEnvPATH extracts the PATH entry sandboxEnv hands the workload.
+func sandboxEnvPATH(t *testing.T, env []string) string {
+	t.Helper()
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			return strings.TrimPrefix(e, "PATH=")
+		}
+	}
+	t.Fatal("sandboxEnv must always provide PATH")
+	return ""
+}
+
+func TestSandboxEnv_SanitizesPATH(t *testing.T) {
+	// libc treats an EMPTY $PATH element (a leading/trailing ':' or '::') as the
+	// current directory, and runWith sets the child's working directory to the
+	// snapshot (or the writable copy of the tree under review) — so an operator
+	// PATH ending in ':' lets a repository that ships an executable named
+	// go/npm/pytest become the binary the operator's trusted validate_command
+	// runs. Relative elements are the same hole spelled differently, and a
+	// group/world-writable directory is plantable by anyone. All three must be
+	// dropped before the PATH crosses into the sandbox.
+	worldWritable := t.TempDir()
+	require.NoError(t, os.Chmod(worldWritable, 0o777))
+	groupWritable := t.TempDir()
+	require.NoError(t, os.Chmod(groupWritable, 0o775))
+
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"trailing empty element is cwd", "/usr/bin:", "/usr/bin"},
+		{"leading empty element is cwd", ":/usr/bin", "/usr/bin"},
+		{"double colon is cwd", "/usr/bin::/bin", "/usr/bin:/bin"},
+		{"explicit dot is cwd", ".:/usr/bin", "/usr/bin"},
+		{"relative element", "relative/bin:/usr/bin", "/usr/bin"},
+		{"world-writable dir", worldWritable + ":/usr/bin", "/usr/bin"},
+		{"group-writable dir", groupWritable + ":/usr/bin", "/usr/bin"},
+		{"nonexistent dir", "/definitely/not/here:/usr/bin", "/usr/bin"},
+		{"empty PATH falls back", "", "/usr/bin:/bin:/usr/sbin:/sbin"},
+		{"nothing survivable falls back", ".:~/bin", "/usr/bin:/bin:/usr/sbin:/sbin"},
+		{"clean PATH survives", "/usr/bin:/bin", "/usr/bin:/bin"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", tc.path)
+			assert.Equal(t, tc.want, sandboxEnvPATH(t, sandboxEnv(t.TempDir())))
+		})
+	}
+}
+
+func TestOSLevelBackendRun_SnapshotExecutableCannotHijackPATH(t *testing.T) {
+	// The end-to-end version of the table above, through the real Run path: a
+	// repository under review plants an executable named `go` and the operator's
+	// PATH carries a trailing empty element (libc: current directory). Without
+	// sanitization the workload's own `go` lookup resolves into the snapshot.
+	snap := t.TempDir()
+	repoGo := "#!/bin/sh\necho REPO-GO-RAN\n"
+	require.NoError(t, os.WriteFile(filepath.Join(snap, "go"), []byte(repoGo), 0o755))
+	t.Setenv("PATH", "/usr/bin:")
+
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"/bin/sh", "-c", "go version"},
+		SnapshotDir: snap,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, res.Output, "REPO-GO-RAN",
+		"the tree under review must never supply the operator's toolchain binaries")
+}
+
 func TestOSLevelBackendRun_WritableNeverRunsAgainstTheOperatorSnapshot(t *testing.T) {
 	// Writable asks for an ephemeral copy so the snapshot stays read-only. Until
 	// task 3.0 this backend had no copy mechanism and refused the flag outright,
