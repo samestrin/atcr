@@ -170,7 +170,7 @@ func terminalErrorLine(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	return log.NewRedactor("").Redact(err.Error())
 }
 
 // handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a

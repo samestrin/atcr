@@ -125,9 +125,11 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 				// neither-backend-usable outcome — so the sentinel stays off and
 				// the both-causes shape is returned without it.
 				if ctx.Err() != nil || errors.Is(osErr, context.Canceled) || errors.Is(osErr, context.DeadlineExceeded) {
-					return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w", err, osErr)
+					return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w", boundedCause{err}, osErr)
 				}
-				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", err, osErr, ErrSandboxNoUsableBackend)
+				// boundedCause for the same reason as the --exec resolver: chain
+				// preserved, rendered text bounded before it can reach stderr.
+				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", boundedCause{err}, osErr, ErrSandboxNoUsableBackend)
 			}
 			warnOSLevelFallbackEngaged(ctx, sc, err)
 			return osBackend, nil

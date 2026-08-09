@@ -153,6 +153,25 @@ func truncateCause(err error) string {
 	return msg[:n] + "… (truncated)"
 }
 
+// boundedCause carries a cause whose RENDERED form is truncateCause's, while
+// errors.Is/errors.As still reach the original through Unwrap.
+//
+// It exists because the neither-backend-usable returns are the one place both
+// obligations apply at once. They %w-wrap the docker cause so a caller can still
+// tell a daemon fault from an interrupt — but that error is also RETURNED, and a
+// returned error is printed to stderr by runMain, which is not the logger and so
+// never saw truncateCause. The warning path was bounded and this one was not,
+// so the daemon's raw stderr and the full `docker run` argv (absolute host
+// paths, a DOCKER_HOST endpoint) reached the terminal and CI logs verbatim.
+//
+// errors.Join is deliberately NOT used for this: its Error() concatenates the
+// joined messages, so joining the cause back in to preserve the chain would
+// reprint the untruncated text and defeat the bound.
+type boundedCause struct{ cause error }
+
+func (b boundedCause) Error() string { return truncateCause(b.cause) }
+func (b boundedCause) Unwrap() error { return b.cause }
+
 // ResolveExecBackend implements the execution gate. When execEnabled is false it
 // returns nil (execution off — the normal path). When true it first attempts the
 // configured docker backend and returns it on a passing preflight. If
@@ -215,13 +234,20 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 				// configuration is broken when they simply pressed ctrl-C. Return
 				// the same both-causes shape minus the sentinel instead.
 				if ctx.Err() != nil || errors.Is(osErr, context.Canceled) || errors.Is(osErr, context.DeadlineExceeded) {
-					return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w", err, osErr)
+					return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w", boundedCause{err}, osErr)
 				}
 				// Both causes are %w-wrapped, not %v-formatted: this is the one path
 				// with two distinct causes to tell apart, so it is the last place a
 				// caller should lose errors.Is on context.Canceled, ErrOSLevelNoContainment,
 				// or a docker-side sentinel.
-				return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w: %w", err, osErr, ErrSandboxNoUsableBackend)
+				//
+				// The docker cause travels inside boundedCause: still %w, so the chain
+				// is unchanged, but rendered through truncateCause so the daemon's raw
+				// stderr does not reach runMain's terminal print in full. The os-level
+				// cause is left bare — it is atcr's own generator message, short and
+				// bounded by construction, and truncating it would elide the
+				// containment reason an operator needs verbatim.
+				return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w: %w", boundedCause{err}, osErr, ErrSandboxNoUsableBackend)
 			}
 			warnOSLevelFallbackEngaged(ctx, sc, err)
 			return osBackend, sc.TestCommand, osCfg.Timeout, nil
