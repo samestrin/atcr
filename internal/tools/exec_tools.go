@@ -238,7 +238,7 @@ func (d *Dispatcher) runInSandbox(ctx context.Context, spec sandbox.RunSpec) (To
 		fmt.Fprintf(&b, "exit code: %d\n", res.ExitCode)
 	}
 	b.WriteString(res.Output)
-	return ToolResult{Content: b.String()}, nil
+	return ToolResult{Content: b.String(), BackendName: d.execBackend.Name()}, nil
 }
 
 // unmarshalToolArgs unmarshals tool arguments, tolerating empty/whitespace input

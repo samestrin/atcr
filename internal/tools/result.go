@@ -10,4 +10,9 @@ type ToolResult struct {
 	Content       string
 	Truncated     bool
 	OriginalBytes int
+	// BackendName names the sandbox backend that executed the tool, when the
+	// result came from an execution-gated tool (run_tests/run_script). It lets
+	// the evidence trail distinguish a docker-backed run from an os-level
+	// fallback run.
+	BackendName string
 }
