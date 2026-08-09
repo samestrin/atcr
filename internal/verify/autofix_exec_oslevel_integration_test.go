@@ -306,11 +306,19 @@ func TestIntegration_AutoFixFallback_NetworkEgressIsBlocked(t *testing.T) {
 	// nc is used rather than /bin/sh's /dev/tcp because dash — /bin/sh on Debian
 	// and Ubuntu, the other supported platform — has no /dev/tcp redirection at
 	// all, which would make this leg vacuous by construction there.
-	probe := "nc -z -w 5 127.0.0.1 " + port + " && echo CONNECTED || echo REFUSED"
+	//
+	// The probe's exit code IS the signal, mirroring both Phase 3 sandbox legs:
+	// exit 97 reserves "nc missing/unexecutable inside the sandbox" (a broken
+	// probe, not containment), `exec` makes nc's own code the workload's (0 =
+	// connected, non-zero = refused). A shell-authored token (&& echo CONNECTED
+	// || echo REFUSED) is produced by ANY failure and always exits 0, which is
+	// the anti-pattern those legs document — it passes with containment fully
+	// removed.
+	probe := "command -v nc >/dev/null 2>&1 || exit 97; exec nc -z -w 2 127.0.0.1 " + port
 
 	// Positive control: the identical probe MUST succeed unsandboxed.
 	hostCode, hostOut := runUnsandboxed(t, probe)
-	if hostCode != 0 || !strings.Contains(hostOut, "CONNECTED") {
+	if hostCode != 0 {
 		skipOrFailFallbackProof(t, "the unsandboxed control probe could not reach the test's own listener (nc missing or unusable), so a blocked dial would prove nothing: rc=%d out=%s", hostCode, hostOut)
 	}
 
