@@ -91,6 +91,59 @@ type OSLevelConfig struct {
 	// verifies findings concurrently and each skeptic may run many tools, so
 	// without this cap a large finding set could exhaust the host.
 	MaxConcurrent int
+	// ModuleCacheDir is a persistent, atcr-owned dependency cache mounted
+	// READ-ONLY into every run, and the one carve-out that deliberately outlives
+	// the per-run scratch tree.
+	//
+	// It exists because HOME points at a fresh, empty scratch subdirectory that
+	// `defer os.RemoveAll` destroys when the run ends. Go therefore defaulted
+	// GOPATH to $HOME/go — an empty directory inside a throwaway tree — while the
+	// run has no network, so every project with a non-vendored dependency failed
+	// module resolution on the first run AND on every subsequent one, with
+	// nothing accumulating in between. Preflight only probes `echo`, so it
+	// reported the backend healthy while the workload it exists to run could not
+	// resolve its dependencies.
+	//
+	// READ-ONLY is the deliberate half. A persistent directory that
+	// model-authored code may WRITE is a cache-poisoning primitive that survives
+	// the run and silently feeds every later build on the host — the mirror image
+	// of the exfiltration risk that rules out binding the operator's real
+	// GOMODCACHE. Read-only keeps the benefit (a warm cache is reusable) without
+	// letting a run mutate what the next one compiles.
+	//
+	// It is atcr-owned and NOT the operator's real GOMODCACHE. A real module
+	// cache lives under the operator's $HOME and carries private-module paths and
+	// whatever a previous build wrote there; this package keeps $HOME out of
+	// reach of the workload (oslevel_profile.go's read tier) and exposing the real
+	// cache would reopen exactly that boundary.
+	//
+	// Empty disables the carve-out entirely, which is the pre-existing behavior.
+	// It MUST be absolute when set, and MUST NOT overlap SnapshotDir or
+	// ScratchDir; the generators reject all three.
+	//
+	// Seeding is a HOST-side act by construction: the sandbox has no network
+	// (--unshare-net / (deny network*)), so no run can populate this directory
+	// itself. atcr — or the operator — warms it outside the sandbox, and every
+	// run afterwards reads it.
+	ModuleCacheDir string
+}
+
+// defaultOSLevelModuleCacheDir returns the persistent, atcr-owned dependency
+// cache location, or "" when the host offers no user cache directory (in which
+// case the carve-out is simply disabled rather than guessed at).
+//
+// os.UserCacheDir is the platform convention (~/Library/Caches on darwin,
+// $XDG_CACHE_HOME on linux). It sits UNDER the operator's home, which this
+// package otherwise keeps out of the workload's reach — that is acceptable here
+// only because the grant is a single atcr-owned leaf mounted read-only, not the
+// home tree and not a writable surface. assertNotAHomeTree still refuses the
+// tree itself, so a misconfiguration cannot widen this to $HOME.
+func defaultOSLevelModuleCacheDir() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "atcr", "oslevel-modcache")
 }
 
 // DefaultOSLevelConfig returns a conservative default configuration. ToolPath is
@@ -101,6 +154,7 @@ func DefaultOSLevelConfig() OSLevelConfig {
 		Timeout:        60 * time.Second,
 		MaxOutputBytes: 64 * 1024,
 		MaxConcurrent:  4,
+		ModuleCacheDir: defaultOSLevelModuleCacheDir(),
 	}
 }
 
@@ -1026,6 +1080,35 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	scratchDir = canonicalScratch
 	homeDir = filepath.Join(scratchDir, osLevelScratchHomeSubdir)
 	runCfg.ScratchDir = scratchDir
+	// The persistent module cache is created (not just referenced) before the
+	// generators see it: both of them carve out a path, and a path that does not
+	// exist yields a dead rule on darwin and aborts the sandbox on Linux
+	// (--ro-bind, not --ro-bind-try — a cache the run was told it has and cannot
+	// reach is a silent degradation back to the failure this field exists to fix).
+	//
+	// A failure to create it is NOT fatal: the carve-out is an optimization, and
+	// refusing the whole run because a cache directory could not be made would be
+	// worse than running without it. It degrades to the pre-existing behavior and
+	// says so, rather than failing closed on a non-security concern.
+	if runCfg.ModuleCacheDir != "" {
+		if mkErr := os.MkdirAll(runCfg.ModuleCacheDir, 0o700); mkErr != nil {
+			logger.Warn("sandbox exec module cache unavailable; continuing without it",
+				"backend", osLevelBackendName, "command", logCmd,
+				"module_cache_dir", runCfg.ModuleCacheDir, "error", mkErr)
+			runCfg.ModuleCacheDir = ""
+		} else if canonicalCache, evalErr := filepath.EvalSymlinks(runCfg.ModuleCacheDir); evalErr != nil {
+			// Same reason the snapshot and scratch dirs are canonicalized above:
+			// the generators' guards are component-wise STRING tests and cannot
+			// see symlinks, so an unresolved path is guarded under a spelling the
+			// kernel resolves away.
+			logger.Warn("sandbox exec module cache could not be resolved; continuing without it",
+				"backend", osLevelBackendName, "command", logCmd,
+				"module_cache_dir", runCfg.ModuleCacheDir, "error", evalErr)
+			runCfg.ModuleCacheDir = ""
+		} else {
+			runCfg.ModuleCacheDir = canonicalCache
+		}
+	}
 	args, err := osLevelRunArgs(b.platform(), runCfg, spec)
 	if err != nil {
 		return RunResult{Command: cmdStr}, err
@@ -1090,7 +1173,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// created above, so the directory the containment profile/argv permits and
 	// the directory HOME/TMPDIR/GOCACHE point at agree by construction rather
 	// than by coincidence.
-	cmd.Env = sandboxEnv(homeDir)
+	cmd.Env = sandboxEnv(homeDir, runCfg.ModuleCacheDir)
 	// Put the sandbox in its own process group and make cancellation kill the
 	// whole group, so a workload that forked is reaped rather than left running
 	// past the deadline. WaitDelay is the backstop for a grandchild that escaped
@@ -1295,8 +1378,8 @@ func ranToCompletion(runErr error) bool {
 // package contract says a run must not mutate (sandbox.go:9) — and would break
 // outright once Phase 2 makes the snapshot read-only, since a Go build cannot
 // run with an unwritable HOME/GOCACHE.
-func sandboxEnv(scratchDir string) []string {
-	return []string{
+func sandboxEnv(scratchDir, moduleCacheDir string) []string {
+	env := []string{
 		"PATH=" + sanitizeSandboxPath(os.Getenv("PATH")),
 		"HOME=" + scratchDir,
 		"TMPDIR=" + scratchDir,
@@ -1305,6 +1388,25 @@ func sandboxEnv(scratchDir string) []string {
 		"GOTMPDIR=" + scratchDir,
 		"LANG=C",
 	}
+	// GOPATH is set even without a module cache, and that is the point: left
+	// unset, Go derives it as $HOME/go — inside the throwaway scratch tree — so
+	// the module cache it then derives from GOPATH is destroyed with the run.
+	// Naming both explicitly means the location is a decision this function
+	// makes rather than a consequence of where HOME happens to point.
+	//
+	// GOFLAGS=-mod=mod is deliberately NOT set: the run has no network, so
+	// nudging the toolchain toward fetching would only turn a clear "missing
+	// dependency" into a confusing "dial tcp: no route".
+	if moduleCacheDir == "" {
+		return append(env,
+			"GOPATH="+filepath.Join(scratchDir, "go"),
+			"GOMODCACHE="+filepath.Join(scratchDir, "go", "pkg", "mod"),
+		)
+	}
+	return append(env,
+		"GOPATH="+filepath.Join(scratchDir, "go"),
+		"GOMODCACHE="+moduleCacheDir,
+	)
 }
 
 // osLevelSandboxFallbackPATH is handed to the workload when the operator's

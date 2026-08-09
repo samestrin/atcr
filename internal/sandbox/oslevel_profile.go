@@ -249,11 +249,40 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 		}
 	}
 
+	// The persistent module cache is READ-only and must clear the same guards the
+	// read-only snapshot does: not the filesystem root, not a system directory,
+	// not a home TREE, and disjoint from both of the run's own directories. It is
+	// the one carve-out that outlives the run, so a misconfigured value here
+	// persists its blast radius too.
+	var moduleCache string
+	if cfg.ModuleCacheDir != "" {
+		if moduleCache, err = profileSafePath("ModuleCacheDir", cfg.ModuleCacheDir); err != nil {
+			return "", err
+		}
+		if err := assertUsableSource("ModuleCacheDir", moduleCache, darwinSourceProtectedDirs(), true); err != nil {
+			return "", err
+		}
+		if err := assertNotAHomeTree("ModuleCacheDir", moduleCache, darwinHomeContainers, darwinHomeDirs, true); err != nil {
+			return "", err
+		}
+		if err := assertDisjointPaths(snapshot, moduleCache, true); err != nil {
+			return "", err
+		}
+		if scratch != "" {
+			if err := assertDisjointPaths(scratch, moduleCache, true); err != nil {
+				return "", err
+			}
+		}
+	}
+
 	metadataScope := append([]string{}, darwinSystemReadDirs...)
 	metadataScope = append(metadataScope, darwinTmpDirs...)
 	metadataScope = append(metadataScope, "/dev", snapshot)
 	if scratch != "" {
 		metadataScope = append(metadataScope, scratch)
+	}
+	if moduleCache != "" {
+		metadataScope = append(metadataScope, moduleCache)
 	}
 
 	var b strings.Builder
@@ -281,6 +310,7 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// pathAncestors excludes the root), but the map's contract is "every literal
 	// in this clause, once" and seeding it is what makes that true by
 	// construction rather than by a normalization invariant enforced elsewhere.
+	ancestorRoots := []string{snapshot, scratch, moduleCache}
 	seenAncestor := map[string]bool{"/": true}
 	metadataLiterals := []string{profileLiteral("/")}
 	for _, alias := range darwinSymlinkAliases {
@@ -298,7 +328,7 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	// subpaths granted. Granting an ancestor's metadata reveals that the
 	// directory exists and nothing about its contents, so this does not widen
 	// the read surface the way a subpath rule would.
-	for _, dir := range []string{snapshot, scratch} {
+	for _, dir := range ancestorRoots {
 		if dir == "" {
 			continue
 		}
@@ -324,6 +354,12 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	}
 	b.WriteString("(allow file-read* file-write-data " + profileLiteral("/dev/null") + ")\n")
 	b.WriteString(profileReadRule(snapshot) + "\n")
+	// READ, never write. A persistent directory the workload could write is a
+	// cache-poisoning primitive that outlives the run and feeds every later
+	// build; see OSLevelConfig.ModuleCacheDir.
+	if moduleCache != "" {
+		b.WriteString(profileReadRule(moduleCache) + "\n")
+	}
 	if scratch != "" {
 		b.WriteString(profileWriteRule(scratch) + "\n")
 	}
@@ -843,6 +879,30 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	if spec.Writable && scratch == "" {
 		return nil, fmt.Errorf("sandbox: RunSpec.Writable requires a ScratchDir to back the writable %s tree", bwrapWorkDir)
 	}
+	// The persistent module cache clears the same guards as the read-only
+	// snapshot, plus disjointness from both of the run's own directories. It is
+	// the one carve-out that outlives the run, so a bad value persists with it.
+	moduleCache := ""
+	if cfg.ModuleCacheDir != "" {
+		if !filepath.IsAbs(cfg.ModuleCacheDir) {
+			return nil, fmt.Errorf("sandbox: ModuleCacheDir must be an absolute path, got %q", cfg.ModuleCacheDir)
+		}
+		moduleCache = filepath.Clean(cfg.ModuleCacheDir)
+		if err := assertUsableSource("ModuleCacheDir", moduleCache, linuxProtectedRoots(), false); err != nil {
+			return nil, err
+		}
+		if err := assertNotAHomeTree("ModuleCacheDir", moduleCache, linuxHomeContainers, linuxHomeDirs, false); err != nil {
+			return nil, err
+		}
+		if err := assertDisjointPaths(snapshot, moduleCache, false); err != nil {
+			return nil, err
+		}
+		if scratch != "" {
+			if err := assertDisjointPaths(scratch, moduleCache, false); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	args := []string{
 		// Network isolation. --unshare-net removes every interface but loopback,
@@ -908,6 +968,15 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	// allow the real /tmp.
 	args = append(args, "--tmpfs", "/tmp")
 
+	// Bound READ-only, at its own host path so GOMODCACHE resolves to the same
+	// spelling inside and outside — and read-only because a persistent directory
+	// the workload may write is a cache-poisoning primitive that outlives the run
+	// (see OSLevelConfig.ModuleCacheDir). Emitted with the other read-only mounts,
+	// ahead of every writable one, so assertNoBindShadowing below can prove
+	// nothing writable covers it.
+	if moduleCache != "" {
+		args = append(args, "--ro-bind", moduleCache, moduleCache)
+	}
 	if spec.Writable {
 		args = append(args, "--ro-bind", snapshot, bwrapSrcDir)
 	} else {

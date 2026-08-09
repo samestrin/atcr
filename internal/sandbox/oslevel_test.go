@@ -1147,9 +1147,99 @@ func TestSandboxEnv_SanitizesPATH(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("PATH", tc.path)
-			assert.Equal(t, tc.want, sandboxEnvPATH(t, sandboxEnv(t.TempDir())))
+			assert.Equal(t, tc.want, sandboxEnvPATH(t, sandboxEnv(t.TempDir(), "")))
 		})
 	}
+}
+
+func TestSandboxEnv_PinsGOPATHAndGOMODCACHEOutOfTheThrowawayTree(t *testing.T) {
+	// Left unset, Go derives GOPATH as $HOME/go — and HOME is a scratch
+	// subdirectory that `defer os.RemoveAll` destroys when the run ends. With no
+	// network inside the sandbox, that meant every project with a non-vendored
+	// dependency failed module resolution on the first run and on every run
+	// after it, with nothing accumulating in between.
+	scratch := t.TempDir()
+
+	t.Run("no module cache keeps everything inside the scratch tree", func(t *testing.T) {
+		env := sandboxEnv(scratch, "")
+		assert.Contains(t, env, "GOPATH="+filepath.Join(scratch, "go"))
+		assert.Contains(t, env, "GOMODCACHE="+filepath.Join(scratch, "go", "pkg", "mod"))
+	})
+
+	t.Run("a module cache moves GOMODCACHE out of the scratch tree", func(t *testing.T) {
+		cache := t.TempDir()
+		env := sandboxEnv(scratch, cache)
+		assert.Contains(t, env, "GOMODCACHE="+cache,
+			"the persistent cache is the whole point: it must survive the scratch tree's removal")
+		// GOPATH stays scratch-local on purpose — only the module cache is
+		// shared. GOPATH also holds bin/ and pkg/, which a run must not persist.
+		assert.Contains(t, env, "GOPATH="+filepath.Join(scratch, "go"))
+		assert.False(t, pathContains(scratch, cache),
+			"a module cache inside the scratch tree would be destroyed with it")
+	})
+}
+
+func TestOSLevelBackendRun_ModuleCacheIsCreatedAndSurvivesTheRun(t *testing.T) {
+	// The scratch tree is removed when Run returns; the module cache must not be.
+	// Also asserts Run CREATES it — the generators bind a path, and a path that
+	// does not exist is a dead rule on darwin and aborts the sandbox on Linux.
+	var seen OSLevelConfig
+	cache := filepath.Join(t.TempDir(), "modcache")
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ModuleCacheDir = cache
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "GOMODCACHE=$GOMODCACHE"
+echo "GOPATH=$GOPATH"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+
+	assert.DirExists(t, cache, "Run must create the module cache before the generators carve it out")
+	require.NotEmpty(t, seen.ScratchDir)
+	assert.NoDirExists(t, seen.ScratchDir, "the scratch tree is still ephemeral")
+	assert.Contains(t, res.Output, "GOMODCACHE="+resolvePath(t, cache),
+		"the workload's GOMODCACHE must be the persistent cache, not a scratch subdirectory")
+	assert.Contains(t, seen.ModuleCacheDir, "modcache",
+		"the generators must receive the resolved cache path")
+	// Per-run copy, not sticky state on the backend — the same rule ScratchDir
+	// follows, so two concurrent runs cannot disagree about it.
+	assert.Equal(t, cache, b.cfg.ModuleCacheDir)
+}
+
+func TestOSLevelBackendRun_UncreatableModuleCacheDegradesRatherThanFaults(t *testing.T) {
+	// The carve-out is an optimization. Refusing the whole run because a cache
+	// directory could not be created would be worse than running without it —
+	// but it must SAY so, or a silently missing cache reads as a working one.
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the unwritable-parent that makes the cache uncreatable")
+	}
+	var seen OSLevelConfig
+	locked := filepath.Join(t.TempDir(), "locked")
+	require.NoError(t, os.MkdirAll(locked, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ModuleCacheDir = filepath.Join(locked, "modcache")
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "GOMODCACHE=$GOMODCACHE"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	res, err := b.Run(ctx, RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err, "an unusable module cache is a degradation, not a backend fault")
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Contains(t, buf.String(), "sandbox exec module cache unavailable",
+		"a dropped cache must be visible in the evidence trail")
+	assert.Empty(t, seen.ModuleCacheDir,
+		"the generators must not be handed a cache path that does not exist")
+	assert.Contains(t, res.Output, "GOMODCACHE="+filepath.Join(seen.ScratchDir, osLevelScratchHomeSubdir, "go", "pkg", "mod"),
+		"without a cache the environment falls back to the scratch-local default")
 }
 
 func TestOSLevelBackendRun_SnapshotExecutableCannotHijackPATH(t *testing.T) {

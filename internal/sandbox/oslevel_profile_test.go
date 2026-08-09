@@ -33,6 +33,11 @@ func profileFixture(t *testing.T) (OSLevelConfig, RunSpec) {
 	t.Helper()
 	cfg := DefaultOSLevelConfig()
 	cfg.ScratchDir = "/private/var/folders/atcr-scratch-abc123"
+	// Pinned, not inherited from DefaultOSLevelConfig: that value comes from
+	// os.UserCacheDir(), so leaving it would make every profile assertion depend
+	// on the running user's home path — and on a host where UserCacheDir fails,
+	// the carve-out would silently vanish from the fixture entirely.
+	cfg.ModuleCacheDir = "/private/var/folders/atcr-modcache-abc123"
 	return cfg, RunSpec{
 		Command:     []string{"go", "test", "./..."},
 		SnapshotDir: "/Users/dev/atcr-snapshot-abc123",
@@ -277,7 +282,7 @@ func TestSandboxExecProfile_ScopesMetadataReadsAwayFromUserData(t *testing.T) {
 	// the clause grants stat() over whatever it names.
 	// The fixture's two directories are already in canonical spelling, so they
 	// travel into the clause unchanged; the fixed lists are emitted verbatim.
-	permitted := map[string]bool{"/dev": true, spec.SnapshotDir: true, cfg.ScratchDir: true}
+	permitted := map[string]bool{"/dev": true, spec.SnapshotDir: true, cfg.ScratchDir: true, cfg.ModuleCacheDir: true}
 	for _, d := range append(append([]string{}, darwinSystemReadDirs...), darwinTmpDirs...) {
 		permitted[d] = true
 	}
@@ -397,6 +402,112 @@ func TestSandboxExecProfile_TheScratchDirIsTheOnlyWritableRoot(t *testing.T) {
 			assert.NotContains(t, line, "file-write*", "a device literal must not carry file-write*: %s", line)
 		}
 	}
+}
+
+func TestProfiles_ModuleCacheIsReadOnlyAndGuardedOnBothPlatforms(t *testing.T) {
+	// The module cache is the ONE carve-out that outlives the run, so it is also
+	// the one whose misconfiguration persists. Two properties matter and both are
+	// asserted on each platform: it is never writable (a persistent directory the
+	// workload can write is a cache-poisoning primitive that feeds every later
+	// build), and it clears the same path guards the read-only snapshot does.
+
+	t.Run("darwin read-only", func(t *testing.T) {
+		cfg, spec := profileFixture(t)
+		profile, err := sandboxExecProfile(cfg, spec)
+		require.NoError(t, err)
+
+		assert.Contains(t, profile, `(allow file-read* (subpath "`+cfg.ModuleCacheDir+`"))`,
+			"the module cache must be readable or GOMODCACHE resolves to nothing")
+		assert.NotContains(t, writeAllowSubpaths(t, profile), cfg.ModuleCacheDir,
+			"the module cache must never be writable: a poisoned entry would outlive the run")
+	})
+
+	t.Run("linux read-only", func(t *testing.T) {
+		cfg, spec := bwrapFixture(t)
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
+
+		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{cfg.ModuleCacheDir, cfg.ModuleCacheDir},
+			"the module cache must be bound at its own path so GOMODCACHE resolves identically inside and out")
+		for _, pair := range argvPairs(t, argv, "--bind") {
+			assert.NotEqual(t, cfg.ModuleCacheDir, pair[0],
+				"the module cache must never be bound writable: %v", pair)
+		}
+	})
+
+	t.Run("guards reject a dangerous cache path", func(t *testing.T) {
+		// Same standard as SnapshotDir: not the root, not a system tree, not a
+		// home TREE, and disjoint from the run's own two directories.
+		darwinCfg, darwinSpec := profileFixture(t)
+		linuxCfg, linuxSpec := bwrapFixture(t)
+
+		// The home-container spelling is platform-specific by design (/Users on
+		// darwin, /home on linux), so each list is driven with its own.
+		for _, bad := range []string{"/", "/usr", "/Users"} {
+			t.Run("darwin "+bad, func(t *testing.T) {
+				cfg := darwinCfg
+				cfg.ModuleCacheDir = bad
+				_, err := sandboxExecProfile(cfg, darwinSpec)
+				require.Error(t, err, "ModuleCacheDir %q must be refused", bad)
+			})
+		}
+		for _, bad := range []string{"/", "/usr", "/home", "/var/home"} {
+			t.Run("linux "+bad, func(t *testing.T) {
+				cfg := linuxCfg
+				cfg.ModuleCacheDir = bad
+				_, err := bwrapArgs(cfg, linuxSpec)
+				require.Error(t, err, "ModuleCacheDir %q must be refused", bad)
+			})
+		}
+
+		// Overlapping the snapshot or the scratch dir is refused too: the cache
+		// is read-only, so nesting it inside the writable scratch tree would
+		// hand the workload write access to it by the other rule.
+		t.Run("darwin overlaps scratch", func(t *testing.T) {
+			cfg := darwinCfg
+			cfg.ModuleCacheDir = filepath.Join(cfg.ScratchDir, "modcache")
+			_, err := sandboxExecProfile(cfg, darwinSpec)
+			require.Error(t, err)
+		})
+		t.Run("linux overlaps scratch", func(t *testing.T) {
+			cfg := linuxCfg
+			cfg.ModuleCacheDir = filepath.Join(cfg.ScratchDir, "modcache")
+			_, err := bwrapArgs(cfg, linuxSpec)
+			require.Error(t, err)
+		})
+		t.Run("darwin overlaps snapshot", func(t *testing.T) {
+			cfg := darwinCfg
+			cfg.ModuleCacheDir = filepath.Join(darwinSpec.SnapshotDir, "modcache")
+			_, err := sandboxExecProfile(cfg, darwinSpec)
+			require.Error(t, err)
+		})
+		t.Run("linux overlaps snapshot", func(t *testing.T) {
+			cfg := linuxCfg
+			cfg.ModuleCacheDir = filepath.Join(linuxSpec.SnapshotDir, "modcache")
+			_, err := bwrapArgs(cfg, linuxSpec)
+			require.Error(t, err)
+		})
+	})
+
+	t.Run("empty disables the carve-out entirely", func(t *testing.T) {
+		// The pre-existing behavior must remain reachable, and "disabled" must
+		// mean no rule at all rather than a rule naming "".
+		cfg, spec := profileFixture(t)
+		cfg.ModuleCacheDir = ""
+		profile, err := sandboxExecProfile(cfg, spec)
+		require.NoError(t, err)
+		assert.NotContains(t, profile, `(subpath "")`)
+
+		lcfg, lspec := bwrapFixture(t)
+		lcfg.ModuleCacheDir = ""
+		argv, err := bwrapArgs(lcfg, lspec)
+		require.NoError(t, err)
+		for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
+			for _, pair := range argvPairs(t, argv, flag) {
+				assert.NotEmpty(t, pair[0], "an empty module cache must emit no mount at all")
+			}
+		}
+	})
 }
 
 func TestSandboxExecProfile_HostTempRootsKeepTheirNonWriteRoles(t *testing.T) {
@@ -644,6 +755,9 @@ func bwrapFixture(t *testing.T) (OSLevelConfig, RunSpec) {
 	t.Helper()
 	cfg := DefaultOSLevelConfig()
 	cfg.ScratchDir = "/var/tmp/atcr-scratch-abc123"
+	// Pinned for the same reason profileFixture pins it: DefaultOSLevelConfig
+	// derives this from os.UserCacheDir(), which is the running user's home.
+	cfg.ModuleCacheDir = "/var/cache/atcr-modcache"
 	return cfg, RunSpec{
 		Command:     []string{"go", "test", "./..."},
 		SnapshotDir: "/srv/atcr-snapshot-abc123",
@@ -917,8 +1031,9 @@ func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
 				// directories (plus the work copy carved out of the scratch dir)
 				// and the fixed system allowlists.
 				permitted := map[string]bool{
-					snapshot:       true,
-					cfg.ScratchDir: true,
+					snapshot:           true,
+					cfg.ScratchDir:     true,
+					cfg.ModuleCacheDir: true,
 					filepath.Join(cfg.ScratchDir, osLevelScratchWorkSubdir): true,
 				}
 				for _, p := range linuxRequiredRoots {
