@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,6 +122,27 @@ func TestResolveAutoFixSandbox_NeitherUsableCauseIsBounded(t *testing.T) {
 	assert.Contains(t, err.Error(), "truncated")
 	assert.ErrorIs(t, err, ErrSandboxNoUsableBackend)
 	assert.ErrorIs(t, err, osCause)
+}
+
+// TestNeitherUsableError_KeepsTheDockerUnavailableSentinel pins the interaction
+// between two independently-correct changes: boundedCause wraps the docker cause
+// so its TEXT is bounded, and ErrDockerUnavailable is the sentinel that decides
+// whether the fallback may engage at all. A caller asking "was Docker
+// unavailable?" about a returned neither-usable error must still get an answer —
+// boundedCause sits directly between it and the sentinel, and a switch to
+// %v-formatting or errors.Join there would sever it silently, with nothing else
+// in the suite noticing.
+func TestNeitherUsableError_KeepsTheDockerUnavailableSentinel(t *testing.T) {
+	stubOSLevel(t, errors.New("bwrap: command not found"))
+
+	_, _, _, err := ResolveExecBackend(context.Background(), true, noisyFallbackConfig(t))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sandbox.ErrDockerUnavailable,
+		"the unavailable-class sentinel must survive boundedCause on the returned error")
+	assert.ErrorIs(t, err, ErrSandboxNoUsableBackend)
+	assert.NotContains(t, err.Error(), noisyDaemonTail,
+		"and the text must still be bounded — both properties at once is the point")
 }
 
 // TestResolveExecBackend_SingleBackendRefusalIsUnchanged is the paired negative
