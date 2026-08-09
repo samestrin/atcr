@@ -791,7 +791,14 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	}
 	logger := log.FromContext(ctx)
 	cmdStr := renderCommand(spec)
-	logger.Info("sandbox exec start", "backend", osLevelBackendName, "tool", tool, "command", cmdStr)
+	// A Preflight probe is labeled as one at every step, so the evidence trail
+	// separates a readiness check from an executed workload without
+	// command-string matching.
+	startMsg, auditMsg := "sandbox exec start", "sandbox exec"
+	if probe {
+		startMsg, auditMsg = "sandbox preflight probe start", "sandbox preflight probe"
+	}
+	logger.Info(startMsg, "backend", osLevelBackendName, "tool", tool, "command", cmdStr)
 	// Exactly one terminal record per start line, emitted from a defer so it
 	// reports the FINAL outcome. Registered immediately after the start line, so
 	// every path that announced a run also accounts for it — including the ones
@@ -807,7 +814,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// timeout and exit-code branches run, so its trail records
 	// exit_code=0/timed_out=false for every run including the killed and faulted
 	// ones. The evidence trail for model-authored code should not carry that.
-	defer func() { auditRun(logger, tool, res, err) }()
+	defer func() { auditRun(logger, tool, res, err, auditMsg) }()
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -1002,7 +1009,11 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 //     is the security decision in this file (see toolPath), and an operator's
 //     tool_path override and the Preflight-pinned default are indistinguishable
 //     from the workload command alone.
-func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error) {
+//
+// msg is "sandbox exec" for a workload run and "sandbox preflight probe" for a
+// Preflight verification run, so the two are separable without command-string
+// matching.
+func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error, msg string) {
 	attrs := []any{
 		"backend", osLevelBackendName,
 		"tool", tool,
@@ -1012,10 +1023,10 @@ func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error) {
 		"fault", runErr != nil,
 	}
 	if runErr != nil {
-		logger.Error("sandbox exec", append(attrs, "error", runErr)...)
+		logger.Error(msg, append(attrs, "error", runErr)...)
 		return
 	}
-	logger.Info("sandbox exec", attrs...)
+	logger.Info(msg, attrs...)
 }
 
 // osLevelWaitGrace bounds how long cmd.Wait blocks after the sandboxed process
