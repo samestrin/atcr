@@ -235,6 +235,33 @@ func TestSandboxExecProfile_ResolvesSymlinkedSystemPrefixes(t *testing.T) {
 	}
 }
 
+// clauseOperands returns the operands of kind ("subpath" or "literal") on the
+// single profile line containing marker.
+//
+// The whole file-read-metadata clause is emitted as ONE line, so a per-line
+// assert.Contains(line, "(subpath ") is satisfied by any single scoped entry on
+// it — appending (subpath "/Users") to the same clause keeps such a check green
+// while restoring exactly the `stat ~/.ssh/id_ed25519` capability the clause was
+// scoped to remove. Reading the operands back as a SET is what lets the test
+// assert containment of the whole clause instead of the presence of one entry.
+func clauseOperands(t *testing.T, profile, marker, kind string) []string {
+	t.Helper()
+	var line string
+	for _, l := range strings.Split(profile, "\n") {
+		if strings.Contains(l, marker) {
+			require.Empty(t, line, "more than one %s clause: the set assertion below would only cover the first", marker)
+			line = l
+		}
+	}
+	require.NotEmpty(t, line, "no %s clause in the profile", marker)
+
+	var out []string
+	for _, m := range regexp.MustCompile(`\(`+kind+` "([^"]*)"\)`).FindAllStringSubmatch(line, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
 func TestSandboxExecProfile_ScopesMetadataReadsAwayFromUserData(t *testing.T) {
 	// An unscoped (allow file-read-metadata) let a workload stat
 	// ~/.ssh/id_ed25519 and read back its size and mtime. No content, but enough
@@ -244,12 +271,28 @@ func TestSandboxExecProfile_ScopesMetadataReadsAwayFromUserData(t *testing.T) {
 	profile, err := sandboxExecProfile(cfg, spec)
 	require.NoError(t, err)
 
-	for _, line := range strings.Split(profile, "\n") {
-		if !strings.Contains(line, "file-read-metadata") {
-			continue
-		}
-		assert.Contains(t, line, "(subpath ", "metadata reads must be path-scoped, not global: %s", line)
-		assert.NotContains(t, line, `(subpath "/")`, "a root subtree scope is not a scope")
+	// Exhaustive: every subtree the metadata clause scopes to must be one the
+	// generator is entitled to grant. A presence check stays green when an EXTRA,
+	// wider scope is added, which is the regression that actually matters here —
+	// the clause grants stat() over whatever it names.
+	// The fixture's two directories are already in canonical spelling, so they
+	// travel into the clause unchanged; the fixed lists are emitted verbatim.
+	permitted := map[string]bool{"/dev": true, spec.SnapshotDir: true, cfg.ScratchDir: true}
+	for _, d := range append(append([]string{}, darwinSystemReadDirs...), darwinTmpDirs...) {
+		permitted[d] = true
+	}
+
+	granted := clauseOperands(t, profile, "file-read-metadata", "subpath")
+	require.NotEmpty(t, granted, "metadata reads must be path-scoped, not global")
+	for _, g := range granted {
+		assert.NotEqual(t, "/", g, "a root subtree scope is not a scope")
+		assert.True(t, permitted[g],
+			"metadata clause scopes to a subtree outside the permitted set: %q", g)
+	}
+	// The user-data trees the scoping exists to exclude, named explicitly so the
+	// intent survives a future widening of `permitted`.
+	for _, forbidden := range []string{"/Users", "/Users/dev", "/private/var/root", "/private/etc"} {
+		assert.NotContains(t, granted, forbidden, "the metadata clause must not cover user data")
 	}
 }
 
