@@ -12,6 +12,16 @@ import (
 // load rather than at execution time.
 const SandboxBackendDocker = "docker"
 
+// SandboxFallbackOSLevel is the only accepted `sandbox.fallback` value: the
+// OS-level backend (sandbox-exec on macOS, bwrap on Linux) that verify's
+// resolvers engage when Docker's preflight fails AND an operator has explicitly
+// opted in here.
+//
+// Its value MUST stay equal to the backend's own Name() (sandbox.osLevelBackendName,
+// internal/sandbox/oslevel.go:27) — that string is how an operator connects what
+// they configured to the backend named in a diagnostic.
+const SandboxFallbackOSLevel = "os-level"
+
 // SandboxConfig is the optional `sandbox:` block in .atcr/config.yaml that
 // enables `--exec` reproduction (Epic 11.0). Its mere presence does NOT enable
 // execution — `--exec` must also be passed and the backend must pass a preflight
@@ -35,6 +45,14 @@ type SandboxConfig struct {
 	PidsLimit *int   `yaml:"pids_limit,omitempty"`
 	// TimeoutSecs is the default per-run wall-clock budget.
 	TimeoutSecs *int `yaml:"timeout_secs,omitempty"`
+	// Fallback names a second backend to try when the primary (docker) fails its
+	// preflight. Empty — the default, and the shape of every config written before
+	// this field existed — means NO fallback: the resolvers keep refusing the run
+	// outright, which is the fail-closed contract this field must never weaken
+	// implicitly. The single accepted value is SandboxFallbackOSLevel, so opting in
+	// is always an explicit, greppable act rather than something inferred from the
+	// host ("docker absent", "running in CI").
+	Fallback string `yaml:"fallback,omitempty"`
 }
 
 // Validate checks the sandbox block. A nil block is valid (execution simply
@@ -69,6 +87,17 @@ func (s *SandboxConfig) Validate() error {
 	}
 	if err := validateCPUs(s.CPUs); err != nil {
 		return err
+	}
+	// The fallback allowlist is deliberately LAST and self-contained: it shares no
+	// early return with the Image/TestCommand checks above, so configuring a
+	// fallback can neither exempt a block from them nor change which failure an
+	// operator sees for a config broken in two ways. Exact match after trimming,
+	// with no case folding, mirroring Backend at line 47 — "OS-Level" must fail at
+	// config load, because at the resolver a value that misses the sentinel is
+	// indistinguishable from no fallback at all, and silently refusing to fall back
+	// is the opposite of what the operator wrote down.
+	if f := strings.TrimSpace(s.Fallback); f != "" && f != SandboxFallbackOSLevel {
+		return fmt.Errorf("sandbox.fallback %q is unsupported (only %q)", s.Fallback, SandboxFallbackOSLevel)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestSandboxConfig_Validate(t *testing.T) {
@@ -80,4 +81,110 @@ func TestSandboxConfig_Validate_AutoFixTensionUnchanged(t *testing.T) {
 	noImageErr := noImage.Validate()
 	require.Error(t, noImageErr)
 	assert.Contains(t, noImageErr.Error(), "image is required")
+}
+
+// TestSandboxConfig_Validate_Fallback covers the `sandbox.fallback` field on its
+// own, deliberately as a separate function rather than folded into
+// TestSandboxConfig_Validate's table: the field's whole purpose is to be an
+// ADDITIVE opt-in that cannot disturb the pinned Image/TestCommand contract, and
+// a rejection that accidentally rode on one of those checks would be invisible
+// inside a shared table. Every case pairs the Fallback value with an otherwise
+// valid config so the assertion isolates the fallback branch specifically.
+//
+// The allowlist is exact-match with no case-folding, mirroring Backend's check
+// (sandbox.go:47): a typo'd casing must fail at config load rather than silently
+// no-op'ing at the resolver, where "fallback configured" and "fallback absent"
+// have opposite security meanings.
+func TestSandboxConfig_Validate_Fallback(t *testing.T) {
+	base := func(fallback string) *SandboxConfig {
+		return &SandboxConfig{
+			Backend:     SandboxBackendDocker,
+			Image:       "golang:1.25",
+			TestCommand: []string{"go", "test", "./..."},
+			Fallback:    fallback,
+		}
+	}
+	cases := []struct {
+		name     string
+		fallback string
+		ok       bool
+		wantSub  string
+	}{
+		{"unset is valid (pre-story configs unchanged)", "", true, ""},
+		{"exact sentinel is valid", SandboxFallbackOSLevel, true, ""},
+		{"whitespace-only is treated as unset", "   ", true, ""},
+		{"tab/newline-only is treated as unset", "\t\n", true, ""},
+		{"surrounding whitespace is trimmed", "  os-level  ", true, ""},
+		{"unsupported value", "always", false, "is unsupported"},
+		{"a backend name is not a fallback value", "docker", false, "is unsupported"},
+		{"upper camel case is rejected (no case folding)", "OS-Level", false, "is unsupported"},
+		{"all caps is rejected (no case folding)", "OS-LEVEL", false, "is unsupported"},
+		{"near-miss spelling is rejected", "oslevel", false, "is unsupported"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := base(tc.fallback).Validate()
+			if tc.ok {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantSub)
+			assert.Contains(t, err.Error(), "sandbox.fallback",
+				"the error must name the field it rejected, not a neighbouring one")
+			assert.Contains(t, err.Error(), SandboxFallbackOSLevel,
+				"the error must name the supported value so the operator can fix it")
+		})
+	}
+}
+
+// TestSandboxConfig_Validate_FallbackDoesNotWeakenPinnedChecks is the
+// independence proof for the fallback branch: a valid Fallback must not exempt a
+// config from the unconditional Image/TestCommand requirements, and an INVALID
+// Fallback must not preempt them either. Both directions matter — the first
+// would let `fallback: os-level` smuggle an incomplete block past config load,
+// the second would reorder which failure an operator sees for a config that is
+// broken in two ways, and either would show up as churn in
+// TestSandboxConfig_Validate_AutoFixTensionUnchanged.
+func TestSandboxConfig_Validate_FallbackDoesNotWeakenPinnedChecks(t *testing.T) {
+	// Valid fallback does not exempt the config from the Image requirement.
+	noImage := &SandboxConfig{TestCommand: []string{"go", "test"}, Fallback: SandboxFallbackOSLevel}
+	err := noImage.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image is required")
+
+	// ...nor from the TestCommand requirement.
+	noCmd := &SandboxConfig{Image: "img", Fallback: SandboxFallbackOSLevel}
+	err = noCmd.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "test_command is required")
+
+	// An invalid fallback on a config that ALSO fails a pinned check reports the
+	// pinned failure: the fallback branch runs after them and cannot short-circuit.
+	both := &SandboxConfig{Fallback: "always"}
+	err = both.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image is required",
+		"the fallback branch must not preempt the unconditional Image/TestCommand checks")
+}
+
+// TestSandboxConfig_FallbackYAMLRoundTrip pins the wire form. omitempty is the
+// back-compat guarantee: a config that never set a fallback must marshal without
+// a `fallback:` key at all, so round-tripping an operator's existing file cannot
+// introduce one.
+func TestSandboxConfig_FallbackYAMLRoundTrip(t *testing.T) {
+	var parsed SandboxConfig
+	require.NoError(t, yaml.Unmarshal([]byte("backend: docker\nimage: golang:1.25\nfallback: os-level\ntest_command: [go, test]\n"), &parsed))
+	assert.Equal(t, SandboxFallbackOSLevel, parsed.Fallback)
+	assert.NoError(t, parsed.Validate())
+
+	out, err := yaml.Marshal(&parsed)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "fallback: os-level")
+
+	unset := SandboxConfig{Backend: SandboxBackendDocker, Image: "img", TestCommand: []string{"go", "test"}}
+	unsetOut, err := yaml.Marshal(&unset)
+	require.NoError(t, err)
+	assert.NotContains(t, string(unsetOut), "fallback",
+		"an unset fallback must not appear in the marshalled config (omitempty)")
 }
