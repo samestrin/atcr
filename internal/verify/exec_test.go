@@ -2,12 +2,15 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +65,164 @@ func TestResolveExecBackend_PreflightFailureRefuses(t *testing.T) {
 	_, _, _, err := ResolveExecBackend(context.Background(), true, sc)
 	require.Error(t, err, "a failed preflight must refuse the run")
 	assert.Contains(t, err.Error(), "preflight")
+}
+
+// --- OS-level fallback seam (shared by both resolvers' tests) ---------------
+
+// fakeOSLevel is a sandbox.Backend standing in for the real OS-level backend.
+// Substituting at the constructor seam rather than pointing the real backend at
+// a shim binary is deliberate: it keeps these resolver tests independent of
+// whether sandbox-exec/bwrap exists on the runner, and of internal/sandbox's
+// binary-path config surface, which no resolver behavior depends on.
+type fakeOSLevel struct {
+	preflightErr error
+	preflights   int
+}
+
+func (f *fakeOSLevel) Name() string { return "os-level" }
+
+func (f *fakeOSLevel) Preflight(context.Context) error {
+	f.preflights++
+	return f.preflightErr
+}
+
+func (f *fakeOSLevel) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
+	return sandbox.RunResult{}, errors.New("fakeOSLevel does not execute")
+}
+
+// stubOSLevel swaps the package's OS-level constructor seam for the duration of
+// a test and reports what the resolver did with it: the fake it handed back, the
+// config it was constructed with, and how many times it was called at all. The
+// call count is load-bearing in the negative cases — "Docker succeeded, so the
+// fallback was never attempted" is only provable by counting zero constructions,
+// not by inspecting the returned backend.
+func stubOSLevel(t *testing.T, preflightErr error) (*fakeOSLevel, *sandbox.OSLevelConfig, *int) {
+	t.Helper()
+	fake := &fakeOSLevel{preflightErr: preflightErr}
+	var gotCfg sandbox.OSLevelConfig
+	calls := 0
+	prev := newOSLevelBackendFn
+	newOSLevelBackendFn = func(cfg sandbox.OSLevelConfig) sandbox.Backend {
+		calls++
+		gotCfg = cfg
+		return fake
+	}
+	t.Cleanup(func() { newOSLevelBackendFn = prev })
+	return fake, &gotCfg, &calls
+}
+
+// fallbackSandboxConfig is an otherwise-valid config whose docker shim fails
+// preflight — the only state in which the fallback is even consulted.
+func fallbackSandboxConfig(t *testing.T, fallback string) *registry.SandboxConfig {
+	t.Helper()
+	return &registry.SandboxConfig{
+		DockerPath:  fakeDocker(t, "exit 1"),
+		Image:       "golang:1.25",
+		TestCommand: []string{"go", "test", "./..."},
+		Fallback:    fallback,
+	}
+}
+
+func TestResolveExecBackend_FallbackEngagesOnDockerPreflightFailure(t *testing.T) {
+	fake, gotCfg, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	secs := 45
+	sc.TimeoutSecs = &secs
+
+	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "os-level", b.Name(),
+		"the identifier is the stable backend name, never the underlying binary's")
+	assert.Same(t, sandbox.Backend(fake), b)
+	assert.Equal(t, []string{"go", "test", "./..."}, cmd)
+	assert.Equal(t, 45*time.Second, timeout,
+		"the operator's configured timeout must reach the caller on the fallback path too")
+	assert.Equal(t, 45*time.Second, gotCfg.Timeout,
+		"...and the backend it was constructed with")
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights,
+		"the fallback backend must be preflighted before it is handed back")
+}
+
+func TestResolveExecBackend_FallbackNeverEngagesWhenDockerSucceeds(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	sc := &registry.SandboxConfig{
+		DockerPath: fakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+exit 0`),
+		TestCommand: []string{"go", "test", "./..."},
+		Fallback:    registry.SandboxFallbackOSLevel,
+	}
+
+	b, _, _, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "docker", b.Name())
+	assert.Equal(t, 0, *calls,
+		"configuring a fallback must have zero effect on a host where Docker works")
+}
+
+func TestResolveExecBackend_FallbackNotConfiguredIsUntouched(t *testing.T) {
+	// The pinned-regression path, asserted from the other side: with no fallback
+	// configured the OS-level constructor must never be reached at all.
+	_, _, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, "")
+
+	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "preflight")
+	assert.Nil(t, b)
+	assert.Nil(t, cmd)
+	assert.Zero(t, timeout)
+	assert.Equal(t, 0, *calls)
+}
+
+func TestResolveExecBackend_UnsupportedFallbackValueIsNotAFallback(t *testing.T) {
+	// Defense in depth: a config that skipped Validate() must not be able to talk
+	// the resolver into a fallback with a value the allowlist would have rejected.
+	for _, v := range []string{"always", "docker", "OS-Level", "oslevel", "   "} {
+		t.Run(v, func(t *testing.T) {
+			_, _, calls := stubOSLevel(t, nil)
+			sc := fallbackSandboxConfig(t, v)
+
+			b, _, _, err := ResolveExecBackend(context.Background(), true, sc)
+
+			require.Error(t, err)
+			assert.Nil(t, b)
+			assert.Equal(t, 0, *calls,
+				"only the exact sentinel may engage the fallback")
+		})
+	}
+}
+
+func TestResolveExecBackend_FallbackPreflightFailureRefusesWithoutPartialSuccess(t *testing.T) {
+	fake, _, calls := stubOSLevel(t, errors.New("bwrap: command not found"))
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+
+	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b, "never a non-nil backend alongside a non-nil error")
+	assert.Nil(t, cmd)
+	assert.Zero(t, timeout)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights)
+}
+
+func TestResolveExecBackend_FallbackIrrelevantWhenExecDisabled(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+
+	b, _, _, err := ResolveExecBackend(context.Background(), false, sc)
+
+	require.NoError(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 0, *calls,
+		"the fallback lives entirely inside the execEnabled path")
 }
