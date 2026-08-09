@@ -96,6 +96,24 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	}
 	backend := sandbox.NewDockerBackend(cfg)
 	if err := backend.Preflight(ctx); err != nil {
+		// The os-level fallback, structurally identical to ResolveExecBackend's
+		// branch and sharing its seam, its gate helper, and its ONE sentinel — the
+		// consistency here is a requirement, not a style preference: an operator
+		// who learns what `--exec` does on a Docker-less host must not find
+		// `--auto-fix` behaving differently. Only the return shape differs (no
+		// []string/timeout slot; the auto-fix budget travels on RunSpec.Timeout).
+		//
+		// This is a different bypass from `enabled == false` above: --no-sandbox
+		// accepts unsandboxed host execution, sandbox.fallback substitutes a
+		// still-contained backend. Neither implies the other.
+		if osLevelFallbackConfigured(sc) && ctx.Err() == nil {
+			osBackend := newOSLevelBackendFn(osLevelFallbackConfig(sc))
+			if osErr := osBackend.Preflight(ctx); osErr != nil {
+				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", err, osErr, ErrSandboxNoUsableBackend)
+			}
+			warnOSLevelFallbackEngaged(ctx, sc, err)
+			return osBackend, nil
+		}
 		return nil, fmt.Errorf("--auto-fix sandbox preflight failed: %w", err)
 	}
 	return backend, nil

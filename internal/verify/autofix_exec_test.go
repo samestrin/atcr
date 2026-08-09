@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -187,4 +188,127 @@ func TestResolveAutoFixSandbox_RefusesWhenUnconfigured(t *testing.T) {
 	// (the two features have opposite default polarities), so pin that explicitly.
 	assert.ErrorIs(t, err, ErrAutoFixSandboxUnconfigured)
 	assert.NotErrorIs(t, err, ErrExecNoBackend, "auto-fix's unconfigured sentinel must be distinct from --exec's")
+}
+
+// --- OS-level fallback, mirroring ResolveExecBackend's branch ---------------
+//
+// These reuse exec_test.go's stubOSLevel/fallbackSandboxConfig helpers on
+// purpose. One seam and one fake, shared by both resolvers, is the mechanical
+// enforcement of the story's cross-resolver consistency requirement: a second
+// seam declared here is exactly how the two branches would drift apart.
+
+func TestResolveAutoFixSandbox_FallbackEngagesOnDockerPreflightFailure(t *testing.T) {
+	fake, gotCfg, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Image = "alpine:3.20"
+	secs := 90
+	sc.TimeoutSecs = &secs
+
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "os-level", b.Name(),
+		"the stable backend identifier, never the underlying binary's name")
+	assert.Same(t, sandbox.Backend(fake), b)
+	assert.Equal(t, 90*time.Second, gotCfg.Timeout,
+		"the operator's sandbox.timeout_secs must reach the fallback backend")
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights,
+		"the fallback backend must be preflighted before it is handed back")
+}
+
+func TestResolveAutoFixSandbox_FallbackNeverEngagesWhenDockerSucceeds(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	dockerPath, _ := fakeDockerRecording(t)
+	sc := &registry.SandboxConfig{
+		Backend:     "docker",
+		DockerPath:  dockerPath,
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test", "./..."},
+		Fallback:    registry.SandboxFallbackOSLevel,
+	}
+
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "docker", b.Name())
+	assert.Equal(t, 0, *calls,
+		"configuring a fallback must have zero effect where Docker works")
+}
+
+func TestResolveAutoFixSandbox_UnsupportedFallbackValueIsNotAFallback(t *testing.T) {
+	for _, v := range []string{"always", "docker", "OS-Level", "oslevel", "   "} {
+		t.Run(v, func(t *testing.T) {
+			_, _, calls := stubOSLevel(t, nil)
+			sc := fallbackSandboxConfig(t, v)
+			sc.Image = "alpine:3.20"
+
+			b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+			require.Error(t, err)
+			assert.Nil(t, b)
+			assert.Equal(t, 0, *calls, "only the exact sentinel may engage the fallback")
+		})
+	}
+}
+
+func TestResolveAutoFixSandbox_FallbackPreflightFailureRefusesWithoutPartialSuccess(t *testing.T) {
+	osCause := errors.New("sandbox-exec: not found")
+	fake, _, calls := stubOSLevel(t, osCause)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Image = "alpine:3.20"
+
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b, "never a non-nil backend alongside a non-nil error")
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights)
+	assert.ErrorIs(t, err, ErrSandboxNoUsableBackend,
+		"the SAME sentinel as ResolveExecBackend — never a second one")
+	assert.ErrorIs(t, err, osCause)
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+}
+
+func TestResolveAutoFixSandbox_NoFallbackRefusalIsNotSentineled(t *testing.T) {
+	sc := fallbackSandboxConfig(t, "")
+	sc.Image = "alpine:3.20"
+	_, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend,
+		"the untouched refusal must stay distinguishable from the combined-failure one")
+}
+
+// TestResolveAutoFixSandbox_FallbackIrrelevantWhenDisabled pins that the two
+// bypasses stay separate: --no-sandbox (enabled == false) accepts unsandboxed
+// host execution, sandbox.fallback substitutes a still-contained backend.
+// Neither may imply the other, so a configured fallback must not resurrect a
+// backend on the path where the operator explicitly opted out of sandboxing.
+func TestResolveAutoFixSandbox_FallbackIrrelevantWhenDisabled(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+
+	b, err := ResolveAutoFixSandbox(context.Background(), false, sc)
+
+	require.NoError(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 0, *calls)
+}
+
+func TestResolveAutoFixSandbox_CanceledContextDoesNotAttemptFallback(t *testing.T) {
+	_, _, calls := stubOSLevel(t, nil)
+	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
+	sc.Image = "alpine:3.20"
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	b, err := ResolveAutoFixSandbox(ctx, true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.Equal(t, 0, *calls)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
 }
