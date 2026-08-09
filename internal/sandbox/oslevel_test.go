@@ -21,6 +21,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ---------------------------------------------------------------------------
+// SCOPE OF PROOF (32.3/Q7) — read this before adding anything here, and before
+// citing any test in this file as containment evidence.
+//
+// EVERY test in this file drives a POSIX shell shim standing in for
+// sandbox-exec/bwrap. The shim exits however the test tells it to, with no
+// regard for what filesystem or network access it "would" have had, and many of
+// these tests additionally stub the containment seam outright
+// (captureContainmentCfg / withContainment), so no profile or bind-mount is in
+// play at all. What they prove is that the BACKEND does its part: which argv it
+// assembles, which environment it hands over, which directory it runs in, that
+// it bounds its own spawns, and what it records afterwards.
+//
+// They prove NOTHING about kernel enforcement. This matters because several
+// names in this file read like containment proofs and are not:
+// _DoesNotLeakParentEnvironment, _TimeoutKillsWholeProcessGroupAndReports124,
+// _WritableNeverRunsAgainstTheOperatorSnapshot,
+// _WritableSnapshotIsNeverTheSandboxHome,
+// _CopiesTreeWithoutFollowingSymlinksOut. Each asserts a real and worthwhile
+// property of the backend's own behavior — none of them shows that the kernel
+// refused anything.
+//
+// The enforcement proof exists ONLY in the //go:build integration tests
+// (AC 02-03/02-04), which drive the real sandbox-exec/bwrap binary and actively
+// attempt a forbidden write and an outbound connection. A green run of this
+// file must never be accepted as containment sign-off.
+// ---------------------------------------------------------------------------
+
 // OSLevelBackend must satisfy Backend exactly as DockerBackend does
 // (sandbox.go:122). oslevel.go carries the production assertion; this one keeps
 // a signature regression attributable to the test suite as well.
@@ -1861,13 +1889,8 @@ func TestOSLevelBackend_PreflightAndRunAreRaceFree(t *testing.T) {
 // ---------------------------------------------------------------------------
 // AC 01-05: fake-shim unit coverage — concurrency capping and structured logging.
 //
-// SCOPE OF PROOF (32.3/Q7): every test below drives a POSIX shell shim that
-// exits however the test tells it to, with no regard for what filesystem or
-// network access it "would" have had. They therefore prove only that the backend
-// bounds its own spawns and records what it did. They prove NOTHING about kernel
-// enforcement — that proof exists only in the //go:build integration tests
-// (AC 02-03/02-04) against the real sandbox-exec/bwrap binary, and a green run
-// here must never be read as containment evidence.
+// SCOPE OF PROOF: see the banner at the top of this file. It covers every test
+// here, not only this section.
 // ---------------------------------------------------------------------------
 
 // osLevelSerializationSleep is the shim's per-run stall. The serialization
