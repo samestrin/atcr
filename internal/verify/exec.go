@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -258,16 +259,80 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 				// containment reason an operator needs verbatim.
 				return nil, nil, 0, fmt.Errorf("--exec preflight failed: docker: %w; os-level fallback also failed: %w: %w", boundedCause{err}, osErr, ErrSandboxNoUsableBackend)
 			}
-			warnOSLevelFallbackEngaged(ctx, sc, err)
-			return osBackend, sc.TestCommand, osCfg.Timeout, nil
+			// Deferred, not emitted: the caller still runs its own gates and may
+			// refuse this run outright. See pendingFallbackWarning.
+			return withPendingFallbackWarning(osBackend, sc, err), sc.TestCommand, osCfg.Timeout, nil
 		}
 		return nil, nil, 0, fmt.Errorf("--exec preflight failed: %w", err)
 	}
 	return backend, sc.TestCommand, timeout, nil
 }
 
-// EmitPendingFallbackWarning fires the fallback-engaged notice a resolver
-// deferred, once the caller has committed to the run.
+// pendingFallbackWarning decorates a resolved backend with the fallback-engaged
+// notice, so the warning fires when the CALLER commits to the run rather than the
+// instant the resolver's preflight passed.
 //
-// STUB — wired but deliberately inert; see the RED test.
-func EmitPendingFallbackWarning(ctx context.Context, b sandbox.Backend) {}
+// The ordering defect it fixes: both callers run their own gates (snapshot
+// usability, toolchain reachability) AFTER resolution and can still refuse. The
+// warning fired first, so an operator read "os-level sandbox fallback engaged ...
+// runs_as invoking user" describing a run that never executed anything — the
+// exact confusion TestFallbackWarning_SilentWhenDockerSucceedsOrFallbackFails
+// already forbids for the sibling case.
+//
+// sandbox.Backend is EMBEDDED, not reimplemented, and that is load-bearing rather
+// than stylistic. CheckOSLevelSnapshotUsable and CheckOSLevelToolchainReachable
+// both refuse any backend they cannot positively identify, and their godoc names
+// this precise shape as the hazard: "a decorating wrapper, which reports its own
+// Name()". Embedding forwards Name/Preflight/Run by construction, so the method
+// that would break both gates cannot be forgotten — and if sandbox.Backend gains
+// a method, this type inherits it instead of silently failing to compile into a
+// stub. TestFallbackDecorator_ForwardsNameToTheWrappedBackend asserts the
+// consequence directly.
+//
+// Alternatives rejected: returning an "engaged" bool from the resolvers would
+// change both return shapes, which AC 03-03 pins; emitting from each CLI call
+// site independently would duplicate the notice across cli/verify.go and
+// cli/autofix.go and lose the docker cause, which only the resolver holds.
+type pendingFallbackWarning struct {
+	sandbox.Backend
+	once sync.Once
+	emit func(context.Context)
+}
+
+// Unwrap returns the decorated backend. It exists because the wrapper is
+// otherwise opaque to a caller that needs the CONCRETE type — the Docker parity
+// test casts to *sandbox.DockerBackend to assert timeout propagation, and an
+// os-level equivalent would be blocked by the decoration without this.
+func (p *pendingFallbackWarning) Unwrap() sandbox.Backend { return p.Backend }
+
+// unwrapBackend returns the backend b decorates, or b itself when undecorated.
+func unwrapBackend(b sandbox.Backend) sandbox.Backend {
+	if p, ok := b.(*pendingFallbackWarning); ok {
+		return p.Unwrap()
+	}
+	return b
+}
+
+// withPendingFallbackWarning wraps b so the notice for cause is emitted later.
+func withPendingFallbackWarning(b sandbox.Backend, sc *registry.SandboxConfig, cause error) sandbox.Backend {
+	return &pendingFallbackWarning{
+		Backend: b,
+		emit:    func(ctx context.Context) { warnOSLevelFallbackEngaged(ctx, sc, cause) },
+	}
+}
+
+// EmitPendingFallbackWarning fires the fallback-engaged notice a resolver
+// deferred, once the caller has committed to the run. Callers invoke it
+// unconditionally after their gates pass; it is a no-op for any backend carrying
+// no pending notice (nil, docker, or an undecorated os-level backend), so a call
+// site never has to ask which backend it got.
+//
+// At most one notice is emitted however many call sites ask: two CLI sites
+// already call this, and a double-logged engagement reads as two fallbacks.
+func EmitPendingFallbackWarning(ctx context.Context, b sandbox.Backend) {
+	p, ok := b.(*pendingFallbackWarning)
+	if !ok || p == nil || p.emit == nil {
+		return
+	}
+	p.once.Do(func() { p.emit(ctx) })
+}

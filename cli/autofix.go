@@ -113,6 +113,12 @@ var checkOSLevelSnapshotFn = verify.CheckOSLevelSnapshotUsable
 // unrelated reasons, and a test staging one must not have to stage the other.
 var checkOSLevelToolchainFn = verify.CheckOSLevelToolchainReachable
 
+// emitPendingFallbackWarningFn fires the fallback-engaged notice the resolvers
+// defer until a caller commits to the run. Indirected through a package var, like
+// its sibling gates, so a test can assert WHEN it fires rather than only that the
+// text appeared somewhere in a log buffer.
+var emitPendingFallbackWarningFn = verify.EmitPendingFallbackWarning
+
 // warnNoSandbox writes the --no-sandbox security warning to out. It is
 // deliberately NOT memoized — no sync.Once, no package-level "seen" bool, no
 // env/state gate — which is the exact opposite of the read-once ATCR_TELEMETRY
@@ -421,6 +427,13 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		}
 		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", joined))
 	}
+	// Every gate passed, so the run is committed and the isolation-model-changed
+	// notice is finally true. Emitted HERE rather than beside check (5) on
+	// purpose: an unrelated failure — a missing GitHub token, an unresolvable
+	// validate command — still refuses the run, and warning that the fallback
+	// "engaged" for a run that never happens is the same misreport this deferral
+	// removes. A no-op when no notice is pending.
+	emitPendingFallbackWarningFn(cmd.Context(), be.sandboxBackend)
 	return be, nil
 }
 

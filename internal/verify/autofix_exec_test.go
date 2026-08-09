@@ -210,7 +210,9 @@ func TestResolveAutoFixSandbox_FallbackEngagesOnDockerPreflightFailure(t *testin
 	require.NotNil(t, b)
 	assert.Equal(t, "os-level", b.Name(),
 		"the stable backend identifier, never the underlying binary's name")
-	assert.Same(t, sandbox.Backend(fake), b)
+	// unwrapBackend: see the --exec sibling; the backend is decorated with the
+	// deferred fallback-engaged notice.
+	assert.Same(t, sandbox.Backend(fake), unwrapBackend(b))
 	assert.Equal(t, 90*time.Second, gotCfg.Timeout,
 		"the operator's sandbox.timeout_secs must reach the fallback backend")
 	assert.Equal(t, 1, *calls)

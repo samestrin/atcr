@@ -113,3 +113,59 @@ func TestResolveExec_ToolchainGateSkippedForDocker(t *testing.T) {
 	_, _, _, err := resolveExec(cmd, proj)
 	assert.NoError(t, err, "the docker backend must pass the toolchain gate unconditionally")
 }
+
+// TestResolveExec_FallbackWarningFiresOnlyAfterEveryGatePasses is the ordering
+// guarantee at the boundary that motivated the deferral.
+//
+// The resolver used to warn the instant the os-level preflight passed, but
+// resolveExec's own gates run afterwards and can still refuse — so an operator
+// read "os-level sandbox fallback engaged ... runs_as invoking user" describing a
+// run that never executed anything. These two subtests are the positive and
+// negative halves of the fix; without the negative one, simply moving the warn
+// call would look equally green.
+func TestResolveExec_FallbackWarningFiresOnlyAfterEveryGatePasses(t *testing.T) {
+	stageEmit := func(t *testing.T) *int {
+		t.Helper()
+		var fired int
+		prev := emitPendingFallbackWarningFn
+		emitPendingFallbackWarningFn = func(context.Context, sandbox.Backend) { fired++ }
+		t.Cleanup(func() { emitPendingFallbackWarningFn = prev })
+		return &fired
+	}
+
+	t.Run("all gates pass: warning fires once", func(t *testing.T) {
+		captureSnapshotGate(t, nil)
+		captureToolchainGate(t, nil)
+		fired := stageEmit(t)
+
+		cmd, proj := execResolveFixture(t)
+		_, _, _, err := resolveExec(cmd, proj)
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, *fired, "a committed run must tell the operator the isolation model changed")
+	})
+
+	t.Run("snapshot gate refuses: warning never fires", func(t *testing.T) {
+		captureSnapshotGate(t, errors.New("staged snapshot refusal"))
+		captureToolchainGate(t, nil)
+		fired := stageEmit(t)
+
+		cmd, proj := execResolveFixture(t)
+		_, _, _, err := resolveExec(cmd, proj)
+
+		require.Error(t, err)
+		assert.Zero(t, *fired, "nothing was engaged, so the refusal is the whole signal")
+	})
+
+	t.Run("toolchain gate refuses: warning never fires", func(t *testing.T) {
+		captureSnapshotGate(t, nil)
+		captureToolchainGate(t, errors.New("staged toolchain refusal"))
+		fired := stageEmit(t)
+
+		cmd, proj := execResolveFixture(t)
+		_, _, _, err := resolveExec(cmd, proj)
+
+		require.Error(t, err)
+		assert.Zero(t, *fired, "a run refused for an unreachable toolchain engaged nothing")
+	})
+}

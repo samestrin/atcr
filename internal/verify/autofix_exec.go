@@ -135,8 +135,9 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 				// preserved, rendered text bounded before it can reach stderr.
 				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", boundedCause{err}, osErr, ErrSandboxNoUsableBackend)
 			}
-			warnOSLevelFallbackEngaged(ctx, sc, err)
-			return osBackend, nil
+			// Deferred identically to ResolveExecBackend: --auto-fix's gate checks
+			// run after this returns and can still refuse.
+			return withPendingFallbackWarning(osBackend, sc, err), nil
 		}
 		return nil, fmt.Errorf("--auto-fix sandbox preflight failed: %w", err)
 	}

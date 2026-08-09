@@ -153,6 +153,13 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if err := checkOSLevelToolchainFn(backend, testCmd); err != nil {
 		return nil, nil, 0, usageError(err)
 	}
+	// Every gate has now accepted the run, so the isolation-model-changed notice
+	// is finally true. The resolver DEFERS it (verify.pendingFallbackWarning)
+	// precisely because the refusals above can still fire: warning first meant an
+	// operator read "fallback engaged ... runs_as invoking user" about a run that
+	// never executed anything. A no-op for docker and for any backend carrying no
+	// pending notice, so it is called unconditionally.
+	emitPendingFallbackWarningFn(ctx, backend)
 	return backend, testCmd, timeout, nil
 }
 

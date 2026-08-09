@@ -188,7 +188,9 @@ func TestResolveExecBackend_FallbackEngagesOnDockerPreflightFailure(t *testing.T
 	require.NotNil(t, b)
 	assert.Equal(t, "os-level", b.Name(),
 		"the identifier is the stable backend name, never the underlying binary's")
-	assert.Same(t, sandbox.Backend(fake), b)
+	// unwrapBackend: the resolver now returns the fallback backend wrapped in a
+	// pending-warning decorator, so identity is asserted through the wrapper.
+	assert.Same(t, sandbox.Backend(fake), unwrapBackend(b))
 	assert.Equal(t, []string{"go", "test", "./..."}, cmd)
 	assert.Equal(t, 45*time.Second, timeout,
 		"the operator's configured timeout must reach the caller on the fallback path too")
@@ -385,8 +387,11 @@ func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) 
 	pids := 256
 	sc.PidsLimit = &pids
 
-	_, _, _, err := ResolveExecBackend(ctx, true, sc)
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
 	require.NoError(t, err)
+	// The notice is DEFERRED until the caller commits to the run; emitting here
+	// is what a CLI call site does once its own gates pass.
+	EmitPendingFallbackWarning(ctx, b)
 
 	out := buf.String()
 	assert.Contains(t, out, "os-level sandbox fallback engaged")
@@ -410,8 +415,9 @@ func TestFallbackWarning_NamesLostDefaultsEvenWhenNothingWasConfigured(t *testin
 		Fallback:    registry.SandboxFallbackOSLevel,
 	}
 
-	_, _, _, err := ResolveExecBackend(ctx, true, sc)
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
 	require.NoError(t, err)
+	EmitPendingFallbackWarning(ctx, b) // deferred until the caller commits
 
 	out := buf.String()
 	assert.Contains(t, out, "uid 65534")
@@ -457,8 +463,9 @@ func TestFallbackWarning_AutoFixResolverWarnsIdentically(t *testing.T) {
 	sc := fallbackSandboxConfig(t, registry.SandboxFallbackOSLevel)
 	sc.Image = "alpine:3.20"
 
-	_, err := ResolveAutoFixSandbox(ctx, true, sc)
+	b, err := ResolveAutoFixSandbox(ctx, true, sc)
 	require.NoError(t, err)
+	EmitPendingFallbackWarning(ctx, b) // deferred until the caller commits
 	assert.Contains(t, buf.String(), "os-level sandbox fallback engaged")
 	assert.Contains(t, buf.String(), "uid 65534")
 }
