@@ -376,6 +376,31 @@ func TestCheckOSLevelSnapshotUsable_IsANoOpForOtherBackends(t *testing.T) {
 	assert.NoError(t, CheckOSLevelSnapshotUsable(sandbox.NewDockerBackend(sandbox.DefaultDockerConfig()), nil, home, true))
 }
 
+// namedBackend is a minimal sandbox.Backend whose Name is whatever the test
+// says — the shape a decorating wrapper (auditing, metrics, retrying) takes
+// when it reports its own name instead of the wrapped backend's.
+type namedBackend struct{ name string }
+
+func (n namedBackend) Name() string { return n.name }
+
+func (n namedBackend) Preflight(context.Context) error { return nil }
+
+func (n namedBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
+	return sandbox.RunResult{}, errors.New("namedBackend does not execute")
+}
+
+// TestCheckOSLevelSnapshotUsable_RefusesAnUnrecognizedBackend pins the
+// fail-closed default: a backend the gate cannot positively identify must be
+// refused, not silently passed. Dispatching on Name() != "os-level" alone is
+// fail-OPEN — any decorator around the OS-level backend reports its own name
+// and the snapshot check becomes a no-op with zero test failures.
+func TestCheckOSLevelSnapshotUsable_RefusesAnUnrecognizedBackend(t *testing.T) {
+	err := CheckOSLevelSnapshotUsable(namedBackend{name: "auditing-decorator"}, nil, t.TempDir(), true)
+	require.Error(t, err, "an unrecognized backend must be refused, not silently passed")
+	assert.Contains(t, err.Error(), "auditing-decorator",
+		"the refusal must name the backend it could not identify")
+}
+
 func TestCheckOSLevelSnapshotUsable_RefusesAProfileMetacharacterPath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "repo(1)")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
