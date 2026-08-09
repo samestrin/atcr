@@ -206,16 +206,33 @@ Concretely, opting in accepts all of the following:
   `TMPDIR`, `HOME`, `GOCACHE` and `GOTMPDIR` point into the per-run scratch
   directory, so anything following the environment works; a command that
   hardcodes bare `/tmp` fails on macOS with `Operation not permitted`.
-- **Go dependency resolution needs a warm module cache.** The sandbox has no
-  network, so a non-vendored dependency cannot be downloaded during a run.
+- **Go dependency resolution needs a module cache you warm yourself.** The sandbox
+  has no network, so a non-vendored dependency cannot be downloaded during a run.
   `GOMODCACHE` points at a persistent, atcr-owned cache
   (`<user cache dir>/atcr/oslevel-modcache`) mounted **read-only**, so a cache
-  warmed on the host is reused by every later run — but nothing warms it
-  automatically yet, and until it is warmed a `go build` with an external
-  dependency fails with `dial tcp: ... no such host`. Vendored trees are
-  unaffected. The cache is read-only on purpose: a persistent directory that
-  model-authored code could write would let one run poison what later runs
+  warmed on the host is reused by every later run. Until it is warmed, a `go build`
+  with an external dependency fails with `dial tcp: ... no such host`. Vendored
+  trees are unaffected. The cache is read-only on purpose: a persistent directory
+  that model-authored code could write would let one run poison what later runs
   compile.
+
+  Warming it is a **deliberate, operator-invoked step**, not something a review run
+  does for you:
+
+  ```sh
+  GOMODCACHE="$(go env GOMODCACHE)"   # or the atcr cache path above
+  (cd /path/to/repo && GOMODCACHE=<atcr cache path> go mod download)
+  ```
+
+  **atcr will not warm this cache automatically, and that is an accepted
+  limitation rather than a missing feature.** An automatic warm step would have to
+  run a network fetch **on the host**, outside every sandbox, driven by the
+  `go.mod` living *inside the tree under review* — which may be an untrusted pull
+  request naming a typosquatted module or carrying a `replace` directive. That
+  would cross this package's "no network" guarantee on the host side, before any
+  containment applies, to fix a failure mode that is merely inconvenient. The same
+  reasoning is why `sandbox.image` being ignored is disclosed above rather than
+  worked around: a disclosed limitation beats an undisclosed supply-chain surface.
 - **The platform binary is resolved only from `/usr/bin`, `/bin`, `/usr/sbin`, and
   `/sbin` — never from `$PATH`.** This is deliberate (a `$PATH` lookup is an
   injection surface for the very code being contained), but it means a `bwrap`
