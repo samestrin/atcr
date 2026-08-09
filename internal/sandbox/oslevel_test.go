@@ -1235,6 +1235,28 @@ exit 1`)
 	assert.Zero(t, res.ExitCode, "a tool fault has no program exit status to report")
 }
 
+func TestOSLevelBackendRun_LoggedCommandIsTruncatedToTheOutputBudget(t *testing.T) {
+	// For Script mode renderCommand returns the entire script body, and runWith
+	// wrote that string into two log records per run with no length bound,
+	// while the workload's own Output is carefully capped — a model-authored
+	// script is unbounded input and must not push megabytes into the log.
+	script := "echo " + strings.Repeat("x", 1<<20)
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+	b.cfg.MaxOutputBytes = 1024
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	res, err := b.Run(ctx, RunSpec{Script: script, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.Equal(t, script, res.Command,
+		"the untruncated render stays on the result for the evidence block")
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		assert.LessOrEqual(t, len(line), 4096, "no log record may carry the unbounded command: %.80s...", line)
+	}
+	assert.Contains(t, buf.String(), "truncated")
+}
+
 func TestOSLevelBackendRun_RefusalIsLoggedAndCarriesTheCommand(t *testing.T) {
 	// Run's first action is b.toolPath(), which returns before any logger is
 	// obtained: a run refused with errOSLevelNotPreflighted produced NO log
