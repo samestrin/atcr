@@ -328,17 +328,23 @@ func TestIntegration_AutoFixFallback_NetworkEgressIsBlocked(t *testing.T) {
 		"outbound egress to a live listener must be blocked under the fallback")
 }
 
-// TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable records a
-// containment REDUCTION relative to the Docker backend, deliberately, as a
-// passing assertion rather than a comment.
+// TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable records the
+// /tmp carve-out relative to the Docker backend, deliberately, as a passing
+// assertion rather than a comment — per platform, because the carve-out itself
+// is per platform.
 //
-// Docker's /tmp is a container tmpfs; the os-level profile grants the host's
-// real /tmp read and write, as the invoking user. That is a documented property
-// of the platform profile (Phase 2), not a defect introduced here — but it is a
-// difference an operator opting into the fallback inherits, and the 4.8.A review
-// found it invisible: named in no warning and probed by no test, so a future
-// widening could not be told apart from it. Pinning it means a change to the
-// carve-out breaks a test instead of passing silently. See TD-025.
+// Docker's /tmp is a container tmpfs. On darwin the os-level profile grants the
+// host's real /tmp read and write, as the invoking user. On Linux bwrapArgs
+// mounts --tmpfs /tmp unconditionally (oslevel_profile.go), so the host's /tmp
+// is INVISIBLE inside the sandbox and a sandboxed /tmp write lands in the
+// ephemeral tmpfs — asserting the darwin shape there made this test unpassable
+// on Linux (green only because CI never builds this tag). The darwin exposure
+// is a documented property of the platform profile (Phase 2), not a defect
+// introduced here — but it is a difference an operator opting into the fallback
+// inherits, and the 4.8.A review found it invisible: named in no warning and
+// probed by no test, so a future widening could not be told apart from it.
+// Pinning it means a change to the carve-out breaks a test instead of passing
+// silently. See TD-025.
 func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) {
 	requireResolvableSandboxTool(t)
 
@@ -364,14 +370,33 @@ func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) 
 		60*time.Second,
 	)
 	require.NoError(t, runErr)
-	assert.Equal(t, 0, res.ExitCode,
-		"host /tmp is readable under the os-level fallback — if this now FAILS the carve-out changed, which is a behavior change to document, not a test to delete")
-	assert.Contains(t, res.Stdout, "HOSTTMP")
 
 	// The write half of the name: a probe is only AndWritable if a write is
 	// actually issued and its landing place asserted on the host.
+	writeRes, writeRunErr := RunSandboxedValidation(
+		context.Background(),
+		backend,
+		[]string{"/bin/sh", "-c", "printf 'SANDBOXED-WRITE\n' >> " + marker},
+		snapshot,
+		60*time.Second,
+	)
+	require.NoError(t, writeRunErr)
 	hostBody, readErr := os.ReadFile(marker)
 	require.NoError(t, readErr)
-	assert.Contains(t, string(hostBody), "SANDBOXED-WRITE",
-		"the sandboxed write must land on the host's real /tmp")
+
+	if runtime.GOOS == "darwin" {
+		assert.Equal(t, 0, res.ExitCode,
+			"host /tmp is readable under the os-level fallback — if this now FAILS the carve-out changed, which is a behavior change to document, not a test to delete")
+		assert.Contains(t, res.Stdout, "HOSTTMP")
+		assert.Equal(t, 0, writeRes.ExitCode,
+			"host /tmp is writable under the os-level fallback — same carve-out, same rule")
+		assert.Contains(t, string(hostBody), "SANDBOXED-WRITE",
+			"the sandboxed write must land on the host's real /tmp")
+	} else if runtime.GOOS == "linux" {
+		assert.NotEqual(t, 0, res.ExitCode,
+			"on Linux the host /tmp hides behind an ephemeral tmpfs — the marker must NOT be readable")
+		assert.NotContains(t, res.Stdout, "HOSTTMP")
+		assert.NotContains(t, string(hostBody), "SANDBOXED-WRITE",
+			"this /tmp write must land in the ephemeral tmpfs, not the host's /tmp")
+	}
 }
