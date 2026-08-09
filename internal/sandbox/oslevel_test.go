@@ -69,14 +69,19 @@ func TestOSLevelBackendName_MatchesFallbackConfigValue(t *testing.T) {
 	assert.Equal(t, "os-level", osLevelBackendName)
 }
 
-func TestDefaultOSLevelConfig_BoundsAreNonZero(t *testing.T) {
+func TestDefaultOSLevelConfig_BoundsAreTheDocumentedValues(t *testing.T) {
 	// Scoped deliberately: this asserts the three bounds OSLevelConfig actually
 	// carries, NOT that the defaults are "safe" in the package-contract sense —
 	// there are no memory/CPU/PID/uid caps to assert (TD-001).
+	//
+	// Pinned to the exact values, not positivity: under assert.Positive a change
+	// from 60s to 1ns or from 64 KiB to 1 byte stayed green, and both are
+	// user-visible regressions (every run instantly timing out, every diagnostic
+	// truncated to nothing). A value change must be a deliberate test edit.
 	cfg := DefaultOSLevelConfig()
-	assert.Positive(t, cfg.Timeout, "an unbounded default timeout is a resource-exhaustion risk")
-	assert.Positive(t, cfg.MaxOutputBytes)
-	assert.Positive(t, cfg.MaxConcurrent)
+	assert.Equal(t, 60*time.Second, cfg.Timeout)
+	assert.Equal(t, 64*1024, cfg.MaxOutputBytes)
+	assert.Equal(t, 4, cfg.MaxConcurrent)
 }
 
 func TestNewOSLevelBackend_ZeroValueConfigGetsSafeDefaults(t *testing.T) {
