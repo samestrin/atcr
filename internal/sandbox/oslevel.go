@@ -990,9 +990,17 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		cmd.Stdin = strings.NewReader(spec.Script)
 	}
 	var buf bytes.Buffer
+	// Floor MaxOutputBytes for a struct-literal backend the way MaxConcurrent
+	// and Timeout are floored: a zero value would otherwise cap the capture at
+	// an undocumented 4096 bytes and disable the truncation marker (truncate's
+	// limit<=0 early return).
+	maxOut := b.cfg.MaxOutputBytes
+	if maxOut <= 0 {
+		maxOut = DefaultOSLevelConfig().MaxOutputBytes
+	}
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
 	// before truncation, with headroom for rune-boundary backup.
-	lw := &limitedWriter{w: &buf, n: int64(b.cfg.MaxOutputBytes) + 4096}
+	lw := &limitedWriter{w: &buf, n: int64(maxOut) + 4096}
 	// Both streams ALSO feed a dedicated tail buffer for fault classification.
 	// The display buffer keeps the HEAD of the combined capture, so a workload
 	// flooding output before the tool reports its own failure would push the
@@ -1019,7 +1027,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	runErr := cmd.Run()
 	res = RunResult{
 		Command: cmdStr,
-		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
+		Output:  truncate(buf.String(), maxOut),
 	}
 
 	// A cancellation-class end (deadline exceeded OR parent cancellation) is
