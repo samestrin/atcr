@@ -259,7 +259,7 @@ func (b *osLevelBackend) Preflight(ctx context.Context) error {
 			Command:     []string{"/bin/sh", "-c", "echo " + nonce},
 			SnapshotDir: tmpDir,
 			Writable:    writable,
-		})
+		}, true)
 		cancel()
 		if err != nil {
 			// The tool's own stderr travels with the error. Without it the caller
@@ -730,13 +730,20 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 	if err != nil {
 		return RunResult{}, err
 	}
-	return b.runWith(ctx, tool, spec)
+	return b.runWith(ctx, tool, spec, false)
 }
 
 // runWith is Run against an already-resolved binary. Preflight uses it so its
 // verification run spawns the exact path it just validated — toolPath has not
 // been pinned at that point, and must not be until the verification succeeds.
-func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec) (res RunResult, err error) {
+//
+// probe marks Preflight's verification runs. A probe bypasses the MaxConcurrent
+// semaphore: Preflight is the readiness gate a resolver blocks on, so queueing
+// it behind in-flight workload runs would report a busy backend as an unhealthy
+// one. Probes are rare (one backend setup, not per finding) and bounded by
+// preflightRunTimeout, so exempting them does not open the resource hole the
+// semaphore closes.
+func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec, probe bool) (res RunResult, err error) {
 	// Validate up front. The argv is no longer built here — it needs the scratch
 	// directory, which is created below — so without this a malformed spec would
 	// take a concurrency slot and create a temp tree before being refused.
@@ -747,29 +754,32 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// Bound concurrent sandbox spawns; block until a slot frees or ctx is done.
 	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
 	// enforces MaxConcurrent rather than silently spawning without limit,
-	// mirroring docker.go:237-251.
-	b.semOnce.Do(func() {
-		if b.sem == nil {
-			n := b.cfg.MaxConcurrent
-			if n <= 0 {
-				n = DefaultOSLevelConfig().MaxConcurrent
+	// mirroring docker.go:237-251. Probes skip the acquire entirely (see the
+	// doc comment).
+	if !probe {
+		b.semOnce.Do(func() {
+			if b.sem == nil {
+				n := b.cfg.MaxConcurrent
+				if n <= 0 {
+					n = DefaultOSLevelConfig().MaxConcurrent
+				}
+				b.sem = make(chan struct{}, n)
 			}
-			b.sem = make(chan struct{}, n)
+		})
+		select {
+		case b.sem <- struct{}{}:
+			defer func() { <-b.sem }()
+		case <-ctx.Done():
+			// A cancellation while queued is still a cancellation, not a backend
+			// fault — report it the same way a cancellation after spawn is reported,
+			// so a caller keying on err != nil does not treat a user's ctrl-C on a
+			// queued run as a sandbox failure.
+			return RunResult{
+				Command:  renderCommand(spec),
+				ExitCode: timeoutExitCode,
+				TimedOut: true,
+			}, nil
 		}
-	})
-	select {
-	case b.sem <- struct{}{}:
-		defer func() { <-b.sem }()
-	case <-ctx.Done():
-		// A cancellation while queued is still a cancellation, not a backend
-		// fault — report it the same way a cancellation after spawn is reported,
-		// so a caller keying on err != nil does not treat a user's ctrl-C on a
-		// queued run as a sandbox failure.
-		return RunResult{
-			Command:  renderCommand(spec),
-			ExitCode: timeoutExitCode,
-			TimedOut: true,
-		}, nil
 	}
 
 	timeout := spec.Timeout
