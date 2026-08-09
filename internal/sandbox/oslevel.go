@@ -465,7 +465,16 @@ func seedWritableCopy(src, dst string) (skipped int, err error) {
 			// had them.
 			return os.MkdirAll(target, info.Mode().Perm()|0o700)
 		case d.Type()&os.ModeSymlink != 0:
-			return copySymlinkIfContained(src, path, dst, target)
+			if err := copySymlinkIfContained(src, path, dst, target); err != nil {
+				// A link that vanished (or turned unreadable) between readdir
+				// and readlink is the live-working-tree case below: skip it.
+				if errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) {
+					skipped++
+					return nil
+				}
+				return err
+			}
+			return nil
 		case d.Type().IsRegular():
 			info, err := d.Info()
 			if err != nil {
@@ -480,7 +489,12 @@ func seedWritableCopy(src, dst string) (skipped int, err error) {
 					"(exceeds %d bytes)", osLevelMaxWritableCopyBytes)
 			}
 			if err := copyRegularFile(path, target, info.Mode().Perm()); err != nil {
-				if errors.Is(err, os.ErrPermission) {
+				// os.ErrNotExist alongside os.ErrPermission: the snapshot is
+				// the operator's LIVE working tree, and a file that vanished
+				// between readdir and open (.git pack rewrite, build temp file,
+				// editor swap) reports ENOENT — one vanishing file must not
+				// abort the run any more than one unreadable file may.
+				if errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) {
 					skipped++
 					return nil
 				}
