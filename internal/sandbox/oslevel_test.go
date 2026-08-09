@@ -1275,6 +1275,43 @@ func TestOSLevelBackendRun_RefusalIsLoggedAndCarriesTheCommand(t *testing.T) {
 	assert.Contains(t, buf.String(), `command="go test"`)
 }
 
+func TestOSLevelBackendRun_CanonicalizesTheSnapshotDirBeforeTheGenerators(t *testing.T) {
+	// The generators are pure string functions and cannot see symlinks: a
+	// SnapshotDir reached through a symlink (an ordinary checkout layout) would
+	// be guarded and bound under a spelling the kernel resolves away — on
+	// darwin an unresolved alias's rules are inert (fail closed), while on
+	// Linux bwrap binds the RESOLVED target (fail OPEN). The impure caller must
+	// canonicalize before the generators run.
+	real := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(real, "f"), []byte("x"), 0o644))
+	link := filepath.Join(t.TempDir(), "snap-link")
+	require.NoError(t, os.Symlink(real, link))
+	wantResolved, err := filepath.EvalSymlinks(real)
+	require.NoError(t, err)
+
+	b := newFakeOSLevelBackend(t, "exit 0")
+	var gotCfg OSLevelConfig
+	var gotSpec RunSpec
+	orig := osLevelContainmentArgs
+	osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, error) {
+		gotCfg = cfg
+		gotSpec = spec
+		return []string{"--fake-containment"}, nil
+	}
+	t.Cleanup(func() { osLevelContainmentArgs = orig })
+
+	_, err = b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: link})
+	require.NoError(t, err)
+	assert.Equal(t, wantResolved, gotSpec.SnapshotDir,
+		"the generators must receive the canonical snapshot path, not a spelling the kernel resolves away")
+	if runtime.GOOS == "darwin" {
+		// os.MkdirTemp returns a /var/folders spelling on macOS; the scratch
+		// dir handed to the generators must be canonicalized the same way.
+		assert.False(t, strings.HasPrefix(gotCfg.ScratchDir, "/var/"),
+			"the scratch dir must reach the generators in canonical form, got %q", gotCfg.ScratchDir)
+	}
+}
+
 func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
