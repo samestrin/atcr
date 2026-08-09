@@ -639,9 +639,11 @@ func TestOSLevelBackendRun_WritableCopyFailureIsAFaultNotASuccess(t *testing.T) 
 	snapshot := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "big.bin"), bytes.Repeat([]byte("x"), 1024), 0o644))
 
+	var seen OSLevelConfig
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
-	b := withContainment(t, NewOSLevelBackend(cfg))
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
 
 	res, err := b.Run(context.Background(), RunSpec{
 		Command:     []string{"true"},
@@ -652,6 +654,12 @@ func TestOSLevelBackendRun_WritableCopyFailureIsAFaultNotASuccess(t *testing.T) 
 	assert.Contains(t, err.Error(), "writable copy")
 	assert.Zero(t, res.ExitCode,
 		"a fault carries no program exit status; the non-nil error is the caller's signal (TD-005)")
+
+	// A half-seeded copy of the repository under review must not be left behind
+	// when the seed faults — this is the path where the scratch tree is largest
+	// and least expected to survive.
+	require.NotEmpty(t, seen.ScratchDir)
+	assert.NoDirExists(t, seen.ScratchDir, "the ephemeral scratch tree must not survive a failed writable copy")
 }
 
 // writeFakeOSLevel writes an executable shell script that impersonates the
@@ -757,7 +765,12 @@ touch %q`, marker+".child", marker)
 
 func TestOSLevelBackendRun_TimeoutKillsWholeProcessGroupAndReports124(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "survived")
-	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody(marker))
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSleepBody(marker))
+	cfg.MaxConcurrent = 1
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
 
 	start := time.Now()
 	res, err := b.Run(context.Background(), RunSpec{
@@ -779,6 +792,15 @@ func TestOSLevelBackendRun_TimeoutKillsWholeProcessGroupAndReports124(t *testing
 	assert.NoFileExists(t, marker, "the sandboxed workload must be killed, not left running")
 	assert.NoFileExists(t, marker+".child",
 		"a forked grandchild must be reaped too — that is what the process group is for")
+
+	// The scratch tree must be gone on the TIMEOUT path too, not only on the
+	// clean exit-0 path TestOSLevelBackendRun_ScratchDirIsRemovedAfterTheRun
+	// covers. On a Writable run it holds a full copy of the repository under
+	// review, so leaking it on the failure paths — the ones most likely to recur
+	// under a broken host — is a disk-consumption and data-residency problem, not
+	// a tidiness one.
+	require.NotEmpty(t, seen.ScratchDir)
+	assert.NoDirExists(t, seen.ScratchDir, "the ephemeral scratch tree must not survive a timed-out run")
 }
 
 func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
