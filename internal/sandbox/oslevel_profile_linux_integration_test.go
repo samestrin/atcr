@@ -668,7 +668,7 @@ func TestIntegration_OSLevelLinux_ScratchBindIsNotAnEscapeHatch(t *testing.T) {
 	res, runErr := b.Run(context.Background(), RunSpec{
 		Command: []string{"/bin/sh", "-c",
 			"echo HOME_WRITABLE=$(touch \"$HOME/probe\" 2>&1 && echo yes || echo no); " +
-				"cat " + canaryPath + " 2>/dev/null || echo PROBE-1-MISS; " +
+				"cat \"" + canaryPath + "\" 2>/dev/null || echo PROBE-1-MISS; " +
 				"cat \"$HOME/../\"$(basename " + canaryPath + ") 2>/dev/null || echo PROBE-2-MISS; true"},
 		SnapshotDir: t.TempDir(),
 		Timeout:     10 * time.Second,
