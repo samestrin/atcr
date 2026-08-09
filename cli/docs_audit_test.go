@@ -1292,6 +1292,39 @@ func TestMarkdownSectionScopesToItsOwnHeading(t *testing.T) {
 	}
 }
 
+// TestMarkdownSectionIgnoresHeadingsInsideFencedBlocks guards the other
+// direction: truncating a section EARLY is just as bad as leaking a sibling
+// into it, and it is the quieter failure — the assertions built on the section
+// still run, they just run against a fraction of the prose and report the rest
+// as missing.
+//
+// A `#` comment is the first line of almost every YAML example in docs/, and
+// docs/auto-fix.md's fallback section opens with one (`# .atcr/config.yaml`).
+// Read as an H1 that outranks the `##` section heading, it cut that section off
+// at its first code fence and made TestAutoFixDocsStateFallbackIsOptIn demand
+// prose that was present four paragraphs further down.
+func TestMarkdownSectionIgnoresHeadingsInsideFencedBlocks(t *testing.T) {
+	for name, fence := range map[string]string{"backtick": "```", "tilde": "~~~"} {
+		t.Run(name, func(t *testing.T) {
+			doc := "## Target\nbefore fence\n\n" + fence + "yaml\n# .atcr/config.yaml\nsandbox:\n  fallback: os-level\n" + fence +
+				"\n\nafter fence\n\n## Sibling\nunwanted"
+			body, ok := markdownSection(doc, regexp.MustCompile(`Target`))
+			if !ok {
+				t.Fatal("markdownSection did not find the Target section")
+			}
+			if !strings.Contains(body, "after fence") {
+				t.Errorf("a `#` comment inside a fenced block truncated the section: %q", body)
+			}
+			if !strings.Contains(body, "before fence") {
+				t.Errorf("markdownSection dropped the body before the fence: %q", body)
+			}
+			if strings.Contains(body, "unwanted") {
+				t.Errorf("markdownSection leaked the sibling section: %q", body)
+			}
+		})
+	}
+}
+
 // TestAutoFixDocsStateFallbackIsOptIn asserts the prose carries the facts a
 // reader's risk-acceptance decision depends on, and that AC 03-05's Edge Case 1
 // names as the failure mode: the field is opt-in (never automatic), and the
