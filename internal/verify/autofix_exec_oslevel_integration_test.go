@@ -98,11 +98,25 @@ func resolveFallbackBackend(t *testing.T, sc *registry.SandboxConfig) sandbox.Ba
 	t.Helper()
 	backend, err := ResolveAutoFixSandbox(context.Background(), true, sc)
 	if err != nil {
-		msg := err.Error()
-		for _, hostLimit := range []string{"uid map", "user namespace", "userns", "Permission denied", "operation not permitted"} {
-			if strings.Contains(strings.ToLower(msg), strings.ToLower(hostLimit)) {
-				skipOrFailFallbackProof(t, "the host cannot create the namespaces the backend requires: %v", err)
-				return nil
+		// The only legitimate skip is a host capability the product cannot
+		// create: Linux unprivileged user namespaces (the case Phase 3 measured
+		// on orchestrator.lan). Classify it by the bubblewrap-specific
+		// diagnostics the Linux leg curates (internal/sandbox's
+		// usernsDenialMarkers, matched case-sensitively as there), on Linux
+		// only. The bare "Permission denied" / "operation not permitted"
+		// substrings this list used to carry are the MOST LIKELY text of a
+		// genuine regression on this path — verifyExecutable rejecting a mode,
+		// an unwritable scratch dir, sandbox-exec refusing the generated
+		// profile — so matching them converted exactly the containment failures
+		// this file exists to catch into skips, upstream of
+		// ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF. They now fail, as regressions.
+		if runtime.GOOS == "linux" {
+			msg := err.Error()
+			for _, hostLimit := range []string{"setting up uid map", "No permissions to create new namespace", "Creating new namespace failed", "loopback: Failed RTM_NEWADDR"} {
+				if strings.Contains(msg, hostLimit) {
+					skipOrFailFallbackProof(t, "the host cannot create the namespaces the backend requires: %v", err)
+					return nil
+				}
 			}
 		}
 		require.NoError(t, err, "the sandbox tool resolved from a trusted directory, so a resolver failure is a regression in this repo, not a host limitation")
