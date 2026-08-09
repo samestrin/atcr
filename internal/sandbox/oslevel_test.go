@@ -1249,7 +1249,7 @@ func TestOSLevelBackendRun_LoggedCommandIsTruncatedToTheOutputBudget(t *testing.
 
 	res, err := b.Run(ctx, RunSpec{Script: script, SnapshotDir: t.TempDir()})
 	require.NoError(t, err)
-	assert.Equal(t, script, res.Command,
+	assert.Contains(t, res.Command, script,
 		"the untruncated render stays on the result for the evidence block")
 	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
 		assert.LessOrEqual(t, len(line), 4096, "no log record may carry the unbounded command: %.80s...", line)

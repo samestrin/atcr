@@ -782,10 +782,15 @@ func (b *osLevelBackend) Run(ctx context.Context, spec RunSpec) (RunResult, erro
 		// A refusal must still appear in the evidence trail, with the command
 		// it refused: runWith's audit deferral never runs on this path, so an
 		// unlogged refusal would leave no record of what was asked for or why
-		// nothing ran.
+		// nothing ran. The log gets the truncated render (a Script-mode render
+		// is unbounded model-authored input); the result keeps the full one.
 		cmdStr := renderCommand(spec)
+		maxOut := b.cfg.MaxOutputBytes
+		if maxOut <= 0 {
+			maxOut = DefaultOSLevelConfig().MaxOutputBytes
+		}
 		log.FromContext(ctx).Error("sandbox exec refused",
-			"backend", osLevelBackendName, "command", cmdStr, "error", err)
+			"backend", osLevelBackendName, "command", truncate(cmdStr, maxOut), "error", err)
 		return RunResult{Command: cmdStr}, err
 	}
 	return b.runWith(ctx, tool, spec, false)
@@ -849,6 +854,19 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	}
 	logger := log.FromContext(ctx)
 	cmdStr := renderCommand(spec)
+	// Floor MaxOutputBytes for a struct-literal backend the way MaxConcurrent
+	// and Timeout are floored: a zero value would otherwise cap the capture at
+	// an undocumented 4096 bytes and disable the truncation marker (truncate's
+	// limit<=0 early return). The floor must precede logCmd: the log budget is
+	// the same display budget.
+	maxOut := b.cfg.MaxOutputBytes
+	if maxOut <= 0 {
+		maxOut = DefaultOSLevelConfig().MaxOutputBytes
+	}
+	// A Script-mode command render is the entire script body — unbounded,
+	// model-authored input. Everything written to the LOG uses the truncated
+	// form; only res.Command keeps the full render for the evidence block.
+	logCmd := truncate(cmdStr, maxOut)
 	// A Preflight probe is labeled as one at every step, so the evidence trail
 	// separates a readiness check from an executed workload without
 	// command-string matching.
@@ -856,7 +874,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	if probe {
 		startMsg, auditMsg = "sandbox preflight probe start", "sandbox preflight probe"
 	}
-	logger.Info(startMsg, "backend", osLevelBackendName, "tool", tool, "command", cmdStr)
+	logger.Info(startMsg, "backend", osLevelBackendName, "tool", tool, "command", logCmd)
 	// Exactly one terminal record per start line, emitted from a defer so it
 	// reports the FINAL outcome. Registered immediately after the start line, so
 	// every path that announced a run also accounts for it — including the ones
@@ -874,7 +892,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// timeout and exit-code branches run, so its trail records
 	// exit_code=0/timed_out=false for every run including the killed and faulted
 	// ones. The evidence trail for model-authored code should not carry that.
-	defer func() { auditRun(logger, tool, res, err, auditMsg) }()
+	defer func() { auditRun(logger, tool, logCmd, res, err, auditMsg) }()
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -942,7 +960,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 			// an incomplete tree is worth knowing about, even though refusing the
 			// run over one unreadable file would be worse.
 			logger.Warn("sandbox exec writable copy skipped unreadable entries",
-				"backend", osLevelBackendName, "command", cmdStr, "skipped", skipped)
+				"backend", osLevelBackendName, "command", logCmd, "skipped", skipped)
 		}
 		if b.platform() != "linux" {
 			// On darwin the run must execute IN the copy: sandbox-exec applies a
@@ -990,14 +1008,6 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		cmd.Stdin = strings.NewReader(spec.Script)
 	}
 	var buf bytes.Buffer
-	// Floor MaxOutputBytes for a struct-literal backend the way MaxConcurrent
-	// and Timeout are floored: a zero value would otherwise cap the capture at
-	// an undocumented 4096 bytes and disable the truncation marker (truncate's
-	// limit<=0 early return).
-	maxOut := b.cfg.MaxOutputBytes
-	if maxOut <= 0 {
-		maxOut = DefaultOSLevelConfig().MaxOutputBytes
-	}
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
 	// before truncation, with headroom for rune-boundary backup.
 	lw := &limitedWriter{w: &buf, n: int64(maxOut) + 4096}
@@ -1043,9 +1053,9 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		// so a failed reap stays observable instead of being masked by TimedOut.
 		if runErr != nil && !errors.Is(runErr, syscall.ESRCH) && !errors.Is(runErr, context.DeadlineExceeded) && !errors.Is(runErr, context.Canceled) {
 			logger.Warn("sandbox exec kill-on-timeout returned unexpected error",
-				"backend", osLevelBackendName, "command", cmdStr, "error", runErr)
+				"backend", osLevelBackendName, "command", logCmd, "error", runErr)
 		}
-		logger.Warn("sandbox exec timed out", "backend", osLevelBackendName, "command", cmdStr, "timeout", timeout)
+		logger.Warn("sandbox exec timed out", "backend", osLevelBackendName, "command", logCmd, "timeout", timeout)
 		return res, nil
 	}
 	if errors.Is(runErr, exec.ErrWaitDelay) {
@@ -1055,7 +1065,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		// (localvalidate.go:147-153).
 		res.TimedOut = true
 		res.ExitCode = timeoutExitCode
-		logger.Warn("sandbox exec exceeded wait grace", "backend", osLevelBackendName, "command", cmdStr)
+		logger.Warn("sandbox exec exceeded wait grace", "backend", osLevelBackendName, "command", logCmd)
 		return res, nil
 	}
 	if runErr != nil {
@@ -1064,7 +1074,7 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		// flood would push the tool's diagnostic out of the retained head and
 		// silently turn a containment failure into a reported workload exit.
 		// Truncation is a display budget and must not decide a security question.
-		return b.classifyRunError(ctx, res, tool, cmdStr, capture.Tail(), runErr)
+		return b.classifyRunError(ctx, res, tool, logCmd, capture.Tail(), runErr)
 	}
 	return res, nil
 }
@@ -1090,12 +1100,15 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 //
 // msg is "sandbox exec" for a workload run and "sandbox preflight probe" for a
 // Preflight verification run, so the two are separable without command-string
-// matching.
-func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error, msg string) {
+// matching. cmdForLog is the truncated command render: a Script-mode render is
+// the whole script body (unbounded, model-authored), and the audit record is a
+// log line, so it must not carry what res.Command carries for the evidence
+// block.
+func auditRun(logger *slog.Logger, tool, cmdForLog string, res RunResult, runErr error, msg string) {
 	attrs := []any{
 		"backend", osLevelBackendName,
 		"tool", tool,
-		"command", res.Command,
+		"command", cmdForLog,
 		"exit_code", res.ExitCode,
 		"timed_out", res.TimedOut,
 		"fault", runErr != nil,

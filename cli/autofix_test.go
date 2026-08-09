@@ -1906,7 +1906,7 @@ func TestHiddenCause_CarriesTheSentinelWithoutContributingText(t *testing.T) {
 // pflag's UnquoteUsage lifts the first backquoted span out of a usage string and
 // renders it as the flag's value name, so a bool flag whose help text mentions an
 // example command in backquotes renders as if it took an argument. The
-// --no-sandbox usage carried “(e.g. `go build`/`npm test`)“ and `atcr review
+// --no-sandbox usage carried ``(e.g. `go build`/`npm test`)`` and `atcr review
 // --help` rendered `--no-sandbox go build` — a DANGER-marked boolean that looked
 // like it requires a `go build` operand, with the second backquoted token left
 // dangling mid-sentence.
