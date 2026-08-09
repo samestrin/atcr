@@ -1364,9 +1364,13 @@ func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
 		t.Errorf("the OS-level section of docs/execution.md must name the %q config value", registry.SandboxFallbackOSLevel)
 	}
 	// It must say what is NOT provided, or it overstates parity (AC 03-05).
+	// Token presence alone is not enough: a rewrite claiming the OS-level backend
+	// PROVIDES these protections would pass a plain substring check. Bind each
+	// token to an explicit negative qualifier in the same sentence.
 	for _, want := range []string{"cap-drop", "no-new-privileges"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("the OS-level section of docs/execution.md must state that %q is not provided", want)
+		re := regexp.MustCompile(`(?i)\bnot\b[^.]*\bprovide\b[^.]*\b` + regexp.QuoteMeta(want) + `\b`)
+		if !re.MatchString(section) {
+			t.Errorf("the OS-level section of docs/execution.md must state that %q is not provided in the same sentence as a negative qualifier", want)
 		}
 	}
 	// The bind set and /tmp distinction are the positive guarantees that make the
