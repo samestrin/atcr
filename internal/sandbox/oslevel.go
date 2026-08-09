@@ -508,7 +508,12 @@ func seedWritableCopy(src, dst string) (skipped int, err error) {
 // snapshot; otherwise it drops it. The link is recreated with its ORIGINAL
 // (relative) target rather than a rewritten one, so the copy keeps the same
 // internal shape the snapshot had.
-func copySymlinkIfContained(src, path, dst, target string) error {
+//
+// It is a variable, not a plain function, solely so tests can inject the
+// vanished-between-readdir-and-readlink failure the live-working-tree skip
+// logic exists for (mirroring the osLevelContainmentArgs seam); production
+// code never reassigns it.
+var copySymlinkIfContained = func(src, path, dst, target string) error {
 	linkTarget, err := os.Readlink(path)
 	if err != nil {
 		return err
@@ -541,7 +546,8 @@ func copySymlinkIfContained(src, path, dst, target string) error {
 }
 
 // copyRegularFile copies one file's contents, preserving its permission bits.
-func copyRegularFile(path, target string, perm os.FileMode) error {
+// It is a variable for the same test-seam reason as copySymlinkIfContained.
+var copyRegularFile = func(path, target string, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return err
 	}
