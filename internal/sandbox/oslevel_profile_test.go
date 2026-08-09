@@ -765,17 +765,21 @@ func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
 	// bwrap's model is allow-list — nothing is visible unless bound in — so the
 	// equivalent of deny-default is that no bind exposes / or a home directory.
 	cfg, spec := bwrapFixture(t)
-	argv, err := bwrapArgs(cfg, spec)
-	require.NoError(t, err)
+	for _, snapshot := range []string{spec.SnapshotDir, "/home/dev/project", "/root/project", "/tmp/atcr-snap-x"} {
+		spec := spec
+		spec.SnapshotDir = snapshot
+		argv, err := bwrapArgs(cfg, spec)
+		require.NoError(t, err)
 
-	for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
-		for _, pair := range argvPairs(t, argv, flag) {
-			assert.NotEqual(t, "/", pair[0], "%s must never take the host root as its source: %v", flag, pair)
-			assert.NotEqual(t, "/", pair[1], "%s must never mount over the sandbox root: %v", flag, pair)
-			assert.False(t, strings.HasPrefix(pair[0], "/home/"),
-				"%s must never expose a home directory: %v", flag, pair)
-			assert.False(t, strings.HasPrefix(pair[0], "/root"),
-				"%s must never expose root's home: %v", flag, pair)
+		for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
+			for _, pair := range argvPairs(t, argv, flag) {
+				assert.NotEqual(t, "/", pair[0], "%s must never take the host root as its source: %v", flag, pair)
+				assert.NotEqual(t, "/", pair[1], "%s must never mount over the sandbox root: %v", flag, pair)
+				assert.False(t, strings.HasPrefix(pair[0], "/home/"),
+					"%s must never expose a home directory: %v", flag, pair)
+				assert.False(t, strings.HasPrefix(pair[0], "/root"),
+					"%s must never expose root's home: %v", flag, pair)
+			}
 		}
 	}
 }
