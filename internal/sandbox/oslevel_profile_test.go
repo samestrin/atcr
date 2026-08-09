@@ -1094,6 +1094,25 @@ func TestSandboxExecProfile_GrantsMetadataOnAncestorsOfTheCarveOuts(t *testing.T
 	}
 }
 
+func TestDarwinSourceProtectedDirs_NamesTheProtectedTreesExplicitly(t *testing.T) {
+	// /System and /Library were refused only INCIDENTALLY — a
+	// darwinSystemReadDirs entry happens to sit under each — while /Volumes
+	// and /Applications were accepted outright: SnapshotDir=/Volumes would
+	// expose every mounted external disk, Time Machine target and network
+	// share read-only to model-authored code. The guard must name the trees,
+	// not inherit the refusal from an unrelated list's contents.
+	for _, dir := range []string{"/System", "/Library", "/Applications", "/Volumes"} {
+		assert.Contains(t, darwinSourceProtectedDirs(), dir,
+			"removing a darwinSystemReadDirs entry must not be able to widen the source guard")
+
+		cfg, base := profileFixture(t)
+		spec := base
+		spec.SnapshotDir = dir
+		_, err := sandboxExecProfile(cfg, spec)
+		assert.Error(t, err, "SnapshotDir=%s must be refused", dir)
+	}
+}
+
 func TestGenerators_DarwinGuardsFoldCaseButLinuxGuardsDoNot(t *testing.T) {
 	// macOS filesystems are case-insensitive by default, so /users/samestrin and
 	// /Users/samestrin are the SAME directory — but filepath.Rel compares bytes.
