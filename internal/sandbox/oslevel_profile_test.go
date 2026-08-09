@@ -1110,3 +1110,25 @@ func TestGenerators_DarwinGuardsFoldCaseButLinuxGuardsDoNot(t *testing.T) {
 		assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{"/Home/dev", "/Home/dev"})
 	})
 }
+
+func TestSandboxExecProfile_PinsTheExplicitNetworkDenial(t *testing.T) {
+	// The explicit `(deny network*)` clause is defence-in-depth: `(deny default)`
+	// already covers network operations, so deleting the explicit line does not
+	// open a hole — and consequently the real-binary integration proof cannot
+	// detect its removal (measured: with the line deleted, the whole darwin
+	// integration suite stayed green, network test included).
+	//
+	// That is exactly why it needs a shape assertion. Without one the clause
+	// reads as "proven by the containment tests" when nothing pins it, and a
+	// future edit that relaxes the deny-default posture could drop it in the same
+	// breath and lose the network denial with it.
+	cfg := DefaultOSLevelConfig()
+	cfg.ScratchDir = "/private/tmp/atcr-scratch-xyz"
+	profile, err := sandboxExecProfile(cfg, RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: "/private/var/folders/xx/atcr-snap-xyz",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, profile, profileDenyNetwork,
+		"the explicit network denial must stay in the emitted profile even though (deny default) subsumes it")
+}

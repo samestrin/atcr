@@ -582,9 +582,15 @@ func writeFakeOSLevel(t *testing.T, body string) string {
 	return p
 }
 
-// withContainment satisfies the containment gate in osLevelRunArgs so a test can
-// exercise Run and Preflight. Phase 2 makes osLevelContainmentArgs non-empty for
-// real and this helper disappears.
+// withContainment substitutes a cheap fake for the real containment generators
+// so a shim-based Run or Preflight test does not depend on them.
+//
+// It did NOT disappear once the generators were wired, and should not: the real
+// generators enforce path guards (no home tree, no protected root, snapshot and
+// scratch disjoint, no profile-metacharacters) that a fixture path can trip for
+// reasons unrelated to the behavior under test, and on the wrong platform they
+// reject the host's temp paths outright. Tests that mean to exercise the real
+// generators call them directly or drive the integration suite.
 func withContainment(t *testing.T, b *osLevelBackend) *osLevelBackend {
 	t.Helper()
 	orig := osLevelContainmentArgs
@@ -608,9 +614,10 @@ exit %d`, code, code)
 }
 
 // newFakeOSLevelBackend builds a backend around a shim, with the containment
-// gate satisfied. Run refuses outright when the containment argv is empty
-// (which it is throughout Phase 1), so a test that wants to exercise Run's
-// taxonomy has to supply containment the same way Phase 2 will.
+// gate satisfied by a fake. Run refuses outright when the containment argv is
+// empty, so a test exercising Run's taxonomy has to supply one; using the fake
+// keeps the taxonomy assertions independent of the real generators' path
+// guards.
 func newFakeOSLevelBackend(t *testing.T, body string) *osLevelBackend {
 	t.Helper()
 	cfg := DefaultOSLevelConfig()

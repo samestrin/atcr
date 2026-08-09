@@ -246,24 +246,41 @@ func (b *osLevelBackend) Preflight(ctx context.Context) error {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	nonce := "atcr-preflight-" + randHex(8)
-	runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
-	defer cancel()
-	res, err := b.runWith(runCtx, resolved, RunSpec{
-		Command:     []string{"/bin/sh", "-c", "echo " + nonce},
-		SnapshotDir: tmpDir,
-	})
-	if err != nil {
-		return fmt.Errorf("sandbox preflight: trivial run failed: %w", err)
-	}
-	if res.TimedOut || res.ExitCode != 0 {
-		return fmt.Errorf("sandbox preflight: trivial run exited %d (timed_out=%t): %w",
-			res.ExitCode, res.TimedOut, errPreflightTrivialRun)
-	}
-	if !strings.Contains(res.Output, nonce) {
-		return fmt.Errorf("sandbox preflight: trivial run exited 0 but never executed the command "+
-			"(nonce absent from output — %s may not be a sandboxing tool): %w",
-			resolved, errPreflightTrivialRun)
+	// Both shapes are probed, because a green Preflight is what a resolver acts
+	// on. RunSandboxedValidation hardcodes Writable:true for every --auto-fix
+	// run (internal/verify/sandboxvalidate.go:72), so probing only the read-only
+	// shape would report the backend ready while the writable argv, the scratch
+	// partition and the seeding step had never been exercised — and the failure
+	// would then land after --auto-fix had already applied its patch.
+	for _, writable := range []bool{false, true} {
+		nonce := "atcr-preflight-" + randHex(8)
+		runCtx, cancel := context.WithTimeout(ctx, preflightRunTimeout)
+		res, err := b.runWith(runCtx, resolved, RunSpec{
+			Command:     []string{"/bin/sh", "-c", "echo " + nonce},
+			SnapshotDir: tmpDir,
+			Writable:    writable,
+		})
+		cancel()
+		if err != nil {
+			// The tool's own stderr travels with the error. Without it the caller
+			// sees only "bwrap failed to set up the sandbox (exit 1)" — bwrap
+			// exits 1 for every one of its failures, so that message cannot
+			// distinguish "this host forbids user namespaces" (an operator
+			// problem with a known remedy) from "our argv is wrong" (our bug).
+			// Both the operator's diagnostics and the integration suite's
+			// skip-vs-fail decision depend on this text.
+			return fmt.Errorf("sandbox preflight: trivial run failed (writable=%t): %w (tool output: %s)",
+				writable, err, strings.TrimSpace(res.Output))
+		}
+		if res.TimedOut || res.ExitCode != 0 {
+			return fmt.Errorf("sandbox preflight: trivial run exited %d (timed_out=%t, writable=%t, tool output: %s): %w",
+				res.ExitCode, res.TimedOut, writable, strings.TrimSpace(res.Output), errPreflightTrivialRun)
+		}
+		if !strings.Contains(res.Output, nonce) {
+			return fmt.Errorf("sandbox preflight: trivial run exited 0 but never executed the command "+
+				"(nonce absent from output — %s may not be a sandboxing tool): %w",
+				resolved, errPreflightTrivialRun)
+		}
 	}
 
 	// Pin only here, on the success path, so a failed Preflight leaves the
@@ -677,10 +694,9 @@ func osLevelRunArgs(goos string, cfg OSLevelConfig, spec RunSpec) ([]string, err
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
-	// The containment arguments come first and the workload last. This call is
-	// wired now, while it returns nothing, so Phase 2 only has to fill in the
-	// generator — no signature change, no new call site, and the argv-ordering
-	// tests already pin the shape the generator must produce.
+	// The containment arguments come first and the workload last. The generator
+	// is wired (osLevelContainmentArgs dispatches on GOOS), so this is the real
+	// containment argv, not a placeholder.
 	contain, err := osLevelContainmentArgs(goos, cfg, spec)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: cannot build containment arguments: %w", err)
