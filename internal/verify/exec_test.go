@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
@@ -395,7 +396,15 @@ func TestTruncateCause_BoundsAnUnboundedDaemonMessage(t *testing.T) {
 	assert.Equal(t, "docker daemon unreachable", truncateCause(short))
 	long := errors.New(strings.Repeat("x", 500))
 	got := truncateCause(long)
-	assert.Less(t, len(got), 500)
+	assert.LessOrEqual(t, len(got), 300+len("… (truncated)"))
+	assert.Contains(t, got, "truncated")
+}
+
+func TestTruncateCause_TruncatesOnRuneBoundary(t *testing.T) {
+	// 299 ASCII bytes plus a 3-byte rune places byte 300 inside the rune.
+	long := errors.New(strings.Repeat("x", 299) + strings.Repeat("€", 10))
+	got := truncateCause(long)
+	assert.True(t, utf8.ValidString(got))
 	assert.Contains(t, got, "truncated")
 }
 
