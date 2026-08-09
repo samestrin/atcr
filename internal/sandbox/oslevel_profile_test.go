@@ -679,6 +679,48 @@ func TestBwrapArgs_RejectsAShadowingArgvItWasHandedDirectly(t *testing.T) {
 	}
 }
 
+func TestAssertNoBindShadowing_TracksEveryWritableMountVariant(t *testing.T) {
+	// The guard's comment claimed the switch covered "every writable bind
+	// variant bwrap accepts" — it did not: overlay, dir, file, symlink and
+	// bind-fd all establish mounts that can shadow an earlier read-only one,
+	// and an untracked variant both escaped the check and left its operands to
+	// be re-scanned as if they were flags.
+	ro := []string{"--ro-bind", "/snapshot", "/work"}
+	for name, variant := range map[string][]string{
+		"overlay":     {"--overlay", "/src", "/rwsrc", "/overlay-work", "/"},
+		"tmp-overlay": {"--tmp-overlay", "/"},
+		"ro-overlay":  {"--ro-overlay", "/"},
+		"bind-fd":     {"--bind-fd", "3", "/"},
+		"file":        {"--file", "3", "/work"},
+		"dir":         {"--dir", "/"},
+		"symlink":     {"--symlink", "/x", "/"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			argv := append(append([]string{}, ro...), variant...)
+			err := assertNoBindShadowing(argv)
+			if name == "ro-overlay" {
+				assert.NoError(t, err, "a read-only overlay does not shadow anything writably")
+				return
+			}
+			assert.Error(t, err, "%s establishes a writable mount shadowing the read-only mount and must be refused", name)
+		})
+	}
+}
+
+func TestAssertNoBindShadowing_StopsAtTheTerminatorAndRefusesUnknownFlags(t *testing.T) {
+	// osLevelRunArgs appends the MODEL-AUTHORED workload immediately after
+	// "--"; scanning past the terminator reads workload tokens as mount flags,
+	// and a workload spelling of "--bind /work /work" would be refused as
+	// shadowing — a false positive on the run's own command line.
+	err := assertNoBindShadowing([]string{"--ro-bind", "/snapshot", "/work", "--", "--bind", "/work", "/work"})
+	assert.NoError(t, err, "workload arguments after the terminator are not bwrap's")
+
+	// The default arm must refuse, not ignore: an untracked bwrap flag is a
+	// containment decision the guard cannot vouch for.
+	err = assertNoBindShadowing([]string{"--unshare-net", "--brand-new-bwrap-flag", "--", "true"})
+	assert.Error(t, err, "an untracked bwrap flag must be a refusal, not a silent pass")
+}
+
 // argvPairs2 returns the destination operand of every single-operand mount
 // flag (--proc, --dev, --tmpfs) in the argv.
 func argvPairs2(t *testing.T, argv []string, flag string) []string {
