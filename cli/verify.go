@@ -82,12 +82,21 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	// the read-only and writable shapes accept different paths, so checking the
 	// other one here would validate a run that never happens.
 	//
-	// normalizeRepoFlag is the same resolution runVerify uses; on a command that
-	// registers no repo-root flag (review --verify) it falls back to ".", which
-	// is that path's repo root anyway.
-	root, rootErr := normalizeRepoFlag(cmd)
-	if rootErr != nil {
-		return nil, nil, 0, rootErr
+	// normalizeRepoFlag is the same resolution runVerify uses — but only on a
+	// command that registers --repo-root. `atcr review` registers --repo as the
+	// GitHub owner/name target and no --repo-root at all, and normalizeRepoFlag
+	// treats --repo as the deprecated PATH alias, so calling it on that call
+	// site either hard-refuses `--repo owner/name` as a nonexistent path or
+	// silently stats an unrelated directory. On a repo-root-less command the
+	// root is "." — the working tree, which is the root the review run itself
+	// uses.
+	root := "."
+	if cmd.Flags().Lookup("repo-root") != nil {
+		var rootErr error
+		root, rootErr = normalizeRepoFlag(cmd)
+		if rootErr != nil {
+			return nil, nil, 0, rootErr
+		}
 	}
 	absRoot, absErr := filepath.Abs(root)
 	if absErr != nil {
