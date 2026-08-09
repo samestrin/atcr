@@ -265,6 +265,7 @@ func TestIntegration_OSLevelLinux_SensitiveHostPathsAreInvisible(t *testing.T) {
 	// mount model rather than a denial of one synthetic directory.
 	b := linuxIntegrationBackend(t)
 
+	missing := 0
 	for _, path := range []string{"/root/.ssh", "/etc/shadow", "/home"} {
 		t.Run(path, func(t *testing.T) {
 			// The host-side existence control. Without it this test passes
@@ -272,10 +273,19 @@ func TestIntegration_OSLevelLinux_SensitiveHostPathsAreInvisible(t *testing.T) {
 			// a reviewer, who saw "/definitely-not-here-xyz" reported as
 			// contained. That vacuity is the same one runUnsandboxed guards
 			// against for the network probe.
+			//
+			// A missing path is a plain skip, NOT skipOrFail: /root/.ssh is
+			// absent on most stock Linux hosts, and escalating that to t.Fatalf
+			// under ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF failed the documented
+			// sign-off run for a reason with nothing to do with containment —
+			// pressuring the operator to unset the flag on the exact run where
+			// it matters most. The escalation survives only for the case where
+			// EVERY candidate is absent, because then no invisibility claim was
+			// tested at all.
 			if _, err := os.Stat(path); err != nil {
-				skipOrFail(t, "%s does not exist on this host, so its invisibility inside the "+
+				missing++
+				t.Skipf("%s does not exist on this host, so its invisibility inside the "+
 					"namespace proves nothing: %v", path, err)
-				return
 			}
 			res, err := b.Run(context.Background(), RunSpec{
 				Command:     []string{"/bin/sh", "-c", "ls -la " + path + " 2>&1"},
@@ -286,6 +296,10 @@ func TestIntegration_OSLevelLinux_SensitiveHostPathsAreInvisible(t *testing.T) {
 			assert.NotEqual(t, 0, res.ExitCode, "%s must not be listable; output: %s", path, res.Output)
 			assertPathInvisible(t, res.Output, path)
 		})
+	}
+	if missing == 3 {
+		skipOrFail(t, "none of the candidate sensitive paths exists on this host, so no "+
+			"invisibility claim was tested at all")
 	}
 }
 
