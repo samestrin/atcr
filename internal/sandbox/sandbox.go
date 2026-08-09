@@ -18,10 +18,11 @@
 //   - a non-root user, dropped capabilities, and no-new-privileges.
 //
 // osLevelBackend (oslevel.go) is the exception: it wraps the platform's native
-// process sandbox — macOS sandbox-exec, Linux bwrap — which, once its profile
-// generators land, isolates the filesystem and network but shares the host kernel and has no image, no rootfs
-// remount, and no capability set to drop. bwrap supplies a PID namespace;
-// neither tool caps memory or CPU without additional cgroup/rlimit plumbing.
+// process sandbox — macOS sandbox-exec, Linux bwrap — which isolates the
+// filesystem and network but shares the host kernel and has no image, no
+// rootfs remount, and no capability set to drop. bwrap supplies a PID
+// namespace; neither tool caps memory or CPU without additional cgroup/rlimit
+// plumbing.
 // A caller that needs the full list must require DockerBackend specifically
 // rather than any Backend. This distinction is stated here rather than left
 // implicit because the OS-level backend is operator-selectable, and an operator
