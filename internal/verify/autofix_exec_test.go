@@ -397,3 +397,27 @@ func TestCheckOSLevelSnapshotUsable_BothShapesAreCheckedFaithfully(t *testing.T)
 	assert.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, false))
 	assert.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, true))
 }
+
+// TestCheckOSLevelSnapshotUsable_ForwardsWritableShape pins that the writable
+// argument is passed through to sandbox.CheckSnapshotUsable rather than
+// hardcoded. TestCheckOSLevelSnapshotUsable_BothShapesAreCheckedFaithfully
+// exercises the real generator for both shapes, but only this test can detect
+// the argument being silently replaced inside CheckOSLevelSnapshotUsable.
+func TestCheckOSLevelSnapshotUsable_ForwardsWritableShape(t *testing.T) {
+	fake := &fakeOSLevel{}
+	ordinary := t.TempDir()
+
+	var gotWritable bool
+	orig := checkSnapshotUsableFn
+	checkSnapshotUsableFn = func(cfg sandbox.OSLevelConfig, dir string, writable bool) error {
+		gotWritable = writable
+		return nil
+	}
+	t.Cleanup(func() { checkSnapshotUsableFn = orig })
+
+	require.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, false))
+	assert.False(t, gotWritable, "writable=false must be forwarded to CheckSnapshotUsable")
+
+	require.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, true))
+	assert.True(t, gotWritable, "writable=true must be forwarded to CheckSnapshotUsable")
+}

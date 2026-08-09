@@ -129,6 +129,11 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	return backend, nil
 }
 
+// checkSnapshotUsableFn is the seam CheckOSLevelSnapshotUsable uses to call
+// sandbox.CheckSnapshotUsable. Tests swap it to assert the writable shape they
+// pass is forwarded unchanged.
+var checkSnapshotUsableFn = sandbox.CheckSnapshotUsable
+
 // CheckOSLevelSnapshotUsable pre-validates the directory a sandboxed validation
 // will actually be handed, when — and only when — the os-level backend was
 // selected. It returns nil for every other backend, including a nil one.
@@ -156,7 +161,7 @@ func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxCon
 	// (the scratch dir would sit inside the snapshot). --auto-fix always runs
 	// Writable (RunSandboxedValidation hardcodes it); --exec never does. Checking
 	// the wrong shape would validate a run that never happens.
-	if err := sandbox.CheckSnapshotUsable(osLevelFallbackConfig(sc), snapshotDir, writable); err != nil {
+	if err := checkSnapshotUsableFn(osLevelFallbackConfig(sc), snapshotDir, writable); err != nil {
 		return fmt.Errorf("os-level sandbox cannot contain this directory: %w", err)
 	}
 	return nil
