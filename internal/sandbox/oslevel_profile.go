@@ -897,7 +897,25 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		// (sandboxEnv, oslevel.go) — a toolchain with an unreachable HOME fails
 		// before it starts.
 		args = append(args, "--bind", scratch, scratch)
-		if workCopy := filepath.Join(scratch, osLevelScratchWorkSubdir); spec.Writable && workCopy != bwrapWorkDir {
+		if spec.Writable {
+			workCopy := filepath.Join(scratch, osLevelScratchWorkSubdir)
+			// An explicit refusal, not a silently skipped mount. The condition is
+			// unreachable today — Join(scratch, "work") can only equal "/work" when
+			// scratch is "/", which assertUsableWritableRoot already refused above —
+			// and the previous form expressed it as `&& workCopy != bwrapWorkDir`,
+			// which on the impossible branch emits NO /work mount while --chdir
+			// /work below still points there. The run would then die on an opaque
+			// bwrap chdir error rather than on a generator refusal naming the cause.
+			//
+			// Stated as a refusal for the same reason assertUsableWritableRoot
+			// checks "/" explicitly rather than leaving it to the disjointness math
+			// (see its doc comment): it is the one value whose blast radius is
+			// total, and a guard that survives a future reordering of the checks
+			// above is worth more than one that depends on them.
+			if workCopy == bwrapWorkDir {
+				return nil, fmt.Errorf("sandbox: ScratchDir %q puts the writable copy at %s, "+
+					"which is the sandbox work mount itself", scratch, bwrapWorkDir)
+			}
 			// The COPY subdirectory — not the scratch root — is also mounted at
 			// /work, the writable tree the Docker mount convention promises.
 			// Binding the root here instead would put the snapshot copy and the
