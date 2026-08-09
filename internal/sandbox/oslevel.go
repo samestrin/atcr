@@ -412,6 +412,15 @@ var (
 // unreadable would make --auto-fix unusable on ordinary checkouts. A failure to
 // read the snapshot ROOT is still fatal, since that is a copy of nothing.
 func seedWritableCopy(src, dst string) (skipped int, err error) {
+	// WalkDir Lstats the walk root and does NOT dereference it, so a SnapshotDir
+	// whose final component is a symlink to a directory would visit exactly one
+	// entry and seed an EMPTY copy with skipped=0/err=nil — and the workload
+	// would run against an empty tree. Resolve the root once up front.
+	resolved, resolveErr := filepath.EvalSymlinks(src)
+	if resolveErr != nil {
+		return 0, fmt.Errorf("sandbox: cannot resolve snapshot dir %q: %w", src, resolveErr)
+	}
+	src = resolved
 	var copiedBytes int64
 	var entries int
 	walkErr := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
@@ -483,6 +492,15 @@ func seedWritableCopy(src, dst string) (skipped int, err error) {
 			return nil
 		}
 	})
+	if walkErr == nil && entries == 0 {
+		// Post-condition: a non-empty source must never seed an empty copy.
+		// Unreachable through the walk alone once the root is resolved — it is
+		// the guard against the next silent-empty-copy shape, and turns it into
+		// the fault runWith's seed-error path already knows how to report.
+		if dirEntries, readErr := os.ReadDir(src); readErr == nil && len(dirEntries) > 0 {
+			return skipped, fmt.Errorf("sandbox: writable copy of %q seeded zero entries from a non-empty snapshot", src)
+		}
+	}
 	return skipped, walkErr
 }
 
