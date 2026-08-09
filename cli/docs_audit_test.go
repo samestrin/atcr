@@ -1307,17 +1307,20 @@ func TestAutoFixDocsStateFallbackIsOptIn(t *testing.T) {
 	}
 	ref := string(b)
 
-	// "automatically falls back" is the phrasing /refine-epic explicitly rejected.
-	lower := strings.ToLower(ref)
-	for _, banned := range []string{"automatically falls back", "automatic fallback"} {
-		if strings.Contains(lower, banned) {
-			t.Errorf("docs/auto-fix.md uses the rejected phrasing %q; the fallback is config-gated, never automatic", banned)
-		}
+	// The "automatic fallback" framing is what /refine-epic explicitly rejected.
+	// Matched as a regex family, not a fixed blacklist, so a reworded variant
+	// ("falls back automatically", "automatically engages") is caught too.
+	reAutomatic := regexp.MustCompile(`(?i)automatic\w*\s+(fallback|engage)|falls?\s+back\s+automatic\w*|automatically\s+(falls?\s+back|engages)`)
+	if m := reAutomatic.FindString(ref); m != "" {
+		t.Errorf("docs/auto-fix.md uses the rejected phrasing %q; the fallback is config-gated, never automatic", m)
 	}
 
-	section, ok := markdownSection(ref, regexp.MustCompile(`(?i)fallback`))
+	// Anchored to the heading that names the sentinel, not merely one containing
+	// the word "fallback": otherwise an earlier fallback-named section could
+	// satisfy these assertions while the real one rots.
+	section, ok := markdownSection(ref, regexp.MustCompile(regexp.QuoteMeta(registry.SandboxFallbackOSLevel)))
 	if !ok {
-		t.Fatal("docs/auto-fix.md has no section heading naming the fallback")
+		t.Fatalf("docs/auto-fix.md has no section heading naming %q", registry.SandboxFallbackOSLevel)
 	}
 	section = strings.ToLower(section)
 	for _, want := range []struct{ token, why string }{
@@ -1327,6 +1330,43 @@ func TestAutoFixDocsStateFallbackIsOptIn(t *testing.T) {
 	} {
 		if !strings.Contains(section, want.token) {
 			t.Errorf("the fallback section of docs/auto-fix.md must %s (no %q found)", want.why, want.token)
+		}
+	}
+}
+
+// TestExecutionDocsDescribeOSLevelBackend guards docs/execution.md, which
+// auto-fix.md cross-links as the single source of truth for sandbox mechanics.
+// Without this, both passages this sprint corrected could regress — including
+// back to "Docker is the only implementation today" — with CI green, since every
+// other assertion added here reads auto-fix.md only.
+func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "execution.md"))
+	if err != nil {
+		t.Fatalf("read execution.md: %v", err)
+	}
+	ref := string(b)
+
+	// The claim this sprint falsified. Matched loosely so a reworded revival
+	// ("the only backend implemented today") is caught too.
+	reOnlyImpl := regexp.MustCompile(`(?i)Docker is the only (implementation|backend)|only (implementation|backend) (today|available)`)
+	if m := reOnlyImpl.FindString(ref); m != "" {
+		t.Errorf("docs/execution.md still claims %q; the OS-level backend is reachable via sandbox.fallback", m)
+	}
+
+	// The guarantee list is written in container terms, so the page must name the
+	// narrower set the OS-level backend actually delivers.
+	section, ok := markdownSection(ref, regexp.MustCompile(`(?i)OS-level`))
+	if !ok {
+		t.Fatal("docs/execution.md has no section distinguishing the OS-level backend's guarantees from the Docker ones")
+	}
+	if !strings.Contains(section, registry.SandboxFallbackOSLevel) {
+		t.Errorf("the OS-level section of docs/execution.md must name the %q config value", registry.SandboxFallbackOSLevel)
+	}
+	// It must say what is NOT provided, or it overstates parity (AC 03-05).
+	for _, want := range []string{"cap-drop", "no-new-privileges"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the OS-level section of docs/execution.md must state that %q is not provided", want)
 		}
 	}
 }

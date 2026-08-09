@@ -24,9 +24,12 @@ execution reference, which is the authoritative source for the container
 mechanics this page deliberately does not duplicate.
 
 Because sandboxing is on by default, `--auto-fix` **fails closed**: if no
-`sandbox:` block is configured (or the backend fails its preflight) and you did
-not explicitly pass `--no-sandbox`, the command hard-errors rather than silently
-falling back to running the validation command on the host. Sandbox resolution
+`sandbox:` block is configured (or the backend fails its preflight and no
+[`sandbox.fallback`](#os-level-fallback-sandboxfallback-os-level) is configured)
+and you did not explicitly pass `--no-sandbox`, the command hard-errors rather
+than silently falling back to running the validation command on the host. Even
+with a fallback configured, the substitute is another *sandbox* — never the host.
+Sandbox resolution
 is the fourth checked piece of the `--auto-fix` startup gate, joined into the
 same all-or-nothing usage error as the apply target, the validation command, and
 the GitHub credentials — so a missing sandbox is reported alongside any other
@@ -129,8 +132,9 @@ The block has exactly three fields:
 `sandbox.fallback` is an **opt-in** config field that names a second backend to
 try when Docker fails its preflight. It uses the operating system's own process
 confinement — `sandbox-exec` on macOS, `bwrap` (Bubblewrap) on Linux — instead of
-a container, so a machine with no Docker daemon can still run `--auto-fix`
-validation under real containment.
+a container, so a machine with no Docker daemon can still run validation under
+real containment. It applies to **both** `--auto-fix` validation and `--exec`
+reproduction, since both resolve their backend through the same preflight.
 
 ```yaml
 # .atcr/config.yaml
@@ -142,11 +146,13 @@ sandbox:
 ```
 
 **It is never automatic.** ATCR does not infer this from your host — not from a
-missing `docker` binary, not from a CI environment variable. The fallback engages
-only when both of these are true: you wrote `fallback: os-level` in config, **and**
-Docker's preflight has already failed. It is never chosen as a first-choice
-backend while Docker is healthy. Any value other than `os-level` is rejected at
-config-load time.
+missing `docker` binary, not from a CI environment variable. All of the following
+must hold before the fallback engages: you wrote `fallback: os-level` in config,
+Docker's preflight has already failed, and that failure was not caused by your own
+cancellation (an interrupted run is refused outright rather than retried under a
+different backend). It is never chosen as a first-choice backend while Docker is
+healthy. Any **non-empty** value other than `os-level` is rejected at config-load
+time; a blank or whitespace-only value is treated as unset.
 
 **With `fallback` unset, nothing changes.** That is the default and the shape of
 every config written before the field existed: a Docker preflight failure remains
@@ -171,10 +177,10 @@ and is therefore suppressible with `ATCR_LOG_LEVEL=error`.
 ### What you give up relative to Docker
 
 The OS-level backend is a genuine improvement over `--no-sandbox` — the run still
-gets no network egress and a filesystem scoped to the code snapshot plus `/tmp`.
-It is **not** equivalent to the container backend. It shares the host kernel and
-has no image, no root filesystem to remount, and no capability set to drop, so
-the guarantee list in
+gets no network egress, and no access to `$HOME` (so `~/.ssh` stays unreadable).
+It is **not** equivalent to the container backend: it has no image, no root
+filesystem to remount, and no capability set to drop, and on macOS it does not get
+the virtual-machine boundary Docker Desktop provides. So the guarantee list in
 [What the sandbox guarantees](execution.md#what-the-sandbox-guarantees) applies
 only to the Docker backend; that page names the narrower OS-level set separately.
 Concretely, opting in accepts all of the following:
@@ -198,9 +204,12 @@ Concretely, opting in accepts all of the following:
   injection surface for the very code being contained), but it means a `bwrap`
   installed under `/usr/local/bin` — a source build, Homebrew-on-Linux, or Nix —
   is **not** found, and the fallback preflight fails.
-- **Validation cost scales with working-tree size.** Because the validation step
-  needs a writable tree, each run makes a full host-side copy of the snapshot
-  before executing.
+- **Validation cost scales with working-tree size, and very large trees are
+  refused.** Because the validation step needs a writable tree, each run makes a
+  full host-side copy of the snapshot before executing. That copy is bounded at
+  **2 GiB and 500,000 entries**; a tree exceeding either ceiling fails the run
+  rather than validating a partial copy. Entries the copy cannot read are skipped
+  with a warning, so an unreadable file does not abort the run.
 
 `sandbox.fallback` and `--no-sandbox` are **separate, non-overlapping** escape
 hatches, and neither implies the other: the flag accepts fully unsandboxed host
@@ -209,7 +218,9 @@ execution, while this config field substitutes a still-contained backend.
 ## Opting out (`--no-sandbox`)
 
 The `--no-sandbox` flag is the **only** way to run `--auto-fix`'s validation
-outside the container. It is a command-line flag on `atcr review`; there is no
+unsandboxed, directly on the host. (`sandbox.fallback: os-level` also runs
+validation outside a container, but under OS-level confinement rather than none —
+it is not an opt-out.) It is a command-line flag on `atcr review`; there is no
 config-file equivalent — nothing in the `auto_fix:` block (or anywhere in
 `.atcr/config.yaml`) can disable the sandbox.
 

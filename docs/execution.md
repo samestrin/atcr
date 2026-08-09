@@ -42,7 +42,8 @@ atcr review --verify --exec             # one-shot review -> reconcile -> verify
 ```
 
 If `--exec` is passed without a `sandbox:` block, or the backend fails its
-preflight check, the command **hard-errors (exit 2) without executing anything**.
+preflight check and no [`sandbox.fallback`](auto-fix.md#os-level-fallback-sandboxfallback-os-level)
+is configured, the command **hard-errors (exit 2) without executing anything**.
 On `review --verify --exec` the gate is resolved *first*, so a misconfigured
 sandbox fails fast before any review API calls are spent. `review --exec` without
 `--verify` is rejected — execution runs in the verify stage, where the skeptics
@@ -68,22 +69,34 @@ explicit opt-in fallback (see below). Podman is a future addition.
 ### What the OS-level fallback guarantees instead
 
 The guarantee list above is written in container terms and describes the **Docker
-backend only**. When `--auto-fix` is configured with
+backend only**. When either `--exec` or `--auto-fix` is configured with
 [`sandbox.fallback: os-level`](auto-fix.md#os-level-fallback-sandboxfallback-os-level)
-and Docker's preflight fails, validation runs under the OS's own confinement
-(`sandbox-exec` on macOS, `bwrap` on Linux). That backend shares the host kernel
-and has no image, no root filesystem to remount, and no capability set to drop, so
-it delivers a genuinely narrower set:
+and Docker's preflight fails, the run instead executes under the OS's own
+confinement (`sandbox-exec` on macOS, `bwrap` on Linux). That backend has no
+image, no root filesystem to remount, and no capability set to drop, so it
+delivers a genuinely narrower set:
 
 - **No network egress** — enforced by the sandbox profile (macOS) or a network
   namespace (Linux).
-- **Filesystem scoped** to the code snapshot plus `/tmp`; paths outside those
-  roots — `$HOME` and `~/.ssh` included — are neither readable nor writable.
+- **No access to your personal files.** `$HOME` is not readable, so `~/.ssh` and
+  friends stay out of reach of the code being validated.
+- **Writes confined** to the code snapshot copy, `/tmp`, and an ephemeral per-run
+  scratch directory. On Linux `/tmp` is a fresh tmpfs; on macOS it is the host's
+  real `/tmp` (see the caveats link below).
+- **Reads confined** to those same paths plus a fixed, read-only system and
+  toolchain tier the workload needs in order to run at all — `/usr/lib`,
+  `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/share`, the dynamic-loader
+  cache, and the toolchain prefixes (`/opt/homebrew`, `/usr/local`,
+  `/Library/Developer/CommandLineTools`) on macOS; the equivalent `/usr`, `/bin`,
+  `/lib`, and a short list of `/etc` files on Linux. These are read-only: a
+  compromised run can execute your toolchain but cannot modify it.
 - **Wall-clock timeout and a concurrency cap**, as with the container backend.
 
 It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
-`--security-opt no-new-privileges`, a non-root user, or memory/CPU/PID caps. The
-per-platform caveats an operator accepts by opting in are listed in full under
+`--security-opt no-new-privileges`, a non-root user, or memory/CPU/PID caps. On
+macOS the container backend additionally runs inside a virtual machine, which this
+backend does not. The per-platform caveats an operator accepts by opting in are
+listed in full under
 [What you give up relative to Docker](auto-fix.md#what-you-give-up-relative-to-docker).
 
 ### Preflight
@@ -92,7 +105,9 @@ Before any execution the backend verifies, in order: the Docker daemon is
 reachable, the configured base **image is present locally** (runs are
 network-isolated, so it cannot be pulled on demand — run `docker pull <image>`
 first), and a trivial hardened container runs to completion. Any failure refuses
-the run.
+the run, unless `sandbox.fallback: os-level` is configured — in which case the
+OS-level backend is preflighted in turn, and the run is refused only if that
+fails too.
 
 ## The tools
 
