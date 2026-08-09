@@ -544,6 +544,43 @@ func TestOSLevelSeedWritableCopy_ResolvesASymlinkedSnapshotRoot(t *testing.T) {
 	assert.Equal(t, "real", string(body))
 }
 
+func TestOSLevelSeedWritableCopy_VanishingEntriesAreSkippedNotFatal(t *testing.T) {
+	// For --auto-fix the snapshot is the operator's LIVE working tree: .git pack
+	// rewrites, build temp files and editor swap files vanish between readdir
+	// and open, and os.Open reports that as ENOENT, not EPERM. A vanished entry
+	// must be counted as skipped — the same outcome as an unreadable one — not
+	// abort the walk and fault the run on a healthy repository.
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "keep.txt"), []byte("keep"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "gone.txt"), []byte("gone"), 0o644))
+	require.NoError(t, os.Symlink("keep.txt", filepath.Join(snapshot, "gone-link")))
+
+	origCopy := copyRegularFile
+	copyRegularFile = func(path, target string, perm os.FileMode) error {
+		if filepath.Base(path) == "gone.txt" {
+			return fmt.Errorf("open %s: %w", path, os.ErrNotExist)
+		}
+		return origCopy(path, target, perm)
+	}
+	t.Cleanup(func() { copyRegularFile = origCopy })
+
+	origLink := copySymlinkIfContained
+	copySymlinkIfContained = func(src, path, dst, target string) error {
+		return fmt.Errorf("readlink %s: %w", path, os.ErrNotExist)
+	}
+	t.Cleanup(func() { copySymlinkIfContained = origLink })
+
+	dst := filepath.Join(t.TempDir(), "scratch")
+	require.NoError(t, os.MkdirAll(dst, 0o700))
+	skipped, err := seedWritableCopy(snapshot, dst)
+	require.NoError(t, err, "a vanished file or link must not abort the copy")
+	assert.Equal(t, 2, skipped, "both vanished entries must be counted as skipped")
+
+	body, readErr := os.ReadFile(filepath.Join(dst, "keep.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "keep", string(body), "readable siblings must still be copied")
+}
+
 func TestOSLevelSeedWritableCopy_RefusesAnOversizedSnapshot(t *testing.T) {
 	// An unbounded copy turns a large repository (or a workload-authored file)
 	// into a host disk-exhaustion vector, on the same host atcr is running on.
