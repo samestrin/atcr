@@ -556,6 +556,36 @@ func TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath(t *testing.T) {
 	assert.Equal(t, wantRoot, gotDir, "on the review call site the gate checks the working-tree root")
 }
 
+// TestResolveExec_WorkingBackendSurvivesTheSnapshotGate is the happy-path bar
+// for the TD-019 pre-check: with a cleanly-resolved backend and the REAL
+// checkOSLevelSnapshotFn (deliberately not stubbed), resolveExec must return
+// the backend, test command and timeout intact. Every sibling test either
+// stubs the gate or drives a failing preflight, so without this the gate
+// could reject every legitimate --exec run with no test turning red.
+func TestResolveExec_WorkingBackendSurvivesTheSnapshotGate(t *testing.T) {
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: "docker"}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+	// checkOSLevelSnapshotFn is deliberately NOT stubbed: the real gate runs.
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.NoError(t, err, "a working backend must survive the real snapshot gate")
+	require.NotNil(t, backend)
+	assert.Equal(t, "docker", backend.Name())
+	assert.Equal(t, []string{"go", "test"}, testCmd)
+	assert.Equal(t, time.Minute, timeout)
+}
+
 // nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
 // pre-check dispatches on that and nothing else runs it.
 type nameOnlyBackend struct{ name string }
