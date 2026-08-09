@@ -872,6 +872,16 @@ func linuxProtectedRoots() []string {
 
 // assertNoBindShadowing rejects an argv in which a writable --bind is applied
 // at or above the destination of an earlier read-only mount.
+//
+// The containment test is deliberately one-directional: it flags a writable
+// destination that CONTAINS an earlier read-only destination (the writable
+// bind shadows the read-only mount wholesale). The reverse — a writable
+// destination contained BY an earlier mount — is not flagged, because it is
+// the generator's own normal shape: the scratch bind legitimately lands
+// inside the /tmp tmpfs bwrap itself establishes. What keeps a HOST path from
+// being bound over one of bwrap's pseudo-mounts is not this sweep but the
+// input guard upstream of it: assertUsableWritableRoot's mount-points check
+// refuses such a ScratchDir before the argv is ever assembled.
 func assertNoBindShadowing(args []string) error {
 	type mount struct {
 		dest     string
