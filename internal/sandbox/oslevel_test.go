@@ -1217,6 +1217,34 @@ exit 1`)
 	assert.Zero(t, res.ExitCode, "a tool fault has no program exit status to report")
 }
 
+func TestOSLevelBackendRun_WorkloadCannotSpoofAToolFaultViaStdout(t *testing.T) {
+	// The classifier's diagnostic match must not run on the workload's stdout:
+	// model-authored code could otherwise print "bwrap: " itself and force its
+	// own failing run to be classified as a backend fault — manufacturing "the
+	// sandbox is broken" instead of "my tests failed".
+	b := newFakeOSLevelBackend(t, `echo "bwrap: setting up uid map: Permission denied"
+exit 1`)
+	b.goos = "linux"
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err,
+		"a workload printing a tool diagnostic on STDOUT is a workload exit, not a backend fault")
+	assert.Equal(t, 1, res.ExitCode)
+}
+
+func TestOSLevelBackendRun_MidLineDiagnosticOnStderrIsNotAToolFault(t *testing.T) {
+	// The anchor matters as well as the stream: a diagnostic string appearing
+	// mid-line in workload output (a test log quoting the error, say) is not
+	// the tool reporting its own failure.
+	b := newFakeOSLevelBackend(t, `echo "test log: got bwrap: setting up uid map error from fixture" >&2
+exit 1`)
+	b.goos = "linux"
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err, "a mid-line diagnostic mention is workload output, not a tool fault")
+	assert.Equal(t, 1, res.ExitCode)
+}
+
 func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
