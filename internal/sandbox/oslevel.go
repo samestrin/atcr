@@ -1482,7 +1482,14 @@ func checkSnapshotUsableFor(goos string, cfg OSLevelConfig, snapshotDir string, 
 			return fmt.Errorf("sandbox: cannot stage an os-level containment check: %w", err)
 		}
 		defer func() { _ = os.RemoveAll(scratch) }()
-		cfg.ScratchDir = scratch
+		// runWith canonicalizes its per-run scratch dir before the generators
+		// see it (os.MkdirTemp returns a /var/folders spelling on macOS); the
+		// pre-check must evaluate the same spelling the real run will.
+		canonicalScratch, err := filepath.EvalSymlinks(scratch)
+		if err != nil {
+			return fmt.Errorf("sandbox: cannot resolve staged scratch dir %q: %w", scratch, err)
+		}
+		cfg.ScratchDir = canonicalScratch
 	}
 	// Mirror runWith's canonicalization: the generators are pure string
 	// functions and cannot see symlinks, so this pre-check must evaluate the
