@@ -1421,6 +1421,24 @@ func TestOSLevelBackend_Preflight_DoesNotQueueBehindTheConcurrencyCap(t *testing
 		"a preflight probe must not queue behind in-flight workload runs")
 }
 
+func TestOSLevelBackend_Preflight_FailedRePreflightRevokesThePinnedTool(t *testing.T) {
+	// Preflight writes b.pinnedTool on success but never cleared it on failure:
+	// a backend that preflighted green once and is re-preflighted after the
+	// host changed (binary replaced, userns disabled) returned an error from
+	// Preflight while toolPath kept returning the stale pin, so Run kept
+	// spawning the binary the FAILED preflight just refused to vouch for.
+	b := newFakeOSLevelBackend(t, fakeOSLevelExecBody())
+	require.NoError(t, b.Preflight(context.Background()))
+
+	// The host changed: the tool can no longer run the workload.
+	require.NoError(t, os.WriteFile(b.cfg.ToolPath, []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	require.Error(t, b.Preflight(context.Background()), "the re-preflight must fail")
+
+	_, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.ErrorIs(t, err, errOSLevelNotPreflighted,
+		"a failed re-preflight must leave the backend unrunnable, not spawn the stale pin")
+}
+
 func TestOSLevelBackend_Preflight_ResolvesOnlyFromTrustedDirs(t *testing.T) {
 	// exec.LookPath would honour $PATH verbatim, and Go maps an empty PATH
 	// element to "." — the repository under review. A binary planted there must
