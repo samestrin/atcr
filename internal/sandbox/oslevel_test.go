@@ -252,7 +252,6 @@ func TestOSLevelRunArgs_NoLongerRefusesOnceTheGeneratorIsWired(t *testing.T) {
 		t.Run(goos, func(t *testing.T) {
 			args, err := osLevelRunArgs(goos, DefaultOSLevelConfig(), spec)
 			require.NoError(t, err)
-			assert.NotErrorIs(t, err, ErrOSLevelNoContainment)
 			require.GreaterOrEqual(t, len(args), len(spec.Command))
 			assert.Equal(t, spec.Command, args[len(args)-len(spec.Command):],
 				"the workload stays last, after the containment arguments")
@@ -295,9 +294,13 @@ exit 0`)
 
 	require.NotEmpty(t, seen.ScratchDir, "the generators must receive the per-run scratch dir")
 	assert.True(t, filepath.IsAbs(seen.ScratchDir))
-	assert.Contains(t, res.Output, "HOME="+seen.ScratchDir,
-		"the carved-out directory and the workload's HOME must be the same directory")
-	assert.Contains(t, res.Output, "TMPDIR="+seen.ScratchDir)
+	// HOME is the home SUBDIRECTORY of the carve-out, not its root: the root
+	// also holds the snapshot copy on a writable run, and sharing them would
+	// make the tree under review supply the toolchain's dotfiles.
+	home := filepath.Join(seen.ScratchDir, osLevelScratchHomeSubdir)
+	assert.Contains(t, res.Output, "HOME="+home,
+		"the workload's HOME must live inside the carved-out scratch tree")
+	assert.Contains(t, res.Output, "TMPDIR="+home)
 
 	// The per-run value must not leak back into the backend's own config: two
 	// concurrent runs each get their own scratch dir, and a sticky value would
@@ -334,10 +337,11 @@ func TestOSLevelBackendRun_WritableSeedsAnEphemeralCopyInsteadOfRefusing(t *test
 	// from INSIDE the run, by the shim itself. sandboxEnv points HOME at the
 	// scratch dir, which makes this assertion identical on both platforms even
 	// though only darwin also sets cmd.Dir to it.
-	cfg.ToolPath = writeFakeOSLevel(t, `echo "PWD=$(pwd)"
-echo "SEEDED=$(cat "$HOME/file.txt")"
-echo "SEEDED_DEEP=$(cat "$HOME/pkg/sub/deep.txt")"
-echo "MUTATED" > "$HOME/file.txt"
+	cfg.ToolPath = writeFakeOSLevel(t, `WORK="$(dirname "$HOME")/work"
+echo "PWD=$(pwd)"
+echo "SEEDED=$(cat "$WORK/file.txt")"
+echo "SEEDED_DEEP=$(cat "$WORK/pkg/sub/deep.txt")"
+echo "MUTATED" > "$WORK/file.txt"
 exit 0`)
 	b := NewOSLevelBackend(cfg)
 	captureContainmentCfg(t, &seen)
@@ -356,7 +360,7 @@ exit 0`)
 	// On darwin the workload runs IN the scratch copy, because sandbox-exec
 	// cannot remap paths the way bwrap's --ro-bind /src + --bind /work split does.
 	if runtime.GOOS == "darwin" {
-		assert.Contains(t, res.Output, "PWD="+resolvePath(t, seen.ScratchDir),
+		assert.Contains(t, res.Output, "PWD="+resolvePath(t, filepath.Join(seen.ScratchDir, osLevelScratchWorkSubdir)),
 			"on darwin the writable run must execute inside the scratch copy")
 	}
 
@@ -365,6 +369,94 @@ exit 0`)
 	onDisk, err := os.ReadFile(filepath.Join(snapshot, "file.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "original", string(onDisk), "a writable run must never mutate the host snapshot")
+}
+
+func TestOSLevelBackendRun_WritableSnapshotIsNeverTheSandboxHome(t *testing.T) {
+	// Regression for the task 3.0.A HIGH finding. When the snapshot copy and
+	// $HOME were the same directory, every dotfile in the tree under review
+	// became the run's own toolchain configuration: a review measured a
+	// snapshot's .gitconfig taking effect as --global config, its
+	// Library/Application Support/go/env setting GOFLAGS and GOPROXY, and its
+	// .profile being EXECUTED by `sh -lc`. The argv is the operator's trusted
+	// validate_command, so that is repository content silently redirecting the
+	// operator's own validation — up to and including making it pass.
+	var seen OSLevelConfig
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, ".gitconfig"),
+		[]byte("[user]\n\tname = PWNED\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, ".profile"),
+		[]byte("echo PROFILE-EXECUTED-FROM-SNAPSHOT\n"), 0o644))
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "HOME=$HOME"
+echo "HOME_DOTFILES=$(ls -A "$HOME" | tr '\n' ',')"
+echo "GITCONFIG_PRESENT=$([ -e "$HOME/.gitconfig" ] && echo yes || echo no)"
+echo "PROFILE_PRESENT=$([ -e "$HOME/.profile" ] && echo yes || echo no)"
+exit 0`)
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: snapshot,
+		Writable:    true,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, seen.ScratchDir)
+
+	assert.Contains(t, res.Output, "GITCONFIG_PRESENT=no",
+		"a .gitconfig in the tree under review must never become the run's global git config")
+	assert.Contains(t, res.Output, "PROFILE_PRESENT=no",
+		"a .profile in the tree under review must never be sourced by the run's shell")
+	assert.NotContains(t, res.Output, "HOME="+filepath.Join(seen.ScratchDir, osLevelScratchWorkSubdir),
+		"HOME must not be the snapshot copy")
+	assert.Contains(t, res.Output, "HOME="+filepath.Join(seen.ScratchDir, osLevelScratchHomeSubdir))
+}
+
+func TestOSLevelBackendRun_WritableWorkingDirectoryPerPlatform(t *testing.T) {
+	// The cmd.Dir decision differs by platform and only ONE branch is reachable
+	// on any given host, so without the injectable goos seam the other branch is
+	// dead code on the machine that could have tested it. Both are asserted here
+	// from either host.
+	//
+	//   darwin: cmd.Dir must be the scratch COPY — sandbox-exec applies policy to
+	//           paths and cannot remap them, so the copy cannot be made to appear
+	//           at the snapshot's path.
+	//   linux:  cmd.Dir must stay the host snapshot — bwrapArgs emits
+	//           --bind <scratch>/work /work + --chdir /work, so the remap happens
+	//           inside the mount namespace instead.
+	for _, tc := range []struct {
+		goos    string
+		wantDir func(snapshot, scratch string) string
+	}{
+		{goos: "darwin", wantDir: func(_, scratch string) string {
+			return filepath.Join(scratch, osLevelScratchWorkSubdir)
+		}},
+		{goos: "linux", wantDir: func(snapshot, _ string) string { return snapshot }},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			var seen OSLevelConfig
+			snapshot := t.TempDir()
+			cfg := DefaultOSLevelConfig()
+			cfg.ToolPath = writeFakeOSLevel(t, `echo "PWD=$(pwd)"
+exit 0`)
+			b := NewOSLevelBackend(cfg)
+			b.goos = tc.goos
+			// The seam is captured rather than driven for real: the point here is
+			// the cmd.Dir branch, and the real linux generator would reject a
+			// macOS temp path (and vice versa) for reasons unrelated to it.
+			captureContainmentCfg(t, &seen)
+
+			res, err := b.Run(context.Background(), RunSpec{
+				Command:     []string{"true"},
+				SnapshotDir: snapshot,
+				Writable:    true,
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, seen.ScratchDir)
+			assert.Contains(t, res.Output, "PWD="+resolvePath(t, tc.wantDir(snapshot, seen.ScratchDir)))
+		})
+	}
 }
 
 func TestOSLevelSeedWritableCopy_CopiesTreeWithoutFollowingSymlinksOut(t *testing.T) {
@@ -385,7 +477,8 @@ func TestOSLevelSeedWritableCopy_CopiesTreeWithoutFollowingSymlinksOut(t *testin
 
 	dst := filepath.Join(t.TempDir(), "scratch")
 	require.NoError(t, os.MkdirAll(dst, 0o700))
-	require.NoError(t, seedWritableCopy(snapshot, dst))
+	_, err := seedWritableCopy(snapshot, dst)
+	require.NoError(t, err)
 
 	// Regular files come across, with their contents and their mode.
 	body, err := os.ReadFile(filepath.Join(dst, "keep.txt"))
@@ -442,7 +535,7 @@ func TestOSLevelSeedWritableCopy_RefusesAnOversizedSnapshot(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "scratch")
 	require.NoError(t, os.MkdirAll(dst, 0o700))
 
-	err := seedWritableCopy(snapshot, dst)
+	_, err := seedWritableCopy(snapshot, dst)
 	require.Error(t, err, "the copy must be bounded")
 	assert.Contains(t, err.Error(), "too large")
 }
@@ -821,14 +914,20 @@ exit 0`)
 // os.MkdirTemp path fails for a reason that has nothing to do with the code
 // under test.
 //
-// The leaf may already be gone by assertion time — a run's scratch tree is
-// deliberately removed when Run returns — so only the PARENT is resolved and the
-// final element is re-appended.
+// The path may already be gone by assertion time — a run's scratch tree is
+// deliberately removed when Run returns — so this resolves the deepest ancestor
+// that still exists and re-appends the remainder.
 func resolvePath(t *testing.T, path string) string {
 	t.Helper()
-	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
-	require.NoError(t, err)
-	return filepath.Join(parent, filepath.Base(path))
+	var suffix []string
+	for cur := filepath.Clean(path); ; cur = filepath.Dir(cur) {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(append([]string{resolved}, suffix...)...)
+		}
+		parent := filepath.Dir(cur)
+		require.NotEqual(t, parent, cur, "no existing ancestor of %q could be resolved", path)
+		suffix = append([]string{filepath.Base(cur)}, suffix...)
+	}
 }
 
 func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {

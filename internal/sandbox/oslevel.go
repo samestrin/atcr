@@ -276,10 +276,12 @@ func (b *osLevelBackend) Preflight(ctx context.Context) error {
 	return nil
 }
 
-// ErrOSLevelNoContainment is returned by Preflight while the platform
-// containment argv generator is unimplemented. It is a sentinel so a caller can
-// branch on "this backend cannot contain anything yet" with errors.Is rather
-// than by matching message text.
+// ErrOSLevelNoContainment is returned when the platform containment generator
+// produced no arguments at all, so a spawn would provide no isolation. It is a
+// sentinel so a caller can branch on "this backend cannot contain anything"
+// with errors.Is rather than by matching message text. The generators are wired
+// (osLevelContainmentArgs), so on a supported platform this now marks a
+// regression rather than the expected state.
 var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containment yet")
 
 // errPreflightTrivialRun marks a preflight failure at the trivial-run step, so a
@@ -318,6 +320,28 @@ var osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) 
 	}
 }
 
+// A run's scratch tree is PARTITIONED, not shared. Both subdirectories live
+// under the per-run scratch root the containment profile/argv carves out, so
+// the split costs nothing in the generators.
+//
+//	<scratch>/home  HOME, TMPDIR, GOTMPDIR and the XDG/Go caches
+//	<scratch>/work  the ephemeral copy of the snapshot, for a Writable run
+//
+// Pointing both at one directory is not a tidiness question. It makes the tree
+// under review the run's $HOME, so every dotfile in the repository becomes the
+// toolchain's own configuration: a review measured `.gitconfig` in a snapshot
+// taking effect as `--global` config, `Library/Application Support/go/env`
+// setting GOFLAGS and GOPROXY, and `.profile` being EXECUTED by `sh -lc`. The
+// argv is the operator's trusted validate_command, so that is repository
+// content silently redirecting the operator's own validation — including the
+// power to make the tree's validation pass. DockerBackend avoids it by having
+// separate mount points (/scratch vs /work, docker.go:165-169); this backend
+// has to create them.
+const (
+	osLevelScratchHomeSubdir = "home"
+	osLevelScratchWorkSubdir = "work"
+)
+
 // osLevelMaxWritableCopyBytes and osLevelMaxWritableCopyEntries bound the
 // ephemeral copy a Writable run seeds into its scratch directory.
 //
@@ -325,11 +349,22 @@ var osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) 
 // is running on: the snapshot is the tree under review, and a workload from a
 // previous run (or a repository containing a large fixture) decides its size.
 // The Docker backend gets this bound for free from the container's own storage
-// limits; here it has to be stated. They are variables rather than constants so
-// the bound itself is testable without writing a multi-gigabyte fixture.
+// limits; here it has to be stated.
+//
+// The numbers are sized against a real working tree rather than picked round:
+// atcr's own checkout measured 486 MiB / 16.9k entries excluding .git, and a
+// working tree carries build output, caches and vendored dependencies that a
+// git clone does not. An earlier 512 MiB bound put this very repository at 91%
+// of the limit, and crossing it is not a degraded run — it is a fault, so the
+// caller reports "cannot even validate". Nothing is excluded from the count:
+// .git is deliberately copied, because an operator's validate_command may
+// legitimately shell out to git.
+//
+// They are variables rather than constants so the bound itself is testable
+// without writing a multi-gigabyte fixture.
 var (
-	osLevelMaxWritableCopyBytes   int64 = 512 << 20 // 512 MiB
-	osLevelMaxWritableCopyEntries       = 200_000
+	osLevelMaxWritableCopyBytes   int64 = 2 << 30 // 2 GiB
+	osLevelMaxWritableCopyEntries       = 500_000
 )
 
 // seedWritableCopy copies the snapshot tree into a run's writable scratch
@@ -354,12 +389,25 @@ var (
 // than a host secret. Irregular entries (devices, sockets, FIFOs) are dropped
 // for the same reason — they are not source code and cannot be meaningfully
 // copied.
-func seedWritableCopy(src, dst string) error {
+// It returns the number of entries it could not read and therefore skipped. A
+// permission error on an individual entry is NOT fatal: the copy is a throwaway
+// working tree, and aborting the whole run because one file in a repository is
+// unreadable would make --auto-fix unusable on ordinary checkouts. A failure to
+// read the snapshot ROOT is still fatal, since that is a copy of nothing.
+func seedWritableCopy(src, dst string) (skipped int, err error) {
 	var copiedBytes int64
 	var entries int
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			if path == src {
+				return walkErr
+			}
+			// Unreadable directory or entry: skip it and keep going.
+			skipped++
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -379,27 +427,46 @@ func seedWritableCopy(src, dst string) error {
 		case d.IsDir():
 			info, err := d.Info()
 			if err != nil {
-				return err
+				skipped++
+				return filepath.SkipDir
 			}
-			return os.MkdirAll(target, info.Mode().Perm())
+			// |0o700 rather than the source mode verbatim. A read-only (0555)
+			// directory in the snapshot would otherwise be recreated read-only
+			// and then reject its own children, faulting every Writable run on a
+			// repository containing an extracted archive or a module cache. The
+			// copy is throwaway and only this process writes into it, so the
+			// owner bits are widened; group/other bits are left as the source
+			// had them.
+			return os.MkdirAll(target, info.Mode().Perm()|0o700)
 		case d.Type()&os.ModeSymlink != 0:
 			return copySymlinkIfContained(src, path, dst, target)
 		case d.Type().IsRegular():
 			info, err := d.Info()
 			if err != nil {
-				return err
+				skipped++
+				return nil
 			}
+			// The bound is checked BEFORE the bytes are written, so crossing it
+			// costs one stat rather than one full file copy.
 			copiedBytes += info.Size()
 			if copiedBytes > osLevelMaxWritableCopyBytes {
 				return fmt.Errorf("sandbox: snapshot is too large to copy into the writable scratch tree "+
 					"(exceeds %d bytes)", osLevelMaxWritableCopyBytes)
 			}
-			return copyRegularFile(path, target, info.Mode().Perm())
+			if err := copyRegularFile(path, target, info.Mode().Perm()); err != nil {
+				if errors.Is(err, os.ErrPermission) {
+					skipped++
+					return nil
+				}
+				return err
+			}
+			return nil
 		default:
 			// Device, socket, FIFO: dropped deliberately. See the doc comment.
 			return nil
 		}
 	})
+	return skipped, walkErr
 }
 
 // copySymlinkIfContained recreates a symlink only when it resolves inside the
@@ -596,11 +663,11 @@ func checkHostPrerequisite(ctx context.Context, goos, procRoot string) error {
 // osLevelRunArgs builds the argv for the platform sandboxing tool: the tool's
 // own containment arguments, then the workload.
 //
-// Phase 1 scope: the containment arguments are empty. The deny-by-default
-// sandbox-exec profile and the bwrap bind-mount/namespace argument list are
-// generated in Phase 2 (oslevel_profile.go) and slot in here. Until they do,
-// this backend provides NO containment — which is why nothing wires it into a
-// resolver until Phase 4, and why Preflight refuses.
+// The containment arguments come from osLevelContainmentArgs, which dispatches
+// to the generators in oslevel_profile.go — the deny-by-default sandbox-exec
+// profile on macOS, the bind-mount/namespace argument list on Linux. The
+// empty-argv gate below stays regardless: it is what stops a future generator
+// regression from producing a spawn with no isolation arguments at all.
 //
 // Like dockerRunArgs, this is pure (no I/O) so the argv can be asserted in a
 // unit test without either binary installed. The script body is NOT included
@@ -702,9 +769,13 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// Exactly one terminal record per start line, emitted from a defer so it
 	// reports the FINAL outcome. Registered immediately after the start line, so
 	// every path that announced a run also accounts for it — including the ones
-	// that fail before the process is created. The pre-spawn refusals ABOVE this
-	// point (no containment argv, Writable, a queued cancellation) never log a
-	// start, so they correctly produce no record at all.
+	// that fail before the process is created. Only the refusals that genuinely
+	// precede this point produce no record at all: spec validation and a
+	// cancellation while queued for a concurrency slot. The argv build moved
+	// BELOW this line (it needs the scratch dir), so a containment-generator
+	// refusal and a failed writable copy now do announce a start and are
+	// accounted for with fault=true — which is the right way round, since both
+	// are failures worth seeing in the evidence trail.
 	//
 	// DockerBackend logs its equivalent line inline (docker.go:289-294) before the
 	// timeout and exit-code branches run, so its trail records
@@ -732,6 +803,24 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(scratchDir) }()
+	homeDir := filepath.Join(scratchDir, osLevelScratchHomeSubdir)
+	if err := os.MkdirAll(homeDir, 0o700); err != nil {
+		return RunResult{Command: cmdStr}, fmt.Errorf("os-level sandbox run: cannot create scratch home: %w", err)
+	}
+
+	// Build the argv BEFORE seeding anything. osLevelRunArgs is where the
+	// generators' guards live — assertUsableSource, assertNotAHomeTree,
+	// assertDisjointPaths — and they are what refuse a SnapshotDir of "/", of a
+	// home tree, or of a protected mount. Seeding first would copy up to the
+	// full bound out of exactly those trees before the guard that exists to
+	// refuse them ever ran, and a SIGKILL inside that window would leave the
+	// copy on disk.
+	runCfg := b.cfg
+	runCfg.ScratchDir = scratchDir
+	args, err := osLevelRunArgs(b.platform(), runCfg, spec)
+	if err != nil {
+		return RunResult{Command: cmdStr}, err
+	}
 
 	// Run inside the snapshot. RunSpec.validate already requires SnapshotDir to
 	// be absolute, and the Docker backend mounts it as the working directory —
@@ -740,29 +829,37 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	workDir := spec.SnapshotDir
 	if spec.Writable {
 		// Seed the throwaway copy the run may mutate, so the host snapshot stays
-		// read-only (sandbox.go:59-67). A failed seed is a FAULT: falling through
-		// would run the workload against a partial or empty tree and report its
-		// exit code as a validation verdict.
-		if seedErr := seedWritableCopy(spec.SnapshotDir, scratchDir); seedErr != nil {
+		// read-only (sandbox.go:59-67). It goes in its OWN subdirectory, never
+		// the scratch root, so the tree under review does not become $HOME.
+		// A failed seed is a FAULT: falling through would run the workload
+		// against a partial or empty tree and report its exit code as a
+		// validation verdict.
+		copyDir := filepath.Join(scratchDir, osLevelScratchWorkSubdir)
+		if err := os.MkdirAll(copyDir, 0o700); err != nil {
+			return RunResult{Command: cmdStr},
+				fmt.Errorf("os-level sandbox run: cannot create writable copy dir: %w", err)
+		}
+		skipped, seedErr := seedWritableCopy(spec.SnapshotDir, copyDir)
+		if seedErr != nil {
 			return RunResult{Command: cmdStr},
 				fmt.Errorf("os-level sandbox run: writable copy failed: %w", seedErr)
+		}
+		if skipped > 0 {
+			// Surfaced rather than swallowed: a validation verdict produced over
+			// an incomplete tree is worth knowing about, even though refusing the
+			// run over one unreadable file would be worse.
+			logger.Warn("sandbox exec writable copy skipped unreadable entries",
+				"backend", osLevelBackendName, "command", cmdStr, "skipped", skipped)
 		}
 		if b.platform() != "linux" {
 			// On darwin the run must execute IN the copy: sandbox-exec applies a
 			// policy to paths and cannot remap them, so there is no way to make
 			// the copy appear at the snapshot's path. On Linux bwrapArgs already
-			// emits --ro-bind snap /src + --bind scratch /work + --chdir /work,
-			// so cmd.Dir stays the host snapshot for the bwrap process itself and
-			// the remap happens inside the mount namespace.
-			workDir = scratchDir
+			// emits --ro-bind snap /src + --bind <scratch>/work /work + --chdir
+			// /work, so cmd.Dir stays the host snapshot for the bwrap process
+			// itself and the remap happens inside the mount namespace.
+			workDir = copyDir
 		}
-	}
-
-	runCfg := b.cfg
-	runCfg.ScratchDir = scratchDir
-	args, err := osLevelRunArgs(b.platform(), runCfg, spec)
-	if err != nil {
-		return RunResult{Command: cmdStr}, err
 	}
 
 	cmd := exec.CommandContext(runCtx, tool, args...)
@@ -779,10 +876,12 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec)
 	// --setenv pair. The scrub is cmd.Env's alone; a future caller that leaves
 	// cmd.Env nil would leak the whole parent environment.
 	//
-	// The scratch dir is the one created above, so the directory the containment
-	// profile/argv carves out and the directory HOME/TMPDIR/GOCACHE point at are
-	// the same directory by construction rather than by coincidence.
-	cmd.Env = sandboxEnv(scratchDir)
+	// HOME is the scratch tree's home SUBDIRECTORY, never its root and never the
+	// snapshot copy — see osLevelScratchHomeSubdir. It sits inside the carve-out
+	// created above, so the directory the containment profile/argv permits and
+	// the directory HOME/TMPDIR/GOCACHE point at agree by construction rather
+	// than by coincidence.
+	cmd.Env = sandboxEnv(homeDir)
 	// Put the sandbox in its own process group and make cancellation kill the
 	// whole group, so a workload that forked is reaped rather than left running
 	// past the deadline. WaitDelay is the backstop for a grandchild that escaped

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -758,7 +759,13 @@ func TestBwrapArgs_SnapshotIsReadOnlyAtWorkAndWritableSplitsToSrc(t *testing.T) 
 		require.NoError(t, err)
 		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{spec.SnapshotDir, "/src"},
 			"the snapshot stays read-only; only an ephemeral copy is writable")
-		assert.Contains(t, argvPairs(t, argv, "--bind"), [2]string{cfg.ScratchDir, "/work"})
+		// The COPY subdirectory, not the scratch root: binding the root at /work
+		// would put the snapshot copy and the run's $HOME in one directory, so
+		// the tree under review would supply the toolchain's dotfiles.
+		assert.Contains(t, argvPairs(t, argv, "--bind"),
+			[2]string{filepath.Join(cfg.ScratchDir, osLevelScratchWorkSubdir), "/work"})
+		assert.NotContains(t, argvPairs(t, argv, "--bind"), [2]string{cfg.ScratchDir, "/work"},
+			"the scratch ROOT must never be the writable work tree")
 		for _, pair := range argvPairs(t, argv, "--bind") {
 			assert.NotEqual(t, spec.SnapshotDir, pair[0], "the snapshot must never be bound writable")
 		}

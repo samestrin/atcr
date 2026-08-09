@@ -826,17 +826,18 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 		// the same path inside the sandbox as outside it. That is what lets Run
 		// point HOME, TMPDIR, GOCACHE and the XDG cache at a host path
 		// (sandboxEnv, oslevel.go) — a toolchain with an unreachable HOME fails
-		// before it starts. NOTE: Run does not yet populate cfg.ScratchDir with
-		// the directory it creates, so this bind is only exercised by callers
-		// that set it explicitly; wiring the two together is Phase 3/4 work.
+		// before it starts.
 		args = append(args, "--bind", scratch, scratch)
-		if spec.Writable && scratch != bwrapWorkDir {
-			// And again at /work, which is the writable tree the Docker mount
-			// convention promises. Two mounts of one source is how bwrap
-			// expresses "visible in both places"; there is no aliasing risk
-			// because both are the same writable directory. Skipped when the
-			// scratch dir IS /work, which would emit the identical bind twice.
-			args = append(args, "--bind", scratch, bwrapWorkDir)
+		if workCopy := filepath.Join(scratch, osLevelScratchWorkSubdir); spec.Writable && workCopy != bwrapWorkDir {
+			// The COPY subdirectory — not the scratch root — is also mounted at
+			// /work, the writable tree the Docker mount convention promises.
+			// Binding the root here instead would put the snapshot copy and the
+			// run's $HOME in one directory, making the tree under review supply
+			// the toolchain's own dotfiles (.gitconfig, go/env, .profile). Two
+			// mounts of one source is how bwrap expresses "visible in both
+			// places"; there is no aliasing risk because both are the same
+			// writable directory.
+			args = append(args, "--bind", workCopy, bwrapWorkDir)
 		}
 	}
 	args = append(args, "--chdir", bwrapWorkDir)
