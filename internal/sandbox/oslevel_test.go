@@ -1140,6 +1140,24 @@ exit 65`)
 	assert.LessOrEqual(t, len(res.Output), 16, "display truncation still applies to the reported output")
 }
 
+func TestOSLevelBackendRun_ClassifiesOnStderrSurvivingAStdoutFlood(t *testing.T) {
+	// The classifier reads the same combined, head-capped buffer the display
+	// Output comes from. A workload that floods stdout before the tool reports
+	// its own failure pushes the diagnostic past the capture cap — the combined
+	// buffer keeps the HEAD, so the tool's stderr line is exactly what is lost.
+	// Classification must read a dedicated stderr capture instead.
+	b := newFakeOSLevelBackend(t, `head -c 200000 /dev/zero | tr '\0' 'x'
+echo "bwrap: setting up uid map: Permission denied" >&2
+exit 1`)
+	b.goos = "linux"
+	b.cfg.MaxOutputBytes = 1024
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.Error(t, err,
+		"a stdout flood must not wash the tool's own stderr diagnostic out of classification")
+	assert.Zero(t, res.ExitCode, "a tool fault has no program exit status to report")
+}
+
 func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = "/nonexistent/os-sandbox-binary-xyz"
