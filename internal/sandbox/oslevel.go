@@ -971,19 +971,28 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Cap the captured buffer so a chatty workload cannot exhaust host memory
 	// before truncation, with headroom for rune-boundary backup.
 	lw := &limitedWriter{w: &buf, n: int64(b.cfg.MaxOutputBytes) + 4096}
-	// The display buffer sees both streams; fault classification sees ONLY
-	// stderr, tee'd into a dedicated tail. Both properties are load-bearing:
-	// the display buffer keeps the HEAD, so an output flood would push the
-	// tool's diagnostic past the cap — and a combined classification capture
-	// lets the workload print "bwrap: " on stdout and manufacture a tool fault
-	// out of its own failure. The tail keeps the end of stderr, which is where
-	// a failing tool's diagnostic lives. Distinct Stdout/Stderr writers make
-	// os/exec drain the pipes from separate goroutines, so the shared display
-	// buffer goes through lockedWriter.
-	display := &lockedWriter{w: lw}
-	var stderrTail tailBuffer
-	cmd.Stdout = display
-	cmd.Stderr = io.MultiWriter(display, &stderrTail)
+	// Both streams ALSO feed a dedicated tail buffer for fault classification.
+	// The display buffer keeps the HEAD of the combined capture, so a workload
+	// flooding output before the tool reports its own failure would push the
+	// diagnostic past the capture cap — and with it the one signal that
+	// separates a tool fault from a workload exit. The tail keeps the capture's
+	// final bytes, which is where a failing tool's diagnostic lives.
+	//
+	// The capture stays COMBINED on purpose: assigning one writer value to both
+	// cmd.Stdout and cmd.Stderr keeps os/exec's same-writer fast path, where the
+	// child's two fds share a single kernel pipe and the display buffer
+	// preserves the child's own write chronology. Splitting the streams (to
+	// give classification a stderr-only view) puts the pipes on separate copy
+	// goroutines with no inter-stream ordering, and a stdout flood can then
+	// bury an early-emitted stderr diagnostic past the head cap — a display
+	// regression measured as a flake in
+	// TestOSLevelBackendRun_TruncatesCombinedOutput. Closing the remaining
+	// stdout-spoofing vector needs the workload's streams redirected INSIDE the
+	// sandbox, which the pure argv builders cannot express; see the residual
+	// note on classifyToolExit.
+	capture := &combinedCapture{lw: lw}
+	cmd.Stdout = capture
+	cmd.Stderr = capture
 
 	runErr := cmd.Run()
 	res = RunResult{
@@ -1020,14 +1029,12 @@ func (b *osLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		return res, nil
 	}
 	if runErr != nil {
-		// The STDERR TAIL is handed to the classifier, not res.Output and not
-		// the head-capped combined display buffer: a small MaxOutputBytes or an
-		// output flood would push the tool's diagnostic out of the retained
-		// head, and a combined capture would let the workload spoof the
-		// diagnostic on stdout — either silently turns a containment failure
-		// into a reported workload exit (or vice versa). Truncation is a
-		// display budget and must not decide a security question.
-		return b.classifyRunError(ctx, res, tool, cmdStr, stderrTail.String(), runErr)
+		// The capture TAIL is handed to the classifier, not res.Output and not
+		// the head-capped display buffer: a small MaxOutputBytes or an output
+		// flood would push the tool's diagnostic out of the retained head and
+		// silently turn a containment failure into a reported workload exit.
+		// Truncation is a display budget and must not decide a security question.
+		return b.classifyRunError(ctx, res, tool, cmdStr, capture.Tail(), runErr)
 	}
 	return res, nil
 }
@@ -1074,16 +1081,16 @@ func auditRun(logger *slog.Logger, tool string, res RunResult, runErr error, msg
 // exits while a lingering grandchild still holds its output pipes open.
 const osLevelWaitGrace = 5 * time.Second
 
-// osLevelCaptureTailBytes caps the tail of the stderr capture that fault
-// classification reads. Every measured tool diagnostic (bwrap's die() lines,
-// sandbox-exec's usage/syntax errors) is well under 1 KiB; 8 KiB leaves
+// osLevelCaptureTailBytes caps the tail of the combined output capture that
+// fault classification reads. Every measured tool diagnostic (bwrap's die()
+// lines, sandbox-exec's usage/syntax errors) is well under 1 KiB; 8 KiB leaves
 // generous headroom without giving a chatty workload an unbounded buffer.
 const osLevelCaptureTailBytes = 8 << 10
 
 // tailBuffer keeps only the LAST osLevelCaptureTailBytes written to it. Fault
-// classification needs the end of the tool's stderr — that is where a failing
+// classification needs the end of the capture — that is where a failing
 // sandbox tool prints its diagnostic — not the head the display buffer
-// preserves. Only the stderr goroutine ever writes to it, so it needs no lock.
+// preserves.
 type tailBuffer struct {
 	data []byte
 }
@@ -1096,21 +1103,24 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (t *tailBuffer) String() string { return string(t.data) }
-
-// lockedWriter serializes writes from os/exec's per-stream copy goroutines:
-// with distinct Stdout and Stderr writers exec drains the two pipes
-// concurrently, and the bounded display buffer is not goroutine-safe.
-type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
+// combinedCapture fans the workload's combined stdout+stderr into the bounded
+// display buffer and the classification tail. A run assigns the SAME value to
+// cmd.Stdout and cmd.Stderr, so os/exec drains both pipes from one goroutine
+// (its same-writer fast path) and the writes below never race.
+type combinedCapture struct {
+	lw   *limitedWriter
+	tail tailBuffer
 }
 
-func (l *lockedWriter) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(p)
+func (c *combinedCapture) Write(p []byte) (int, error) {
+	n, err := c.lw.Write(p)
+	_, _ = c.tail.Write(p)
+	return n, err
 }
+
+// Tail returns the retained trailing bytes of the capture, for fault
+// classification.
+func (c *combinedCapture) Tail() string { return string(c.tail.data) }
 
 // runCtxDone reports whether the run's context ended in a cancellation class
 // (deadline or explicit cancel).
@@ -1222,24 +1232,28 @@ const signalExitBase = 128
 // fault, never a successful run, per the package's containment-first contract
 // (sandbox.go:5-14). Ambiguity always resolves toward refusing the run.
 //
-// output is the tail of the run's captured STDERR (see tailBuffer), never the
-// display-truncated string and never the combined capture: a small
-// MaxOutputBytes would cut the diagnostic off, and a workload that can reach
-// the classifier's input could print the diagnostic itself and manufacture a
-// fault. Matching is anchored to line start for the same reason — the real
-// tools print their diagnostics at the start of a line, while a mid-line
-// mention is the workload quoting a message.
+// output is the tail of the run's captured output (see combinedCapture), never
+// the display-truncated string: a small MaxOutputBytes would cut the
+// diagnostic off and silently turn a containment failure into a reported
+// workload exit.
 //
-// Residual, by construction: the workload's stderr shares the tool's stderr
-// channel, so a workload that prints "bwrap: " to ITS OWN stderr at line start
-// still spoofs a fault. Closing that requires redirecting the workload's
-// streams inside the sandbox, which the pure argv builders cannot express.
-// Spoofing a fault is the safe direction — a fault is refused — so the
-// residual is accepted rather than papered over with a stricter match that
-// would risk missing real diagnostics. (An exit-code co-occurrence check adds
-// nothing: bwrap's fault code is 1, the most common workload exit code there
-// is, and sandbox-exec's diagnostic branch exists precisely for codes outside
-// the measured sysexits set.)
+// Matching is a plain substring check, and that is deliberate. A line-anchored
+// match was tried and rejected: the capture is the COMBINED stdout+stderr (see
+// runWith for why separating the streams costs the display its chronology), so
+// a workload flood without a trailing newline glues the tool's diagnostic onto
+// a non-line-start position and the anchor loses real faults — the fail-open
+// direction, which is worse than the spoof it was meant to close.
+//
+// Residual, by construction: a workload that prints "bwrap: " itself can spoof
+// a tool fault. Closing that requires redirecting the workload's streams
+// inside the sandbox, which the pure argv builders cannot express. Spoofing a
+// fault is the safe direction — a fault is refused, and the caller sees an
+// error rather than a fabricated validation verdict — so the residual is
+// accepted rather than papered over with a stricter match that would risk
+// missing real diagnostics. (An exit-code co-occurrence check adds nothing:
+// bwrap's fault code is 1, the most common workload exit code there is, and
+// sandbox-exec's diagnostic branch exists precisely for codes outside the
+// measured sysexits set.)
 func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	if exitCode == 0 {
 		return false, ""
@@ -1249,7 +1263,7 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	}
 	switch goos {
 	case "linux":
-		if hasLineWithPrefix(output, bwrapDiagnosticPrefix) || hasLineWithPrefix(output, bwrapUsagePrefix) {
+		if strings.Contains(output, bwrapDiagnosticPrefix) || strings.Contains(output, bwrapUsagePrefix) {
 			return true, fmt.Sprintf("%s failed to set up the sandbox (exit %d)", linuxSandboxTool, exitCode)
 		}
 		// Everything else is bwrap passing the workload's own status through
@@ -1260,23 +1274,13 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 		if reason, ok := sandboxExecFaultCodes[exitCode]; ok {
 			return true, fmt.Sprintf("%s %s (exit %d)", darwinSandboxTool, reason, exitCode)
 		}
-		if hasLineWithPrefix(output, sandboxExecDiagnosticPrefix) || hasLineWithPrefix(output, sandboxExecUsagePrefix) {
+		if strings.Contains(output, sandboxExecDiagnosticPrefix) || strings.Contains(output, sandboxExecUsagePrefix) {
 			return true, fmt.Sprintf("%s reported a sandbox error (exit %d)", darwinSandboxTool, exitCode)
 		}
 		return false, ""
 	default:
 		return true, fmt.Sprintf("no exit-code classification rule for %s; treating exit %d as a sandbox fault", goos, exitCode)
 	}
-}
-
-// hasLineWithPrefix reports whether any line of s begins with prefix.
-func hasLineWithPrefix(s, prefix string) bool {
-	for line := range strings.Lines(s) {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // classifyRunError maps a failed *exec.Cmd run onto the Backend.Run contract: a
