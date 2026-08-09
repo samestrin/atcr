@@ -551,6 +551,79 @@ func TestOSLevelSeedWritableCopy_CopiesTreeWithoutFollowingSymlinksOut(t *testin
 	}))
 }
 
+func TestOSLevelSeedWritableCopy_UnreadableEntriesAreSkippedNotFatal(t *testing.T) {
+	// seedWritableCopy's (skipped int, err error) signature makes the
+	// permission-skip a deliberate design decision: aborting a whole --auto-fix
+	// run because one file in an ordinary checkout is unreadable would make the
+	// backend unusable, but a verdict produced over an incomplete tree is worth
+	// knowing about. Both halves of that — the skip AND the count — need pinning,
+	// or deleting every skipped++ leaves the suite green and the guarantee
+	// silently gone.
+	//
+	// This is the PERMISSION case specifically. Its sibling
+	// _VanishingEntriesAreSkippedNotFatal covers the ENOENT case through injected
+	// seams; this one uses real mode bits, which is why it must skip under root.
+	if os.Geteuid() == 0 {
+		t.Skip("root (CAP_DAC_OVERRIDE) bypasses POSIX mode bits, so nothing would be unreadable")
+	}
+
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "keep.txt"), []byte("keep"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "locked.txt"), []byte("secret"), 0o000))
+	lockedDir := filepath.Join(snapshot, "locked-dir")
+	require.NoError(t, os.MkdirAll(lockedDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(lockedDir, "inner.txt"), []byte("inner"), 0o644))
+	require.NoError(t, os.Chmod(lockedDir, 0o000))
+	// Restored so t.TempDir's cleanup can remove the tree.
+	t.Cleanup(func() { _ = os.Chmod(lockedDir, 0o755) })
+
+	dst := filepath.Join(t.TempDir(), "scratch")
+	require.NoError(t, os.MkdirAll(dst, 0o700))
+
+	skipped, err := seedWritableCopy(snapshot, dst)
+	require.NoError(t, err, "one unreadable entry must not abort the copy")
+	assert.GreaterOrEqual(t, skipped, 2,
+		"both the unreadable file and the unreadable directory must be counted as skipped")
+
+	// The copy still happened: readable siblings are present, unreadable content
+	// is absent rather than half-written.
+	body, readErr := os.ReadFile(filepath.Join(dst, "keep.txt"))
+	require.NoError(t, readErr, "readable siblings must still be copied")
+	assert.Equal(t, "keep", string(body))
+	assert.NoFileExists(t, filepath.Join(dst, "locked-dir", "inner.txt"),
+		"content under an unreadable directory must not appear in the copy")
+}
+
+func TestOSLevelBackendRun_WritableCopySkipsAreSurfacedInTheAuditTrail(t *testing.T) {
+	// The skipped count is only useful if it REACHES someone. runWith logs it as
+	// a warn with a "skipped" attribute; nothing asserted that, so deleting the
+	// whole warn block left the suite green and a validation verdict produced
+	// over an incomplete tree became indistinguishable from one over a full tree.
+	if os.Geteuid() == 0 {
+		t.Skip("root (CAP_DAC_OVERRIDE) bypasses POSIX mode bits, so nothing would be unreadable")
+	}
+
+	snapshot := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "keep.txt"), []byte("keep"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshot, "locked.txt"), []byte("secret"), 0o000))
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+	b := withContainment(t, NewOSLevelBackend(cfg))
+
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	_, err := b.Run(ctx, RunSpec{Command: []string{"true"}, SnapshotDir: snapshot, Writable: true})
+	require.NoError(t, err, "an unreadable entry is a degraded copy, not a fault")
+
+	out := buf.String()
+	assert.Contains(t, out, "sandbox exec writable copy skipped unreadable entries",
+		"a copy that skipped entries must say so in the evidence trail")
+	assert.Contains(t, out, "skipped=1",
+		"the count must be carried as an attribute, not just implied by the message")
+}
+
 func TestOSLevelSeedWritableCopy_ResolvesASymlinkedSnapshotRoot(t *testing.T) {
 	// filepath.WalkDir Lstats the walk root and does NOT dereference it: a
 	// SnapshotDir whose final component is a symlink to a directory (an ordinary
