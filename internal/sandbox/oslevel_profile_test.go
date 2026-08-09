@@ -763,23 +763,62 @@ func TestBwrapArgs_AlwaysUnsharesNetworkAndPID(t *testing.T) {
 
 func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
 	// bwrap's model is allow-list — nothing is visible unless bound in — so the
-	// equivalent of deny-default is that no bind exposes / or a home directory.
+	// equivalent of deny-default is that every bind source is one the generator
+	// is entitled to expose, and nothing else.
+	//
+	// Asserted as an exhaustive membership sweep, not as prefix bans. An earlier
+	// revision banned sources under /home/ and /root, which contradicts the
+	// documented policy TestBwrapArgs_RejectsASnapshotThatWouldExposeTheHost
+	// pins: a snapshot INSIDE a home directory is the ordinary developer case and
+	// is ALLOWED. Those bans passed only because bwrapFixture supplies /srv and
+	// /var/tmp paths that can never trip them, and fixing the fixture to a
+	// realistic /home/dev/project snapshot made them fail on correct behavior.
+	// Membership catches what the prefix bans were reaching for — an EXTRA bind
+	// of some unrelated host tree — without encoding an invariant the generator
+	// does not hold.
 	cfg, spec := bwrapFixture(t)
 	for _, snapshot := range []string{spec.SnapshotDir, "/home/dev/project", "/root/project", "/tmp/atcr-snap-x"} {
-		spec := spec
-		spec.SnapshotDir = snapshot
-		argv, err := bwrapArgs(cfg, spec)
-		require.NoError(t, err)
+		for _, writable := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/writable=%v", snapshot, writable), func(t *testing.T) {
+				spec := spec
+				spec.SnapshotDir = snapshot
+				spec.Writable = writable
+				argv, err := bwrapArgs(cfg, spec)
+				require.NoError(t, err)
 
-		for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
-			for _, pair := range argvPairs(t, argv, flag) {
-				assert.NotEqual(t, "/", pair[0], "%s must never take the host root as its source: %v", flag, pair)
-				assert.NotEqual(t, "/", pair[1], "%s must never mount over the sandbox root: %v", flag, pair)
-				assert.False(t, strings.HasPrefix(pair[0], "/home/"),
-					"%s must never expose a home directory: %v", flag, pair)
-				assert.False(t, strings.HasPrefix(pair[0], "/root"),
-					"%s must never expose root's home: %v", flag, pair)
-			}
+				// The only sources the generator may name: the run's own two
+				// directories (plus the work copy carved out of the scratch dir)
+				// and the fixed system allowlists.
+				permitted := map[string]bool{
+					snapshot:       true,
+					cfg.ScratchDir: true,
+					filepath.Join(cfg.ScratchDir, osLevelScratchWorkSubdir): true,
+				}
+				for _, p := range linuxRequiredRoots {
+					permitted[p] = true
+				}
+				for _, p := range linuxOptionalRoots {
+					permitted[p] = true
+				}
+				for _, p := range linuxOptionalFiles {
+					permitted[p] = true
+				}
+
+				var sources int
+				for _, flag := range []string{"--bind", "--ro-bind", "--ro-bind-try"} {
+					for _, pair := range argvPairs(t, argv, flag) {
+						sources++
+						assert.NotEqual(t, "/", pair[0], "%s must never take the host root as its source: %v", flag, pair)
+						assert.NotEqual(t, "/", pair[1], "%s must never mount over the sandbox root: %v", flag, pair)
+						assert.True(t, permitted[pair[0]],
+							"%s exposes a host path outside the permitted set: %v", flag, pair)
+					}
+				}
+				// A sweep over an empty bind set proves nothing; the generator
+				// always emits at least the required roots and the snapshot.
+				assert.GreaterOrEqual(t, sources, len(linuxRequiredRoots)+1,
+					"the generator must emit the required roots and the snapshot")
+			})
 		}
 	}
 }
