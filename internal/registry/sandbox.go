@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -66,7 +67,11 @@ func (s *SandboxConfig) Validate() error {
 	if b := strings.TrimSpace(s.Backend); b != "" && b != SandboxBackendDocker {
 		return fmt.Errorf("sandbox.backend %q is unsupported (only %q)", s.Backend, SandboxBackendDocker)
 	}
-	if strings.TrimSpace(s.Image) == "" {
+	// Trimmed in place, like Fallback below: the sibling resolvers test this
+	// field for raw non-emptiness and copy it verbatim (internal/verify/exec.go:
+	// `sc.Image != ""`), so operator padding must not survive config load.
+	s.Image = strings.TrimSpace(s.Image)
+	if s.Image == "" {
 		return errors.New("sandbox.image is required when a sandbox block is present (a base image carrying the toolchain your test_command needs)")
 	}
 	if len(s.TestCommand) == 0 {
@@ -75,6 +80,24 @@ func (s *SandboxConfig) Validate() error {
 	for _, tok := range s.TestCommand {
 		if strings.TrimSpace(tok) == "" {
 			return errors.New("sandbox.test_command must not contain empty tokens")
+		}
+	}
+	// DockerPath mirrors the OSLevelConfig.ToolPath contract
+	// (internal/sandbox/oslevel.go resolveToolPath/toolPath): when set it must be
+	// an absolute path. Both resolvers copy sc.DockerPath verbatim after a raw
+	// `!= ""` test, so a typo'd or whitespace-only value would surface only as a
+	// Docker preflight failure — which, with fallback: os-level configured, the
+	// resolvers treat as "Docker unavailable" and silently downgrade to a backend
+	// with no memory/CPU/PID caps. Reject it at config load instead. A
+	// whitespace-only value is rejected rather than normalized to "unset" so the
+	// typo stays visible; surrounding padding is trimmed in place, like Fallback.
+	if s.DockerPath != "" {
+		s.DockerPath = strings.TrimSpace(s.DockerPath)
+		if s.DockerPath == "" {
+			return errors.New("sandbox.docker_path must not be whitespace-only (leave it unset to resolve docker on PATH)")
+		}
+		if !filepath.IsAbs(s.DockerPath) {
+			return fmt.Errorf("sandbox.docker_path must be an absolute path, got %q", s.DockerPath)
 		}
 	}
 	if s.PidsLimit != nil && *s.PidsLimit <= 0 {
