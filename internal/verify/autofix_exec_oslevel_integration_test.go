@@ -367,4 +367,11 @@ func TestIntegration_AutoFixFallback_HostTmpIsReadableAndWritable(t *testing.T) 
 	assert.Equal(t, 0, res.ExitCode,
 		"host /tmp is readable under the os-level fallback — if this now FAILS the carve-out changed, which is a behavior change to document, not a test to delete")
 	assert.Contains(t, res.Stdout, "HOSTTMP")
+
+	// The write half of the name: a probe is only AndWritable if a write is
+	// actually issued and its landing place asserted on the host.
+	hostBody, readErr := os.ReadFile(marker)
+	require.NoError(t, readErr)
+	assert.Contains(t, string(hostBody), "SANDBOXED-WRITE",
+		"the sandboxed write must land on the host's real /tmp")
 }
