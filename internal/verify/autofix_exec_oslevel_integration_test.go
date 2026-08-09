@@ -277,6 +277,19 @@ func TestIntegration_AutoFixFallback_ContainmentHoldsOnTheResolvedBackend(t *tes
 	if runtime.GOOS == "darwin" {
 		assert.Contains(t, res.Stdout+res.Stderr, "Operation not permitted",
 			"the failure must carry the sandbox's own denial diagnostic, not merely a non-zero exit: %s", res.Stdout+res.Stderr)
+	} else if runtime.GOOS == "linux" {
+		output := res.Stdout + res.Stderr
+		found := false
+		for _, want := range []string{"No such file or directory", "Directory nonexistent"} {
+			if strings.Contains(output, want) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found,
+			"the failure must carry the sandbox's own ENOENT-class denial diagnostic, not merely a non-zero exit: %s", output)
+		assert.Contains(t, output, secret,
+			"the ENOENT must name the forbidden path under test")
 	}
 	assert.NotContains(t, res.Stdout+res.Stderr, secretBody)
 }
