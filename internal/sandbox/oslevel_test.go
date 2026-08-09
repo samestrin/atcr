@@ -996,6 +996,24 @@ func resolvePath(t *testing.T, path string) string {
 	}
 }
 
+func TestOSLevelBackendRun_StructLiteralMaxOutputBytesGetsTheDefaultFloor(t *testing.T) {
+	// The struct-literal-bypass reasoning is applied to MaxConcurrent (lazy
+	// semOnce) and Timeout, but a zero MaxOutputBytes produced a 4096-byte
+	// capture cap with NO truncation marker — truncate's limit<=0 early return
+	// — so output was silently clipped at an undocumented 4096 bytes.
+	b := withContainment(t, &osLevelBackend{cfg: OSLevelConfig{
+		ToolPath: writeFakeOSLevel(t, `head -c 200000 /dev/zero | tr '\0' 'x'
+exit 0`),
+		Timeout: 5 * time.Second,
+	}})
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"noisy"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(res.Output), DefaultOSLevelConfig().MaxOutputBytes,
+		"a zero MaxOutputBytes must floor to the default budget, not an undocumented 4096")
+	assert.Contains(t, res.Output, "truncated", "a capped capture must carry the truncation marker")
+}
+
 func TestOSLevelBackendRun_ConcurrencyCapAppliesToStructLiteral(t *testing.T) {
 	// A struct-literal backend bypasses NewOSLevelBackend and leaves sem nil;
 	// the lazy alloc must still enforce a cap rather than failing open
