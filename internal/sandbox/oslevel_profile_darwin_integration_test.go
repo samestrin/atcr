@@ -518,3 +518,79 @@ func TestIntegration_OSLevelDarwin_WritableOverlayDoesNotWidenTheBoundary(t *tes
 	assert.NotContains(t, res.Output, "ATCR-INTEGRATION-CANARY",
 		"the writable carve-out widened the boundary: the secret was readable — containment breach")
 }
+
+func TestIntegration_OSLevelDarwin_SensitiveHostPathsAreUnreadable(t *testing.T) {
+	// Not a synthetic stand-in: the REAL paths an escape would target on macOS.
+	// docs/execution.md leads with "No access to your personal files. $HOME is
+	// not readable, so ~/.ssh and friends stay out of reach", and
+	// oslevel_profile.go states the same as the read tier's design rationale —
+	// but every other darwin denial is asserted against a synthetic /var/tmp
+	// fixture, so that claim had zero kernel-level evidence on macOS. It matters
+	// more here than on Linux: darwinSystemReadDirs grants /opt/homebrew and
+	// /usr/local by PREFIX, so a future read-tier addition could shadow a real
+	// user path with no test noticing. The paths are never written to — only
+	// read-probed — which is what makes this safe to run.
+	b := darwinIntegrationBackend(t)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	for _, probe := range []struct {
+		path string
+		cat  bool
+	}{
+		{filepath.Join(home, ".ssh"), false},
+		{"/Users", false},
+		{"/etc/master.passwd", true},
+	} {
+		t.Run(probe.path, func(t *testing.T) {
+			// The host-side existence control: without it this test passes
+			// identically for a path that simply is not on the host.
+			info, statErr := os.Stat(probe.path)
+			if statErr != nil {
+				skipOrFail(t, "%s does not exist on this host, so its unreadability inside the "+
+					"sandbox proves nothing: %v", probe.path, statErr)
+				return
+			}
+
+			// A host-observed content token whose absence from the sandbox output
+			// discriminates "denied" from "read but empty-looking". Skipped when no
+			// distinctive token is available host-side (empty dir, unreadable
+			// file) or the token is a substring of the probe path itself, where it
+			// would false-positive against the denial diagnostic naming the path.
+			token := ""
+			if probe.cat || !info.IsDir() {
+				if body, readErr := os.ReadFile(probe.path); readErr == nil {
+					for _, line := range strings.Split(string(body), "\n") {
+						if line != "" && !strings.HasPrefix(line, "#") {
+							token = strings.SplitN(line, ":", 2)[0] + ":"
+							break
+						}
+					}
+				}
+			} else if entries, readErr := os.ReadDir(probe.path); readErr == nil && len(entries) > 0 {
+				token = entries[0].Name()
+			}
+			if token != "" && strings.Contains(probe.path, strings.TrimSuffix(token, ":")) {
+				token = ""
+			}
+
+			cmd := "ls -la " + probe.path
+			if probe.cat || !info.IsDir() {
+				cmd = "cat " + probe.path
+			}
+			res, err := b.Run(context.Background(), RunSpec{
+				Command:     []string{"/bin/sh", "-c", cmd + " 2>&1"},
+				SnapshotDir: t.TempDir(),
+				Timeout:     10 * time.Second,
+			})
+			require.NoError(t, err, "output: %s", res.Output)
+			assert.NotEqual(t, 0, res.ExitCode, "%s must not be readable; output: %s", probe.path, res.Output)
+			assertDeniedByProfile(t, res.Output, probe.path)
+			if token != "" {
+				assert.NotContains(t, res.Output, token,
+					"content of %s leaked into captured output — containment breach; output: %s", probe.path, res.Output)
+			}
+		})
+	}
+}
