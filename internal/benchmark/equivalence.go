@@ -132,31 +132,40 @@ func familyOf(cat string) []string {
 	return []string{cat}
 }
 
-// satisfyingSet returns every category that would satisfy at least one of the
-// expected categories: the union of their families.
+// satisfactions resolves the equivalence relation for ONE case in a single walk
+// of the expected categories' families, returning both quantities scoreOne needs:
 //
-// Both scoring loops resolve through this one set so a single definition of
-// "matched" governs recall and the cost-per-corroborated denominator. Keeping
-// them in step is not cosmetic — under exact matching `recall > 0` implies
+//   - hit — how many expected categories had at least one member of their OWN
+//     family raised. This is recall's numerator.
+//   - satisfying — the UNION of those families. This is the membership test
+//     behind the cost-per-corroborated denominator: every finding whose category
+//     satisfied some expected category.
+//
+// Both scoring quantities resolve through this one walk so a single definition of
+// "matched" governs recall and the cost-per-corroborated denominator. Keeping them
+// in step is not cosmetic — under exact matching `recall > 0` implies
 // `matchedFindings > 0`, and widening only the recall side would drop
 // cost_per_corroborated_finding_usd for a perfect-recall reviewer, the encoding
 // scoreOne reserves exclusively for a priced reviewer that matched nothing.
-func satisfyingSet(expected map[string]bool) map[string]bool {
-	out := make(map[string]bool, len(expected))
+//
+// The two must nonetheless stay DISTINCT quantities. Recall asks whether cat's own
+// family was raised; answering it from the union would credit an expected category
+// with a sibling category's hit. They are computed together only because both walk
+// the same families — which, split across a separate set-builder and a per-category
+// predicate, cost two familyOf resolutions per expected category per case.
+func satisfactions(expected, raised map[string]bool) (hit int, satisfying map[string]bool) {
+	satisfying = make(map[string]bool, len(expected))
 	for cat := range expected {
+		catHit := false
 		for _, member := range familyOf(cat) {
-			out[member] = true
+			satisfying[member] = true
+			if raised[member] {
+				catHit = true
+			}
+		}
+		if catHit {
+			hit++
 		}
 	}
-	return out
-}
-
-// isSatisfied reports whether any member of cat's family was raised.
-func isSatisfied(cat string, raised map[string]bool) bool {
-	for _, member := range familyOf(cat) {
-		if raised[member] {
-			return true
-		}
-	}
-	return false
+	return hit, satisfying
 }
