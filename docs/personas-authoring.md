@@ -105,6 +105,17 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word;
 EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If
 nothing is wrong, emit exactly: NO FINDINGS
+```
+
+> **The Rules line is not the whole CATEGORY contract.** "One lowercase word" is
+> the *shape*; the permitted words are a closed vocabulary that reaches the model
+> through `{{.ScopeRule}}` in the `## Scope` section above, whose authority is
+> `reconcile.Categories()`. Do **not** restate or narrow that list inside your own
+> prompt — a persona-local list is exactly the drift the injection exists to
+> prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
+> as written and let `{{.ScopeRule}}` carry the enumeration.
+
+```markdown
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
@@ -169,7 +180,7 @@ Before submitting your persona, confirm every item:
 - [ ] **`language` scope** (if present) is in canonical form (no leading dot, lowercased, e.g. `["go", "ts"]`); omit it entirely for a generalist persona.
 - [ ] **Prompt template** mirrors the canonical structure: `## Role`, `## Focus`, `## Scope` (`{{.ScopeRule}}`), `## Severity Rubric`, the exact 7-column `## Output Format` contract, and `## Payload` (`{{.Payload}}`).
 - [ ] **Required template variables** are all present and the template renders with no leftover `{{ }}` actions.
-- [ ] **Category word** for the persona's target class appears in the prompt template itself.
+- [ ] **Category word** for the persona's target class appears in the prompt template itself, **and is a member of `reconcile.Categories()`** — a word outside the closed vocabulary is never offered to the model by `{{.ScopeRule}}`, so a persona whose worked example emits one is telling the model to contradict its own prompt. If your target class has no member that fits, propose one against `reconcile/category.go` rather than inventing a persona-local word.
 - [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/` (built-in) or `personas/community/testdata/` (community persona), named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
 - [ ] **Fixture test passes** locally with no network access.
 - [ ] **No secrets, credentials, or network instructions** in the prompt.
