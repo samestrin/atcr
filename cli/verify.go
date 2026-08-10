@@ -207,13 +207,6 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
 	}
 
-	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
-	if err != nil {
-		return err // refuse-without-backend / preflight failure (exit 2)
-	}
-
-	fresh, _ := cmd.Flags().GetBool("fresh")
-	thorough, _ := cmd.Flags().GetBool("thorough")
 	// The reviewed-repo root skeptics inspect and the redactor relativizes
 	// absolute paths against (Epic 22.1). Defaults to "." (the CWD == repo-root
 	// operating assumption), preserving pre-22.1 behavior; --repo <other-repo>
@@ -221,6 +214,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	// normalizeRepoFlag so empty/unset normalization and the nonexistent-root
 	// guard stay identical across both commands (rather than passing a bad root
 	// into the snapshot, where every finding silently degrades to unverifiable).
+	//
+	// Resolved BEFORE resolveExec, deliberately. resolveExec's last act is the
+	// os-level fallback-engaged notice, and that notice carries the docker
+	// preflight cause — the daemon's raw stderr and the joined `docker run` argv,
+	// with absolute host paths. Installing the redactor after that call would
+	// leave the one line most worth scrubbing unscrubbed. resolveExec already
+	// calls normalizeRepoFlag itself, so this is a reordering, not new work.
 	repoRoot, err := normalizeRepoFlag(cmd)
 	if err != nil {
 		return err
@@ -234,6 +234,30 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageError(err)
 	}
+
+	// ONE redactor, two sinks. It scrubs the persisted exec evidence
+	// (verify.Options.Redactor, below) AND every log line this command emits.
+	//
+	// The log half was missing entirely: newRedactor was wired only into Options,
+	// and nothing installed a redactor on the CONTEXT, so `atcr verify` ran under
+	// setupLogger's base log.NewRedactor("") — no review root, therefore no path
+	// relativization — for its whole lifetime. `atcr review` had this via
+	// correlateAndRedact; the standalone path did not. Absolute reviewed-repo
+	// paths reached stderr and CI logs as a result.
+	//
+	// Built once and shared rather than constructed twice: two redactors could
+	// drift to different roots or secret sets, leaving log lines and findings.json
+	// scrubbed to different standards with nothing to catch it.
+	redactor := newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...)
+	cmd.SetContext(log.NewContext(cmd.Context(), log.WithRedactor(log.FromContext(cmd.Context()), redactor)))
+
+	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
+	if err != nil {
+		return err // refuse-without-backend / preflight failure (exit 2)
+	}
+
+	fresh, _ := cmd.Flags().GetBool("fresh")
+	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
@@ -245,7 +269,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		// Scrub configured registry secrets from reproduced exec evidence before it
 		// is persisted into findings.json (Epic 11.0). This path holds only the
 		// registry, so secrets resolve via RegistrySecretValues, not a PreparedReview.
-		Redactor: newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
+		// The SAME instance now also backs the context logger — see above.
+		Redactor: redactor,
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {
