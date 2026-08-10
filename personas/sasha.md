@@ -38,7 +38,7 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
-CRITICAL|store/users.go:42|User input concatenated into SQL query enables injection|Use parameterized query with placeholders|injection|20|query := "SELECT * FROM users WHERE id = " + userInput
+CRITICAL|store/users.go:42|User input concatenated into SQL query enables injection|Use parameterized query with placeholders|security|20|query := "SELECT * FROM users WHERE id = " + userInput
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.

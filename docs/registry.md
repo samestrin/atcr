@@ -465,7 +465,7 @@ Three optional per-agent guardrails bound what a reviewer contributes to the fan
 
 | Field | Type | Default | Validated at load | Effect |
 |-------|------|---------|-------------------|--------|
-| `scope` | string[] (per agent) | — (all categories) | every entry must be non-empty | **Soft** prompt-injection focus hint. The listed categories are appended to the agent's persona prompt as a "Review Focus" instruction steering it toward those areas. It is *not* a hard filter — out-of-category findings are never dropped, so a genuine cross-cutting issue is preserved. Use it to nudge a specialist (e.g. a performance reviewer) without silencing it. |
+| `scope` | string[] (per agent) | — (all categories) | every entry must be non-empty; an off-vocabulary entry warns on stderr rather than failing the load | **Soft** prompt-injection focus hint. The listed categories are appended to the agent's persona prompt as a "Review Focus" instruction steering it toward those areas. It is *not* a hard filter — out-of-category findings are never dropped, so a genuine cross-cutting issue is preserved. Use it to nudge a specialist (e.g. a performance reviewer) without silencing it. Entries should be members of the closed CATEGORY vocabulary (`reconcile.Categories()`, the same list injected into every prompt): the focus block is appended *after* the rendered prompt, so a non-member still steers the review but ends the prompt by naming a word the prompt's own vocabulary rule declared illegal. Load reports one as `warning: agent '<name>': scope entry "<entry>" is not a member of the closed CATEGORY vocabulary`, with a `did you mean` suggestion when the entry is within one or two edits of a real member. |
 | `min_severity` | string (per agent) | `LOW` (no floor) | one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (case-insensitive; normalized to upper-case) | **Hard** floor enforced in fan-out post-processing: findings below this severity are dropped from the agent's `findings.txt` before reconciliation. A dropped count is logged to stderr. |
 | `max_findings` | int (per agent) | — (unlimited) | must be `> 0` | **Hard** cap enforced in fan-out post-processing: the agent's findings are truncated to this many, keeping the **most severe** first (a severity-sorted cap, so a flood of `LOW` items can never push out a `HIGH` one). A truncated count is logged to stderr. |
 
@@ -487,12 +487,14 @@ agents:
     persona: bruce
     provider: openrouter
     model: nvidia/nemotron-nano
-    scope: ["performance", "efficiency"]   # soft focus hint injected into the prompt
+    scope: ["performance", "complexity"]   # soft focus hint injected into the prompt
     min_severity: MEDIUM                    # drop LOW findings before reconciliation
     max_findings: 20                        # keep at most the 20 most severe
 ```
 
 An out-of-range value (an unknown `min_severity`, a non-positive `max_findings`, or a blank `scope` entry) is a load error, so a misconfiguration is caught at load rather than mid-run.
+
+A well-formed `scope` entry that is simply outside the CATEGORY vocabulary **is not a load error** — it warns on stderr and the registry keeps loading, because scope is a soft hint and a pre-existing config naming a non-member must not be broken by the vocabulary landing. That makes it the one scope misconfiguration you have to read stderr to notice, so prefer vocabulary members when writing focus words.
 
 ## Verifying the configuration (`atcr doctor`)
 

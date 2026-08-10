@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/reconcile"
 )
 
 // DiffFetcher retrieves the unified diff between two commits of a GitHub repo.
@@ -71,19 +72,27 @@ type DroppedRecord struct {
 var ErrDiffUnavailable = errors.New("diff unavailable upstream")
 
 // categoryMap translates aacr-bench's comment categories into ATCR's reviewer
-// vocabulary (personas/_base.md:44). Keys are lowercased on lookup. Both the
-// dataset's actual literals and the shorter spellings used in the epic body are
-// accepted. A comment whose category has no mapping is dropped from the
-// expected set — and tallied: ExpectedCategories returns the count so the
-// build can report it, because a silently shrunken expected set would inflate
-// the scored recall of every reviewer run against the suite.
+// vocabulary, whose authority is reconcile/category.go (reconcile.Categories()).
+//
+// Values are the exported constants rather than literals: this map is the
+// ground-truth side of benchmark scoring, so a rename in the vocabulary that did
+// not reach here would leave it emitting a word no reviewer still produces, and
+// every case in that category would silently become unscoreable. Keys stay
+// literals — they are aacr-bench's own spellings, not ATCR's.
+//
+// Keys are lowercased on lookup. Both the dataset's actual literals and the
+// shorter spellings used in the epic body are accepted. A comment whose category
+// has no mapping is dropped from the expected set — and tallied:
+// ExpectedCategories returns the count so the build can report it, because a
+// silently shrunken expected set would inflate the scored recall of every
+// reviewer run against the suite.
 var categoryMap = map[string]string{
-	"code defect":                     "correctness",
-	"security vulnerability":          "security",
-	"security":                        "security",
-	"maintainability and readability": "maintainability",
-	"maintainability":                 "maintainability",
-	"performance":                     "performance",
+	"code defect":                     reconcile.CategoryCorrectness,
+	"security vulnerability":          reconcile.CategorySecurity,
+	"security":                        reconcile.CategorySecurity,
+	"maintainability and readability": reconcile.CategoryMaintainability,
+	"maintainability":                 reconcile.CategoryMaintainability,
+	"performance":                     reconcile.CategoryPerformance,
 }
 
 // prURLPattern captures owner, repo, and PR number from a GitHub PR URL. It is

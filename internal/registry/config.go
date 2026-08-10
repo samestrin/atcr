@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"io"
 	"math"
 	"net/url"
 	"os"
@@ -13,6 +14,81 @@ import (
 	"strings"
 	"unicode"
 )
+
+// scopeVocabularyWarnWriter is the sink for the off-vocabulary scope warning; a
+// var so tests can capture it, mirroring insecureRegistryWarnWriter.
+var scopeVocabularyWarnWriter io.Writer = os.Stderr
+
+// scopeSuggestMaxDistance bounds how far a scope entry may be from a vocabulary
+// member before the warning stops suggesting that member. At 2, a typo
+// ("performace") is pointed at the word it almost is, while a genuinely
+// different word ("efficiency") is reported with no fabricated suggestion —
+// a wrong suggestion is worse than none, because an operator may act on it.
+const scopeSuggestMaxDistance = 2
+
+// warnScopeOutsideVocabulary emits a stderr warning when an agent's scope entry
+// is not a member of the closed CATEGORY vocabulary (epic 35.16.4).
+//
+// It WARNS rather than errors deliberately: scope is a soft focus hint, and a
+// pre-existing config naming a non-member must keep loading. The reason it is
+// worth surfacing at all is positional — internal/payload.ScopeFocus renders
+// these entries verbatim and internal/fanout appends the block AFTER the
+// rendered prompt, so the entries are the last text the reviewer reads, after
+// the vocabulary rule. A non-member there ends the prompt by naming a word the
+// same prompt declared illegal.
+func warnScopeOutsideVocabulary(agent, entry string) {
+	token := strings.ToLower(strings.TrimSpace(entry))
+	for _, c := range reclib.Categories() {
+		if token == c {
+			return
+		}
+	}
+	suggestion := ""
+	if nearest, ok := nearestCategory(token); ok {
+		suggestion = fmt.Sprintf(" (did you mean %q?)", nearest)
+	}
+	_, _ = fmt.Fprintf(scopeVocabularyWarnWriter,
+		"warning: agent '%s': scope entry %q is not a member of the closed CATEGORY vocabulary%s; "+
+			"it still steers the review, but reviewers are told to spell CATEGORY exactly as listed\n",
+		agent, entry, suggestion)
+}
+
+// nearestCategory returns the vocabulary member within scopeSuggestMaxDistance
+// edits of token, and whether one was found. Ties resolve to the first member in
+// vocabulary order, so the suggestion is stable across runs.
+func nearestCategory(token string) (string, bool) {
+	best, bestDist := "", scopeSuggestMaxDistance+1
+	for _, c := range reclib.Categories() {
+		if d := editDistance(token, c); d < bestDist {
+			best, bestDist = c, d
+		}
+	}
+	return best, bestDist <= scopeSuggestMaxDistance
+}
+
+// editDistance is the Levenshtein distance between a and b, computed with a
+// single rolling row. Inputs here are single short category words, so the
+// quadratic cost is irrelevant and a dependency for it would not be.
+func editDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		curr[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)]
+}
 
 // DefaultTemperature fills an agent's temperature when unset (applied at
 // load time — temperature is purely agent-level).
@@ -990,6 +1066,8 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
 		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
+		} else {
+			warnScopeOutsideVocabulary(name, s)
 		}
 	}
 	// Language entries (Epic 9.0) follow the Scope guard: reject blank entries (a
