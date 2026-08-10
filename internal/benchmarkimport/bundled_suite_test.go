@@ -75,6 +75,49 @@ func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
 	assert.NotEmpty(t, planted, "the suite must plant at least one expected category")
 }
 
+// unplantableReason returns why cat is illegal as a suite EXPECTED category, or
+// "" when it is legal. Extracted from the loop in the guard above so the rule
+// can be exercised directly: a guard that only ever runs over the committed
+// suite proves the suite is currently clean, not that the guard would object to
+// a suite that was not.
+//
+// STUB — deliberately wrong, replaced below.
+func unplantableReason(cat string, vocabulary map[string]struct{}) string {
+	_, _ = cat, vocabulary
+	return ""
+}
+
+// The guard must FIRE, not merely pass on today's data. Both halves are checked:
+// a word outside the taxonomy, and a word inside it that is nonetheless illegal
+// to plant.
+func TestUnplantableReason_RejectsWhatTheSuiteMayNotPlant(t *testing.T) {
+	vocabulary := taxonomyVocabulary(t)
+
+	t.Run("non-member is rejected", func(t *testing.T) {
+		// No reviewer is ever prompted to emit this, so a case planting it scores
+		// a structural zero.
+		assert.NotEmpty(t, unplantableReason("wobbliness", vocabulary),
+			"a category outside reconcile.Categories() must be rejected")
+	})
+
+	t.Run("routing values are rejected", func(t *testing.T) {
+		// `other` and `out-of-scope` ARE taxonomy members, so a bare membership
+		// test admits them — but equivalence.go hard-excludes both from every
+		// family, so a case planting one can never be satisfied by any raised
+		// category. Membership alone is the wrong question for the expected side.
+		for _, routing := range []string{reconcile.CategoryOther, reconcile.CategoryOutOfScope} {
+			assert.NotEmpty(t, unplantableReason(routing, vocabulary),
+				"%q is a taxonomy member but is unsatisfiable as a planted expectation", routing)
+		}
+	})
+
+	t.Run("an ordinary member is accepted", func(t *testing.T) {
+		// The negative cases above would all pass if the rule rejected everything.
+		assert.Empty(t, unplantableReason(reconcile.CategoryCorrectness, vocabulary),
+			"a plain taxonomy member must remain plantable")
+	})
+}
+
 // taxonomyVocabulary is the closed reviewer vocabulary as a set. It fails the
 // test on an empty vocabulary rather than returning one: an empty set makes every
 // Contains assertion above fail loudly, but a caller that looped over it instead
