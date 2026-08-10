@@ -64,9 +64,8 @@ func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
 	for _, c := range m.Cases {
 		for _, cat := range c.ExpectedCategories {
 			planted[cat] = struct{}{}
-			assert.Contains(t, vocabulary, cat,
-				"case %q plants %q, which is not a member of reconcile.Categories() — no reviewer is prompted to emit it, so that case's recall is structurally zero",
-				c.ID, cat)
+			assert.Empty(t, unplantableReason(cat, vocabulary),
+				"case %q plants %q: %s", c.ID, cat, unplantableReason(cat, vocabulary))
 		}
 	}
 
@@ -81,9 +80,21 @@ func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
 // suite proves the suite is currently clean, not that the guard would object to
 // a suite that was not.
 //
-// STUB — deliberately wrong, replaced below.
+// Two distinct rules, because membership alone is not sufficient for the
+// EXPECTED side of a case.
 func unplantableReason(cat string, vocabulary map[string]struct{}) string {
-	_, _ = cat, vocabulary
+	if _, ok := vocabulary[cat]; !ok {
+		return "not a member of reconcile.Categories() — no reviewer is prompted to emit it, so the case's recall is structurally zero"
+	}
+	// `other` and `out-of-scope` are members of the vocabulary (they are legal
+	// EMISSIONS — the escape hatch that makes the set closed rather than lossy),
+	// but internal/benchmark's equivalence relation hard-excludes both from every
+	// family precisely so `other` cannot become a free hit on every case. A suite
+	// that plants one is therefore asking for a detection that can never be
+	// credited.
+	if cat == reconcile.CategoryOther || cat == reconcile.CategoryOutOfScope {
+		return "a routing value: legal to emit, but hard-excluded from every equivalence family, so a case planting it can never be satisfied"
+	}
 	return ""
 }
 
