@@ -81,8 +81,26 @@ func categoryEnumeration() string {
 	return strings.Join(mustNonEmptyVocabulary(reconcile.Categories()), ", ")
 }
 
-// mustNonEmptyVocabulary returns cats, or stops the program if it is empty.
+// mustNonEmptyVocabulary returns cats, or panics if the vocabulary is empty.
+//
+// categoryVocabularyRule is assembled at package init, so an empty vocabulary
+// would not fail anywhere near where it could be noticed: every prompt, in every
+// mode, would simply ship the sentence "spelled exactly as listed: ." — an
+// instruction that names no words — and reviewers would go back to inventing a
+// category per finding, which is the exact regression epic 35.16.4 closed.
+//
+// It refuses rather than falling back to the bare scope rule: a base-only rule is
+// the no-vocabulary prompt this epic exists to remove (see the const block
+// above), so degrading quietly would swap a visibly broken prompt for an
+// invisibly broken one. Reaching here means the pinned reconcile module is
+// defective, which is a build-time fault — the same contract regexp.MustCompile
+// applies to a bad pattern at init, and it surfaces in CI on the bump that caused
+// it rather than in a review transcript weeks later.
 func mustNonEmptyVocabulary(cats []string) []string {
+	if len(cats) == 0 {
+		panic("payload: reconcile.Categories() is empty — every rendered prompt would instruct reviewers to " +
+			"spell CATEGORY from an empty list; refusing to build a scope rule with no vocabulary")
+	}
 	return cats
 }
 
