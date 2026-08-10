@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"io"
 	"math"
 	"net/url"
 	"os"
@@ -13,6 +14,10 @@ import (
 	"strings"
 	"unicode"
 )
+
+// scopeVocabularyWarnWriter is the sink for the off-vocabulary scope warning; a
+// var so tests can capture it, mirroring insecureRegistryWarnWriter.
+var scopeVocabularyWarnWriter io.Writer = os.Stderr
 
 // DefaultTemperature fills an agent's temperature when unset (applied at
 // load time — temperature is purely agent-level).

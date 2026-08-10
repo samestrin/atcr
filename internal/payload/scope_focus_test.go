@@ -42,3 +42,21 @@ func TestScopeFocus(t *testing.T) {
 		t.Fatalf("ScopeFocus with blank entries = %q, want identical to single render %q", clean, wantSingle)
 	}
 }
+
+// TestScopeFocus_RestatesCategoryBoundary guards the seam between operator scope
+// config and the closed CATEGORY vocabulary (epic 35.16.4). The focus block is
+// appended AFTER RenderPrompt returns (internal/fanout/review.go), so it is the
+// last text the model reads — after both the vocabulary rule and the diff, at
+// the position of maximum recency. An operator scope entry that is not a
+// vocabulary member would otherwise end the prompt by naming a word the prompt
+// earlier declared illegal. The block must therefore say what these words are:
+// focus areas, not CATEGORY values.
+func TestScopeFocus_RestatesCategoryBoundary(t *testing.T) {
+	out := ScopeFocus([]string{"efficiency"})
+	if !strings.Contains(out, "not CATEGORY values") {
+		t.Errorf("ScopeFocus does not separate focus areas from CATEGORY values: %q", out)
+	}
+	if !strings.Contains(out, "closed vocabulary") {
+		t.Errorf("ScopeFocus does not point CATEGORY back at the closed vocabulary: %q", out)
+	}
+}
