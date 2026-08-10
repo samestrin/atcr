@@ -135,10 +135,21 @@ func TestScopeRule_DisambiguatesConfusablePairs(t *testing.T) {
 	}
 	for _, mode := range allModes {
 		rule := ScopeRule(mode)
+		// Locate the gloss ONCE per mode, and check the result. An unchecked
+		// strings.Index would return -1 the moment the sentence is reworded and
+		// slice-panic, which kills the whole internal/payload test binary — every
+		// other guard in this file would stop reporting and a one-word prompt edit
+		// would present as a stack trace instead of a named failure. The lookup is
+		// also loop-invariant, so hoisting it out of the pairs loop is free.
+		at := strings.Index(rule, "When two members are close")
+		if at < 0 {
+			t.Errorf("mode %q lost the disambiguation gloss entirely", mode)
+			continue
+		}
+		gloss := rule[at:]
 		for _, pair := range pairs {
 			// Both words must appear inside the gloss clause, not merely
 			// somewhere in the enumeration.
-			gloss := rule[strings.Index(rule, "When two members are close"):]
 			if !strings.Contains(gloss, "`"+pair[0]+"`") || !strings.Contains(gloss, "`"+pair[1]+"`") {
 				t.Errorf("mode %q does not disambiguate %q vs %q", mode, pair[0], pair[1])
 			}
