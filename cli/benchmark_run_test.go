@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -247,4 +249,43 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
 	require.Equal(t, "m-greta", sub.Reviewers[0].Model)
 	require.Equal(t, 2, sub.Reviewers[0].Runs, "two cases scored")
 	require.InDelta(t, 0.75, sub.Reviewers[0].CorroborationRate, 1e-9, "category recall (1.0 + 0.5)/2")
+}
+
+// A pool row whose PROBLEM leaked an unescaped pipe is recorded by the parser as
+// SKIPPED, not as a finding. Discarding it shrinks the out-of-vocabulary
+// DENOMINATOR, so the reviewer emitting the worst-formed output earns the best
+// drift rate — the metric rewards exactly the behaviour it exists to detect. A
+// skipped row must fold into its reviewer's raised categories as "" and count as
+// drift, by the same rule that already makes an empty CATEGORY column drift.
+//
+// REVIEWER is the engine's last-appended column, so the final field survives an
+// overflow earlier in the row; parse() strips trailing empty fields BEFORE
+// classifying a row as skipped, so that field is non-empty by construction.
+func TestReadCaseFindings_SkippedRowsCountAsDrift(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+
+	body := stream.Version + "\n" +
+		// well-formed, in-vocabulary
+		"HIGH|a.go:1|clean problem|clean fix|correctness|15|evidence|greta\n" +
+		// unescaped pipe in PROBLEM -> 9 columns -> parser records it as skipped
+		"HIGH|b.go:2|leaked | pipe here|some fix|security|15|evidence|greta\n"
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "findings.txt"), []byte(body), 0o600))
+
+	got, err := readCaseFindings(dir)
+	require.NoError(t, err)
+	require.Contains(t, got, "greta", "the skipped row's REVIEWER must still be recovered")
+	assert.ElementsMatch(t, []string{"correctness", ""}, got["greta"],
+		"the malformed row joins the denominator as an unlabelled finding")
+
+	// The recipe from the TD row: one in-vocabulary row + one malformed row is a
+	// rate of 0.5, not 0.0.
+	rate := benchmark.OutOfVocabularyRate([]benchmark.ReviewerScore{
+		{Model: "m", Persona: "p", Cases: []benchmark.CaseScore{
+			{Expected: []string{"correctness"}, Raised: got["greta"]},
+		}},
+	})
+	require.NotNil(t, rate)
+	assert.InDelta(t, 0.5, *rate, 1e-9, "1 drifted of 2 findings, not 0 of 1")
 }
