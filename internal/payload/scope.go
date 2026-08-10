@@ -51,6 +51,11 @@ const (
 		"`out-of-scope` so the reconciler annotates rather than promotes it."
 )
 
+// categoryEnumeration renders the closed CATEGORY vocabulary.
+//
+// STUB — wrong answer on purpose (epic 35.16.4 T2, RED stage).
+func categoryEnumeration() string { return "" }
+
 // ScopeRule returns the scope instruction for a payload mode. diff and blocks
 // share the changed-only rule (function-context expansion does not widen the
 // review scope); files mode uses the wider rule. An unknown mode falls back to
