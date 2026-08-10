@@ -1,3 +1,24 @@
+## [35.16.3] - 2026-08-09
+
+### Added
+
+- **OS-level sandbox backend (`internal/sandbox`) — a config-gated alternative to `--no-sandbox` for `--auto-fix` validation and `--exec`.** Wraps native process confinement instead of a container: `sandbox-exec` on macOS, `bwrap` (Bubblewrap, namespace-based mount/network/PID isolation) on Linux. Opt in with `sandbox.fallback: os-level` in `.atcr/config.yaml`; it engages only when Docker's preflight has already failed and never as a first-choice backend while Docker is healthy. With `fallback` unset, behavior is byte-identical to before this sprint — a Docker preflight failure remains a hard refusal, and `--no-sandbox` remains the only way to run validation fully unsandboxed.
+- **Deny-by-default sandbox profile generation.** Both platforms generate a strict runtime profile scoped to the project directory (or its writable scratch copy) and `/tmp`: no outbound network egress, no read access to `$HOME` (so `~/.ssh` stays unreadable), and a narrow read-only allowlist for the host toolchain needed to execute at all. Proven with real kernel-level containment tests on both platforms (blocked write outside allowed dirs, blocked network egress) — executed on real macOS and Linux hosts, not merely unit-tested for shape.
+- **`Writable: true` support for the OS-level backend**, so `--auto-fix` (which always validates against a writable copy) can use the fallback, not just read-only `--exec` reproduction. The writable copy is made host-side, in Go, before the sandboxed process spawns — bounded in size/entry count and refuses to traverse a symlink out of the snapshot.
+- **Explicit "neither backend usable" warning**, surfaced identically from both `ResolveExecBackend` and `ResolveAutoFixSandbox` when Docker's preflight fails and the OS-level fallback (if configured) also fails its own preflight — never a silent, partial, or implicit success.
+- `docs/auto-fix.md` documents the new `sandbox.fallback: os-level` field, what it engages under, and what its containment guarantees give up relative to the Docker backend (no resource caps, no image, host toolchain only, no automatic Go module cache warming). `docs/execution.md`'s "Docker is the only implementation today" claim is corrected.
+
+### Fixed
+
+- **Sandboxed child processes now get a sanitized `PATH`** instead of inheriting the operator's verbatim — an empty `PATH` element resolves to the current directory, which is the reviewed repository under the sandbox, so a repo could otherwise supply the `go`/`npm`/etc. binary that runs the trusted validate command. Legitimate group-writable toolchain directories (e.g. Homebrew's `/opt/homebrew/bin`) are still accepted.
+- **URL-embedded credentials are scrubbed unconditionally by the log redactor**, closing a gap where a credential embedded in a logged URL survived the base redaction pass.
+- **The `--exec` snapshot gate now checks the actual directory a dirty-worktree run executes in** (the detached temp-snapshot copy), not just the repo root — closing a case where the gate validated one directory while the run used another.
+- **The os-level fallback no longer engages on a Docker *configuration* fault** (as opposed to a genuine unreachable-daemon preflight failure) — config faults now refuse the run rather than silently downgrading to a weaker backend.
+- **The fallback-engaged warning is deferred until the caller's own gates accept the run**, instead of firing before it's known whether the run will actually proceed.
+- A dedicated review-scoped redactor is now installed on the standalone `atcr verify` context, so it no longer logs absolute repository paths unredacted.
+
+*Shipped via /execute-sprint + /execute-code-review + /resolve-td (sprint 35.16.3)*
+
 ## [35.16.2] - 2026-08-07
 
 ### Added
