@@ -113,7 +113,35 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 			recallSum += float64(hit) / float64(len(expected))
 		}
 		// Cost-per-corroborated denominator: every finding whose category satisfied
-		// an expected (planted) category. Counts findings, not distinct categories.
+		// an expected (planted) category.
+		//
+		// The unit is FINDINGS, not distinct categories, and that is deliberate. It
+		// mirrors the production producer scorecard.costPer, whose denominator
+		// accumulates FindingsCorroborated — a count of findings — because
+		// cost_per_corroborated_finding_usd is not a benchmark field: it sits on the
+		// frozen PublicRecord allowlist shared verbatim between `benchmark export`
+		// and production `leaderboard --export`. It also matches CaseScore.Raised's
+		// one-entry-per-finding semantics and the out-of-vocabulary rate's denominator.
+		// Pinned by TestScore_CostDenominatorCountsFindingsNotDistinctCategories —
+		// every other cost fixture raises all-distinct categories and so pins the same
+		// number under either unit.
+		//
+		// KNOWN GAMING SURFACE, accepted rather than closed. The widened satisfying
+		// set admits six words for `maintainability`, so a reviewer emitting one nit
+		// six times under style/naming/bloat/complexity/duplication/maintainability
+		// buys six denominator and publishes a 6x cheaper number with no extra
+		// detection. Exact matching made the same inflation visible as duplicate-label
+		// spam; varied family labels read as legitimate. The magnitude is unchanged —
+		// six findings bought six before too — only the detectability. The
+		// counter-signal is findings_raised_avg, which sits on the same published row
+		// and rises in lockstep, so compare the two.
+		//
+		// Do NOT "fix" this by switching the unit here. Forking a frozen shared key's
+		// meaning between its two producers — cost-per-finding from production,
+		// cost-per-detected-category from the benchmark, distinguishable only by the
+		// envelope's source tag — is a worse defect than the hole. A unit change must
+		// version or rename the metric, in an epic scoped to touch PublicRecord.
+		//
 		// Drive the count off normalizedRaised so this pass normalizes each finding
 		// once rather than twice. It is NOT once per finding per RUN: OutOfVocabularyRate
 		// is a separate top-level walk over the same ReviewerScores and normalizes them
