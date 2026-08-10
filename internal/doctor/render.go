@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
-	"unicode/utf8"
 )
 
 // RenderJSON writes the report as stable, indented JSON. The schema is the
@@ -53,13 +52,8 @@ func diagnostic(a AgentResult) string {
 	if healthy(a.Status) || a.Detail == "" {
 		return a.Hint
 	}
-	detail := a.Detail
-	if len(detail) > maxTableDetailBytes {
-		// Cut on a rune boundary so a multi-byte sequence is never split.
-		detail = detail[:maxTableDetailBytes]
-		for !utf8.ValidString(detail) {
-			detail = detail[:len(detail)-1]
-		}
+	detail := clampRunes(a.Detail, maxTableDetailBytes)
+	if len(detail) < len(a.Detail) {
 		detail += "… (--json for full text)"
 	}
 	if a.Hint == "" {
