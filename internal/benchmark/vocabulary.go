@@ -55,8 +55,20 @@ import "github.com/samestrin/atcr/reconcile"
 const MaxOutOfVocabularyRate = 0.20
 
 // ExceedsVocabularyCeiling reports whether a measured rate breaches
-// MaxOutOfVocabularyRate. STUB — always false; see the RED test.
-func ExceedsVocabularyCeiling(_ *float64) bool { return false }
+// MaxOutOfVocabularyRate.
+//
+// The comparison lives HERE rather than in each caller so the ceiling's exclusive
+// semantics — a run sitting exactly on it trips the guard — are a property of the
+// package instead of whichever operator a given test happened to type. Before this
+// existed the constant had no non-test consumer at all: a real run measuring 0.72
+// wrote the number to JSON and exited 0 with no warning, while the doc above and
+// the CHANGELOG both described enforcement that did not exist.
+//
+// A nil rate is UNMEASURED, not clean, and is never a breach — the same nil-vs-zero
+// distinction RunResult.OutOfVocabularyRate's pointer carries.
+func ExceedsVocabularyCeiling(rate *float64) bool {
+	return rate != nil && *rate >= MaxOutOfVocabularyRate
+}
 
 // OutOfVocabularyRate is the share of a run's findings whose category is not a
 // member of the closed reviewer vocabulary (reconcile.Categories()).

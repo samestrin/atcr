@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -128,6 +129,8 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	warnIfVocabularyCeilingExceeded(cmd.ErrOrStderr(), rr.OutOfVocabularyRate)
+
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding run-result: %w", err)
@@ -205,3 +208,17 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
 	return writeExportFile(output, out)
 }
+
+// warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
+// measured out-of-vocabulary rate breaches benchmark.MaxOutOfVocabularyRate.
+//
+// It writes to STDERR deliberately: `benchmark run --output <path>` prints nothing
+// to stdout, so the documented resumable invocation would otherwise give the
+// operator no signal at all that the reviewers ignored the offered vocabulary.
+//
+// It is deliberately NOT an exit-code change. A V1 validation run is 2-5 hours of
+// paid LLM work, and failing it at the very end over a diagnostic would discard
+// that work for a number the run was executed to discover.
+//
+// STUB — emits nothing; see the RED test.
+func warnIfVocabularyCeilingExceeded(_ io.Writer, _ *float64) {}

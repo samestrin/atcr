@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -288,4 +289,46 @@ func TestReadCaseFindings_SkippedRowsCountAsDrift(t *testing.T) {
 	})
 	require.NotNil(t, rate)
 	assert.InDelta(t, 0.5, *rate, 1e-9, "1 drifted of 2 findings, not 0 of 1")
+}
+
+// A run whose reviewers breached the vocabulary ceiling must SAY SO to the
+// operator. Before this, MaxOutOfVocabularyRate had no non-test consumer at all: a
+// run measuring 0.72 drift wrote the number to JSON and exited 0 silently, while
+// the constant's doc and the CHANGELOG both announced enforcement that did not
+// exist. The warning names both the ceiling and the measured value, and goes to
+// stderr so `--output <path>` (which prints nothing to stdout) still surfaces it.
+func TestBenchmarkRun_WarnsWhenVocabularyCeilingExceeded(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: "not-a-taxonomy-word"}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotNil(t, rr.OutOfVocabularyRate)
+
+	var buf bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&buf, rr.OutOfVocabularyRate)
+	got := buf.String()
+	assert.Contains(t, got, "out_of_vocabulary_rate", "the warning must name the metric")
+	assert.Contains(t, got, "0.20", "the warning must name the ceiling")
+	assert.Contains(t, got, "1.00", "the warning must name the measured value")
+}
+
+// The clean and unmeasured paths stay silent — a warning on every run is a warning
+// nobody reads.
+func TestBenchmarkRun_NoVocabularyWarningWhenCleanOrUnmeasured(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	clean, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotNil(t, clean.OutOfVocabularyRate)
+
+	var buf bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&buf, clean.OutOfVocabularyRate)
+	assert.Empty(t, buf.String(), "a measured-clean run must not warn")
+
+	buf.Reset()
+	warnIfVocabularyCeilingExceeded(&buf, nil)
+	assert.Empty(t, buf.String(), "an unmeasured run is not a breach")
 }
