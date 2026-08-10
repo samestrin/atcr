@@ -93,21 +93,29 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		raised, normalizedRaised := normalizeSet(c.Raised)
 		totalFindings += len(c.Raised)
 
+		// Both loops below resolve through the equivalence relation in
+		// equivalence.go: a coarse expected category is satisfied by any member of
+		// the ATCR family it spans, so a reviewer that writes `style` for a planted
+		// `maintainability` defect is credited for detecting it. The relation is
+		// scorer-side only — no product category is merged — and reduces to exact
+		// matching for any expected category with no family.
+		satisfying := satisfyingSet(expected)
+
 		if len(expected) > 0 {
 			ratedCases++
 			hit := 0
 			for cat := range expected {
-				if raised[cat] {
+				if isSatisfied(cat, raised) {
 					hit++
 				}
 			}
 			recallSum += float64(hit) / float64(len(expected))
 		}
-		// Cost-per-corroborated denominator: every finding whose category matched
+		// Cost-per-corroborated denominator: every finding whose category satisfied
 		// an expected (planted) category. Counts findings, not distinct categories.
 		// Drive the count off normalizedRaised so normalize() runs once per finding.
 		for _, cat := range normalizedRaised {
-			if expected[cat] {
+			if satisfying[cat] {
 				matchedFindings++
 			}
 		}
