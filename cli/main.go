@@ -143,11 +143,44 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	if err != nil {
 		code := exitCode(err)
 		if code != 0 {
-			_, _ = fmt.Fprintln(stderr, "atcr:", err)
+			_, _ = fmt.Fprintln(stderr, "atcr:", terminalErrorLine(err))
 		}
 		return code
 	}
 	return 0
+}
+
+// terminalErrorLine renders a returned error for the terminal print above.
+//
+// It exists because that print is the ONE error path that never passes through
+// the redactor setupLogger installs: the logger is request-scoped (built per
+// invocation in cobra's PersistentPreRunE) and is long gone by the time
+// ExecuteContext returns its error here. Every structured log line is scrubbed
+// and this line was not, so a secret-shaped token echoed by a subprocess — the
+// docker daemon's raw stderr is the measured case (TD, internal/verify/exec.go)
+// — reached stderr and CI logs verbatim.
+//
+// The redactor is built with an EMPTY review root: this call site has no review
+// to relativize paths against, and NewRedactor's bearer/sk- shape scrubbing
+// applies regardless of configured secrets.
+//
+// KNOWN LIMIT, recorded rather than implied away: the request-scoped redactor is
+// constructed WITH the registry's configured secrets, and this one cannot be —
+// those values live on a config the command already tore down. So an exact
+// configured key echoed back in a genuinely novel shape is scrubbed here only if
+// it matches bearer/sk-. That is strictly more than the nothing this path did
+// before, and the shape patterns are what the measured leak (a daemon echoing a
+// token) actually produces.
+//
+// Bounding the message length is a
+// separate concern handled at the point the cause is wrapped, not here — this
+// function must not truncate, or a legitimate multi-line usage error would lose
+// its tail.
+func terminalErrorLine(err error) string {
+	if err == nil {
+		return ""
+	}
+	return log.NewRedactor("").Redact(err.Error())
 }
 
 // handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a

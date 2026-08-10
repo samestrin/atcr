@@ -54,7 +54,7 @@ func addAutoFixFlags(cmd *cobra.Command) {
 			"If branch/commit creation succeeds and a later step fails, the remote branch (and possibly commit) is left behind and must be deleted manually.")
 	cmd.Flags().Bool("no-sandbox", false,
 		"DANGER: disables container isolation for --auto-fix validation. By default --auto-fix runs the "+
-			"validation command (e.g. `go build`/`npm test`) inside a sandbox container so LLM-generated code "+
+			"validation command (e.g. go build/npm test) inside a sandbox container so LLM-generated code "+
 			"cannot touch the host. Passing --no-sandbox runs that LLM-generated validation directly on the host "+
 			"machine with your privileges, with no isolation — only use it where Docker is unavailable and you "+
 			"accept the risk. Meaningless without --auto-fix. Prints a security warning to stderr on every run.")
@@ -71,12 +71,53 @@ func addAutoFixFlags(cmd *cobra.Command) {
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
 }
 
+// autoFixRefusal is the --auto-fix gate's refusal error. Error() returns the
+// joined human-readable list ONLY — the resolver's message is already rendered
+// into that list, so contributing it here would print it twice — while Unwrap
+// exposes the underlying cause so errors.Is(verify.ErrSandboxNoUsableBackend)
+// means the same thing at the --exec and --auto-fix call sites. Unlike the
+// hiddenCause placeholder it replaced, Error() is never empty: any consumer
+// that unwraps and prints (errors.Unwrap(err).Error(), errors.Join, a %v on an
+// intermediate cause, a structured logger walking the chain) gets real text.
+// It must never escape validateAutoFixBackend's wrapping expression — the
+// joined text alone is only the right message in that one position.
+type autoFixRefusal struct {
+	text  string
+	cause error
+}
+
+func (e autoFixRefusal) Error() string { return e.text }
+func (e autoFixRefusal) Unwrap() error { return e.cause }
+
 // resolveAutoFixSandboxFn is the sandbox resolver validateAutoFixBackend calls,
 // indirected through a package var (like resolveHeadSHAFn) so a test can count
 // invocations — the load-bearing proof that --no-sandbox skips resolution
 // entirely rather than calling a resolver that no-ops (AC 03-02). Production
 // points at the real verify.ResolveAutoFixSandbox.
 var resolveAutoFixSandboxFn = verify.ResolveAutoFixSandbox
+
+// checkOSLevelSnapshotFn is the seam for the os-level snapshot pre-check used by
+// both gate call sites: --auto-fix's gate check (5) in validateAutoFixBackend
+// (autofix.go) and --exec's resolveExec (verify.go). A single package var is
+// intentional so a test can stage a refusal without needing a repo actually
+// checked out at $HOME, but mutating it affects both gates — any test stubbing
+// it must restore the original value in a cleanup.
+var checkOSLevelSnapshotFn = verify.CheckOSLevelSnapshotUsable
+
+// checkOSLevelToolchainFn is the sibling seam for the os-level toolchain-
+// reachability pre-check, used by the same two gate call sites as
+// checkOSLevelSnapshotFn and subject to the same restore-in-cleanup rule.
+//
+// Separate from the snapshot seam on purpose: the two answer different questions
+// (can the sandbox CONTAIN this directory / can it REACH this tool), fail for
+// unrelated reasons, and a test staging one must not have to stage the other.
+var checkOSLevelToolchainFn = verify.CheckOSLevelToolchainReachable
+
+// emitPendingFallbackWarningFn fires the fallback-engaged notice the resolvers
+// defer until a caller commits to the run. Indirected through a package var, like
+// its sibling gates, so a test can assert WHEN it fires rather than only that the
+// text appeared somewhere in a log buffer.
+var emitPendingFallbackWarningFn = verify.EmitPendingFallbackWarning
 
 // warnNoSandbox writes the --no-sandbox security warning to out. It is
 // deliberately NOT memoized — no sync.Once, no package-level "seen" bool, no
@@ -191,6 +232,9 @@ func resolveValidateTimeout(af *registry.AutoFixConfig) (time.Duration, error) {
 func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, repoRoot string) (autoFixBackend, error) {
 	var be autoFixBackend
 	var missing []string
+	// sandboxErr preserves the resolver's error VALUE next to its rendered text in
+	// `missing`, so the refusal below can wrap it and callers can errors.Is it.
+	var sandboxErr error
 
 	var af *registry.AutoFixConfig
 	if proj != nil {
@@ -318,8 +362,41 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 		}
 		if backend, err := resolveAutoFixSandboxFn(ctx, true, sandboxConfig); err != nil {
 			missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+			// The error itself is kept alongside its rendered text so the final
+			// refusal can wrap it. Flattening to a string here would strip
+			// verify.ErrSandboxNoUsableBackend, leaving errors.Is true at the
+			// --exec call site and false at this one — two behaviors from the
+			// sentinel that exists precisely so both mean the same thing.
+			sandboxErr = err
 		} else {
 			be.sandboxBackend = backend
+			// (5) Snapshot usability — only bites when the os-level fallback was
+			// selected, and is a no-op for docker. The resolver's Preflight probes
+			// its OWN temp snapshot, so it cannot vouch for the directory the
+			// validation will actually be handed: this repo root. A repo checked out
+			// at $HOME, or whose path carries a profile metacharacter, would
+			// otherwise pass this gate and refuse at Run — after --auto-fix had
+			// already applied its patch (TD-019). Joining the same `missing` slice
+			// keeps it a fail-closed gate refusal like the other four, not a new
+			// error path.
+			if err := checkOSLevelSnapshotFn(backend, sandboxConfig, absTarget, true); err != nil {
+				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+				sandboxErr = err
+			}
+			// (5b) Toolchain reachability — the sibling gate. The sandbox sanitizes
+			// the workload's PATH, so a validate_command that runs on the host can be
+			// unreachable inside the run; unchecked, that arrives as `command not
+			// found` AFTER the patch has been applied, which is the same
+			// too-late-to-help shape check (5) exists to prevent.
+			//
+			// be.validateArgv is the RESOLVED argv from check (2), not the raw
+			// config: a project relying on the Go default has no configured command
+			// to inspect, and checking the raw value would silently skip exactly
+			// those projects.
+			if err := checkOSLevelToolchainFn(backend, be.validateArgv); err != nil {
+				missing = append(missing, fmt.Sprintf("sandbox: %s", err.Error()))
+				sandboxErr = err
+			}
 		}
 	}
 
@@ -338,8 +415,25 @@ func validateAutoFixBackend(cmd *cobra.Command, proj *registry.ProjectConfig, re
 	}
 
 	if len(missing) > 0 {
-		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", strings.Join(missing, "; ")))
+		joined := strings.Join(missing, "; ")
+		if sandboxErr != nil {
+			// The refusal's Error() is the joined list alone (the resolver's text
+			// is already rendered into it); Unwrap carries the resolver's error so
+			// the sentinel stays matchable without printing a second time.
+			return autoFixBackend{}, usageError(autoFixRefusal{
+				text:  fmt.Sprintf("--auto-fix cannot run: %s", joined),
+				cause: sandboxErr,
+			})
+		}
+		return autoFixBackend{}, usageError(fmt.Errorf("--auto-fix cannot run: %s", joined))
 	}
+	// Every gate passed, so the run is committed and the isolation-model-changed
+	// notice is finally true. Emitted HERE rather than beside check (5) on
+	// purpose: an unrelated failure — a missing GitHub token, an unresolvable
+	// validate command — still refuses the run, and warning that the fallback
+	// "engaged" for a run that never happens is the same misreport this deferral
+	// removes. A no-op when no notice is pending.
+	emitPendingFallbackWarningFn(cmd.Context(), be.sandboxBackend)
 	return be, nil
 }
 

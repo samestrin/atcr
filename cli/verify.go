@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,12 +63,113 @@ func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Back
 	if proj == nil || proj.Sandbox == nil {
 		return nil, nil, 0, usageError(errors.New("--exec requires a project config with a sandbox block"))
 	}
-	backend, testCmd, timeout, err := verify.ResolveExecBackend(cmd.Context(), true, proj.Sandbox)
+	// cmd.Context() is nil on a bare command that was never executed (cobra does
+	// not default it); production always arrives via ExecuteContext. The sibling
+	// call site guards this already (autofix.go), and an unguarded nil reaches
+	// exec.CommandContext(nil, …) inside the docker preflight and panics rather
+	// than refusing — so the two sites guard it identically.
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// The same TD-019 pre-check --auto-fix runs as its gate check (5), applied
+	// here so the two resolvers do not drift: under the os-level fallback a repo
+	// at $HOME, at /tmp, or at a path carrying a sandbox-exec profile
+	// metacharacter is rejected by the generators, and without this it surfaces
+	// only when a skeptic's first run_tests call faults — which the reviewing
+	// model can misread as a failing test and turn into a false finding.
+	//
+	// writable is false: --exec's call sites leave RunSpec.Writable false, and
+	// the read-only and writable shapes accept different paths, so checking the
+	// other one here would validate a run that never happens.
+	//
+	// normalizeRepoFlag is the same resolution runVerify uses — but only on a
+	// command that registers --repo-root. `atcr review` registers --repo as the
+	// GitHub owner/name target and no --repo-root at all, and normalizeRepoFlag
+	// treats --repo as the deprecated PATH alias, so calling it on that call
+	// site either hard-refuses `--repo owner/name` as a nonexistent path or
+	// silently stats an unrelated directory. On a repo-root-less command the
+	// root is "." — the working tree, which is the root the review run itself
+	// uses.
+	root := "."
+	if cmd.Flags().Lookup("repo-root") != nil {
+		var rootErr error
+		root, rootErr = normalizeRepoFlag(cmd)
+		if rootErr != nil {
+			return nil, nil, 0, rootErr
+		}
+	}
+	absRoot, absErr := filepath.Abs(root)
+	if absErr != nil {
+		return nil, nil, 0, usageError(absErr)
+	}
+	backend, testCmd, timeout, err := resolveExecBackendFn(ctx, true, proj.Sandbox)
 	if err != nil {
+		// Deliberately unchanged: every resolver error — the pre-existing
+		// single-backend refusal and the combined neither-usable one alike — is a
+		// usage error here. The resolver already decided WHICH refusal this is and
+		// said so in the message; re-deciding it at this layer would duplicate that
+		// judgement in a second place, and branching on the sentinel to print
+		// something different is exactly the divergence AC 03-04 forbids. The
+		// sentinel travels intact because codedError implements Unwrap.
 		return nil, nil, 0, usageError(err)
 	}
+	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, absRoot, false); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	// absRoot is NOT necessarily the directory the run is handed. buildDispatcher
+	// takes the run's root from tools.NewSnapshotManager(repoRoot).SnapshotFor(head),
+	// and that returns the live worktree ONLY on the clean-tree fast path
+	// (internal/tools/snapshot.go). Any dirty worktree gets a detached copy under
+	// os.MkdirTemp("", "atcr-snapshot-"), whose path is unrelated to absRoot — so
+	// gating absRoot alone could false-refuse (a repo under $HOME rejected even
+	// though the sandboxed dir is an OS temp path) and false-pass (a TMPDIR the
+	// generators would reject, never inspected).
+	//
+	// Both roots are gated, which is what makes the check right on BOTH paths
+	// without needing to know which one this invocation will take.
+	//
+	// os.TempDir() itself, not a predicted leaf: checkSnapshotUsableFor calls
+	// filepath.EvalSymlinks, which errors on a path that does not exist yet, so a
+	// synthesized "atcr-snapshot-XXXX" name would fail for the wrong reason. This
+	// is sound because the containment checks involved are pure path-prefix logic
+	// with no dependence on directory contents, and os.MkdirTemp always nests
+	// under os.TempDir() with a random suffix carrying no profile metacharacters —
+	// so a safe os.TempDir() implies every snapshot leaf beneath it is safe too.
+	//
+	// Deliberately NOT moved into buildDispatcher, which is where SnapshotDir is
+	// finally known: a failure there is returned into the pipeline and degrades
+	// affected findings to unverifiable, whereas a refusal here is a fail-fast
+	// usage error before the review starts — which is the entire reason this
+	// pre-check exists rather than letting the first run_tests call fault.
+	if err := checkOSLevelSnapshotFn(backend, proj.Sandbox, os.TempDir(), false); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	// The sandbox sanitizes the workload's PATH, so a test_command the operator
+	// runs fine on the host can be unreachable inside the run. Unchecked, that is
+	// a `command not found` arriving mid-review, which a skeptic can misread as a
+	// genuine validation failure rather than a missing tool. Same fail-fast
+	// position and same usage-error class as the snapshot gates above.
+	if err := checkOSLevelToolchainFn(backend, testCmd); err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	// Every gate has now accepted the run, so the isolation-model-changed notice
+	// is finally true. The resolver DEFERS it (verify.pendingFallbackWarning)
+	// precisely because the refusals above can still fire: warning first meant an
+	// operator read "fallback engaged ... runs_as invoking user" about a run that
+	// never executed anything. A no-op for docker and for any backend carrying no
+	// pending notice, so it is called unconditionally.
+	emitPendingFallbackWarningFn(ctx, backend)
 	return backend, testCmd, timeout, nil
 }
+
+// resolveExecBackendFn is the seam through which resolveExec reaches the
+// resolver, mirroring autofix.go's `var resolveAutoFixSandboxFn`. It exists so a
+// test can produce the neither-backend-usable outcome, which cannot be staged
+// with real binaries: on a host that HAS a working sandbox-exec or bwrap the
+// fallback succeeds, so the very case that must be surfaced correctly is the one
+// a real-binary test can never reach.
+var resolveExecBackendFn = verify.ResolveExecBackend
 
 // newRedactor is the seam through which runVerify constructs the exec-evidence
 // redactor. A package var (not a direct log.NewRedactor call) so a test can
@@ -104,13 +207,6 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
 	}
 
-	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
-	if err != nil {
-		return err // refuse-without-backend / preflight failure (exit 2)
-	}
-
-	fresh, _ := cmd.Flags().GetBool("fresh")
-	thorough, _ := cmd.Flags().GetBool("thorough")
 	// The reviewed-repo root skeptics inspect and the redactor relativizes
 	// absolute paths against (Epic 22.1). Defaults to "." (the CWD == repo-root
 	// operating assumption), preserving pre-22.1 behavior; --repo <other-repo>
@@ -118,6 +214,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	// normalizeRepoFlag so empty/unset normalization and the nonexistent-root
 	// guard stay identical across both commands (rather than passing a bad root
 	// into the snapshot, where every finding silently degrades to unverifiable).
+	//
+	// Resolved BEFORE resolveExec, deliberately. resolveExec's last act is the
+	// os-level fallback-engaged notice, and that notice carries the docker
+	// preflight cause — the daemon's raw stderr and the joined `docker run` argv,
+	// with absolute host paths. Installing the redactor after that call would
+	// leave the one line most worth scrubbing unscrubbed. resolveExec already
+	// calls normalizeRepoFlag itself, so this is a reordering, not new work.
 	repoRoot, err := normalizeRepoFlag(cmd)
 	if err != nil {
 		return err
@@ -131,6 +234,30 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageError(err)
 	}
+
+	// ONE redactor, two sinks. It scrubs the persisted exec evidence
+	// (verify.Options.Redactor, below) AND every log line this command emits.
+	//
+	// The log half was missing entirely: newRedactor was wired only into Options,
+	// and nothing installed a redactor on the CONTEXT, so `atcr verify` ran under
+	// setupLogger's base log.NewRedactor("") — no review root, therefore no path
+	// relativization — for its whole lifetime. `atcr review` had this via
+	// correlateAndRedact; the standalone path did not. Absolute reviewed-repo
+	// paths reached stderr and CI logs as a result.
+	//
+	// Built once and shared rather than constructed twice: two redactors could
+	// drift to different roots or secret sets, leaving log lines and findings.json
+	// scrubbed to different standards with nothing to catch it.
+	redactor := newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...)
+	cmd.SetContext(log.NewContext(cmd.Context(), log.WithRedactor(log.FromContext(cmd.Context()), redactor)))
+
+	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
+	if err != nil {
+		return err // refuse-without-backend / preflight failure (exit 2)
+	}
+
+	fresh, _ := cmd.Flags().GetBool("fresh")
+	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
 		Thorough:          thorough,
@@ -142,7 +269,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		// Scrub configured registry secrets from reproduced exec evidence before it
 		// is persisted into findings.json (Epic 11.0). This path holds only the
 		// registry, so secrets resolve via RegistrySecretValues, not a PreparedReview.
-		Redactor: newRedactor(absRoot, fanout.RegistrySecretValues(cfg.Registry)...),
+		// The SAME instance now also backs the context logger — see above.
+		Redactor: redactor,
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {

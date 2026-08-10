@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/verify"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
@@ -1117,5 +1118,338 @@ func TestDocsAudit_ConfigSetTelemetryFlagCoverage(t *testing.T) {
 		if !strings.Contains(long, want) {
 			t.Errorf("`atcr config set` Long text omits %q; it must document the only supported key and its accepted values", want)
 		}
+	}
+}
+
+// nestedYAMLKeyValue returns the value documented for key nested one level under
+// the top-level block, inside a fenced YAML block in ref. It is deliberately
+// stricter than configBlockDocumented: a bare mention of the key in prose, the
+// key under a DIFFERENT top-level block, or the key at column 0 all fail to
+// match, because none of those tell a reader where the key actually lives.
+//
+// The returned bool reports whether such a key was found at all, so a caller can
+// distinguish "documented with the wrong value" from "not documented".
+func nestedYAMLKeyValue(ref, block, key string) (string, bool) {
+	reBlock := regexp.MustCompile("^" + regexp.QuoteMeta(block))
+	// Indentation is required: a column-0 `key:` is a sibling of the block, not a
+	// field of it.
+	reKey := regexp.MustCompile(`^\s+` + regexp.QuoteMeta(key) + `:\s*(.*)$`)
+
+	inFence, inBlock := false, false
+	for _, ln := range strings.Split(ref, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if !inFence {
+			if strings.HasPrefix(trimmed, "```yaml") || strings.HasPrefix(trimmed, "```yml") {
+				inFence = true
+			}
+			continue
+		}
+		if trimmed == "```" {
+			// Block scope never survives its fence.
+			inFence, inBlock = false, false
+			continue
+		}
+		if reBlock.MatchString(ln) {
+			inBlock = true
+			continue
+		}
+		// Any other column-0 key ends the block.
+		if ln != "" && !strings.HasPrefix(ln, " ") && !strings.HasPrefix(ln, "\t") {
+			inBlock = false
+			continue
+		}
+		if !inBlock {
+			continue
+		}
+		if m := reKey.FindStringSubmatch(ln); m != nil {
+			val := m[1]
+			// Trailing `# comment` is presentation, not value.
+			if i := strings.Index(val, "#"); i >= 0 {
+				val = val[:i]
+			}
+			val = strings.Trim(strings.TrimSpace(val), `"'`)
+			if val == "" {
+				// `fallback:` with no value documents nothing actionable.
+				continue
+			}
+			return val, true
+		}
+	}
+	return "", false
+}
+
+// TestNestedYAMLKeyValueRejectsMisplacedKeys guards the helper above against the
+// four ways `fallback:` can appear without actually documenting the
+// `sandbox.fallback` surface.
+func TestNestedYAMLKeyValueRejectsMisplacedKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{"prose only", "The sandbox: block accepts fallback: os-level in some configs."},
+		{"wrong parent block", "```yaml\nauto_fix:\n  fallback: os-level\n```"},
+		{"column zero, not nested", "```yaml\nsandbox:\n  backend: docker\nfallback: os-level\n```"},
+		{"empty value", "```yaml\nsandbox:\n  fallback:\n```"},
+		{"scope leaks past fence", "```yaml\nsandbox:\n  backend: docker\n```\n\n```yaml\n  fallback: os-level\n```"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := nestedYAMLKeyValue(tc.ref, "sandbox:", "fallback"); ok {
+				t.Errorf("nestedYAMLKeyValue matched %q; %s must not count as documenting sandbox.fallback", got, tc.name)
+			}
+		})
+	}
+}
+
+// TestNestedYAMLKeyValueReadsValue asserts the helper strips a trailing comment
+// and surrounding quotes, so a documented value can be compared to the shipped
+// constant verbatim.
+func TestNestedYAMLKeyValueReadsValue(t *testing.T) {
+	cases := map[string]string{
+		"plain":     "```yaml\nsandbox:\n  fallback: os-level\n```",
+		"commented": "```yaml\nsandbox:\n  fallback: os-level     # opt-in, never automatic\n```",
+		"quoted":    "```yaml\nsandbox:\n  fallback: \"os-level\"\n```",
+	}
+	for name, ref := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, ok := nestedYAMLKeyValue(ref, "sandbox:", "fallback")
+			if !ok {
+				t.Fatal("nestedYAMLKeyValue found no fallback key")
+			}
+			if got != "os-level" {
+				t.Errorf("nestedYAMLKeyValue = %q, want %q", got, "os-level")
+			}
+		})
+	}
+}
+
+// TestAutoFixDocsDocumentSandboxFallback asserts docs/auto-fix.md documents the
+// opt-in `sandbox.fallback` field with the value the code actually accepts. The
+// expected value is READ FROM registry.SandboxFallbackOSLevel rather than
+// hardcoded, so renaming the sentinel fails this test instead of silently
+// desynchronizing the docs from the config validator (AC 03-05).
+func TestAutoFixDocsDocumentSandboxFallback(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "auto-fix.md"))
+	if err != nil {
+		t.Fatalf("read auto-fix.md: %v", err)
+	}
+	ref := string(b)
+
+	got, ok := nestedYAMLKeyValue(ref, "sandbox:", "fallback")
+	if !ok {
+		t.Fatal("docs/auto-fix.md does not document the `fallback:` key inside a fenced YAML `sandbox:` block")
+	}
+	if got != registry.SandboxFallbackOSLevel {
+		t.Errorf("docs/auto-fix.md documents `sandbox.fallback: %s`, but the only value the config validator accepts is %q", got, registry.SandboxFallbackOSLevel)
+	}
+}
+
+// markdownSection returns the body of the first `##`/`###` section whose heading
+// matches re, up to the next heading of the same-or-higher level. It exists so a
+// prose assertion can be scoped to the section under test: docs/auto-fix.md
+// already says "opt-in" about `--exec` in its opening paragraph, so a
+// whole-file substring check would pass vacuously.
+//
+// Lines inside a fenced code block are never treated as headings. Almost every
+// YAML example in docs/ opens with a `# path/to/file` comment, and reading that
+// as an H1 outranks any `##` section heading and ends the section at its first
+// fence — silently, because the caller still gets a body and still runs its
+// assertions, just against a fraction of the prose. That is exactly what
+// happened to docs/auto-fix.md's `sandbox.fallback: os-level` section, whose
+// example begins `# .atcr/config.yaml`: the section was cut off six lines in and
+// TestAutoFixDocsStateFallbackIsOptIn reported prose missing that was four
+// paragraphs below the cut.
+func markdownSection(ref string, re *regexp.Regexp) (string, bool) {
+	reHeading := regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	reFence := regexp.MustCompile("^\\s*(```|~~~)")
+	var body []string
+	level := 0
+	inFence := false
+	for _, ln := range strings.Split(ref, "\n") {
+		if reFence.MatchString(ln) {
+			inFence = !inFence
+			if level > 0 {
+				body = append(body, ln)
+			}
+			continue
+		}
+		var m []string
+		if !inFence {
+			m = reHeading.FindStringSubmatch(ln)
+		}
+		if level == 0 {
+			if m != nil && re.MatchString(m[2]) {
+				level = len(m[1])
+			}
+			continue
+		}
+		if m != nil && len(m[1]) <= level {
+			break
+		}
+		body = append(body, ln)
+	}
+	if level == 0 {
+		return "", false
+	}
+	return strings.Join(body, "\n"), true
+}
+
+// TestMarkdownSectionScopesToItsOwnHeading guards the helper against returning
+// content from a sibling section, which is the bug that would let a scoped prose
+// assertion pass vacuously again.
+func TestMarkdownSectionScopesToItsOwnHeading(t *testing.T) {
+	doc := "## Intro\nopt-in prose here\n\n## Target\nwanted body\n\n### Nested\nalso wanted\n\n# After\nunwanted"
+	body, ok := markdownSection(doc, regexp.MustCompile(`Target`))
+	if !ok {
+		t.Fatal("markdownSection did not find the Target section")
+	}
+	if !strings.Contains(body, "wanted body") || !strings.Contains(body, "also wanted") {
+		t.Errorf("markdownSection dropped its own body or a nested subsection: %q", body)
+	}
+	for _, unwanted := range []string{"opt-in prose here", "unwanted"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("markdownSection leaked sibling content %q into the section body", unwanted)
+		}
+	}
+}
+
+// TestMarkdownSectionIgnoresHeadingsInsideFencedBlocks guards the other
+// direction: truncating a section EARLY is just as bad as leaking a sibling
+// into it, and it is the quieter failure — the assertions built on the section
+// still run, they just run against a fraction of the prose and report the rest
+// as missing.
+//
+// A `#` comment is the first line of almost every YAML example in docs/, and
+// docs/auto-fix.md's fallback section opens with one (`# .atcr/config.yaml`).
+// Read as an H1 that outranks the `##` section heading, it cut that section off
+// at its first code fence and made TestAutoFixDocsStateFallbackIsOptIn demand
+// prose that was present four paragraphs further down.
+func TestMarkdownSectionIgnoresHeadingsInsideFencedBlocks(t *testing.T) {
+	for name, fence := range map[string]string{"backtick": "```", "tilde": "~~~"} {
+		t.Run(name, func(t *testing.T) {
+			doc := "## Target\nbefore fence\n\n" + fence + "yaml\n# .atcr/config.yaml\nsandbox:\n  fallback: os-level\n" + fence +
+				"\n\nafter fence\n\n## Sibling\nunwanted"
+			body, ok := markdownSection(doc, regexp.MustCompile(`Target`))
+			if !ok {
+				t.Fatal("markdownSection did not find the Target section")
+			}
+			if !strings.Contains(body, "after fence") {
+				t.Errorf("a `#` comment inside a fenced block truncated the section: %q", body)
+			}
+			if !strings.Contains(body, "before fence") {
+				t.Errorf("markdownSection dropped the body before the fence: %q", body)
+			}
+			if strings.Contains(body, "unwanted") {
+				t.Errorf("markdownSection leaked the sibling section: %q", body)
+			}
+		})
+	}
+}
+
+// TestAutoFixDocsStateFallbackIsOptIn asserts the prose carries the facts a
+// reader's risk-acceptance decision depends on, and that AC 03-05's Edge Case 1
+// names as the failure mode: the field is opt-in (never automatic), and the
+// unset default is unchanged. A YAML example alone can imply neither.
+//
+// The assertion is scoped to the fallback section, not the whole file, because
+// docs/auto-fix.md's opening paragraph already says "opt-in" about `--exec`.
+func TestAutoFixDocsStateFallbackIsOptIn(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "auto-fix.md"))
+	if err != nil {
+		t.Fatalf("read auto-fix.md: %v", err)
+	}
+	ref := string(b)
+
+	// The "automatic fallback" framing is what /refine-epic explicitly rejected.
+	// Matched as a regex family, not a fixed blacklist, so a reworded variant
+	// ("falls back automatically", "automatically engages") is caught too.
+	reAutomatic := regexp.MustCompile(`(?i)automatic\w*\s+(fallback|engage)|falls?\s+back\s+automatic\w*|automatically\s+(falls?\s+back|engages)`)
+	if m := reAutomatic.FindString(ref); m != "" {
+		t.Errorf("docs/auto-fix.md uses the rejected phrasing %q; the fallback is config-gated, never automatic", m)
+	}
+
+	// Anchored to the heading that names the sentinel, not merely one containing
+	// the word "fallback": otherwise an earlier fallback-named section could
+	// satisfy these assertions while the real one rots.
+	section, ok := markdownSection(ref, regexp.MustCompile(regexp.QuoteMeta(registry.SandboxFallbackOSLevel)))
+	if !ok {
+		t.Fatalf("docs/auto-fix.md has no section heading naming %q", registry.SandboxFallbackOSLevel)
+	}
+	section = strings.ToLower(section)
+	for _, want := range []struct{ token, why string }{
+		{"opt-in", "state the field is opt-in"},
+		{"unset", "state what the unset default does"},
+		{"refus", "describe the neither-backend-usable refusal (AC 03-04)"},
+	} {
+		if !strings.Contains(section, want.token) {
+			t.Errorf("the fallback section of docs/auto-fix.md must %s (no %q found)", want.why, want.token)
+		}
+	}
+}
+
+// TestExecutionDocsDescribeOSLevelBackend guards docs/execution.md, which
+// auto-fix.md cross-links as the single source of truth for sandbox mechanics.
+// Without this, both passages this sprint corrected could regress — including
+// back to "Docker is the only implementation today" — with CI green, since every
+// other assertion added here reads auto-fix.md only.
+func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "execution.md"))
+	if err != nil {
+		t.Fatalf("read execution.md: %v", err)
+	}
+	ref := string(b)
+
+	// The claim this sprint falsified. Matched loosely so a reworded revival
+	// ("the only backend implemented today") is caught too.
+	reOnlyImpl := regexp.MustCompile(`(?i)Docker is the only (implementation|backend)|only (implementation|backend) (today|available)`)
+	if m := reOnlyImpl.FindString(ref); m != "" {
+		t.Errorf("docs/execution.md still claims %q; the OS-level backend is reachable via sandbox.fallback", m)
+	}
+
+	// The guarantee list is written in container terms, so the page must name the
+	// narrower set the OS-level backend actually delivers.
+	section, ok := markdownSection(ref, regexp.MustCompile(`(?i)OS-level`))
+	if !ok {
+		t.Fatal("docs/execution.md has no section distinguishing the OS-level backend's guarantees from the Docker ones")
+	}
+	if !strings.Contains(section, registry.SandboxFallbackOSLevel) {
+		t.Errorf("the OS-level section of docs/execution.md must name the %q config value", registry.SandboxFallbackOSLevel)
+	}
+	// It must say what is NOT provided, or it overstates parity (AC 03-05).
+	// Token presence alone is not enough: a rewrite claiming the OS-level backend
+	// PROVIDES these protections would pass a plain substring check. Bind each
+	// token to an explicit negative qualifier in the same sentence.
+	for _, want := range []string{"cap-drop", "no-new-privileges"} {
+		re := regexp.MustCompile(`(?i)\bnot\b[^.]*\bprovide\b[^.]*\b` + regexp.QuoteMeta(want) + `\b`)
+		if !re.MatchString(section) {
+			t.Errorf("the OS-level section of docs/execution.md must state that %q is not provided in the same sentence as a negative qualifier", want)
+		}
+	}
+	// The bind set and /tmp distinction are the positive guarantees that make the
+	// negative claims meaningful; losing them would let the section silently drift.
+	for _, want := range []string{"/usr", "/bin", "/lib"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the OS-level section of docs/execution.md must name the Linux bind root %q", want)
+		}
+	}
+	// /tmp is not writable on EITHER platform, but by different mechanisms, and
+	// naming both is what stops a reader assuming macOS silently inherits the
+	// host's. The previous wording pinned here ("On Linux `/tmp` is a fresh
+	// tmpfs") described a profile that still granted the host /tmp on macOS; that
+	// grant has been removed, so this tracks the current guarantee rather than
+	// the sentence that used to state it.
+	// Matched with \s+ between words rather than as a literal: these are prose
+	// sentences in a wrapped markdown bullet, so a literal Contains fails the
+	// moment the phrase straddles a line break — a reflow, not a regression.
+	for _, want := range []string{`fresh\s+` + "`" + `--tmpfs /tmp` + "`", `no\s+write\s+rule\s+for\s+` + "`" + `/tmp` + "`"} {
+		if !regexp.MustCompile(want).MatchString(section) {
+			t.Errorf("the OS-level section of docs/execution.md must distinguish Linux /tmp from macOS /tmp: no match for %q", want)
+		}
+	}
+	if !strings.Contains(section, "No network egress") {
+		t.Errorf("the OS-level section of docs/execution.md must state that network egress is blocked")
 	}
 }

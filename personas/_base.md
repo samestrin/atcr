@@ -45,7 +45,7 @@ Rules:
 - EST_MINUTES is an integer estimate to fix
 - FILE:LINE must be a real, exact location copied from the diff — never approximate, guess, or invent it
 - EVIDENCE quotes or paraphrases the code that proves the problem
-- No prose, no headers, no markdown around findings; if there are no findings, emit nothing
+- No prose, no headers, no markdown around findings; if there are no findings, emit exactly: NO FINDINGS
 
 Example:
 HIGH|src/auth.go:42|Session token never expires|Check expiry in Validate and reject stale tokens|security|15|expiresAt field is set but never read

@@ -44,7 +44,7 @@ Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
 
 SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
+Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
 HIGH|internal/api/handler.go:12|Caller-supplied index parsed with the error ignored and used to index items, panicking on out-of-range or negative input|Check the Atoi error and bounds-check i against len(items) before indexing|validation|15|i, _ := strconv.Atoi(idxParam)

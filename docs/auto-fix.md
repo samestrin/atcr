@@ -24,9 +24,12 @@ execution reference, which is the authoritative source for the container
 mechanics this page deliberately does not duplicate.
 
 Because sandboxing is on by default, `--auto-fix` **fails closed**: if no
-`sandbox:` block is configured (or the backend fails its preflight) and you did
-not explicitly pass `--no-sandbox`, the command hard-errors rather than silently
-falling back to running the validation command on the host. Sandbox resolution
+`sandbox:` block is configured (or the backend fails its preflight and no
+[`sandbox.fallback`](#os-level-fallback-sandboxfallback-os-level) is configured)
+and you did not explicitly pass `--no-sandbox`, the command hard-errors rather
+than silently falling back to running the validation command on the host. Even
+with a fallback configured, the substitute is another *sandbox* — never the host.
+Sandbox resolution
 is the fourth checked piece of the `--auto-fix` startup gate, joined into the
 same all-or-nothing usage error as the apply target, the validation command, and
 the GitHub credentials — so a missing sandbox is reported alongside any other
@@ -91,6 +94,7 @@ sandbox:
   backend: docker            # required for --auto-fix by default (see above)
   image: golang:1.25         # MUST be present locally (runs are network-isolated)
   test_command: [go, test, ./...]
+  fallback: os-level         # OPTIONAL opt-in; omit for today's fail-closed behavior
 auto_fix:
   apply_target: .            # where the patch is applied (default: repo root)
   validate_command: [go, build, ./...]   # post-apply validation argv
@@ -118,13 +122,139 @@ The block has exactly three fields:
 > by default, `--auto-fix` needs a `sandbox:` block (with an `image` and
 > `test_command`) just as `--exec` does — the container image is where your
 > validation command runs. If Docker is genuinely unavailable in your
-> environment, use [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
-> of host execution instead.
+> environment, you have two options, in order of preference: the still-contained
+> [`sandbox.fallback: os-level`](#os-level-fallback-sandboxfallback-os-level)
+> opt-in below, or [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
+> of unsandboxed host execution instead.
+
+## OS-level fallback (`sandbox.fallback: os-level`)
+
+`sandbox.fallback` is an **opt-in** config field that names a second backend to
+try when Docker fails its preflight. It uses the operating system's own process
+confinement — `sandbox-exec` on macOS, `bwrap` (Bubblewrap) on Linux — instead of
+a container, so a machine with no Docker daemon can still run validation under
+real containment. It applies to **both** `--auto-fix` validation and `--exec`
+reproduction, since both resolve their backend through the same preflight.
+
+```yaml
+# .atcr/config.yaml
+sandbox:
+  backend: docker            # still the primary; the fallback is only a fallback
+  image: golang:1.25
+  test_command: [go, test, ./...]
+  fallback: os-level         # the ONLY accepted value
+```
+
+**It is never automatic.** ATCR does not infer this from your host — not from a
+missing `docker` binary, not from a CI environment variable. All of the following
+must hold before the fallback engages: you wrote `fallback: os-level` in config,
+Docker's preflight has already failed, and that failure was not caused by your own
+cancellation (an interrupted run is refused outright rather than retried under a
+different backend). It is never chosen as a first-choice backend while Docker is
+healthy. Any **non-empty** value other than `os-level` is rejected at config-load
+time; a blank or whitespace-only value is treated as unset.
+
+**With `fallback` unset, nothing changes.** That is the default and the shape of
+every config written before the field existed: a Docker preflight failure remains
+a hard refusal, and `--no-sandbox` remains the only way to run validation outside
+a sandbox. The fail-closed posture described in
+[Sandboxed by default](#sandboxed-by-default) is untouched for anyone who does not
+opt in.
+
+**When neither backend is usable, the run is refused.** If Docker's preflight
+fails and the OS-level backend then fails its own preflight too (no
+`sandbox-exec`/`bwrap`, or the platform cannot provide containment), `--auto-fix`
+hard-errors with a message naming both failures. It does **not** quietly degrade
+to unsandboxed host execution. A configured-but-broken fallback is a refusal, not
+a bypass.
+
+**It logs when it engages.** Switching backends changes your isolation model, so
+ATCR emits a warning naming the backend, the Docker error that triggered it, and
+what is no longer enforced. Note this is a **log line, not a banner**: unlike
+`--no-sandbox`'s unconditional stderr warning, it goes through the context logger
+and is therefore suppressible with `ATCR_LOG_LEVEL=error`.
+
+### What you give up relative to Docker
+
+The OS-level backend is a genuine improvement over `--no-sandbox` — the run still
+gets no network egress, and no access to `$HOME` (so `~/.ssh` stays unreadable).
+It is **not** equivalent to the container backend: it has no image, no root
+filesystem to remount, and no capability set to drop, and on macOS it does not get
+the virtual-machine boundary Docker Desktop provides. So the guarantee list in
+[What the sandbox guarantees](execution.md#what-the-sandbox-guarantees) applies
+only to the Docker backend; that page names the narrower OS-level set separately.
+Concretely, opting in accepts all of the following:
+
+- **Runs as the invoking user**, not as the unprivileged `uid 65534` the container
+  backend uses.
+- **No resource caps.** `sandbox.memory`, `sandbox.cpus`, and `sandbox.pids_limit`
+  still pass config validation but are **not enforced** by this backend. Every
+  hardened container default is likewise dropped: `--cap-drop ALL`,
+  `--security-opt no-new-privileges`, and the read-only root filesystem.
+- **`sandbox.image` is ignored.** There is no container, so `test_command` /
+  `validate_command` runs against the **host's** toolchain rather than the declared
+  image's. If that toolchain is not reachable the command exits `127`, which a
+  reviewing model can misread as a genuine validation failure rather than a missing
+  tool. On Linux, "reachable" is narrower than your `PATH` suggests: the sandbox
+  binds only `/usr` plus `/bin`, `/sbin`, `/lib`, and `/lib64`, so a toolchain
+  installed under `/opt`, `/nix`, `/home/linuxbrew`, or a version-manager shim in
+  `$HOME` (mise, asdf, nvm) is invisible inside the sandbox even though `PATH`
+  still resolves it on the host.
+- **`/tmp` is not writable on either platform.** On Linux the run gets a fresh,
+  ephemeral `--tmpfs /tmp`. On macOS `sandbox-exec` cannot provide one, so the
+  profile simply grants no write rule for `/tmp` and a write there is denied.
+  `TMPDIR`, `HOME`, `GOCACHE` and `GOTMPDIR` point into the per-run scratch
+  directory, so anything following the environment works; a command that
+  hardcodes bare `/tmp` fails on macOS with `Operation not permitted`.
+- **Go dependency resolution needs a module cache you warm yourself.** The sandbox
+  has no network, so a non-vendored dependency cannot be downloaded during a run.
+  `GOMODCACHE` points at a persistent, atcr-owned cache
+  (`<user cache dir>/atcr/oslevel-modcache`) mounted **read-only**, so a cache
+  warmed on the host is reused by every later run. Until it is warmed, a `go build`
+  with an external dependency fails with `dial tcp: ... no such host`. Vendored
+  trees are unaffected. The cache is read-only on purpose: a persistent directory
+  that model-authored code could write would let one run poison what later runs
+  compile.
+
+  Warming it is a **deliberate, operator-invoked step**, not something a review run
+  does for you:
+
+  ```sh
+  GOMODCACHE="$(go env GOMODCACHE)"   # or the atcr cache path above
+  (cd /path/to/repo && GOMODCACHE=<atcr cache path> go mod download)
+  ```
+
+  **atcr will not warm this cache automatically, and that is an accepted
+  limitation rather than a missing feature.** An automatic warm step would have to
+  run a network fetch **on the host**, outside every sandbox, driven by the
+  `go.mod` living *inside the tree under review* — which may be an untrusted pull
+  request naming a typosquatted module or carrying a `replace` directive. That
+  would cross this package's "no network" guarantee on the host side, before any
+  containment applies, to fix a failure mode that is merely inconvenient. The same
+  reasoning is why `sandbox.image` being ignored is disclosed above rather than
+  worked around: a disclosed limitation beats an undisclosed supply-chain surface.
+- **The platform binary is resolved only from `/usr/bin`, `/bin`, `/usr/sbin`, and
+  `/sbin` — never from `$PATH`.** This is deliberate (a `$PATH` lookup is an
+  injection surface for the very code being contained), but it means a `bwrap`
+  installed under `/usr/local/bin` — a source build, Homebrew-on-Linux, or Nix —
+  is **not** found, and the fallback preflight fails.
+- **Validation cost scales with working-tree size, and very large trees are
+  refused.** Because the validation step needs a writable tree, each run makes a
+  full host-side copy of the snapshot before executing. That copy is bounded at
+  **2 GiB and 500,000 entries**; a tree exceeding either ceiling fails the run
+  rather than validating a partial copy. Entries the copy cannot read are skipped
+  with a warning, so an unreadable file does not abort the run.
+
+`sandbox.fallback` and `--no-sandbox` are **separate, non-overlapping** escape
+hatches, and neither implies the other: the flag accepts fully unsandboxed host
+execution, while this config field substitutes a still-contained backend.
 
 ## Opting out (`--no-sandbox`)
 
 The `--no-sandbox` flag is the **only** way to run `--auto-fix`'s validation
-outside the container. It is a command-line flag on `atcr review`; there is no
+unsandboxed, directly on the host. (`sandbox.fallback: os-level` also runs
+validation outside a container, but under OS-level confinement rather than none —
+it is not an opt-out.) It is a command-line flag on `atcr review`; there is no
 config-file equivalent — nothing in the `auto_fix:` block (or anywhere in
 `.atcr/config.yaml`) can disable the sandbox.
 

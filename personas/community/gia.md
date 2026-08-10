@@ -43,7 +43,7 @@ Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
 
 SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
+Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
 CRITICAL|internal/cache/cache.go:13|Goroutines write the shared entries map with no mutex, a concurrent map write and data race|Guard entries with a sync.Mutex or use sync.Map; take the lock inside the goroutine|race|25|go func(k string) { c.entries[k] = load(k) }(k)

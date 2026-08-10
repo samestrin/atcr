@@ -19,7 +19,7 @@ import (
 // manifest and prints its reproducibility hash; `run` executes a suite through the
 // review pipeline and writes a scored run-result; `export` wraps a run-result in
 // the suite-tagged public submission envelope. The curated standard-v1 suite
-// content lives in the external atcr/benchmark-suite repo.
+// content is bundled at benchmarks/standard-v1/ in this repo.
 func newBenchmarkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "benchmark",

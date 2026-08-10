@@ -35,7 +35,7 @@ Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
 
 SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
+Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
 HIGH|store/orders.go:88|Query inside range loop issues one DB call per row (N+1)|Batch the ids into a single WHERE id IN (...) query|n+1|25|for _, id := range ids { db.Find(&u, id) }

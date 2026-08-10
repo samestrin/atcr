@@ -42,7 +42,7 @@ Emit ONLY findings, one per line, exactly 7 pipe-delimited columns:
 
 SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
-Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit nothing.
+Rules: replace literal | in any field with /; CATEGORY is one lowercase word; EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If nothing is wrong, emit exactly: NO FINDINGS
 
 Example:
 CRITICAL|api/client.go:14|Get returns (nil, nil) for a missing key, breaking the published (nil, ErrNotFound) contract callers branch on|Restore ErrNotFound on the absent-key path, or bump the API version and migrate callers|contract|25|return nil, nil

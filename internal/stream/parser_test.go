@@ -194,3 +194,19 @@ func TestParseModelOutput_SkipsFencedExampleRows(t *testing.T) {
 	assert.Equal(t, "real.go", findings[0].File, "the fenced example rows must be skipped")
 	assert.Equal(t, 10, findings[0].Line)
 }
+
+func TestIsNoFindings_MatchesTheSentinelTolerantly(t *testing.T) {
+	// The sentinel is model-produced, so a trailing newline or a lowercase
+	// rendering must not be misread as an anomalous response.
+	for _, in := range []string{"NO FINDINGS", "no findings", "  NO FINDINGS\n", "No Findings"} {
+		assert.True(t, IsNoFindings(in), "%q is the clean-review sentinel", in)
+	}
+	for _, in := range []string{"", "NO FINDINGS HERE", "I found no findings", "NOFINDINGS"} {
+		assert.False(t, IsNoFindings(in), "%q must not be mistaken for the sentinel", in)
+	}
+}
+
+func TestParseModelOutput_TreatsTheSentinelAsZeroFindings(t *testing.T) {
+	assert.Empty(t, ParseModelOutput([]byte(NoFindingsSentinel)),
+		"the sentinel declares a clean review; it must never parse as a finding")
+}

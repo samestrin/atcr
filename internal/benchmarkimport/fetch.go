@@ -1,0 +1,387 @@
+package benchmarkimport
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	neturl "net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/gitexec"
+)
+
+// DatasetURL is the canonical location of aacr-bench's review-comment
+// positive samples (Apache-2.0). See benchmarks/standard-v1/NOTICE.md.
+//
+// Pinned to an immutable commit rather than main: Sample() shuffles the whole
+// record pool, so a single record added or removed upstream would change the
+// entire selection and make the committed suite unreproducible.
+const DatasetURL = "https://raw.githubusercontent.com/alibaba/aacr-bench/b3072489eace26efca8bcf2b1ac6a24ba64f82c1/dataset/positive_samples.json"
+
+// maxDatasetBytes bounds the dataset download. The real file is ~1.1 MB; the
+// ceiling keeps a redirect to something unexpected from being read into memory.
+const maxDatasetBytes = 64 << 20
+
+// maxDiffBytes bounds a fetched diff. It mirrors benchmark.MaxDiffBytes — the
+// runner's per-diff ceiling — and is a var so tests can lower it.
+var maxDiffBytes = benchmark.MaxDiffBytes
+
+// maxFetchAttempts bounds the retry budget for one compare request, counting
+// the first try. Rate limiting is the anticipated failure mode of a full
+// ingestion run, but a sustained outage must surface rather than spin.
+const maxFetchAttempts = 4
+
+// retryBaseDelay is the first backoff interval; each further attempt doubles
+// it. A var so tests do not pay the real schedule.
+var retryBaseDelay = 2 * time.Second
+
+// FetchDataset downloads positive_samples.json. This is an authoring-time
+// action — the suite it produces is committed, so no test and no benchmark run
+// depends on this reaching the network.
+func FetchDataset(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building dataset request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading dataset: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("downloading dataset: unexpected status %s", resp.Status)
+	}
+	// Bounded so an oversized payload fails here as a size problem rather than
+	// surfacing downstream as an opaque "unexpected end of JSON input" from
+	// ParseDataset — the same +1 pattern the compare fetcher uses below.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDatasetBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading dataset: %w", err)
+	}
+	if len(body) > maxDatasetBytes {
+		return nil, fmt.Errorf("dataset exceeds the %d-byte ceiling", maxDatasetBytes)
+	}
+	return body, nil
+}
+
+// CompareAPIFetcher is the primary diff source: GitHub's compare endpoint
+// returns the same unified diff a local clone would produce, without cloning
+// repositories that run to multiple gigabytes.
+type CompareAPIFetcher struct {
+	Client *http.Client
+	// Token authenticates the request. Optional, but the unauthenticated rate
+	// limit (60/hr) is low enough that a real ingestion run needs one.
+	Token string
+	// baseURL overrides the API host in tests. Empty means api.github.com.
+	baseURL string
+}
+
+// FetchDiff implements DiffFetcher against api.github.com's compare endpoint.
+func (f *CompareAPIFetcher) FetchDiff(ctx context.Context, owner, repo, base, head string) ([]byte, error) {
+	client := f.Client
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	}
+	host := f.baseURL
+	if host == "" {
+		host = "https://api.github.com"
+	}
+	// Escaped so a crafted owner/repo value in the dataset cannot redirect the
+	// call with "../" segments.
+	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s", strings.TrimSuffix(host, "/"),
+		neturl.PathEscape(owner), neturl.PathEscape(repo), neturl.PathEscape(base), neturl.PathEscape(head))
+
+	// Throttling is the anticipated failure mode of a full ingestion run, so a
+	// 429/5xx/secondary-403 is retried rather than aborting the build and
+	// discarding every diff fetched before it.
+	var lastErr error
+	for attempt := 1; attempt <= maxFetchAttempts; attempt++ {
+		if attempt > 1 {
+			if err := sleepCtx(ctx, retryDelay(attempt, lastErr)); err != nil {
+				return nil, fmt.Errorf("compare %s/%s: %w", owner, repo, err)
+			}
+		}
+		body, err := f.attemptDiff(ctx, client, url, owner, repo, base, head)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		var retry retryableError
+		if !errors.As(err, &retry) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// retryableError marks a compare failure that a later attempt may survive. It
+// carries the server's Retry-After so backoff can honor it instead of guessing.
+type retryableError struct {
+	err        error
+	retryAfter time.Duration
+}
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
+// retryDelay prefers the server's Retry-After and otherwise doubles the base
+// delay per attempt.
+func retryDelay(attempt int, lastErr error) time.Duration {
+	var retry retryableError
+	if errors.As(lastErr, &retry) && retry.retryAfter > 0 {
+		return retry.retryAfter
+	}
+	return retryBaseDelay << (attempt - 2)
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// attemptDiff performs one compare request. A failure that a retry may survive
+// is wrapped in retryableError; everything else is terminal.
+func (f *CompareAPIFetcher) attemptDiff(ctx context.Context, client *http.Client, url, owner, repo, base, head string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building compare request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3.diff")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if f.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+f.Token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		// A transport error mid-run is exactly what a retry is for; a cancelled
+		// context is not, and must not be spun on.
+		wrapped := fmt.Errorf("compare %s/%s: %w", owner, repo, err)
+		if ctx.Err() != nil {
+			return nil, wrapped
+		}
+		return nil, retryableError{err: wrapped}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// A 404 here means the compare range no longer resolves — the PR's commits
+	// were force-pushed away or garbage-collected. That is this record's problem
+	// alone, so it is reported as unavailable rather than failing the ingestion.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("compare %s/%s %s...%s: %w", owner, repo, base, head, ErrDiffUnavailable)
+	}
+	if resp.StatusCode != http.StatusOK {
+		statusErr := fmt.Errorf("compare %s/%s %s...%s: unexpected status %s", owner, repo, base, head, resp.Status)
+		if throttled(resp) {
+			return nil, retryableError{err: statusErr, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
+		}
+		return nil, statusErr
+	}
+	// Bounded so an oversized PR fails here, at the record that caused it,
+	// rather than after the suite is written and committed.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDiffBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("compare %s/%s: reading diff: %w", owner, repo, err)
+	}
+	if int64(len(body)) > maxDiffBytes {
+		return nil, fmt.Errorf("compare %s/%s %s...%s: diff exceeds the %d-byte runner ceiling",
+			owner, repo, base, head, maxDiffBytes)
+	}
+	return body, nil
+}
+
+// throttled reports whether a non-OK response is transient. A plain 403 is a
+// permanent credentials problem; GitHub's secondary rate limit is also a 403
+// but says so in the body, so the two are distinguished on that text rather
+// than retried alike.
+func throttled(resp *http.Response) bool {
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return true
+	case resp.StatusCode >= 500:
+		return true
+	case resp.StatusCode == http.StatusForbidden:
+		// Bounded read: this body is a short JSON error, and the response is
+		// discarded either way.
+		peek, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return strings.Contains(strings.ToLower(string(peek)), "secondary rate limit")
+	default:
+		return false
+	}
+}
+
+// parseRetryAfter reads the delay-seconds form of Retry-After. The HTTP-date
+// form is not used by GitHub's rate limiter; an unparsable value falls back to
+// the exponential schedule.
+func parseRetryAfter(v string) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// CloneFetcher is the documented fallback for when the compare API is
+// unavailable (rate limit exhausted, network policy, or a repository whose
+// compare range GitHub refuses to render). It reproduces the same diff from a
+// blobless clone, which is slower and far heavier on disk.
+type CloneFetcher struct {
+	// WorkDir holds the per-repository clones. Defaults to a temp directory
+	// created once on first use and reused for the rest of the run.
+	WorkDir string
+	// BaseURL overrides the clone host. Defaults to https://github.com; tests
+	// and mirrors point it elsewhere.
+	BaseURL string
+
+	tempOnce sync.Once
+	tempDir  string
+	tempErr  error
+}
+
+// workDir resolves the clone root exactly once. Allocating a fresh temp
+// directory per call would defeat the per-repository clone cache below and
+// leave one full clone on disk for every case ingested.
+func (f *CloneFetcher) workDir() (string, error) {
+	if f.WorkDir != "" {
+		return f.WorkDir, nil
+	}
+	f.tempOnce.Do(func() {
+		f.tempDir, f.tempErr = os.MkdirTemp("", "aacr-clone-")
+	})
+	return f.tempDir, f.tempErr
+}
+
+// Cleanup removes the self-allocated temp clone root — blobless clones run to
+// gigabytes, so leaving one per repository on disk permanently is not an
+// option. Call once at the end of the run. A caller-supplied WorkDir is the
+// caller's to manage and is never touched.
+func (f *CloneFetcher) Cleanup() error {
+	if f.WorkDir != "" || f.tempDir == "" {
+		return nil
+	}
+	return os.RemoveAll(f.tempDir)
+}
+
+func (f *CloneFetcher) cloneURL(owner, repo string) string {
+	base := f.BaseURL
+	if base == "" {
+		base = "https://github.com"
+	}
+	return fmt.Sprintf("%s/%s/%s.git", strings.TrimSuffix(base, "/"), owner, repo)
+}
+
+// isUnavailableRef reports whether git's fetch output means the requested
+// object no longer exists upstream, as opposed to a network or auth failure.
+func isUnavailableRef(msg string) bool {
+	return strings.Contains(msg, "couldn't find remote ref") ||
+		strings.Contains(msg, "not our ref")
+}
+
+// FetchDiff implements DiffFetcher by cloning and diffing locally.
+func (f *CloneFetcher) FetchDiff(ctx context.Context, owner, repo, base, head string) ([]byte, error) {
+	work, err := f.workDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating clone workdir: %w", err)
+	}
+	dir := filepath.Join(work, owner+"__"+repo)
+
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		clone := gitexec.CommandContextFn(ctx, "clone", "--filter=blob:none", "--no-checkout",
+			f.cloneURL(owner, repo), dir)
+		if out, err := clone.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("cloning %s/%s: %w: %s", owner, repo, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// PR head commits are frequently unreachable from any branch tip, so fetch
+	// the exact objects rather than relying on the default refspec. The depth is
+	// not pinned to 1: the three-dot diff below needs the merge base, which a
+	// single-commit fetch cannot supply.
+	fetch := gitexec.CommandContextFn(ctx, "-C", dir, "fetch", "origin", base, head)
+	if out, err := fetch.CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		// A ref the remote no longer has is this record's problem alone — the
+		// PR was force-pushed or garbage-collected — so it is reported as
+		// unavailable and skipped, mirroring the compare fetcher's 404.
+		if isUnavailableRef(msg) {
+			return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, ErrDiffUnavailable, msg)
+		}
+		return nil, fmt.Errorf("fetching %s..%s in %s/%s: %w: %s", base, head, owner, repo, err, msg)
+	}
+
+	// Three-dot, matching the compare API's base...head semantics. Two-dot would
+	// inject the reverse of base-side commits whenever the base branch moved
+	// after the fork point, producing a diff of different content than the
+	// primary fetcher. The hardening flags are the repo-wide convention for
+	// diff-family call sites (see internal/gitexec's package doc): the bytes
+	// produced here land in a committed benchmark diff and its published hash.
+	//
+	// The format flags pin every knob a git config can turn — gitexec neutralizes
+	// system and global config but not GIT_CONFIG_* env config, and never the
+	// clone's own local config. Their values are git's defaults, which is what
+	// the compare API emits: three context lines, a/ and b/ prefixes, rename
+	// detection on (GitHub's diffs carry `similarity index`/`rename from`), and
+	// the myers algorithm.
+	//
+	// This makes the output independent of the operator's environment. It does
+	// NOT make it byte-identical to the compare API: the `index <sha>..<sha>`
+	// line carries GitHub's own abbreviation width (11 hex in the committed
+	// suite), while locally that width is derived from the object database of a
+	// --filter=blob:none partial clone. So a clone-produced suite is
+	// semantically equivalent to a compare-produced one, not byte-identical, and
+	// is not expected to reproduce the committed hash — see
+	// benchmarks/standard-v1/NOTICE.md.
+	diff := gitexec.CommandContextFn(ctx, "-C", dir, "diff",
+		"--no-ext-diff", "--no-color", "--no-textconv",
+		"-U3", "--src-prefix=a/", "--dst-prefix=b/", "--find-renames", "--diff-algorithm=myers",
+		base+"..."+head)
+	var stderr bytes.Buffer
+	diff.Stderr = &stderr
+	stdout, err := diff.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
+	}
+	if err := diff.Start(); err != nil {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w", base, head, owner, repo, err)
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, maxDiffBytes+1))
+	waitErr := diff.Wait()
+	if readErr != nil {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: reading diff: %w", base, head, owner, repo, readErr)
+	}
+	if waitErr != nil {
+		// git's own stderr is the diagnostic (e.g. "no merge base" on a partial
+		// clone); a bare "exit status 128" sends the operator nowhere.
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: %w: %s", base, head, owner, repo, waitErr, strings.TrimSpace(stderr.String()))
+	}
+	// Bounded like the compare fetcher, so an oversized PR fails at the record
+	// that caused it instead of exhausting memory or being committed and
+	// failing later inside ReproHashManifest.
+	if int64(len(out)) > maxDiffBytes {
+		return nil, fmt.Errorf("diffing %s..%s in %s/%s: diff exceeds the %d-byte runner ceiling",
+			base, head, owner, repo, maxDiffBytes)
+	}
+	return out, nil
+}

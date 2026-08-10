@@ -340,14 +340,36 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	return res, nil
 }
 
+// ErrDockerUnavailable marks the ONE Preflight failure class that means "Docker
+// is not available on this host": the binary is missing or the daemon is
+// unreachable. It is the gate for the os-level fallback.
+//
+// It exists because Preflight also fails for reasons that are the operator's
+// CONFIGURATION rather than Docker's absence — the declared base image not being
+// present locally, validateHostCaps rejecting memory/cpus against the host, an
+// invalid scratch_size/work_size, or the trivial hardened container failing to
+// run. Falling back on those is the wrong direction: an operator who just
+// tightened a cap would silently get a backend that enforces none of them
+// (osLevelUnenforcedDefaults). Only this class may downgrade; everything else
+// stays a hard refusal, which is what an operator editing a cap expects.
+//
+// Deliberately attached at ONE site. Marking a later step would re-open exactly
+// the downgrade this separates out, so new Preflight steps are unmarked by
+// default — the fail-closed direction.
+var ErrDockerUnavailable = errors.New("docker is unavailable")
+
 // Preflight implements Backend. It verifies, in order: the docker binary is
 // runnable, the daemon is reachable, the base image is present, and a trivial
 // network-isolated container runs to completion.
 func (b *DockerBackend) Preflight(ctx context.Context) error {
 	// 1. Daemon reachable (also proves the binary runs). `docker version` talks
 	//    to the daemon; a non-zero status means it is down or unreachable.
+	//
+	//    This is the only step marked ErrDockerUnavailable: a failure here means
+	//    Docker itself is missing or down, which is what the os-level fallback is
+	//    for. Every step below is a configuration fault and must refuse instead.
 	if err := b.dockerCmd(ctx, 15*time.Second, "version"); err != nil {
-		return fmt.Errorf("sandbox preflight: docker daemon unreachable (is Docker running?): %w", err)
+		return fmt.Errorf("sandbox preflight: docker daemon unreachable (is Docker running?): %w: %w", err, ErrDockerUnavailable)
 	}
 	// 2. Base image present locally (runs are network-isolated, so the image
 	//    cannot be pulled on demand).

@@ -135,6 +135,7 @@ func TestRunTests_Handler_ScopesTargetAndReportsExit(t *testing.T) {
 	assert.Contains(t, res.Content, "exit")
 	assert.Contains(t, res.Content, "1")
 	assert.Contains(t, res.Content, "FAIL: x")
+	assert.Equal(t, "stub", res.BackendName, "the result must name the backend that executed the command")
 }
 
 func TestRunTests_Handler_NoTargetRunsFullSuite(t *testing.T) {

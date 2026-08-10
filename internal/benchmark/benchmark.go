@@ -10,7 +10,7 @@
 // It stays stdlib + scorecard-type only, with no live-LLM dependency: the suite
 // EXECUTION loop that drives each case's diff through the review pipeline lives in
 // cmd/atcr (the composition root that may import internal/fanout). The curated
-// standard-v1 suite CONTENT lives in the external atcr/benchmark-suite repo.
+// standard-v1 suite CONTENT is bundled at benchmarks/standard-v1/ in this repo.
 package benchmark
 
 import (

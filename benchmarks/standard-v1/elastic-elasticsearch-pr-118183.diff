@@ -1,0 +1,929 @@
+diff --git a/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_multi_dense_vector_max_sim.yml b/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_rank_vectors_max_sim.yml
+similarity index 95%
+rename from modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_multi_dense_vector_max_sim.yml
+rename to modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_rank_vectors_max_sim.yml
+index 77d4b70cdfcae..7c46fbc9a26a5 100644
+--- a/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_multi_dense_vector_max_sim.yml
++++ b/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/141_rank_vectors_max_sim.yml
+@@ -3,9 +3,9 @@ setup:
+       capabilities:
+         - method: POST
+           path: /_search
+-          capabilities: [ multi_dense_vector_script_max_sim_with_bugfix ]
++          capabilities: [ rank_vectors_script_max_sim_with_bugfix ]
+       test_runner_features: capabilities
+-      reason: "Support for multi dense vector max-sim functions capability required"
++      reason: "Support for rank vectors max-sim functions capability required"
+   - skip:
+       features: headers
+ 
+@@ -18,14 +18,14 @@ setup:
+           mappings:
+             properties:
+               vector:
+-                 type: multi_dense_vector
++                 type: rank_vectors
+                  dims: 5
+               byte_vector:
+-                 type: multi_dense_vector
++                 type: rank_vectors
+                  dims: 5
+                  element_type: byte
+               bit_vector:
+-                type: multi_dense_vector
++                type: rank_vectors
+                 dims: 40
+                 element_type: bit
+   - do:
+diff --git a/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_multi_dense_vector_dv_fields_api.yml b/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_rank_vectors_dv_fields_api.yml
+similarity index 94%
+rename from modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_multi_dense_vector_dv_fields_api.yml
+rename to modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_rank_vectors_dv_fields_api.yml
+index 66cb3f3c46fcc..f37e554fca7bf 100644
+--- a/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_multi_dense_vector_dv_fields_api.yml
++++ b/modules/lang-painless/src/yamlRestTest/resources/rest-api-spec/test/painless/181_rank_vectors_dv_fields_api.yml
+@@ -3,9 +3,9 @@ setup:
+       capabilities:
+         - method: POST
+           path: /_search
+-          capabilities: [ multi_dense_vector_script_access ]
++          capabilities: [ rank_vectors_script_access ]
+       test_runner_features: capabilities
+-      reason: "Support for multi dense vector field script access capability required"
++      reason: "Support for rank vector field script access capability required"
+   - skip:
+       features: headers
+ 
+@@ -18,14 +18,14 @@ setup:
+           mappings:
+             properties:
+               vector:
+-                 type: multi_dense_vector
++                 type: rank_vectors
+                  dims: 5
+               byte_vector:
+-                 type: multi_dense_vector
++                 type: rank_vectors
+                  dims: 5
+                  element_type: byte
+               bit_vector:
+-                type: multi_dense_vector
++                type: rank_vectors
+                 dims: 40
+                 element_type: bit
+   - do:
+diff --git a/rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_multi_dense_vector.yml b/rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_rank_vectors.yml
+similarity index 88%
+rename from rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_multi_dense_vector.yml
+rename to rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_rank_vectors.yml
+index 80d1d25dfcbd8..ecf34f46c3383 100644
+--- a/rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_multi_dense_vector.yml
++++ b/rest-api-spec/src/yamlRestTest/resources/rest-api-spec/test/search.vectors/30_rank_vectors.yml
+@@ -3,9 +3,9 @@ setup:
+       capabilities:
+         - method: POST
+           path: /_search
+-          capabilities: [ multi_dense_vector_field_mapper ]
++          capabilities: [ rank_vectors_field_mapper ]
+       test_runner_features: capabilities
+-      reason: "Support for multi dense vector field mapper capability required"
++      reason: "Support for rank vectors field mapper capability required"
+ ---
+ "Test create multi-vector field":
+   - do:
+@@ -15,7 +15,7 @@ setup:
+           mappings:
+             properties:
+               vector1:
+-                type: multi_dense_vector
++                type: rank_vectors
+                 dims: 3
+   - do:
+       index:
+@@ -48,7 +48,7 @@ setup:
+               name:
+                 type: keyword
+               vector1:
+-                type: multi_dense_vector
++                type: rank_vectors
+   - do:
+       index:
+         index: test
+@@ -88,7 +88,7 @@ setup:
+           mappings:
+             properties:
+               vector1:
+-                type: multi_dense_vector
++                type: rank_vectors
+   - do:
+       catch: bad_request
+       index:
+@@ -105,7 +105,7 @@ setup:
+           mappings:
+             properties:
+               vector1:
+-                type: multi_dense_vector
++                type: rank_vectors
+                 dims: 3
+   - do:
+       catch: bad_request
+@@ -123,7 +123,7 @@ setup:
+           mappings:
+             properties:
+               vector1:
+-                type: multi_dense_vector
++                type: rank_vectors
+                 dims: 3
+   - do:
+       catch: bad_request
+diff --git a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java b/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java
+index a91960832239f..23b8f3f2bb4fb 100644
+--- a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java
++++ b/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValues.java
+@@ -17,7 +17,7 @@
+ 
+ public class MultiDenseVectorScriptDocValues extends ScriptDocValues<BytesRef> {
+ 
+-    public static final String MISSING_VECTOR_FIELD_MESSAGE = "A document doesn't have a value for a multi-vector field!";
++    public static final String MISSING_VECTOR_FIELD_MESSAGE = "A document doesn't have a value for a vector field!";
+ 
+     private final int dims;
+     protected final MultiDenseVectorSupplier dvSupplier;
+@@ -41,7 +41,7 @@ private MultiDenseVector getCheckedVector() {
+     }
+ 
+     /**
+-     * Get multi-dense vector's value as an array of floats
++     * Get rank-vectors's value as an array of floats
+      */
+     public Iterator<float[]> getVectorValues() {
+         return getCheckedVector().getVectors();
+@@ -57,7 +57,7 @@ public float[] getMagnitudes() {
+     @Override
+     public BytesRef get(int index) {
+         throw new UnsupportedOperationException(
+-            "accessing a multi-vector field's value through 'get' or 'value' is not supported, use 'vectorValues' or 'magnitudes' instead."
++            "accessing a vector field's value through 'get' or 'value' is not supported, use 'vectorValues' or 'magnitudes' instead."
+         );
+     }
+ 
+diff --git a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorDVLeafFieldData.java b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsDVLeafFieldData.java
+similarity index 92%
+rename from server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorDVLeafFieldData.java
+rename to server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsDVLeafFieldData.java
+index b9716d315f33a..ffa4852c44a9f 100644
+--- a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorDVLeafFieldData.java
++++ b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsDVLeafFieldData.java
+@@ -21,13 +21,13 @@
+ 
+ import java.io.IOException;
+ 
+-final class MultiVectorDVLeafFieldData implements LeafFieldData {
++final class RankVectorsDVLeafFieldData implements LeafFieldData {
+     private final LeafReader reader;
+     private final String field;
+     private final DenseVectorFieldMapper.ElementType elementType;
+     private final int dims;
+ 
+-    MultiVectorDVLeafFieldData(LeafReader reader, String field, DenseVectorFieldMapper.ElementType elementType, int dims) {
++    RankVectorsDVLeafFieldData(LeafReader reader, String field, DenseVectorFieldMapper.ElementType elementType, int dims) {
+         this.reader = reader;
+         this.field = field;
+         this.elementType = elementType;
+@@ -38,7 +38,7 @@ final class MultiVectorDVLeafFieldData implements LeafFieldData {
+     public DocValuesScriptFieldFactory getScriptFieldFactory(String name) {
+         try {
+             BinaryDocValues values = DocValues.getBinary(reader, field);
+-            BinaryDocValues magnitudeValues = DocValues.getBinary(reader, field + MultiDenseVectorFieldMapper.VECTOR_MAGNITUDES_SUFFIX);
++            BinaryDocValues magnitudeValues = DocValues.getBinary(reader, field + RankVectorsFieldMapper.VECTOR_MAGNITUDES_SUFFIX);
+             return switch (elementType) {
+                 case BYTE -> new ByteMultiDenseVectorDocValuesField(values, magnitudeValues, name, elementType, dims);
+                 case FLOAT -> new FloatMultiDenseVectorDocValuesField(values, magnitudeValues, name, elementType, dims);
+diff --git a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapper.java b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapper.java
+similarity index 90%
+rename from server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapper.java
+rename to server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapper.java
+index b23a1f1f66792..d57dbf79b450c 100644
+--- a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapper.java
++++ b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapper.java
+@@ -51,14 +51,14 @@
+ import static org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper.MAX_DIMS_COUNT_BIT;
+ import static org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper.namesToElementType;
+ 
+-public class MultiDenseVectorFieldMapper extends FieldMapper {
++public class RankVectorsFieldMapper extends FieldMapper {
+ 
+     public static final String VECTOR_MAGNITUDES_SUFFIX = "._magnitude";
+-    public static final FeatureFlag FEATURE_FLAG = new FeatureFlag("multi_dense_vector");
+-    public static final String CONTENT_TYPE = "multi_dense_vector";
++    public static final FeatureFlag FEATURE_FLAG = new FeatureFlag("rank_vectors");
++    public static final String CONTENT_TYPE = "rank_vectors";
+ 
+-    private static MultiDenseVectorFieldMapper toType(FieldMapper in) {
+-        return (MultiDenseVectorFieldMapper) in;
++    private static RankVectorsFieldMapper toType(FieldMapper in) {
++        return (RankVectorsFieldMapper) in;
+     }
+ 
+     public static class Builder extends FieldMapper.Builder {
+@@ -122,24 +122,24 @@ protected Parameter<?>[] getParameters() {
+             return new Parameter<?>[] { elementType, dims, meta };
+         }
+ 
+-        public MultiDenseVectorFieldMapper.Builder dimensions(int dimensions) {
++        public RankVectorsFieldMapper.Builder dimensions(int dimensions) {
+             this.dims.setValue(dimensions);
+             return this;
+         }
+ 
+-        public MultiDenseVectorFieldMapper.Builder elementType(DenseVectorFieldMapper.ElementType elementType) {
++        public RankVectorsFieldMapper.Builder elementType(DenseVectorFieldMapper.ElementType elementType) {
+             this.elementType.setValue(elementType);
+             return this;
+         }
+ 
+         @Override
+-        public MultiDenseVectorFieldMapper build(MapperBuilderContext context) {
++        public RankVectorsFieldMapper build(MapperBuilderContext context) {
+             // Validate again here because the dimensions or element type could have been set programmatically,
+             // which affects index option validity
+             validate();
+-            return new MultiDenseVectorFieldMapper(
++            return new RankVectorsFieldMapper(
+                 leafName(),
+-                new MultiDenseVectorFieldType(
++                new RankVectorsFieldType(
+                     context.buildFullName(leafName()),
+                     elementType.getValue(),
+                     dims.getValue(),
+@@ -153,16 +153,16 @@ public MultiDenseVectorFieldMapper build(MapperBuilderContext context) {
+     }
+ 
+     public static final TypeParser PARSER = new TypeParser(
+-        (n, c) -> new MultiDenseVectorFieldMapper.Builder(n, c.indexVersionCreated()),
++        (n, c) -> new RankVectorsFieldMapper.Builder(n, c.indexVersionCreated()),
+         notInMultiFields(CONTENT_TYPE)
+     );
+ 
+-    public static final class MultiDenseVectorFieldType extends SimpleMappedFieldType {
++    public static final class RankVectorsFieldType extends SimpleMappedFieldType {
+         private final DenseVectorFieldMapper.ElementType elementType;
+         private final Integer dims;
+         private final IndexVersion indexCreatedVersion;
+ 
+-        public MultiDenseVectorFieldType(
++        public RankVectorsFieldType(
+             String name,
+             DenseVectorFieldMapper.ElementType elementType,
+             Integer dims,
+@@ -207,7 +207,7 @@ public boolean isAggregatable() {
+ 
+         @Override
+         public IndexFieldData.Builder fielddataBuilder(FieldDataContext fieldDataContext) {
+-            return new MultiVectorIndexFieldData.Builder(name(), CoreValuesSourceType.KEYWORD, indexCreatedVersion, dims, elementType);
++            return new RankVectorsIndexFieldData.Builder(name(), CoreValuesSourceType.KEYWORD, indexCreatedVersion, dims, elementType);
+         }
+ 
+         @Override
+@@ -231,19 +231,14 @@ DenseVectorFieldMapper.ElementType getElementType() {
+ 
+     private final IndexVersion indexCreatedVersion;
+ 
+-    private MultiDenseVectorFieldMapper(
+-        String simpleName,
+-        MappedFieldType fieldType,
+-        BuilderParams params,
+-        IndexVersion indexCreatedVersion
+-    ) {
++    private RankVectorsFieldMapper(String simpleName, MappedFieldType fieldType, BuilderParams params, IndexVersion indexCreatedVersion) {
+         super(simpleName, fieldType, params);
+         this.indexCreatedVersion = indexCreatedVersion;
+     }
+ 
+     @Override
+-    public MultiDenseVectorFieldType fieldType() {
+-        return (MultiDenseVectorFieldType) super.fieldType();
++    public RankVectorsFieldType fieldType() {
++        return (RankVectorsFieldType) super.fieldType();
+     }
+ 
+     @Override
+@@ -282,14 +277,14 @@ public void parse(DocumentParserContext context) throws IOException {
+                     );
+                 }
+             }
+-            MultiDenseVectorFieldType updatedFieldType = new MultiDenseVectorFieldType(
++            RankVectorsFieldType updatedFieldType = new RankVectorsFieldType(
+                 fieldType().name(),
+                 fieldType().elementType,
+                 currentDims,
+                 indexCreatedVersion,
+                 fieldType().meta()
+             );
+-            Mapper update = new MultiDenseVectorFieldMapper(leafName(), updatedFieldType, builderParams, indexCreatedVersion);
++            Mapper update = new RankVectorsFieldMapper(leafName(), updatedFieldType, builderParams, indexCreatedVersion);
+             context.addDynamicMapper(update);
+             return;
+         }
+@@ -371,12 +366,12 @@ protected String contentType() {
+ 
+     @Override
+     public FieldMapper.Builder getMergeBuilder() {
+-        return new MultiDenseVectorFieldMapper.Builder(leafName(), indexCreatedVersion).init(this);
++        return new RankVectorsFieldMapper.Builder(leafName(), indexCreatedVersion).init(this);
+     }
+ 
+     @Override
+     protected SyntheticSourceSupport syntheticSourceSupport() {
+-        return new SyntheticSourceSupport.Native(new MultiDenseVectorFieldMapper.DocValuesSyntheticFieldLoader());
++        return new SyntheticSourceSupport.Native(new RankVectorsFieldMapper.DocValuesSyntheticFieldLoader());
+     }
+ 
+     private class DocValuesSyntheticFieldLoader extends SourceLoader.DocValuesBasedSyntheticFieldLoader {
+diff --git a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorIndexFieldData.java b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsIndexFieldData.java
+similarity index 87%
+rename from server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorIndexFieldData.java
+rename to server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsIndexFieldData.java
+index 44a666e25a611..7f54d2b9a8ad8 100644
+--- a/server/src/main/java/org/elasticsearch/index/mapper/vectors/MultiVectorIndexFieldData.java
++++ b/server/src/main/java/org/elasticsearch/index/mapper/vectors/RankVectorsIndexFieldData.java
+@@ -22,14 +22,14 @@
+ import org.elasticsearch.search.sort.BucketedSort;
+ import org.elasticsearch.search.sort.SortOrder;
+ 
+-public class MultiVectorIndexFieldData implements IndexFieldData<MultiVectorDVLeafFieldData> {
++public class RankVectorsIndexFieldData implements IndexFieldData<RankVectorsDVLeafFieldData> {
+     protected final String fieldName;
+     protected final ValuesSourceType valuesSourceType;
+     private final int dims;
+     private final IndexVersion indexVersion;
+     private final DenseVectorFieldMapper.ElementType elementType;
+ 
+-    public MultiVectorIndexFieldData(
++    public RankVectorsIndexFieldData(
+         String fieldName,
+         int dims,
+         ValuesSourceType valuesSourceType,
+@@ -54,19 +54,19 @@ public ValuesSourceType getValuesSourceType() {
+     }
+ 
+     @Override
+-    public MultiVectorDVLeafFieldData load(LeafReaderContext context) {
+-        return new MultiVectorDVLeafFieldData(context.reader(), fieldName, elementType, dims);
++    public RankVectorsDVLeafFieldData load(LeafReaderContext context) {
++        return new RankVectorsDVLeafFieldData(context.reader(), fieldName, elementType, dims);
+     }
+ 
+     @Override
+-    public MultiVectorDVLeafFieldData loadDirect(LeafReaderContext context) throws Exception {
++    public RankVectorsDVLeafFieldData loadDirect(LeafReaderContext context) throws Exception {
+         return load(context);
+     }
+ 
+     @Override
+     public SortField sortField(Object missingValue, MultiValueMode sortMode, XFieldComparatorSource.Nested nested, boolean reverse) {
+         throw new IllegalArgumentException(
+-            "Field [" + fieldName + "] of type [" + MultiDenseVectorFieldMapper.CONTENT_TYPE + "] doesn't support sort"
++            "Field [" + fieldName + "] of type [" + RankVectorsFieldMapper.CONTENT_TYPE + "] doesn't support sort"
+         );
+     }
+ 
+@@ -108,7 +108,7 @@ public Builder(
+ 
+         @Override
+         public IndexFieldData<?> build(IndexFieldDataCache cache, CircuitBreakerService breakerService) {
+-            return new MultiVectorIndexFieldData(name, dims, valuesSourceType, indexVersion, elementType);
++            return new RankVectorsIndexFieldData(name, dims, valuesSourceType, indexVersion, elementType);
+         }
+     }
+ }
+diff --git a/server/src/main/java/org/elasticsearch/indices/IndicesModule.java b/server/src/main/java/org/elasticsearch/indices/IndicesModule.java
+index 340bff4e1c852..3dc25b058b1d6 100644
+--- a/server/src/main/java/org/elasticsearch/indices/IndicesModule.java
++++ b/server/src/main/java/org/elasticsearch/indices/IndicesModule.java
+@@ -67,7 +67,7 @@
+ import org.elasticsearch.index.mapper.VersionFieldMapper;
+ import org.elasticsearch.index.mapper.flattened.FlattenedFieldMapper;
+ import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper;
+ import org.elasticsearch.index.mapper.vectors.SparseVectorFieldMapper;
+ import org.elasticsearch.index.seqno.RetentionLeaseBackgroundSyncAction;
+ import org.elasticsearch.index.seqno.RetentionLeaseSyncAction;
+@@ -211,8 +211,8 @@ public static Map<String, Mapper.TypeParser> getMappers(List<MapperPlugin> mappe
+ 
+         mappers.put(DenseVectorFieldMapper.CONTENT_TYPE, DenseVectorFieldMapper.PARSER);
+         mappers.put(SparseVectorFieldMapper.CONTENT_TYPE, SparseVectorFieldMapper.PARSER);
+-        if (MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled()) {
+-            mappers.put(MultiDenseVectorFieldMapper.CONTENT_TYPE, MultiDenseVectorFieldMapper.PARSER);
++        if (RankVectorsFieldMapper.FEATURE_FLAG.isEnabled()) {
++            mappers.put(RankVectorsFieldMapper.CONTENT_TYPE, RankVectorsFieldMapper.PARSER);
+         }
+ 
+         for (MapperPlugin mapperPlugin : mapperPlugins) {
+diff --git a/server/src/main/java/org/elasticsearch/rest/action/search/SearchCapabilities.java b/server/src/main/java/org/elasticsearch/rest/action/search/SearchCapabilities.java
+index 794b30aa5aab2..0e8e33e1169ea 100644
+--- a/server/src/main/java/org/elasticsearch/rest/action/search/SearchCapabilities.java
++++ b/server/src/main/java/org/elasticsearch/rest/action/search/SearchCapabilities.java
+@@ -10,7 +10,7 @@
+ package org.elasticsearch.rest.action.search;
+ 
+ import org.elasticsearch.Build;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper;
+ 
+ import java.util.HashSet;
+ import java.util.Set;
+@@ -34,14 +34,14 @@ private SearchCapabilities() {}
+     private static final String TRANSFORM_RANK_RRF_TO_RETRIEVER = "transform_rank_rrf_to_retriever";
+     /** Support kql query. */
+     private static final String KQL_QUERY_SUPPORTED = "kql_query";
+-    /** Support multi-dense-vector field mapper. */
+-    private static final String MULTI_DENSE_VECTOR_FIELD_MAPPER = "multi_dense_vector_field_mapper";
++    /** Support rank-vectors field mapper. */
++    private static final String RANK_VECTORS_FIELD_MAPPER = "rank_vectors_field_mapper";
+     /** Support propagating nested retrievers' inner_hits to top-level compound retrievers . */
+     private static final String NESTED_RETRIEVER_INNER_HITS_SUPPORT = "nested_retriever_inner_hits_support";
+-    /** Support multi-dense-vector script field access. */
+-    private static final String MULTI_DENSE_VECTOR_SCRIPT_ACCESS = "multi_dense_vector_script_access";
+-    /** Initial support for multi-dense-vector maxSim functions access. */
+-    private static final String MULTI_DENSE_VECTOR_SCRIPT_MAX_SIM = "multi_dense_vector_script_max_sim_with_bugfix";
++    /** Support rank-vectors script field access. */
++    private static final String RANK_VECTORS_SCRIPT_ACCESS = "rank_vectors_script_access";
++    /** Initial support for rank-vectors maxSim functions access. */
++    private static final String RANK_VECTORS_SCRIPT_MAX_SIM = "rank_vectors_script_max_sim_with_bugfix";
+ 
+     private static final String RANDOM_SAMPLER_WITH_SCORED_SUBAGGS = "random_sampler_with_scored_subaggs";
+ 
+@@ -55,10 +55,10 @@ private SearchCapabilities() {}
+         capabilities.add(TRANSFORM_RANK_RRF_TO_RETRIEVER);
+         capabilities.add(NESTED_RETRIEVER_INNER_HITS_SUPPORT);
+         capabilities.add(RANDOM_SAMPLER_WITH_SCORED_SUBAGGS);
+-        if (MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled()) {
+-            capabilities.add(MULTI_DENSE_VECTOR_FIELD_MAPPER);
+-            capabilities.add(MULTI_DENSE_VECTOR_SCRIPT_ACCESS);
+-            capabilities.add(MULTI_DENSE_VECTOR_SCRIPT_MAX_SIM);
++        if (RankVectorsFieldMapper.FEATURE_FLAG.isEnabled()) {
++            capabilities.add(RANK_VECTORS_FIELD_MAPPER);
++            capabilities.add(RANK_VECTORS_SCRIPT_ACCESS);
++            capabilities.add(RANK_VECTORS_SCRIPT_MAX_SIM);
+         }
+         if (Build.current().isSnapshot()) {
+             capabilities.add(KQL_QUERY_SUPPORTED);
+diff --git a/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVector.java b/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVector.java
+index 7d948cf5a74fa..daf2e3529869f 100644
+--- a/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVector.java
++++ b/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVector.java
+@@ -46,7 +46,7 @@ private static String badQueryVectorType(Object queryVector) {
+     }
+ 
+     MultiDenseVector EMPTY = new MultiDenseVector() {
+-        public static final String MISSING_VECTOR_FIELD_MESSAGE = "Multi Dense vector value missing for a field,"
++        public static final String MISSING_VECTOR_FIELD_MESSAGE = "vector value missing for a field,"
+             + " use isEmpty() to check for a missing vector value";
+ 
+         @Override
+diff --git a/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVectorDocValuesField.java b/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVectorDocValuesField.java
+index 61ae4304683c8..cf838f3b93f96 100644
+--- a/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVectorDocValuesField.java
++++ b/server/src/main/java/org/elasticsearch/script/field/vectors/MultiDenseVectorDocValuesField.java
+@@ -52,6 +52,6 @@ public ElementType getElementType() {
+     // DenseVector fields are single valued, so Iterable does not make sense.
+     @Override
+     public Iterator<MultiDenseVector> iterator() {
+-        throw new UnsupportedOperationException("Cannot iterate over single valued multi_dense_vector field, use get() instead");
++        throw new UnsupportedOperationException("Cannot iterate over single valued rank_vectors field, use get() instead");
+     }
+ }
+diff --git a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldTypeTests.java b/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldTypeTests.java
+index 14cc63e31fa27..af58c7e734ebf 100644
+--- a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldTypeTests.java
++++ b/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldTypeTests.java
+@@ -13,7 +13,7 @@
+ import org.elasticsearch.index.fielddata.FieldDataContext;
+ import org.elasticsearch.index.mapper.FieldTypeTestCase;
+ import org.elasticsearch.index.mapper.MappedFieldType;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper.MultiDenseVectorFieldType;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper.RankVectorsFieldType;
+ import org.junit.BeforeClass;
+ 
+ import java.io.IOException;
+@@ -27,11 +27,11 @@ public class MultiDenseVectorFieldTypeTests extends FieldTypeTestCase {
+ 
+     @BeforeClass
+     public static void setup() {
+-        assumeTrue("Requires multi-dense vector support", MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled());
++        assumeTrue("Requires rank-vectors support", RankVectorsFieldMapper.FEATURE_FLAG.isEnabled());
+     }
+ 
+-    private MultiDenseVectorFieldType createFloatFieldType() {
+-        return new MultiDenseVectorFieldType(
++    private RankVectorsFieldType createFloatFieldType() {
++        return new RankVectorsFieldType(
+             "f",
+             DenseVectorFieldMapper.ElementType.FLOAT,
+             BBQ_MIN_DIMS,
+@@ -40,66 +40,60 @@ private MultiDenseVectorFieldType createFloatFieldType() {
+         );
+     }
+ 
+-    private MultiDenseVectorFieldType createByteFieldType() {
+-        return new MultiDenseVectorFieldType(
+-            "f",
+-            DenseVectorFieldMapper.ElementType.BYTE,
+-            5,
+-            IndexVersion.current(),
+-            Collections.emptyMap()
+-        );
++    private RankVectorsFieldType createByteFieldType() {
++        return new RankVectorsFieldType("f", DenseVectorFieldMapper.ElementType.BYTE, 5, IndexVersion.current(), Collections.emptyMap());
+     }
+ 
+     public void testHasDocValues() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         assertTrue(fft.hasDocValues());
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         assertTrue(bft.hasDocValues());
+     }
+ 
+     public void testIsIndexed() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         assertFalse(fft.isIndexed());
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         assertFalse(bft.isIndexed());
+     }
+ 
+     public void testIsSearchable() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         assertFalse(fft.isSearchable());
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         assertFalse(bft.isSearchable());
+     }
+ 
+     public void testIsAggregatable() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         assertFalse(fft.isAggregatable());
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         assertFalse(bft.isAggregatable());
+     }
+ 
+     public void testFielddataBuilder() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         FieldDataContext fdc = new FieldDataContext("test", null, () -> null, Set::of, MappedFieldType.FielddataOperation.SCRIPT);
+         assertNotNull(fft.fielddataBuilder(fdc));
+ 
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         FieldDataContext bdc = new FieldDataContext("test", null, () -> null, Set::of, MappedFieldType.FielddataOperation.SCRIPT);
+         assertNotNull(bft.fielddataBuilder(bdc));
+     }
+ 
+     public void testDocValueFormat() {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         expectThrows(IllegalArgumentException.class, () -> fft.docValueFormat(null, null));
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         expectThrows(IllegalArgumentException.class, () -> bft.docValueFormat(null, null));
+     }
+ 
+     public void testFetchSourceValue() throws IOException {
+-        MultiDenseVectorFieldType fft = createFloatFieldType();
++        RankVectorsFieldType fft = createFloatFieldType();
+         List<List<Double>> vector = List.of(List.of(0.0, 1.0, 2.0, 3.0, 4.0, 6.0));
+         assertEquals(vector, fetchSourceValue(fft, vector));
+-        MultiDenseVectorFieldType bft = createByteFieldType();
++        RankVectorsFieldType bft = createByteFieldType();
+         assertEquals(vector, fetchSourceValue(bft, vector));
+     }
+ }
+diff --git a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValuesTests.java b/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValuesTests.java
+index 435baa477e740..42276c81fd161 100644
+--- a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValuesTests.java
++++ b/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorScriptDocValuesTests.java
+@@ -31,7 +31,7 @@ public class MultiDenseVectorScriptDocValuesTests extends ESTestCase {
+ 
+     @BeforeClass
+     public static void setup() {
+-        assumeTrue("Requires multi-dense vector support", MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled());
++        assumeTrue("Requires rank-vectors support", RankVectorsFieldMapper.FEATURE_FLAG.isEnabled());
+     }
+ 
+     public void testFloatGetVectorValueAndGetMagnitude() throws IOException {
+@@ -115,7 +115,7 @@ public void testFloatMetadataAndIterator() throws IOException {
+             assertFalse(dv.isEmpty());
+             assertEquals(dims, dv.getDims());
+             UnsupportedOperationException e = expectThrows(UnsupportedOperationException.class, field::iterator);
+-            assertEquals("Cannot iterate over single valued multi_dense_vector field, use get() instead", e.getMessage());
++            assertEquals("Cannot iterate over single valued rank_vectors field, use get() instead", e.getMessage());
+         }
+         field.setNextDocId(vectors.length);
+         MultiDenseVector dv = field.get();
+@@ -142,7 +142,7 @@ public void testByteMetadataAndIterator() throws IOException {
+             assertFalse(dv.isEmpty());
+             assertEquals(dims, dv.getDims());
+             UnsupportedOperationException e = expectThrows(UnsupportedOperationException.class, field::iterator);
+-            assertEquals("Cannot iterate over single valued multi_dense_vector field, use get() instead", e.getMessage());
++            assertEquals("Cannot iterate over single valued rank_vectors field, use get() instead", e.getMessage());
+         }
+         field.setNextDocId(vectors.length);
+         MultiDenseVector dv = field.get();
+diff --git a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapperTests.java b/server/src/test/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapperTests.java
+similarity index 87%
+rename from server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapperTests.java
+rename to server/src/test/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapperTests.java
+index 6a890328732ca..e81c28cbcc444 100644
+--- a/server/src/test/java/org/elasticsearch/index/mapper/vectors/MultiDenseVectorFieldMapperTests.java
++++ b/server/src/test/java/org/elasticsearch/index/mapper/vectors/RankVectorsFieldMapperTests.java
+@@ -51,17 +51,17 @@
+ import static org.mockito.Mockito.mock;
+ import static org.mockito.Mockito.when;
+ 
+-public class MultiDenseVectorFieldMapperTests extends MapperTestCase {
++public class RankVectorsFieldMapperTests extends MapperTestCase {
+ 
+     @BeforeClass
+     public static void setup() {
+-        assumeTrue("Requires multi-dense vector support", MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled());
++        assumeTrue("Requires rank vectors support", RankVectorsFieldMapper.FEATURE_FLAG.isEnabled());
+     }
+ 
+     private final ElementType elementType;
+     private final int dims;
+ 
+-    public MultiDenseVectorFieldMapperTests() {
++    public RankVectorsFieldMapperTests() {
+         this.elementType = randomFrom(ElementType.BYTE, ElementType.FLOAT, ElementType.BIT);
+         this.dims = ElementType.BIT == elementType ? 4 * Byte.SIZE : 4;
+     }
+@@ -77,7 +77,7 @@ protected void minimalMapping(XContentBuilder b, IndexVersion indexVersion) thro
+     }
+ 
+     private void indexMapping(XContentBuilder b, IndexVersion indexVersion) throws IOException {
+-        b.field("type", "multi_dense_vector").field("dims", dims);
++        b.field("type", "rank_vectors").field("dims", dims);
+         if (elementType != ElementType.FLOAT) {
+             b.field("element_type", elementType.toString());
+         }
+@@ -95,23 +95,23 @@ protected Object getSampleValueForDocument() {
+     protected void registerParameters(ParameterChecker checker) throws IOException {
+         checker.registerConflictCheck(
+             "dims",
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims)),
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims + 8))
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims)),
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims + 8))
+         );
+         checker.registerConflictCheck(
+             "element_type",
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims).field("element_type", "byte")),
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims).field("element_type", "float"))
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims).field("element_type", "byte")),
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims).field("element_type", "float"))
+         );
+         checker.registerConflictCheck(
+             "element_type",
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims).field("element_type", "float")),
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims * 8).field("element_type", "bit"))
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims).field("element_type", "float")),
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims * 8).field("element_type", "bit"))
+         );
+         checker.registerConflictCheck(
+             "element_type",
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims).field("element_type", "byte")),
+-            fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", dims * 8).field("element_type", "bit"))
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims).field("element_type", "byte")),
++            fieldMapping(b -> b.field("type", "rank_vectors").field("dims", dims * 8).field("element_type", "bit"))
+         );
+     }
+ 
+@@ -127,7 +127,7 @@ protected boolean supportsIgnoreMalformed() {
+ 
+     @Override
+     protected void assertSearchable(MappedFieldType fieldType) {
+-        assertThat(fieldType, instanceOf(MultiDenseVectorFieldMapper.MultiDenseVectorFieldType.class));
++        assertThat(fieldType, instanceOf(RankVectorsFieldMapper.RankVectorsFieldType.class));
+         assertFalse(fieldType.isIndexed());
+         assertFalse(fieldType.isSearchable());
+     }
+@@ -147,7 +147,7 @@ public void testAggregatableConsistency() {}
+     public void testDims() {
+         {
+             Exception e = expectThrows(MapperParsingException.class, () -> createMapperService(fieldMapping(b -> {
+-                b.field("type", "multi_dense_vector");
++                b.field("type", "rank_vectors");
+                 b.field("dims", 0);
+             })));
+             assertThat(
+@@ -158,7 +158,7 @@ public void testDims() {
+         // test max limit for non-indexed vectors
+         {
+             Exception e = expectThrows(MapperParsingException.class, () -> createMapperService(fieldMapping(b -> {
+-                b.field("type", "multi_dense_vector");
++                b.field("type", "rank_vectors");
+                 b.field("dims", 5000);
+             })));
+             assertThat(
+@@ -171,14 +171,14 @@ public void testDims() {
+     public void testMergeDims() throws IOException {
+         XContentBuilder mapping = mapping(b -> {
+             b.startObject("field");
+-            b.field("type", "multi_dense_vector");
++            b.field("type", "rank_vectors");
+             b.endObject();
+         });
+         MapperService mapperService = createMapperService(mapping);
+ 
+         mapping = mapping(b -> {
+             b.startObject("field");
+-            b.field("type", "multi_dense_vector").field("dims", dims);
++            b.field("type", "rank_vectors").field("dims", dims);
+             b.endObject();
+         });
+         merge(mapperService, mapping);
+@@ -190,14 +190,14 @@ public void testMergeDims() throws IOException {
+ 
+     public void testLargeDimsBit() throws IOException {
+         createMapperService(fieldMapping(b -> {
+-            b.field("type", "multi_dense_vector");
++            b.field("type", "rank_vectors");
+             b.field("dims", 1024 * Byte.SIZE);
+             b.field("element_type", ElementType.BIT.toString());
+         }));
+     }
+ 
+     public void testNonIndexedVector() throws Exception {
+-        DocumentMapper mapper = createDocumentMapper(fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", 3)));
++        DocumentMapper mapper = createDocumentMapper(fieldMapping(b -> b.field("type", "rank_vectors").field("dims", 3)));
+ 
+         float[][] validVectors = { { -12.1f, 100.7f, -4 }, { 42f, .05f, -1f } };
+         double[] dotProduct = new double[2];
+@@ -234,7 +234,7 @@ public void testNonIndexedVector() throws Exception {
+                 .asFloatBuffer();
+             fb.get(decodedValues[i]);
+         }
+-        List<IndexableField> magFields = doc1.rootDoc().getFields("field" + MultiDenseVectorFieldMapper.VECTOR_MAGNITUDES_SUFFIX);
++        List<IndexableField> magFields = doc1.rootDoc().getFields("field" + RankVectorsFieldMapper.VECTOR_MAGNITUDES_SUFFIX);
+         assertEquals(1, magFields.size());
+         assertThat(magFields.get(0), instanceOf(BinaryDocValuesField.class));
+         BytesRef magBR = magFields.get(0).binaryValue();
+@@ -249,7 +249,7 @@ public void testNonIndexedVector() throws Exception {
+     }
+ 
+     public void testPoorlyIndexedVector() throws Exception {
+-        DocumentMapper mapper = createDocumentMapper(fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", 3)));
++        DocumentMapper mapper = createDocumentMapper(fieldMapping(b -> b.field("type", "rank_vectors").field("dims", 3)));
+ 
+         float[][] validVectors = { { -12.1f, 100.7f, -4 }, { 42f, .05f, -1f } };
+         double[] dotProduct = new double[2];
+@@ -279,27 +279,23 @@ public void testInvalidParameters() {
+ 
+         MapperParsingException e = expectThrows(
+             MapperParsingException.class,
+-            () -> createDocumentMapper(
+-                fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", 3).field("element_type", "foo"))
+-            )
++            () -> createDocumentMapper(fieldMapping(b -> b.field("type", "rank_vectors").field("dims", 3).field("element_type", "foo")))
+         );
+         assertThat(e.getMessage(), containsString("invalid element_type [foo]; available types are "));
+         e = expectThrows(
+             MapperParsingException.class,
+-            () -> createDocumentMapper(
+-                fieldMapping(b -> b.field("type", "multi_dense_vector").field("dims", 3).startObject("foo").endObject())
+-            )
++            () -> createDocumentMapper(fieldMapping(b -> b.field("type", "rank_vectors").field("dims", 3).startObject("foo").endObject()))
+         );
+         assertThat(
+             e.getMessage(),
+-            containsString("Failed to parse mapping: unknown parameter [foo] on mapper [field] of type [multi_dense_vector]")
++            containsString("Failed to parse mapping: unknown parameter [foo] on mapper [field] of type [rank_vectors]")
+         );
+     }
+ 
+     public void testDocumentsWithIncorrectDims() throws Exception {
+         int dims = 3;
+         XContentBuilder fieldMapping = fieldMapping(b -> {
+-            b.field("type", "multi_dense_vector");
++            b.field("type", "rank_vectors");
+             b.field("dims", dims);
+         });
+ 
+@@ -382,8 +378,7 @@ protected void assertFetch(MapperService mapperService, String field, Object val
+             Source s = SourceProvider.fromStoredFields().getSource(ir.leaves().get(0), 0);
+             nativeFetcher.setNextReader(ir.leaves().get(0));
+             List<Object> fromNative = nativeFetcher.fetchValues(s, 0, new ArrayList<>());
+-            MultiDenseVectorFieldMapper.MultiDenseVectorFieldType denseVectorFieldType =
+-                (MultiDenseVectorFieldMapper.MultiDenseVectorFieldType) ft;
++            RankVectorsFieldMapper.RankVectorsFieldType denseVectorFieldType = (RankVectorsFieldMapper.RankVectorsFieldType) ft;
+             switch (denseVectorFieldType.getElementType()) {
+                 case BYTE -> assumeFalse("byte element type testing not currently added", false);
+                 case FLOAT -> {
+@@ -408,12 +403,12 @@ protected void assertFetch(MapperService mapperService, String field, Object val
+ 
+     @Override
+     protected void randomFetchTestFieldConfig(XContentBuilder b) throws IOException {
+-        b.field("type", "multi_dense_vector").field("dims", randomIntBetween(2, 4096)).field("element_type", "float");
++        b.field("type", "rank_vectors").field("dims", randomIntBetween(2, 4096)).field("element_type", "float");
+     }
+ 
+     @Override
+     protected Object generateRandomInputValue(MappedFieldType ft) {
+-        MultiDenseVectorFieldMapper.MultiDenseVectorFieldType vectorFieldType = (MultiDenseVectorFieldMapper.MultiDenseVectorFieldType) ft;
++        RankVectorsFieldMapper.RankVectorsFieldType vectorFieldType = (RankVectorsFieldMapper.RankVectorsFieldType) ft;
+         int numVectors = randomIntBetween(1, 16);
+         return switch (vectorFieldType.getElementType()) {
+             case BYTE -> {
+@@ -451,7 +446,7 @@ public void testCannotBeUsedInMultifields() {
+             b.endObject();
+             b.endObject();
+         })));
+-        assertThat(e.getMessage(), containsString("Field [vectors] of type [multi_dense_vector] can't be used in multifields"));
++        assertThat(e.getMessage(), containsString("Field [vectors] of type [rank_vectors] can't be used in multifields"));
+     }
+ 
+     @Override
+@@ -486,7 +481,7 @@ public SyntheticSourceExample example(int maxValues) {
+         }
+ 
+         private void mapping(XContentBuilder b) throws IOException {
+-            b.field("type", "multi_dense_vector");
++            b.field("type", "rank_vectors");
+             if (elementType == ElementType.BYTE || elementType == ElementType.BIT || randomBoolean()) {
+                 b.field("element_type", elementType.toString());
+             }
+diff --git a/server/src/test/java/org/elasticsearch/script/MultiVectorScoreScriptUtilsTests.java b/server/src/test/java/org/elasticsearch/script/MultiVectorScoreScriptUtilsTests.java
+index f908f51170478..fecd7924e4c6d 100644
+--- a/server/src/test/java/org/elasticsearch/script/MultiVectorScoreScriptUtilsTests.java
++++ b/server/src/test/java/org/elasticsearch/script/MultiVectorScoreScriptUtilsTests.java
+@@ -11,8 +11,8 @@
+ 
+ import org.apache.lucene.util.VectorUtil;
+ import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper.ElementType;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper;
+ import org.elasticsearch.index.mapper.vectors.MultiDenseVectorScriptDocValuesTests;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper;
+ import org.elasticsearch.script.MultiVectorScoreScriptUtils.MaxSimDotProduct;
+ import org.elasticsearch.script.MultiVectorScoreScriptUtils.MaxSimInvHamming;
+ import org.elasticsearch.script.field.vectors.BitMultiDenseVectorDocValuesField;
+@@ -35,7 +35,7 @@ public class MultiVectorScoreScriptUtilsTests extends ESTestCase {
+ 
+     @BeforeClass
+     public static void setup() {
+-        assumeTrue("Requires multi-dense vector support", MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled());
++        assumeTrue("Requires rank-vectors support", RankVectorsFieldMapper.FEATURE_FLAG.isEnabled());
+     }
+ 
+     public void testFloatMultiVectorClassBindings() throws IOException {
+diff --git a/server/src/test/java/org/elasticsearch/script/field/vectors/MultiDenseVectorTests.java b/server/src/test/java/org/elasticsearch/script/field/vectors/MultiDenseVectorTests.java
+index 12f4b931b4d0a..6fc24a26135b4 100644
+--- a/server/src/test/java/org/elasticsearch/script/field/vectors/MultiDenseVectorTests.java
++++ b/server/src/test/java/org/elasticsearch/script/field/vectors/MultiDenseVectorTests.java
+@@ -11,7 +11,7 @@
+ 
+ import org.apache.lucene.util.BytesRef;
+ import org.apache.lucene.util.VectorUtil;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper;
+ import org.elasticsearch.test.ESTestCase;
+ import org.junit.BeforeClass;
+ 
+@@ -23,7 +23,7 @@ public class MultiDenseVectorTests extends ESTestCase {
+ 
+     @BeforeClass
+     public static void setup() {
+-        assumeTrue("Requires multi-dense vector support", MultiDenseVectorFieldMapper.FEATURE_FLAG.isEnabled());
++        assumeTrue("Requires rank-vectors support", RankVectorsFieldMapper.FEATURE_FLAG.isEnabled());
+     }
+ 
+     public void testByteUnsupported() {
+diff --git a/test/framework/src/main/java/org/elasticsearch/search/aggregations/AggregatorTestCase.java b/test/framework/src/main/java/org/elasticsearch/search/aggregations/AggregatorTestCase.java
+index 51f66418bb44b..d491e4bb52fa2 100644
+--- a/test/framework/src/main/java/org/elasticsearch/search/aggregations/AggregatorTestCase.java
++++ b/test/framework/src/main/java/org/elasticsearch/search/aggregations/AggregatorTestCase.java
+@@ -112,7 +112,7 @@
+ import org.elasticsearch.index.mapper.TextFieldMapper;
+ import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
+ import org.elasticsearch.index.mapper.vectors.DenseVectorFieldMapper;
+-import org.elasticsearch.index.mapper.vectors.MultiDenseVectorFieldMapper;
++import org.elasticsearch.index.mapper.vectors.RankVectorsFieldMapper;
+ import org.elasticsearch.index.mapper.vectors.SparseVectorFieldMapper;
+ import org.elasticsearch.index.query.SearchExecutionContext;
+ import org.elasticsearch.index.shard.IndexShard;
+@@ -206,7 +206,7 @@ public abstract class AggregatorTestCase extends ESTestCase {
+     private static final List<String> TYPE_TEST_BLACKLIST = List.of(
+         ObjectMapper.CONTENT_TYPE, // Cannot aggregate objects
+         DenseVectorFieldMapper.CONTENT_TYPE, // Cannot aggregate dense vectors
+-        MultiDenseVectorFieldMapper.CONTENT_TYPE, // Cannot aggregate dense vectors
++        RankVectorsFieldMapper.CONTENT_TYPE, // Cannot aggregate dense vectors
+         SparseVectorFieldMapper.CONTENT_TYPE, // Sparse vectors are no longer supported
+ 
+         NestedObjectMapper.CONTENT_TYPE, // TODO support for nested
