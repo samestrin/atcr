@@ -1,6 +1,10 @@
 package payload
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/samestrin/atcr/reconcile"
+)
 
 // ScopeFocus renders an agent's per-agent scope categories (Epic 2.2) as a soft
 // focus instruction appended to its persona prompt. It is a SOFT constraint:
@@ -51,23 +55,59 @@ const (
 		"`out-of-scope` so the reconciler annotates rather than promotes it."
 )
 
-// categoryEnumeration renders the closed CATEGORY vocabulary.
+// categoryEnumeration renders the closed CATEGORY vocabulary
+// (reconcile.Categories) as a comma-separated list, in vocabulary order.
 //
-// STUB — wrong answer on purpose (epic 35.16.4 T2, RED stage).
-func categoryEnumeration() string { return "" }
+// It is generated rather than written out so the prompt text cannot drift from
+// the constant: there is deliberately no second literal list of categories
+// anywhere in the tree (epic 35.16.4 AC3).
+func categoryEnumeration() string {
+	return strings.Join(reconcile.Categories(), ", ")
+}
+
+// categoryVocabularyRule is the domain constraint appended to every scope rule.
+//
+// Epic 35.16.4: before this, no enumeration reached any of the 29 rendered
+// prompts — each persona asked only for "one lowercase word", and reviewers
+// invented one per finding (34 distinct categories over 213 findings in the
+// 35.16.2 dry-run, 72.3% of them unscoreable). The rule NARROWS each persona's
+// existing format constraint rather than contradicting it: "one lowercase word"
+// stays true, this says which words exist.
+//
+// It rides {{.ScopeRule}} because that field is the one channel present in all
+// 29 prompts — 10 in personas/, 14 in personas/community/, and 5 installed
+// outside the repo — and is already allowlisted for fetched community templates
+// (internal/registry/persona.go:140-149). Injecting here reaches every prompt,
+// including the out-of-repo ones CI cannot see, without editing a single prompt
+// file, so no prompt file can fall out of sync.
+var categoryVocabularyRule = "Use CATEGORY from this closed vocabulary, spelled exactly as listed: " +
+	categoryEnumeration() + ". That list is the whole vocabulary and every finding has a home in it, so " +
+	"choose the closest member rather than inventing a word; use `other` only when no member genuinely fits."
+
+// Full scope rules as rendered into a prompt: the per-mode scope instruction
+// plus the shared vocabulary constraint. Both are assembled once at init rather
+// than per call — ScopeRule is invoked per agent per payload chunk on the
+// fan-out path (internal/fanout/review.go), and the result is identical every
+// time.
+var (
+	scopeChangedOnlyFull = scopeChangedOnly + " " + categoryVocabularyRule
+	scopeFilesFull       = scopeFiles + " " + categoryVocabularyRule
+)
 
 // ScopeRule returns the scope instruction for a payload mode. diff and blocks
 // share the changed-only rule (function-context expansion does not widen the
 // review scope); files mode uses the wider rule. An unknown mode falls back to
-// the conservative changed-only rule.
+// the conservative changed-only rule. Every mode carries the closed CATEGORY
+// vocabulary — an unknown mode must not be a hole through which a reviewer is
+// offered no vocabulary at all.
 func ScopeRule(mode PayloadMode) string {
 	switch mode {
 	case ModeFiles:
-		return scopeFiles
+		return scopeFilesFull
 	case ModeDiff, ModeBlocks:
-		return scopeChangedOnly
+		return scopeChangedOnlyFull
 	default:
-		return scopeChangedOnly
+		return scopeChangedOnlyFull
 	}
 }
 
@@ -90,7 +130,7 @@ func ScopeRule(mode PayloadMode) string {
 // column 0 unless a file really was rendered in files mode.
 func ScopeRuleForPayload(mode PayloadMode, text string) string {
 	if containsFilesHeader(text) {
-		return scopeFiles
+		return scopeFilesFull
 	}
 	return ScopeRule(mode)
 }
