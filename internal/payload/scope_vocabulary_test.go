@@ -81,18 +81,24 @@ func TestScopeRule_EnumerationIsGeneratedNotDuplicated(t *testing.T) {
 	// The generator, not a literal, is the source: every member appears in
 	// vocabulary order, so a reordering or addition in reconcile/category.go
 	// propagates without touching scope.go.
+	//
+	// Compare DISCRETE TOKENS, not strings.Index positions. Index matches
+	// substrings, and this vocabulary contains two pairs where one member is a
+	// suffix of another — `contract` inside `api-contract`, `leak` inside
+	// `resource-leak`. For those, Index locates the containing member's text
+	// rather than the standalone token, so the position check reported "in order"
+	// no matter how the two were actually arranged: reordering `contract` ahead of
+	// `api-contract` in the source slice still passed. Splitting on the join
+	// separator gives each member its own position and removes the collision.
 	cats := reconcile.Categories()
-	enumeration := categoryEnumeration()
-	pos := -1
-	for _, cat := range cats {
-		at := strings.Index(enumeration, cat)
-		if at < 0 {
-			t.Fatalf("generated enumeration omits %q", cat)
+	tokens := strings.Split(categoryEnumeration(), ", ")
+	if len(tokens) != len(cats) {
+		t.Fatalf("generated enumeration has %d tokens, want %d — %q", len(tokens), len(cats), categoryEnumeration())
+	}
+	for i, cat := range cats {
+		if tokens[i] != cat {
+			t.Errorf("generated enumeration position %d is %q, want %q — the rendered list no longer tracks vocabulary order", i, tokens[i], cat)
 		}
-		if at <= pos {
-			t.Errorf("category %q appears out of vocabulary order in the generated enumeration", cat)
-		}
-		pos = at
 	}
 }
 
