@@ -29,14 +29,25 @@ import (
 // resume. That makes a real V1 checkpoint hand-convertible into a fixture. The
 // type is redeclared rather than imported: package cli is outside this package's
 // dependency direction, and internal/benchmark stays a leaf.
+//
+// Four fields below are carried for that shape fidelity ALONE, and no value a
+// fixture puts in them is ever asserted. Suite, SuiteVersion, and CaseID are
+// never read after unmarshalling. Expected IS loaded into CaseScore.Expected,
+// but the only production function these fixtures drive is OutOfVocabularyRate,
+// which decides membership against the taxonomy rather than against ground
+// truth and so never consults it. Verified by mutation: rewriting a fixture's
+// suite, suite_version, and expected values leaves every test in this file
+// green. Recall scoring is the consumer that does read CaseScore.Expected
+// (score.go), and it is pinned by score_test.go and equivalence_test.go against
+// their own inline cases — never through these fixtures.
 type recordedRun struct {
-	Suite        string         `json:"suite"`
-	SuiteVersion string         `json:"suite_version"`
+	Suite        string         `json:"suite"`         // shape fidelity only — never read
+	SuiteVersion string         `json:"suite_version"` // shape fidelity only — never read
 	Cases        []recordedCase `json:"cases"`
 }
 
 type recordedCase struct {
-	CaseID    string             `json:"case_id"`
+	CaseID    string             `json:"case_id"` // shape fidelity only — never read
 	Expected  []string           `json:"expected"`
 	Reviewers []recordedReviewer `json:"reviewers"`
 }
