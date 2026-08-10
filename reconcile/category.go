@@ -116,12 +116,13 @@ var categories = []string{
 	CategoryOther,
 }
 
-// categoryMerges records every word from the three derivation sources that is
-// NOT a member, and the member it folds into. A merge is only justified when a
-// developer would act on both words identically — "coupling is not
-// maintainability; race is not concurrency" is the standing rule, and when in
-// doubt the distinction is kept. Each entry below states why the two are the
-// same thing, not merely similar.
+// categoryMerges records every word from the three derivation sources that a
+// consumer should treat as another word, and the member it folds into. Almost
+// every key is a non-member; the one exception is documented in its own block
+// below. A merge is only justified when a developer would act on both words
+// identically — "coupling is not maintainability; race is not concurrency" is
+// the standing rule, and when in doubt the distinction is kept. Each entry below
+// states why the two are the same thing, not merely similar.
 //
 // This is derivation provenance, not a runtime normalizer: nothing in this epic
 // rewrites an emitted category. Epic 35.16.6 owns parse-boundary
@@ -131,15 +132,28 @@ var categoryMerges = map[string]string{
 	"resource":  CategoryResourceLeak, // singular/plural of the same emitted word; both meant an unreleased resource
 	"resources": CategoryResourceLeak,
 
-	// Same concept, different word. No reviewer would triage these differently.
+	// A member that is ALSO a merge — the single case, and it is deliberate.
 	//
-	// `logic` and `secret` are deliberately NOT here. Both read as merges on the
-	// merits — a logic error IS a correctness defect, a leaked credential IS a
-	// security finding — but personas/community/sonny.md:49 and gerald.md:50 ship
-	// worked examples that emit exactly those two words. Merging them would hand
-	// those two reviewers a prompt whose own example contradicts its own
-	// vocabulary, which is the defect this epic exists to remove. They are
-	// members instead, and the rendered rule tells the model how to choose.
+	// Membership and canonicalization answer different questions. Membership is
+	// what the PROMPT offers: `logic` stays a member because
+	// personas/community/sonny.md:49 ships a worked example that emits it, and a
+	// prompt whose own example contradicts its own vocabulary is the defect this
+	// epic exists to remove. Canonicalization is what INGESTION should do with the
+	// word once emitted: the rendered rule tells every reviewer that `logic` is
+	// accepted as the equivalent of `correctness`, so leaving the fold unrecorded
+	// would split identical findings across every category-keyed consumer
+	// (ModalCategory clustering, SARIF rule ids, the 35.16.5 scorer) and re-create
+	// the unscoreability this epic closes. Offering both words and recording that
+	// they are one is the only combination that is true on both sides.
+	//
+	// `secret` is NOT folded, despite gerald.md:50 emitting it for the same reason
+	// sonny emits `logic`. The difference is the gloss: it draws a real triage line
+	// ("`secret` for an exposed credential, `security` for every other
+	// vulnerability"), so the two are distinct rather than equivalent, and
+	// reconcile/consensus.go treats both as security-related on their own terms.
+	CategoryLogic: CategoryCorrectness,
+
+	// Same concept, different word. No reviewer would triage these differently.
 	"bug":       CategoryCorrectness, // an unqualified restatement of "the code is wrong"
 	"input":     CategoryInputValidation,
 	"failure":   CategoryErrorHandling, // mira's "failure handling" — missing timeouts, unbounded retries, partial-failure states
