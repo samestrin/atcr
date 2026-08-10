@@ -209,6 +209,10 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		SuiteVersion: m.SuiteVersion,
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 		Reviewers:    benchmark.Score(reviewers),
+		// Computed from the same accumulated ReviewerScores Score consumes, so a
+		// resumed run reports the same rate as an uninterrupted one — replayed cases
+		// fold in through applyReviewerOutcome before this point.
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
 	}, nil
 }
 
