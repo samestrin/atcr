@@ -291,3 +291,49 @@ func TestEquivalence_CitedRationaleLinesStillMatchReconcile(t *testing.T) {
 			c.line, c.why, lines[c.line-1])
 	}
 }
+
+// AC6's hardest constraint is a NEGATIVE one: `correctness` must not be widened to
+// the functional-defect members equivalence.go's rationale refuses by name. Nothing
+// executable defended it. TestScore_EveryFamilyMemberSatisfiesItsCoarseCategory
+// ranges over categoryFamilies itself, so an added row simply becomes another
+// passing subtest — verified by mutation: adding all ten refused words to
+// categoryFamilies[CategoryCorrectness] left `go test ./internal/benchmark/` fully
+// green. That change takes the satisfiable share of the taxonomy from 13/32 to
+// 23/32 and `correctness` — planted in 14 of the suite's 17 cases — from 2
+// satisfying words to 12, ranking reviewers by finding volume rather than by
+// detection. Enumerate the refusal as a literal so widening the table fails HERE,
+// forcing the widener to argue against the rationale rather than around it.
+func TestEquivalence_RefusedMembersSatisfyNothing(t *testing.T) {
+	refused := []string{
+		// The functional-defect members `correctness` must never absorb.
+		reconcile.CategoryRace, reconcile.CategoryConcurrency, reconcile.CategoryState,
+		reconcile.CategoryInvariant, reconcile.CategoryErrorHandling, reconcile.CategoryContract,
+		reconcile.CategoryAPIContract, reconcile.CategoryType, reconcile.CategoryResourceLeak,
+		reconcile.CategoryLeak,
+		// The two borderlines the rationale argues out explicitly (category.go:136's
+		// "coupling is not maintainability", and `docs` overlapping :61).
+		reconcile.CategoryCoupling, reconcile.CategoryDocs,
+	}
+
+	for _, w := range refused {
+		assert.NotContains(t, categoryFamilies, w, "%q must not be a family key", w)
+		for coarse, members := range categoryFamilies {
+			assert.NotContains(t, members, w,
+				"%q is refused by equivalence.go's rationale but appears in %q's family — "+
+					"widening the table requires arguing against that text first", w, coarse)
+		}
+	}
+
+	// End-to-end, so the refusal is pinned at the metric and not only in the table:
+	// a raised `race` asserts a different defect than a planted `correctness`.
+	got := Score([]ReviewerScore{{
+		Model: "m", Persona: "p",
+		Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{reconcile.CategoryRace},
+		}},
+	}})
+	require.Len(t, got, 1)
+	assert.InDelta(t, 0.0, got[0].CorroborationRate, 1e-9,
+		"a raised %q must not satisfy a planted %q", reconcile.CategoryRace, reconcile.CategoryCorrectness)
+}
