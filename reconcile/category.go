@@ -167,7 +167,14 @@ var categoryMerges = map[string]string{
 	CategoryLogic: CategoryCorrectness,
 
 	// Same concept, different word. No reviewer would triage these differently.
-	"bug":       CategoryCorrectness, // an unqualified restatement of "the code is wrong"
+	"bug": CategoryCorrectness, // an unqualified restatement of "the code is wrong"
+	// `input` was the third-most-frequent out-of-vocabulary word in the 35.16.2
+	// dry-run, and every observed use named untrusted data crossing a trust
+	// boundary unchecked — a reviewer writing it meant "this input is not
+	// validated", never "input handling is awkward". That is input-validation's
+	// definition, so the two are the same finding; the softer readings (`validation`
+	// for a misplaced check, `error-handling` for a bad input path) are separate
+	// members a reviewer reaches for with those words instead.
 	"input":     CategoryInputValidation,
 	"failure":   CategoryErrorHandling, // mira's "failure handling" — missing timeouts, unbounded retries, partial-failure states
 	"stability": CategoryErrorHandling,
