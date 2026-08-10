@@ -1,46 +1,157 @@
 package reconcile
 
-// STUB — deliberately wrong (epic 35.16.4 T1, RED stage). The constants exist
-// so the test compiles; the vocabulary itself is still the old six-word
-// personas/_base.md:44 list with no recorded merges, which is the defect.
+// The closed reviewer CATEGORY vocabulary (epic 35.16.4).
+//
+// Before this epic no enumeration reached any reviewer: every persona prompt
+// asked only for "one lowercase word", and the sole list in the tree
+// (personas/_base.md:44, six words) sits at persona-resolution levels 4-5, a
+// fallback no shipped persona reaches. The 35.16.2 dry-run measured the
+// consequence — 72.3% of findings (154 of 213) used a word the scorer did not
+// recognise, across 34 distinct categories, while `maintainability` appeared in
+// 17 of 17 cases' ground truth and was emitted once. The reviewers were finding
+// real problems and labelling them with words nothing had offered them.
+//
+// The fix is therefore to OFFER MORE, not to offer less. This set is closed but
+// deliberately not small: it is the union of three sources — the words the
+// dry-run actually emitted, each persona's declared Focus list, and the 14
+// category words personas/community_test.go:117-132 binds in code and requires
+// to appear in each community persona's own prompt. Narrowing is what caused
+// the drift; a member is removed only when a developer would act on it
+// identically to another member (see categoryMerges).
+//
+// This is a GENERATION-TIME vocabulary. It is rendered into every prompt through
+// internal/payload's ScopeRule (the one channel present in all 29 prompts), so
+// no prompt file is edited and none can drift. It deliberately does NOT
+// normalize anything at ingestion: no consumer of Finding.Category reads this
+// list yet, and Category never enters FindingID, so adding it changes no
+// existing finding identity. Canonicalization at the parse boundary is epic
+// 35.16.6.
 const (
-	CategoryCorrectness     = "correctness"
-	CategorySecurity        = "security"
-	CategoryPerformance     = "performance"
-	CategoryConcurrency     = "concurrency"
-	CategoryRace            = "race"
-	CategoryErrorHandling   = "error-handling"
-	CategoryAPIContract     = "api-contract"
-	CategoryContract        = "contract"
-	CategoryState           = "state"
-	CategoryInputValidation = "input-validation"
-	CategoryValidation      = "validation"
-	CategoryResourceLeak    = "resource-leak"
-	CategoryLeak            = "leak"
-	CategoryCoupling        = "coupling"
-	CategoryDuplication     = "duplication"
-	CategoryComplexity      = "complexity"
-	CategoryBloat           = "bloat"
-	CategoryInvariant       = "invariant"
-	CategoryType            = "type"
-	CategoryDependency      = "dependency"
-	CategoryObservability   = "observability"
-	CategoryConfiguration   = "configuration"
-	CategoryExtensibility   = "extensibility"
-	CategoryNaming          = "naming"
-	CategoryStyle           = "style"
-	CategoryMaintainability = "maintainability"
-	CategoryTesting         = "testing"
-	CategoryDocs            = "docs"
-	CategoryOther           = "other"
+	// Defect classes — what is wrong with the code's behaviour.
+	CategoryCorrectness   = "correctness"    // logic errors, off-by-one, inverted conditions, unreachable branches
+	CategorySecurity      = "security"       // injection, auth bypass, traversal, exposed or hardcoded credentials
+	CategoryPerformance   = "performance"    // hot-path cost: N+1 calls, needless allocation, accidental O(n^2)
+	CategoryConcurrency   = "concurrency"    // synchronization and lifecycle misuse: lock discipline, channel/WaitGroup hazards, goroutines with no exit path
+	CategoryRace          = "race"           // a specific unsynchronized access to specific shared state, including check-then-act (TOCTOU)
+	CategoryErrorHandling = "error-handling" // swallowed or ignored errors, missing timeouts, unbounded retries, partial-failure states
+	CategoryState         = "state"          // stale caches, mutation of shared data, ordering assumptions
+	CategoryInvariant     = "invariant"      // a property the code assumes but never establishes or enforces
+	CategoryType          = "type"           // type-safety gaps: over-broad any/dynamic typing, unchecked assertions, lossy conversion
+
+	// Contract and interface — what the code promises its callers.
+	CategoryAPIContract     = "api-contract"     // the published interface itself is wrong: signature, error type, or ownership semantics that callers must code around
+	CategoryContract        = "contract"         // this change violates an existing contract — the function does not honour its own name, docs, or signature
+	CategoryValidation      = "validation"       // a validation rule that is missing, too weak, or applied on the wrong side of the boundary
+	CategoryInputValidation = "input-validation" // untrusted input reaching logic unchecked (the trust-boundary subset of validation)
+
+	// Resource and dependency handling.
+	CategoryResourceLeak  = "resource-leak" // an acquired resource with no release path: unclosed handle, connection churn, unbounded cache
+	CategoryLeak          = "leak"          // a leak of something other than a held resource: memory retained by a live reference, a leaked secret or internal detail
+	CategoryDependency    = "dependency"    // a dependency that is unnecessary, unpinned, misused, or points the wrong way
+	CategoryConfiguration = "configuration" // dangerous defaults, unvalidated config, undocumented environment dependence
+
+	// Structure and design — cost the change imposes on future work.
+	CategoryCoupling        = "coupling"        // hidden dependencies, layer violations, config reach-through, two sources of truth
+	CategoryComplexity      = "complexity"      // this code is harder to follow than the problem requires
+	CategoryBloat           = "bloat"           // code that should not exist at all: dead branches, unused abstraction, speculative generality
+	CategoryDuplication     = "duplication"     // parallel implementations that will drift apart
+	CategoryExtensibility   = "extensibility"   // a hardcoded assumption the known roadmap already contradicts
+	CategoryMaintainability = "maintainability" // structural readability cost not captured above: functions doing three jobs, misleading structure, comments that lie
+	CategoryNaming          = "naming"          // an identifier that promises something the code does not do, or one concept spelled three ways
+	CategoryStyle           = "style"           // formatting and idiom only — no behavioural or structural claim
+
+	// Cross-cutting concerns.
+	CategoryObservability = "observability" // if this breaks in production nobody will know: no log, metric, or error context
+	CategoryTesting       = "testing"       // absent, vacuous, or non-isolated tests
+	CategoryDocs          = "docs"          // documentation or comments made wrong by this change
+
+	// Control values. These are not defect classes; they route a finding.
+	// CategoryOutOfScope is declared in merge.go, where its annotate-don't-promote
+	// semantics live.
+	CategoryOther = "other" // a real finding that genuinely fits no member above — the escape hatch that makes the set closed rather than lossy
 )
 
-var categoryMerges = map[string]string{}
-
+// categories is the vocabulary in the order it is offered to a reviewer:
+// defect classes first (what is broken), then contract, resource, and
+// structural concerns (what will break later), then cross-cutting concerns,
+// with the two routing values last. Order is part of the rendered prompt, so it
+// is deliberate rather than alphabetical — a reviewer scanning the list should
+// meet the categories in roughly the order they scan the code.
+//
+// Callers receive a copy via Categories(); this slice is never handed out.
 var categories = []string{
-	CategorySecurity, CategoryCorrectness, CategoryPerformance,
-	CategoryTesting, CategoryStyle, CategoryDocs,
+	CategoryCorrectness,
+	CategorySecurity,
+	CategoryPerformance,
+	CategoryConcurrency,
+	CategoryRace,
+	CategoryErrorHandling,
+	CategoryState,
+	CategoryInvariant,
+	CategoryType,
+	CategoryAPIContract,
+	CategoryContract,
+	CategoryValidation,
+	CategoryInputValidation,
+	CategoryResourceLeak,
+	CategoryLeak,
+	CategoryDependency,
+	CategoryConfiguration,
+	CategoryCoupling,
+	CategoryComplexity,
+	CategoryBloat,
+	CategoryDuplication,
+	CategoryExtensibility,
+	CategoryMaintainability,
+	CategoryNaming,
+	CategoryStyle,
+	CategoryObservability,
+	CategoryTesting,
+	CategoryDocs,
+	CategoryOutOfScope,
+	CategoryOther,
 }
 
-// Categories returns the closed reviewer CATEGORY vocabulary.
-func Categories() []string { return categories }
+// categoryMerges records every word from the three derivation sources that is
+// NOT a member, and the member it folds into. A merge is only justified when a
+// developer would act on both words identically — "coupling is not
+// maintainability; race is not concurrency" is the standing rule, and when in
+// doubt the distinction is kept. Each entry below states why the two are the
+// same thing, not merely similar.
+//
+// This is derivation provenance, not a runtime normalizer: nothing in this epic
+// rewrites an emitted category. Epic 35.16.6 owns parse-boundary
+// canonicalization and is the intended consumer.
+var categoryMerges = map[string]string{
+	// Trivially identical variants — the only collapse the epic pre-approved.
+	"resource":  CategoryResourceLeak, // singular/plural of the same emitted word; both meant an unreleased resource
+	"resources": CategoryResourceLeak,
+
+	// Same concept, different word. No reviewer would triage these differently.
+	"logic":     CategoryCorrectness, // "logic error" is the definition of a correctness defect; personas/community_test.go binds it to sonny, whose Focus is logic errors
+	"bug":       CategoryCorrectness, // an unqualified restatement of "the code is wrong"
+	"secret":    CategorySecurity,    // a leaked credential is a security finding; gerald's Focus is exactly sasha's "secrets leakage" dimension
+	"input":     CategoryInputValidation,
+	"failure":   CategoryErrorHandling, // mira's "failure handling" — missing timeouts, unbounded retries, partial-failure states
+	"stability": CategoryErrorHandling,
+
+	// Readability variants. These three describe the same complaint — the code
+	// reads worse than it needs to — and split only by which word the model
+	// reached for. `naming` stays a member because an identifier that lies is a
+	// specific, separately actionable defect; these are not.
+	"clarity":     CategoryMaintainability,
+	"cleanliness": CategoryMaintainability,
+	"consistency": CategoryNaming, // every observed use was "same concept spelled three ways", which is otto's naming dimension
+	"structure":   CategoryMaintainability,
+}
+
+// Categories returns the closed reviewer CATEGORY vocabulary in offer order.
+//
+// The returned slice is a copy: this module is published and embedded by
+// external tools, and a shared backing array would let one consumer corrupt
+// every prompt rendered afterwards in the same process.
+func Categories() []string {
+	out := make([]string, len(categories))
+	copy(out, categories)
+	return out
+}
