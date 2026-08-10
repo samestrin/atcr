@@ -80,6 +80,19 @@ const (
 // is deliberate rather than alphabetical — a reviewer scanning the list should
 // meet the categories in roughly the order they scan the code.
 //
+// Scoring caveat (epic 35.16.5 owns the fix): the benchmark scorer compares a
+// raised category against ground truth by exact string equality
+// (internal/benchmark/score.go), and internal/benchmarkimport maps the suite's
+// ground truth to exactly four values — correctness, security, maintainability,
+// performance. Every other member here is therefore unscoreable today, and the
+// disambiguation gloss actively steers models toward some of them (`logic` for
+// correctness; complexity/duplication/naming/bloat/style for maintainability;
+// secret/validation/input-validation for security). Offering the words is still
+// right — the 72.3%-unscoreable measurement was caused by offering too few — but
+// until 35.16.5 widens the scorer's targets or adds an equivalence layer, a
+// benchmark re-run can measure WORSE while the prompts get better. Do not read a
+// regression there as a regression in this vocabulary.
+//
 // Callers receive a copy via Categories(); this slice is never handed out.
 var categories = []string{
 	CategoryCorrectness,
