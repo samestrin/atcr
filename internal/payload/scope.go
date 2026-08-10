@@ -32,7 +32,8 @@ func ScopeFocus(scope []string) string {
 	// accidental prompt bloat becomes a concern.
 	return "\n\n## Review Focus\nConcentrate this review on the following categories: " +
 		strings.Join(cats, ", ") + ". Prioritize findings in these areas. This is a focus " +
-		"hint, not a hard limit — still report any genuinely critical issue you find outside them."
+		"hint, not a hard limit — still report any genuinely critical issue you find outside them. " +
+		"These are focus areas, not CATEGORY values: CATEGORY still comes from the closed vocabulary above."
 }
 
 // Per-payload-mode scope rules injected into persona prompts as {{.ScopeRule}}.

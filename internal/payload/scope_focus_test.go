@@ -17,7 +17,8 @@ func TestScopeFocus(t *testing.T) {
 	// join punctuation cannot drift unnoticed.
 	const wantSingle = "\n\n## Review Focus\nConcentrate this review on the following categories: " +
 		"performance. Prioritize findings in these areas. This is a focus hint, not a hard " +
-		"limit — still report any genuinely critical issue you find outside them."
+		"limit — still report any genuinely critical issue you find outside them. " +
+		"These are focus areas, not CATEGORY values: CATEGORY still comes from the closed vocabulary above."
 	single := ScopeFocus([]string{"performance"})
 	if single != wantSingle {
 		t.Fatalf("ScopeFocus single = %q, want %q", single, wantSingle)
