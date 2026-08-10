@@ -427,11 +427,27 @@ func TestProfiles_ModuleCacheIsReadOnlyAndGuardedOnBothPlatforms(t *testing.T) {
 		argv, err := bwrapArgs(cfg, spec)
 		require.NoError(t, err)
 
-		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{cfg.ModuleCacheDir, cfg.ModuleCacheDir},
-			"the module cache must be bound at its own path so GOMODCACHE resolves identically inside and out")
+		// Bound at a fixed sandbox-internal path, NOT at its own host path.
+		// binding at its own path requires bwrap to auto-vivify every ancestor
+		// directory needed to host that mount point — and the default
+		// ModuleCacheDir lives under $HOME/.cache/..., so binding it there made
+		// /home, $HOME's basename, and $HOME/.cache all appear as visible
+		// (if empty) directories inside the sandbox. That is a real containment
+		// gap against the documented "$HOME is not readable" guarantee,
+		// measured via TestIntegration_OSLevelLinux_SensitiveHostPathsAreInvisible
+		// on a real CI runner. A fixed mount point never touches $HOME's path at
+		// all, regardless of where the operator's cache directory happens to live.
+		assert.Contains(t, argvPairs(t, argv, "--ro-bind"), [2]string{cfg.ModuleCacheDir, bwrapModuleCacheDir},
+			"the module cache must be bound at a fixed sandbox-internal path, never its own host path")
+		for _, pair := range argvPairs(t, argv, "--ro-bind") {
+			assert.NotEqual(t, cfg.ModuleCacheDir, pair[1],
+				"the module cache's host path must never appear as a mount DESTINATION — that is what forces $HOME's ancestors into visibility")
+		}
 		for _, pair := range argvPairs(t, argv, "--bind") {
 			assert.NotEqual(t, cfg.ModuleCacheDir, pair[0],
 				"the module cache must never be bound writable: %v", pair)
+			assert.NotEqual(t, bwrapModuleCacheDir, pair[1],
+				"the module cache mount point must never be writable: %v", pair)
 		}
 	})
 

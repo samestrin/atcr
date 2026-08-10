@@ -1244,7 +1244,15 @@ exit 0`)
 	assert.DirExists(t, cache, "Run must create the module cache before the generators carve it out")
 	require.NotEmpty(t, seen.ScratchDir)
 	assert.NoDirExists(t, seen.ScratchDir, "the scratch tree is still ephemeral")
-	assert.Contains(t, res.Output, "GOMODCACHE="+resolvePath(t, cache),
+	// On Linux the workload sees the fixed bwrapModuleCacheDir mount point,
+	// never the real host path (see that constant's doc — binding at the real
+	// path would force $HOME's ancestors into visibility). darwin's profile
+	// grants the real path directly.
+	wantGOMODCACHE := resolvePath(t, cache)
+	if runtime.GOOS == "linux" {
+		wantGOMODCACHE = bwrapModuleCacheDir
+	}
+	assert.Contains(t, res.Output, "GOMODCACHE="+wantGOMODCACHE,
 		"the workload's GOMODCACHE must be the persistent cache, not a scratch subdirectory")
 	assert.Contains(t, seen.ModuleCacheDir, "modcache",
 		"the generators must receive the resolved cache path")

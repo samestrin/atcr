@@ -404,6 +404,18 @@ func TestCheckOSLevelSnapshotUsable_RefusesAnUnrecognizedBackend(t *testing.T) {
 }
 
 func TestCheckOSLevelSnapshotUsable_RefusesAProfileMetacharacterPath(t *testing.T) {
+	// `(`/`)` are metacharacters ONLY in sandbox-exec's interpolated profile
+	// DSL (profileSafePath, oslevel_profile.go) — bwrap's argv is discrete
+	// elements passed straight to execve, so bwrapArgs has no equivalent
+	// rejection and correctly accepts this path on Linux. This exported check
+	// dispatches on the real runtime.GOOS (sandbox.CheckSnapshotUsable), not
+	// an injectable seam, so the property under test is darwin-only; it went
+	// unnoticed on Linux only because CI never ran the integration tag there
+	// before this sprint's containment-proof job.
+	if runtime.GOOS != "darwin" {
+		t.Skip("profile-DSL metacharacter rejection is darwin-specific (sandbox-exec only); bwrap's discrete argv has no equivalent")
+	}
+
 	dir := filepath.Join(t.TempDir(), "repo(1)")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 

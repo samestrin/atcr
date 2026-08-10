@@ -1173,7 +1173,17 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// created above, so the directory the containment profile/argv permits and
 	// the directory HOME/TMPDIR/GOCACHE point at agree by construction rather
 	// than by coincidence.
-	cmd.Env = sandboxEnv(homeDir, runCfg.ModuleCacheDir)
+	//
+	// GOMODCACHE must name the path the module cache is actually reachable AT
+	// inside the sandbox, which diverges from the host path on Linux only:
+	// bwrapArgs binds it at the fixed bwrapModuleCacheDir mount point rather
+	// than its own host path (see that constant's doc). darwin's profile
+	// grants the real path directly, so it is unchanged.
+	envModuleCache := runCfg.ModuleCacheDir
+	if b.platform() == "linux" && envModuleCache != "" {
+		envModuleCache = bwrapModuleCacheDir
+	}
+	cmd.Env = sandboxEnv(homeDir, envModuleCache)
 	// Put the sandbox in its own process group and make cancellation kill the
 	// whole group, so a workload that forked is reaped rather than left running
 	// past the deadline. WaitDelay is the backstop for a grandchild that escaped

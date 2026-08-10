@@ -805,6 +805,22 @@ func pathContains(parent, child string) bool {
 const (
 	bwrapWorkDir = "/work"
 	bwrapSrcDir  = "/src"
+	// bwrapModuleCacheDir is the fixed sandbox-internal mount point for
+	// OSLevelConfig.ModuleCacheDir. Binding it here — rather than at its own
+	// host path — is deliberate: the default ModuleCacheDir lives under
+	// os.UserCacheDir() ($HOME/.cache/... on Linux), and bwrap must
+	// auto-vivify every ancestor directory needed to host a --ro-bind
+	// mountPOINT. Binding at the real path therefore made /home, the
+	// operator's home directory basename, and $HOME/.cache all appear as
+	// visible (if empty) directories inside the sandbox — a real crack in the
+	// "$HOME is not readable" guarantee, measured via
+	// TestIntegration_OSLevelLinux_SensitiveHostPathsAreInvisible on a real
+	// CI runner (GOMODCACHE's default resolves under /home/runner/.cache
+	// there). A fixed mount point never touches $HOME's path at all,
+	// regardless of where the operator's cache directory lives. The
+	// content is identical either way — only the path Go sees for
+	// GOMODCACHE differs inside the sandbox, which callers do not depend on.
+	bwrapModuleCacheDir = "/atcr-modcache"
 )
 
 // linuxRequiredRoots must be visible or nothing can execute inside the
@@ -1032,14 +1048,16 @@ func bwrapArgs(cfg OSLevelConfig, spec RunSpec) ([]string, error) {
 	// allow the real /tmp.
 	args = append(args, "--tmpfs", "/tmp")
 
-	// Bound READ-only, at its own host path so GOMODCACHE resolves to the same
-	// spelling inside and outside — and read-only because a persistent directory
-	// the workload may write is a cache-poisoning primitive that outlives the run
-	// (see OSLevelConfig.ModuleCacheDir). Emitted with the other read-only mounts,
-	// ahead of every writable one, so assertNoBindShadowing below can prove
-	// nothing writable covers it.
+	// Bound READ-only at the fixed bwrapModuleCacheDir mount point — never at
+	// its own host path (see that constant's doc for why: binding at the real
+	// path forces bwrap to auto-vivify $HOME's ancestors when the cache lives
+	// under $HOME, as it does by default). Read-only because a persistent
+	// directory the workload may write is a cache-poisoning primitive that
+	// outlives the run (see OSLevelConfig.ModuleCacheDir). Emitted with the
+	// other read-only mounts, ahead of every writable one, so
+	// assertNoBindShadowing below can prove nothing writable covers it.
 	if moduleCache != "" {
-		args = append(args, "--ro-bind", moduleCache, moduleCache)
+		args = append(args, "--ro-bind", moduleCache, bwrapModuleCacheDir)
 	}
 	if spec.Writable {
 		args = append(args, "--ro-bind", snapshot, bwrapSrcDir)
