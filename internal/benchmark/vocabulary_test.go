@@ -282,3 +282,35 @@ func TestExceedsVocabularyCeiling(t *testing.T) {
 }
 
 func ptr(f float64) *float64 { return &f }
+
+// A reviewer that labels EVERY finding `other` reports perfect vocabulary
+// agreement while conveying no categorical information — `other` is a taxonomy
+// member, so it is in vocabulary by construction.
+//
+// This test does NOT assert the desirable behaviour; it pins the KNOWN one, so the
+// blind spot is a recorded decision rather than an accident, and so a future change
+// to how routing values are treated shows up here as a deliberate edit. The paired
+// zeros are the signature: drift 0.0 alongside recall 0.0 means "categorized
+// nothing", not "categorized everything correctly".
+func TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot(t *testing.T) {
+	reviewers := []ReviewerScore{{
+		Model: "m", Persona: "p",
+		Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised: []string{
+				reconcile.CategoryOther, reconcile.CategoryOther, reconcile.CategoryOther,
+			},
+		}},
+	}}
+
+	rate := OutOfVocabularyRate(reviewers)
+	require.NotNil(t, rate)
+	assert.InDelta(t, 0.0, *rate, 1e-9,
+		"`other` is a taxonomy member, so an all-`other` run currently reads as zero drift")
+
+	got := Score(reviewers)
+	require.Len(t, got, 1)
+	assert.InDelta(t, 0.0, got[0].CorroborationRate, 1e-9,
+		"`other` is hard-excluded from every family, so the same run detects nothing — "+
+			"drift 0.0 with recall 0.0 is the all-`other` signature, not a clean run")
+}

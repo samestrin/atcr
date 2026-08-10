@@ -49,6 +49,22 @@ import "github.com/samestrin/atcr/reconcile"
 // On the taxonomy's own design merits 0.20 is loose: category.go:73 ships `other`
 // precisely so a reviewer that read its prompt always has a legal landing spot, so
 // every out-of-vocabulary emission is a reviewer ignoring a 32-word enumeration.
+//
+// # Known hole: leaning on `other` entirely reads as flawless agreement
+//
+// `other` and `out-of-scope` are members of reconcile.Categories(), so they are IN
+// vocabulary here. A reviewer or persona that labels EVERY finding `other` therefore
+// reports a rate of 0.0 — identical to a reviewer that categorized every finding
+// precisely — while conveying no categorical information at all. This is the same
+// collapse the nil-vs-0 pointer prevents one level up, and it is currently NOT
+// prevented. It interacts with the equivalence relation: `other` is hard-excluded
+// from every family, so an all-`other` reviewer scores recall 0.0 AND drift 0.0
+// simultaneously — that pairing is the signature to look for.
+//
+// This is recorded, pinned by TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot, and
+// deliberately NOT fixed here: excluding the routing values would change what this
+// metric means, and the choice belongs with the 35.16.6 canonicalization work rather
+// than being made silently. Do not read a 0.0 as clean without checking recall.
 // The right move is to TIGHTEN this in 35.16.6 once the post-merge validation run
 // supplies the first real number under this metric — never to loosen it when a run
 // fails.
@@ -126,6 +142,22 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 // vocabularySet is the closed vocabulary as a lookup set, normalized the same way
 // the scorer normalizes a raised category so case and padding never register as
 // drift.
+//
+// # What is NOT folded, and why that inflates the measured rate
+//
+// normalize (score.go) is ToLower(TrimSpace(s)) and nothing more. SEPARATORS are not
+// folded, and 5 of the 32 members are hyphenated — so every separator variant a real
+// model emits counts as full drift against this list:
+//
+//	error_handling · "error handling" · input_validation · "resource leak" · "api contract"
+//
+// Those are SPELLINGS of a member, not vocabulary drift, and each one inflates the
+// rate against MaxOutOfVocabularyRate. Separator and hyphenation folding is epic
+// 35.16.6's parse-boundary canonicalization and is deliberately out of scope here
+// (folding reconcile.CategoryMerges() likewise — see the const doc above), so the
+// first real run may fail the ceiling on a normalization artifact rather than on
+// genuine drift. Diagnose a failure by inspecting the emitted words before treating
+// the number as model behaviour.
 //
 // Built per call rather than cached in a package var: reconcile.Categories()
 // returns a fresh copy by design, and this runs once per run result, not per
