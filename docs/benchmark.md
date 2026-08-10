@@ -248,7 +248,17 @@ share of the run's findings whose category is not a member of the closed reviewe
 vocabulary. It answers "did the models actually use the categories they were
 offered?", which no other field reveals — a reviewer that invents its own words
 quietly zeroes its own recall, and the low score is indistinguishable from one that
-simply found less. Four details matter when reading it:
+simply found less. Five details matter when reading it:
+
+- A run is guarded against a **ceiling of `0.20`**, and the ceiling is **exclusive** —
+  a run sitting exactly on `0.20` trips the guard. Treat `0.20` as a *provisional
+  fixture guard*, not an empirical bound on model behaviour: it is deliberately loose
+  so that the words `reconcile`'s merge table records as *meaning* a taxonomy member
+  without *being* one (`bug`, `input`, `clarity`, `consistency`, `structure`, …) have
+  headroom until epic 35.16.6 lands parse-boundary canonicalization. It is **not**
+  derived from the 35.16.2 dry-run's 72.3%, which measured a different denominator
+  entirely. The intent is to **tighten** this once a post-merge validation run supplies
+  the first real number under this metric — never to loosen it when a run fails.
 
 - The denominator is **findings, not distinct categories**, so one prolific
   in-vocabulary category cannot mask thirty drifted findings.
