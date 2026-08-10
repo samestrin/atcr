@@ -213,6 +213,45 @@ func TestCategories_MergeTargetsAreNotThemselvesMerged(t *testing.T) {
 	}
 }
 
+// TestCategoryMerges_IsReachableByItsDeclaredConsumer covers the structural half
+// of the merge map's purpose. The map documents epic 35.16.6's parse-boundary
+// canonicalizer as its intended consumer, but that canonicalizer lives in module
+// github.com/samestrin/atcr, which cannot reach an unexported identifier in the
+// separately-versioned github.com/samestrin/atcr/reconcile. Unexported, the
+// declared consumer would have to duplicate the map — the exact drift this epic
+// exists to eliminate.
+func TestCategoryMerges_IsReachableByItsDeclaredConsumer(t *testing.T) {
+	got := CategoryMerges()
+	if len(got) != len(categoryMerges) {
+		t.Fatalf("CategoryMerges() returned %d entries, want %d", len(got), len(categoryMerges))
+	}
+	for word, target := range categoryMerges {
+		if got[word] != target {
+			t.Errorf("CategoryMerges()[%q] = %q, want %q", word, got[word], target)
+		}
+	}
+}
+
+// TestCategoryMerges_ReturnsCopy mirrors Categories()' contract: this module is
+// published and embedded, so a shared map would let one consumer corrupt the
+// canonicalization every other consumer applies in the same process.
+func TestCategoryMerges_ReturnsCopy(t *testing.T) {
+	first := CategoryMerges()
+	if len(first) == 0 {
+		t.Fatal("CategoryMerges() returned an empty map")
+	}
+	first["bug"] = "mutated"
+	delete(first, CategoryLogic)
+
+	second := CategoryMerges()
+	if second["bug"] == "mutated" {
+		t.Error("CategoryMerges() shares its backing map: a caller's write is visible to the next caller")
+	}
+	if _, ok := second[CategoryLogic]; !ok {
+		t.Error("CategoryMerges() shares its backing map: a caller's delete is visible to the next caller")
+	}
+}
+
 // TestCategories_ReturnsCopy verifies callers cannot mutate the vocabulary
 // through the returned slice. This module is published and embedded by external
 // tools; a shared backing array would let any consumer corrupt every prompt

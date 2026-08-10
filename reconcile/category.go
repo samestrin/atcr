@@ -182,6 +182,9 @@ var categoryMerges = map[string]string{
 	"structure":   CategoryMaintainability,
 }
 
+// CategoryMerges is a compiling stub pending implementation.
+func CategoryMerges() map[string]string { return nil }
+
 // Categories returns the closed reviewer CATEGORY vocabulary in offer order.
 //
 // The returned slice is a copy: this module is published and embedded by
