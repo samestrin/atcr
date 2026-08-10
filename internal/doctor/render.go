@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
+	"unicode/utf8"
 )
 
 // RenderJSON writes the report as stable, indented JSON. The schema is the
@@ -33,13 +34,38 @@ func RenderTableError(w io.Writer, rep *Report) error {
 		if a.LatencyMS > 0 {
 			latency = fmt.Sprintf("%dms", a.LatencyMS)
 		}
-		hint := a.Hint
-		if hint == "" && a.Detail != "" {
-			hint = "error: " + a.Detail
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Source, a.Status, latency, hint)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Source, a.Status, latency, diagnostic(a))
 	}
 	return tw.Flush()
+}
+
+// maxTableDetailBytes bounds the upstream detail rendered in the table. The
+// probe already clamps detail to 512 bytes; this is the tighter budget for a
+// single terminal row, with --json carrying the untruncated text.
+const maxTableDetailBytes = 160
+
+// diagnostic builds the HINT cell. The hint is atcr's guess at the cause; the
+// detail is the upstream's own account of it. A failing row carries both — the
+// guess alone is what let a 403 quota cap read as "check the API key" while the
+// captured body said the billing cycle was exhausted. Healthy rows render no
+// detail, so the common case stays quiet.
+func diagnostic(a AgentResult) string {
+	if healthy(a.Status) || a.Detail == "" {
+		return a.Hint
+	}
+	detail := a.Detail
+	if len(detail) > maxTableDetailBytes {
+		// Cut on a rune boundary so a multi-byte sequence is never split.
+		detail = detail[:maxTableDetailBytes]
+		for !utf8.ValidString(detail) {
+			detail = detail[:len(detail)-1]
+		}
+		detail += "… (--json for full text)"
+	}
+	if a.Hint == "" {
+		return "error: " + detail
+	}
+	return a.Hint + " | detail: " + detail
 }
 
 // RenderTable writes an aligned human-readable table: one row per
