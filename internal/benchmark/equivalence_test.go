@@ -1,6 +1,9 @@
 package benchmark
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -216,5 +219,62 @@ func TestScore_ExactMatchStillCountsForEveryFamily(t *testing.T) {
 			require.NotNil(t, got[0].CostPerCorroboratedFindingUSD)
 			assert.InDelta(t, 1.0, *got[0].CostPerCorroboratedFindingUSD, 1e-9)
 		})
+	}
+}
+
+// readRepoFile reads a file by its path relative to the repository root, so a test
+// can assert against a source this package only cites in prose.
+func readRepoFile(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", rel))
+	require.NoError(t, err, "cited source %s must be readable", rel)
+	return string(data)
+}
+
+// The `correctness` family admits `logic` on ONE piece of evidence: the worked
+// example in personas/community/sonny.md emits that word. Nothing bound the two,
+// so editing the persona's example would silently narrow what a raised finding can
+// satisfy — a change to the recall contract, made from a file that looks like
+// documentation. Bind them.
+func TestEquivalence_SonnyWorkedExampleJustifiesLogicMembership(t *testing.T) {
+	require.Contains(t, categoryFamilies[reconcile.CategoryCorrectness], reconcile.CategoryLogic,
+		"the family this test justifies must actually contain `logic`")
+
+	sonny := readRepoFile(t, "personas/community/sonny.md")
+	assert.Contains(t, sonny, "|"+reconcile.CategoryLogic+"|",
+		"personas/community/sonny.md's worked example is the sole justification for "+
+			"`logic` in the correctness family; if it no longer emits that word, re-argue "+
+			"the family membership in equivalence.go rather than deleting this test")
+}
+
+// The family table is a HAND COPY of prose that lives in reconcile/category.go, and
+// equivalence.go's rationale cites that prose by line number. Nothing bound the
+// citations to the source, so an edit to the gloss — or any insertion that shifts
+// its lines — silently desynchronized the recall contract's stated justification
+// from its actual authority. (One citation was already nine lines stale when this
+// test was written.) Pin every cited line so either edit fails CI.
+func TestEquivalence_CitedRationaleLinesStillMatchReconcile(t *testing.T) {
+	lines := strings.Split(readRepoFile(t, "reconcile/category.go"), "\n")
+
+	for _, c := range []struct {
+		line int    // 1-indexed, as cited in equivalence.go's doc comment
+		want string // distinctive substring the citation relies on
+		why  string
+	}{
+		{61, "comments that lie", "the `docs` borderline exclusion cites :61 as what `docs` overlaps"},
+		{68, "documentation or comments made wrong by this change", "the `docs` exclusion gloss"},
+		{73, "escape hat", "`other` is hard-excluded as the closed-vocabulary escape hatch"},
+		{83, "Scoring caveat", "start of the gloss the families are derived from verbatim"},
+		{94, "regression there as a regression in this vocabulary.", "end of that gloss"},
+		{136, `"coupling is not maintainability; race is not concurrency"`, "the standing exclusion rule"},
+		{140, "derivation provenance, not a runtime normalizer", "why CategoryMerges is not this table"},
+		{162, "`secret` is NOT folded", "start of the no-merge note the security family cites"},
+		{166, "security-related on their own terms", "end of that note"},
+	} {
+		require.Greater(t, len(lines), c.line, "reconcile/category.go is shorter than cited line %d", c.line)
+		assert.Contains(t, lines[c.line-1], c.want,
+			"equivalence.go cites reconcile/category.go:%d for %s — that line now reads %q. "+
+				"Update the citation in equivalence.go (do not relax this test).",
+			c.line, c.why, lines[c.line-1])
 	}
 }
