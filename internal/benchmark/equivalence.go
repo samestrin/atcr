@@ -174,9 +174,16 @@ func FamilyKeys() []string {
 // Validate rejects a case whose expected categories overlap that way, so no valid
 // suite can reach the double-count. Do not relax that check without replacing this
 // paragraph.
+// The family is returned as a COPY. categoryFamilies is package-level shared
+// state, so handing out the backing array would let one caller's write rewrite
+// the equivalence relation for every case scored afterwards in the process —
+// reconcile.Categories() returns a defensive copy for exactly this reason. The
+// allocation is affordable precisely because the hot path does not come through
+// here: satisfactions reads the table directly (see its comment), leaving
+// Manifest.Validate as the only caller.
 func familyOf(cat string) []string {
 	if family, ok := categoryFamilies[cat]; ok {
-		return family
+		return append([]string(nil), family...)
 	}
 	return []string{cat}
 }
