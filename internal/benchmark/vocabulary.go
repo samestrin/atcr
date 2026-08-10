@@ -21,8 +21,30 @@ import "github.com/samestrin/atcr/reconcile"
 // `input`, `clarity`, `cleanliness`, `consistency`, `structure`, `failure`,
 // `stability`, `resource`, `resources`. Nothing folds them until epic 35.16.6
 // lands parse-boundary canonicalization, so under a bare membership test they all
-// read as drift. A tighter ceiling would assert a property of live model
-// behaviour that no committed measurement supports and no fixture can prove.
+// read as drift.
+//
+// # How much headroom that actually needs — and why 0.20 may already be too tight
+//
+// The 35.16.2 dry-run's per-word tail is the one usable measurement (its review at
+// .planning/epics/code-reviews/35.16.2_*/claude/2026-08-07_code-review.md §8). Of
+// its 213 findings, the merge-table words listed above account for at least:
+//
+//	input 15 · failure 13 · resource 9 · clarity 5 · consistency 4 ·
+//	structure 4 · resources 4   =  54 / 213  ≈  25%
+//
+// That is a FLOOR, not an estimate: the review enumerated only 12 of the 34 distinct
+// categories emitted, and `bug`, `cleanliness`, and `stability` are not among the
+// twelve. Replayed under THIS metric those 54 findings are drift, while the tail's
+// other big entries (`contract` 28, `state` 21, `coupling` 9, `concurrency` 8,
+// `duplication` 7, `naming` 4) are taxonomy members and are not.
+//
+// So on the only transcript in existence, merge-table words alone would have put the
+// rate around 25% — ABOVE this ceiling. Read 0.20 as a deliberately tight fixture
+// guard that the first real run may well trip, not as a bound live behaviour has
+// been shown to satisfy. If V1 fails here, the finding is that 35.16.6's
+// canonicalization is a prerequisite for a meaningful rate — NOT a licence to raise
+// the number. Recomputing this share from V1's own output is how the ceiling should
+// eventually be set.
 //
 // On the taxonomy's own design merits 0.20 is loose: category.go:73 ships `other`
 // precisely so a reviewer that read its prompt always has a legal landing spot, so
