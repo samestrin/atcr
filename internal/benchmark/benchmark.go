@@ -249,7 +249,11 @@ type RunResult struct {
 	Reviewers    []scorecard.PublicRecord `json:"reviewers"`
 
 	// OutOfVocabularyRate is the share of the run's findings whose category is not
-	// a member of the closed reviewer vocabulary — see OutOfVocabularyRate.
+	// a member of the closed reviewer vocabulary. The value is produced by the
+	// package-level OutOfVocabularyRate FUNCTION in vocabulary.go, which documents
+	// the metric's three definitional choices; this field only carries it. (The
+	// function and this field deliberately share a name — say which one you mean at
+	// a call site, since `benchmark.OutOfVocabularyRate` alone is ambiguous.)
 	//
 	// It is a DIAGNOSTIC on the run, not a reviewer metric, which is why it sits
 	// here rather than on scorecard.PublicRecord: that type is the frozen public
