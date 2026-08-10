@@ -12,10 +12,29 @@ import (
 // (personas/community_test.go, personas/_base.md), which this module cannot
 // import.
 
-// observedCategories is every category word the 35.16.2 AC3 dry-run actually
-// emitted (kimi-k3 + qwen3.8-max over the bundled standard-v1 suite). Source:
-// the epic body's frequency table plus the out-of-vocabulary tail recorded in
-// .planning/.../35.16.2_.../claude/2026-08-07_code-review.md.
+// observedEmittedCount is how many DISTINCT category words the 35.16.2 AC3
+// dry-run emitted, as measured and reported at
+// .planning/.../35.16.2_.../claude/2026-08-07_code-review.md:118 ("72.3% of
+// findings (154 of 213) use a category outside ATCR's vocabulary — 34 distinct
+// categories emitted").
+//
+// observedRecordedCount is how many of those 34 were ever written down. The
+// write-ups record a frequency table and an out-of-vocabulary tail, not the full
+// set, so 9 emitted words exist only as a count and cannot be recovered from the
+// artifacts. Keep this equal to len(observedCategories) — the test above enforces it.
+const (
+	observedEmittedCount  = 34
+	observedRecordedCount = 25
+)
+
+// observedCategories is every category word the 35.16.2 AC3 dry-run emitted THAT
+// EITHER WRITE-UP RECORDED (kimi-k3 + qwen3.8-max over the bundled standard-v1
+// suite) — a faithful union of the epic body's frequency table and the
+// out-of-vocabulary tail, but not the full emitted set: see
+// observedEmittedCount. The 9 unrecorded words are consequently unguarded, so a
+// clean run of TestCategories_ObservedWordsAreAccountedFor proves the claim for
+// the recorded words only. Recovering one from a future run artifact means
+// appending it here and raising observedRecordedCount together.
 var observedCategories = []string{
 	"security", "correctness", "state", "contract", "failure", "input",
 	"bug", "resource", "resources", "duplication", "coupling", "clarity",
@@ -81,10 +100,29 @@ func TestCategories_RosterWordsAreAccountedFor(t *testing.T) {
 }
 
 // TestCategories_ObservedWordsAreAccountedFor enforces T1's success criterion
-// for the dry-run vocabulary: no word a reviewer actually emitted may fall
-// through to nothing.
+// for the dry-run vocabulary, over the words that were recorded: no word a
+// reviewer actually emitted AND that either write-up wrote down may fall through
+// to nothing. See observedCategories for why that is narrower than "every word
+// the run emitted".
 func TestCategories_ObservedWordsAreAccountedFor(t *testing.T) {
 	assertAccountedFor(t, observedCategories, "35.16.2 dry-run")
+}
+
+// TestObservedCategories_MatchesItsDocumentedCount ties the slice to the number
+// its comment claims, so the two cannot drift apart again. The list previously
+// declared itself "every category word the dry-run actually emitted" while
+// holding 25 of the 34 distinct words the run produced — the test above then
+// proved 74% of what it claimed. Adding a recovered word means raising
+// observedRecordedCount in the same edit, which is the point.
+func TestObservedCategories_MatchesItsDocumentedCount(t *testing.T) {
+	if len(observedCategories) != observedRecordedCount {
+		t.Errorf("observedCategories holds %d words but its comment documents %d — update both together",
+			len(observedCategories), observedRecordedCount)
+	}
+	if observedRecordedCount > observedEmittedCount {
+		t.Errorf("observedRecordedCount (%d) exceeds the %d distinct words the dry-run emitted",
+			observedRecordedCount, observedEmittedCount)
+	}
 }
 
 // TestCategories_BaseWordsAreAccountedFor enforces the same for the six words
