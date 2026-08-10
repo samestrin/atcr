@@ -440,3 +440,39 @@ func TestScore_FineExpectedCategorySatisfiedByItself(t *testing.T) {
 	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9,
 		"an expected %q with no family of its own is scored by exact match", reconcile.CategoryStyle)
 }
+
+// familyOf hands its result to a caller that iterates it, so returning the
+// package-level slice directly would let any caller rewrite the equivalence
+// relation for the rest of the process — a global, silent change to how every
+// subsequent case is scored. reconcile.Categories() returns a defensive copy for
+// exactly this reason; this table is no less shared.
+//
+// The copy is affordable because the hot path does not use familyOf: satisfactions
+// reads categoryFamilies directly (see its comment), leaving Manifest.Validate as
+// the only caller.
+func TestFamilyOf_ReturnsACopyTheCallerCannotMutate(t *testing.T) {
+	family := familyOf(reconcile.CategoryCorrectness)
+	require.Greater(t, len(family), 1, "correctness has a real family to mutate")
+
+	poisoned := "poisoned-by-a-caller"
+	family[0] = poisoned
+
+	again := familyOf(reconcile.CategoryCorrectness)
+	assert.NotContains(t, again, poisoned,
+		"mutating a returned family must not rewrite the shared equivalence relation")
+	assert.Contains(t, again, reconcile.CategoryCorrectness,
+		"the original member must survive a caller's write")
+}
+
+// The identity fallback allocates a fresh slice per call, so it is already safe —
+// pinned so a future "optimization" that returns a shared one-element slice does
+// not reintroduce the hazard by another route.
+func TestFamilyOf_IdentityFallbackIsAlsoIsolated(t *testing.T) {
+	first := familyOf(reconcile.CategoryStyle)
+	require.Equal(t, []string{reconcile.CategoryStyle}, first)
+
+	first[0] = "poisoned"
+
+	assert.Equal(t, []string{reconcile.CategoryStyle}, familyOf(reconcile.CategoryStyle),
+		"the identity fallback must not hand out shared state either")
+}
