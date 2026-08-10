@@ -248,10 +248,18 @@ share of the run's findings whose category is not a member of the closed reviewe
 vocabulary. It answers "did the models actually use the categories they were
 offered?", which no other field reveals — a reviewer that invents its own words
 quietly zeroes its own recall, and the low score is indistinguishable from one that
-simply found less. Three details matter when reading it:
+simply found less. Four details matter when reading it:
 
 - The denominator is **findings, not distinct categories**, so one prolific
   in-vocabulary category cannot mask thirty drifted findings.
+- It is **micro-averaged over the whole run**, not averaged per reviewer — and the
+  denominator is only the findings that actually survived. On a *partial* roster
+  failure (some reviewers errored, see Behavior above) the rate is computed from the
+  survivors alone, and nothing in the payload states how many findings that was: a
+  run where 8 of 10 reviewers failed on every case can publish a clean-looking rate
+  drawn from two reviewers. Reconstruct the denominator from the `reviewers[]` rows
+  as the sum of `findings_raised_avg × runs` before trusting a rate as
+  representative.
 - A finding with an **empty** category counts as drift. Otherwise the rate would
   improve when a reviewer stopped labelling entirely.
 - The key is **absent** (not `0.0`) for a run that raised no findings at all, and
