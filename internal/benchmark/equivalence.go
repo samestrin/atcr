@@ -1,6 +1,10 @@
 package benchmark
 
-import "github.com/samestrin/atcr/reconcile"
+import (
+	"sort"
+
+	"github.com/samestrin/atcr/reconcile"
+)
 
 // categoryFamilies is the scorer-side equivalence relation: for each COARSE
 // category internal/benchmarkimport can emit as ground truth, the ATCR taxonomy
@@ -117,6 +121,27 @@ var categoryFamilies = map[string][]string{
 	reconcile.CategoryPerformance: {
 		reconcile.CategoryPerformance,
 	},
+}
+
+// FamilyKeys returns the coarse ground-truth categories the equivalence relation
+// spans, sorted, as a copy.
+//
+// It exists SOLELY so internal/benchmarkimport can bind its categoryMap output
+// values to this table in a test — the two must name the same four words, and
+// nothing enforced that across the package boundary. It deliberately does NOT
+// expose family MEMBERSHIP: this table is a benchmark-side relation that merges
+// nothing in the product (see the header above), and handing out the full
+// map[string][]string would offer a reusable equivalence relation — and a mutable
+// map — inviting exactly the product-side merge that constraint forbids.
+//
+// Keys only, copied, sorted. Do not widen this signature.
+func FamilyKeys() []string {
+	out := make([]string, 0, len(categoryFamilies))
+	for k := range categoryFamilies {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // familyOf returns the categories that satisfy an expected category: its family

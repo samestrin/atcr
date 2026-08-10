@@ -203,9 +203,18 @@ func TestEquivalence_FamilyMembershipIsExactlyAsSpecified(t *testing.T) {
 	}
 }
 
-// The families must cover exactly the ground truth internal/benchmarkimport can
-// emit. A fifth key would be dead weight; a missing one is a coarse category
-// scored by exact match while its siblings are scored by family.
+// The family table has exactly these four keys.
+//
+// This is an IN-PACKAGE assertion against a literal — it does NOT bind the keys to
+// internal/benchmarkimport's categoryMap, which is where the ground truth actually
+// comes from. That cross-package binding lives in
+// TestCategoryMap_OutputsMatchScorerFamilyKeys (internal/benchmarkimport/suite_test.go),
+// which asserts ElementsMatch against benchmark.FamilyKeys(); it cannot live here,
+// because internal/benchmarkimport imports this package and an in-package test
+// importing back is an import cycle.
+//
+// Kept as a fast local guard on the count and spelling. If you change the keys,
+// the benchmarkimport test is the one that decides whether the change is correct.
 func TestEquivalence_CoversEveryGroundTruthCategory(t *testing.T) {
 	want := []string{
 		reconcile.CategoryCorrectness,
@@ -220,7 +229,8 @@ func TestEquivalence_CoversEveryGroundTruthCategory(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, want, got,
-		"family keys must be exactly the values internal/benchmarkimport's categoryMap emits")
+		"family keys drifted from this literal; the authoritative binding to "+
+			"internal/benchmarkimport's categoryMap is TestCategoryMap_OutputsMatchScorerFamilyKeys")
 }
 
 // Equivalence resolves AFTER normalize, so a coarse expected category spelled
@@ -384,4 +394,41 @@ func TestEquivalence_RefusedMembersSatisfyNothing(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.InDelta(t, 0.0, got[0].CorroborationRate, 1e-9,
 		"a raised %q must not satisfy a planted %q", reconcile.CategoryRace, reconcile.CategoryCorrectness)
+}
+
+// A fine expected category — one that is a taxonomy MEMBER but never a family KEY —
+// is satisfied by itself through familyOf's identity fallback. That is what makes
+// the equivalence relation additive: it widens what satisfies a coarse word and
+// changes nothing else.
+//
+// The path was previously covered only incidentally, by synthetic non-taxonomy
+// strings in sort-stability fixtures ("a"/"a", "x"/"x" in score_test.go). Nothing
+// exercised it with a REAL taxonomy word, which is the case a suite can actually
+// plant.
+//
+// Written against reconcile.CategoryStyle rather than the literal "style" on
+// purpose: if a future taxonomy edit dropped `style` or promoted it to a family
+// key, a literal would keep passing through the identity fallback on a now-synthetic
+// word — silently degrading into a duplicate of the score_test.go fixtures while
+// still appearing to guard this.
+func TestScore_FineExpectedCategorySatisfiedByItself(t *testing.T) {
+	// The premise: `style` is a MEMBER of maintainability's family, never a KEY.
+	// If that ever inverts, this test is measuring something else.
+	require.NotContains(t, categoryFamilies, reconcile.CategoryStyle,
+		"%q must not be a family key, or the identity fallback is not what is under test",
+		reconcile.CategoryStyle)
+	require.Contains(t, categoryFamilies[reconcile.CategoryMaintainability], reconcile.CategoryStyle,
+		"%q must be a member of maintainability's family", reconcile.CategoryStyle)
+
+	got := Score([]ReviewerScore{{
+		Model: "m", Persona: "p",
+		Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryStyle},
+			Raised:   []string{reconcile.CategoryStyle},
+		}},
+	}})
+
+	require.Len(t, got, 1)
+	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9,
+		"an expected %q with no family of its own is scored by exact match", reconcile.CategoryStyle)
 }
