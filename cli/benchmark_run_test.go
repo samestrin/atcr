@@ -63,6 +63,15 @@ func (s stubCategoryCompleter) Complete(_ context.Context, _ llmclient.Invocatio
 	return "HIGH|x.go:1|planted defect|fix it|" + s.category + "|15|evidence", nil
 }
 
+// stubNoFindingsCompleter reviews successfully and reports no defect at all — the
+// only path that leaves a run with zero findings to measure. Distinct from a failed
+// reviewer: the review itself succeeds, so the run is scored rather than aborted.
+type stubNoFindingsCompleter struct{}
+
+func (stubNoFindingsCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "No findings.", nil
+}
+
 // executeBenchmarkRun loads + validates the suite, executes each case's diff
 // through the review pipeline with the injected Completer, scores findings against
 // the case's expected categories, and aggregates per-reviewer PublicRecord into a
@@ -114,6 +123,27 @@ func TestExecuteBenchmarkRun_ReportsVocabularyDrift(t *testing.T) {
 	require.NotNil(t, rr.OutOfVocabularyRate)
 	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
 		"every finding used a non-member word -> full drift")
+}
+
+// A run that raised NO findings reports the rate as absent, never 0.0 — the
+// nil-vs-zero distinction RunResult.OutOfVocabularyRate's pointer exists to carry.
+// Asserted here at the CLI wiring level and against the MARSHALED JSON, because
+// omitempty on the nil pointer is what actually drops the key from the run-result
+// file an operator reads; the library-level test cannot observe that.
+func TestExecuteBenchmarkRun_NoFindingsOmitsVocabularyRate(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	assert.Nil(t, rr.OutOfVocabularyRate, "no findings -> unmeasured, not a clean 0.0")
+
+	raw, err := json.Marshal(rr)
+	require.NoError(t, err)
+	var decoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	_, present := decoded["out_of_vocabulary_rate"]
+	assert.False(t, present, "a nil rate must drop the key entirely — not emit null, not emit 0")
 }
 
 // Two runs over the same suite + transcript are byte-identical (generatedAt is
