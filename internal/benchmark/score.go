@@ -111,7 +111,12 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		}
 		// Cost-per-corroborated denominator: every finding whose category satisfied
 		// an expected (planted) category. Counts findings, not distinct categories.
-		// Drive the count off normalizedRaised so normalize() runs once per finding.
+		// Drive the count off normalizedRaised so this pass normalizes each finding
+		// once rather than twice. It is NOT once per finding per RUN: OutOfVocabularyRate
+		// is a separate top-level walk over the same ReviewerScores and normalizes them
+		// again. That duplication is deliberate — it keeps the run diagnostic off
+		// Score's signature and out of the frozen PublicRecord — and is negligible
+		// against an LLM-bound run.
 		for _, cat := range normalizedRaised {
 			if satisfying[cat] {
 				matchedFindings++
@@ -141,7 +146,8 @@ func normalize(cat string) string { return strings.ToLower(strings.TrimSpace(cat
 
 // normalizeSet returns the distinct non-empty normalized categories in cats
 // and a parallel slice of every normalized value (preserving order, including
-// empty entries) so callers can iterate findings without re-normalizing.
+// empty entries) so a caller can iterate findings without re-normalizing them
+// within the same pass.
 func normalizeSet(cats []string) (map[string]bool, []string) {
 	set := make(map[string]bool, len(cats))
 	normalized := make([]string, len(cats))
