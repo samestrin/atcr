@@ -18,6 +18,27 @@ jobs:
     name: Go Lint & Test
     runs-on: ubuntu-latest
 
+    env:
+      # This job is the ONLY thing that builds the root module against the
+      # reconcile version go.mod:38 actually pins. That coverage exists today by
+      # accident, not by design: `go.work` (`use . ./reconcile`) is gitignored
+      # (.gitignore:19), so a fresh checkout simply has none and the build falls
+      # through to go.mod + go.sum. Commit a go.work, or add a step that
+      # generates one, and the coverage evaporates with nothing failing to say
+      # so — the root would compile against the WORKING TREE copy of reconcile
+      # and a reference to an unreleased symbol would ship green.
+      #
+      # GOWORK=off makes it a guarantee instead of a side effect. It is a no-op
+      # against today's checkout, which is the point: it costs nothing and it
+      # cannot be silently removed. .githooks/pre-push:70 runs the same thing
+      # explicitly for the local case.
+      #
+      # It catches only the compile-detectable drift class (a symbol missing
+      # from the pin). Drift in the BEHAVIOR behind an unchanged signature — an
+      # unexported predicate widened in-tree — compiles clean either way and is
+      # governed by release discipline (docs/release-process.md), not by CI.
+      GOWORK: "off"
+
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
