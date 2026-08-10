@@ -155,6 +155,54 @@ func TestEquivalence_EveryWordIsATaxonomyMember(t *testing.T) {
 	}
 }
 
+// The MEMBERSHIP of every family, pinned as an explicit fixture rather than by
+// iterating the table against itself.
+//
+// TestScore_EveryFamilyMemberSatisfiesItsCoarseCategory and
+// TestEquivalence_EveryWordIsATaxonomyMember both range over categoryFamilies, so
+// they are vacuous in the DELETION direction — verified by mutation: removing
+// `validation`, `input-validation`, `naming`, `bloat`, and `complexity` left
+// `go test ./internal/benchmark/` fully green. Each deletion silently zeroes the
+// recall contribution of a reviewer that writes that word for a planted coarse
+// defect: exactly the silent-zeroing failure equivalence.go's header claims is
+// guarded against. The Clarifications specified this membership verbatim; encode it.
+//
+// Adding a member here is not a formality — it must be justified against
+// equivalence.go's "Membership is the taxonomy's own steering set" rationale first.
+func TestEquivalence_FamilyMembershipIsExactlyAsSpecified(t *testing.T) {
+	want := map[string][]string{
+		reconcile.CategoryCorrectness: {
+			reconcile.CategoryCorrectness,
+			reconcile.CategoryLogic,
+		},
+		reconcile.CategorySecurity: {
+			reconcile.CategorySecurity,
+			reconcile.CategorySecret,
+			reconcile.CategoryValidation,
+			reconcile.CategoryInputValidation,
+		},
+		reconcile.CategoryMaintainability: {
+			reconcile.CategoryMaintainability,
+			reconcile.CategoryComplexity,
+			reconcile.CategoryDuplication,
+			reconcile.CategoryNaming,
+			reconcile.CategoryBloat,
+			reconcile.CategoryStyle,
+		},
+		reconcile.CategoryPerformance: {
+			reconcile.CategoryPerformance,
+		},
+	}
+
+	require.Len(t, categoryFamilies, len(want), "a family was added or removed wholesale")
+	for coarse, members := range want {
+		got, ok := categoryFamilies[coarse]
+		require.True(t, ok, "family %q is missing from the table", coarse)
+		assert.ElementsMatch(t, members, got,
+			"family %q's membership drifted from the specified steering set", coarse)
+	}
+}
+
 // The families must cover exactly the ground truth internal/benchmarkimport can
 // emit. A fifth key would be dead weight; a missing one is a coarse category
 // scored by exact match while its siblings are scored by family.
