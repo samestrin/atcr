@@ -487,7 +487,7 @@ agents:
     persona: bruce
     provider: openrouter
     model: nvidia/nemotron-nano
-    scope: ["performance", "efficiency"]   # soft focus hint injected into the prompt
+    scope: ["performance", "complexity"]   # soft focus hint injected into the prompt
     min_severity: MEDIUM                    # drop LOW findings before reconciliation
     max_findings: 20                        # keep at most the 20 most severe
 ```

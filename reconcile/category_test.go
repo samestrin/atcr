@@ -139,6 +139,37 @@ func TestCategories_WellFormed(t *testing.T) {
 	}
 }
 
+// TestCategories_LockedSet pins the vocabulary exactly, in order.
+//
+// The membership tests above are derived from the same sources the constant is,
+// so they cannot catch the removal of a member no source names — `configuration`
+// (from personas/mira.md:11's Focus list) had exactly that hole. Epic 35.16.4
+// AC4 requires that removing ANY category fails a test, so the expected set is
+// spelled out here. This literal lives in a test on purpose: it is the tripwire
+// that makes a vocabulary change deliberate, and it cannot silently drift
+// because any divergence from Categories() fails immediately.
+func TestCategories_LockedSet(t *testing.T) {
+	want := []string{
+		"correctness", "logic", "security", "secret", "performance",
+		"concurrency", "race", "error-handling", "state", "invariant", "type",
+		"api-contract", "contract", "validation", "input-validation",
+		"resource-leak", "leak", "dependency", "configuration",
+		"coupling", "complexity", "bloat", "duplication", "extensibility",
+		"maintainability", "naming", "style",
+		"observability", "testing", "docs",
+		"out-of-scope", "other",
+	}
+	got := Categories()
+	if len(got) != len(want) {
+		t.Fatalf("vocabulary has %d members, want %d\n got: %v\nwant: %v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("member %d is %q, want %q — a vocabulary change must be deliberate", i, got[i], want[i])
+		}
+	}
+}
+
 // TestCategories_MergeTargetsAreNotThemselvesMerged rejects a chained merge
 // (a -> b -> c). Every recorded merge must land directly on a member, so a
 // reader of categoryMerges never has to follow more than one hop.

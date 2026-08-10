@@ -100,9 +100,43 @@ func TestScopeRule_PreservesExistingInstructions(t *testing.T) {
 	if !strings.Contains(changed, "Stay on the diff") || !strings.Contains(changed, "changed regions") {
 		t.Error("changed-only rule lost its scope discipline text")
 	}
+	// Assert on the routing SENTENCE, not the bare token: "out-of-scope" is
+	// itself a member of the injected enumeration, so a token check would pass
+	// even if the whole routing instruction were deleted from the base rule.
 	for _, mode := range allModes {
-		if !strings.Contains(ScopeRule(mode), reconcile.CategoryOutOfScope) {
-			t.Errorf("mode %q lost the out-of-scope routing instruction", mode)
+		rule := ScopeRule(mode)
+		if !strings.Contains(rule, "annotates rather than") {
+			t.Errorf("mode %q lost the out-of-scope routing instruction (the sentence, not just the word)", mode)
+		}
+		if !strings.Contains(rule, "routing value rather than a defect class") {
+			t.Errorf("mode %q does not mark out-of-scope as a routing value, so it reads as an ordinary defect class", mode)
+		}
+	}
+}
+
+// TestScopeRule_DisambiguatesConfusablePairs guards the gloss. The vocabulary
+// deliberately keeps near-pairs distinct (race/concurrency, contract/
+// api-contract, resource-leak/leak, input-validation/validation, secret/
+// security, correctness/logic); a reviewer handed both words with no rule for
+// choosing between them just relocates the drift this epic closes.
+func TestScopeRule_DisambiguatesConfusablePairs(t *testing.T) {
+	pairs := [][2]string{
+		{reconcile.CategoryRace, reconcile.CategoryConcurrency},
+		{reconcile.CategoryContract, reconcile.CategoryAPIContract},
+		{reconcile.CategoryResourceLeak, reconcile.CategoryLeak},
+		{reconcile.CategoryInputValidation, reconcile.CategoryValidation},
+		{reconcile.CategorySecret, reconcile.CategorySecurity},
+		{reconcile.CategoryCorrectness, reconcile.CategoryLogic},
+	}
+	for _, mode := range allModes {
+		rule := ScopeRule(mode)
+		for _, pair := range pairs {
+			// Both words must appear inside the gloss clause, not merely
+			// somewhere in the enumeration.
+			gloss := rule[strings.Index(rule, "When two members are close"):]
+			if !strings.Contains(gloss, "`"+pair[0]+"`") || !strings.Contains(gloss, "`"+pair[1]+"`") {
+				t.Errorf("mode %q does not disambiguate %q vs %q", mode, pair[0], pair[1])
+			}
 		}
 	}
 }

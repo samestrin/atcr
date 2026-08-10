@@ -28,8 +28,10 @@ package reconcile
 // 35.16.6.
 const (
 	// Defect classes — what is wrong with the code's behaviour.
-	CategoryCorrectness   = "correctness"    // logic errors, off-by-one, inverted conditions, unreachable branches
-	CategorySecurity      = "security"       // injection, auth bypass, traversal, exposed or hardcoded credentials
+	CategoryCorrectness   = "correctness"    // the code produces a wrong result: off-by-one, inverted condition, unreachable branch
+	CategoryLogic         = "logic"          // accepted equivalent spelling of correctness; a member because personas/community/sonny.md:49's worked example emits it
+	CategorySecurity      = "security"       // injection, auth bypass, traversal — every vulnerability class except credential exposure
+	CategorySecret        = "secret"         // an exposed credential specifically: hardcoded key, secret in a log, weak secret handling (personas/community/gerald.md's whole lens)
 	CategoryPerformance   = "performance"    // hot-path cost: N+1 calls, needless allocation, accidental O(n^2)
 	CategoryConcurrency   = "concurrency"    // synchronization and lifecycle misuse: lock discipline, channel/WaitGroup hazards, goroutines with no exit path
 	CategoryRace          = "race"           // a specific unsynchronized access to specific shared state, including check-then-act (TOCTOU)
@@ -48,7 +50,7 @@ const (
 	CategoryResourceLeak  = "resource-leak" // an acquired resource with no release path: unclosed handle, connection churn, unbounded cache
 	CategoryLeak          = "leak"          // a leak of something other than a held resource: memory retained by a live reference, a leaked secret or internal detail
 	CategoryDependency    = "dependency"    // a dependency that is unnecessary, unpinned, misused, or points the wrong way
-	CategoryConfiguration = "configuration" // dangerous defaults, unvalidated config, undocumented environment dependence
+	CategoryConfiguration = "configuration" // dangerous defaults, unvalidated config, undocumented environment dependence (personas/mira.md:11)
 
 	// Structure and design — cost the change imposes on future work.
 	CategoryCoupling        = "coupling"        // hidden dependencies, layer violations, config reach-through, two sources of truth
@@ -81,7 +83,9 @@ const (
 // Callers receive a copy via Categories(); this slice is never handed out.
 var categories = []string{
 	CategoryCorrectness,
+	CategoryLogic,
 	CategorySecurity,
+	CategorySecret,
 	CategoryPerformance,
 	CategoryConcurrency,
 	CategoryRace,
@@ -128,9 +132,15 @@ var categoryMerges = map[string]string{
 	"resources": CategoryResourceLeak,
 
 	// Same concept, different word. No reviewer would triage these differently.
-	"logic":     CategoryCorrectness, // "logic error" is the definition of a correctness defect; personas/community_test.go binds it to sonny, whose Focus is logic errors
+	//
+	// `logic` and `secret` are deliberately NOT here. Both read as merges on the
+	// merits — a logic error IS a correctness defect, a leaked credential IS a
+	// security finding — but personas/community/sonny.md:49 and gerald.md:50 ship
+	// worked examples that emit exactly those two words. Merging them would hand
+	// those two reviewers a prompt whose own example contradicts its own
+	// vocabulary, which is the defect this epic exists to remove. They are
+	// members instead, and the rendered rule tells the model how to choose.
 	"bug":       CategoryCorrectness, // an unqualified restatement of "the code is wrong"
-	"secret":    CategorySecurity,    // a leaked credential is a security finding; gerald's Focus is exactly sasha's "secrets leakage" dimension
 	"input":     CategoryInputValidation,
 	"failure":   CategoryErrorHandling, // mira's "failure handling" — missing timeouts, unbounded retries, partial-failure states
 	"stability": CategoryErrorHandling,

@@ -87,7 +87,35 @@ func categoryEnumeration() string {
 // file, so no prompt file can fall out of sync.
 var categoryVocabularyRule = "Use CATEGORY from this closed vocabulary, spelled exactly as listed: " +
 	categoryEnumeration() + ". That list is the whole vocabulary and every finding has a home in it, so " +
-	"choose the closest member rather than inventing a word; use `other` only when no member genuinely fits."
+	"choose the closest member rather than inventing a word; use `" + reconcile.CategoryOther +
+	"` only when no member genuinely fits. `" + reconcile.CategoryOutOfScope +
+	"` is a routing value rather than a defect class — use it only for a pre-existing issue as described above, " +
+	"never as a category for the change under review. " + categoryDisambiguation
+
+// categoryDisambiguation tells the model how to choose between the members that
+// sit closest together.
+//
+// Without it the enumeration is 32 bare words: the distinctions that justify
+// keeping `race` separate from `concurrency` live in reconcile/category.go's
+// comments, which no reviewer ever sees, so the per-model drift this epic closes
+// would simply reappear as drift between the members of each near-pair. Only the
+// genuinely confusable pairs are glossed — glossing all 32 would bury the list.
+//
+// The words come from the reconcile constants, never from literals, so a rename
+// in the vocabulary cannot leave a stale word behind in this sentence.
+var categoryDisambiguation = "When two members are close, choose by this rule: `" +
+	reconcile.CategoryRace + "` for a specific unsynchronized access to specific shared state, `" +
+	reconcile.CategoryConcurrency + "` for other synchronization or lifecycle misuse; `" +
+	reconcile.CategoryContract + "` when the change violates an existing contract, `" +
+	reconcile.CategoryAPIContract + "` when the published interface is itself wrong; `" +
+	reconcile.CategoryResourceLeak + "` for an acquired resource that is never released, `" +
+	reconcile.CategoryLeak + "` for anything else retained or exposed; `" +
+	reconcile.CategoryInputValidation + "` for untrusted input reaching logic unchecked, `" +
+	reconcile.CategoryValidation + "` for any other missing or misplaced check; `" +
+	reconcile.CategorySecret + "` for an exposed credential, `" +
+	reconcile.CategorySecurity + "` for every other vulnerability; `" +
+	reconcile.CategoryCorrectness + "` for a wrong result, with `" +
+	reconcile.CategoryLogic + "` accepted as its equivalent."
 
 // Full scope rules as rendered into a prompt: the per-mode scope instruction
 // plus the shared vocabulary constraint. Both are assembled once at init rather
