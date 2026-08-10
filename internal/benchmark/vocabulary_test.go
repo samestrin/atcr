@@ -260,3 +260,25 @@ func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
 	assert.NotContains(t, back, "out_of_vocabulary_rate",
 		"the public submission schema must not gain a column from this epic")
 }
+
+// The ceiling's EXCLUSIVE semantics ("a run sitting exactly on it trips the guard")
+// must live in production code, not in whichever operator a test happens to pick.
+func TestExceedsVocabularyCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rate *float64
+		want bool
+	}{
+		{name: "unmeasured is not a breach", rate: nil, want: false},
+		{name: "clean run", rate: ptr(0.0), want: false},
+		{name: "under the ceiling", rate: ptr(MaxOutOfVocabularyRate - 0.01), want: false},
+		{name: "exactly on the ceiling trips it", rate: ptr(MaxOutOfVocabularyRate), want: true},
+		{name: "over the ceiling", rate: ptr(0.72), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ExceedsVocabularyCeiling(tc.rate))
+		})
+	}
+}
+
+func ptr(f float64) *float64 { return &f }

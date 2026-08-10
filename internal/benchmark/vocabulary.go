@@ -54,6 +54,10 @@ import "github.com/samestrin/atcr/reconcile"
 // fails.
 const MaxOutOfVocabularyRate = 0.20
 
+// ExceedsVocabularyCeiling reports whether a measured rate breaches
+// MaxOutOfVocabularyRate. STUB — always false; see the RED test.
+func ExceedsVocabularyCeiling(_ *float64) bool { return false }
+
 // OutOfVocabularyRate is the share of a run's findings whose category is not a
 // member of the closed reviewer vocabulary (reconcile.Categories()).
 //
