@@ -77,6 +77,18 @@ func TestValidate_RejectsEmptyAndDuplicateCategories(t *testing.T) {
 			Suite: "s", SuiteVersion: "1.0.0",
 			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", "security"}}},
 		},
+		// The scorer dedupes on the NORMALIZED category (normalizeSet), so a
+		// manifest that validates these as two distinct categories then scores them
+		// as one — silently halving the recall denominator with no diagnostic.
+		// Validate must apply the same notion of distinct that the scorer does.
+		"case-differing duplicate": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"maintainability", "Maintainability"}}},
+		},
+		"whitespace-differing duplicate": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", " security "}}},
+		},
 	}
 	for name, m := range cases {
 		t.Run(name, func(t *testing.T) {
