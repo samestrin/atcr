@@ -346,7 +346,10 @@ func TestRenderTable_DetailPrefixedWhenHintEmpty(t *testing.T) {
 	assert.NotContains(t, out, "\tconnection refused", "undecorated Detail must not appear as-is in the HINT column")
 }
 
-func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
+// The hint is a guess; the detail is the upstream's own account of the failure.
+// The default table must carry both — hint first — rather than making the guess
+// the only thing a reader sees without re-running with --json.
+func TestRenderTable_HintAndDetailBothRendered(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusNetworkError, Hint: "check firewall", Detail: "connection refused"},
 	}}
@@ -354,7 +357,48 @@ func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
 	RenderTable(&b, rep)
 	out := b.String()
 	assert.Contains(t, out, "check firewall", "Hint should appear when set")
-	assert.NotContains(t, out, "connection refused", "Detail must not appear when Hint is set")
+	assert.Contains(t, out, "connection refused", "Detail is the evidence and must not be dropped when a Hint is set")
+	assert.Less(t, strings.Index(out, "check firewall"), strings.Index(out, "connection refused"),
+		"the hint leads; the detail follows it")
+}
+
+// The live 2026-08-10 failure: the table said "check the API key" while the
+// captured detail said the account had hit its billing-cycle limit.
+func TestRenderTable_NonOKStatusCarriesUpstreamDetail(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{{
+		Agent: "kai", Provider: "moonshot", Model: "kimi-k3", Status: StatusAuthFailed,
+		Hint:   "authenticated but refused — likely quota, billing, or a permission scope",
+		Detail: "You have reached your usage limit for this billing cycle",
+	}}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.Contains(t, out, "usage limit", "the diagnostic evidence belongs in the default view")
+}
+
+// An ok row has nothing to diagnose, so a stray Detail must not add noise to
+// the common case.
+func TestRenderTable_OKStatusOmitsDetail(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK, Detail: "should not surface"},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	assert.NotContains(t, b.String(), "should not surface", "ok rows render no detail")
+}
+
+// A verbose upstream body must not blow out the table; it is truncated with a
+// pointer to --json for the full text.
+func TestRenderTable_LongDetailTruncatedWithJSONPointer(t *testing.T) {
+	long := strings.Repeat("x", 400)
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusProviderError, Detail: long},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.NotContains(t, out, long, "a 400-char detail must not be rendered whole")
+	assert.Contains(t, out, "--json", "truncation must point at where the full text lives")
 }
 
 func TestRenderTableError_EmptySourcePassesThrough(t *testing.T) {
