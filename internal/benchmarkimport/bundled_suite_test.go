@@ -145,11 +145,14 @@ func TestUnplantableReason_RejectsWhatTheSuiteMayNotPlant(t *testing.T) {
 	})
 }
 
-// taxonomyVocabulary is the closed reviewer vocabulary as a set. It fails the
-// test on an empty vocabulary rather than returning one: an empty set makes every
-// Contains assertion above fail loudly, but a caller that looped over it instead
-// would pass vacuously, and a vacuous pass is precisely the defect these guards
-// replace.
+// taxonomyVocabulary is the closed reviewer vocabulary as a set.
+//
+// The NotEmpty check is a DIAGNOSTIC AID, not a guard: it is deliberately not
+// load-bearing. If reconcile.Categories() ever came back empty the callers would
+// already fail — unplantableReason would reject every planted category, and
+// TestUnplantableReason's "ordinary member is accepted" subtest would fail too.
+// What this buys is one precise message naming the real cause, instead of N
+// confusing per-category failures pointing at the suite.
 func taxonomyVocabulary(t *testing.T) map[string]struct{} {
 	t.Helper()
 	cats := reconcile.Categories()
