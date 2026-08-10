@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -133,6 +134,52 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 	assert.InDelta(t, 0.20, at, 1e-9)
 	assert.GreaterOrEqual(t, at, MaxOutOfVocabularyRate,
 		"the ceiling is exclusive: a run AT the threshold must trip the guard")
+}
+
+// The rate is MICRO-averaged across the whole run — one pooled numerator over one
+// pooled denominator — and NOT macro-averaged per reviewer. vocabulary.go:111-113
+// states that choice as load-bearing, so it needs a test that can tell the two
+// apart rather than one that happens to agree with both.
+//
+// The four recorded fixtures cannot: computed both ways they give 0.0/0.0
+// (run-clean), 0.6/0.6 (run-drifted) and 0.20/0.20 (run-boundary-at) — identical.
+// Only run-boundary-under separates them at all, at micro 4/21 = 0.190476 vs macro
+// 0.190909, a 4.3e-4 gap that survives solely because TestOutOfVocabularyRate_BoundaryPair
+// happens to use assert.InDelta(..., 1e-9). A documented decision resting on a
+// four-decimal-place accident is not pinned.
+//
+// So this case is deliberately lopsided: one reviewer raising 2 findings that both
+// drifted, one raising 80 that are all clean. Micro pools them to 2/82 ≈ 0.024 —
+// under the ceiling, a run that passes. Macro averages the per-reviewer rates to
+// (1.0 + 0.0)/2 = 0.5 — over the ceiling, a run that trips. The two answers now
+// straddle MaxOutOfVocabularyRate, so a macro implementation cannot satisfy this
+// test by rounding.
+func TestOutOfVocabularyRate_IsMicroAveragedNotMacroAveraged(t *testing.T) {
+	twoDrifted := []string{"bug", "clarity"} // neither is a taxonomy member
+	eightyClean := make([]string, 80)
+	for i := range eightyClean {
+		eightyClean[i] = reconcile.CategoryCorrectness
+	}
+
+	rate := mustRate(t, OutOfVocabularyRate([]ReviewerScore{
+		{Model: "sparse", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: twoDrifted,
+		}}},
+		{Model: "prolific", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: eightyClean,
+		}}},
+	}))
+
+	const micro, macro = 2.0 / 82.0, 0.5
+	assert.InDelta(t, micro, rate, 1e-9,
+		"the rate pools findings run-wide; a 2-finding reviewer must not weigh as much as an 80-finding one")
+	assert.Greater(t, math.Abs(rate-macro), 1e-6,
+		"a per-reviewer average would report 0.5 here — that is the implementation this test exists to reject")
+
+	// The two averagings land on opposite sides of the ceiling, so the choice is
+	// not academic: it decides whether this run passes.
+	assert.False(t, ExceedsVocabularyCeiling(&rate), "micro-averaged, this run is under the ceiling")
+	assert.True(t, ExceedsVocabularyCeiling(ptr(macro)), "macro-averaged, the same run would trip it")
 }
 
 // The denominator is FINDINGS, not distinct categories — matching CaseScore.Raised's
