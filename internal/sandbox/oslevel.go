@@ -1583,7 +1583,13 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	switch goos {
 	case "linux":
 		if strings.Contains(output, bwrapDiagnosticPrefix) || strings.Contains(output, bwrapUsagePrefix) {
-			return true, fmt.Sprintf("%s failed to set up the sandbox (exit %d)", linuxSandboxTool, exitCode)
+			// The generic label alone cannot distinguish a host restriction
+			// ("setting up uid map: Permission denied") from an argv bug — both
+			// the operator and CI's own log need bwrap's own diagnostic to tell
+			// them apart, so it travels with the classified reason rather than
+			// staying stranded in res.Output where only some callers look.
+			return true, fmt.Sprintf("%s failed to set up the sandbox (exit %d): %s",
+				linuxSandboxTool, exitCode, strings.TrimSpace(output))
 		}
 		// Everything else is bwrap passing the workload's own status through
 		// verbatim — including 126/127 from `sh`, the most common outcome for a
@@ -1594,7 +1600,8 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 			return true, fmt.Sprintf("%s %s (exit %d)", darwinSandboxTool, reason, exitCode)
 		}
 		if strings.Contains(output, sandboxExecDiagnosticPrefix) || strings.Contains(output, sandboxExecUsagePrefix) {
-			return true, fmt.Sprintf("%s reported a sandbox error (exit %d)", darwinSandboxTool, exitCode)
+			return true, fmt.Sprintf("%s reported a sandbox error (exit %d): %s",
+				darwinSandboxTool, exitCode, strings.TrimSpace(output))
 		}
 		return false, ""
 	default:

@@ -1454,6 +1454,12 @@ func TestOSLevelClassifyToolExit_LinuxKeysOnBwrapDiagnostic(t *testing.T) {
 		isFault, reason := classifyToolExit("linux", f.code, f.output)
 		assert.True(t, isFault, "a bwrap diagnostic marks a tool fault: %q", f.output)
 		assert.NotEmpty(t, reason, "a fault must carry a reason for the wrapped error")
+		// The generic "failed to set up the sandbox" label alone cannot
+		// distinguish a host restriction from an argv bug — both the operator
+		// and CI's own log need bwrap's own diagnostic line to tell them apart
+		// (this is the same gap Preflight's trivial-run probe already closes by
+		// appending res.Output; Run's classified reason must too).
+		assert.Contains(t, reason, f.output, "the classified reason must carry bwrap's own diagnostic, not just the exit code")
 	}
 
 	// Workload statuses bwrap passed through verbatim must stay results. 126 and
@@ -1485,11 +1491,16 @@ func TestOSLevelClassifyToolExit_DarwinUsesSysexitsAndDiagnostic(t *testing.T) {
 		isFault, reason := classifyToolExit("darwin", f.code, f.output)
 		assert.True(t, isFault, "sandbox-exec exit %d is a tool fault", f.code)
 		assert.NotEmpty(t, reason)
+		if _, known := sandboxExecFaultCodes[f.code]; !known {
+			assert.Contains(t, reason, f.output, "the classified reason must carry sandbox-exec's own diagnostic, not just the exit code")
+		}
 	}
 
-	// A diagnostic at an unexpected code is still a fault.
-	isFault, _ := classifyToolExit("darwin", 3, "sandbox-exec: sandbox_apply: Operation not permitted")
+	// A diagnostic at an unexpected code is still a fault, and its own
+	// diagnostic text must ride the classified reason too.
+	isFault, reason := classifyToolExit("darwin", 3, "sandbox-exec: sandbox_apply: Operation not permitted")
 	assert.True(t, isFault)
+	assert.Contains(t, reason, "sandbox-exec: sandbox_apply: Operation not permitted")
 
 	// Ordinary workload failures stay results.
 	for _, code := range []int{1, 2, 3, 42, 127} {
