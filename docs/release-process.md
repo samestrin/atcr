@@ -200,7 +200,7 @@ takes — during which a merged behavioral fix is inert in production while its 
 tests pass on every run.
 
 The cost is real and worth stating: under squash-merge the tagged commit is
-orthaned, reachable only by the tag. `reconcile/v0.4.0` is already in that state.
+orphaned, reachable only by the tag. `reconcile/v0.4.0` is already in that state.
 The tag still resolves and the proxy still serves the module, but `git branch
 --contains` finds nothing and the published subtree has no place in the linear
 history of `main`. That is the accepted trade for a zero-length window.
