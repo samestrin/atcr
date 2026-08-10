@@ -54,6 +54,15 @@ func (stubCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string
 	return "HIGH|x.go:1|planted defect|fix it|correctness|15|evidence", nil
 }
 
+// stubCategoryCompleter raises one finding under a caller-chosen category, so a
+// test can drive the out-of-vocabulary rate off a word the closed vocabulary does
+// not contain.
+type stubCategoryCompleter struct{ category string }
+
+func (s stubCategoryCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "HIGH|x.go:1|planted defect|fix it|" + s.category + "|15|evidence", nil
+}
+
 // executeBenchmarkRun loads + validates the suite, executes each case's diff
 // through the review pipeline with the injected Completer, scores findings against
 // the case's expected categories, and aggregates per-reviewer PublicRecord into a
@@ -81,6 +90,30 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 	assert.InDelta(t, 0.0, *greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
 	assert.Equal(t, int64(0), greta.LatencyP50MS, "stub reports no usage -> deterministic 0")
 	assert.Equal(t, "m-kai", rr.Reviewers[1].Model)
+
+	// The out-of-vocabulary diagnostic must reach the run result, or an operator
+	// has no signal that reviewers drifted off the closed vocabulary. Without this
+	// assertion the wiring could be deleted and the whole suite would stay green.
+	// stubCompleter raises only `correctness`, a taxonomy member, so a measured 0.
+	require.NotNil(t, rr.OutOfVocabularyRate, "a run that raised findings must report a rate")
+	assert.InDelta(t, 0.0, *rr.OutOfVocabularyRate, 1e-9,
+		"every stub finding uses a taxonomy member -> measured 0, not unmeasured")
+}
+
+// A run whose reviewers all drift off the vocabulary reports it. Paired with the
+// clean case above so the wiring is pinned in both directions rather than by a
+// single value that a hardcoded 0 would also satisfy.
+func TestExecuteBenchmarkRun_ReportsVocabularyDrift(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: "not-a-taxonomy-word"}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	require.NotNil(t, rr.OutOfVocabularyRate)
+	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
+		"every finding used a non-member word -> full drift")
 }
 
 // Two runs over the same suite + transcript are byte-identical (generatedAt is

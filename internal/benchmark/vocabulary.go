@@ -58,9 +58,12 @@ const MaxOutOfVocabularyRate = 0.20
 // reviewer: it is a property of the run's findings, and a reviewer that raised two
 // findings should not weigh as heavily as one that raised eighty.
 //
-// A run with no findings returns 0 rather than NaN — there is no drift to report,
-// and NaN would neither serialize nor compare.
-func OutOfVocabularyRate(reviewers []ReviewerScore) float64 {
+// A run with no findings at all returns nil, NOT 0. A run in which every reviewer
+// errored raised nothing to measure, and reporting that as 0.0 would publish the
+// most drifted possible run as flawless vocabulary agreement — the exact collapse
+// RunResult.OutOfVocabularyRate's pointer exists to prevent. nil means unmeasured;
+// a non-nil 0 means measured and clean.
+func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 	vocabulary := vocabularySet()
 
 	var total, drifted int
@@ -76,9 +79,10 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) float64 {
 	}
 
 	if total == 0 {
-		return 0
+		return nil
 	}
-	return float64(drifted) / float64(total)
+	rate := float64(drifted) / float64(total)
+	return &rate
 }
 
 // vocabularySet is the closed vocabulary as a lookup set, normalized the same way

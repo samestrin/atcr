@@ -204,19 +204,16 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		})
 	}
 
-	// Computed from the same accumulated ReviewerScores Score consumes, so a resumed
-	// run reports the same rate as an uninterrupted one — replayed cases fold in
-	// through applyReviewerOutcome before this point. Always set (never nil): this
-	// producer always measures, so an absent key can only mean a foreign or
-	// pre-35.16.5 run-result file.
-	oov := benchmark.OutOfVocabularyRate(reviewers)
-
 	return &benchmark.RunResult{
-		Suite:               m.Suite,
-		SuiteVersion:        m.SuiteVersion,
-		GeneratedAt:         generatedAt.UTC().Format(time.RFC3339),
-		Reviewers:           benchmark.Score(reviewers),
-		OutOfVocabularyRate: &oov,
+		Suite:        m.Suite,
+		SuiteVersion: m.SuiteVersion,
+		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
+		Reviewers:    benchmark.Score(reviewers),
+		// Computed from the same accumulated ReviewerScores Score consumes, so a
+		// resumed run reports the same rate as an uninterrupted one — replayed cases
+		// fold in through applyReviewerOutcome before this point. nil when the run
+		// raised no findings at all, which must not read as perfect agreement.
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
 	}, nil
 }
 

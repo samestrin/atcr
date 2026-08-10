@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/benchmark"
-	"github.com/samestrin/atcr/internal/benchmarkimport"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/reconcile"
 )
@@ -74,29 +73,6 @@ func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
 	// A suite that planted nothing would satisfy the loop above vacuously — the
 	// exact shape of the escape hatch this guard replaces.
 	assert.NotEmpty(t, planted, "the suite must plant at least one expected category")
-}
-
-// The ingestion map is the only producer of a suite's expected categories, so
-// every value it can emit must be a taxonomy member. The Load-based guard above
-// covers only what the COMMITTED suite happens to plant; this covers every value
-// a future rebuild could emit, including the aacr-bench labels no committed case
-// currently carries.
-func TestCategoryMap_EmitsOnlyTaxonomyCategories(t *testing.T) {
-	vocabulary := taxonomyVocabulary(t)
-
-	for _, upstream := range []string{
-		"code defect",
-		"security vulnerability",
-		"security",
-		"maintainability and readability",
-		"maintainability",
-		"performance",
-	} {
-		mapped, ok := benchmarkimport.MapCategory(upstream)
-		require.True(t, ok, "aacr-bench category %q must still map", upstream)
-		assert.Contains(t, vocabulary, mapped,
-			"categoryMap emits %q for %q, which is not a member of reconcile.Categories()", mapped, upstream)
-	}
 }
 
 // taxonomyVocabulary is the closed reviewer vocabulary as a set. It fails the

@@ -82,9 +82,18 @@ func loadRecordedRun(t *testing.T, name string) []ReviewerScore {
 	return out
 }
 
+// mustRate derefs a measured rate, failing when the run reported none. Every
+// fixture below raises findings, so a nil here is a defect rather than a valid
+// "unmeasured" outcome.
+func mustRate(t *testing.T, rate *float64) float64 {
+	t.Helper()
+	require.NotNil(t, rate, "this run raised findings, so it must report a rate")
+	return *rate
+}
+
 // A recorded run whose reviewers stayed inside the closed vocabulary passes.
 func TestOutOfVocabularyRate_CleanRunIsUnderTheCeiling(t *testing.T) {
-	rate := OutOfVocabularyRate(loadRecordedRun(t, "run-clean.json"))
+	rate := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-clean.json")))
 
 	assert.InDelta(t, 0.0, rate, 1e-9, "every raised category is a taxonomy member")
 	assert.Less(t, rate, MaxOutOfVocabularyRate)
@@ -93,7 +102,7 @@ func TestOutOfVocabularyRate_CleanRunIsUnderTheCeiling(t *testing.T) {
 // A recorded run whose reviewers ignored the enumeration FAILS. This is the
 // assertion AC3 names: model drift away from the vocabulary must not be silent.
 func TestOutOfVocabularyRate_DriftedRunExceedsTheCeiling(t *testing.T) {
-	rate := OutOfVocabularyRate(loadRecordedRun(t, "run-drifted.json"))
+	rate := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-drifted.json")))
 
 	assert.InDelta(t, 0.6, rate, 1e-9, "12 of 20 findings used a non-member word")
 	assert.GreaterOrEqual(t, rate, MaxOutOfVocabularyRate,
@@ -104,8 +113,8 @@ func TestOutOfVocabularyRate_DriftedRunExceedsTheCeiling(t *testing.T) {
 // (4/21 vs 4/20), so an inverted or misread comparison cannot satisfy both — which
 // two far-apart extremes would.
 func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
-	under := OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-under.json"))
-	at := OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-at.json"))
+	under := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-under.json")))
+	at := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-at.json")))
 
 	assert.InDelta(t, 4.0/21.0, under, 1e-9)
 	assert.Less(t, under, MaxOutOfVocabularyRate, "just under the ceiling passes")
@@ -119,7 +128,7 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 // documented one-entry-per-finding semantics. A distinct-category denominator would
 // let one prolific in-vocabulary category mask many drifted findings.
 func TestOutOfVocabularyRate_DenominatorCountsFindingsNotCategories(t *testing.T) {
-	rate := OutOfVocabularyRate([]ReviewerScore{{
+	rate := mustRate(t, OutOfVocabularyRate([]ReviewerScore{{
 		Model:   "m",
 		Persona: "p",
 		Cases: []CaseScore{{
@@ -127,7 +136,7 @@ func TestOutOfVocabularyRate_DenominatorCountsFindingsNotCategories(t *testing.T
 			// 2 distinct categories, 5 findings, 1 of which is out of vocabulary.
 			Raised: []string{"correctness", "correctness", "correctness", "correctness", "bug"},
 		}},
-	}})
+	}}))
 
 	assert.InDelta(t, 1.0/5.0, rate, 1e-9, "1 drifted finding of 5, not 1 of 2 distinct categories")
 }
@@ -135,11 +144,11 @@ func TestOutOfVocabularyRate_DenominatorCountsFindingsNotCategories(t *testing.T
 // A finding with no category at all is drift. Excluding it would produce a rate
 // that IMPROVES when a reviewer stops labelling entirely.
 func TestOutOfVocabularyRate_EmptyCategoryCountsAsDrift(t *testing.T) {
-	rate := OutOfVocabularyRate([]ReviewerScore{{
+	rate := mustRate(t, OutOfVocabularyRate([]ReviewerScore{{
 		Model:   "m",
 		Persona: "p",
 		Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness", "", "   "}}},
-	}})
+	}}))
 
 	assert.InDelta(t, 2.0/3.0, rate, 1e-9, "blank and whitespace-only categories are out of vocabulary")
 }
@@ -147,11 +156,11 @@ func TestOutOfVocabularyRate_EmptyCategoryCountsAsDrift(t *testing.T) {
 // Membership is decided against the live taxonomy after the scorer's own
 // normalize, so case and padding do not create phantom drift.
 func TestOutOfVocabularyRate_MembershipIsNormalized(t *testing.T) {
-	rate := OutOfVocabularyRate([]ReviewerScore{{
+	rate := mustRate(t, OutOfVocabularyRate([]ReviewerScore{{
 		Model:   "m",
 		Persona: "p",
 		Cases:   []CaseScore{{Expected: []string{"security"}, Raised: []string{"  SECURITY ", "Input-Validation"}}},
-	}})
+	}}))
 
 	assert.InDelta(t, 0.0, rate, 1e-9, "normalized members are in vocabulary")
 }
@@ -160,23 +169,35 @@ func TestOutOfVocabularyRate_MembershipIsNormalized(t *testing.T) {
 // routing values, which are legal emissions even though they satisfy no expected
 // category. A reviewer that reaches for `other` read its prompt; that is not drift.
 func TestOutOfVocabularyRate_EveryTaxonomyMemberIsInVocabulary(t *testing.T) {
-	rate := OutOfVocabularyRate([]ReviewerScore{{
+	rate := mustRate(t, OutOfVocabularyRate([]ReviewerScore{{
 		Model:   "m",
 		Persona: "p",
 		Cases:   []CaseScore{{Expected: []string{"correctness"}, Raised: reconcile.Categories()}},
-	}})
+	}}))
 
 	assert.InDelta(t, 0.0, rate, 1e-9, "no member of the closed vocabulary may count as drift")
 }
 
-// A run that raised nothing has no rate to report; 0 is the only value that does
-// not divide by zero, and it must not read as a failure.
-func TestOutOfVocabularyRate_NoFindingsIsZeroNotNaN(t *testing.T) {
-	assert.InDelta(t, 0.0, OutOfVocabularyRate(nil), 1e-9)
-	assert.InDelta(t, 0.0, OutOfVocabularyRate([]ReviewerScore{{Model: "m", Persona: "p"}}), 1e-9)
-	assert.InDelta(t, 0.0, OutOfVocabularyRate([]ReviewerScore{{
+// A run that raised NOTHING is unmeasured, not clean. This is the sharp edge: a
+// run in which every reviewer errored is the most drifted outcome possible, and
+// reporting it as 0.0 would publish it as flawless vocabulary agreement — exactly
+// the collapse the pointer field exists to prevent. It must also not divide by
+// zero or emit NaN, which would neither serialize nor compare.
+func TestOutOfVocabularyRate_NoFindingsIsUnmeasuredNotClean(t *testing.T) {
+	assert.Nil(t, OutOfVocabularyRate(nil), "no reviewers -> nothing measured")
+	assert.Nil(t, OutOfVocabularyRate([]ReviewerScore{{Model: "m", Persona: "p"}}),
+		"a reviewer with no cases -> nothing measured")
+	assert.Nil(t, OutOfVocabularyRate([]ReviewerScore{{
 		Cases: []CaseScore{{Expected: []string{"correctness"}, Raised: nil}},
-	}}), 1e-9)
+	}}), "a total-failure run that raised nothing must not read as perfect agreement")
+
+	// ...while a run that raised findings and drifted on none IS measured, and
+	// reports an explicit 0. The two outcomes must stay distinguishable.
+	clean := OutOfVocabularyRate([]ReviewerScore{{
+		Cases: []CaseScore{{Expected: []string{"correctness"}, Raised: []string{"correctness"}}},
+	}})
+	require.NotNil(t, clean, "a run with findings is measured")
+	assert.InDelta(t, 0.0, *clean, 1e-9)
 }
 
 // The rate reaches `atcr benchmark run` consumers through the run result.
