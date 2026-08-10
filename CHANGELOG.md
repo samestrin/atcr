@@ -13,6 +13,13 @@
 ### Fixed
 - Removed a duplicate `"security"` literal in `reconcile/consensus.go`, which now uses the vocabulary constant.
 - Corrected the `scope:` example in `docs/registry.md`, which demonstrated a category outside the vocabulary.
+- `secret` and `input-validation` are now exempt from the consensus filter alongside `security`. The disambiguation rule steers credential findings to `secret` and injection findings to `input-validation`, so without this a MEDIUM/LOW single-reviewer credential finding became a drop candidate where it previously survived — a behavior change produced entirely by the prompt. **Reaches the `atcr` binary only after the next `reconcile` tag and pin bump** (see below).
+- Agent `scope:` entries outside the closed vocabulary now warn at registry load, naming the nearest member, and the rendered focus block states that scope entries are focus areas rather than CATEGORY values. The block is appended last in the prompt, so an off-vocabulary entry previously ended the prompt by naming a word the prompt had declared illegal.
+
+### Documentation
+- [`docs/release-process.md`](docs/release-process.md) now states that merging a `reconcile/` change does not ship it — the root module consumes the nested module through the Go proxy at the pinned version, so a behavioral fix stays inert until a `reconcile/vX.Y.Z` tag is cut *and* the root pin is bumped.
+- Documented that PR-time CI is **weaker** than the module release gate: the nested module is linted and race-tested only on tag push, so a lint-clean PR is not evidence the gate will pass. The pre-tag step now runs the gate's own three checks instead of a lighter build-and-test. A deprecated `parser.ParseDir` call added in this epic passed PR CI and was caught only by running the gate by hand.
+- [`docs/architecture.md`](docs/architecture.md) carries both points where the standalone library is introduced, so they are visible before someone edits `reconcile/` rather than at release time.
 
 *Shipped via /execute-epic (epic 35.16.4)*
 

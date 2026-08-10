@@ -85,6 +85,20 @@ The reconciler is also published as a standalone, stdlib-only library
 (`github.com/samestrin/atcr/reconcile`) so other tools can embed the exact same
 merge.
 
+It is a **nested Go module with its own `go.mod`**, and `atcr` consumes it through
+the Go proxy at the version pinned in the root `go.mod` — not from the working
+tree. Two consequences worth knowing before you edit anything under `reconcile/`:
+
+- **Merging a change there does not ship it.** It reaches the `atcr` binary only
+  after a `reconcile/vX.Y.Z` tag is cut and the root pin is bumped to it.
+- **PR-time CI does not lint it.** The nested module is linted and race-tested
+  only on the release tag, so a lint-clean PR is not evidence the release gate
+  will pass.
+
+Both are covered in
+[release-process.md](release-process.md#cutting-a-reconcile-module-release),
+including the exact commands to run the gate locally.
+
 ### 3. Verify — adversarial skeptics
 
 `atcr verify` runs **skeptic** agents — a different model from any reviewer that

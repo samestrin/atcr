@@ -161,20 +161,69 @@ module: the tag push plus its CI gate *is* the entire release. The tag makes the
 module fetchable through the public Go proxy; consuming code pins it via a normal
 `require github.com/samestrin/atcr/reconcile vX.Y.Z` in the root `go.mod`.
 
+### Merging a `reconcile/` change does not ship it
+
+The root module consumes `./reconcile` **through the Go proxy at the pinned
+version**, not from the working tree — there is deliberately no `replace`
+directive. So a merged change to `reconcile/` has no effect on the `atcr` binary
+until BOTH of the following land:
+
+1. a `reconcile/vX.Y.Z` tag is cut from `main` (steps 1–3 below), and
+2. the root `go.mod` pin is bumped to it (step 4 below).
+
+Between merge and step 2, `atcr` still runs the OLD library. A behavioral fix in
+`reconcile/` — a changed predicate, a widened exemption — is therefore inert in
+production while its own tests pass on every run, which reads as "shipped" and is
+not. Plan the tag and the pin bump as part of landing the change, not as
+housekeeping to do later; if the fix corrects a live defect, the gap is a window
+in which the defect is still reachable.
+
+Additive changes (a new exported symbol nothing consumes yet) can wait for the
+next release. Behavioral changes should not.
+
 **Precondition — the repository must be public.** `proxy.golang.org` returns 404
 for a private module, so `go install`/`go mod download` cannot resolve
 `github.com/samestrin/atcr/reconcile` until the repo is public (see Sprint 33.2 /
 TD-002). Do not cut a module tag against a private repo.
 
-1. **Confirm the module builds clean and `reconcile/go.mod` is unchanged.** From
-   an up-to-date `main`:
+### The PR-time checks are WEAKER than the tag gate
+
+A `reconcile/` change can pass every check on its pull request and still fail the
+release gate. The two run different check sets, on purpose:
+
+| Check | PR-time (`ci.yml` → `reconcile-module`) | Tag push (`reconcile-module.yml`) |
+|---|---|---|
+| `go test ./...` | ✅ | ✅ (with `-race`) |
+| `gofmt -l .` | ❌ | ✅ |
+| `golangci-lint` | ❌ | ✅ |
+
+The PR-time job deliberately runs tests only so PR feedback stays fast, and the
+root `ci` job's lint does **not** cross the nested `go.mod` boundary — so
+`./reconcile` is never linted until a tag is pushed. A lint-only defect
+(a deprecated stdlib call, an unhandled error) therefore stays invisible through
+review and merge, and surfaces mid-release. This has already happened once: a
+`parser.ParseDir` call added in epic 35.16.4 passed PR CI and was caught only by
+running the gate by hand.
+
+Run the gate locally before tagging — step 1 below does exactly that.
+
+1. **Run the tag gate locally and confirm `reconcile/go.mod` is unchanged.** From
+   an up-to-date `main`, run the same three checks the gate runs, not just the
+   build:
 
    ```sh
-   ( cd reconcile && go build ./... && go test ./... )
+   (
+     cd reconcile
+     gofmt -l .                                             # must print nothing
+     golangci-lint run --timeout 5m --config ../.golangci.yml
+     go test -race ./...
+   )
    ```
 
-   The tagged content is the `reconcile/` subtree at the tagged commit; verify it
-   is the intended state before tagging.
+   Do not substitute the lighter `go build ./... && go test ./...` — that is the
+   PR-time check, and passing it proves nothing about the gate (see the table
+   above). The tagged content is the `reconcile/` subtree at the tagged commit;
+   verify it is the intended state before tagging.
 
 2. **Cut the module tag.** From the commit whose `reconcile/` subtree you are
    publishing:
