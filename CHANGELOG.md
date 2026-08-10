@@ -1,3 +1,33 @@
+## [35.16.4] - 2026-08-09
+
+### Added
+- Closed reviewer CATEGORY vocabulary as an exported, ordered constant in the public `reconcile` module (`reconcile.Categories`, plus `Category*` constants), derived from three sources: the categories the 35.16.2 benchmark dry-run actually emitted, each persona's declared Focus list, and the 14 category words bound in code by the community persona roster.
+- Disambiguation guidance in the injected prompt for the six confusable member pairs (`race`/`concurrency`, `contract`/`api-contract`, `resource-leak`/`leak`, `input-validation`/`validation`, `secret`/`security`, `correctness`/`logic`), so keeping the distinctions does not just relocate the drift.
+- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the rendered enumeration tracks `reconcile.Categories()`, and a locked-set test so removing any member fails.
+
+### Changed
+- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` rather than written into any persona file, so adding a member reaches every prompt — including the 5 installed outside the repo — with no prompt edit. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary. Injection does not by itself keep the prompt files consistent: `personas/_base.md:44` still carries a six-word literal list, and the worked examples in `personas/ingrid.md`, `penny.md` and `sasha.md` demonstrated non-member words until a follow-up corrected them.
+- `out-of-scope` is now presented to reviewers as a routing value rather than an ordinary defect class.
+- Bumped the `github.com/samestrin/atcr/reconcile` dependency to v0.6.0 — cut from this branch's tip so the pin bump rides the same PR and the merged branch never runs the old library (see [`docs/release-process.md`](docs/release-process.md#where-the-tag-is-cut-from-the-branch-tip-not-main)). v0.6.0 adds the exported `CategoryMerges()` accessor and the widened consensus-filter exemption below; nothing was removed.
+
+### Fixed
+- Removed a duplicate `"security"` literal in `reconcile/consensus.go`, which now uses the vocabulary constant.
+- Corrected the `scope:` example in `docs/registry.md`, which demonstrated a category outside the vocabulary.
+- `secret` and `input-validation` are now exempt from the consensus filter alongside `security`. The disambiguation rule steers credential findings to `secret` and injection findings to `input-validation`, so without this a MEDIUM/LOW single-reviewer credential finding became a drop candidate where it previously survived — a behavior change produced entirely by the prompt. It reaches the `atcr` binary in this release: the `reconcile/v0.6.0` tag and the pin bump to it both ride this PR.
+- Agent `scope:` entries outside the closed vocabulary now warn at registry load, naming the nearest member, and the rendered focus block states that scope entries are focus areas rather than CATEGORY values. The block is appended last in the prompt, so an off-vocabulary entry previously ended the prompt by naming a word the prompt had declared illegal.
+
+- The PR-time `reconcile-module` CI job now runs `gofmt`, `golangci-lint` and `go test -race` — the same three checks as the release gate, where it previously ran `go test` alone. Neither root CI job crosses the nested `go.mod` boundary, so lint on `./reconcile` effectively ran only after merge: a deprecated `parser.ParseDir` call added in this epic passed PR CI and was caught only by running the gate by hand before tagging. Measured, the skipped checks cost ~2s. Both workflows now carry reciprocal `mirrors:` comments so the check sets stay in lockstep.
+- **The three wasm parser modules that had no CI at all now have it.** An audit of every nested `go.mod` found `internal/astgroup/parsers/src/{goparser,pyparser,guestabi}` covered by nothing — root `go test`/`golangci-lint` do not cross their module boundaries, and only `braceparser` had a job (tests only). A source change that failed to compile for `wasip1` was caught by nothing until someone ran `parsers/build.sh` by hand. The `braceparser-module` job is replaced by `parser-modules`, covering all four with `gofmt`, `go vet`, a `wasip1/wasm` build (braceparser across all 8 language build tags, since `active` is selected at compile time), `go test` where tests exist, and `golangci-lint` on the three that are lint-clean. Runs in ~4s.
+- `.githooks/pre-push` now mirrors both nested-module jobs instead of only claiming to: it adds reconcile's `gofmt` + `golangci-lint`, the parser-module checks (skipped with a message on a pre-1.26 toolchain), and a `GOWORK=off go build ./...` pin check — a local `go.work` resolves `reconcile` from the working tree and hides the `go.mod` pin, so root code could compile locally against an unreleased symbol and fail only in CI.
+
+### Documentation
+- [`docs/release-process.md`](docs/release-process.md) now states that merging a `reconcile/` change does not ship it — the root module consumes the nested module through the Go proxy at the pinned version, so a behavioral fix stays inert until a `reconcile/vX.Y.Z` tag is cut *and* the root pin is bumped.
+- Documented that the PR-time job and the release gate run an identical check set on purpose, why that matters for a nested module root CI cannot see, and that adding a check to one without the other produces a defect that merges clean and surfaces mid-release rather than a stricter release.
+- [`docs/architecture.md`](docs/architecture.md) carries both points where the standalone library is introduced, so they are visible before someone edits `reconcile/` rather than at release time.
+- Documented the local `go.work` trap in [`docs/release-process.md`](docs/release-process.md): the workspace resolves `reconcile` from the working tree rather than the pinned version, so a local build proves nothing about the pin, and commands run inside the parser modules need `GOWORK=off` because the workspace does not list them.
+
+*Shipped via /execute-epic (epic 35.16.4)*
+
 ## [35.16.3] - 2026-08-09
 
 ### Added

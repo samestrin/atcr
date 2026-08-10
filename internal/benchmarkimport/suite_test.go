@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/reconcile"
 )
 
 // fakeFetcher stands in for the GitHub compare API so the test suite never
@@ -73,6 +74,28 @@ func TestMapCategory_RejectsUnknownVocabulary(t *testing.T) {
 	_, ok := MapCategory("Documentation Update")
 
 	assert.False(t, ok, "an unmapped category is reported, never guessed at")
+}
+
+// TestMapCategory_EmitsVocabularyMembers is the rename guard for categoryMap.
+//
+// This map is the ground-truth side of benchmark scoring. If a member is renamed
+// in reconcile/category.go while the map keeps the old spelling, every reviewer
+// emits the new word, the expected set still holds the old one, and 100% of
+// those cases silently become unscoreable — the same failure epic 35.16.4 closed,
+// inverted. Membership is asserted against reconcile.Categories() rather than a
+// literal list so this test does not become a third copy of the vocabulary.
+func TestMapCategory_EmitsVocabularyMembers(t *testing.T) {
+	vocab := make(map[string]bool)
+	for _, c := range reconcile.Categories() {
+		vocab[c] = true
+	}
+	require.NotEmpty(t, vocab, "guard: an empty vocabulary would make this test vacuous")
+	require.NotEmpty(t, categoryMap, "guard: an empty map would make this test vacuous")
+
+	for in, out := range categoryMap {
+		assert.Truef(t, vocab[out],
+			"categoryMap[%q] = %q, which is not a member of reconcile.Categories()", in, out)
+	}
 }
 
 func TestExpectedCategories_IsDedupedAndSorted(t *testing.T) {

@@ -18,6 +18,27 @@ jobs:
     name: Go Lint & Test
     runs-on: ubuntu-latest
 
+    env:
+      # This job is the ONLY thing that builds the root module against the
+      # reconcile version go.mod:38 actually pins. That coverage exists today by
+      # accident, not by design: `go.work` (`use . ./reconcile`) is gitignored
+      # (.gitignore:19), so a fresh checkout simply has none and the build falls
+      # through to go.mod + go.sum. Commit a go.work, or add a step that
+      # generates one, and the coverage evaporates with nothing failing to say
+      # so — the root would compile against the WORKING TREE copy of reconcile
+      # and a reference to an unreleased symbol would ship green.
+      #
+      # GOWORK=off makes it a guarantee instead of a side effect. It is a no-op
+      # against today's checkout, which is the point: it costs nothing and it
+      # cannot be silently removed. .githooks/pre-push:70 runs the same thing
+      # explicitly for the local case.
+      #
+      # It catches only the compile-detectable drift class (a symbol missing
+      # from the pin). Drift in the BEHAVIOR behind an unchanged signature — an
+      # unexported predicate widened in-tree — compiles clean either way and is
+      # governed by release discipline (docs/release-process.md), not by CI.
+      GOWORK: "off"
+
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -114,11 +135,22 @@ jobs:
         run: gitleaks dir . --config .gitleaks.toml --no-banner --redact
 
   # PR-time coverage for the nested ./reconcile module. The `ci` job above runs
-  # `go test ./...` from the repo root, which does NOT cross ./reconcile's go.mod
-  # boundary — so without this dedicated job a library regression is invisible
-  # until the next module-release tag. This job runs `go test` only (no -race, no
-  # lint) so PR feedback stays fast; the full gofmt + golangci-lint + race gate
-  # runs on tag push in reconcile-module.yml.
+  # `go test ./...` and golangci-lint from the repo root, and NEITHER crosses
+  # ./reconcile's go.mod boundary — so without this dedicated job a library
+  # regression is invisible until the next module-release tag.
+  #
+  # mirrors: .github/workflows/reconcile-module.yml — this job runs the SAME three
+  # checks as the release gate (gofmt, golangci-lint, go test -race), deliberately.
+  # Keep the two in lockstep: a check that exists in only one of them is the defect
+  # this pairing exists to prevent, not an optimization.
+  #
+  # It ran `go test` alone until 2026-08-10, on the rationale that skipping lint
+  # kept PR feedback fast. Measured on this module that saved ~2s (gofmt 0.02s,
+  # golangci-lint 0.17s warm / 0.75s cold, go test -race 1.3s) inside a job that
+  # already spends longer than that provisioning Go — while letting a deprecated
+  # parser.ParseDir call merge clean and fail only on the release tag, mid-release.
+  # Do not re-trim this job for speed without re-measuring; the numbers, not the
+  # intuition, are the reason it is shaped this way.
   reconcile-module:
     name: Reconcile Module Test
     runs-on: ubuntu-latest
@@ -140,26 +172,64 @@ jobs:
           # cache on for ephemeral hosted runners (see the `ci` job)
           cache: true
 
+      - name: Verify Formatted
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          # Same pinned version and shared root config as the `ci` job and
+          # reconcile-module.yml, so a module change cannot pass one and fail another.
+          version: v2.12.2
+          working-directory: ./reconcile
+          args: --timeout 5m --config ../.golangci.yml
+
       - name: Run Module Tests
         # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
-        run: go test ./...
+        run: go test -race ./...
 
-  # PR-time tests for the brace-parser scanner, which lives behind a nested go.mod
-  # (internal/astgroup/parsers/src/braceparser) so root `go test ./...` never reaches
-  # its parse_core.go/configs.go unit tests — leaving scanner regressions invisible
-  # until they surface in the corpus. This job provisions Go 1.26 (the module's go
-  # directive) and runs tests only: the embedded .wasm binaries are committed by
-  # design (build.sh is not part of CI) and their integrity is already verified by
-  # TestEmbeddedParsersMatchManifest, so no wasm rebuild is needed here.
-  braceparser-module:
-    name: Brace Parser Module Test
+  # PR-time coverage for the FOUR nested wasm parser modules under
+  # internal/astgroup/parsers/src/ — guestabi (the shared guest ABI), goparser,
+  # pyparser, and braceparser. Each has its own go.mod, so neither the root
+  # `go test ./...` nor the root golangci-lint reaches any of them.
+  #
+  # Until 2026-08-10 only braceparser had a job, and it ran `go test` alone:
+  # goparser, pyparser and guestabi had NO CI of any kind, so a source change that
+  # did not compile for wasip1 was caught by nothing until somebody ran
+  # parsers/build.sh by hand. This job covers all four with one check set.
+  #
+  # Two things it deliberately does NOT do:
+  #   - It does not rebuild the .wasm binaries. They are committed by design
+  #     (build.sh is not part of CI, and needs no toolchain beyond Go), and their
+  #     integrity is verified by TestEmbeddedParsersMatchManifest in the root job.
+  #   - It does not lint braceparser. That module has one pre-existing staticcheck
+  #     finding (QF1001 in parse_core.go), and correcting it means regenerating the
+  #     8 brace-language .wasm files — ~24 MB of binary churn — so it belongs in a
+  #     dedicated change alongside a build.sh run, tracked in the TD README. The
+  #     other three modules ARE linted and are clean.
+  #
+  # Everything is built for GOOS=wasip1 GOARCH=wasm because that is the only target
+  # these modules are ever compiled for (build.sh), and braceparser additionally
+  # needs a language build tag: `active` is selected at compile time by
+  # active_<lang>.go, so a bare `go build ./...` fails with "undefined: active".
+  # All 8 languages are built, since a config-table change can break exactly one.
+  parser-modules:
+    name: Wasm Parser Modules
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
-    defaults:
-      run:
-        working-directory: ./internal/astgroup/parsers/src/braceparser
+    env:
+      GOOS: wasip1
+      GOARCH: wasm
+      # The modules declare `go 1.26`; pin the toolchain so an implicit download
+      # cannot silently swap compilers, matching parsers/build.sh.
+      GOTOOLCHAIN: local
 
     steps:
       - name: Check out code
@@ -172,8 +242,70 @@ jobs:
           # cache on for ephemeral hosted runners (see the `ci` job)
           cache: true
 
-      - name: Run Module Tests
+      - name: Verify Formatted
+        working-directory: ./internal/astgroup/parsers/src
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Build guestabi, goparser, pyparser
+        working-directory: ./internal/astgroup/parsers/src
+        run: |
+          for m in guestabi goparser pyparser; do
+            echo "::group::go vet + go build $m"
+            # -o /dev/null: goparser and pyparser are main packages, so a bare
+            # `go build ./...` drops an executable in the module directory.
+            ( cd "$m" && go vet ./... && go build -o /dev/null ./... )
+            echo "::endgroup::"
+          done
+
+      - name: Build braceparser for every language tag
+        working-directory: ./internal/astgroup/parsers/src/braceparser
+        run: |
+          for tag in bash cpp csharp java kotlin php rust ts; do
+            echo "::group::go vet + go build -tags $tag"
+            go vet -tags "$tag" ./...
+            go build -tags "$tag" -o /dev/null ./...
+            echo "::endgroup::"
+          done
+
+      - name: Run braceparser tests
+        working-directory: ./internal/astgroup/parsers/src/braceparser
+        # Host-native, not wasip1: the scanner tests exercise plain Go and there is
+        # no wasm test runner on the runner. braceparser is the only one of the four
+        # with tests.
+        env:
+          GOOS: ''
+          GOARCH: ''
         run: go test ./...
+
+      # One action invocation per module: golangci-lint-action takes a single
+      # working-directory, and using the action (not a bare binary) keeps the
+      # pinned v2.12.2 and the shared root config identical to the `ci` and
+      # `reconcile-module` jobs. braceparser is absent by design — see the header.
+      - name: Run golangci-lint (guestabi)
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          version: v2.12.2
+          working-directory: ./internal/astgroup/parsers/src/guestabi
+          args: --timeout 5m --config ../../../../../.golangci.yml
+
+      - name: Run golangci-lint (goparser)
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          version: v2.12.2
+          working-directory: ./internal/astgroup/parsers/src/goparser
+          args: --timeout 5m --config ../../../../../.golangci.yml
+
+      - name: Run golangci-lint (pyparser)
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          version: v2.12.2
+          working-directory: ./internal/astgroup/parsers/src/pyparser
+          args: --timeout 5m --config ../../../../../.golangci.yml
 
   # ---------------------------------------------------------------------------
   # OS-level sandbox containment proofs.

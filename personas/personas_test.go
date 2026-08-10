@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/require"
 )
 
@@ -130,6 +131,75 @@ func TestPennyFixture(t *testing.T) {
 
 func TestIngridFixture(t *testing.T) {
 	fixtureTest(t, "ingrid", "testdata/ingrid_fixture.patch", "error")
+}
+
+// exampleLineRe matches a worked-example finding line in a persona prompt: the
+// severity token at column 0 is what makes a line a finding, both in the prompt's
+// own stated contract and in internal/stream's parser.
+var exampleLineRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
+
+// exampleCategoryField is the 1-based column the CATEGORY occupies in the
+// pipe-delimited finding format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE.
+const exampleCategoryField = 5
+
+// TestPersonaExamples_UseVocabularyCategories is the class guard for epic
+// 35.16.4: every prompt now carries "Use CATEGORY from this closed vocabulary,
+// spelled exactly as listed" (injected through {{.ScopeRule}}), so a worked
+// example that demonstrates a non-member has the prompt contradicting itself in
+// the one place models weight most heavily. Few-shot examples outweigh
+// enumerations for most models, so such a reviewer keeps emitting the
+// non-member word and stays unscoreable.
+//
+// It asserts the class rather than the known instances: any persona added later
+// with an off-vocabulary example fails here. Only in-repo prompts are reachable
+// (personas/*.md and personas/community/*.md); prompts installed outside the
+// repo are covered by the same rule but cannot be checked by CI.
+func TestPersonaExamples_UseVocabularyCategories(t *testing.T) {
+	members := make(map[string]bool, len(reconcile.Categories()))
+	for _, c := range reconcile.Categories() {
+		members[c] = true
+	}
+
+	prompts := map[string]string{}
+
+	base, err := Base()
+	require.NoError(t, err)
+	prompts["_base.md"] = base
+
+	for _, name := range Names() {
+		text, err := Get(name)
+		require.NoErrorf(t, err, "Get(%q)", name)
+		prompts[name+".md"] = text
+	}
+	for _, name := range CommunityNames() {
+		text, err := CommunityGet(name)
+		require.NoErrorf(t, err, "CommunityGet(%q)", name)
+		prompts["community/"+name+".md"] = text
+	}
+
+	checked := 0
+	for file, text := range prompts {
+		for i, line := range strings.Split(text, "\n") {
+			if !exampleLineRe.MatchString(line) {
+				continue
+			}
+			fields := strings.Split(line, "|")
+			require.GreaterOrEqualf(t, len(fields), exampleCategoryField,
+				"%s:%d worked example has %d fields, too few to carry a CATEGORY", file, i+1, len(fields))
+
+			cat := strings.TrimSpace(fields[exampleCategoryField-1])
+			checked++
+			require.Truef(t, members[cat],
+				"%s:%d worked example emits CATEGORY %q, which is not a member of the closed vocabulary — "+
+					"the same prompt tells the model to spell CATEGORY exactly as listed, so the example contradicts the rule",
+				file, i+1, cat)
+		}
+	}
+
+	// Non-vacuous: a regex or layout change that stops matching example lines
+	// would otherwise turn this guard into a silent pass.
+	require.GreaterOrEqual(t, checked, len(Names())+len(CommunityNames()),
+		"expected at least one worked example per prompt — the example-line matcher found too few")
 }
 
 // goWordRe matches the standalone language name "go"/"Go" (whole word,
