@@ -81,8 +81,23 @@ import (
 // logic->correctness and omits every security and maintainability steer above.
 //
 // Keys and members are validated against reconcile.Categories() by
-// TestEquivalence_EveryWordIsATaxonomyMember, so removing a category from the
-// constant fails CI here rather than silently zeroing a case's recall.
+// TestEquivalence_EveryWordIsATaxonomyMember, so a category removed from the
+// taxonomy surfaces here rather than silently zeroing a case's recall.
+//
+// That guard reaches the REAL change path only: a reconcile release plus a
+// go.mod pin bump, which CI compiles and this test then fails on. It does NOT
+// catch an uncommitted in-tree edit to reconcile/category.go — go.work is
+// gitignored (.gitignore:19) and CI sets GOWORK=off (.github/workflows/ci.yml:41),
+// so CI compiles the root module against the pinned reconcile (go.mod:38), and
+// deleting a member from the in-tree slice leaves this test green. Verified by
+// mutation: with CategoryMaintainability removed from the in-tree Categories
+// slice, TestEquivalence_EveryWordIsATaxonomyMember still passes under
+// GOWORK=off. (TestEquivalence_CitedRationaleLinesStillMatchReconcile does fail
+// there, but only because deleting a line shifts the line numbers it pins — a
+// tripwire on file layout, not a check on taxonomy membership.) That gap is
+// deliberate and documented at ci.yml:36-39: the pin catches compile-detectable
+// drift, while behavior drift behind an unchanged signature is governed by
+// release discipline (docs/release-process.md), not by CI.
 var categoryFamilies = map[string][]string{
 	// aacr-bench "Code Defect". `logic` is a member of the vocabulary because
 	// personas/community/sonny.md:49's worked example emits it.

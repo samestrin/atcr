@@ -129,9 +129,17 @@ func TestEquivalence_RoutingValuesSatisfyNothing(t *testing.T) {
 }
 
 // The relation is keyed off the 35.16.4 taxonomy constant: every key and every
-// member must be a live member of reconcile.Categories(). Removing a category
-// from the constant therefore fails CI here rather than silently zeroing the
+// member must be a live member of reconcile.Categories(). A category removed
+// from the taxonomy therefore surfaces here rather than silently zeroing the
 // recall of every case that plants it.
+//
+// Scope of that guarantee: it holds for a reconcile release plus a go.mod pin
+// bump, which is what CI compiles. An uncommitted in-tree edit to
+// reconcile/category.go does NOT reach CI — go.work is gitignored and CI sets
+// GOWORK=off, so the root module builds against the pinned reconcile and a
+// member deleted from the in-tree slice leaves this test green. See
+// equivalence.go's categoryFamilies doc and ci.yml:36-39 for why that is an
+// accepted, release-discipline-governed gap rather than a hole to plug here.
 func TestEquivalence_EveryWordIsATaxonomyMember(t *testing.T) {
 	members := make(map[string]bool)
 	for _, c := range reconcile.Categories() {
