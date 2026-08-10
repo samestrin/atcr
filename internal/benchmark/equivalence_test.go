@@ -253,6 +253,11 @@ func TestEquivalence_SonnyWorkedExampleJustifiesLogicMembership(t *testing.T) {
 // its lines — silently desynchronized the recall contract's stated justification
 // from its actual authority. (One citation was already nine lines stale when this
 // test was written.) Pin every cited line so either edit fails CI.
+//
+// SCOPE: this reads the LOCAL reconcile/ tree, which is where a developer edits the
+// gloss. reconcile is a separate module pinned at v0.6.0 with no replace directive,
+// so the COMPILED dependency is the module cache — byte-identical today. A version
+// bump that changed the gloss without touching the local tree would not fail here.
 func TestEquivalence_CitedRationaleLinesStillMatchReconcile(t *testing.T) {
 	lines := strings.Split(readRepoFile(t, "reconcile/category.go"), "\n")
 
