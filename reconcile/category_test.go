@@ -3,6 +3,7 @@ package reconcile
 import (
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // The three derivation sources for the closed CATEGORY vocabulary (epic
@@ -160,14 +161,31 @@ func assertAccountedFor(t *testing.T, words []string, source string) {
 func TestCategories_WellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range Categories() {
-		switch {
-		case c == "":
+		// Independent ifs, not a switch: a switch short-circuits at the first
+		// matching arm, so a member that is both non-lowercase AND duplicated
+		// would report only the casing failure and never reach the duplicate
+		// check. Every violation on one member should surface in a single run.
+		if c == "" {
 			t.Error("empty category in the closed vocabulary")
-		case c != strings.ToLower(c):
+		}
+		if c != strings.ToLower(c) {
 			t.Errorf("category %q is not lowercase — persona prompts specify a lowercase word", c)
-		case strings.ContainsAny(c, " \t|"):
-			t.Errorf("category %q contains whitespace or a pipe — it would corrupt the wire format", c)
-		case seen[c]:
+		}
+		// Every whitespace class, not just space and tab. Newline is the one that
+		// actually breaks the wire format: findings are line-delimited, so an
+		// embedded newline splits one finding into two lines and the second fails
+		// the severity-prefix check. ContainsFunc(unicode.IsSpace) covers CR, LF,
+		// vertical tab and form feed; NBSP (U+00A0) is checked alongside it because
+		// unicode.IsSpace reports true for it only via Latin-1 space handling, and
+		// spelling it out keeps the intent legible. TrimSpace catches leading and
+		// trailing whitespace that a bare interior scan would still admit.
+		if strings.TrimSpace(c) != c || strings.ContainsFunc(c, unicode.IsSpace) || strings.ContainsRune(c, '\u00a0') {
+			t.Errorf("category %q contains whitespace — an embedded newline would split one finding into two wire-format lines", c)
+		}
+		if strings.Contains(c, "|") {
+			t.Errorf("category %q contains a pipe — it would corrupt the pipe-delimited wire format", c)
+		}
+		if seen[c] {
 			t.Errorf("category %q appears twice", c)
 		}
 		seen[c] = true
