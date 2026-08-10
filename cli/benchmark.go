@@ -220,5 +220,16 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 // paid LLM work, and failing it at the very end over a diagnostic would discard
 // that work for a number the run was executed to discover.
 //
-// STUB — emits nothing; see the RED test.
-func warnIfVocabularyCeilingExceeded(_ io.Writer, _ *float64) {}
+// A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
+// a warning nobody reads.
+func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
+	if !benchmark.ExceedsVocabularyCeiling(rate) {
+		return
+	}
+	_, _ = fmt.Fprintf(w,
+		"warning: out_of_vocabulary_rate %.2f is at or above the %.2f ceiling — "+
+			"reviewers are labelling findings with words outside the offered vocabulary, "+
+			"which zeroes their recall independently of what they actually detected. "+
+			"Treat this run's corroboration_rate as a measure of vocabulary agreement, not detection.\n",
+		*rate, benchmark.MaxOutOfVocabularyRate)
+}
