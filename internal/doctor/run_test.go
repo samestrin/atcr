@@ -231,6 +231,40 @@ func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
 	assert.NotContains(t, got.hint, "raise --timeout")
 }
 
+// A 403 is commonly quota exhaustion, billing, or a permission scope — not a
+// bad credential. Reproduced live 2026-08-10: a Moonshot billing-cycle cap
+// returned 403 and doctor reported auth_failed with "check the API key" on a
+// key that authenticated 19 other agents in the same run.
+func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
+	t.Setenv("ATCR_QUOTA_PROBE_KEY", "k")
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_QUOTA_PROBE_KEY"}
+	got := classify("", &llmclient.HTTPStatusError{
+		Status:  403,
+		Snippet: "You have reached your usage limit for this billing cycle",
+	}, testNonce, 5, tgt)
+
+	assert.Equal(t, StatusAuthFailed, got.status, "403 stays in the auth class")
+	assert.NotContains(t, got.hint, "API key", "a 403 hint must not blame the credential")
+	assert.NotContains(t, got.hint, tgt.APIKeyEnv, "a 403 hint must not name the key env var")
+	assert.Contains(t, got.hint, "quota", "a 403 hint should name quota as a likely cause")
+	assert.Contains(t, got.hint, "billing", "a 403 hint should name billing as a likely cause")
+	assert.Contains(t, got.hint, "permission", "a 403 hint should name permission as a likely cause")
+	assert.Contains(t, got.hint, "detail", "a 403 hint should direct the reader to the captured detail")
+	assert.Contains(t, got.detail, "usage limit", "the upstream body stays available as evidence")
+}
+
+// The 401 hint is the one case where the credential IS the likely cause, so
+// splitting the cases must not cost 401 its actionable pointer.
+func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
+	t.Setenv("ATCR_AUTH_PROBE_KEY", "k")
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_AUTH_PROBE_KEY"}
+	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt)
+
+	assert.Equal(t, StatusAuthFailed, got.status)
+	assert.Contains(t, got.hint, "API key")
+	assert.Contains(t, got.hint, tgt.APIKeyEnv, "the 401 hint names the env var to check")
+}
+
 func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt)
