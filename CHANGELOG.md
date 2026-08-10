@@ -1,3 +1,21 @@
+## [35.16.4] - 2026-08-09
+
+### Added
+- Closed reviewer CATEGORY vocabulary as an exported, ordered constant in the public `reconcile` module (`reconcile.Categories`, plus `Category*` constants), derived from three sources: the categories the 35.16.2 benchmark dry-run actually emitted, each persona's declared Focus list, and the 14 category words bound in code by the community persona roster.
+- Disambiguation guidance in the injected prompt for the six confusable member pairs (`race`/`concurrency`, `contract`/`api-contract`, `resource-leak`/`leak`, `input-validation`/`validation`, `secret`/`security`, `correctness`/`logic`), so keeping the distinctions does not just relocate the drift.
+- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the enumeration is generated rather than duplicated, and a locked-set test so removing any member fails.
+
+### Changed
+- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` — no persona file is edited, so no prompt file can drift out of sync. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary.
+- `out-of-scope` is now presented to reviewers as a routing value rather than an ordinary defect class.
+- Bumped the `github.com/samestrin/atcr/reconcile` dependency to v0.5.0.
+
+### Fixed
+- Removed a duplicate `"security"` literal in `reconcile/consensus.go`, which now uses the vocabulary constant.
+- Corrected the `scope:` example in `docs/registry.md`, which demonstrated a category outside the vocabulary.
+
+*Shipped via /execute-epic (epic 35.16.4)*
+
 ## [35.16.3] - 2026-08-09
 
 ### Added
