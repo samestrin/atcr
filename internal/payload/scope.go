@@ -64,9 +64,19 @@ const (
 // categoryEnumeration renders the closed CATEGORY vocabulary
 // (reconcile.Categories) as a comma-separated list, in vocabulary order.
 //
-// It is generated rather than written out so the prompt text cannot drift from
-// the constant: there is deliberately no second literal list of categories
-// anywhere in the tree (epic 35.16.4 AC3).
+// It is generated rather than written out so the injected text cannot drift from
+// the constant. That is the whole of epic 35.16.4 AC3: the INJECTED enumeration
+// has no second literal copy anywhere in the tree.
+//
+// One literal list does survive, and it is reachable — do not read AC3 as saying
+// otherwise. personas/_base.md:44 names six categories in its CATEGORY rule, and
+// _base.md is the persona-resolution fallback (internal/registry/persona.go
+// levels 4-5) for any rostered agent with no persona file of its own. _base.md
+// also carries {{.ScopeRule}}, at line 14 — so an agent resolved that way reads
+// this 32-word vocabulary first and the six-word list afterwards, at the position
+// of greater recency. Leaving it was a deliberate call recorded in the epic's
+// Clarifications, not an oversight; strip the parenthetical from _base.md if that
+// ordering ever bites.
 func categoryEnumeration() string {
 	return strings.Join(reconcile.Categories(), ", ")
 }
