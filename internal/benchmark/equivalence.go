@@ -52,7 +52,7 @@ import "github.com/samestrin/atcr/reconcile"
 //   - `coupling` — aacr-bench's "Maintainability and Readability" arguably spans
 //     it, but category.go:136 names "coupling is not maintainability" as the
 //     standing rule. Out.
-//   - `docs` — category.go:77 ("documentation or comments made wrong by this
+//   - `docs` — category.go:68 ("documentation or comments made wrong by this
 //     change") overlaps :61's "comments that lie". The closest real call in the
 //     set. Out.
 //
