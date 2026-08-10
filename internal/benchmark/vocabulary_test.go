@@ -181,30 +181,56 @@ func TestOutOfVocabularyRate_NoFindingsIsZeroNotNaN(t *testing.T) {
 
 // The rate reaches `atcr benchmark run` consumers through the run result.
 func TestRunResult_CarriesOutOfVocabularyRate(t *testing.T) {
-	rr := RunResult{
+	measured := 0.125
+	data, err := json.Marshal(RunResult{
 		Suite:               "standard-v1",
 		SuiteVersion:        "1.0.0",
 		GeneratedAt:         "2026-08-10T00:00:00Z",
-		OutOfVocabularyRate: 0.125,
-	}
-
-	data, err := json.Marshal(rr)
+		OutOfVocabularyRate: &measured,
+	})
 	require.NoError(t, err)
 
 	var back map[string]any
 	require.NoError(t, json.Unmarshal(data, &back))
-	assert.Equal(t, 0.125, back["out_of_vocabulary_rate"],
-		"the rate must be present in the run result, always — 0.0 is a real measurement")
+	assert.Equal(t, 0.125, back["out_of_vocabulary_rate"])
+}
+
+// A clean run emits an explicit 0, and a run-result that never carried the field
+// stays absent. Those two must not collapse into one another: a producer that
+// measured perfect vocabulary agreement is saying something a file predating this
+// epic is not.
+func TestRunResult_ZeroRateIsEmittedButAnUnmeasuredRunIsNot(t *testing.T) {
+	clean := 0.0
+	data, err := json.Marshal(RunResult{Suite: "s", SuiteVersion: "1.0.0", OutOfVocabularyRate: &clean})
+	require.NoError(t, err)
+
+	var withRate map[string]any
+	require.NoError(t, json.Unmarshal(data, &withRate))
+	require.Contains(t, withRate, "out_of_vocabulary_rate", "a measured 0.0 must still be published")
+	assert.Equal(t, 0.0, withRate["out_of_vocabulary_rate"])
+
+	data, err = json.Marshal(RunResult{Suite: "s", SuiteVersion: "1.0.0"})
+	require.NoError(t, err)
+
+	var withoutRate map[string]any
+	require.NoError(t, json.Unmarshal(data, &withoutRate))
+	assert.NotContains(t, withoutRate, "out_of_vocabulary_rate", "an unmeasured run must not read as clean")
+
+	// And the read direction: a legacy file round-trips to nil, not to 0.
+	var legacy RunResult
+	require.NoError(t, json.Unmarshal([]byte(`{"suite":"s","suite_version":"1.0.0"}`), &legacy))
+	assert.Nil(t, legacy.OutOfVocabularyRate, "an absent key means unmeasured, never clean")
 }
 
 // ...but it must NOT reach the public submission envelope. Submission is the
 // frozen public contract; adding a diagnostic column there is 35.16.6's decision
 // to make, not a side effect of this one.
 func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
+	drifted := 0.42
 	data, err := json.Marshal(BuildSubmission(RunResult{
 		Suite:               "standard-v1",
 		SuiteVersion:        "1.0.0",
-		OutOfVocabularyRate: 0.42,
+		OutOfVocabularyRate: &drifted,
 	}, time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)))
 	require.NoError(t, err)
 

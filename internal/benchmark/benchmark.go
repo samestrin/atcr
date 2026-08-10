@@ -251,10 +251,13 @@ type RunResult struct {
 	// column does not belong in a public submission. BuildSubmission accordingly
 	// does not carry this field forward.
 	//
-	// Deliberately NOT omitempty: 0.0 is a real and desirable measurement (perfect
-	// vocabulary agreement), and dropping the key would make it indistinguishable
-	// from a producer that never computed one.
-	OutOfVocabularyRate float64 `json:"out_of_vocabulary_rate"`
+	// A POINTER for the same reason CostPerCorroboratedFindingUSD is one: 0.0 is a
+	// real and desirable measurement (perfect vocabulary agreement) and must not
+	// read identically to "nobody measured". omitempty drops the key only when the
+	// pointer is nil, so a producer that computed a clean run still emits an
+	// explicit 0 — while a run-result file predating epic 35.16.5 unmarshals to nil
+	// and is honestly reported as unmeasured rather than as flawless.
+	OutOfVocabularyRate *float64 `json:"out_of_vocabulary_rate,omitempty"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the
