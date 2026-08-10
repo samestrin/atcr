@@ -290,11 +290,11 @@ func bounded(s string) string { return clampRunes(s, maxDetailBytes) }
 // clampRunes truncates s to at most max bytes, walking back to the last valid
 // rune boundary. Shared by the probe's detail bound and the table renderer's
 // tighter per-row bound so the two cannot drift in how they cut UTF-8.
-func clampRunes(s string, max int) string {
-	if len(s) <= max {
+func clampRunes(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	s = s[:max]
+	s = s[:limit]
 	// Walk back to the last valid rune boundary (at most utf8.UTFMax-1 steps).
 	for !utf8.ValidString(s) {
 		s = s[:len(s)-1]
