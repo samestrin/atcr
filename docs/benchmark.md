@@ -228,6 +228,35 @@ The `reviewers[]` rows reuse the **same public reviewer schema** as
 `leaderboard --export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
 public board renders one consistent set of columns for both submission sources.
 
+#### `atcr_version` is the scorer discriminator
+
+`suite`, `suite_version`, and the reproducibility hash pin the **inputs** — the
+cases, their planted categories, and the raw diff bytes. They say nothing about
+how those inputs were **scored**, and the hash is deliberately blind to scorer
+changes.
+
+That gap is real. Epic 35.16.5 introduced benchmark-side equivalence-class
+matching, so `corroboration_rate` and `cost_per_corroborated_finding_usd` mean
+something different before and after it — for the *same* `standard-v1` `1.0.0`.
+Two submissions can therefore carry identical suite identity and
+non-comparable numbers.
+
+**`atcr_version` is the only field that separates them, and it is
+scoring-relevant for exactly this reason.** When comparing or aggregating
+submissions:
+
+- Treat `(suite, suite_version, atcr_version)` — not `(suite, suite_version)` —
+  as the comparability key for any recall- or cost-derived metric.
+- Do not aggregate `corroboration_rate` or
+  `cost_per_corroborated_finding_usd` across differing `atcr_version` values
+  without stating that the scorer changed between them.
+
+A dedicated scoring/metric version in the envelope would say this more directly,
+but `submission_schema` is a frozen public contract; adding a field is a
+schema-versioning decision, not a documentation fix. Until such a field exists,
+`atcr_version` carries the meaning, and consumers must be told so — which is what
+this section does.
+
 ### The run-result contract
 
 `export` reads a **run-result** file rather than your local scorecard — so a
