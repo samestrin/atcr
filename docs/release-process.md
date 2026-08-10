@@ -186,26 +186,34 @@ for a private module, so `go install`/`go mod download` cannot resolve
 `github.com/samestrin/atcr/reconcile` until the repo is public (see Sprint 33.2 /
 TD-002). Do not cut a module tag against a private repo.
 
-### The PR-time checks are WEAKER than the tag gate
+### The PR-time checks and the tag gate are deliberately identical
 
-A `reconcile/` change can pass every check on its pull request and still fail the
-release gate. The two run different check sets, on purpose:
+The nested module runs the same three checks in both places:
 
 | Check | PR-time (`ci.yml` → `reconcile-module`) | Tag push (`reconcile-module.yml`) |
 |---|---|---|
-| `go test ./...` | ✅ | ✅ (with `-race`) |
-| `gofmt -l .` | ❌ | ✅ |
-| `golangci-lint` | ❌ | ✅ |
+| `gofmt -l .` | ✅ | ✅ |
+| `golangci-lint` (root `.golangci.yml`, v2.12.2) | ✅ | ✅ |
+| `go test -race ./...` | ✅ | ✅ |
 
-The PR-time job deliberately runs tests only so PR feedback stays fast, and the
-root `ci` job's lint does **not** cross the nested `go.mod` boundary — so
-`./reconcile` is never linted until a tag is pushed. A lint-only defect
-(a deprecated stdlib call, an unhandled error) therefore stays invisible through
-review and merge, and surfaces mid-release. This has already happened once: a
-`parser.ParseDir` call added in epic 35.16.4 passed PR CI and was caught only by
-running the gate by hand.
+This matters because neither the root `ci` job's `go test ./...` nor its
+`golangci-lint` crosses the nested `go.mod` boundary — `./reconcile` is invisible
+to both. Its only coverage is the pair above, so if a check exists in one and not
+the other, that check effectively runs *after* merge.
 
-Run the gate locally before tagging — step 1 below does exactly that.
+That is not hypothetical. Until 2026-08-10 the PR-time job ran `go test` alone,
+on the rationale that skipping lint kept feedback fast. A deprecated
+`parser.ParseDir` call added in epic 35.16.4 passed PR CI, merged clean, and was
+caught only by running the gate by hand before tagging. Measured afterward, the
+skipped checks cost about two seconds on this module.
+
+**Keep the two in lockstep.** Adding a check to the release gate without adding
+it to the PR job does not produce a stricter release — it produces a defect that
+merges clean and surfaces mid-release. Both files carry a `mirrors:` comment
+pointing at the other.
+
+Step 1 below runs the same checks locally, so a tag is never the first place they
+execute against the commit being published.
 
 1. **Run the tag gate locally and confirm `reconcile/go.mod` is unchanged.** From
    an up-to-date `main`, run the same three checks the gate runs, not just the
@@ -220,10 +228,10 @@ Run the gate locally before tagging — step 1 below does exactly that.
    )
    ```
 
-   Do not substitute the lighter `go build ./... && go test ./...` — that is the
-   PR-time check, and passing it proves nothing about the gate (see the table
-   above). The tagged content is the `reconcile/` subtree at the tagged commit;
-   verify it is the intended state before tagging.
+   These are the same checks the PR job already ran (see the table above), so on
+   an unchanged `main` this should be a formality — but run it anyway: it is the
+   only thing that verifies the exact subtree you are about to publish, and
+   `go build ./... && go test ./...` alone does not.
 
 2. **Cut the module tag.** From the commit whose `reconcile/` subtree you are
    publishing:

@@ -2,11 +2,20 @@ name: Reconcile Module CI
 
 # Independent release gate for the standalone ./reconcile module
 # (github.com/samestrin/atcr/reconcile). The root "Go CI" workflow's
-# `go test ./...` does NOT cross the nested ./reconcile go.mod boundary, so the
-# module is only fully gated here, on a module-release tag push.
+# `go test ./...` and golangci-lint do NOT cross the nested ./reconcile go.mod
+# boundary, so the module is gated by this workflow on a release tag and by the
+# `reconcile-module` job in ci.yml on every pull request.
 #
 # based_on: .github/workflows/ci.yml — reuses the ubuntu-latest runner and the
 # Go 1.25 setup verbatim.
+#
+# mirrors: the `reconcile-module` job in .github/workflows/ci.yml — that job runs
+# the SAME three checks (gofmt, golangci-lint, go test -race) at PR time.
+# Keep the two in lockstep. A check that lives here but not there is not a
+# stricter release gate, it is a defect that merges clean and surfaces
+# mid-release: that is exactly what happened in epic 35.16.4, when this workflow
+# was the only place ./reconcile was linted. Adding a check here means adding it
+# there in the same commit.
 
 on:
   push:

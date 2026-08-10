@@ -114,11 +114,22 @@ jobs:
         run: gitleaks dir . --config .gitleaks.toml --no-banner --redact
 
   # PR-time coverage for the nested ./reconcile module. The `ci` job above runs
-  # `go test ./...` from the repo root, which does NOT cross ./reconcile's go.mod
-  # boundary — so without this dedicated job a library regression is invisible
-  # until the next module-release tag. This job runs `go test` only (no -race, no
-  # lint) so PR feedback stays fast; the full gofmt + golangci-lint + race gate
-  # runs on tag push in reconcile-module.yml.
+  # `go test ./...` and golangci-lint from the repo root, and NEITHER crosses
+  # ./reconcile's go.mod boundary — so without this dedicated job a library
+  # regression is invisible until the next module-release tag.
+  #
+  # mirrors: .github/workflows/reconcile-module.yml — this job runs the SAME three
+  # checks as the release gate (gofmt, golangci-lint, go test -race), deliberately.
+  # Keep the two in lockstep: a check that exists in only one of them is the defect
+  # this pairing exists to prevent, not an optimization.
+  #
+  # It ran `go test` alone until 2026-08-10, on the rationale that skipping lint
+  # kept PR feedback fast. Measured on this module that saved ~2s (gofmt 0.02s,
+  # golangci-lint 0.17s warm / 0.75s cold, go test -race 1.3s) inside a job that
+  # already spends longer than that provisioning Go — while letting a deprecated
+  # parser.ParseDir call merge clean and fail only on the release tag, mid-release.
+  # Do not re-trim this job for speed without re-measuring; the numbers, not the
+  # intuition, are the reason it is shaped this way.
   reconcile-module:
     name: Reconcile Module Test
     runs-on: ubuntu-latest
@@ -140,9 +151,26 @@ jobs:
           # cache on for ephemeral hosted runners (see the `ci` job)
           cache: true
 
+      - name: Verify Formatted
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          # Same pinned version and shared root config as the `ci` job and
+          # reconcile-module.yml, so a module change cannot pass one and fail another.
+          version: v2.12.2
+          working-directory: ./reconcile
+          args: --timeout 5m --config ../.golangci.yml
+
       - name: Run Module Tests
         # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
-        run: go test ./...
+        run: go test -race ./...
 
   # PR-time tests for the brace-parser scanner, which lives behind a nested go.mod
   # (internal/astgroup/parsers/src/braceparser) so root `go test ./...` never reaches

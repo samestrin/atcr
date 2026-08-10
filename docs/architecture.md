@@ -91,9 +91,11 @@ tree. Two consequences worth knowing before you edit anything under `reconcile/`
 
 - **Merging a change there does not ship it.** It reaches the `atcr` binary only
   after a `reconcile/vX.Y.Z` tag is cut and the root pin is bumped to it.
-- **PR-time CI does not lint it.** The nested module is linted and race-tested
-  only on the release tag, so a lint-clean PR is not evidence the release gate
-  will pass.
+- **Root CI does not see it.** Neither the root `go test ./...` nor the root
+  `golangci-lint` crosses the nested `go.mod` boundary. The module's only
+  coverage is the dedicated `reconcile-module` job at PR time and the release
+  gate on tag push, which run an identical check set on purpose — keep them in
+  lockstep if you touch either.
 
 Both are covered in
 [release-process.md](release-process.md#cutting-a-reconcile-module-release),
