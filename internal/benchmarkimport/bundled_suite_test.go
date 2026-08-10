@@ -3,15 +3,15 @@ package benchmarkimport_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/benchmarkimport"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/reconcile"
 )
 
 // suiteDir is the committed standard-v1 suite, relative to this package.
@@ -42,60 +42,76 @@ func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
 		}
 	}
 	assert.GreaterOrEqual(t, len(distinct), 3, "the suite must span at least 3 categories, got %v", distinct)
-
-	// Every category must be emittable under the prompt each reviewer actually
-	// receives. The shipped personas resolve to their own files — never
-	// personas/_base.md, which registry.ResolvePersona reaches only as a
-	// fallback for agents with no persona file of their own — so this guard
-	// reads the personas' own prompts. A persona that declares no CATEGORY
-	// enumeration is unconstrained (any lowercase word is emittable); one that
-	// declares an explicit list must cover every suite category, or that
-	// reviewer's recall on it is structurally zero.
-	for _, pf := range shippedPersonaFiles(t) {
-		raw, err := os.ReadFile(pf)
-		require.NoError(t, err)
-		vocab := declaredCategoryVocabulary(raw)
-		if len(vocab) == 0 {
-			continue
-		}
-		for cat := range distinct {
-			assert.Contains(t, vocab, cat,
-				"%q is excluded by %s's CATEGORY vocabulary, so that reviewer is never prompted to emit it", cat, filepath.Base(pf))
-		}
-	}
 }
 
-// shippedPersonaFiles returns the prompts reviewers actually receive: every
-// top-level personas/*.md except _base.md, the resolution fallback no shipped
-// persona consults.
-func shippedPersonaFiles(t *testing.T) []string {
-	t.Helper()
-	files, err := filepath.Glob("../../personas/*.md")
+// Every category the suite plants must be a member of the closed reviewer
+// vocabulary, whose authority is reconcile/category.go (epic 35.16.4).
+//
+// This asserts membership against the taxonomy CONSTANT directly rather than
+// scraping an allowlist out of a persona prompt. Scraping is both obsolete and
+// unsound here: since 35.16.4 the vocabulary is injected into all 29 prompts
+// through internal/payload's ScopeRule rather than written into any prompt file,
+// so there is nothing left in a persona to parse — and the regex that used to try
+// silently matched nothing, while an "extracted no vocabulary" branch turned that
+// miss into a pass. A category outside the taxonomy is never offered to any
+// reviewer, so every case planting it scores a structural zero.
+func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
+	m, err := benchmark.Load(suiteDir)
 	require.NoError(t, err)
 
-	out := make([]string, 0, len(files))
-	for _, f := range files {
-		if filepath.Base(f) != "_base.md" {
-			out = append(out, f)
+	vocabulary := taxonomyVocabulary(t)
+
+	planted := map[string]struct{}{}
+	for _, c := range m.Cases {
+		for _, cat := range c.ExpectedCategories {
+			planted[cat] = struct{}{}
+			assert.Contains(t, vocabulary, cat,
+				"case %q plants %q, which is not a member of reconcile.Categories() — no reviewer is prompted to emit it, so that case's recall is structurally zero",
+				c.ID, cat)
 		}
 	}
-	require.NotEmpty(t, out, "the shipped panel must resolve to persona files of its own")
-	return out
+
+	// A suite that planted nothing would satisfy the loop above vacuously — the
+	// exact shape of the escape hatch this guard replaces.
+	assert.NotEmpty(t, planted, "the suite must plant at least one expected category")
 }
 
-// declaredCategoryVocabulary extracts an explicit CATEGORY allowlist from a
-// prompt, or nil when the prompt constrains CATEGORY only to a lowercase word
-// — in which case every category is emittable.
-func declaredCategoryVocabulary(raw []byte) []string {
-	m := regexp.MustCompile(`CATEGORY is a single lowercase word \(([^)]*)\)`).FindSubmatch(raw)
-	if m == nil {
-		return nil
+// The ingestion map is the only producer of a suite's expected categories, so
+// every value it can emit must be a taxonomy member. The Load-based guard above
+// covers only what the COMMITTED suite happens to plant; this covers every value
+// a future rebuild could emit, including the aacr-bench labels no committed case
+// currently carries.
+func TestCategoryMap_EmitsOnlyTaxonomyCategories(t *testing.T) {
+	vocabulary := taxonomyVocabulary(t)
+
+	for _, upstream := range []string{
+		"code defect",
+		"security vulnerability",
+		"security",
+		"maintainability and readability",
+		"maintainability",
+		"performance",
+	} {
+		mapped, ok := benchmarkimport.MapCategory(upstream)
+		require.True(t, ok, "aacr-bench category %q must still map", upstream)
+		assert.Contains(t, vocabulary, mapped,
+			"categoryMap emits %q for %q, which is not a member of reconcile.Categories()", mapped, upstream)
 	}
-	var out []string
-	for _, w := range strings.Split(string(m[1]), ",") {
-		if w = strings.TrimSpace(w); w != "" {
-			out = append(out, w)
-		}
+}
+
+// taxonomyVocabulary is the closed reviewer vocabulary as a set. It fails the
+// test on an empty vocabulary rather than returning one: an empty set makes every
+// Contains assertion above fail loudly, but a caller that looped over it instead
+// would pass vacuously, and a vacuous pass is precisely the defect these guards
+// replace.
+func taxonomyVocabulary(t *testing.T) map[string]struct{} {
+	t.Helper()
+	cats := reconcile.Categories()
+	require.NotEmpty(t, cats, "reconcile must publish a non-empty category vocabulary")
+
+	out := make(map[string]struct{}, len(cats))
+	for _, c := range cats {
+		out[c] = struct{}{}
 	}
 	return out
 }
