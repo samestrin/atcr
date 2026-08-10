@@ -179,3 +179,54 @@ func TestCategoryEnumeration_WellFormed(t *testing.T) {
 		t.Errorf("enumeration contains a template action: %q", enumeration)
 	}
 }
+
+// TestMustNonEmptyVocabulary_RefusesAnEmptyVocabulary covers the degenerate case
+// the rendered rule cannot survive. categoryVocabularyRule is a package-level var
+// built at init, so if reconcile.Categories() ever returned empty, every prompt
+// in every mode would ship the sentence "spelled exactly as listed: ." — an
+// instruction naming no words at all, reaching production silently because
+// nothing on the path inspects the constant.
+//
+// It panics rather than falling back to the base rule: a base-only rule is the
+// no-vocabulary prompt this epic exists to remove (see the const block's warning
+// in scope.go), so degrading to it quietly would trade a visibly broken prompt
+// for an invisibly broken one. An empty vocabulary can only come from a
+// defective pinned reconcile module, which is a build-time fault, and this is
+// the same contract regexp.MustCompile applies to a bad pattern at init.
+func TestMustNonEmptyVocabulary_RefusesAnEmptyVocabulary(t *testing.T) {
+	for _, empty := range [][]string{nil, {}} {
+		if !panics(func() { mustNonEmptyVocabulary(empty) }) {
+			t.Errorf("mustNonEmptyVocabulary(%#v) returned instead of panicking — a degenerate vocabulary would reach every rendered prompt", empty)
+		}
+	}
+}
+
+// TestMustNonEmptyVocabulary_PassesTheRealVocabularyThrough keeps the guard from
+// becoming a tripwire that fires on the healthy case: the live vocabulary must
+// pass through unchanged, contents and order intact.
+func TestMustNonEmptyVocabulary_PassesTheRealVocabularyThrough(t *testing.T) {
+	want := reconcile.Categories()
+	if panics(func() { mustNonEmptyVocabulary(want) }) {
+		t.Fatal("the live vocabulary must not trip the guard")
+	}
+	got := mustNonEmptyVocabulary(want)
+	if len(got) != len(want) {
+		t.Fatalf("guard changed the vocabulary length: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("guard changed the vocabulary at %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// panics reports whether fn panicked.
+func panics(fn func()) (panicked bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+		}
+	}()
+	fn()
+	return false
+}

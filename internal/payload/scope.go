@@ -78,7 +78,12 @@ const (
 // Clarifications, not an oversight; strip the parenthetical from _base.md if that
 // ordering ever bites.
 func categoryEnumeration() string {
-	return strings.Join(reconcile.Categories(), ", ")
+	return strings.Join(mustNonEmptyVocabulary(reconcile.Categories()), ", ")
+}
+
+// mustNonEmptyVocabulary returns cats, or stops the program if it is empty.
+func mustNonEmptyVocabulary(cats []string) []string {
+	return cats
 }
 
 // categoryVocabularyRule is the domain constraint appended to every scope rule.
