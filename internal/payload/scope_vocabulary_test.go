@@ -64,12 +64,17 @@ func TestScopeRuleForPayload_CarriesEveryCategory(t *testing.T) {
 // member to reconcile.Categories() must change the rendered text; if it does
 // not, the text is a hardcoded copy.
 func TestScopeRule_EnumerationIsGeneratedNotDuplicated(t *testing.T) {
+	// Reconstruct the expected enumeration from the EXPORTED vocabulary, not from
+	// categoryEnumeration(). Comparing the rule against categoryEnumeration()
+	// would compare the generator with itself: replacing its body with a
+	// hardcoded literal identical to today's list would still pass, which is
+	// precisely the drift this test claims to catch.
+	fromVocabulary := strings.Join(reconcile.Categories(), ", ")
 	for _, mode := range allModes {
 		rule := ScopeRule(mode)
-		rendered := categoryEnumeration()
 
-		if !strings.Contains(rule, rendered) {
-			t.Errorf("mode %q does not embed the generated enumeration verbatim — the rule text appears to be a hand-maintained copy", mode)
+		if !strings.Contains(rule, fromVocabulary) {
+			t.Errorf("mode %q does not embed reconcile.Categories() joined verbatim — the rule text appears to be a hand-maintained copy", mode)
 		}
 	}
 
