@@ -20,26 +20,46 @@ const suiteDir = "../../benchmarks/standard-v1"
 // shipped data: they run offline in CI and fail if an edit makes the bundled
 // suite unloadable, unscoreable, or unreviewable.
 
-func TestBundledSuite_SatisfiesTheManifestContract(t *testing.T) {
+// loadSuite loads the committed suite through the same path `atcr benchmark
+// verify` uses. Every test below goes through it rather than calling
+// benchmark.Load itself, so the failure message for an unloadable suite is
+// written once.
+func loadSuite(t *testing.T) *benchmark.Manifest {
+	t.Helper()
 	m, err := benchmark.Load(suiteDir)
-
 	require.NoError(t, err, "the committed suite must load through the same path atcr benchmark verify uses")
+	return m
+}
+
+// distinctPlantedCategories maps each expected category the suite plants to the
+// ids of the cases planting it. Returning the case ids rather than a bare set
+// lets the membership guard below name the offending case in its failure
+// message while still sharing one derivation with the category-bar test — two
+// independent walks of m.Cases is how the two came to disagree about what the
+// suite plants.
+func distinctPlantedCategories(m *benchmark.Manifest) map[string][]string {
+	out := map[string][]string{}
+	for _, c := range m.Cases {
+		for _, cat := range c.ExpectedCategories {
+			out[cat] = append(out[cat], c.ID)
+		}
+	}
+	return out
+}
+
+func TestBundledSuite_SatisfiesTheManifestContract(t *testing.T) {
+	m := loadSuite(t)
+
 	assert.Equal(t, "standard-v1", m.Suite)
 	assert.Equal(t, "1.0.0", m.SuiteVersion)
 }
 
 func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	assert.GreaterOrEqual(t, len(m.Cases), 12, "the suite must carry at least 12 cases")
 
-	distinct := map[string]struct{}{}
-	for _, c := range m.Cases {
-		for _, cat := range c.ExpectedCategories {
-			distinct[cat] = struct{}{}
-		}
-	}
+	distinct := distinctPlantedCategories(m)
 	assert.GreaterOrEqual(t, len(distinct), 3, "the suite must span at least 3 categories, got %v", distinct)
 }
 
@@ -55,17 +75,13 @@ func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
 // miss into a pass. A category outside the taxonomy is never offered to any
 // reviewer, so every case planting it scores a structural zero.
 func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
-
 	vocabulary := taxonomyVocabulary(t)
 
-	planted := map[string]struct{}{}
-	for _, c := range m.Cases {
-		for _, cat := range c.ExpectedCategories {
-			planted[cat] = struct{}{}
-			assert.Empty(t, unplantableReason(cat, vocabulary),
-				"case %q plants %q: %s", c.ID, cat, unplantableReason(cat, vocabulary))
+	planted := distinctPlantedCategories(loadSuite(t))
+	for cat, caseIDs := range planted {
+		if reason := unplantableReason(cat, vocabulary); reason != "" {
+			assert.Fail(t, "suite plants an illegal expected category",
+				"%q is planted by case(s) %v: %s", cat, caseIDs, reason)
 		}
 	}
 
@@ -171,8 +187,7 @@ func TestBundledSuite_CaseIdsAreTheGoldenSeededSelection(t *testing.T) {
 		"vllm-project-vllm-pr-17425",
 	}
 
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	got := make([]string, 0, len(m.Cases))
 	for _, c := range m.Cases {
@@ -195,8 +210,7 @@ func TestBundledSuite_ReproHashIsPinned(t *testing.T) {
 }
 
 func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	for _, c := range m.Cases {
 		t.Run(c.ID, func(t *testing.T) {
@@ -214,8 +228,7 @@ func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
 }
 
 func TestBundledSuite_DiffsStayWithinTheRunnersSizeCeiling(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	for _, c := range m.Cases {
 		info, err := os.Stat(filepath.Join(suiteDir, c.Diff))
