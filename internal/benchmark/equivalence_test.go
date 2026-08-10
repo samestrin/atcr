@@ -275,6 +275,41 @@ func TestEquivalence_FamiliesAreDisjoint(t *testing.T) {
 	}
 }
 
+// Disjointness between the four explicit families is only half the property. The
+// other half is disjointness against the IDENTITY FALLBACK: a case planting a fine
+// member alongside its own coarse parent (expected {maintainability, style}) lets
+// one raised `style` satisfy `style` by the fallback AND `maintainability` by the
+// family — recall 1.0 from a single detection, where exact matching gave 0.5.
+//
+// Manifest.Validate rejects that shape, which is what lets equivalence.go call the
+// fallback TOTAL. But TestValidate_RejectsOverlappingExpectedCategories pins only
+// four hand-written pairs, so a member added to a family tomorrow would be
+// guarded by code and covered by nothing. Drive every pair the table actually
+// contains.
+func TestValidate_RejectsEveryCoarseMemberPairInTheTable(t *testing.T) {
+	pairs := 0
+	for coarse, members := range categoryFamilies {
+		for _, member := range members {
+			if member == coarse {
+				// Every family contains its own key; that is not an overlap.
+				continue
+			}
+			pairs++
+			t.Run(coarse+"+"+member, func(t *testing.T) {
+				m := Manifest{
+					Suite: "s", SuiteVersion: "1.0.0",
+					Cases: []Case{{ID: "c", Diff: "c.diff",
+						ExpectedCategories: []string{coarse, member}}},
+				}
+				require.Error(t, m.Validate(),
+					"planting %q beside its family parent %q would let one raised finding satisfy both",
+					member, coarse)
+			})
+		}
+	}
+	require.Greater(t, pairs, 0, "the table must contain at least one coarse/member pair to guard")
+}
+
 // Widening is monotone: every family contains its own coarse category, so a
 // reviewer that emits the exact ground-truth word is never scored worse than it
 // was under exact matching. This is what makes the change safe to apply to the
