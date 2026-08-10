@@ -125,6 +125,27 @@ func TestExecuteBenchmarkRun_ReportsVocabularyDrift(t *testing.T) {
 		"every finding used a non-member word -> full drift")
 }
 
+// An EMPTY category counts as drift, exactly like a non-member word — the third of
+// vocabulary.go's definitional choices, whose absence would produce a rate that
+// IMPROVES when a reviewer stops labelling entirely. Driven through the CLI wiring
+// rather than the library because an unlabelled finding also has to survive the
+// parser's short-row padding to reach the scorer at all.
+func TestExecuteBenchmarkRun_EmptyCategoryCountsAsDrift(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: ""}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	require.NotNil(t, rr.OutOfVocabularyRate, "findings were raised -> measured, not unmeasured")
+	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
+		"an unlabelled finding is drift, not an exemption from the metric")
+	require.Len(t, rr.Reviewers, 1)
+	assert.InDelta(t, 1.0, rr.Reviewers[0].FindingsRaisedAvg, 1e-9,
+		"the unlabelled finding still counts as a finding, so it is in the denominator too")
+}
+
 // A run that raised NO findings reports the rate as absent, never 0.0 — the
 // nil-vs-zero distinction RunResult.OutOfVocabularyRate's pointer exists to carry.
 // Asserted here at the CLI wiring level and against the MARSHALED JSON, because
