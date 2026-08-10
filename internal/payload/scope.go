@@ -39,15 +39,20 @@ func ScopeFocus(scope []string) string {
 // diff and blocks constrain findings to the changed regions; files mode widens
 // visibility to whole files and routes pre-existing issues to the out-of-scope
 // category so the reconciler annotates rather than promotes them.
+//
+// These are the BASE halves only. Never return one directly from a scope-rule
+// accessor: the closed CATEGORY vocabulary is appended in scopeChangedOnlyFull /
+// scopeFilesFull below, so returning a base const hands the reviewer a prompt
+// with no vocabulary at all (epic 35.16.4).
 const (
-	scopeChangedOnly = "Review only the changed regions. The payload shows you the change in context, " +
+	scopeChangedOnlyBase = "Review only the changed regions. The payload shows you the change in context, " +
 		"but a finding whose FILE:LINE falls outside the changed lines will be discarded before it " +
 		"reaches the report when grounding is active (git-range reviews) — it is not enough for the " +
 		"code to merely be visible in the surrounding context. If you must flag a genuine pre-existing " +
 		"issue in unchanged code, give it CATEGORY out-of-scope so the reconciler annotates rather than " +
 		"discards it. Stay on the diff."
 
-	scopeFiles = "Full head-version content of each changed file is provided, so pre-existing issues " +
+	scopeFilesBase = "Full head-version content of each changed file is provided, so pre-existing issues " +
 		"in unchanged regions may be visible. Focus your findings on the changed regions. A finding whose " +
 		"FILE:LINE falls outside the changed lines will be discarded before it reaches the report when " +
 		"grounding is active (git-range reviews) — it is not enough for the code to merely be visible in " +
@@ -90,8 +95,8 @@ var categoryVocabularyRule = "Use CATEGORY from this closed vocabulary, spelled 
 // fan-out path (internal/fanout/review.go), and the result is identical every
 // time.
 var (
-	scopeChangedOnlyFull = scopeChangedOnly + " " + categoryVocabularyRule
-	scopeFilesFull       = scopeFiles + " " + categoryVocabularyRule
+	scopeChangedOnlyFull = scopeChangedOnlyBase + " " + categoryVocabularyRule
+	scopeFilesFull       = scopeFilesBase + " " + categoryVocabularyRule
 )
 
 // ScopeRule returns the scope instruction for a payload mode. diff and blocks
