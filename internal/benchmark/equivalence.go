@@ -125,6 +125,15 @@ var categoryFamilies = map[string][]string{
 // The identity fallback is what keeps this change additive. An expected category
 // with no family — a suite that plants a finer word, or a test using a synthetic
 // one — is still scored by exact match, exactly as before.
+//
+// That claim holds only because the fallback is TOTAL, and it is Manifest.Validate
+// that makes it so. The fallback otherwise OVERLAPS the table: an unfamilied `style`
+// is satisfied by itself AND, if the same case also expects `maintainability`,
+// counted a second time through that family — one raised finding satisfying two
+// distinct expected categories, measuring recall 1.0 where exact matching gave 0.5.
+// Validate rejects a case whose expected categories overlap that way, so no valid
+// suite can reach the double-count. Do not relax that check without replacing this
+// paragraph.
 func familyOf(cat string) []string {
 	if family, ok := categoryFamilies[cat]; ok {
 		return family
