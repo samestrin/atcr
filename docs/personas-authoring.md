@@ -105,6 +105,11 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word;
 EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If
 nothing is wrong, emit exactly: NO FINDINGS
+
+## Payload
+Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
+
+{{.Payload}}
 ```
 
 > **The Rules line is not the whole CATEGORY contract.** "One lowercase word" is
@@ -114,14 +119,6 @@ nothing is wrong, emit exactly: NO FINDINGS
 > prompt — a persona-local list is exactly the drift the injection exists to
 > prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
 > as written and let `{{.ScopeRule}}` carry the enumeration.
-
-```markdown
-
-## Payload
-Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
-
-{{.Payload}}
-```
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
