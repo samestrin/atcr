@@ -3,10 +3,10 @@
 ### Added
 - Closed reviewer CATEGORY vocabulary as an exported, ordered constant in the public `reconcile` module (`reconcile.Categories`, plus `Category*` constants), derived from three sources: the categories the 35.16.2 benchmark dry-run actually emitted, each persona's declared Focus list, and the 14 category words bound in code by the community persona roster.
 - Disambiguation guidance in the injected prompt for the six confusable member pairs (`race`/`concurrency`, `contract`/`api-contract`, `resource-leak`/`leak`, `input-validation`/`validation`, `secret`/`security`, `correctness`/`logic`), so keeping the distinctions does not just relocate the drift.
-- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the enumeration is generated rather than duplicated, and a locked-set test so removing any member fails.
+- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the rendered enumeration tracks `reconcile.Categories()`, and a locked-set test so removing any member fails.
 
 ### Changed
-- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` — no persona file is edited, so no prompt file can drift out of sync. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary.
+- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` rather than written into any persona file, so adding a member reaches every prompt — including the 5 installed outside the repo — with no prompt edit. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary. Injection does not by itself keep the prompt files consistent: `personas/_base.md:44` still carries a six-word literal list, and the worked examples in `personas/ingrid.md`, `penny.md` and `sasha.md` demonstrated non-member words until a follow-up corrected them.
 - `out-of-scope` is now presented to reviewers as a routing value rather than an ordinary defect class.
 - Bumped the `github.com/samestrin/atcr/reconcile` dependency to v0.5.0.
 
