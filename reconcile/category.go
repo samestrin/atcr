@@ -182,8 +182,31 @@ var categoryMerges = map[string]string{
 	"structure":   CategoryMaintainability,
 }
 
-// CategoryMerges is a compiling stub pending implementation.
-func CategoryMerges() map[string]string { return nil }
+// CategoryMerges returns the recorded folds from an emitted word to the
+// vocabulary member it means: derivation provenance for the closed vocabulary,
+// and the canonicalization table epic 35.16.6's parse-boundary normalizer is
+// meant to apply.
+//
+// It is exported because that consumer lives in module
+// github.com/samestrin/atcr, which cannot reach an unexported identifier in this
+// separately-versioned module. Left unexported the map's declared consumer would
+// have to duplicate it — the drift this vocabulary exists to eliminate.
+//
+// Nothing in this module rewrites an emitted category; applying the table is the
+// caller's decision. Almost every key is a non-member; `logic` is the one key
+// that is also a member (see categoryMerges for why both are true at once), so a
+// caller that canonicalizes must expect a member to map to another member.
+//
+// The returned map is a copy, for the same reason Categories() returns one: this
+// module is published and embedded, and a shared map would let one consumer
+// corrupt the canonicalization every other consumer applies in the same process.
+func CategoryMerges() map[string]string {
+	out := make(map[string]string, len(categoryMerges))
+	for word, target := range categoryMerges {
+		out[word] = target
+	}
+	return out
+}
 
 // Categories returns the closed reviewer CATEGORY vocabulary in offer order.
 //
