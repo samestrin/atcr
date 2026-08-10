@@ -1,0 +1,171 @@
+package reconcile
+
+import (
+	"strings"
+	"testing"
+)
+
+// The three derivation sources for the closed CATEGORY vocabulary (epic
+// 35.16.4 T1). They are restated here as literal data, independent of
+// category.go, so the taxonomy cannot silently stop covering a source: these
+// lists come from the dry-run measurement and from files outside this module
+// (personas/community_test.go, personas/_base.md), which this module cannot
+// import.
+
+// observedCategories is every category word the 35.16.2 AC3 dry-run actually
+// emitted (kimi-k3 + qwen3.8-max over the bundled standard-v1 suite). Source:
+// the epic body's frequency table plus the out-of-vocabulary tail recorded in
+// .planning/.../35.16.2_.../claude/2026-08-07_code-review.md.
+var observedCategories = []string{
+	"security", "correctness", "state", "contract", "failure", "input",
+	"bug", "resource", "resources", "duplication", "coupling", "clarity",
+	"concurrency", "structure", "consistency", "cleanliness", "stability",
+	"extensibility", "race", "style", "performance", "maintainability",
+	"testing", "out-of-scope", "naming",
+}
+
+// rosterCategories is the 14 category words bound in code by
+// personas/community_test.go:117-132, each required by
+// TestCommunityPersonas_FixtureAndPromptCategory to appear in its persona's own
+// prompt template. A word here that is not accounted for leaves that persona
+// authored to find something the enumeration never offers.
+var rosterCategories = []string{
+	"coupling", "logic", "contract", "validation", "race", "leak",
+	"complexity", "type", "dependency", "observability", "secret",
+	"duplication", "invariant", "bloat",
+}
+
+// baseCategories is the six-word list at personas/_base.md:44 — the only
+// enumeration that existed anywhere before this epic, and a resolution fallback
+// no shipped persona reaches.
+var baseCategories = []string{
+	"security", "correctness", "performance", "testing", "style", "docs",
+}
+
+// categorySet indexes Categories() for membership assertions.
+func categorySet() map[string]bool {
+	set := make(map[string]bool, len(Categories()))
+	for _, c := range Categories() {
+		set[c] = true
+	}
+	return set
+}
+
+// TestCategories_MandatoryMembers locks the members epic 35.16.4 T1 names as
+// mandatory: the two control values, performance, the dimensions the dry-run
+// proved reviewers need, and maintainability as distinct from style. These are
+// the members whose absence caused the measured recall failure, so they are
+// asserted by name rather than by count.
+func TestCategories_MandatoryMembers(t *testing.T) {
+	set := categorySet()
+	for _, want := range []string{
+		CategoryOutOfScope, CategoryOther,
+		CategoryPerformance, CategoryConcurrency, CategoryAPIContract,
+		CategoryErrorHandling, CategoryMaintainability, CategoryStyle,
+	} {
+		if !set[want] {
+			t.Errorf("mandatory category %q is not a member of the closed vocabulary", want)
+		}
+	}
+	if CategoryMaintainability == CategoryStyle {
+		t.Error("maintainability and style must stay distinct members")
+	}
+}
+
+// TestCategories_RosterWordsAreAccountedFor enforces AC5: every one of the 14
+// CI-bound community roster words is a member, or is recorded in categoryMerges
+// as folding into a member. A roster word that is neither leaves its persona
+// emitting a word its own injected enumeration does not offer.
+func TestCategories_RosterWordsAreAccountedFor(t *testing.T) {
+	assertAccountedFor(t, rosterCategories, "community roster (personas/community_test.go:117-132)")
+}
+
+// TestCategories_ObservedWordsAreAccountedFor enforces T1's success criterion
+// for the dry-run vocabulary: no word a reviewer actually emitted may fall
+// through to nothing.
+func TestCategories_ObservedWordsAreAccountedFor(t *testing.T) {
+	assertAccountedFor(t, observedCategories, "35.16.2 dry-run")
+}
+
+// TestCategories_BaseWordsAreAccountedFor enforces the same for the six words
+// personas/_base.md:44 offers, so closing the vocabulary never removes one that
+// was already on offer.
+func TestCategories_BaseWordsAreAccountedFor(t *testing.T) {
+	assertAccountedFor(t, baseCategories, "personas/_base.md:44")
+}
+
+// assertAccountedFor fails for any word that is neither a member nor a recorded
+// merge into a member. A merge whose target is not itself a member is also a
+// failure: it would route findings to a word no prompt offers.
+func assertAccountedFor(t *testing.T, words []string, source string) {
+	t.Helper()
+	set := categorySet()
+	for _, w := range words {
+		if set[w] {
+			continue
+		}
+		target, merged := categoryMerges[w]
+		if !merged {
+			t.Errorf("%s word %q is neither a member nor a recorded merge — it would have no home in the closed vocabulary", source, w)
+			continue
+		}
+		if !set[target] {
+			t.Errorf("%s word %q merges into %q, which is not itself a member", source, w, target)
+		}
+	}
+}
+
+// TestCategories_WellFormed guards the shape every member must have: the
+// enumeration is rendered verbatim into reviewer prompts and the emitted word
+// travels the pipe-delimited wire format, so whitespace, pipes, uppercase, and
+// duplicates are all defects.
+func TestCategories_WellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range Categories() {
+		switch {
+		case c == "":
+			t.Error("empty category in the closed vocabulary")
+		case c != strings.ToLower(c):
+			t.Errorf("category %q is not lowercase — persona prompts specify a lowercase word", c)
+		case strings.ContainsAny(c, " \t|"):
+			t.Errorf("category %q contains whitespace or a pipe — it would corrupt the wire format", c)
+		case seen[c]:
+			t.Errorf("category %q appears twice", c)
+		}
+		seen[c] = true
+	}
+	if len(Categories()) < len(rosterCategories) {
+		t.Errorf("closed vocabulary has %d members, fewer than the %d CI-bound roster words alone", len(Categories()), len(rosterCategories))
+	}
+}
+
+// TestCategories_MergeTargetsAreNotThemselvesMerged rejects a chained merge
+// (a -> b -> c). Every recorded merge must land directly on a member, so a
+// reader of categoryMerges never has to follow more than one hop.
+func TestCategories_MergeTargetsAreNotThemselvesMerged(t *testing.T) {
+	for word, target := range categoryMerges {
+		if _, chained := categoryMerges[target]; chained {
+			t.Errorf("merge %q -> %q chains through another merge", word, target)
+		}
+		if word == target {
+			t.Errorf("category %q merges into itself", word)
+		}
+	}
+}
+
+// TestCategories_ReturnsCopy verifies callers cannot mutate the vocabulary
+// through the returned slice. This module is published and embedded by external
+// tools; a shared backing array would let any consumer corrupt every prompt
+// rendered afterwards in the same process.
+func TestCategories_ReturnsCopy(t *testing.T) {
+	first := Categories()
+	if len(first) == 0 {
+		t.Fatal("Categories() returned an empty vocabulary")
+	}
+	original := first[0]
+	first[0] = "mutated"
+
+	if got := Categories()[0]; got != original {
+		t.Errorf("Categories() shares its backing array: got %q after caller mutation, want %q", got, original)
+	}
+}
