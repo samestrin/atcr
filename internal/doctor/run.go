@@ -233,8 +233,14 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 	if errors.As(err, &se) {
 		status, hint := StatusProviderError, ""
 		switch se.Status {
-		case 401, 403:
+		case 401:
 			status, hint = StatusAuthFailed, "check the API key in "+tgt.APIKeyEnv
+		case 403:
+			// A 403 is authenticated-but-refused: quota exhaustion, billing state,
+			// or a permission scope far more often than a bad credential. Naming
+			// the key here misdirects the whole investigation, so point at the
+			// captured upstream body instead — it carries the real reason.
+			status, hint = StatusAuthFailed, "authenticated but refused — likely quota, billing, or a permission scope; read detail for the upstream reason"
 		case 404:
 			status, hint = StatusNotFound, "check the model name and the provider base_url"
 		case 429:
