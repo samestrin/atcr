@@ -241,6 +241,20 @@ type RunResult struct {
 	SuiteVersion string                   `json:"suite_version"`
 	GeneratedAt  string                   `json:"generated_at"`
 	Reviewers    []scorecard.PublicRecord `json:"reviewers"`
+
+	// OutOfVocabularyRate is the share of the run's findings whose category is not
+	// a member of the closed reviewer vocabulary — see OutOfVocabularyRate.
+	//
+	// It is a DIAGNOSTIC on the run, not a reviewer metric, which is why it sits
+	// here rather than on scorecard.PublicRecord: that type is the frozen public
+	// schema shared with the production leaderboard export, and a benchmark-only
+	// column does not belong in a public submission. BuildSubmission accordingly
+	// does not carry this field forward.
+	//
+	// Deliberately NOT omitempty: 0.0 is a real and desirable measurement (perfect
+	// vocabulary agreement), and dropping the key would make it indistinguishable
+	// from a producer that never computed one.
+	OutOfVocabularyRate float64 `json:"out_of_vocabulary_rate"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the

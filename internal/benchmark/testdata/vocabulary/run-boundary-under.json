@@ -1,0 +1,74 @@
+{
+  "_note": "4 out-of-vocabulary of 21 findings = 0.190476 - just under the ceiling, passes.",
+  "suite": "fixture-vocabulary",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "case-alpha",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style",
+            "race",
+            "observability",
+            "input"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style",
+            "race",
+            "bug"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "case-beta",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling",
+            "naming",
+            "bug"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling",
+            "naming",
+            "input"
+          ]
+        }
+      ]
+    }
+  ]
+}

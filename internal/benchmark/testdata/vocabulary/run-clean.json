@@ -1,0 +1,67 @@
+{
+  "_note": "Every raised category is a member of reconcile.Categories(). Rate 0.00 - passes.",
+  "suite": "fixture-vocabulary",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "case-alpha",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style",
+            "race"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "case-beta",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling",
+            "naming"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling"
+          ]
+        }
+      ]
+    }
+  ]
+}
