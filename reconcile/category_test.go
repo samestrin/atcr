@@ -174,12 +174,10 @@ func TestCategories_WellFormed(t *testing.T) {
 		// Every whitespace class, not just space and tab. Newline is the one that
 		// actually breaks the wire format: findings are line-delimited, so an
 		// embedded newline splits one finding into two lines and the second fails
-		// the severity-prefix check. ContainsFunc(unicode.IsSpace) covers CR, LF,
-		// vertical tab and form feed; NBSP (U+00A0) is checked alongside it because
-		// unicode.IsSpace reports true for it only via Latin-1 space handling, and
-		// spelling it out keeps the intent legible. TrimSpace catches leading and
-		// trailing whitespace that a bare interior scan would still admit.
-		if strings.TrimSpace(c) != c || strings.ContainsFunc(c, unicode.IsSpace) || strings.ContainsRune(c, '\u00a0') {
+		// the severity-prefix check. unicode.IsSpace covers CR, LF, vertical tab,
+		// form feed and NBSP (U+00A0), so no class needs listing separately;
+		// TrimSpace additionally rejects leading and trailing whitespace.
+		if strings.TrimSpace(c) != c || strings.ContainsFunc(c, unicode.IsSpace) {
 			t.Errorf("category %q contains whitespace — an embedded newline would split one finding into two wire-format lines", c)
 		}
 		if strings.Contains(c, "|") {
