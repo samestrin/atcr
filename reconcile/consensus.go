@@ -125,15 +125,29 @@ const (
 )
 
 // securityRelated reports whether a category signals a security concern after
-// ModalCategory-style canonicalization (lower+trim). It matches CategorySecurity
-// — the vocabulary member (category.go) — plus common synonyms/substrings
+// ModalCategory-style canonicalization (lower+trim). It matches the vocabulary's
+// security-bearing members (category.go) plus common synonyms/substrings
 // reviewers actually emit, so a single reviewer labeling a genuine vulnerability
 // "vulnerability", "auth", or "injection" is not silently dropped because the
 // exemption predicate was overly literal. The substring arm is why closing the
 // vocabulary does not narrow this exemption.
+//
+// CategorySecret and CategoryInputValidation are matched explicitly because the
+// closed vocabulary redistributes what used to arrive as "security" (epic
+// 35.16.4). The injected disambiguation rule tells every reviewer "`secret` for
+// an exposed credential, `security` for every other vulnerability", moving
+// credential findings to secret; it likewise steers "injection" — which the
+// substring arm catches — to input-validation, which it does not. Without both,
+// a MEDIUM or LOW single-reviewer credential or untrusted-input finding loses the
+// consensusExempt exemption and becomes a drop candidate where it previously
+// survived, a behavior change produced entirely by the prompt.
+//
+// TestSecurityRelated_CoversEveryVocabularyMember tables this over the whole
+// vocabulary so a future member cannot silently fall out of the exemption.
 func securityRelated(category string) bool {
 	c := strings.ToLower(strings.TrimSpace(category))
-	if c == CategorySecurity {
+	switch c {
+	case CategorySecurity, CategorySecret, CategoryInputValidation:
 		return true
 	}
 	return strings.Contains(c, "vuln") || strings.Contains(c, "auth") || strings.Contains(c, "inject")
