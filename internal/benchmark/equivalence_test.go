@@ -163,3 +163,58 @@ func TestEquivalence_CoversEveryGroundTruthCategory(t *testing.T) {
 	assert.ElementsMatch(t, want, got,
 		"family keys must be exactly the values internal/benchmarkimport's categoryMap emits")
 }
+
+// Equivalence resolves AFTER normalize, so a coarse expected category spelled
+// with different case or padding is still satisfied by a finer raised one.
+// normalizeSet feeds both sides, but the family lookup is a separate map hit —
+// nothing guarantees it sees normalized input unless this pins it.
+func TestScore_EquivalenceIsCaseAndWhitespaceInsensitive(t *testing.T) {
+	got := Score([]ReviewerScore{{
+		Model:   "m",
+		Persona: "p",
+		Cases:   []CaseScore{{Expected: []string{"  Maintainability "}, Raised: []string{"STYLE"}}},
+	}})
+
+	require.Len(t, got, 1)
+	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9,
+		"family lookup must run on the normalized category, not the raw one")
+}
+
+// No word may belong to two families. Overlap would let one raised finding
+// satisfy two distinct planted categories in a case that plants both, inflating
+// recall from a single detection — and it would mean the gloss steers the same
+// word toward two different coarse labels, which is a defect in the table rather
+// than a property to score against.
+func TestEquivalence_FamiliesAreDisjoint(t *testing.T) {
+	owner := map[string]string{}
+	for coarse, members := range categoryFamilies {
+		for _, m := range members {
+			if prev, dup := owner[m]; dup {
+				assert.Failf(t, "overlapping families",
+					"%q belongs to both %q and %q", m, prev, coarse)
+			}
+			owner[m] = coarse
+		}
+	}
+}
+
+// Widening is monotone: every family contains its own coarse category, so a
+// reviewer that emits the exact ground-truth word is never scored worse than it
+// was under exact matching. This is what makes the change safe to apply to the
+// cost denominator, where a shrinking value would flip a published rate.
+func TestScore_ExactMatchStillCountsForEveryFamily(t *testing.T) {
+	for coarse := range categoryFamilies {
+		t.Run(coarse, func(t *testing.T) {
+			got := Score([]ReviewerScore{{
+				Model:   "m",
+				Persona: "p",
+				CostUSD: 1.0,
+				Cases:   []CaseScore{{Expected: []string{coarse}, Raised: []string{coarse}}},
+			}})
+			require.Len(t, got, 1)
+			assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9)
+			require.NotNil(t, got[0].CostPerCorroboratedFindingUSD)
+			assert.InDelta(t, 1.0, *got[0].CostPerCorroboratedFindingUSD, 1e-9)
+		})
+	}
+}
