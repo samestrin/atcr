@@ -170,6 +170,35 @@ func TestCategories_LockedSet(t *testing.T) {
 	}
 }
 
+// TestCategories_EquivalentMembersRecordTheirFold covers the one case where a
+// word is BOTH a member and a recorded merge.
+//
+// The rendered prompt tells every reviewer that `logic` is accepted as the
+// equivalent of `correctness`. Two words the prompt itself calls equivalent, with
+// no recorded fold, split identical findings across every category-keyed
+// consumer — ModalCategory clustering, SARIF rule ids, the 35.16.5 scorer — which
+// re-creates the unscoreability this epic exists to close. The member stays
+// (personas/community/sonny.md:49's worked example emits it, and a prompt whose
+// example contradicts its own vocabulary is the defect this epic removes), so the
+// fold is recorded for the ingestion boundary instead.
+//
+// `secret` is deliberately NOT here: the gloss draws a real triage line between an
+// exposed credential and every other vulnerability, so those two are distinct, not
+// equivalent. Only a pair the prompt declares equivalent belongs in this test.
+func TestCategories_EquivalentMembersRecordTheirFold(t *testing.T) {
+	target, recorded := categoryMerges[CategoryLogic]
+	if !recorded {
+		t.Fatalf("the prompt calls %q equivalent to %q but categoryMerges records no fold, so every category-keyed consumer will split them",
+			CategoryLogic, CategoryCorrectness)
+	}
+	if target != CategoryCorrectness {
+		t.Errorf("categoryMerges[%q] = %q, want %q", CategoryLogic, target, CategoryCorrectness)
+	}
+	if !categorySet()[CategoryLogic] {
+		t.Errorf("%q must stay a member — sonny.md:49's worked example emits it, and the prompt may not contradict its own vocabulary", CategoryLogic)
+	}
+}
+
 // TestCategories_MergeTargetsAreNotThemselvesMerged rejects a chained merge
 // (a -> b -> c). Every recorded merge must land directly on a member, so a
 // reader of categoryMerges never has to follow more than one hop.
