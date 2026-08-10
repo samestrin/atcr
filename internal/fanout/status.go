@@ -317,6 +317,17 @@ type AgentStatus struct {
 	// absent from the common non-truncated status.json.
 	ResponseTruncated bool `json:"response_truncated"`
 
+	// UnparseableResponse marks an agent that returned content from which zero
+	// findings could be parsed. Its findings_count is 0 either way, so without
+	// this marker a reader cannot tell "reviewed the diff and found nothing"
+	// from "emitted prose no parser could use" — the two score identically on a
+	// leaderboard and mean opposite things. It is NOT a failure: a clean review
+	// is a legitimate outcome, and failing it over would spend the backup model
+	// on every no-findings case. The unambiguous shape — no content at all —
+	// fails over instead and never sets this. omitempty keeps it absent from the
+	// common status.json.
+	UnparseableResponse bool `json:"unparseable_response,omitempty"`
+
 	// Post-processing enforcement counters (Epic 2.2). Always present so a
 	// zero is distinguishable from an older status.json that predates the field.
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`

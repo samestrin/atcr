@@ -7,8 +7,27 @@
 //
 //   - no network (the run cannot exfiltrate or call out),
 //   - a read-only view of the snapshot (the run cannot mutate the work tree),
-//   - resource caps (memory, CPU, PIDs) so a run cannot exhaust the host,
-//   - non-root, dropped capabilities, and no-new-privileges.
+//   - a bounded wall-clock duration and a cap on concurrent runs,
+//   - the minimum privilege its isolation mechanism can express.
+//
+// Those are the universal MUSTs. The following are guaranteed by DockerBackend
+// and NOT by every backend, because they depend on a mechanism the host may not
+// provide:
+//
+//   - memory, CPU, and PID caps,
+//   - a non-root user, dropped capabilities, and no-new-privileges.
+//
+// OSLevelBackend (oslevel.go) is the exception: it wraps the platform's native
+// process sandbox — macOS sandbox-exec, Linux bwrap — which isolates the
+// filesystem and network but shares the host kernel and has no image, no
+// rootfs remount, and no capability set to drop. bwrap supplies a PID
+// namespace; neither tool caps memory or CPU without additional cgroup/rlimit
+// plumbing.
+// A caller that needs the full list must require DockerBackend specifically
+// rather than any Backend. This distinction is stated here rather than left
+// implicit because the OS-level backend is operator-selectable, and an operator
+// choosing it is accepting a genuinely weaker containment posture than Docker's
+// in exchange for not needing a daemon.
 //
 // The package never enables itself: callers opt in via `--exec` and a backend
 // that passes Preflight. Bare-metal execution is intentionally unsupported.
@@ -38,16 +57,22 @@ type RunSpec struct {
 	Timeout time.Duration
 	// SnapshotDir is the host directory mounted read-only as the working tree.
 	SnapshotDir string
-	// Writable opts into an ephemeral writable /work overlay. It defaults to
+	// Writable opts into an ephemeral writable working tree. It defaults to
 	// false, preserving the read-only behavior every current caller relies on.
 	//
-	// When true, the snapshot itself stays read-only — it is mounted at /src
-	// instead of /work — and /work is backed by an ephemeral tmpfs seeded with a
-	// `cp -R /src/. /work/` copy. Only that throwaway copy is writable; it (and
-	// every write into it) dies with the container, so no host file is ever
-	// mutated. The package-level read-only-snapshot MUST is thereby narrowed, not
-	// weakened.
+	// The universal guarantee, on every backend: when true, the snapshot itself
+	// stays read-only and the writable tree the workload mutates is an
+	// ephemeral copy — it (and every write into it) dies with the run, so no
+	// host file is ever mutated. The package-level read-only-snapshot MUST is
+	// thereby narrowed, not weakened.
 	//
+	// Everything below is DockerBackend-specific mechanics; OSLevelBackend
+	// provides the same guarantee differently (a host-side copy seeded into the
+	// per-run scratch tree before the spawn — no shell wrapper, no image
+	// requirement; see oslevel.go's seedWritableCopy).
+	//
+	// DockerBackend mounts the snapshot at /src instead of /work, and /work is
+	// backed by an ephemeral tmpfs seeded with a `cp -R /src/. /work/` copy.
 	// The copy step is injected differently per mode. Command mode wraps the argv as
 	// `/bin/sh -c 'cp -R /src/. /work/ || exit 125; cd /work && exec "$@"' -- <command...>`,
 	// passing the original command positionally so no token is interpolated into the
@@ -55,9 +80,9 @@ type RunSpec struct {
 	// the script body before it is streamed to `sh -s` over stdin, so the copy step
 	// travels as stdin data and the Script-mode argv is unchanged.
 	//
-	// Image requirement: both paths need a POSIX shell, so the run image must ship
-	// /bin/sh and a `cp` supporting `-R` (true for alpine/golang-family images,
-	// false for distroless/scratch).
+	// Image requirement (DockerBackend only): both paths need a POSIX shell, so
+	// the run image must ship /bin/sh and a `cp` supporting `-R` (true for
+	// alpine/golang-family images, false for distroless/scratch).
 	Writable bool
 }
 
@@ -100,14 +125,19 @@ type RunResult struct {
 	TimedOut bool
 }
 
-// Backend is a pluggable sandbox executor. Docker is the only implementation in
-// Epic 11.0; the interface keeps Podman (or a remote runner) a drop-in later.
+// Backend is a pluggable sandbox executor. DockerBackend (docker.go) and
+// OSLevelBackend (oslevel.go) implement it; the interface keeps Podman (or a
+// remote runner) a drop-in later. See the package doc for which containment
+// guarantees are universal and which are Docker-only.
 type Backend interface {
 	// Name identifies the backend for diagnostics and the evidence trail.
 	Name() string
-	// Preflight verifies the backend is usable: runtime installed, daemon
-	// reachable, base image present, and a trivial container runs to completion.
-	// It MUST pass before Run is used; the CLI refuses `--exec` otherwise.
+	// Preflight verifies the backend is usable: its mechanism is installed and
+	// reachable, its prerequisites are met, and a trivial workload runs to
+	// completion under it. (For Docker that is the daemon, the base image, and a
+	// throwaway container; for the OS-level backend, the sandboxing binary, the
+	// host's namespace support, and a probe run.) It MUST pass before Run is
+	// used; the CLI refuses `--exec` otherwise.
 	Preflight(ctx context.Context) error
 	// Run executes spec in isolation and returns the captured result. err is
 	// reserved for backend faults (spawn failure, malformed spec); a non-zero

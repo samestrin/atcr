@@ -1,0 +1,1683 @@
+diff --git a/src/3rdParty/salomesmesh/inc/MED_Wrapper.hxx b/src/3rdParty/salomesmesh/inc/MED_Wrapper.hxx
+index 71698a09559f8..9fe65145d9e8a 100644
+--- a/src/3rdParty/salomesmesh/inc/MED_Wrapper.hxx
++++ b/src/3rdParty/salomesmesh/inc/MED_Wrapper.hxx
+@@ -38,7 +38,7 @@ namespace MED
+   struct MEDWRAPPER_EXPORT TWrapper
+   {
+     typedef boost::mutex TMutex;
+-    //! This is a syncronization primitive which allow to support thread safety for the MED access
++    //! This is a synchronization primitive which allows one to support thread safety for the MED access
+     TMutex myMutex;
+ 
+     virtual
+diff --git a/src/3rdParty/salomesmesh/inc/SMESH_Array1.hxx b/src/3rdParty/salomesmesh/inc/SMESH_Array1.hxx
+index 4ff6f4e5f54a5..9168dd04f4dd5 100644
+--- a/src/3rdParty/salomesmesh/inc/SMESH_Array1.hxx
++++ b/src/3rdParty/salomesmesh/inc/SMESH_Array1.hxx
+@@ -29,7 +29,7 @@
+ *              The range of the index is user defined.
+ *              An array1 can be constructed with a "C array".
+ *              This functionality is useful to call methods expecting
+-*              an Array1. It allows to carry the bounds inside the arrays.
++*              an Array1. It allows one to carry the bounds inside the arrays.
+ *              
+ * Examples:    Item tab[100]; //  An example with a C array
+ *              Array1OfItem ttab (tab[0],1,100);
+diff --git a/src/3rdParty/salomesmesh/src/SMDS/SMDS_PolyhedralVolumeOfNodes.cpp b/src/3rdParty/salomesmesh/src/SMDS/SMDS_PolyhedralVolumeOfNodes.cpp
+index fdd47cc5d727d..d52d782ab2e2d 100644
+--- a/src/3rdParty/salomesmesh/src/SMDS/SMDS_PolyhedralVolumeOfNodes.cpp
++++ b/src/3rdParty/salomesmesh/src/SMDS/SMDS_PolyhedralVolumeOfNodes.cpp
+@@ -69,7 +69,7 @@ bool SMDS_PolyhedralVolumeOfNodes::ChangeNodes (const vector<const SMDS_MeshNode
+   myNodesByFaces = nodes;
+   myQuantities = quantities;
+ 
+-  // Init fields of parent class, it allows to get only unique nodes(?)
++  // Init fields of parent class, it allows one to get only unique nodes(?)
+ 
+   set<const SMDS_MeshNode *> aSet;
+   aSet.insert( nodes.begin(), nodes.end());
+diff --git a/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Cartesian_3D.cpp b/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Cartesian_3D.cpp
+index 3317be85d9148..119860ba3e898 100644
+--- a/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Cartesian_3D.cpp
++++ b/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Cartesian_3D.cpp
+@@ -3512,7 +3512,7 @@ bool StdMeshers_Cartesian_3D::Compute(SMESH_Mesh &         theMesh,
+   // The algorithm generates the mesh in following steps:
+ 
+   // 1) Intersection of grid lines with the geometry boundary.
+-  // This step allows to find out if a given node of the initial grid is
++  // This step allows one to find out if a given node of the initial grid is
+   // inside or outside the geometry.
+ 
+   // 2) For each cell of the grid, check how many of it's nodes are outside
+diff --git a/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Regular_1D.cpp b/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Regular_1D.cpp
+index 086ee524b8400..9c0e390ecf59c 100644
+--- a/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Regular_1D.cpp
++++ b/src/3rdParty/salomesmesh/src/StdMeshers/StdMeshers_Regular_1D.cpp
+@@ -723,7 +723,7 @@ bool StdMeshers_Regular_1D::computeInternalParameters(SMESH_Mesh &     theMesh,
+       ++nbParams;
+     }
+     if ( nbParams != segLen.size()-1 )
+-      return error( SMESH_Comment("Can't divide into ") << segLen.size() << " segements");
++      return error( SMESH_Comment("Can't divide into ") << segLen.size() << " segments");
+ 
+     compensateError( segLen[ theReverse ? segLen.size()-1 : 0 ],
+                      segLen[ theReverse ? 0 : segLen.size()-1 ],
+diff --git a/src/App/DocumentPyImp.cpp b/src/App/DocumentPyImp.cpp
+index ea62adb535c60..c10db56c8c33e 100644
+--- a/src/App/DocumentPyImp.cpp
++++ b/src/App/DocumentPyImp.cpp
+@@ -353,7 +353,7 @@ PyObject* DocumentPy::addObject(PyObject* args, PyObject* kwd)
+         str << "No document object found of type '" << sType << "'" << std::ends;
+         throw Py::TypeError(str.str());
+     }
+-    // Allows to hide the handling with Proxy in client python code
++    // Allows one to hide the handling with Proxy in client python code
+     if (obj) {
+         try {
+             // the python binding class to the document object
+diff --git a/src/App/ExtensionContainer.h b/src/App/ExtensionContainer.h
+index 9fb5d6284fef8..0910125ca95d0 100644
+--- a/src/App/ExtensionContainer.h
++++ b/src/App/ExtensionContainer.h
+@@ -39,7 +39,7 @@ class Extension;
+  * impossible to handle multiple inheritance in the C-API for python extensions. Also using multiple
+  * parent classes in python is currently not possible with the default object approach.
+  *
+- * The concept of extensions allow to circumvent those problems. Extensions are FreeCAD objects
++ * The concept of extensions allows one to circumvent those problems. Extensions are FreeCAD objects
+  * which work like normal objects in the sense that they use properties and class methods to define
+  * their functionality. However, they are not exposed as individual usable entities but are used to
+  * extend other objects. A extended object gets all the properties and methods of the extension.
+diff --git a/src/App/FeaturePython.h b/src/App/FeaturePython.h
+index c9208e3b954c5..38fbd63ad1783 100644
+--- a/src/App/FeaturePython.h
++++ b/src/App/FeaturePython.h
+@@ -162,7 +162,7 @@ class AppExport FeaturePythonImp
+ };
+ 
+ /**
+- * Generic Python feature class which allows to behave every DocumentObject
++ * Generic Python feature class which allows one to behave every DocumentObject
+  * derived class as Python feature -- simply by subclassing.
+  * @author Werner Mayer
+  */
+diff --git a/src/App/FeaturePythonPyImp.inl b/src/App/FeaturePythonPyImp.inl
+index 962b6e356d020..67fd8b25f9a64 100644
+--- a/src/App/FeaturePythonPyImp.inl
++++ b/src/App/FeaturePythonPyImp.inl
+@@ -111,7 +111,7 @@ int FeaturePythonPyT<FeaturePyT>::__setattro(PyObject *obj, PyObject *attro, PyO
+ {
+     const char *attr;
+     attr = PyUnicode_AsUTF8(attro);
+-    // This overwrites PyObjectBase::__setattr because this actively disallows to delete an attribute
++    // This overwrites PyObjectBase::__setattr because this actively disallows one to delete an attribute
+     //
+ 
+     if (!static_cast<Base::PyObjectBase*>(obj)->isValid()){
+diff --git a/src/App/PropertyContainer.h b/src/App/PropertyContainer.h
+index b8b5ac91ae1d1..819e4d8c1f809 100644
+--- a/src/App/PropertyContainer.h
++++ b/src/App/PropertyContainer.h
+@@ -70,7 +70,7 @@ struct AppExport PropertyData
+   };
+ 
+   //purpose of this struct is to be constructible from all acceptable container types and to
+-  //be able to return the offset to a property from the accepted containers. This allows to use
++  //be able to return the offset to a property from the accepted containers. This allows you to use
+   //one function implementation for multiple container types without losing all type safety by
+   //accepting void*
+   struct OffsetBase
+diff --git a/src/Base/ConsoleObserver.h b/src/Base/ConsoleObserver.h
+index e3c23a04c958a..cdf37cc2e6203 100644
+--- a/src/Base/ConsoleObserver.h
++++ b/src/Base/ConsoleObserver.h
+@@ -95,7 +95,7 @@ class BaseExport ConsoleObserverStd: public ILogger
+ };
+ 
+ /** The ILoggerBlocker class
+- *  This class allows to temporary block then automatically restore arbitrary message types
++ *  This class allows one to temporary block then automatically restore arbitrary message types
+  *  on a particular console observer.
+  */
+ class BaseExport ILoggerBlocker
+diff --git a/src/Base/PyObjectBase.cpp b/src/Base/PyObjectBase.cpp
+index b3e1db9cd9e80..279689f29a341 100644
+--- a/src/Base/PyObjectBase.cpp
++++ b/src/Base/PyObjectBase.cpp
+@@ -96,7 +96,7 @@ PyObjectBase::~PyObjectBase()
+  * To prevent subclasses of PyTypeObject to be subclassed in Python we should remove
+  * the Py_TPFLAGS_BASETYPE flag. For example, the classes App::VectorPy and App::MatrixPy
+  * have removed this flag and its Python proxies App.Vector and App.Matrix cannot be subclassed.
+- * In case we want to allow to derive from subclasses of PyTypeObject in Python
++ * In case we want to allow a new class to derive from subclasses of PyTypeObject in Python
+  * we must either reimplement tp_new, tp_dealloc, tp_getattr, tp_setattr, tp_repr or set them to
+  * 0 and define tp_base as 0.
+  */
+@@ -367,7 +367,7 @@ int PyObjectBase::__setattro(PyObject *obj, PyObject *attro, PyObject *value)
+     const char *attr{};
+     attr = PyUnicode_AsUTF8(attro);
+ 
+-    //Hint: In general we don't allow to delete attributes (i.e. value=0). However, if we want to allow
++    //Hint: In general we don't allow one to delete attributes (i.e. value=0). However, if we want to allow
+     //we must check then in _setattr() of all subclasses whether value is 0.
+     if (!value) {
+         PyErr_Format(PyExc_AttributeError, "Cannot delete attribute: '%s'", attr);
+diff --git a/src/Base/Sequencer.h b/src/Base/Sequencer.h
+index f256832d93a82..bcc8761309163 100644
+--- a/src/Base/Sequencer.h
++++ b/src/Base/Sequencer.h
+@@ -85,7 +85,7 @@ class SequencerLauncher;
+  *        seq2.next ();
+  *      }
+  *
+- *      seq1.next ( true ); // allow to cancel
++ *      seq1.next ( true ); // allow one to cancel
+  *    }
+  *  }
+  *  catch(const Base::AbortException&){
+diff --git a/src/Base/VectorPyImp.cpp b/src/Base/VectorPyImp.cpp
+index 80d730c39de16..5335b48ad3140 100644
+--- a/src/Base/VectorPyImp.cpp
++++ b/src/Base/VectorPyImp.cpp
+@@ -733,7 +733,7 @@ int VectorPy::setCustomAttributes(const char* /*attr*/, PyObject* /*obj*/)
+ }
+ 
+ // TODO: for v0.18
+-// In generation script allow to more precisely define which slots
++// In generation script allow one to more precisely define which slots
+ // of the number protocol should be supported instead of setting all.
+ 
+ PyObject* VectorPy::number_divide_handler(PyObject* self, PyObject* other)
+diff --git a/src/Gui/CallTips.cpp b/src/Gui/CallTips.cpp
+index b26fc5594e191..93221d7366215 100644
+--- a/src/Gui/CallTips.cpp
++++ b/src/Gui/CallTips.cpp
+@@ -168,7 +168,7 @@ void CallTipsList::validateCursor()
+             hide();
+         }
+         else if (!word.isEmpty()){
+-            // If the word is empty we should not allow to do a search,
++            // If the word is empty we should not allow one to do a search,
+             // otherwise we may select the next item which is not okay in this
+             // context. This might happen if e.g. Shift is pressed.
+             keyboardSearch(word);
+diff --git a/src/Gui/CommandWindow.cpp b/src/Gui/CommandWindow.cpp
+index db961147507db..c8ee5c24ed679 100644
+--- a/src/Gui/CommandWindow.cpp
++++ b/src/Gui/CommandWindow.cpp
+@@ -475,7 +475,7 @@ bool StdCmdWindowsMenu::isActive()
+ 
+ Action * StdCmdWindowsMenu::createAction()
+ {
+-    // Allow to show 10 menu items in the 'Window' menu and one separator.
++    // Allow one to show 10 menu items in the 'Window' menu and one separator.
+     // If we have more windows then the user can use the 'Windows...' item.
+     WindowAction *pcAction;
+     pcAction = new WindowAction(this, getMainWindow());
+diff --git a/src/Gui/DlgOnlineHelpImp.h b/src/Gui/DlgOnlineHelpImp.h
+index 947d4c129778f..b57b6cc53d5e4 100644
+--- a/src/Gui/DlgOnlineHelpImp.h
++++ b/src/Gui/DlgOnlineHelpImp.h
+@@ -32,7 +32,7 @@ namespace Dialog {
+ class Ui_DlgOnlineHelp;
+ 
+ /** This class implements the dialog for downloading the online documentation.
+- * Moreover it allows to specify location of the start page an an external browser.
++ * Moreover it allows one to specify location of the start page an an external browser.
+  * Here you can specify to use a proxy if necessary and some more stuff.
+  * \author Werner Mayer
+  */
+diff --git a/src/Gui/DlgParameterImp.cpp b/src/Gui/DlgParameterImp.cpp
+index 28c41b7c170e5..51cc3e861fea2 100644
+--- a/src/Gui/DlgParameterImp.cpp
++++ b/src/Gui/DlgParameterImp.cpp
+@@ -513,7 +513,7 @@ void ParameterGroup::contextMenuEvent(QContextMenuEvent* event)
+     QTreeWidgetItem* item = currentItem();
+     if (item && item->isSelected()) {
+         expandAct->setEnabled(item->childCount() > 0);
+-        // do not allow to import parameters from a non-empty parameter group
++        // do not allow one to import parameters from a non-empty parameter group
+         importAct->setEnabled(item->childCount() == 0);
+ 
+         if (item->isExpanded()) {
+diff --git a/src/Gui/GestureNavigationStyle.cpp b/src/Gui/GestureNavigationStyle.cpp
+index eb24572502893..e3615a5dee621 100644
+--- a/src/Gui/GestureNavigationStyle.cpp
++++ b/src/Gui/GestureNavigationStyle.cpp
+@@ -207,7 +207,7 @@ class NS::Event : public sc::event<NS::Event>
+         bool propagated = false; //flag that the event had been passed to superclass
+     };
+     std::shared_ptr<Flags> flags;
+-    //storing these values as a separate unit allows to effectively write to
++    //storing these values as a separate unit allows one to effectively write to
+     //const object. Statechart passes all events as const, unfortunately, so
+     //this is a workaround. I've considered casting away const instead, but
+     //the internet seems to have mixed opinion if it's undefined behavior or
+diff --git a/src/Gui/GraphicsViewZoom.h b/src/Gui/GraphicsViewZoom.h
+index 6fd56901473ba..057ea87e5ab7d 100644
+--- a/src/Gui/GraphicsViewZoom.h
++++ b/src/Gui/GraphicsViewZoom.h
+@@ -43,7 +43,7 @@
+  *
+  * Note that it becomes not possible when the scene's
+  * size is not large enough comparing to the viewport size. QGraphicsView centers the picture
+- * when it's smaller than the view. And QGraphicsView's scrolls boundaries don't allow to
++ * when it's smaller than the view. And QGraphicsView's scrolls boundaries don't allow one to
+  * put any picture point at any viewport position.
+  *
+  * When the user starts scrolling, this class remembers original scene position and
+diff --git a/src/Gui/InputField.cpp b/src/Gui/InputField.cpp
+index e581927f091a9..7f5937089928c 100644
+--- a/src/Gui/InputField.cpp
++++ b/src/Gui/InputField.cpp
+@@ -743,7 +743,7 @@ QValidator::State InputField::validate(QString& input, int& pos) const
+         QString unitStr;
+         res.getUserString(factor, unitStr);
+         double value = res.getValue()/factor;
+-        // disallow to enter numbers out of range
++        // disallow one to enter numbers out of range
+         if (value > this->Maximum || value < this->Minimum)
+             return QValidator::Invalid;
+     }
+diff --git a/src/Gui/MainWindow.cpp b/src/Gui/MainWindow.cpp
+index 27ac049299a98..6c1b1a7fa6114 100644
+--- a/src/Gui/MainWindow.cpp
++++ b/src/Gui/MainWindow.cpp
+@@ -2296,7 +2296,7 @@ void MainWindow::setWindowTitle(const QString& string)
+         appname = QString::fromLatin1(App::Application::Config()["ExeName"].c_str());
+     }
+ 
+-    // allow to disable version number
++    // allow one to disable version number
+     ParameterGrp::handle hGen = App::GetApplication().GetParameterGroupByPath(
+         "User parameter:BaseApp/Preferences/General");
+     bool showVersion = hGen->GetBool("ShowVersionInTitle", true);
+diff --git a/src/Gui/MainWindow.h b/src/Gui/MainWindow.h
+index c197430dff723..9dfcf4cfdf1bb 100644
+--- a/src/Gui/MainWindow.h
++++ b/src/Gui/MainWindow.h
+@@ -182,7 +182,7 @@ class GuiExport MainWindow : public QMainWindow
+      * one gets created automatically if needed.
+      *
+      * If a url handler is registered that supports its scheme it will be delegated
+-     * to this handler. This mechanism allows to change the default behaviour.
++     * to this handler. This mechanism allows one to change the default behaviour.
+      */
+     void loadUrls(App::Document*, const QList<QUrl>&);
+     /**
+@@ -288,7 +288,7 @@ public Q_SLOTS:
+     void dragEnterEvent(QDragEnterEvent * e) override;
+     /**
+      * This method is called from the Qt framework automatically whenever a
+-     * QTranslator object has been installed. This allows to translate all
++     * QTranslator object has been installed. This allows one to translate all
+      * relevant user visible text.
+      */
+     void changeEvent(QEvent *e) override;
+diff --git a/src/Gui/ManualAlignment.cpp b/src/Gui/ManualAlignment.cpp
+index 252cb3e1862f3..82a6bb0f94f55 100644
+--- a/src/Gui/ManualAlignment.cpp
++++ b/src/Gui/ManualAlignment.cpp
+@@ -958,7 +958,7 @@ void ManualAlignment::align()
+                             .arg(myFixedGroup.countPoints()));
+     }
+     else {
+-        // do not allow to pick further points
++        // do not allow one to pick further points
+         myAlignModel.activeGroup().removeFromViewer(myViewer->getViewer(0));
+         myAlignModel.activeGroup().setAlignable(false);
+         std::vector<App::DocumentObject*> pViews = myAlignModel.activeGroup().getViews();
+diff --git a/src/Gui/MayaGestureNavigationStyle.cpp b/src/Gui/MayaGestureNavigationStyle.cpp
+index 75c23943963d8..40bb1742ce9f9 100644
+--- a/src/Gui/MayaGestureNavigationStyle.cpp
++++ b/src/Gui/MayaGestureNavigationStyle.cpp
+@@ -501,7 +501,7 @@ SbBool MayaGestureNavigationStyle::processSoEvent(const SoEvent * const ev)
+             switch(button){
+                 case SoMouseButtonEvent::BUTTON1:
+                 case SoMouseButtonEvent::BUTTON2:
+-                case SoMouseButtonEvent::BUTTON3: // allows to release button3 into SELECTION mode
++                case SoMouseButtonEvent::BUTTON3: // allows one to release button3 into SELECTION mode
+                     if(comboAfter & BUTTON1DOWN || comboAfter & BUTTON2DOWN) {
+                         //don't leave navigation till all buttons have been released
+                         if (comboAfter & BUTTON1DOWN && comboAfter & BUTTON2DOWN) {
+diff --git a/src/Gui/NotificationArea.cpp b/src/Gui/NotificationArea.cpp
+index 1f4ad2e8c5c55..edade8d749e1a 100644
+--- a/src/Gui/NotificationArea.cpp
++++ b/src/Gui/NotificationArea.cpp
+@@ -552,7 +552,7 @@ class NotificationsAction: public QWidgetAction
+     }
+ 
+     /** pushes all Notification Items to the fast cache (this also prevents all unnecessary
+-     * signaling from parents) and allows to accelerate insertions and deletions
++     * signaling from parents) and allows one to accelerate insertions and deletions
+      */
+     void shiftToCache()
+     {
+diff --git a/src/Gui/OnlineDocumentation.cpp b/src/Gui/OnlineDocumentation.cpp
+index b940bb2f09c06..9c101ac1f0312 100644
+--- a/src/Gui/OnlineDocumentation.cpp
++++ b/src/Gui/OnlineDocumentation.cpp
+@@ -364,7 +364,7 @@ void StdCmdPythonHelp::activated(int iMsg)
+ 
+ bool Gui::OpenURLInBrowser(const char* URL)
+ {
+-    // The webbrowser Python module allows to start the system browser in an OS-independent way
++    // The webbrowser Python module allows one to start the system browser in an OS-independent way
+     Base::PyGILStateLocker lock;
+     try {
+         PyObject* module = PyImport_ImportModule("webbrowser");
+diff --git a/src/Gui/PythonConsole.cpp b/src/Gui/PythonConsole.cpp
+index 0722240e80cb4..b8dd8cc6a7507 100644
+--- a/src/Gui/PythonConsole.cpp
++++ b/src/Gui/PythonConsole.cpp
+@@ -1148,7 +1148,7 @@ bool PythonConsole::canInsertFromMimeData (const QMimeData * source) const
+ }
+ 
+ /**
+- * Allow to paste plain text or urls of text files.
++ * Allow one to paste plain text or urls of text files.
+  */
+ void PythonConsole::insertFromMimeData (const QMimeData * source)
+ {
+@@ -1639,7 +1639,7 @@ bool ConsoleHistory::next()
+ 
+ /**
+  * prev switches the history pointer to the previous item.
+- * The optional parameter prefix allows to search the history selectively for commands that start
++ * The optional parameter prefix allows one to search the history selectively for commands that start
+  *   with a certain character sequence.
+  * @param prefix - prefix string for searching backwards in history, empty string by default
+  * @return true if the pointer was switched to an earlier item, false otherwise.
+diff --git a/src/Gui/PythonConsolePy.h b/src/Gui/PythonConsolePy.h
+index 9e9f919729e86..e9afe8765d448 100644
+--- a/src/Gui/PythonConsolePy.h
++++ b/src/Gui/PythonConsolePy.h
+@@ -33,7 +33,7 @@ class PythonConsole;
+ 
+ /**
+  * Python class for redirection of stdout to FreeCAD's Python
+- * console window. This allows to show all Python messages in
++ * console window. This allows one to show all Python messages in
+  * the same window where the commands are performed.
+  * @see PythonStderr
+  * @see PythonConsole
+@@ -59,7 +59,7 @@ class PythonStdout : public Py::PythonExtension<PythonStdout>
+ 
+ /**
+  * Python class for redirection of stderr to FreeCAD's Python
+- * console window. This allows to show all Python messages in
++ * console window. This allows one to show all Python messages in
+  * the same window where the commands are performed.
+  * @see PythonStdout
+  * @see PythonConsole
+@@ -85,7 +85,7 @@ class PythonStderr : public Py::PythonExtension<PythonStderr>
+ 
+ /**
+  * Python class for redirection of stdout to FreeCAD's output
+- * console window. This allows to report all Python output to
++ * console window. This allows one to report all Python output to
+  * the report view which simplifies debugging scripts.
+  * @see PythonStdout
+  * @see PythonStderr
+@@ -108,7 +108,7 @@ class OutputStdout : public Py::PythonExtension<OutputStdout>
+ 
+ /**
+  * Python class for redirection of stderr to FreeCAD's output
+- * console window. This allows to report all Python errors to
++ * console window. This allows one to report all Python errors to
+  * the report view which simplifies error tracking.
+  * @see PythonStdout
+  * @see PythonStderr
+diff --git a/src/Gui/QSint/actionpanel/actionbox.h b/src/Gui/QSint/actionpanel/actionbox.h
+index 7c5a32cd5795a..5f7500e5a3669 100644
+--- a/src/Gui/QSint/actionpanel/actionbox.h
++++ b/src/Gui/QSint/actionpanel/actionbox.h
+@@ -57,7 +57,7 @@ namespace QSint
+     connect(action2, SIGNAL(clicked()), this, SLOT(action2clicked()));
+     \endcode
+ 
+-    createItem() also allows to create an ActionLabel from already existing QAction:
++    createItem() also allows one to create an ActionLabel from already existing QAction:
+ 
+     \code
+     QAction myAction3(":/icons/action3icon.png", "Action3 Text");
+@@ -195,7 +195,7 @@ class QSINT_EXPORT ActionBox : public QFrame
+       one below another.
+ 
+       You can add action to the specified layout passing it as \a l parameter.
+-      This allows to do custom actions arrangements, i.e. horizontal etc.
++      This allows one to do custom actions arrangements, i.e. horizontal etc.
+ 
+       \since 0.2
+       */
+diff --git a/src/Gui/QSint/actionpanel/actiongroup.h b/src/Gui/QSint/actionpanel/actiongroup.h
+index 41a29620d45b9..cb36abbf0917a 100644
+--- a/src/Gui/QSint/actionpanel/actiongroup.h
++++ b/src/Gui/QSint/actionpanel/actiongroup.h
+@@ -72,7 +72,7 @@ class QSINT_EXPORT ActionGroup : public QWidget
+       one below another.
+ 
+       Set \a addToLayout to \a false if you want to add the action to the specified layout manually.
+-      This allows to do custom actions arrangements, i.e. horizontal etc.
++      This allows one to do custom actions arrangements, i.e. horizontal etc.
+ 
+       If \a addStretch is set to \a true (default),
+       ActionLabel will be automatically aligned to the left side of the ActionGroup.
+diff --git a/src/Gui/SoFCOffscreenRenderer.h b/src/Gui/SoFCOffscreenRenderer.h
+index f72176b1a2b34..5354dc1137f04 100644
+--- a/src/Gui/SoFCOffscreenRenderer.h
++++ b/src/Gui/SoFCOffscreenRenderer.h
+@@ -45,7 +45,7 @@ class GuiExport SoFCOffscreenRenderer : public SoOffscreenRenderer
+ public:
+     /** The SoOffscreenRenderer base class seems to have a huge memory leak. Whenever
+      * an instance is created internal memory doesn't get freed when destroying it.
+-     * Thus, SoFCOffscreenRenderer is implemented as singleton to allow to create only
++     * Thus, SoFCOffscreenRenderer is implemented as singleton to allow one to create only
+      * one global instance. So, the memory is leaking for this instance only.
+      */
+     static SoFCOffscreenRenderer& instance();
+diff --git a/src/Gui/SpinBox.h b/src/Gui/SpinBox.h
+index 8e59337f30eef..6402d6de31e58 100644
+--- a/src/Gui/SpinBox.h
++++ b/src/Gui/SpinBox.h
+@@ -106,7 +106,7 @@ class UIntSpinBoxPrivate;
+ /**
+  * The UIntSpinBox class does basically the same as Qt's QSpinBox unless
+  * that it works with unsigned int's instead.
+- * This allows to use numbers in the range of [0, UINT_MAX]
++ * This allows one to use numbers in the range of [0, UINT_MAX]
+  * @author Werner Mayer
+  */
+ class GuiExport UIntSpinBox : public QSpinBox, public ExpressionSpinBox
+diff --git a/src/Gui/SplitView3DInventor.h b/src/Gui/SplitView3DInventor.h
+index 9d241b6886a13..846e3bca37a47 100644
+--- a/src/Gui/SplitView3DInventor.h
++++ b/src/Gui/SplitView3DInventor.h
+@@ -35,7 +35,7 @@ class View3DInventorViewer;
+ class AbstractSplitViewPy;
+ class View3DSettings;
+ 
+-/** The SplitView3DInventor class allows to create a window with two or more Inventor views.
++/** The SplitView3DInventor class allows one to create a window with two or more Inventor views.
+  *  \author Werner Mayer
+  */
+ class GuiExport AbstractSplitView : public MDIView
+@@ -106,7 +106,7 @@ class AbstractSplitViewPy : public Py::PythonExtension<AbstractSplitViewPy>
+     Gui::MDIViewPy base;
+ };
+ 
+-/** The SplitView3DInventor class allows to create a window with two or more Inventor views.
++/** The SplitView3DInventor class allows one to create a window with two or more Inventor views.
+  *  \author Werner Mayer
+  */
+ class GuiExport SplitView3DInventor : public AbstractSplitView
+diff --git a/src/Gui/ToolBox.h b/src/Gui/ToolBox.h
+index 586fbb3d2b5d8..64e54307a8e5b 100644
+--- a/src/Gui/ToolBox.h
++++ b/src/Gui/ToolBox.h
+@@ -43,7 +43,7 @@ namespace DockWnd
+  *
+  * Items are added using addItem(), or inserted at particular positions using insertItem(). The total number of
+  * items is given by count(). Items can be deleted with delete, or removed from the toolbox with removeItem().
+- * Combining removeItem() and insertItem() allows to move items to different positions.
++ * Combining removeItem() and insertItem() allows one to move items to different positions.
+  *
+  * The current item widget is returned by currentItem() and set with setCurrentItem(). If you prefer you can
+  * work in terms of indexes using currentIndex(), setCurrentIndex(), indexOf() and item().
+diff --git a/src/Gui/View3DInventor.cpp b/src/Gui/View3DInventor.cpp
+index d56e717435721..603872b9d90f6 100644
+--- a/src/Gui/View3DInventor.cpp
++++ b/src/Gui/View3DInventor.cpp
+@@ -872,7 +872,7 @@ bool View3DInventor::eventFilter(QObject* watched, QEvent* e)
+ {
+     // As long as this widget is a top-level window (either in 'TopLevel' or 'FullScreen' mode) we
+     // need to be notified when an action is added to a widget. This action must also be added to
+-    // this window to allow to make use of its shortcut (if defined).
++    // this window to allow one to make use of its shortcut (if defined).
+     // Note: We don't need to care about removing an action if its parent widget gets destroyed.
+     // This does the action itself for us.
+     if (watched != this && e->type() == QEvent::ActionAdded) {
+diff --git a/src/Gui/ViewProviderExtensionPython.h b/src/Gui/ViewProviderExtensionPython.h
+index f995633903877..86df23857db98 100644
+--- a/src/Gui/ViewProviderExtensionPython.h
++++ b/src/Gui/ViewProviderExtensionPython.h
+@@ -30,7 +30,7 @@
+ namespace Gui {
+ 
+ /**
+- * Generic Python extension class which allows to behave every extension
++ * Generic Python extension class which allows one to behave every extension
+  * derived class as Python extension -- simply by subclassing.
+  */
+ template <class ExtensionT>
+diff --git a/src/Gui/Widgets.h b/src/Gui/Widgets.h
+index b9c83bcad02f5..7eae3c745b819 100644
+--- a/src/Gui/Widgets.h
++++ b/src/Gui/Widgets.h
+@@ -53,7 +53,7 @@ class PrefCheckBox;
+ class CommandViewItemPrivate;
+ 
+ /**
+- * This class allows to drag one or more items which correspond to a Command object.
++ * This class allows one to drag one or more items which correspond to a Command object.
+  * The dragged items can be dropped onto the @ref Gui::PythonConsole.
+  * @see CommandViewItem, Command
+  * @author Werner Mayer
+diff --git a/src/Gui/WorkbenchManipulator.h b/src/Gui/WorkbenchManipulator.h
+index c7995d044c74f..b4a0444e845c5 100644
+--- a/src/Gui/WorkbenchManipulator.h
++++ b/src/Gui/WorkbenchManipulator.h
+@@ -38,7 +38,7 @@ class MenuItem;
+ class ToolBarItem;
+ 
+ /**
+- * The WorkbenchManipulator is a class that allows to modify the workbench
++ * The WorkbenchManipulator is a class that allows one to modify the workbench
+  * by adding or removing commands.
+  * WorkbenchManipulator provides methods to manipulate the MenuItem, ToolBarItem or
+  * DockWindowItems structure before setting up the workbench.
+diff --git a/src/Mod/Assembly/Gui/Resources/preferences/Assembly.ui b/src/Mod/Assembly/Gui/Resources/preferences/Assembly.ui
+index 16ceaeb817667..27d5fa29f6d94 100644
+--- a/src/Mod/Assembly/Gui/Resources/preferences/Assembly.ui
++++ b/src/Mod/Assembly/Gui/Resources/preferences/Assembly.ui
+@@ -17,7 +17,7 @@
+    <item row="0" column="0">
+     <widget class="Gui::PrefCheckBox" name="checkBoxEnableEscape">
+      <property name="toolTip">
+-      <string>Allow to leave edit mode when pressing Esc button</string>
++      <string>Allows leaving edit mode when pressing Esc button</string>
+      </property>
+      <property name="text">
+       <string>Esc leaves edit mode</string>
+diff --git a/src/Mod/BIM/ArchNesting.py b/src/Mod/BIM/ArchNesting.py
+index f6533b050629c..167e71644c24c 100644
+--- a/src/Mod/BIM/ArchNesting.py
++++ b/src/Mod/BIM/ArchNesting.py
+@@ -161,9 +161,9 @@ def run(self):
+                     return
+ 
+         # TODO
+-        # allow to use a non-rectangular container
++        # allow one to use a non-rectangular container
+         # manage margins/paddings
+-        # allow to prevent or force specific rotations for a piece
++        # allow one to prevent or force specific rotations for a piece
+ 
+         # LONG-TERM TODO
+         # add genetic algo to swap pieces, and check if the result is better
+diff --git a/src/Mod/BIM/ArchStairs.py b/src/Mod/BIM/ArchStairs.py
+index b3c2082390025..3a5e6e5f9a110 100644
+--- a/src/Mod/BIM/ArchStairs.py
++++ b/src/Mod/BIM/ArchStairs.py
+@@ -1268,7 +1268,7 @@ def connectRailingVector(self, obj, outlineRailL, outlineRailR, pArcRailL, pArcR
+             if obj.LastSegment.Proxy.OutlineRailArcLeftAll: # need if?
+                 outlineRailArcLeftAll.extend(obj.LastSegment.Proxy.OutlineRailArcLeftAll)
+ 
+-            if (outlineLeftAll[-1] - obj.OutlineLeft[0]).Length < 0.01: # To avoid 2 points overlapping fail creating LineSegment # TODO to allow tolerance Part.LineSegment / edge.toShape() allow?
++            if (outlineLeftAll[-1] - obj.OutlineLeft[0]).Length < 0.01: # To avoid 2 points overlapping fail creating LineSegment # TODO to allow one tolerance Part.LineSegment / edge.toShape() allow?
+                 # no need abs() after .Length right?
+                 del outlineLeftAll[-1]
+                 del outlineRailArcLeftAll[-1]
+diff --git a/src/Mod/BIM/ArchVRM.py b/src/Mod/BIM/ArchVRM.py
+index 6fa87fa6c237a..4ce391b912dc1 100644
+--- a/src/Mod/BIM/ArchVRM.py
++++ b/src/Mod/BIM/ArchVRM.py
+@@ -34,7 +34,7 @@
+ #  \ingroup ARCH
+ #  \brief The Arch Vector Rendering Module
+ #
+-#  This module provides the Renderer Class, that allows to
++#  This module provides the Renderer Class, that allows one to
+ #  produce SVG renderings of projected shapes, with filled faces.
+ #  It is used by the "Solid" mode of Arch views in TechDraw and Drawing,
+ #  and is called from ArchSectionPlane code.
+diff --git a/src/Mod/BIM/Resources/ui/preferences-ifc-export.ui b/src/Mod/BIM/Resources/ui/preferences-ifc-export.ui
+index 21cd81e17da84..b6afe5ec9a2f6 100644
+--- a/src/Mod/BIM/Resources/ui/preferences-ifc-export.ui
++++ b/src/Mod/BIM/Resources/ui/preferences-ifc-export.ui
+@@ -171,8 +171,8 @@ is exported. This leads to smaller differences between file versions.</string>
+       <item>
+        <widget class="Gui::PrefCheckBox" name="checkBox_10">
+         <property name="toolTip">
+-         <string>IFCOpenShell is a library that allows to import IFC files.
+-Its serializer functionality allows to give it an OCC shape and it will
++         <string>IFCOpenShell is a library that allows one to import IFC files.
++Its serializer functionality allows giving it an OCC shape and it will
+ produce adequate IFC geometry: NURBS, faceted, or anything else.
+ Note: The serializer is still an experimental feature!</string>
+         </property>
+diff --git a/src/Mod/BIM/bimcommands/BimLayers.py b/src/Mod/BIM/bimcommands/BimLayers.py
+index 27dd6bbb66bd6..9ecbf8108d32b 100644
+--- a/src/Mod/BIM/bimcommands/BimLayers.py
++++ b/src/Mod/BIM/bimcommands/BimLayers.py
+@@ -124,7 +124,7 @@ def Activated(self):
+         self.dialog.tree.setRootIsDecorated(False)  # removes spacing in first column
+         self.dialog.tree.setSelectionMode(
+             QtGui.QTreeView.ExtendedSelection
+-        )  # allow to select many
++        )  # allow one to select many
+ 
+         # fill the tree view
+         self.update()
+diff --git a/src/Mod/BIM/importers/exportIFC.py b/src/Mod/BIM/importers/exportIFC.py
+index 39a3e594408eb..aafc1a99fe5da 100644
+--- a/src/Mod/BIM/importers/exportIFC.py
++++ b/src/Mod/BIM/importers/exportIFC.py
+@@ -175,7 +175,7 @@ def getPreferences():
+     if hasattr(ifcopenshell, "schema_identifier"):
+         schema = ifcopenshell.schema_identifier
+     else:
+-        # v0.6 onwards allows to set our own schema
++        # v0.6 onwards allows one to set our own schema
+         schema = PARAMS.GetString("DefaultIfcExportVersion", "IFC4")
+     preferences["SCHEMA"] = schema
+ 
+@@ -267,7 +267,7 @@ def export(exportList, filename, colors=None, preferences=None):
+     if history:
+         history = history[0]
+     else:
+-        # IFC4 allows to not write any history
++        # IFC4 allows one to not write any history
+         history = None
+     objectslist = Draft.get_group_contents(exportList, walls=True,
+                                            addgroups=True)
+diff --git a/src/Mod/BIM/importers/importIFC.py b/src/Mod/BIM/importers/importIFC.py
+index c2550b3c7629f..868928007627d 100644
+--- a/src/Mod/BIM/importers/importIFC.py
++++ b/src/Mod/BIM/importers/importIFC.py
+@@ -229,7 +229,7 @@ def insert(srcfile, docname, skip=[], only=[], root=None, preferences=None):
+ 
+     global parametrics
+ 
+-    # allow to override the root element
++    # allow one to override the root element
+     if root:
+         preferences['ROOT_ELEMENT'] = root
+ 
+diff --git a/src/Mod/BIM/nativeifc/ifc_objects.py b/src/Mod/BIM/nativeifc/ifc_objects.py
+index ea8f097c2493f..86bffe2e0f589 100644
+--- a/src/Mod/BIM/nativeifc/ifc_objects.py
++++ b/src/Mod/BIM/nativeifc/ifc_objects.py
+@@ -34,7 +34,7 @@ class ifc_object:
+ 
+     def __init__(self, otype=None):
+         self.cached = True  # this marks that the object is freshly created and its shape should be taken from cache
+-        self.virgin_placement = True  # this allows to set the initial placement without triggering any placement change
++        self.virgin_placement = True  # this allows one to set the initial placement without triggering any placement change
+         if otype:
+             self.Type = (
+                 otype[0].upper() + otype[1:]
+diff --git a/src/Mod/BIM/nativeifc/ifc_selftest.py b/src/Mod/BIM/nativeifc/ifc_selftest.py
+index 6641ad1355c06..ef8fe12420cf5 100644
+--- a/src/Mod/BIM/nativeifc/ifc_selftest.py
++++ b/src/Mod/BIM/nativeifc/ifc_selftest.py
+@@ -44,7 +44,7 @@
+ IFC_FILE_PATH = None  # downloaded IFC file path
+ FCSTD_FILE_PATH = None  # saved FreeCAD file
+ PARAMS = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/NativeIFC")
+-SINGLEDOC = False  # This allows to force singledoc mode for all tests
++SINGLEDOC = False  # This allows one to force singledoc mode for all tests
+ SDU = int(SINGLEDOC)  # number of objects is different in singledoc
+ # See also IFCFILECONTENT at the end of this file, retrieved from
+ # https://github.com/aothms/IfcOpenHouse/IfcOpenHouse_IFC4.ifc
+diff --git a/src/Mod/CAM/Gui/Resources/panels/DogboneEdit.ui b/src/Mod/CAM/Gui/Resources/panels/DogboneEdit.ui
+index 59c79bc97c651..66a9bf8d9328d 100644
+--- a/src/Mod/CAM/Gui/Resources/panels/DogboneEdit.ui
++++ b/src/Mod/CAM/Gui/Resources/panels/DogboneEdit.ui
+@@ -111,7 +111,7 @@
+        <item row="2" column="1">
+         <widget class="QComboBox" name="incisionCombo">
+          <property name="toolTip">
+-          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... let's you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
++          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... lets you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+          </property>
+          <property name="currentIndex">
+           <number>2</number>
+diff --git a/src/Mod/CAM/Gui/Resources/translations/CAM_gl.ts b/src/Mod/CAM/Gui/Resources/translations/CAM_gl.ts
+index 57db47088c770..34bc84179308c 100644
+--- a/src/Mod/CAM/Gui/Resources/translations/CAM_gl.ts
++++ b/src/Mod/CAM/Gui/Resources/translations/CAM_gl.ts
+@@ -2981,8 +2981,8 @@ Should multiple tools or tool shapes with the same name exist in different direc
+     </message>
+     <message>
+       <location filename="../panels/DogboneEdit.ui" line="114"/>
+-      <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... let's you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+-      <translation type="unfinished">&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... let's you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
++      <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... lets you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
++      <translation type="unfinished">&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... lets you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+     </message>
+     <message>
+       <location filename="../panels/DogboneEdit.ui" line="121"/>
+diff --git a/src/Mod/CAM/Gui/Resources/translations/CAM_id.ts b/src/Mod/CAM/Gui/Resources/translations/CAM_id.ts
+index 153367ecf98e1..7850a7fc64c4f 100644
+--- a/src/Mod/CAM/Gui/Resources/translations/CAM_id.ts
++++ b/src/Mod/CAM/Gui/Resources/translations/CAM_id.ts
+@@ -2981,8 +2981,8 @@ Should multiple tools or tool shapes with the same name exist in different direc
+     </message>
+     <message>
+       <location filename="../panels/DogboneEdit.ui" line="114"/>
+-      <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... let's you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+-      <translation type="unfinished">&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... let's you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
++      <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... lets you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
++      <translation type="unfinished">&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Determines the incision length of the bone to be inserted into the profile.&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;adaptive&lt;/span&gt; ... the length is adapted to cover the corner based on the angle of its edges, taking the current tool radius into account (default)&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;fixed&lt;/span&gt; ... is the same as adaptive for straight angles. For T-bones it's the radius of the tool (R) and for dogbones it's R * (2/√2 - 1).&lt;/p&gt;&lt;p&gt;&lt;span style=" font-weight:600; font-style:italic;"&gt;custom&lt;/span&gt; ... lets you specify a custom (fixed) length below&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+     </message>
+     <message>
+       <location filename="../panels/DogboneEdit.ui" line="121"/>
+diff --git a/src/Mod/CAM/Path/Op/Vcarve.py b/src/Mod/CAM/Path/Op/Vcarve.py
+index 98f0c2fcbf80b..527efd05090c0 100644
+--- a/src/Mod/CAM/Path/Op/Vcarve.py
++++ b/src/Mod/CAM/Path/Op/Vcarve.py
+@@ -168,11 +168,11 @@ def incrementStepDownDepth(self, maximumUsableDepth):
+         :returns: True if successful, False if maximum depth achieved
+         """
+ 
+-        # do not allow to increase depth if we are already at stop depth
++        # do not allow one to increase depth if we are already at stop depth
+         if self.maximumDepth == self.stop:
+             return False
+ 
+-        # do not allow to increase depth if we are already at
++        # do not allow one to increase depth if we are already at
+         # maximum usable depth
+ 
+         if self.maximumDepth <= maximumUsableDepth:
+diff --git a/src/Mod/Draft/Resources/ui/preferences-draft.ui b/src/Mod/Draft/Resources/ui/preferences-draft.ui
+index 9af75e56958c1..dbb91b1883adf 100644
+--- a/src/Mod/Draft/Resources/ui/preferences-draft.ui
++++ b/src/Mod/Draft/Resources/ui/preferences-draft.ui
+@@ -169,7 +169,7 @@ Objects can then automatically be added to groups as well.</string>
+        <widget class="Gui::PrefCheckBox" name="checkBox_focusOnLength">
+         <property name="toolTip">
+          <string>If checked, Length input, instead of the X coordinate, will have the initial focus.
+-This allows to indicate a direction and then type a distance.</string>
++This allows indicating a direction and then type a distance.</string>
+         </property>
+         <property name="text">
+          <string>Set focus on Length instead of X coordinate</string>
+diff --git a/src/Mod/Draft/draftguitools/gui_beziers.py b/src/Mod/Draft/draftguitools/gui_beziers.py
+index 59c869b1b7f80..254489996496f 100644
+--- a/src/Mod/Draft/draftguitools/gui_beziers.py
++++ b/src/Mod/Draft/draftguitools/gui_beziers.py
+@@ -125,7 +125,7 @@ def action(self, arg):
+                     self.finish(cont=None, closed=False)
+                 if len(self.node) > 2:
+                     # does this make sense for a BCurve?
+-                    # DNC: allows to close the curve
++                    # DNC: allows one to close the curve
+                     # by placing ends close to each other
+                     # with tol = Draft tolerance
+                     # old code has been to insensitive
+@@ -327,7 +327,7 @@ def action(self, arg):
+                         # add point to "clicked list"
+                         self.node.append(self.point)
+                         self.drawUpdate(self.point)
+-                        # DNC: allows to close the curve
++                        # DNC: allows one to close the curve
+                         # by placing ends close to each other
+                         # with tol = Draft tolerance
+                         # old code has been to insensitive
+@@ -363,7 +363,7 @@ def action(self, arg):
+                     if len(self.node) > 2:
+                         self.node[-3] = 2 * self.node[-2] - self.node[-1]
+                         self.drawUpdate(self.point)
+-                        # DNC: allows to close the curve
++                        # DNC: allows one to close the curve
+                         # by placing ends close to each other
+                         # with tol = Draft tolerance
+                         # old code has been to insensitive
+diff --git a/src/Mod/Draft/draftguitools/gui_edit_draft_objects.py b/src/Mod/Draft/draftguitools/gui_edit_draft_objects.py
+index 85ac640137ac8..fcf6b13b26442 100644
+--- a/src/Mod/Draft/draftguitools/gui_edit_draft_objects.py
++++ b/src/Mod/Draft/draftguitools/gui_edit_draft_objects.py
+@@ -648,7 +648,7 @@ def recomputePointsBezier(self, obj, pts, idx, v,
+         (object, Points as list, nodeIndex as Int, App.Vector of new point, moveTrackers as Bool)
+         return the new point list, applying the App.Vector to the given index point
+         """
+-        # DNC: allows to close the curve by placing ends close to each other
++        # DNC: allows one to close the curve by placing ends close to each other
+         tol = 0.001
+         if ( ( idx == 0 ) and ( (v - pts[-1]).Length < tol) ) or (
+                 idx == len(pts) - 1 ) and ( (v - pts[0]).Length < tol):
+@@ -716,7 +716,7 @@ def smoothBezPoint(self, obj, point, style='Symmetric'):
+         if deg < 2:
+             return
+         if point % deg != 0:  # point is a pole
+-            if deg >=3:  # allow to select poles
++            if deg >=3:  # allow one to select poles
+                 if (point % deg == 1) and (point > 2 or obj.Closed): #right pole
+                     knot = point -1
+                     keepp = point
+diff --git a/src/Mod/Draft/draftguitools/gui_layers.py b/src/Mod/Draft/draftguitools/gui_layers.py
+index 0cab3f5a59115..6546b5858d70c 100644
+--- a/src/Mod/Draft/draftguitools/gui_layers.py
++++ b/src/Mod/Draft/draftguitools/gui_layers.py
+@@ -142,7 +142,7 @@ def Activated(self):
+         self.dialog.tree.setItemDelegate(Layers_Delegate())
+         self.dialog.tree.setItemsExpandable(False)
+         self.dialog.tree.setRootIsDecorated(False) # removes spacing in first column
+-        self.dialog.tree.setSelectionMode(QtWidgets.QTreeView.ExtendedSelection) # allow to select many
++        self.dialog.tree.setSelectionMode(QtWidgets.QTreeView.ExtendedSelection) # allow one to select many
+ 
+         # fill the tree view
+         self.update()
+diff --git a/src/Mod/Draft/draftguitools/gui_splines.py b/src/Mod/Draft/draftguitools/gui_splines.py
+index 46cf385534293..b94e2f1b0b4c9 100644
+--- a/src/Mod/Draft/draftguitools/gui_splines.py
++++ b/src/Mod/Draft/draftguitools/gui_splines.py
+@@ -112,7 +112,7 @@ def action(self, arg):
+                 if self.mode == "line" and len(self.node) == 2:
+                     self.finish(cont=None, closed=False)
+                 if len(self.node) > 2:
+-                    # DNC: allows to close the curve
++                    # DNC: allows one to close the curve
+                     # by placing ends close to each other
+                     # with tol = Draft tolerance
+                     # old code has been to insensitive
+diff --git a/src/Mod/Draft/draftguitools/gui_trackers.py b/src/Mod/Draft/draftguitools/gui_trackers.py
+index 965f418f8e66b..7b264cc119997 100644
+--- a/src/Mod/Draft/draftguitools/gui_trackers.py
++++ b/src/Mod/Draft/draftguitools/gui_trackers.py
+@@ -439,7 +439,7 @@ def recompute(self):
+                 self.sep.removeChild(self.bspline)
+             self.bspline = None
+             c =  Part.BSplineCurve()
+-            # DNC: allows to close the curve by placing ends close to each other
++            # DNC: allows one to close the curve by placing ends close to each other
+             if len(self.points) >= 3 and ( (self.points[0] - self.points[-1]).Length < Draft.tolerance() ):
+                 # YVH: Added a try to bypass some hazardous situations
+                 try:
+@@ -695,7 +695,7 @@ def recompute(self):
+ 
+ 
+ class ghostTracker(Tracker):
+-    """A Ghost tracker, that allows to copy whole object representations.
++    """A Ghost tracker, that allows one to copy whole object representations.
+ 
+     You can pass it an object or a list of objects, or a shape.
+     """
+diff --git a/src/Mod/Draft/drafttaskpanels/task_circulararray.py b/src/Mod/Draft/drafttaskpanels/task_circulararray.py
+index d669f15ab9ee0..c2cffabba3698 100644
+--- a/src/Mod/Draft/drafttaskpanels/task_circulararray.py
++++ b/src/Mod/Draft/drafttaskpanels/task_circulararray.py
+@@ -200,7 +200,7 @@ def validate_input(self, selection,
+         """Check that the input is valid.
+ 
+         Some values may not need to be checked because
+-        the interface may not allow to input wrong data.
++        the interface may not allow one to input wrong data.
+         """
+         if not selection:
+             _err(translate("draft","At least one element must be selected."))
+diff --git a/src/Mod/Draft/drafttaskpanels/task_orthoarray.py b/src/Mod/Draft/drafttaskpanels/task_orthoarray.py
+index 4b3bc4a7659d0..cd1f6a612bb7b 100644
+--- a/src/Mod/Draft/drafttaskpanels/task_orthoarray.py
++++ b/src/Mod/Draft/drafttaskpanels/task_orthoarray.py
+@@ -193,7 +193,7 @@ def validate_input(self, selection,
+         """Check that the input is valid.
+ 
+         Some values may not need to be checked because
+-        the interface may not allow to input wrong data.
++        the interface may not allow one to input wrong data.
+         """
+         if not selection:
+             _err(translate("draft","At least one element must be selected."))
+diff --git a/src/Mod/Draft/drafttaskpanels/task_polararray.py b/src/Mod/Draft/drafttaskpanels/task_polararray.py
+index 6a3b03428199a..ceb6d7769a6e7 100644
+--- a/src/Mod/Draft/drafttaskpanels/task_polararray.py
++++ b/src/Mod/Draft/drafttaskpanels/task_polararray.py
+@@ -180,7 +180,7 @@ def validate_input(self, selection,
+         """Check that the input is valid.
+ 
+         Some values may not need to be checked because
+-        the interface may not allow to input wrong data.
++        the interface may not allow one to input wrong data.
+         """
+         if not selection:
+             _err(translate("draft","At least one element must be selected."))
+diff --git a/src/Mod/Fem/App/FemMeshShapeNetgenObject.cpp b/src/Mod/Fem/App/FemMeshShapeNetgenObject.cpp
+index 5fa6536ea67f1..cbc3cd97e5d73 100644
+--- a/src/Mod/Fem/App/FemMeshShapeNetgenObject.cpp
++++ b/src/Mod/Fem/App/FemMeshShapeNetgenObject.cpp
+@@ -62,19 +62,19 @@ FemMeshShapeNetgenObject::FemMeshShapeNetgenObject()
+         (0.3),
+         "MeshParams",
+         Prop_None,
+-        " allows to define how much the linear dimensions of two adjacent cells can differ");
++        " allows one to define how much the linear dimensions of two adjacent cells can differ");
+     ADD_PROPERTY_TYPE(
+         NbSegsPerEdge,
+         (1),
+         "MeshParams",
+         Prop_None,
+-        "allows to define the minimum number of mesh segments in which edges will be split");
++        "allows one to define the minimum number of mesh segments in which edges will be split");
+     ADD_PROPERTY_TYPE(
+         NbSegsPerRadius,
+         (2),
+         "MeshParams",
+         Prop_None,
+-        "allows to define the minimum number of mesh segments in which radiuses will be split");
++        "allows one to define the minimum number of mesh segments in which radiuses will be split");
+     ADD_PROPERTY_TYPE(Optimize, (true), "MeshParams", Prop_None, "Optimize the resulting mesh");
+ }
+ 
+diff --git a/src/Mod/Fem/femsolver/elmer/equations/linear.py b/src/Mod/Fem/femsolver/elmer/equations/linear.py
+index 0b55620e40718..354c0165ed4fe 100644
+--- a/src/Mod/Fem/femsolver/elmer/equations/linear.py
++++ b/src/Mod/Fem/femsolver/elmer/equations/linear.py
+@@ -94,7 +94,7 @@ def __init__(self, obj):
+         obj.LinearPreconditioning = "ILU0"
+         # we must set an expression because we don't have a UI, the user has to
+         # view and edit the tolerance via the property editor and this does not
+-        # yet allow to view and edit small numbers in scientific notation
++        # yet allow one to view and edit small numbers in scientific notation
+         # forum thread: https://forum.freecad.org/viewtopic.php?p=613897#p613897
+         obj.setExpression("LinearTolerance", "1e-10")
+         obj.LinearSolverType = LINEAR_SOLVER
+diff --git a/src/Mod/Fem/femsolver/elmer/equations/nonlinear.py b/src/Mod/Fem/femsolver/elmer/equations/nonlinear.py
+index 1bd8cc4291485..1c2bafb64c64f 100644
+--- a/src/Mod/Fem/femsolver/elmer/equations/nonlinear.py
++++ b/src/Mod/Fem/femsolver/elmer/equations/nonlinear.py
+@@ -72,7 +72,7 @@ def __init__(self, obj):
+         obj.NonlinearNewtonAfterIterations = (3, 1, 500, 1)
+         # for small numbers we must set an expression because we don't have a UI,
+         # the user has to view and edit the tolerance via the property editor and
+-        # this does not yet allow to view and edit small numbers in scientific notation
++        # this does not yet allow one to view and edit small numbers in scientific notation
+         # forum thread: https://forum.freecad.org/viewtopic.php?p=613897#p613897
+         obj.setExpression("NonlinearTolerance", "1e-7")
+         obj.setExpression("NonlinearNewtonAfterTolerance", "1e-3")
+diff --git a/src/Mod/Import/App/ExportOCAF2.cpp b/src/Mod/Import/App/ExportOCAF2.cpp
+index fdc224f490637..4940ccb228772 100644
+--- a/src/Mod/Import/App/ExportOCAF2.cpp
++++ b/src/Mod/Import/App/ExportOCAF2.cpp
+@@ -223,7 +223,7 @@ void ExportOCAF2::setupObject(TDF_Label label,
+             // parent object internal name + '_i<index>'
+             names.push_back(prefix + obj->getNameInDocument() + "_i" + name + ".");
+         }
+-        // Finally, the subname reference allows to use the label for naming
++        // Finally, the subname reference allows one to use the label for naming
+         // with preceding '$'
+         names.push_back(prefix + "$" + obj->Label.getValue() + ".");
+     }
+diff --git a/src/Mod/Material/Gui/DlgDisplayPropertiesImp.cpp b/src/Mod/Material/Gui/DlgDisplayPropertiesImp.cpp
+index 153cc267d4871..a41899b6e45d8 100644
+--- a/src/Mod/Material/Gui/DlgDisplayPropertiesImp.cpp
++++ b/src/Mod/Material/Gui/DlgDisplayPropertiesImp.cpp
+@@ -370,7 +370,7 @@ void DlgDisplayPropertiesImp::reject()
+ }
+ 
+ /**
+- * Opens a dialog that allows to modify the 'ShapeMaterial' property of all selected view providers.
++ * Opens a dialog that allows one to modify the 'ShapeMaterial' property of all selected view providers.
+  */
+ void DlgDisplayPropertiesImp::onButtonCustomAppearanceClicked()
+ {
+@@ -393,7 +393,7 @@ void DlgDisplayPropertiesImp::onButtonCustomAppearanceClicked()
+ }
+ 
+ /**
+- * Opens a dialog that allows to modify the 'ShapeMaterial' property of all selected view providers.
++ * Opens a dialog that allows one to modify the 'ShapeMaterial' property of all selected view providers.
+  */
+ void DlgDisplayPropertiesImp::onButtonColorPlotClicked()
+ {
+diff --git a/src/Mod/Material/MaterialEditor.py b/src/Mod/Material/MaterialEditor.py
+index dc997a9efa2f5..2b060b8bd6023 100644
+--- a/src/Mod/Material/MaterialEditor.py
++++ b/src/Mod/Material/MaterialEditor.py
+@@ -107,7 +107,7 @@ def __init__(self, obj=None, prop=None, material=None, card_path="", category="S
+         standardButtons.button(QtGui.QDialogButtonBox.Ok).setAutoDefault(False)
+         standardButtons.button(QtGui.QDialogButtonBox.Cancel).setAutoDefault(False)
+         self.updateCardsInCombo()
+-        # TODO allow to enter a custom property by pressing Enter in the lineedit
++        # TODO allow one to enter a custom property by pressing Enter in the lineedit
+         # currently closes the dialog
+ 
+         standardButtons.rejected.connect(self.reject)
+diff --git a/src/Mod/Mesh/App/AppMesh.cpp b/src/Mod/Mesh/App/AppMesh.cpp
+index 33edaad8077f6..daca126ed5061 100644
+--- a/src/Mod/Mesh/App/AppMesh.cpp
++++ b/src/Mod/Mesh/App/AppMesh.cpp
+@@ -74,7 +74,7 @@ PyMOD_INIT_FUNC(Mesh)
+ 
+     Mesh::Extension3MFFactory::addProducer(new Mesh::GuiExtension3MFProducer);
+ 
+-    // This registration is sufficient to allow to measure free distances with a mesh
++    // This registration is sufficient to allow one to measure free distances with a mesh
+     App::MeasureManager::addMeasureHandler("Mesh", [](App::DocumentObject*, const char*) {
+         return App::MeasureElementType::INVALID;
+     });
+diff --git a/src/Mod/Mesh/App/Core/Builder.cpp b/src/Mod/Mesh/App/Core/Builder.cpp
+index 0989ba1eace95..623da92bf7009 100644
+--- a/src/Mod/Mesh/App/Core/Builder.cpp
++++ b/src/Mod/Mesh/App/Core/Builder.cpp
+@@ -128,7 +128,7 @@ void MeshBuilder::AddFacet(const Base::Vector3f& pt1,
+ 
+ void MeshBuilder::AddFacet(Base::Vector3f* facetPoints, unsigned char flag, unsigned long prop)
+ {
+-    this->_seq->next(true);  // allow to cancel
++    this->_seq->next(true);  // allow one to cancel
+ 
+     // adjust circulation direction
+     if ((((facetPoints[1] - facetPoints[0]) % (facetPoints[2] - facetPoints[0])) * facetPoints[3])
+@@ -171,7 +171,7 @@ void MeshBuilder::SetNeighbourhood()
+     FacetIndex facetIdx = 0;
+ 
+     for (auto& mf : _meshKernel._aclFacetArray) {
+-        this->_seq->next(true);  // allow to cancel
++        this->_seq->next(true);  // allow one to cancel
+         for (int i = 0; i < 3; i++) {
+             Edge edge(mf._aulPoints[i], mf._aulPoints[(i + 1) % 3], facetIdx);
+             std::set<Edge>::iterator e = edges.find(edge);
+diff --git a/src/Mod/Mesh/App/Core/Elements.h b/src/Mod/Mesh/App/Core/Elements.h
+index a4602b1a6fc6f..2181301bcac28 100644
+--- a/src/Mod/Mesh/App/Core/Elements.h
++++ b/src/Mod/Mesh/App/Core/Elements.h
+@@ -796,7 +796,7 @@ class MeshExport MeshFacetArray: public TMeshFacetArray
+ };
+ 
+ /**
+- * MeshPointModifier is a helper class that allows to modify the
++ * MeshPointModifier is a helper class that allows one to modify the
+  * point array of a mesh kernel but with limited access.
+  */
+ class MeshExport MeshPointModifier
+@@ -823,7 +823,7 @@ class MeshExport MeshPointModifier
+ };
+ 
+ /**
+- * MeshFacetModifier is a helper class that allows to modify the
++ * MeshFacetModifier is a helper class that allows one to modify the
+  * facet array of a mesh kernel but with limited access.
+  */
+ class MeshExport MeshFacetModifier
+diff --git a/src/Mod/Mesh/App/Core/Grid.h b/src/Mod/Mesh/App/Core/Grid.h
+index 834ba65b8b7f7..3cd9990ce94d4 100644
+--- a/src/Mod/Mesh/App/Core/Grid.h
++++ b/src/Mod/Mesh/App/Core/Grid.h
+@@ -45,7 +45,7 @@ class MeshGrid;
+ static constexpr float MESHGRID_BBOX_EXTENSION = 10.0F;
+ 
+ /**
+- * The MeshGrid allows to divide a global mesh object into smaller regions
++ * The MeshGrid allows one to divide a global mesh object into smaller regions
+  * of elements (e.g. facets, points or edges) depending on the resolution
+  * of the grid. All grid elements in the grid structure have the same size.
+  *
+diff --git a/src/Mod/Mesh/App/Core/IO/WriterOBJ.cpp b/src/Mod/Mesh/App/Core/IO/WriterOBJ.cpp
+index b08bf7d12190c..dce64fd6de91c 100644
+--- a/src/Mod/Mesh/App/Core/IO/WriterOBJ.cpp
++++ b/src/Mod/Mesh/App/Core/IO/WriterOBJ.cpp
+@@ -149,7 +149,7 @@ bool WriterOBJ::Save(std::ostream& out)
+         else {
+             out << "v " << pt.x << " " << pt.y << " " << pt.z << '\n';
+         }
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+     // Export normals
+     MeshFacetIterator clIter(_kernel), clEnd(_kernel);
+@@ -163,7 +163,7 @@ bool WriterOBJ::Save(std::ostream& out)
+         out << "vn " << pclFacet->GetNormal().x << " " << pclFacet->GetNormal().y << " "
+             << pclFacet->GetNormal().z << '\n';
+         ++clIter;
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     if (_groups.empty()) {
+@@ -190,7 +190,7 @@ bool WriterOBJ::Save(std::ostream& out)
+                 out << "f " << it->_aulPoints[0] + 1 << "//" << faceIdx << " "
+                     << it->_aulPoints[1] + 1 << "//" << faceIdx << " " << it->_aulPoints[2] + 1
+                     << "//" << faceIdx << '\n';
+-                seq.next(true);  // allow to cancel
++                seq.next(true);  // allow one to cancel
+                 faceIdx++;
+             }
+         }
+@@ -201,7 +201,7 @@ bool WriterOBJ::Save(std::ostream& out)
+                 out << "f " << it._aulPoints[0] + 1 << "//" << faceIdx << " "
+                     << it._aulPoints[1] + 1 << "//" << faceIdx << " " << it._aulPoints[2] + 1
+                     << "//" << faceIdx << '\n';
+-                seq.next(true);  // allow to cancel
++                seq.next(true);  // allow one to cancel
+                 faceIdx++;
+             }
+         }
+@@ -233,7 +233,7 @@ bool WriterOBJ::Save(std::ostream& out)
+                     out << "f " << f._aulPoints[0] + 1 << "//" << it + 1 << " "
+                         << f._aulPoints[1] + 1 << "//" << it + 1 << " " << f._aulPoints[2] + 1
+                         << "//" << it + 1 << '\n';
+-                    seq.next(true);  // allow to cancel
++                    seq.next(true);  // allow one to cancel
+                 }
+             }
+         }
+@@ -245,7 +245,7 @@ bool WriterOBJ::Save(std::ostream& out)
+                     out << "f " << f._aulPoints[0] + 1 << "//" << it + 1 << " "
+                         << f._aulPoints[1] + 1 << "//" << it + 1 << " " << f._aulPoints[2] + 1
+                         << "//" << it + 1 << '\n';
+-                    seq.next(true);  // allow to cancel
++                    seq.next(true);  // allow one to cancel
+                 }
+             }
+         }
+diff --git a/src/Mod/Mesh/App/Core/Iterator.h b/src/Mod/Mesh/App/Core/Iterator.h
+index 4949af280835c..4b8c5dddd3487 100644
+--- a/src/Mod/Mesh/App/Core/Iterator.h
++++ b/src/Mod/Mesh/App/Core/Iterator.h
+@@ -41,7 +41,7 @@ class MeshIndexEdge;
+ class MeshHelpEdge;
+ 
+ /**
+- * The MeshFacetIterator allows to iterate over the facets that
++ * The MeshFacetIterator allows one to iterate over the facets that
+  * hold the topology of the mesh and provides access to their
+  * geometric information.
+  * \note This class is not thread-safe.
+@@ -222,7 +222,7 @@ class MeshFacetIterator
+ };
+ 
+ /**
+- * The MeshPointIterator allows to iterate over the vertices of the mesh and provides access to
++ * The MeshPointIterator allows one to iterate over the vertices of the mesh and provides access to
+  * their geometric information. \note This class is not thread-safe.
+  */
+ class MeshExport MeshPointIterator
+diff --git a/src/Mod/Mesh/App/Core/MeshIO.cpp b/src/Mod/Mesh/App/Core/MeshIO.cpp
+index 8e6af13c6437a..1279e1d6bde0e 100644
+--- a/src/Mod/Mesh/App/Core/MeshIO.cpp
++++ b/src/Mod/Mesh/App/Core/MeshIO.cpp
+@@ -1668,7 +1668,7 @@ bool MeshOutput::SaveBinarySTL(std::ostream& output) const
+         output.write((const char*)&usAtt, sizeof(usAtt));
+ 
+         ++clIter;
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     return true;
+@@ -1739,14 +1739,14 @@ bool MeshOutput::SaveSMF(std::ostream& out) const
+         }
+ 
+         out << "v " << pt.x << " " << pt.y << " " << pt.z << '\n';
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     // facet indices
+     for (const auto& it : rFacets) {
+         out << "f " << it._aulPoints[0] + 1 << " " << it._aulPoints[1] + 1 << " "
+             << it._aulPoints[2] + 1 << '\n';
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     return true;
+@@ -1931,14 +1931,14 @@ bool MeshOutput::SaveOFF(std::ostream& out) const
+         else {
+             out << pt.x << " " << pt.y << " " << pt.z << '\n';
+         }
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     // facet indices (no texture and normal indices)
+     for (const auto& it : rFacets) {
+         out << "3 " << it._aulPoints[0] << " " << it._aulPoints[1] << " " << it._aulPoints[2]
+             << '\n';
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     return true;
+diff --git a/src/Mod/Mesh/App/Core/MeshKernel.h b/src/Mod/Mesh/App/Core/MeshKernel.h
+index 6e0f9e620eba5..a6b43a19273f1 100644
+--- a/src/Mod/Mesh/App/Core/MeshKernel.h
++++ b/src/Mod/Mesh/App/Core/MeshKernel.h
+@@ -413,8 +413,8 @@ class MeshExport MeshKernel
+     /** Assignment operator. */
+     MeshKernel& operator=(const MeshKernel& rclMesh);
+     MeshKernel& operator=(MeshKernel&& rclMesh);
+-    /** This allows to assign the mesh structure directly. The caller must make sure that the point
+-     * indices are correctly set but the neighbourhood gets checked and corrected if \a
++    /** This allows one to assign the mesh structure directly. The caller must make sure that the
++     * point indices are correctly set but the neighbourhood gets checked and corrected if \a
+      * checkNeighbourHood is true.
+      */
+     void Assign(const MeshPointArray& rPoints,
+diff --git a/src/Mod/Mesh/App/Core/TopoAlgorithm.cpp b/src/Mod/Mesh/App/Core/TopoAlgorithm.cpp
+index 88d9bb0a620d0..303029fac0b47 100644
+--- a/src/Mod/Mesh/App/Core/TopoAlgorithm.cpp
++++ b/src/Mod/Mesh/App/Core/TopoAlgorithm.cpp
+@@ -609,7 +609,7 @@ bool MeshTopoAlgorithm::IsSwapEdgeLegal(FacetIndex ulFacetPos, FacetIndex ulNeig
+     Base::Vector3f cP3 = _rclMesh._aclPointArray[rclF._aulPoints[(uFSide + 2) % 3]];
+     Base::Vector3f cP4 = _rclMesh._aclPointArray[rclN._aulPoints[(uNSide + 2) % 3]];
+ 
+-    // do not allow to create degenerated triangles
++    // do not allow one to create degenerated triangles
+     MeshGeomFacet cT3(cP4, cP3, cP1);
+     if (cT3.IsDegenerated(MeshDefinitions::_fMinPointDistanceP2)) {
+         return false;
+diff --git a/src/Mod/Mesh/App/Exporter.cpp b/src/Mod/Mesh/App/Exporter.cpp
+index facaee57be367..a576511db4052 100644
+--- a/src/Mod/Mesh/App/Exporter.cpp
++++ b/src/Mod/Mesh/App/Exporter.cpp
+@@ -470,7 +470,7 @@ bool ExporterAMF::addMesh(const char* name, const MeshObject& mesh)
+             }
+         }
+ 
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     *outputStreamPtr << "\t\t\t</vertices>\n"
+@@ -484,7 +484,7 @@ bool ExporterAMF::addMesh(const char* name, const MeshObject& mesh)
+             *outputStreamPtr << "\t\t\t\t\t<v" << i << '>' << *(triItr++) << "</v" << i << ">\n";
+         }
+         *outputStreamPtr << "\t\t\t\t</triangle>\n";
+-        seq.next(true);  // allow to cancel
++        seq.next(true);  // allow one to cancel
+     }
+ 
+     *outputStreamPtr << "\t\t\t</volume>\n"
+diff --git a/src/Mod/Mesh/App/MeshProperties.cpp b/src/Mod/Mesh/App/MeshProperties.cpp
+index 8b9cb66f1c0a9..a75969c3b68bf 100644
+--- a/src/Mod/Mesh/App/MeshProperties.cpp
++++ b/src/Mod/Mesh/App/MeshProperties.cpp
+@@ -861,7 +861,7 @@ void PropertyMeshKernel::setPyObject(PyObject* value)
+ {
+     if (PyObject_TypeCheck(value, &(MeshPy::Type))) {
+         MeshPy* mesh = static_cast<MeshPy*>(value);
+-        // Do not allow to reassign the same instance
++        // Do not allow one to reassign the same instance
+         if (&(*this->_meshObject) != mesh->getMeshObjectPtr()) {
+             // Note: Copy the content, do NOT reference the same mesh object
+             setValue(*(mesh->getMeshObjectPtr()));
+diff --git a/src/Mod/Mesh/Gui/ViewProviderCurvature.h b/src/Mod/Mesh/Gui/ViewProviderCurvature.h
+index 488148c9e67a7..1332711a48d3c 100644
+--- a/src/Mod/Mesh/Gui/ViewProviderCurvature.h
++++ b/src/Mod/Mesh/Gui/ViewProviderCurvature.h
+@@ -54,9 +54,9 @@ class PropertyCurvatureList;
+ namespace MeshGui
+ {
+ 
+-/** The ViewProviderMeshCurvature class is associated to the mesh curvature feature. It allows to
+- * display the most known types of curvatures, such as Gaussian curvature, mean curvature, minimum
+- * and maximum curvature. Moreover a color bar is also added to the scene.
++/** The ViewProviderMeshCurvature class is associated to the mesh curvature feature. It allows one
++ * to display the most known types of curvatures, such as Gaussian curvature, mean curvature,
++ * minimum and maximum curvature. Moreover a color bar is also added to the scene.
+  *
+  * @author Werner Mayer
+  */
+diff --git a/src/Mod/OpenSCAD/OpenSCADUtils.py b/src/Mod/OpenSCAD/OpenSCADUtils.py
+index 36bf78a220d81..f2652f0b75e3f 100644
+--- a/src/Mod/OpenSCAD/OpenSCADUtils.py
++++ b/src/Mod/OpenSCAD/OpenSCADUtils.py
+@@ -242,7 +242,7 @@ def callopenscadstring(scadstr,outputext='csg'):
+ 
+ 
+ def reverseimporttypes():
+-    '''allows to search for supported filetypes by module'''
++    '''allows one to search for supported filetypes by module'''
+ 
+     def getsetfromdict(dict1, index):
+         if index in dict1:
+diff --git a/src/Mod/OpenSCAD/replaceobj.py b/src/Mod/OpenSCAD/replaceobj.py
+index 5facf18260ccb..5da3f08485c10 100644
+--- a/src/Mod/OpenSCAD/replaceobj.py
++++ b/src/Mod/OpenSCAD/replaceobj.py
+@@ -24,7 +24,7 @@
+ __url__ = ["https://www.freecad.org"]
+ 
+ '''
+-This functions allows to replace an object in the feature hierarchy
++This functions allows one to replace an object in the feature hierarchy
+ '''
+ 
+ 
+diff --git a/src/Mod/Part/App/GeomPlate/CurveConstraintPyImp.cpp b/src/Mod/Part/App/GeomPlate/CurveConstraintPyImp.cpp
+index f173085a05cdd..a80d414fa4817 100644
+--- a/src/Mod/Part/App/GeomPlate/CurveConstraintPyImp.cpp
++++ b/src/Mod/Part/App/GeomPlate/CurveConstraintPyImp.cpp
+@@ -60,7 +60,7 @@ int CurveConstraintPy::PyInit(PyObject* args, PyObject* kwds)
+     // GeomPlate_CurveConstraint has a default constructor but OCCT doesn't check
+     // if neither a 2d, 3d or curve on surface is set when accessing the functions
+     // Length(), FirstParameter(), LastParameter(), ...
+-    // Thus, we don't allow to create an empty GeomPlate_CurveConstraint instance
++    // Thus, we don't allow one to create an empty GeomPlate_CurveConstraint instance
+ 
+     static const std::array<const char *, 7> keywords{"Boundary", "Order", "NbPts", "TolDist", "TolAng", "TolCurv",
+                                                       nullptr};
+diff --git a/src/Mod/Part/App/GeometryDefaultExtension.h b/src/Mod/Part/App/GeometryDefaultExtension.h
+index 44c0c3d1902b6..1e3bc41fff611 100644
+--- a/src/Mod/Part/App/GeometryDefaultExtension.h
++++ b/src/Mod/Part/App/GeometryDefaultExtension.h
+@@ -59,7 +59,7 @@ namespace Part {
+ 
+     // Description:
+     //
+-    // This template allows to define a geometry extension for a given type (uniform interface for one value of type T).
++    // This template allows one to define a geometry extension for a given type (uniform interface for one value of type T).
+     //
+     // Warnings:
+     // - The default constructor relies on the default constructor of T for initialisation. Built-in types
+diff --git a/src/Mod/Part/Gui/SectionCutting.ui b/src/Mod/Part/Gui/SectionCutting.ui
+index 2a40039d84261..02dc268f2e70f 100644
+--- a/src/Mod/Part/Gui/SectionCutting.ui
++++ b/src/Mod/Part/Gui/SectionCutting.ui
+@@ -368,7 +368,7 @@ have the same values.</string>
+       </size>
+      </property>
+      <property name="toolTip">
+-      <string>Allows to cut objects intersecting each other
++      <string>Allows one to cut objects intersecting each other
+ for the price that all cut objects
+ will get the same color</string>
+      </property>
+diff --git a/src/Mod/Part/Gui/TaskFaceAppearances.cpp b/src/Mod/Part/Gui/TaskFaceAppearances.cpp
+index b6d87647eed1a..f1983229ba66f 100644
+--- a/src/Mod/Part/Gui/TaskFaceAppearances.cpp
++++ b/src/Mod/Part/Gui/TaskFaceAppearances.cpp
+@@ -426,7 +426,7 @@ int FaceAppearances::getFirstIndex() const
+ }
+ 
+ /**
+- * Opens a dialog that allows to modify the 'ShapeMaterial' property of all selected view providers.
++ * Opens a dialog that allows one to modify the 'ShapeMaterial' property of all selected view providers.
+  */
+ void FaceAppearances::onButtonCustomAppearanceClicked()
+ {
+diff --git a/src/Mod/Part/Gui/ViewProviderExt.h b/src/Mod/Part/Gui/ViewProviderExt.h
+index af366249aeba1..2682835ff1d7a 100644
+--- a/src/Mod/Part/Gui/ViewProviderExt.h
++++ b/src/Mod/Part/Gui/ViewProviderExt.h
+@@ -93,7 +93,7 @@ class PartGuiExport ViewProviderPartExt : public Gui::ViewProviderGeometryObject
+     std::vector<std::string> getDisplayModes() const override;
+     /// Update the view representation
+     void reload();
+-    /// If no other task is pending it opens a dialog to allow to change face colors
++    /// If no other task is pending it opens a dialog to allow one to change face colors
+     bool changeFaceAppearances();
+ 
+     void updateData(const App::Property*) override;
+diff --git a/src/Mod/PartDesign/App/FeaturePad.cpp b/src/Mod/PartDesign/App/FeaturePad.cpp
+index 644458adc036a..3178b667fcf01 100644
+--- a/src/Mod/PartDesign/App/FeaturePad.cpp
++++ b/src/Mod/PartDesign/App/FeaturePad.cpp
+@@ -63,7 +63,7 @@ Pad::Pad()
+     ADD_PROPERTY_TYPE(TaperAngle2, (0.0), "Pad", App::Prop_None, "Taper angle for 2nd direction");
+     TaperAngle2.setConstraints(&floatAngle);
+ 
+-    // Remove the constraints and keep the type to allow to accept negative values
++    // Remove the constraints and keep the type to allow one to accept negative values
+     // https://forum.freecad.org/viewtopic.php?f=3&t=52075&p=448410#p447636
+     Length2.setConstraints(nullptr);
+ }
+diff --git a/src/Mod/PartDesign/App/FeaturePocket.cpp b/src/Mod/PartDesign/App/FeaturePocket.cpp
+index efbed345c2e35..4c5bea53b1ffd 100644
+--- a/src/Mod/PartDesign/App/FeaturePocket.cpp
++++ b/src/Mod/PartDesign/App/FeaturePocket.cpp
+@@ -64,7 +64,7 @@ Pocket::Pocket()
+     ADD_PROPERTY_TYPE(TaperAngle2, (0.0), "Pocket", App::Prop_None, "Taper angle for 2nd direction");
+     TaperAngle2.setConstraints(&floatAngle);
+ 
+-    // Remove the constraints and keep the type to allow to accept negative values
++    // Remove the constraints and keep the type to allow one to accept negative values
+     // https://forum.freecad.org/viewtopic.php?f=3&t=52075&p=448410#p447636
+     Length2.setConstraints(nullptr);
+ }
+diff --git a/src/Mod/PartDesign/Gui/TaskExtrudeParameters.cpp b/src/Mod/PartDesign/Gui/TaskExtrudeParameters.cpp
+index 59a348635f30c..e9cd6308cba0d 100644
+--- a/src/Mod/PartDesign/Gui/TaskExtrudeParameters.cpp
++++ b/src/Mod/PartDesign/Gui/TaskExtrudeParameters.cpp
+@@ -925,7 +925,7 @@ void TaskExtrudeParameters::setDirectionMode(int index)
+         extrude->UseCustomVector.setValue(false);
+     }
+ 
+-    // if we don't use custom direction, only allow to show its direction
++    // if we don't use custom direction, only allow one to show its direction
+     if (index != DirectionModes::Custom) {
+         ui->XDirectionEdit->setEnabled(false);
+         ui->YDirectionEdit->setEnabled(false);
+diff --git a/src/Mod/PartDesign/Gui/TaskShapeBinder.cpp b/src/Mod/PartDesign/Gui/TaskShapeBinder.cpp
+index 5df5df01eb655..a4d072a0af94f 100644
+--- a/src/Mod/PartDesign/Gui/TaskShapeBinder.cpp
++++ b/src/Mod/PartDesign/Gui/TaskShapeBinder.cpp
+@@ -92,7 +92,7 @@ void TaskShapeBinder::updateUI()
+         ui->baseEdit->setText(QString::fromStdString(obj->Label.getStrValue()));
+     }
+ 
+-    // Allow to clear the Support
++    // Allow one to clear the Support
+     ui->baseEdit->setClearButtonEnabled(true);
+     connect(ui->baseEdit, &QLineEdit::textChanged,
+             this, &TaskShapeBinder::supportChanged);
+diff --git a/src/Mod/PartDesign/Gui/TaskSketchBasedParameters.h b/src/Mod/PartDesign/Gui/TaskSketchBasedParameters.h
+index e5979fc21fd4e..f0fed4501ca36 100644
+--- a/src/Mod/PartDesign/Gui/TaskSketchBasedParameters.h
++++ b/src/Mod/PartDesign/Gui/TaskSketchBasedParameters.h
+@@ -56,7 +56,7 @@ class TaskSketchBasedParameters : public PartDesignGui::TaskFeatureParameters,
+     virtual void finishReferenceSelection(App::DocumentObject* profile, App::DocumentObject* base);
+     /*!
+      * \brief onSelectReference
+-     * Start reference selection mode to allow to select objects of the type defined
++     * Start reference selection mode to allow one to select objects of the type defined
+      * with \a AllowSelectionFlags.
+      * If AllowSelection::NONE is passed the selection mode is finished.
+      */
+diff --git a/src/Mod/Points/App/PointsGrid.h b/src/Mod/Points/App/PointsGrid.h
+index 2070e59807e26..696575117861f 100644
+--- a/src/Mod/Points/App/PointsGrid.h
++++ b/src/Mod/Points/App/PointsGrid.h
+@@ -41,8 +41,9 @@ namespace Points
+ class PointsGrid;
+ 
+ /**
+- * The PointsGrid allows to divide a global point cloud into smaller regions of elements depending
+- * on the resolution of the grid. All grid elements in the grid structure have the same size.
++ * The PointsGrid allows one to divide a global point cloud into smaller regions of elements
++ * depending on the resolution of the grid. All grid elements in the grid structure have the same
++ * size.
+  *
+  * Grids can be used within algorithms to avoid to iterate through all elements, so grids can speed
+  * up algorithms dramatically.
+diff --git a/src/Mod/Sketcher/App/GeometryFacade.h b/src/Mod/Sketcher/App/GeometryFacade.h
+index 025f190e7a130..43da4bc8ec85f 100644
+--- a/src/Mod/Sketcher/App/GeometryFacade.h
++++ b/src/Mod/Sketcher/App/GeometryFacade.h
+@@ -372,7 +372,7 @@ class SketcherExport GeometryFacade: public Base::BaseClass, private ISketchGeom
+ // GeometryTypedFacade
+ 
+ /** @brief  It provides all the functionality of GeometryFacade (derives from it), but in addition
+- * allows to indicate the type of a Part::Geometry derived class.
++ * allows one to indicate the type of a Part::Geometry derived class.
+  *
+  * @details
+  *
+diff --git a/src/Mod/Sketcher/App/Sketch.h b/src/Mod/Sketcher/App/Sketch.h
+index aef9bb9b08571..e74cf4ee9ff48 100644
+--- a/src/Mod/Sketcher/App/Sketch.h
++++ b/src/Mod/Sketcher/App/Sketch.h
+@@ -798,7 +798,7 @@ class SketcherExport Sketch: public Base::Persistence
+      * The implementation is on the order of the groups provided by the QR decomposition used to
+      * reveal the parameters (see System::identifyDependentParameters in GCS). Zeros are made over
+      * the pilot of the full R matrix of the QR decomposition, which is a top triangular
+-     * matrix.This, together with the permutation matrix, allow to know groups of dependent
++     * matrix.This, together with the permutation matrix, allow one to know groups of dependent
+      * parameters (cols between rank and full size). Each group refers to a new parameter not
+      * affected by the rank in combination with other free parameters intervening in the rank
+      * (because of the triangular shape of the R matrix). This results in that each the first column
+diff --git a/src/Mod/Sketcher/App/SketchObject.h b/src/Mod/Sketcher/App/SketchObject.h
+index fd5c675207171..f9e95e06157a6 100644
+--- a/src/Mod/Sketcher/App/SketchObject.h
++++ b/src/Mod/Sketcher/App/SketchObject.h
+@@ -155,7 +155,7 @@ class SketcherExport SketchObject: public Part::Part2DObject
+     int delGeometry(int GeoId, bool deleteinternalgeo = true);
+     /// Deletes just the GeoIds indicated, it does not look for internal geometry
+     int delGeometriesExclusiveList(const std::vector<int>& GeoIds);
+-    /// Does the same as \a delGeometry but allows to delete several geometries in one step
++    /// Does the same as \a delGeometry but allows one to delete several geometries in one step
+     int delGeometries(const std::vector<int>& GeoIds);
+     /// deletes all the elements/constraints of the sketch except for external geometry
+     int deleteAllGeometry();
+@@ -175,8 +175,8 @@ class SketcherExport SketchObject: public Part::Part2DObject
+      * that it will solve the sketch.
+      *
+      * If updating the Geometry property as a consequence of a (successful) solve() is not wanted,
+-     * updategeometry=false, prevents the update. This allows to update the solve status (e.g. dof),
+-     * without updating the geometry (i.e. make it move to fulfil the constraints).
++     * updategeometry=false, prevents the update. This allows one to update the solve status (e.g.
++     * dof), without updating the geometry (i.e. make it move to fulfil the constraints).
+      */
+     int delConstraints(std::vector<int> ConstrIds, bool updategeometry = true);
+     int delConstraintOnPoint(int GeoId, PointPos PosId, bool onlyCoincident = true);
+diff --git a/src/Mod/Sketcher/App/planegcs/GCS.cpp b/src/Mod/Sketcher/App/planegcs/GCS.cpp
+index b630489a7c8ce..68f4e2b54adff 100644
+--- a/src/Mod/Sketcher/App/planegcs/GCS.cpp
++++ b/src/Mod/Sketcher/App/planegcs/GCS.cpp
+@@ -5405,7 +5405,7 @@ void System::identifyDependentParametersSparseQR(const Eigen::MatrixXd& J,
+                               nontransprank,
+                               Rparams,
+                               false,
+-                              true);  // do not transpose allow to diagnose parameters
++                              true);  // do not transpose allow one to diagnose parameters
+ 
+     identifyDependentParameters(SqrJ, Rparams, nontransprank, pdiagnoselist, silent);
+ }
+diff --git a/src/Mod/Sketcher/Gui/DrawSketchController.h b/src/Mod/Sketcher/Gui/DrawSketchController.h
+index 819e8ebf0e0e9..dbf89ed8cdbb0 100644
+--- a/src/Mod/Sketcher/Gui/DrawSketchController.h
++++ b/src/Mod/Sketcher/Gui/DrawSketchController.h
+@@ -38,7 +38,7 @@ namespace SketcherGui
+     the possible construction modes supported by the tool.
+ 
+     @details Different construction modes of a DSH may use different types of controls. This class
+-    allows to instantiate a handler template class to provide such construction mode specific
++    allows one to instantiate a handler template class to provide such construction mode specific
+     controls.
+ 
+     Each different type of control is a template class deriving from this.
+diff --git a/src/Mod/Sketcher/Gui/DrawSketchDefaultHandler.h b/src/Mod/Sketcher/Gui/DrawSketchDefaultHandler.h
+index 439159a09514a..3bb0e96ee8319 100644
+--- a/src/Mod/Sketcher/Gui/DrawSketchDefaultHandler.h
++++ b/src/Mod/Sketcher/Gui/DrawSketchDefaultHandler.h
+@@ -152,7 +152,7 @@ class StateMachine
+     /** Ensure the state machine is the provided mode
+      * but only if the mode is an earlier state.
+      *
+-     * This allows to return to previous states (e.g.
++     * This allows one to return to previous states (e.g.
+      * for modification), only if that state has previously
+      * been completed.
+      */
+@@ -337,7 +337,7 @@ class ConstructionMethodMachine
+  * - handling of continuous creation mode
+  *
+  * This class is intended to be used by instantiating the template with a new DSH type, and
+- * then derive the new type from the instantiated template. This allows to inherit all
++ * then derive the new type from the instantiated template. This allows one to inherit all
+  * the functionality, have direct access to all handler members, while allowing the DSH creator to
+  * add additional data members and functions (and avoiding extensive usage of macros).
+  *
+@@ -1001,8 +1001,8 @@ class DrawSketchDefaultHandler: public DrawSketchHandler,
+     /** @brief Function that performs a sketcher solver diagnose (determination of DoF and dependent
+      * parameters), taking into account the suggested AutoConstraints.
+      *
+-     * @details This function allows to refresh solver information by taking into account any added
+-     * constraint, such as the ones introduced by a widget or on-screen parameters during the
++     * @details This function allows one to refresh solver information by taking into account any
++     * added constraint, such as the ones introduced by a widget or on-screen parameters during the
+      * execution of the DSH.
+      *
+      * Ultimately, it is intended to operate in combination with functions obtaining point/element
+diff --git a/src/Mod/Sketcher/Gui/DrawSketchHandler.h b/src/Mod/Sketcher/Gui/DrawSketchHandler.h
+index da91f34672d48..2bd01a6059fe2 100644
+--- a/src/Mod/Sketcher/Gui/DrawSketchHandler.h
++++ b/src/Mod/Sketcher/Gui/DrawSketchHandler.h
+@@ -206,7 +206,7 @@ class SketcherGuiExport DrawSketchHandler: public Gui::ToolHandler
+     std::unique_ptr<QWidget> createToolWidget() const;
+ 
+     /** @brief Returns whether this tool expects/supports a visible tool widget. Emphasis is in
+-     * visibility, so to allow to adapt the interface accordingly.
++     * visibility, so to allow one to adapt the interface accordingly.
+      * This is an NVI interface and specific handlers must overload the corresponding virtual
+      * function.
+      */
+diff --git a/src/Mod/Sketcher/Gui/SketcherSettings.ui b/src/Mod/Sketcher/Gui/SketcherSettings.ui
+index 134703a284495..9c45f37c1aec7 100644
+--- a/src/Mod/Sketcher/Gui/SketcherSettings.ui
++++ b/src/Mod/Sketcher/Gui/SketcherSettings.ui
+@@ -124,7 +124,7 @@ Requires to re-enter edit mode to take effect.</string>
+       <item>
+        <widget class="Gui::PrefCheckBox" name="checkBoxEnableEscape">
+         <property name="toolTip">
+-         <string>Allow to leave sketch edit mode when pressing Esc button</string>
++         <string>Allow leaving sketch edit mode when pressing Esc button</string>
+         </property>
+         <property name="text">
+          <string>Esc can leave sketch edit mode</string>
+diff --git a/src/Mod/Sketcher/Gui/ViewProviderSketch.cpp b/src/Mod/Sketcher/Gui/ViewProviderSketch.cpp
+index 8ea22eb7cae38..2dec45c454788 100644
+--- a/src/Mod/Sketcher/Gui/ViewProviderSketch.cpp
++++ b/src/Mod/Sketcher/Gui/ViewProviderSketch.cpp
+@@ -2646,7 +2646,7 @@ float ViewProviderSketch::getScaleFactor() const
+ void ViewProviderSketch::scaleBSplinePoleCirclesAndUpdateSolverAndSketchObjectGeometry(
+     GeoListFacade& geolistfacade, bool geometrywithmemoryallocation)
+ {
+-    // In order to allow to tweak geometry and insert scaling factors, this function needs to
++    // In order to allow one to tweak geometry and insert scaling factors, this function needs to
+     // change the geometry vector. This is highly exceptional for a drawing function and special
+     // care needs to be taken. This is valid because:
+     // 1. The treatment is exceptional and no other appropriate place is available to perform this
+diff --git a/src/Mod/TechDraw/App/DrawTile.cpp b/src/Mod/TechDraw/App/DrawTile.cpp
+index 64719d5498851..d759f41c17a1d 100644
+--- a/src/Mod/TechDraw/App/DrawTile.cpp
++++ b/src/Mod/TechDraw/App/DrawTile.cpp
+@@ -43,7 +43,7 @@ DrawTile::DrawTile()
+     ADD_PROPERTY_TYPE(TileRow, (0), group, App::Prop_None, "Row in parent object\n 0 for arrow side, -1 for other side");
+     ADD_PROPERTY_TYPE(TileColumn, (0), group, App::Prop_None, "Column in parent object");
+ 
+-    // there is currently only one column, this don't allow to edit
++    // there is currently only one column, this don't allow one to edit
+     TileColumn.setStatus(App::Property::ReadOnly, true);
+     // the row can only have the value 0 or -1
+     // allow its editing because this way the tiles can be flipped
+diff --git a/src/Mod/TechDraw/Gui/ViewProviderProjGroupItem.cpp b/src/Mod/TechDraw/Gui/ViewProviderProjGroupItem.cpp
+index c7944848f4880..97438bdae8ec3 100644
+--- a/src/Mod/TechDraw/Gui/ViewProviderProjGroupItem.cpp
++++ b/src/Mod/TechDraw/Gui/ViewProviderProjGroupItem.cpp
+@@ -154,7 +154,7 @@ bool ViewProviderProjGroupItem::onDelete(const std::vector<std::string> &)
+         QMessageBox::warning(Gui::getMainWindow(),
+             qApp->translate("Std_Delete", "Object dependencies"), bodyMessage,
+             QMessageBox::Ok);
+-        // don't allow to delete
++        // don't allow one to delete
+         return false;
+    }
+    else if (!viewSection.empty()) {
+diff --git a/src/Mod/TemplatePyMod/DocumentObject.py b/src/Mod/TemplatePyMod/DocumentObject.py
+index d2bf44267d5b0..2aa7fbd4172e9 100644
+--- a/src/Mod/TemplatePyMod/DocumentObject.py
++++ b/src/Mod/TemplatePyMod/DocumentObject.py
+@@ -90,7 +90,7 @@ def purgeTouched(self):
+         "removes the to-be-recomputed flag of this object"
+         return self.__object__.purgeTouched()
+     def __setstate__(self,value):
+-        """allows to save custom attributes of this object as strings, so
++        """allows saving custom attributes of this object as strings, so
+         they can be saved when saving the FreeCAD document"""
+         return None
+     def __getstate__(self):
+@@ -223,7 +223,7 @@ def getDocumentationOfProperty(self,attr):
+         "returns the documentation string of a given property"
+         return self.__vobject__.getDocumentationOfProperty(attr)
+     def __setstate__(self,value):
+-        """allows to save custom attributes of this object as strings, so
++        """allows saving custom attributes of this object as strings, so
+         they can be saved when saving the FreeCAD document"""
+         return None
+     def __getstate__(self):

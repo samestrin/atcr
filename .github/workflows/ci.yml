@@ -79,6 +79,40 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # Full-tree secret scan. The pre-commit hook also runs gitleaks, but it is
+  # opt-in (`git config core.hooksPath .githooks`), silently skipped when the
+  # binary is absent, and scans only `--staged` changes — so an already-committed
+  # secret, or a contributor without the hook, is caught nowhere. This job is
+  # what actually enforces .gitleaks.toml, and what keeps its allowlist entries
+  # honest: remove one and this goes red.
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install gitleaks
+        # Built from a pinned source version rather than a floating action tag,
+        # matching how every other tool here is pinned. The module's declared
+        # path is still the pre-rename zricethezav one.
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+
+      - name: Scan working tree
+        # `dir`, not `git`: this scans the checked-out tree, so it covers files
+        # committed before this job existed instead of only the current diff.
+        # --redact keeps any real finding out of the public log.
+        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact
+
   # PR-time coverage for the nested ./reconcile module. The `ci` job above runs
   # `go test ./...` from the repo root, which does NOT cross ./reconcile's go.mod
   # boundary — so without this dedicated job a library regression is invisible
@@ -140,3 +174,157 @@ jobs:
 
       - name: Run Module Tests
         run: go test ./...
+
+  # ---------------------------------------------------------------------------
+  # OS-level sandbox containment proofs.
+  #
+  # These are the ONLY tests that prove the kernel actually enforces the os-level
+  # sandbox. Every other test asserts the SHAPE of a generated profile or argv,
+  # and a perfectly-shaped profile can contain nothing — so until these ran in CI,
+  # a containment regression could reach main with the suite green.
+  #
+  # They are split by platform because the suites are, via build tags:
+  # `integration && darwin` (sandbox-exec) and `integration && linux` (bwrap). A
+  # single job cannot cover both, and neither runs at all without -tags integration.
+  #
+  # ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF=1 turns skipOrFail's skips into failures: a
+  # skip and a proof are indistinguishable in `go test` output (both render as a
+  # green package), and these runs are being taken as AC 02-03/02-04 sign-off.
+  # ---------------------------------------------------------------------------
+
+  integration-macos:
+    name: OS-Level Sandbox Proof (macOS)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # actions/setup-go installs into the runner's hosted-tool-cache
+      # (/Users/runner/hostedtoolcache/go/...), which is outside the sandbox
+      # profile's darwinSystemReadDirs/vettedToolchainPrefixes allowlist — by
+      # design, per docs/auto-fix.md's documented limitation that a toolchain
+      # outside the vetted tiers is invisible inside the sandbox even though
+      # PATH still resolves it on the host. TestIntegration_OSLevelDarwin_
+      # RealToolchainRuns/go spawns `go version` AS THE SANDBOXED WORKLOAD (the
+      # outer `go test` driving this job is unaffected), so that specific `go`
+      # needs to live under an already-vetted prefix. Copying it into
+      # /usr/local/go (vetted) is a per-job step on this ephemeral runner, not
+      # a change to the sandbox's trust boundary.
+      - name: Relocate Go under a sandbox-vetted prefix
+        run: |
+          set -euo pipefail
+          sudo rsync -a "$(go env GOROOT)/" /usr/local/go/
+          sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+          echo "GOROOT=/usr/local/go" >> "$GITHUB_ENV"
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+
+      # No install step: sandbox-exec ships in the macOS runner base image.
+      - name: Run containment proof
+        env:
+          ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF: '1'
+        run: |
+          set -o pipefail
+          go test -tags integration -v ./internal/sandbox/... ./internal/verify/ 2>&1 | tee proof.log
+
+      - name: Assert the proof actually ran
+        run: |
+          # The guard that makes this job meaningful. `go test` reports ok for a
+          # package whose tagged files were all excluded, or whose -run filter
+          # matched nothing — so a green job is NOT by itself evidence that any
+          # containment test executed. Count the passes.
+          # 8 is a floor, not a count. macOS carries 14 proofs and Linux 15
+          # (10/11 platform + 4 shared); if a platform's build tag broke and its
+          # whole file were excluded, only the 4 shared ones would run. 8 catches
+          # that while leaving room for legitimate test churn.
+          n=$(grep -c '^--- PASS: TestIntegration_' proof.log || true)
+          echo "integration proofs passed: $n"
+          if [ "$n" -lt 8 ]; then
+            echo "::error::Expected at least 8 TestIntegration_* passes, saw $n — the containment proof did not run."
+            exit 1
+          fi
+
+  integration-linux:
+    name: OS-Level Sandbox Proof (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
+      - name: Permit unprivileged user namespaces
+        # Ubuntu 24.04 (what ubuntu-latest resolves to) ships
+        # kernel.apparmor_restrict_unprivileged_userns=1 by default, so an
+        # unprivileged bwrap dies at "setting up uid map: Permission denied" and
+        # the whole leg would skip rather than prove anything.
+        #
+        # This is the SAME restriction that blocks the proof on orchestrator.lan,
+        # where installing a persistent AppArmor profile was ruled out. A GitHub
+        # Actions VM is neither shared nor long-lived — it is destroyed with the
+        # job — so the objection that applied there does not apply here.
+        #
+        # The distro profile is preferred (it keeps the restriction ON for
+        # everything except bwrap); the sysctl is the fallback when the
+        # extra-profiles package layout differs. Which one was used is echoed, so
+        # a silent downgrade to the blunter mechanism is visible in the log.
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y apparmor-profiles apparmor-utils
+          PROFILE=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          if [ -f "$PROFILE" ]; then
+            echo "using distro AppArmor profile: $PROFILE"
+            sudo install -m 0644 "$PROFILE" /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          else
+            echo "AppArmor profile not found at $PROFILE; falling back to the sysctl"
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Verify unprivileged bwrap works
+        # Fail fast and unambiguously if the step above did not take, instead of
+        # surfacing later as an opaque containment-test failure. Deliberately NOT
+        # run under sudo: unprivileged operation is the property under test.
+        run: bwrap --ro-bind / / --unshare-all /bin/true
+
+      - name: Run containment proof
+        # Also unprivileged. Running the suite as root would re-create exactly the
+        # gap this job exists to close (AC 02-04 was signed off on a root-only run).
+        env:
+          ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF: '1'
+        run: |
+          set -o pipefail
+          go test -tags integration -v ./internal/sandbox/... ./internal/verify/ 2>&1 | tee proof.log
+
+      - name: Assert the proof actually ran
+        run: |
+          # 8 is a floor, not a count. macOS carries 14 proofs and Linux 15
+          # (10/11 platform + 4 shared); if a platform's build tag broke and its
+          # whole file were excluded, only the 4 shared ones would run. 8 catches
+          # that while leaving room for legitimate test churn.
+          n=$(grep -c '^--- PASS: TestIntegration_' proof.log || true)
+          echo "integration proofs passed: $n"
+          if [ "$n" -lt 8 ]; then
+            echo "::error::Expected at least 8 TestIntegration_* passes, saw $n — the containment proof did not run."
+            exit 1
+          fi

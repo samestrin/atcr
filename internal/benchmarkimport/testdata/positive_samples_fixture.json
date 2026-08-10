@@ -1,0 +1,216 @@
+[
+  {
+    "change_line_count": 345,
+    "project_main_language": "TypeScript",
+    "source_commit": "f258f5b2cb4a4cf9012e106837aba409b383e367",
+    "target_commit": "83a25941859179b635105c9b4fd79d5542e3701e",
+    "githubPrUrl": "https://github.com/CherryHQ/cherry-studio/pull/5540",
+    "comments": [
+      {
+        "is_ai_comment": true,
+        "note": "The json-key 'defaultaides' should be 'default_aides' to maintain consistency with the naming convention used for other ",
+        "path": "src/renderer/src/i18n/locales/en-us.json",
+        "side": "right",
+        "source_model": "GLM-4.7",
+        "from_line": 1391,
+        "to_line": 1391,
+        "category": "Code Defect",
+        "context": "Repo Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "Typing quality: `getAgentsFromSystemAgents(systemAgents: any)` uses `any`. Prefer defining the expected shape (e.g., `Re",
+        "path": "src/renderer/src/pages/agents/index.ts",
+        "side": "right",
+        "source_model": "GPT-5.2",
+        "from_line": 8,
+        "to_line": 8,
+        "category": "Maintainability and Readability",
+        "context": "File Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "According to the React best practices checklist, components should not be declared inside another component. The `AidesI",
+        "path": "src/renderer/src/pages/settings/DataSettings/DataSettings.tsx",
+        "side": "right",
+        "source_model": "GLM-4.7",
+        "from_line": 66,
+        "to_line": 73,
+        "category": "Performance",
+        "context": "File Level"
+      }
+    ],
+    "category": "New Feature Additions"
+  },
+  {
+    "change_line_count": 71,
+    "project_main_language": "C++",
+    "source_commit": "8a04621f436a36b35346ff474fb980469b61647d",
+    "target_commit": "d67628cd7e7aeeba2a60bea273c5cfc08714120c",
+    "githubPrUrl": "https://github.com/ClickHouse/ClickHouse/pull/72920",
+    "comments": [
+      {
+        "is_ai_comment": false,
+        "note": "The constant `TOO_MANY_IDLE_THRESHOLD=4` lacks documented rationale; add a comment explaining the basis for this value s",
+        "path": "src/Processors/Executors/ExecutorTasks.h",
+        "side": "right",
+        "source_model": "",
+        "from_line": 51,
+        "to_line": 51,
+        "category": "Maintainability and Readability",
+        "context": "File Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "Using `std::try_to_lock` here can cause missed spawns: if another thread holds `spawn_lock`, this call returns early and",
+        "path": "src/Processors/Executors/PipelineExecutor.cpp",
+        "side": "right",
+        "source_model": "GPT-5.2",
+        "from_line": 381,
+        "to_line": 386,
+        "category": "Code Defect",
+        "context": "Diff Level"
+      }
+    ],
+    "category": "Performance Optimizations"
+  },
+  {
+    "change_line_count": 297,
+    "project_main_language": "C++",
+    "source_commit": "abb50a4daa43abee9e6b263dd82e5e876c978c6a",
+    "target_commit": "a440ff7e4138c20ed2ac66977a199ebbf295e493",
+    "githubPrUrl": "https://github.com/FreeCAD/FreeCAD/pull/18688",
+    "comments": [
+      {
+        "is_ai_comment": true,
+        "note": "There appears to be a spelling error in this comment. The phrase \"an an external browser\" likely should be \"in an extern",
+        "path": "src/Gui/DlgOnlineHelpImp.h",
+        "side": "right",
+        "source_model": "Qwen-Coder-480B",
+        "from_line": 35,
+        "to_line": 35,
+        "category": "Maintainability and Readability",
+        "context": "Diff Level"
+      }
+    ],
+    "category": "Documentation Update"
+  },
+  {
+    "change_line_count": 23,
+    "project_main_language": "C#",
+    "source_commit": "2259f56c0786574cbde8624d031e778028352372",
+    "target_commit": "ec952ce3b70c87885ed756ffca2bec128f07c51b",
+    "githubPrUrl": "https://github.com/PowerShell/PowerShell/pull/24910",
+    "comments": [
+      {
+        "is_ai_comment": false,
+        "note": "The comment for nested module filtering incorrectly implies PSReadLine-specific behavior; update to explicitly state the",
+        "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+        "side": "right",
+        "source_model": "",
+        "from_line": 474,
+        "to_line": 474,
+        "category": "Maintainability and Readability",
+        "context": "File Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "The HashSet is initialized with PSModuleInfo objects from `curModule.NestedModules`, but since PSModuleInfo doesn't over",
+        "path": "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+        "side": "right",
+        "source_model": "GLM-4.7",
+        "from_line": 474,
+        "to_line": 479,
+        "category": "Code Defect",
+        "context": "Repo Level"
+      }
+    ],
+    "category": "Bug Fix"
+  },
+  {
+    "change_line_count": 140,
+    "project_main_language": "Java",
+    "source_commit": "76c06b58a4d9e8ee3fe3c0269a046987ad0502e5",
+    "target_commit": "3555a95e7b888335d9f72e432eb4f9fb9640e8cd",
+    "githubPrUrl": "https://github.com/alibaba/spring-ai-alibaba/pull/869",
+    "comments": [
+      {
+        "is_ai_comment": false,
+        "note": "Method name `aliTranslateFunction` should remove 'Function' suffix as it returns a service instance (AliTranslateService",
+        "path": "community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateAutoConfiguration.java",
+        "side": "right",
+        "source_model": "",
+        "from_line": 38,
+        "to_line": 38,
+        "category": "Maintainability and Readability",
+        "context": "File Level"
+      },
+      {
+        "is_ai_comment": false,
+        "note": "- Environment variables \"ACCESS_KEY_ID\" and \"ACCESS_KEY_SECRET\" lack service-specific prefixing and risk naming conflict",
+        "path": "community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateProperties.java",
+        "side": "right",
+        "source_model": "",
+        "from_line": 34,
+        "to_line": 34,
+        "category": "Security Vulnerability",
+        "context": "Repo Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "The validation logic strictly requires `sourceLanguage` and `targetLanguage` to be present, contradicting the `@JsonProp",
+        "path": "community/tool-calls/spring-ai-alibaba-starter-tool-calling-alitranslate/src/main/java/com/alibaba/cloud/ai/toolcalling/alitranslate/AliTranslateService.java",
+        "side": "right",
+        "source_model": "Gemini-3-Pro",
+        "from_line": 84,
+        "to_line": 92,
+        "category": "Code Defect",
+        "context": "Repo Level"
+      }
+    ],
+    "category": "Bug Fix"
+  },
+  {
+    "change_line_count": 46,
+    "project_main_language": "PHP",
+    "source_commit": "d205ac457960f73d781547540cde1732f69076ac",
+    "target_commit": "710b8bda565c411ecb23e8b670d0ba7f45d2b3f3",
+    "githubPrUrl": "https://github.com/appwrite/appwrite/pull/9999",
+    "comments": [
+      {
+        "is_ai_comment": false,
+        "note": "The domain validation logic (intended for proxy/DNS functionality) incorrectly uses `_APP_CONSOLE_DOMAIN`, which is rese",
+        "path": "app/controllers/api/console.php",
+        "side": "right",
+        "source_model": "",
+        "from_line": 46,
+        "to_line": 47,
+        "category": "Code Defect",
+        "context": "Diff Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "The environment variable lookup `System::getEnv('_APP_CONSOLE_DOMAIN', System::getEnv('_APP_DOMAIN', ''))` is called twi",
+        "path": "app/controllers/api/console.php",
+        "side": "right",
+        "source_model": "GLM-4.7",
+        "from_line": 46,
+        "to_line": 47,
+        "category": "Maintainability and Readability",
+        "context": "File Level"
+      },
+      {
+        "is_ai_comment": true,
+        "note": "When `_APP_CONSOLE_DOMAIN` is set, `_APP_DOMAIN` is used as a fallback but is not independently added to `$deniedDomains",
+        "path": "src/Appwrite/Platform/Modules/Proxy/Http/Rules/Redirect/Create.php",
+        "side": "right",
+        "source_model": "Gemini-3-Pro",
+        "from_line": 87,
+        "to_line": 88,
+        "category": "Security Vulnerability",
+        "context": "File Level"
+      }
+    ],
+    "category": "Bug Fix"
+  }
+]

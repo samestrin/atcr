@@ -1,0 +1,22 @@
+diff --git a/src/Identity/Extensions.Core/src/PasswordHasher.cs b/src/Identity/Extensions.Core/src/PasswordHasher.cs
+index cdd9a1ff3cece..0ca24182a41dc 100644
+--- a/src/Identity/Extensions.Core/src/PasswordHasher.cs
++++ b/src/Identity/Extensions.Core/src/PasswordHasher.cs
+@@ -249,6 +249,8 @@ private static bool VerifyHashedPasswordV2(byte[] hashedPassword, string passwor
+ 
+     private static bool VerifyHashedPasswordV3(byte[] hashedPassword, string password, out int iterCount, out KeyDerivationPrf prf)
+     {
++        const int MaxSaltSize = 1024 * 8; // 8 KiB
++
+         iterCount = default(int);
+         prf = default(KeyDerivationPrf);
+ 
+@@ -260,7 +262,7 @@ private static bool VerifyHashedPasswordV3(byte[] hashedPassword, string passwor
+             int saltLength = (int)ReadNetworkByteOrder(hashedPassword, 9);
+ 
+             // Read the salt: must be >= 128 bits
+-            if (saltLength < 128 / 8)
++            if (saltLength < 128 / 8 || saltLength > MaxSaltSize)
+             {
+                 return false;
+             }

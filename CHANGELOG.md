@@ -1,6 +1,52 @@
+## [35.16.3] - 2026-08-09
+
+### Added
+
+- **OS-level sandbox backend (`internal/sandbox`) — a config-gated alternative to `--no-sandbox` for `--auto-fix` validation and `--exec`.** Wraps native process confinement instead of a container: `sandbox-exec` on macOS, `bwrap` (Bubblewrap, namespace-based mount/network/PID isolation) on Linux. Opt in with `sandbox.fallback: os-level` in `.atcr/config.yaml`; it engages only when Docker's preflight has already failed and never as a first-choice backend while Docker is healthy. With `fallback` unset, behavior is byte-identical to before this sprint — a Docker preflight failure remains a hard refusal, and `--no-sandbox` remains the only way to run validation fully unsandboxed.
+- **Deny-by-default sandbox profile generation.** Both platforms generate a strict runtime profile scoped to the project directory (or its writable scratch copy) and `/tmp`: no outbound network egress, no read access to `$HOME` (so `~/.ssh` stays unreadable), and a narrow read-only allowlist for the host toolchain needed to execute at all. Proven with real kernel-level containment tests on both platforms (blocked write outside allowed dirs, blocked network egress) — executed on real macOS and Linux hosts, not merely unit-tested for shape.
+- **`Writable: true` support for the OS-level backend**, so `--auto-fix` (which always validates against a writable copy) can use the fallback, not just read-only `--exec` reproduction. The writable copy is made host-side, in Go, before the sandboxed process spawns — bounded in size/entry count and refuses to traverse a symlink out of the snapshot.
+- **Explicit "neither backend usable" warning**, surfaced identically from both `ResolveExecBackend` and `ResolveAutoFixSandbox` when Docker's preflight fails and the OS-level fallback (if configured) also fails its own preflight — never a silent, partial, or implicit success.
+- `docs/auto-fix.md` documents the new `sandbox.fallback: os-level` field, what it engages under, and what its containment guarantees give up relative to the Docker backend (no resource caps, no image, host toolchain only, no automatic Go module cache warming). `docs/execution.md`'s "Docker is the only implementation today" claim is corrected.
+
+### Fixed
+
+- **Sandboxed child processes now get a sanitized `PATH`** instead of inheriting the operator's verbatim — an empty `PATH` element resolves to the current directory, which is the reviewed repository under the sandbox, so a repo could otherwise supply the `go`/`npm`/etc. binary that runs the trusted validate command. Legitimate group-writable toolchain directories (e.g. Homebrew's `/opt/homebrew/bin`) are still accepted.
+- **URL-embedded credentials are scrubbed unconditionally by the log redactor**, closing a gap where a credential embedded in a logged URL survived the base redaction pass.
+- **The `--exec` snapshot gate now checks the actual directory a dirty-worktree run executes in** (the detached temp-snapshot copy), not just the repo root — closing a case where the gate validated one directory while the run used another.
+- **The os-level fallback no longer engages on a Docker *configuration* fault** (as opposed to a genuine unreachable-daemon preflight failure) — config faults now refuse the run rather than silently downgrading to a weaker backend.
+- **The fallback-engaged warning is deferred until the caller's own gates accept the run**, instead of firing before it's known whether the run will actually proceed.
+- A dedicated review-scoped redactor is now installed on the standalone `atcr verify` context, so it no longer logs absolute repository paths unredacted.
+
+*Shipped via /execute-sprint + /execute-code-review + /resolve-td (sprint 35.16.3)*
+
+## [35.16.2] - 2026-08-07
+
+### Added
+
+- **`standard-v1` benchmark suite content is now bundled at `benchmarks/standard-v1/`.** `docs/benchmark.md` previously pointed at an external `github.com/atcr/benchmark-suite` repo that was never created, so `atcr benchmark verify`/`run`/`export` had nothing real to run against — only the 2-case unit-test fixtures. The suite ships 17 cases spanning `correctness`, `maintainability`, `performance`, and `security`, drawn from a seeded sample of [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0, arXiv:2601.19494) — 1,505 review comments over 196 real pull requests across 50 repositories and 10 languages. Attribution is in `benchmarks/standard-v1/NOTICE.md`; the suite is content-addressed by `suite_version` 1.0.0 and a reproducibility hash.
+- **`cmd/ingest-alibaba-benchmark`** regenerates that suite from the upstream dataset. It is an authoring-time tool — its output is committed, so neither CI nor a benchmark run reaches the network. Diffs come from GitHub's compare API by default, with a `-clone` fallback for when that is unavailable. The dataset URL is pinned to an immutable commit so a record added upstream cannot silently reshuffle the seeded selection.
+- **`otto`'s worked example now labels a readability defect `maintainability`**, matching the dominant ground-truth category in the new suite. It previously emitted `style` for exactly that defect shape — the only shipped persona whose example did — which made recall on `maintainability` noisy across the panel.
+
+### Changed
+
+- `docs/benchmark.md`, plus the `internal/benchmark` and `cli/benchmark` package docs, now point at `benchmarks/standard-v1/` instead of the nonexistent external repo.
+
+### Fixed
+
+- **The reviewer `CATEGORY` vocabulary was never an allowlist, and `personas/_base.md` is not a shared prefix.** An earlier revision of this epic added `maintainability` to the vocabulary line in `personas/_base.md` on the premise that reviewers had to be prompted to emit it. That edit reached zero panel members and has been reverted: `_base.md` is a resolution *fallback* (`internal/registry/persona.go` levels 4-5), consulted only for an agent that has no persona file of its own, and all nine shipped personas resolve to their own file. Those files carry no category enumeration at all, so `maintainability` was always emittable — there is no allowlist to widen. Adding one to nine live production prompts would be a new behavioral restriction the epic never scoped, so the constraint stays absent and this note is the record of that decision.
+- `.gitattributes` marks the suite `-text`. The reproducibility hash is computed over raw diff bytes and one vendored diff carries mixed CRLF/LF, so a checkout with `core.autocrlf=true` would otherwise produce a different hash than the published one.
+
+*Shipped via /execute-epic (epic 35.16.2)*
+
 ## [Unreleased]
 
 ### Changed
+
+- **Breaking for custom personas — a clean review is now declared, not implied.** Every persona prompt previously ended "if there are no findings, emit nothing", so a reviewer with nothing to report returned an empty response. That made an empty response ambiguous: it is also what a dead call looks like when the provider returns a null completion without setting `finish_reason=length`, and such a slot was recorded as a clean zero-finding review — indistinguishable, on a leaderboard, from a reviewer that actually read the diff. Agent `brad` hit exactly this on four cases of the 35.16.2 dry-run while `kai`, which did set the truncation flag, failed over correctly.
+  - A reviewer with nothing to report now emits the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`), matched case-insensitively and whitespace-tolerantly. All 24 bundled prompts (`personas/_base.md`, the nine built-ins, and the fourteen community personas) were updated.
+  - An **empty** reviewer response is now failed over to the slot's backup, and fails the slot if there is none — it is treated as a dead call, not a clean review.
+  - A response that carries content but yields zero parseable findings is **not** failed over — that would spend the backup model on every plausible clean review. It is recorded instead: `AgentStatus.unparseable_response` in `status.json` separates "reviewed and found nothing" from "emitted prose no parser could use", which `findings_count: 0` alone cannot.
+  - **Custom personas must be updated.** A persona still instructing silence will report failures on exactly the reviews it handled correctly. `personas.TestEveryPersona_InstructsTheCleanReviewSentinel` pins this for bundled personas; `docs/personas-authoring.md` documents it for new ones.
 
 - **Breaking — the diff-smell scanner is now top-level `atcr diff-smell`.** `verify` names three unrelated operations and is simultaneously a leaf command and a group, so `atcr verify diff` read as "verify the diff" when it actually means "scan the diff for over-simplification smells". The promotion renames into vocabulary the analyzer, the doc, and the upstream tool already used. `atcr verify diff` keeps working as a **hidden deprecated alias for one minor version**: it is gone from `atcr verify --help` and prints a deprecation note on **stderr** at use (cobra's own `Deprecated` field was unusable — it prints to stdout, which would break the payload-only `--json` guarantee). Flags, output, verdicts, and exit codes are identical under both spellings. The version-discoverability recipe in `docs/diff-smell.md` now probes `atcr diff-smell --help` first with an `atcr verify diff` fallback, so CI hooks pasted during the alias window do not silently skip the gate.
 - **Breaking — `--since` and `--prune` now share one grammar.** Two independent `ParseSince` implementations backed the same flag name with different meanings: `atcr history --since 3m` was three MINUTES (it delegated to `time.ParseDuration`), while `atcr leaderboard --since 3m` was three MONTHS. Both accepted the input without a warning and the resulting windows differed by roughly 43,200x. The new `internal/timewindow` package owns the single grammar — `Nd` days, `Nw` weeks, `Nm` 30-day months, or `all` — and both commands parse through it.

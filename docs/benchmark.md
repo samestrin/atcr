@@ -19,8 +19,10 @@ public submission envelope. The public board accepts only `source ==
 "benchmark-suite"` submissions, so production runs cannot be passed off as suite
 scores.
 
-> **Suite content is external.** The curated `standard-v1` suite **content** lives
-> in the external `github.com/atcr/benchmark-suite` repo (it is not bundled here).
+> **Suite content is bundled.** The curated `standard-v1` suite **content** lives
+> in [`benchmarks/standard-v1/`](../benchmarks/standard-v1/) in this repo, ingested
+> from [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0 —
+> see [`benchmarks/standard-v1/NOTICE.md`](../benchmarks/standard-v1/NOTICE.md)).
 > The tooling here operates against any suite directory that satisfies the contract
 > below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
@@ -277,5 +279,8 @@ the suite identity (`source`, `suite`, `suite_version`).
 - [`docs/scorecard.md`](scorecard.md) — the local scorecard store, the
   `leaderboard --export` production submission, and the shared public reviewer
   schema + privacy model.
-- `github.com/atcr/benchmark-suite` — the external repo holding the curated
-  `standard-v1` suite content.
+- [`benchmarks/standard-v1/`](../benchmarks/standard-v1/) — the curated
+  `standard-v1` suite content bundled in this repo, with its attribution in
+  [`NOTICE.md`](../benchmarks/standard-v1/NOTICE.md). Regenerate it with
+  `go run ./cmd/ingest-alibaba-benchmark` — which refuses to rebuild over an
+  already-published `suite_version` unless you pass `-force`.

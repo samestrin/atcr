@@ -13,6 +13,25 @@ import (
 // data.
 const Version = "# atcr-findings/v1"
 
+// NoFindingsSentinel is what a reviewer emits when it has nothing to report.
+//
+// It exists so a clean review is a POSITIVE signal rather than silence. The
+// fanout engine treats an empty reviewer response as a dead call and fails the
+// slot over to its backup — a provider returning a null completion without
+// setting finish_reason=length is otherwise recorded as a clean review, which
+// on a leaderboard is the opposite of what happened. That gate is only safe if
+// a genuinely clean review looks different from silence, which is what this
+// sentinel provides. Every persona prompt instructs it.
+const NoFindingsSentinel = "NO FINDINGS"
+
+// IsNoFindings reports whether a reviewer response is the explicit clean-review
+// sentinel. Matching is case-insensitive and ignores surrounding whitespace —
+// the sentinel is a model-produced token, so exact-byte matching would turn a
+// trailing newline into a spurious anomaly.
+func IsNoFindings(content string) bool {
+	return strings.EqualFold(strings.TrimSpace(content), NoFindingsSentinel)
+}
+
 // versionPrefix matches any atcr-findings version header so a wrong version can
 // be reported distinctly from a missing one.
 const versionPrefix = "# atcr-findings/"

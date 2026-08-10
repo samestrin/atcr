@@ -5,16 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	reclib "github.com/samestrin/atcr/reconcile"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
+	reclib "github.com/samestrin/atcr/reconcile"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -331,4 +335,269 @@ func TestVerifyCmd_RepoFlagInHelp(t *testing.T) {
 	isolate(t)
 	_, help := execCmdCapture(t, "verify", "--help")
 	require.Contains(t, help, "--repo")
+}
+
+// --- 03-04: "neither backend usable" surfacing (--exec side) ----------------
+
+// TestResolveExec_NeitherBackendUsableIsAUsageErrorNamingBoth pins the --exec
+// half of the cross-resolver consistency requirement: the same combined failure
+// must reach the operator through the same shape it does on --auto-fix — a
+// refusal naming both attempted backends, exit 2, with the sentinel still
+// matchable through the CLI's error wrapping.
+//
+// The seam is stubbed rather than driven by real binaries because the outcome
+// under test is "neither backend is usable", which on a host that HAS a working
+// sandbox-exec/bwrap cannot be produced at all — the fallback would succeed.
+func TestResolveExec_NeitherBackendUsableIsAUsageErrorNamingBoth(t *testing.T) {
+	combined := fmt.Errorf("--exec preflight failed: docker: daemon unreachable; os-level fallback also failed: sandbox-exec not found: %w", verify.ErrSandboxNoUsableBackend)
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return nil, nil, 0, combined
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "matching the pre-existing single-backend refusal's exit code")
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+	assert.ErrorIs(t, err, verify.ErrSandboxNoUsableBackend,
+		"the sentinel must survive the CLI's usageError wrap, or callers must resort to substring matching")
+	assert.Nil(t, backend, "never a backend alongside a refusal")
+	assert.Nil(t, testCmd)
+	assert.Zero(t, timeout)
+}
+
+// TestResolveExec_PreStoryRefusalIsUnchanged is the non-regression bar: an
+// operator who never configured a fallback sees the identical message, exit
+// code, and (absence of) sentinel as before this story.
+func TestResolveExec_PreStoryRefusalIsUnchanged(t *testing.T) {
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return nil, nil, 0, errors.New("--exec preflight failed: docker daemon unreachable")
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	_, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+	assert.Equal(t, "--exec preflight failed: docker daemon unreachable", err.Error())
+	assert.NotContains(t, err.Error(), "os-level")
+	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
+}
+
+// TestResolveExec_UnstubbedSeamStillReachesTheRealResolver pins the seam to
+// production. Both tests above replace it, and the only other --exec test
+// returns at the nil-Sandbox guard before reaching it — so the 4.11.A reviewer
+// demonstrated that neutering the seam's initializer to return (nil, nil, 0, nil)
+// left the ENTIRE cli suite green, i.e. `--exec` silently downgraded to a
+// non-exec run instead of refusing, undetected.
+//
+// This drives the real verify.ResolveExecBackend with a docker shim that fails
+// preflight, so the refusal can only come from the production resolver.
+func TestResolveExec_UnstubbedSeamStillReachesTheRealResolver(t *testing.T) {
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		DockerPath:  fakeDockerShim(t, false), // daemon unreachable
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test"},
+	}}
+
+	backend, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err, "a failing preflight must refuse through the real resolver")
+	assert.Equal(t, 2, exitCode(err))
+	assert.Contains(t, err.Error(), "preflight")
+	assert.Nil(t, backend)
+}
+
+// TestResolveExec_NilContextDoesNotPanic covers the bare-command shape cobra
+// leaves with a nil context. Production always uses ExecuteContext, so this is
+// defensive — but it became reachable the moment the test above started driving
+// the real resolver, which would otherwise hand nil to exec.CommandContext.
+func TestResolveExec_NilContextDoesNotPanic(t *testing.T) {
+	cmd := newVerifyCmd() // deliberately NOT SetContext
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		DockerPath:  fakeDockerShim(t, false),
+		Image:       "alpine:3.20",
+		TestCommand: []string{"go", "test"},
+	}}
+
+	require.NotPanics(t, func() {
+		_, _, _, err := resolveExec(cmd, proj)
+		require.Error(t, err)
+	})
+}
+
+// TestResolveExec_RunsTheSnapshotPreCheckToo closes the resolver-drift the
+// Phase 4 gate identified: the TD-019 pre-check was wired into --auto-fix only,
+// so under the fallback an unusable repo path was discovered by --exec only when
+// a skeptic's first run_tests call faulted — which the reviewing model can
+// misread as a failing test and turn into a false finding.
+func TestResolveExec_RunsTheSnapshotPreCheckToo(t *testing.T) {
+	var gotWritable bool
+	var gotDir string
+	origCheck := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, writable bool) error {
+		gotDir, gotWritable = dir, writable
+		return errors.New("os-level sandbox cannot contain this directory: SnapshotDir is a user's home directory")
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = origCheck })
+
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: registry.SandboxFallbackOSLevel}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err, "an unusable repo path must refuse at the gate, not at the first tool call")
+	assert.Equal(t, 2, exitCode(err))
+	assert.Contains(t, err.Error(), "home directory")
+	assert.Nil(t, backend)
+	assert.False(t, gotWritable, "--exec call sites leave RunSpec.Writable false, so the read-only shape is the one to check")
+	wantRoot, wantErr := filepath.Abs(".")
+	require.NoError(t, wantErr)
+	assert.Equal(t, wantRoot, gotDir, "the checked directory must be the resolved repo root")
+}
+
+// TestResolveExec_CheapPathCheckRunsBeforeBackendResolution pins the ordering
+// contract from validateAutoFixBackend: a bad --repo-root must refuse before the
+// resolver spawns a docker preflight container. A backend resolution that runs
+// first would make this test see the backend error instead.
+func TestResolveExec_CheapPathCheckRunsBeforeBackendResolution(t *testing.T) {
+	var backendCalled bool
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		backendCalled = true
+		return nil, nil, 0, errors.New("backend should not be reached")
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	require.NoError(t, cmd.Flags().Set("repo-root", "/does/not/exist"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	_, _, _, err := resolveExec(cmd, proj)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist or is not a directory")
+	assert.False(t, backendCalled, "cheap path check must run before backend resolution")
+}
+
+// TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath pins the review
+// call site's flag surface: `atcr review` registers --repo as the GitHub
+// owner/name target and no --repo-root (cli/reconcile_test.go pins that help
+// surface), so resolveExec must not feed that command to normalizeRepoFlag —
+// which treats --repo as the deprecated PATH alias and hard-refuses
+// `--repo owner/name` with "--repo-root \"owner/name\" does not exist or is
+// not a directory", naming a flag review does not have. On this call site the
+// gate's root is the working tree — the root the review run itself uses.
+func TestResolveExec_ReviewCallSiteRepoFlagIsNotMisreadAsAPath(t *testing.T) {
+	// Collect every gated directory, not just the last. resolveExec gates the
+	// repo root AND os.TempDir() (the dirty-worktree snapshot root the run may
+	// actually use), so a single-value capture would silently record whichever
+	// call happened to come last. What this test is about is that review's
+	// --repo owner/name never reaches normalizeRepoFlag — so the assertion is
+	// that the working-tree root is AMONG the gated dirs.
+	var gotDirs []string
+	origCheck := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, _ bool) error {
+		gotDirs = append(gotDirs, dir)
+		return nil
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = origCheck })
+
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: "docker"}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+
+	cmd := newReviewCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	require.NoError(t, cmd.Flags().Set("repo", "owner/name"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"},
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.NoError(t, err, "review's --repo is owner/name, not a path — it must never reach normalizeRepoFlag")
+	require.NotNil(t, backend)
+	assert.Equal(t, []string{"go", "test"}, testCmd)
+	assert.Equal(t, time.Minute, timeout)
+	wantRoot, wantErr := filepath.Abs(".")
+	require.NoError(t, wantErr)
+	assert.Contains(t, gotDirs, wantRoot, "on the review call site the gate checks the working-tree root")
+}
+
+// TestResolveExec_WorkingBackendSurvivesTheSnapshotGate is the happy-path bar
+// for the TD-019 pre-check: with a cleanly-resolved backend and the REAL
+// checkOSLevelSnapshotFn (deliberately not stubbed), resolveExec must return
+// the backend, test command and timeout intact. Every sibling test either
+// stubs the gate or drives a failing preflight, so without this the gate
+// could reject every legitimate --exec run with no test turning red.
+func TestResolveExec_WorkingBackendSurvivesTheSnapshotGate(t *testing.T) {
+	orig := resolveExecBackendFn
+	resolveExecBackendFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
+		return &nameOnlyBackend{name: "docker"}, []string{"go", "test"}, time.Minute, nil
+	}
+	t.Cleanup(func() { resolveExecBackendFn = orig })
+	// checkOSLevelSnapshotFn is deliberately NOT stubbed: the real gate runs.
+
+	cmd := newVerifyCmd()
+	cmd.SetContext(context.Background())
+	require.NoError(t, cmd.Flags().Set("exec", "true"))
+	proj := &registry.ProjectConfig{Sandbox: &registry.SandboxConfig{
+		Image: "alpine:3.20", TestCommand: []string{"go", "test"}, Fallback: registry.SandboxFallbackOSLevel,
+	}}
+
+	backend, testCmd, timeout, err := resolveExec(cmd, proj)
+
+	require.NoError(t, err, "a working backend must survive the real snapshot gate")
+	require.NotNil(t, backend)
+	assert.Equal(t, "docker", backend.Name())
+	assert.Equal(t, []string{"go", "test"}, testCmd)
+	assert.Equal(t, time.Minute, timeout)
+}
+
+// nameOnlyBackend is a sandbox.Backend that exists to report a Name(); the
+// pre-check dispatches on that and nothing else runs it.
+type nameOnlyBackend struct{ name string }
+
+func (b *nameOnlyBackend) Name() string                    { return b.name }
+func (b *nameOnlyBackend) Preflight(context.Context) error { return nil }
+func (b *nameOnlyBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
+	return sandbox.RunResult{}, errors.New("nameOnlyBackend does not execute")
 }

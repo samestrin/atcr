@@ -44,7 +44,17 @@ var ErrAutoFixSandboxUnconfigured = errors.New("--auto-fix requires a [sandbox] 
 // as the backend's fallback default and can never silently shrink the operator's
 // validation budget.
 //
-// Writable /work overlay (non-Go validators supported): the validation runs with
+// Writable /work overlay (non-Go validators supported) — WHEN THE DOCKER BACKEND
+// IS RETURNED. Since the os-level fallback landed, this function has two return
+// shapes and only the paragraph below describes the Docker one. Under the
+// os-level backend none of its mechanics hold: the copy is a host-side Go walk
+// (sandbox.seedWritableCopy), there is no image and no /work mount on darwin
+// (the run chdirs into the scratch copy instead), and the requirement is that
+// the HOST's PATH carries the toolchain rather than the image. The guarantee
+// that survives on both is the one that matters to a caller: the snapshot is not
+// mutated and the writable copy is ephemeral.
+//
+// Docker backend specifics: the validation runs with
 // the patched working tree mounted read-only at /src and copied via `cp -a` into a
 // writable /work tmpfs (RunSandboxedValidation sets RunSpec.Writable; see internal/
 // sandbox/docker.go). A validate_command that writes UNDER the project dir — npm
@@ -96,7 +106,143 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	}
 	backend := sandbox.NewDockerBackend(cfg)
 	if err := backend.Preflight(ctx); err != nil {
+		// The os-level fallback, structurally identical to ResolveExecBackend's
+		// branch and sharing its seam, its gate helper, and its ONE sentinel — the
+		// consistency here is a requirement, not a style preference: an operator
+		// who learns what `--exec` does on a Docker-less host must not find
+		// `--auto-fix` behaving differently. Only the return shape differs (no
+		// []string/timeout slot; the auto-fix budget travels on RunSpec.Timeout).
+		//
+		// This is a different bypass from `enabled == false` above: --no-sandbox
+		// accepts unsandboxed host execution, sandbox.fallback substitutes a
+		// still-contained backend. Neither implies the other.
+		// Same three-part gate as ResolveExecBackend, for the same reasons: opted
+		// in, not interrupted, and Docker genuinely unavailable rather than
+		// misconfigured. An operator who learns what --exec does on a Docker-less
+		// host must not find --auto-fix classifying causes differently.
+		if osLevelFallbackConfigured(sc) && ctx.Err() == nil && errors.Is(err, sandbox.ErrDockerUnavailable) {
+			osBackend := newOSLevelBackendFn(osLevelFallbackConfig(sc))
+			if osErr := osBackend.Preflight(ctx); osErr != nil {
+				// Same post-preflight interrupt re-check as ResolveExecBackend:
+				// an osErr wrapping context.Canceled means the operator pressed
+				// ctrl-C mid-preflight — an interrupt, not a
+				// neither-backend-usable outcome — so the sentinel stays off and
+				// the both-causes shape is returned without it.
+				if ctx.Err() != nil || errors.Is(osErr, context.Canceled) || errors.Is(osErr, context.DeadlineExceeded) {
+					return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w", boundedCause{err}, osErr)
+				}
+				// boundedCause for the same reason as the --exec resolver: chain
+				// preserved, rendered text bounded before it can reach stderr.
+				return nil, fmt.Errorf("--auto-fix sandbox preflight failed: docker: %w; os-level fallback also failed: %w: %w", boundedCause{err}, osErr, ErrSandboxNoUsableBackend)
+			}
+			// Deferred identically to ResolveExecBackend: --auto-fix's gate checks
+			// run after this returns and can still refuse.
+			return withPendingFallbackWarning(osBackend, sc, err), nil
+		}
 		return nil, fmt.Errorf("--auto-fix sandbox preflight failed: %w", err)
 	}
 	return backend, nil
+}
+
+// checkToolchainReachableFn is the seam CheckOSLevelToolchainReachable uses to
+// reach sandbox.CheckToolchainReachable, mirroring checkSnapshotUsableFn. A test
+// can stage a refusal without needing a host whose PATH actually loses the tool.
+var checkToolchainReachableFn = sandbox.CheckToolchainReachable
+
+// CheckOSLevelToolchainReachable refuses, at the gate, a run whose configured
+// command the sandbox's sanitized PATH cannot resolve — when, and only when, the
+// os-level backend was selected.
+//
+// It is the sibling of CheckOSLevelSnapshotUsable and shares its dispatch rules
+// exactly: nil (sandboxing off) and the docker backend (which supplies its own
+// image PATH) are the recognized no-check shapes, and ANY other backend it cannot
+// positively identify is REFUSED rather than skipped. Dispatching on name alone
+// would be fail-open for a decorating wrapper, which reports its own Name().
+//
+// The gap it closes: the workload's PATH is sanitized, so an operator's
+// `test_command` / `validate_command` can be perfectly runnable on the host and
+// unreachable inside the run. Left to the run, that is a `command not found`
+// arriving mid-review — which a skeptic can misread as a real validation failure
+// — or, under --auto-fix, arriving after the patch has already been applied.
+func CheckOSLevelToolchainReachable(backend sandbox.Backend, cmd []string) error {
+	if backend == nil || backend.Name() == registry.SandboxBackendDocker {
+		return nil
+	}
+	if backend.Name() != registry.SandboxFallbackOSLevel {
+		return fmt.Errorf("unrecognized sandbox backend %q: refusing to skip the os-level toolchain check (fail-closed)", backend.Name())
+	}
+	return checkToolchainReachableFn(cmd)
+}
+
+// checkSnapshotUsableFn is the seam CheckOSLevelSnapshotUsable uses to call
+// sandbox.CheckSnapshotUsable. Tests swap it to assert the writable shape they
+// pass is forwarded unchanged.
+var checkSnapshotUsableFn = sandbox.CheckSnapshotUsable
+
+// CheckOSLevelSnapshotUsable pre-validates the directory a sandboxed validation
+// will actually be handed, when — and only when — the os-level backend was
+// selected. It returns nil for a nil backend (sandboxing off) and for the
+// docker backend (which enforces its own mounts), and REFUSES any other
+// backend it cannot positively identify: dispatching on name alone is
+// fail-open for a decorating wrapper, which reports its own Name() and would
+// otherwise turn this gate into a silent no-op.
+//
+// It is a SIBLING of ResolveAutoFixSandbox rather than a parameter on it. The
+// resolver's three pinned regression tests call it in its two-argument shape, so
+// threading the apply target through the resolver would force edits to all
+// three, which is exactly the failure mode AC 03-03 names. The caller already
+// holds the resolved target, so passing it here costs nothing.
+//
+// WHY sc IS A PARAMETER even though no field of it changes the verdict today.
+// This looked like a dead argument and an earlier review proposed deleting it;
+// it is inert by DESIGN, not by oversight, and the design is load-bearing:
+//
+//   - The config is reconstructed HERE, via osLevelFallbackConfig(sc), rather
+//     than accepted pre-built from the caller. So the day OSLevelConfig gains a
+//     config-sourced field (a ToolPath or ScratchDir from the operator's sandbox
+//     block), this check picks it up automatically, with no edit here and — the
+//     part that matters — no change to either resolver's signature.
+//   - Dropping the parameter would pin the check to DefaultOSLevelConfig forever.
+//     The gate would then keep reporting success while silently validating
+//     something other than what the run uses: a fail-OPEN drift, and the exact
+//     future risk the TD row that proposed the deletion named itself.
+//   - Accepting the resolver's already-built OSLevelConfig instead would require
+//     ResolveExecBackend/ResolveAutoFixSandbox to RETURN it, changing the return
+//     shapes AC 03-03 pins. Reconstructing from sc gets the same guarantee at no
+//     such cost.
+//
+// TestCheckOSLevelSnapshotUsable_ThreadsOperatorConfigIntoTheCheck is the
+// mechanical proof that the operator's value reaches the checker, so this wiring
+// cannot rot unobserved.
+//
+// The gap this closes (TD-019): Preflight probes its own temp snapshot, so a
+// green preflight says nothing about the caller's repository root. A repo
+// checked out at $HOME, or at a path containing a sandbox-exec profile
+// metacharacter, passes resolution and then fails at Run — for --auto-fix, after
+// the patch has already been applied, surfacing as an opaque "validation could
+// not run". Refusing here turns that into the generator's own specific message,
+// before anything is touched.
+func CheckOSLevelSnapshotUsable(backend sandbox.Backend, sc *registry.SandboxConfig, snapshotDir string, writable bool) error {
+	// Fail-closed dispatch: nil (sandboxing off) and the docker backend (it
+	// enforces its own mounts) are the recognized no-check shapes; the os-level
+	// backend gets the snapshot check below. ANY other name is refused outright
+	// rather than passed — a decorating wrapper reports its own Name(), so
+	// name-based pass-through would silently no-op the gate for exactly the
+	// backend shape it exists to check.
+	if backend == nil || backend.Name() == registry.SandboxBackendDocker {
+		return nil
+	}
+	if backend.Name() != registry.SandboxFallbackOSLevel {
+		return fmt.Errorf("unrecognized sandbox backend %q: refusing to skip the os-level snapshot check (fail-closed)", backend.Name())
+	}
+	// writable is a parameter, not a hardcoded true, because the two call sites
+	// genuinely differ and the shapes are NOT interchangeable — measured: for
+	// os.TempDir() the read-only check passes while the writable one refuses
+	// (the scratch dir would sit inside the snapshot). --auto-fix always runs
+	// Writable (RunSandboxedValidation hardcodes it); --exec never does. Checking
+	// the wrong shape would validate a run that never happens.
+	if err := checkSnapshotUsableFn(osLevelFallbackConfig(sc), snapshotDir, writable); err != nil {
+		return fmt.Errorf("os-level sandbox cannot contain this directory: %w", err)
+	}
+	return nil
 }

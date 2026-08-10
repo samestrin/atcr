@@ -22,6 +22,23 @@ import (
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer(?:\s+|%20)[A-Za-z0-9._-]+`)
 	skKeyPattern       = regexp.MustCompile(`(?i)sk-[A-Za-z0-9._-]+`)
+	// urlCredentialPattern matches the userinfo of a URL carrying an inline
+	// password — the `tcp://user:pass@host:2376` shape an operator's DOCKER_HOST
+	// can take. The docker preflight cause embeds the daemon's raw stderr and the
+	// joined `docker run` argv, so without this the password reached stderr and CI
+	// logs verbatim on the fallback-engaged warning.
+	//
+	// A `user:pass` COLON PAIR is required, deliberately. A pattern matching any
+	// `user@host` would redact `ssh://git@github.com/owner/repo` — ubiquitous in
+	// this tool's own output, and carrying no secret at all. Requiring the colon
+	// keeps every credential-less URL byte-identical.
+	//
+	// The character classes exclude `/`, `@`, `:` and whitespace in the user part
+	// so the match cannot jump a path separator or swallow a following field —
+	// the same over-consumption concern that anchors the token patterns above to
+	// their charset rather than a greedy \S+. Only the userinfo is replaced; the
+	// scheme and host survive so the operator can still tell WHICH endpoint failed.
+	urlCredentialPattern = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.\-]*://)[^/@\s:]+:[^/@\s]*@`)
 )
 
 // Redactor scrubs secrets and absolute paths from log messages before they are
@@ -102,6 +119,14 @@ func (r *Redactor) Redact(msg string) string {
 	}
 	if containsFoldASCII(out, "sk-") {
 		out = skKeyPattern.ReplaceAllString(out, "[redacted]")
+	}
+	// Same always-on tier as the token shapes above, NOT gated on the review root:
+	// a credential in a URL is the same risk class as a bearer token, and the
+	// redactor active where this leak was found (cli/main.go's NewRedactor("")) has
+	// no root at all — gating it there would leave it off in exactly the place it
+	// is needed. "://" is the cheap prefilter, matching the guards above.
+	if strings.Contains(out, "://") {
+		out = urlCredentialPattern.ReplaceAllString(out, "${1}[redacted]@")
 	}
 
 	out = relativizePaths(out, r.root)

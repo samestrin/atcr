@@ -50,7 +50,7 @@ func (r *execEvidenceRecorder) Execute(ctx context.Context, name string, args js
 		r.lastName = name
 		// Copy: the caller's json.RawMessage may alias a reused decode buffer.
 		r.lastArgs = append(json.RawMessage(nil), args...)
-		if ev := parseExecEvidence(res.Content); ev != nil && ev.ExitCode != 0 {
+		if ev := parseExecEvidence(res.Content, res.BackendName); ev != nil && ev.ExitCode != 0 {
 			r.last = ev
 		}
 	}
@@ -103,11 +103,13 @@ func (r *execEvidenceRecorder) reproduceAgain(ctx context.Context, exec bool) (s
 	if verdict != reclib.VerdictConfirmed {
 		return verdict, nil
 	}
-	return verdict, &reconcile.EvidenceExec{Command: rr2.Command, ExitCode: rr2.ExitCode, OutputExcerpt: rr2.Output}
+	return verdict, &reconcile.EvidenceExec{Command: rr2.Command, ExitCode: rr2.ExitCode, OutputExcerpt: rr2.Output, BackendName: res2.BackendName}
 }
 
 // parseExecEvidence reconstructs an EvidenceExec from the deterministic text that
-// (*tools.Dispatcher).runInSandbox renders for a run_tests/run_script result:
+// (*tools.Dispatcher).runInSandbox renders for a run_tests/run_script result.
+// backendName is carried separately by tools.ToolResult so the evidence trail can
+// distinguish docker-backed runs from os-level fallback runs:
 //
 //	$ <command>
 //	exit code: <N>[ (timed out)]
@@ -115,7 +117,7 @@ func (r *execEvidenceRecorder) reproduceAgain(ctx context.Context, exec bool) (s
 //
 // It returns nil when the content does not match that shape (e.g. a tool error),
 // so a malformed or non-exec result simply yields no evidence.
-func parseExecEvidence(content string) *reconcile.EvidenceExec {
+func parseExecEvidence(content, backendName string) *reconcile.EvidenceExec {
 	rr, ok := parseRunResult(content)
 	if !ok {
 		return nil
@@ -124,6 +126,7 @@ func parseExecEvidence(content string) *reconcile.EvidenceExec {
 		Command:       rr.Command,
 		ExitCode:      rr.ExitCode,
 		OutputExcerpt: rr.Output,
+		BackendName:   backendName,
 	}
 }
 

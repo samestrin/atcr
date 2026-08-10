@@ -1,0 +1,186 @@
+diff --git a/crates/api_models/src/admin.rs b/crates/api_models/src/admin.rs
+index 77488262c75..57cc3bb0d86 100644
+--- a/crates/api_models/src/admin.rs
++++ b/crates/api_models/src/admin.rs
+@@ -16,6 +16,7 @@ use common_utils::{
+ use masking::ExposeInterface;
+ use masking::{PeekInterface, Secret};
+ use serde::{Deserialize, Serialize};
++#[cfg(feature = "v1")]
+ use url;
+ use utoipa::ToSchema;
+ 
+diff --git a/crates/api_models/src/events/payment.rs b/crates/api_models/src/events/payment.rs
+index ccda5fd402d..49515972a5d 100644
+--- a/crates/api_models/src/events/payment.rs
++++ b/crates/api_models/src/events/payment.rs
+@@ -10,28 +10,34 @@ use super::{
+     not(feature = "payment_methods_v2")
+ ))]
+ use crate::payment_methods::CustomerPaymentMethodsListResponse;
+-#[cfg(feature = "v1")]
+-use crate::payments::{PaymentListFilterConstraints, PaymentListResponseV2};
+ #[cfg(all(feature = "v2", feature = "payment_methods_v2"))]
+-use crate::{events, payment_methods::CustomerPaymentMethodsListResponse};
++use crate::payment_methods::CustomerPaymentMethodsListResponse;
++#[cfg(feature = "v1")]
++use crate::{
++    payment_methods::{self},
++    payments::{
++        ExtendedCardInfoResponse, PaymentIdType, PaymentListFilterConstraints,
++        PaymentListResponseV2, PaymentsApproveRequest, PaymentsCancelRequest,
++        PaymentsCaptureRequest, PaymentsCompleteAuthorizeRequest,
++        PaymentsDynamicTaxCalculationRequest, PaymentsDynamicTaxCalculationResponse,
++        PaymentsExternalAuthenticationRequest, PaymentsExternalAuthenticationResponse,
++        PaymentsIncrementalAuthorizationRequest, PaymentsManualUpdateRequest,
++        PaymentsManualUpdateResponse, PaymentsPostSessionTokensRequest,
++        PaymentsPostSessionTokensResponse, PaymentsRejectRequest, PaymentsRetrieveRequest,
++        PaymentsStartRequest,
++    },
++};
+ use crate::{
+     payment_methods::{
+-        self, ListCountriesCurrenciesRequest, ListCountriesCurrenciesResponse,
++        ListCountriesCurrenciesRequest, ListCountriesCurrenciesResponse,
+         PaymentMethodCollectLinkRenderRequest, PaymentMethodCollectLinkRequest,
+         PaymentMethodCollectLinkResponse, PaymentMethodDeleteResponse, PaymentMethodListRequest,
+         PaymentMethodListResponse, PaymentMethodMigrateResponse, PaymentMethodResponse,
+         PaymentMethodUpdate,
+     },
+     payments::{
+-        self, ExtendedCardInfoResponse, PaymentIdType, PaymentListConstraints, PaymentListFilters,
+-        PaymentListFiltersV2, PaymentListResponse, PaymentsAggregateResponse,
+-        PaymentsApproveRequest, PaymentsCancelRequest, PaymentsCaptureRequest,
+-        PaymentsCompleteAuthorizeRequest, PaymentsDynamicTaxCalculationRequest,
+-        PaymentsDynamicTaxCalculationResponse, PaymentsExternalAuthenticationRequest,
+-        PaymentsExternalAuthenticationResponse, PaymentsIncrementalAuthorizationRequest,
+-        PaymentsManualUpdateRequest, PaymentsManualUpdateResponse,
+-        PaymentsPostSessionTokensRequest, PaymentsPostSessionTokensResponse, PaymentsRejectRequest,
+-        PaymentsResponse, PaymentsRetrieveRequest, PaymentsSessionResponse, PaymentsStartRequest,
++        self, PaymentListConstraints, PaymentListFilters, PaymentListFiltersV2,
++        PaymentListResponse, PaymentsAggregateResponse, PaymentsResponse, PaymentsSessionResponse,
+         RedirectionResponse,
+     },
+ };
+@@ -159,7 +165,7 @@ impl ApiEventMetric for PaymentsRequest {
+ }
+ 
+ #[cfg(feature = "v2")]
+-impl ApiEventMetric for payments::PaymentsResponse {
++impl ApiEventMetric for PaymentsResponse {
+     fn get_api_event_type(&self) -> Option<ApiEventsType> {
+         Some(ApiEventsType::Payment {
+             payment_id: self.id.clone(),
+diff --git a/crates/api_models/src/events/refund.rs b/crates/api_models/src/events/refund.rs
+index e87ae154471..221a71a45ca 100644
+--- a/crates/api_models/src/events/refund.rs
++++ b/crates/api_models/src/events/refund.rs
+@@ -2,8 +2,11 @@ use common_utils::events::{ApiEventMetric, ApiEventsType};
+ 
+ use crate::refunds::{
+     RefundAggregateResponse, RefundListFilters, RefundListMetaData, RefundListRequest,
+-    RefundListResponse, RefundManualUpdateRequest, RefundRequest, RefundResponse,
+-    RefundUpdateRequest, RefundsRetrieveRequest,
++    RefundListResponse, RefundResponse,
++};
++#[cfg(feature = "v1")]
++use crate::refunds::{
++    RefundManualUpdateRequest, RefundRequest, RefundUpdateRequest, RefundsRetrieveRequest,
+ };
+ 
+ #[cfg(feature = "v1")]
+diff --git a/crates/api_models/src/payment_methods.rs b/crates/api_models/src/payment_methods.rs
+index a228f5fbda1..fc9b148bf05 100644
+--- a/crates/api_models/src/payment_methods.rs
++++ b/crates/api_models/src/payment_methods.rs
+@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
+ use std::str::FromStr;
+ 
+ use cards::CardNumber;
++#[cfg(feature = "v1")]
++use common_utils::crypto::OptionalEncryptableName;
+ use common_utils::{
+     consts::SURCHARGE_PERCENTAGE_PRECISION_LENGTH,
+-    crypto::OptionalEncryptableName,
+     errors,
+     ext_traits::OptionExt,
+     id_type, link_utils, pii,
+@@ -2313,6 +2314,10 @@ pub enum MigrationStatus {
+     Failed,
+ }
+ 
++#[cfg(all(
++    any(feature = "v2", feature = "v1"),
++    not(feature = "payment_methods_v2")
++))]
+ type PaymentMethodMigrationResponseType = (
+     Result<PaymentMethodMigrateResponse, String>,
+     PaymentMethodRecord,
+diff --git a/crates/api_models/src/payments.rs b/crates/api_models/src/payments.rs
+index 22e845c5e0c..c1beff22fe6 100644
+--- a/crates/api_models/src/payments.rs
++++ b/crates/api_models/src/payments.rs
+@@ -1,6 +1,7 @@
++#[cfg(feature = "v1")]
++use std::fmt;
+ use std::{
+     collections::{HashMap, HashSet},
+-    fmt,
+     num::NonZeroI64,
+ };
+ pub mod additional_info;
+@@ -9,6 +10,8 @@ use cards::CardNumber;
+ #[cfg(feature = "v2")]
+ use common_enums::enums::PaymentConnectorTransmission;
+ use common_enums::ProductType;
++#[cfg(feature = "v1")]
++use common_utils::types::{ExtendedAuthorizationAppliedBool, RequestExtendedAuthorizationBool};
+ use common_utils::{
+     consts::default_payments_list_limit,
+     crypto,
+@@ -17,30 +20,28 @@ use common_utils::{
+     hashing::HashedString,
+     id_type,
+     pii::{self, Email},
+-    types::{
+-        ExtendedAuthorizationAppliedBool, MinorUnit, RequestExtendedAuthorizationBool,
+-        StringMajorUnit,
+-    },
++    types::{MinorUnit, StringMajorUnit},
+ };
+ use error_stack::ResultExt;
+ use masking::{PeekInterface, Secret, WithType};
+ use router_derive::Setter;
+-use serde::{de, ser::Serializer, Deserialize, Deserializer, Serialize};
++#[cfg(feature = "v1")]
++use serde::{de, Deserializer};
++use serde::{ser::Serializer, Deserialize, Serialize};
+ use strum::Display;
+ use time::{Date, PrimitiveDateTime};
+ use url::Url;
+ use utoipa::ToSchema;
+ 
+-#[cfg(feature = "v1")]
+-use crate::ephemeral_key::EphemeralKeyCreateResponse;
+ #[cfg(feature = "v2")]
+ use crate::payment_methods;
+ use crate::{
+     admin::{self, MerchantConnectorInfo},
+-    disputes, enums as api_enums,
++    enums as api_enums,
+     mandates::RecurringDetails,
+-    refunds, ValidateFieldAndGet,
+ };
++#[cfg(feature = "v1")]
++use crate::{disputes, ephemeral_key::EphemeralKeyCreateResponse, refunds, ValidateFieldAndGet};
+ 
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub enum PaymentOp {
+@@ -7626,6 +7627,7 @@ mod payment_id_type {
+         deserializer.deserialize_any(PaymentIdVisitor)
+     }
+ 
++    #[allow(dead_code)]
+     pub(crate) fn deserialize_option<'a, D>(
+         deserializer: D,
+     ) -> Result<Option<PaymentIdType>, D::Error>

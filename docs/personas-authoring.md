@@ -104,7 +104,7 @@ SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
 
 Rules: replace literal | in any field with /; CATEGORY is one lowercase word;
 EST_MINUTES is an integer; EVIDENCE cites the offending code; no prose. If
-nothing is wrong, emit nothing.
+nothing is wrong, emit exactly: NO FINDINGS
 
 ## Payload
 Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mode: {{.PayloadMode}}.
@@ -113,6 +113,8 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 ```
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
+
+**Do not tell your persona to stay silent when it finds nothing.** A clean review must be a positive signal — the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`), case-insensitive and whitespace-tolerant. An empty response is treated as a dead call: the engine fails the slot over to its backup and, if there is none, fails the slot. That gate exists because a provider returning a null completion without setting `finish_reason=length` is otherwise recorded as a clean review — indistinguishable from a real one on a leaderboard. A persona that instructs silence will therefore report failures on exactly the reviews it handled correctly.
 
 **Mandatory sections:** a `## Role` declaration and a `## Output Format` block with the exact 7-column pipe-delimited contract above. Keep the column format byte-for-byte — the reconciler parses it.
 

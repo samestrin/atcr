@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +21,10 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1742,4 +1747,209 @@ func TestValidateAutoFixBackend_AllowConfigEditsDefaultsFalseOnBackend(t *testin
 	be, err := validateAutoFixBackend(cmd, proj, root)
 	require.NoError(t, err)
 	require.False(t, be.allowConfigEdits, "allowConfigEdits must default false when the flag is unset")
+}
+
+// --- 03-04: "neither backend usable" surfacing (--auto-fix side) ------------
+
+// stubResolveSandboxErr installs a resolver stand-in returning err, so the CLI's
+// surfacing of a combined neither-usable failure can be asserted without
+// depending on whether this runner has docker or a platform sandbox binary.
+func stubResolveSandboxErr(t *testing.T, err error) {
+	t.Helper()
+	orig := resolveAutoFixSandboxFn
+	resolveAutoFixSandboxFn = func(context.Context, bool, *registry.SandboxConfig) (sandbox.Backend, error) {
+		return nil, err
+	}
+	t.Cleanup(func() { resolveAutoFixSandboxFn = orig })
+}
+
+func autoFixGateFixture(t *testing.T) (*registry.ProjectConfig, *cobra.Command, string) {
+	t.Helper()
+	clearGitHubEnv(t)
+	root := t.TempDir()
+	writeGoMod(t, root)
+	proj := &registry.ProjectConfig{
+		Agents:  []string{"a"},
+		AutoFix: &registry.AutoFixConfig{ApplyTarget: ".", ValidateCommand: []string{"go", "build", "./..."}},
+		Sandbox: sandboxConfig(fakeDockerShim(t, false)),
+	}
+	return proj, autoFixCmd(t, "o/r", "tok", ""), root
+}
+
+// TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth: the combined
+// error reaches the operator through the SAME missing-slice mechanism every
+// other gate check uses, with both attempted backends named — and it is a
+// refusal, never a warn-and-proceed-unsandboxed path.
+func TestValidateAutoFixBackend_NeitherBackendUsableRefusesNamingBoth(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, fmt.Errorf("--auto-fix sandbox preflight failed: docker: daemon unreachable; os-level fallback also failed: bwrap not found: %w", verify.ErrSandboxNoUsableBackend))
+
+	stderr := &bytes.Buffer{}
+	cmd.SetErr(stderr)
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "a neither-usable outcome is a usage-error refusal")
+	assert.Contains(t, err.Error(), "sandbox:")
+	// These two only pin PASS-THROUGH of whatever the resolver produced; the
+	// message's actual content is pinned resolver-side, in
+	// internal/verify/exec_test.go and autofix_exec_test.go.
+	assert.Contains(t, err.Error(), "docker")
+	assert.Contains(t, err.Error(), "os-level")
+	assert.ErrorIs(t, err, verify.ErrSandboxNoUsableBackend,
+		"the sentinel must survive this call site too, or errors.Is means something different on --auto-fix than on --exec")
+
+	// The anti-conflation assertion has to be made on an OBSERVABLE channel.
+	// Asserting be.noSandbox is false proves nothing: a failed gate returns a
+	// zero-valued autoFixBackend by construction, so that holds for any input —
+	// a mutation setting be.noSandbox = true AND printing the --no-sandbox
+	// warning to stderr was shown to leave this test green. stderr is where the
+	// conflation would actually be visible to an operator.
+	assert.NotContains(t, stderr.String(), noSandboxWarnMarker,
+		"a broken fallback must NEVER print the explicit --no-sandbox opt-out warning")
+}
+
+// TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged is the
+// non-regression bar for operators who never configured a fallback: the message
+// and exit code must be exactly what they were before the fallback existed.
+func TestValidateAutoFixBackend_PreStorySandboxErrorIsUnchanged(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, errors.New("--auto-fix sandbox preflight failed: docker daemon unreachable"))
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+	// assert.Equal, NOT Contains: the gate proved a mutation that duplicated the
+	// message ("...unreachable--auto-fix sandbox preflight failed: docker daemon
+	// unreachable") still satisfied a Contains assertion, so the byte-identical
+	// bar this test exists to hold was not actually held.
+	assert.Equal(t, "--auto-fix cannot run: sandbox: --auto-fix sandbox preflight failed: docker daemon unreachable", err.Error())
+	assert.NotContains(t, err.Error(), "os-level",
+		"an operator who never opted in must not see a fallback mentioned at all")
+	// Meaningful only because the combined case above proves the sentinel DOES
+	// reach here when it should; without that pairing this assertion passes
+	// trivially for every error, including the one it is meant to exclude.
+	assert.NotErrorIs(t, err, verify.ErrSandboxNoUsableBackend)
+}
+
+// --- TD-019: gate check (5), os-level snapshot pre-check --------------------
+
+// TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch pins the
+// whole point of check (5): the refusal lands at the GATE, alongside the other
+// four checks, rather than at the first real validation run — which for
+// --auto-fix happens only after a patch has already been applied.
+func TestValidateAutoFixBackend_UnusableSnapshotRefusesBeforeAnyPatch(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true)) // docker works; no fallback involved
+	orig := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(sandbox.Backend, *registry.SandboxConfig, string, bool) error {
+		return errors.New("os-level sandbox cannot contain this directory: SnapshotDir is a user's home directory")
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
+
+	be, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "an unusable snapshot is a gate refusal like any other")
+	assert.Contains(t, err.Error(), "home directory",
+		"the generator's own specific message must reach the operator, not an opaque 'validation could not run'")
+	// runAutoFix dispatches on be.sandboxBackend != nil at cli/autofix.go:508. A
+	// backend that already failed the snapshot-usability pre-check must not reach
+	// that path, or sandboxed validation would run against a directory the gate
+	// just refused. The assertion is meaningful here because this test proves the
+	// failure path returns a zero-valued backend, not a populated one.
+	assert.Nil(t, be.sandboxBackend, "a backend that failed the snapshot pre-check must not be carried forward")
+}
+
+// TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget
+// pins WHICH path is checked. Checking the raw configured value instead of the
+// resolved absolute one would validate a different directory than the one the
+// validation is handed, which is the exact class of bug TD-019 describes.
+func TestValidateAutoFixBackend_SnapshotCheckReceivesTheResolvedAbsoluteTarget(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	proj.Sandbox = sandboxConfig(fakeDockerShim(t, true))
+	var got string
+	orig := checkOSLevelSnapshotFn
+	checkOSLevelSnapshotFn = func(_ sandbox.Backend, _ *registry.SandboxConfig, dir string, _ bool) error {
+		got = dir
+		return nil
+	}
+	t.Cleanup(func() { checkOSLevelSnapshotFn = orig })
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(got), "the check must receive an absolute path, got %q", got)
+	wantRoot, absErr := filepath.Abs(root)
+	require.NoError(t, absErr)
+	assert.Equal(t, wantRoot, got, "the checked directory must be the resolved apply target the validation will use")
+}
+
+// TestAutoFixRefusal_CarriesTheSentinelBehindTheJoinedText pins the refusal
+// type's contract: the message is the joined list alone (the resolver's text
+// is already rendered into it, so contributing it again would print twice)
+// while the cause stays matchable for errors.Is — and Error() is never empty,
+// so a consumer that unwraps and prints never renders a blank hole. It
+// replaced hiddenCause, whose empty Error() did exactly that.
+func TestAutoFixRefusal_CarriesTheSentinelBehindTheJoinedText(t *testing.T) {
+	sentinel := errors.New("boom")
+	r := autoFixRefusal{text: "--auto-fix cannot run: a; b", cause: sentinel}
+
+	assert.Equal(t, "--auto-fix cannot run: a; b", r.Error(),
+		"it must contribute ONLY the joined text; the rendered list already carries the resolver's message")
+	assert.ErrorIs(t, r, sentinel, "...while still carrying the cause for errors.Is")
+
+	wrapped := fmt.Errorf("outer: %w", r)
+	assert.Equal(t, "outer: --auto-fix cannot run: a; b", wrapped.Error(), "wrapping must not alter the message")
+	assert.ErrorIs(t, wrapped, sentinel)
+}
+
+// TestValidateAutoFixBackend_RefusalChainHasNoEmptyError walks the gate
+// refusal's whole Unwrap chain and requires every link to describe itself. An
+// error whose Error() is "" (hiddenCause) renders as a blank hole for any
+// consumer that unwraps and prints — errors.Unwrap(err).Error(), errors.Join,
+// a %v on an intermediate cause, a structured logger walking the chain — which
+// breaks the contract that Error() describes the error.
+func TestValidateAutoFixBackend_RefusalChainHasNoEmptyError(t *testing.T) {
+	proj, cmd, root := autoFixGateFixture(t)
+	stubResolveSandboxErr(t, fmt.Errorf("--auto-fix sandbox preflight failed: docker: daemon unreachable: %w", verify.ErrSandboxNoUsableBackend))
+
+	_, err := validateAutoFixBackend(cmd, proj, root)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--auto-fix cannot run: sandbox:",
+		"the operator-facing message must stay byte-identical in shape")
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		assert.NotEmpty(t, e.Error(),
+			"every link in the refusal chain must describe itself; an empty Error() renders as a blank hole inside %q", err.Error())
+	}
+}
+
+// pflag's UnquoteUsage lifts the first backquoted span out of a usage string and
+// renders it as the flag's value name, so a bool flag whose help text mentions an
+// example command in backquotes renders as if it took an argument. The
+// --no-sandbox usage carried “(e.g. `go build`/`npm test`)“ and `atcr review
+// --help` rendered `--no-sandbox go build` — a DANGER-marked boolean that looked
+// like it requires a `go build` operand, with the second backquoted token left
+// dangling mid-sentence.
+func TestReviewHelp_BoolFlagsRenderWithoutValueName(t *testing.T) {
+	// End-to-end pin: the DANGER flag must render bare (mirrors
+	// TestBenchmarkExport_InFlagRendersStringValueName in benchmark_test.go).
+	_, out := execCmdCapture(t, "review", "--help")
+	require.NotContains(t, out, "--no-sandbox go build",
+		"bool flag --no-sandbox must not render a value name lifted from its usage string")
+
+	// General scan over every registered review flag: for a bool flag the ONLY
+	// source of a rendered value name is a backquoted span in the usage string
+	// (pflag assigns bool no type-derived name), so banning backquotes on bool
+	// flags is exactly "no value name outside pflag's known type set".
+	newReviewCmd().Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.Type() != "bool" {
+			return // value-name types (string, duration, …) legitimately render one
+		}
+		assert.NotContains(t, f.Usage, "`",
+			"bool flag --%s usage must not contain a backquoted span — pflag renders it as a value name", f.Name)
+	})
 }

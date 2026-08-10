@@ -199,6 +199,10 @@ type EvidenceExec struct {
 	ExitCode int `json:"exit_code"`
 	// OutputExcerpt is the captured combined output, truncated to a budget.
 	OutputExcerpt string `json:"output_excerpt"`
+	// BackendName names the sandbox backend that ran the command. It is set when
+	// the result originated from an execution-gated tool so the evidence trail
+	// can distinguish a docker-backed run from an os-level fallback run.
+	BackendName string `json:"backend_name,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.

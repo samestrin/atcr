@@ -1,0 +1,150 @@
+{
+  "suite": "standard-v1",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "id": "bluewave-labs-checkmate-pr-2883",
+      "diff": "bluewave-labs-checkmate-pr-2883.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "cherryhq-cherry-studio-pr-5637",
+      "diff": "cherryhq-cherry-studio-pr-5637.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "cline-cline-pr-4786",
+      "diff": "cline-cline-pr-4786.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "security"
+      ]
+    },
+    {
+      "id": "cline-cline-pr-5955",
+      "diff": "cline-cline-pr-5955.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "dotnet-aspnetcore-pr-62734",
+      "diff": "dotnet-aspnetcore-pr-62734.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "security"
+      ]
+    },
+    {
+      "id": "elastic-elasticsearch-pr-118183",
+      "diff": "elastic-elasticsearch-pr-118183.diff",
+      "expected_categories": [
+        "maintainability"
+      ]
+    },
+    {
+      "id": "elastic-elasticsearch-pr-124403",
+      "diff": "elastic-elasticsearch-pr-124403.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "electron-electron-pr-46982",
+      "diff": "electron-electron-pr-46982.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "freecad-freecad-pr-18688",
+      "diff": "freecad-freecad-pr-18688.diff",
+      "expected_categories": [
+        "maintainability"
+      ]
+    },
+    {
+      "id": "freecad-freecad-pr-20825",
+      "diff": "freecad-freecad-pr-20825.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "juspay-hyperswitch-pr-7353",
+      "diff": "juspay-hyperswitch-pr-7353.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability"
+      ]
+    },
+    {
+      "id": "lvgl-lvgl-pr-7602",
+      "diff": "lvgl-lvgl-pr-7602.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability"
+      ]
+    },
+    {
+      "id": "n8n-io-n8n-pr-20188",
+      "diff": "n8n-io-n8n-pr-20188.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "security"
+      ]
+    },
+    {
+      "id": "openai-codex-pr-3212",
+      "diff": "openai-codex-pr-3212.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    },
+    {
+      "id": "timescale-timescaledb-pr-7632",
+      "diff": "timescale-timescaledb-pr-7632.diff",
+      "expected_categories": [
+        "maintainability"
+      ]
+    },
+    {
+      "id": "vllm-project-vllm-pr-12608",
+      "diff": "vllm-project-vllm-pr-12608.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability"
+      ]
+    },
+    {
+      "id": "vllm-project-vllm-pr-17425",
+      "diff": "vllm-project-vllm-pr-17425.diff",
+      "expected_categories": [
+        "correctness",
+        "maintainability",
+        "performance"
+      ]
+    }
+  ]
+}

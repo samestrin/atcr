@@ -37,21 +37,22 @@ func TestRedactEvidence(t *testing.T) {
 func TestParseExecEvidence(t *testing.T) {
 	t.Parallel()
 
-	ev := parseExecEvidence("$ go test ./calc\nexit code: 1\nFAIL: want 4 got 5\n")
+	ev := parseExecEvidence("$ go test ./calc\nexit code: 1\nFAIL: want 4 got 5\n", "docker")
 	require.NotNil(t, ev)
 	assert.Equal(t, "go test ./calc", ev.Command)
 	assert.Equal(t, 1, ev.ExitCode)
 	assert.Equal(t, "FAIL: want 4 got 5\n", ev.OutputExcerpt)
+	assert.Equal(t, "docker", ev.BackendName)
 
 	// A timed-out marker is stripped from the exit code.
-	ev = parseExecEvidence("$ sleep 99\nexit code: 124 (timed out)\n")
+	ev = parseExecEvidence("$ sleep 99\nexit code: 124 (timed out)\n", "")
 	require.NotNil(t, ev)
 	assert.Equal(t, 124, ev.ExitCode)
 	assert.Equal(t, "sleep 99", ev.Command)
 
 	// Content that is not the runInSandbox shape yields no evidence.
-	assert.Nil(t, parseExecEvidence("tool error: boom"))
-	assert.Nil(t, parseExecEvidence(""))
+	assert.Nil(t, parseExecEvidence("tool error: boom", ""))
+	assert.Nil(t, parseExecEvidence("", ""))
 }
 
 // TestVerifyFinding_ExecEvidenceStampedOnConfirm is the end-to-end check for the

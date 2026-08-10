@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -232,11 +233,14 @@ func TestBaselineReconcile_NoOrderOfMagnitudeClusteringRegressionAtScale(t *test
 		baseElapsed, len(baseFindings), diffElapsed)
 }
 
-// emptyCompleter returns no findings for any chunk.
+// emptyCompleter returns no findings for any chunk, using the clean-review
+// sentinel every persona prompt instructs. It is deliberately NOT "" — an empty
+// response is a dead call, which the engine fails over; a reviewer with nothing
+// to report says so.
 type emptyCompleter struct{}
 
 func (emptyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
-	return "", nil
+	return stream.NoFindingsSentinel, nil
 }
 
 // fixedFileFindingsCompleter returns one finding per configured file for EVERY

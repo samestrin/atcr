@@ -1,0 +1,29 @@
+# gitleaks configuration for atcr.
+#
+# Extends the stock ruleset — this file only adds allowlist entries for
+# confirmed false positives. It never disables a rule.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Confirmed false positives"
+
+# Deliberately regex-only, with NO `paths` entry. A `paths` allowlist exempts
+# the matched files from EVERY rule, so scoping this to the vendored benchmark
+# directory would silently permit a real credential committed there. Matching on
+# the false-positive string itself keeps the blast radius to that one string.
+regexes = [
+  # TimescaleDB names its internal chunk tables _hyper_<hypertable>_<chunk>_chunk.
+  # These appear verbatim in EXPLAIN-plan output inside a vendored benchmark diff
+  # (benchmarks/standard-v1/timescale-timescaledb-pr-7632.diff), where the
+  # generic-api-key entropy rule mistakes them for credentials. They are schema
+  # identifiers from a public open-source pull request, not secrets.
+  '''_hyper_\d+_\d+_chunk''',
+
+  # internal/log/redact_test.go feeds a deliberately fake OpenAI-shaped key to
+  # the redactor to prove the sk- pattern stops at the JSON token boundary. The
+  # literal must stay in the source for the test to mean anything, so the one
+  # fixture string is allowlisted rather than the file.
+  '''sk-abc123DEF''',
+]
