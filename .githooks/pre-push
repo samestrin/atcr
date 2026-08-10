@@ -1,10 +1,22 @@
 #!/bin/sh
 # Pre-push: the slower CI gates, run once per push (too slow for every commit).
-#   1. golangci-lint run
-#   2. go test -race ./...
-#   3. (cd reconcile && go test ./...)  — mirrors ci.yml reconcile-module job
-# Mirrors the GitHub "Go Lint & Test" and reconcile-module workflows so failures
-# surface locally first.
+#   1. golangci-lint run                        — root module
+#   2. go test ./...                            — root module (NOT -race, see below)
+#   3. GOWORK=off go build ./...                — root module against the PINNED reconcile
+#   4. reconcile: gofmt + golangci-lint + test  — mirrors ci.yml `reconcile-module`
+#   5. parsers/src: gofmt + per-tag build + test — mirrors ci.yml `parser-modules`
+#
+# Mirrors the GitHub "Go Lint & Test", reconcile-module and parser-modules jobs so
+# failures surface locally first. Two deliberate divergences, both documented at
+# their call site: this hook never runs -race (it corrupted the repository; see
+# below), and it skips a gate rather than failing when the tool or toolchain it
+# needs is absent locally — CI still enforces every one of them.
+#
+# Step 3 exists because this repo carries a gitignored `go.work` (`use . ./reconcile`).
+# Under that workspace the root module resolves reconcile from the WORKING TREE,
+# masking the `go.mod` pin — so root code can compile locally against a reconcile
+# symbol that does not exist in the pinned release, and fail only in CI, which has
+# no go.work. One GOWORK=off build catches it before the push.
 
 # Git exports GIT_DIR (and friends) into a hook's environment, and GIT_DIR
 # OVERRIDES `git -C <dir>`. Any git command the gates below run therefore
@@ -53,10 +65,69 @@ if ! go test ./...; then
   fail=1
 fi
 
-echo "pre-push: (cd reconcile && go test ./...)"
+# The root module against the PINNED reconcile, not the go.work one (see header).
+# Build only — the suite above already ran; this is purely a pin-drift check.
+echo "pre-push: GOWORK=off go build ./... (root against the pinned reconcile)"
+if ! GOWORK=off go build ./...; then
+  echo "pre-push FAILED: root does not build against the pinned reconcile version."
+  echo "  Your go.work is masking go.mod. Either bump the pin (see docs/release-process.md)"
+  echo "  or stop depending on the unreleased reconcile change."
+  fail=1
+fi
+
+# reconcile: the same three checks as ci.yml's reconcile-module job, minus -race
+# (see the note above go test). Keep this in lockstep with that job.
+echo "pre-push: reconcile (gofmt, golangci-lint, go test)"
+if [ -n "$(cd reconcile && gofmt -l .)" ]; then
+  echo "pre-push FAILED: reconcile gofmt — run: (cd reconcile && go fmt ./...)"
+  (cd reconcile && gofmt -l .)
+  fail=1
+fi
+if command -v golangci-lint >/dev/null 2>&1; then
+  if ! (cd reconcile && golangci-lint run --timeout 5m --config ../.golangci.yml); then
+    echo "pre-push FAILED: reconcile golangci-lint"
+    fail=1
+  fi
+fi
 if ! (cd reconcile && go test ./...); then
   echo "pre-push FAILED: reconcile go test"
   fail=1
+fi
+
+# The four wasm parser modules — mirrors ci.yml's parser-modules job. They declare
+# `go 1.26` and are only ever compiled for wasip1; GOWORK=off because the go.work
+# does not list them (a bare build fails "does not contain modules listed in
+# go.work"). Skipped with a message on an older toolchain rather than failing,
+# matching parsers/build.sh's own version guard.
+parsers_src="internal/astgroup/parsers/src"
+go_ver="$(go env GOVERSION 2>/dev/null)"; go_ver="${go_ver#go}"
+if [ "$(printf '1.26\n%s\n' "${go_ver:-0}" | sort -t. -k1,1n -k2,2n | head -n1)" != "1.26" ]; then
+  echo "pre-push: parser modules need Go >= 1.26 (found ${go_ver:-none}) — skipping locally (CI still enforces it)"
+else
+  echo "pre-push: wasm parser modules (gofmt, per-tag build, tests)"
+  if [ -n "$(cd "$parsers_src" && gofmt -l .)" ]; then
+    echo "pre-push FAILED: parser modules gofmt"
+    (cd "$parsers_src" && gofmt -l .)
+    fail=1
+  fi
+  for m in guestabi goparser pyparser; do
+    if ! (cd "$parsers_src/$m" && GOWORK=off GOTOOLCHAIN=local GOOS=wasip1 GOARCH=wasm \
+            sh -c 'go vet ./... && go build -o /dev/null ./...'); then
+      echo "pre-push FAILED: parser module $m"
+      fail=1
+    fi
+  done
+  for tag in bash cpp csharp java kotlin php rust ts; do
+    if ! (cd "$parsers_src/braceparser" && GOWORK=off GOTOOLCHAIN=local GOOS=wasip1 GOARCH=wasm \
+            sh -c "go vet -tags $tag ./... && go build -tags $tag -o /dev/null ./..."); then
+      echo "pre-push FAILED: braceparser -tags $tag"
+      fail=1
+    fi
+  done
+  if ! (cd "$parsers_src/braceparser" && GOWORK=off go test ./...); then
+    echo "pre-push FAILED: braceparser go test"
+    fail=1
+  fi
 fi
 
 integrity_after="$(integrity_snapshot)"

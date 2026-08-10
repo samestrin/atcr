@@ -259,3 +259,34 @@ execute against the commit being published.
    push). The root [Go CI](../.github/workflows/ci.yml) run on that PR verifies
    the whole repo builds against the real tagged module rather than a local
    `replace`.
+
+### Careful: a local `go.work` hides the pin
+
+This repo is commonly used with a gitignored workspace file:
+
+```
+go 1.25.0
+use (
+    .
+    ./reconcile
+)
+```
+
+Under it, the root module resolves `github.com/samestrin/atcr/reconcile` from the
+**working tree**, not from the version in `go.mod`. That is convenient for
+iterating on both at once, and it means a local `go build ./...` proves nothing
+about the pin: root code can compile against a `reconcile` symbol that does not
+exist in the pinned release and fail only in CI, which has no `go.work`.
+
+To see what CI sees, disable the workspace:
+
+```sh
+GOWORK=off go build ./...
+GOWORK=off go test ./...
+```
+
+`.githooks/pre-push` runs the `GOWORK=off` build automatically, so pin drift is
+caught before the push rather than in CI. The workspace also does **not** list
+the four `internal/astgroup/parsers/src/*` modules, so any command run inside one
+of those needs `GOWORK=off` too — otherwise Go reports `directory prefix . does
+not contain modules listed in go.work`.
