@@ -113,15 +113,21 @@ func (m *Manifest) Validate() error {
 		if len(c.ExpectedCategories) == 0 {
 			return fmt.Errorf("case %q: at least one expected_category is required", c.ID)
 		}
+		// Dedupe on the NORMALIZED category, which is how the scorer counts distinct
+		// expected categories (normalizeSet). Checking the raw string here would let
+		// ["maintainability", "Maintainability"] validate as two categories and then
+		// score as one, changing the recall denominator from 2 to 1 with no
+		// diagnostic anywhere.
 		seenCats := make(map[string]bool, len(c.ExpectedCategories))
 		for _, cat := range c.ExpectedCategories {
-			if strings.TrimSpace(cat) == "" {
+			n := normalize(cat)
+			if n == "" {
 				return fmt.Errorf("case %q: expected_category must not be empty or blank", c.ID)
 			}
-			if seenCats[cat] {
+			if seenCats[n] {
 				return fmt.Errorf("case %q: duplicate expected_category %q", c.ID, cat)
 			}
-			seenCats[cat] = true
+			seenCats[n] = true
 		}
 	}
 	return nil
