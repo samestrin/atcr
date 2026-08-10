@@ -141,8 +141,16 @@ func TestEquivalence_EveryWordIsATaxonomyMember(t *testing.T) {
 	for coarse, family := range categoryFamilies {
 		assert.True(t, members[coarse], "family key %q is not in reconcile.Categories()", coarse)
 		assert.Contains(t, family, coarse, "a family must contain its own coarse category")
+		// The lookup runs on NORMALIZED input — satisfactions receives its keys from
+		// normalizeSet — but the table itself holds raw reconcile constants. A future
+		// constant carrying an upper-case letter or stray padding would be a perfectly
+		// valid Categories() member that no raised finding could ever match: recall
+		// silently zero for that word, with every other assertion here still green.
+		// Pin the table side too, not just the caller side.
+		assert.Equal(t, normalize(coarse), coarse, "family key %q must already be normalized", coarse)
 		for _, m := range family {
 			assert.True(t, members[m], "family member %q is not in reconcile.Categories()", m)
+			assert.Equal(t, normalize(m), m, "family member %q must already be normalized", m)
 		}
 	}
 }

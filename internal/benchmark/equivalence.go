@@ -162,6 +162,10 @@ func familyOf(cat string) []string {
 // with a sibling category's hit. They are computed together only because both walk
 // the same families — which, split across a separate set-builder and a per-category
 // predicate, cost two familyOf resolutions per expected category per case.
+// Both sides are compared RAW: expected/raised arrive already normalized from
+// normalizeSet, and the table's own keys and members are asserted normalized by
+// TestEquivalence_EveryWordIsATaxonomyMember. That test is what lets this function
+// skip a per-member normalize call — do not delete it and leave this comment.
 func satisfactions(expected, raised map[string]bool) (hit int, satisfying map[string]bool) {
 	satisfying = make(map[string]bool, len(expected))
 	for cat := range expected {
