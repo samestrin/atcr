@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -177,6 +178,15 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	}
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
+	}
+	// A run-result may be hand-supplied, so the diagnostic is untrusted input here.
+	// out_of_vocabulary_rate is a SHARE of findings: a value outside [0,1] (or NaN)
+	// is a corrupt file rather than a pessimistic reading, and must not be carried
+	// forward as a measurement. nil stays legal — it means unmeasured.
+	if rr.OutOfVocabularyRate != nil {
+		if v := *rr.OutOfVocabularyRate; math.IsNaN(v) || v < 0 || v > 1 {
+			return fmt.Errorf("run-result %s has out_of_vocabulary_rate %v outside [0,1]", in, v)
+		}
 	}
 
 	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)
