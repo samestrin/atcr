@@ -168,7 +168,7 @@ version**, not from the working tree — there is deliberately no `replace`
 directive. So a merged change to `reconcile/` has no effect on the `atcr` binary
 until BOTH of the following land:
 
-1. a `reconcile/vX.Y.Z` tag is cut from `main` (steps 1–3 below), and
+1. a `reconcile/vX.Y.Z` tag is cut (steps 1–3 below), and
 2. the root `go.mod` pin is bumped to it (step 4 below).
 
 Between merge and step 2, `atcr` still runs the OLD library. A behavioral fix in
@@ -180,6 +180,30 @@ in which the defect is still reachable.
 
 Additive changes (a new exported symbol nothing consumes yet) can wait for the
 next release. Behavioral changes should not.
+
+#### Where the tag is cut from: the branch tip, not `main`
+
+Both module releases so far were tagged from the *branch tip, before merge*, and
+the pin bump was committed onto that same branch so the same PR's CI built
+against the published module:
+
+| Tag | Commit | Cut from | Pin bump |
+|---|---|---|---|
+| `reconcile/v0.4.0` | `40af8fa` (2026-07-31) | a feature branch — the commit is reachable from no branch today; the branch squash-merged as `67bca8a` (PR #212) | `67bca8a` |
+| `reconcile/v0.5.0` | `f55f25a` (2026-08-09 21:16) | the epic 35.16.4 branch | `1bfd465`, same branch, four minutes later |
+
+Do it that way. Tagging from the branch closes the shipping window to zero
+length: the pin bump rides the same PR, so the branch never merges in a state
+where the binary runs the old library. Tagging from `main` after merge is the
+alternative, and it opens a window — bounded by however long the follow-up PR
+takes — during which a merged behavioral fix is inert in production while its own
+tests pass on every run.
+
+The cost is real and worth stating: under squash-merge the tagged commit is
+orthaned, reachable only by the tag. `reconcile/v0.4.0` is already in that state.
+The tag still resolves and the proxy still serves the module, but `git branch
+--contains` finds nothing and the published subtree has no place in the linear
+history of `main`. That is the accepted trade for a zero-length window.
 
 **Precondition — the repository must be public.** `proxy.golang.org` returns 404
 for a private module, so `go install`/`go mod download` cannot resolve
@@ -216,8 +240,9 @@ Step 1 below runs the same checks locally, so a tag is never the first place the
 execute against the commit being published.
 
 1. **Run the tag gate locally and confirm `reconcile/go.mod` is unchanged.** From
-   an up-to-date `main`, run the same three checks the gate runs, not just the
-   build:
+   the exact commit you are about to publish — normally the branch tip, per
+   "Where the tag is cut from" above — run the same three checks the gate runs,
+   not just the build:
 
    ```sh
    (
@@ -229,7 +254,7 @@ execute against the commit being published.
    ```
 
    These are the same checks the PR job already ran (see the table above), so on
-   an unchanged `main` this should be a formality — but run it anyway: it is the
+   an unchanged subtree this should be a formality — but run it anyway: it is the
    only thing that verifies the exact subtree you are about to publish, and
    `go build ./... && go test ./...` alone does not.
 
