@@ -124,18 +124,16 @@ const (
 	trustLowThreshold  = 0.3
 )
 
-// categorySecurity is the literal finding category exempt from the consensus filter.
-// securityRelated recognizes synonyms and substrings as well, so a single reviewer
-// labeling a genuine vulnerability "vulnerability", "auth", or "injection" is not
-// silently dropped because the exemption predicate was overly literal.
-const categorySecurity = "security"
-
 // securityRelated reports whether a category signals a security concern after
-// ModalCategory-style canonicalization (lower+trim). It matches the literal token
-// "security" plus common synonyms/substrings reviewers actually emit.
+// ModalCategory-style canonicalization (lower+trim). It matches CategorySecurity
+// — the vocabulary member (category.go) — plus common synonyms/substrings
+// reviewers actually emit, so a single reviewer labeling a genuine vulnerability
+// "vulnerability", "auth", or "injection" is not silently dropped because the
+// exemption predicate was overly literal. The substring arm is why closing the
+// vocabulary does not narrow this exemption.
 func securityRelated(category string) bool {
 	c := strings.ToLower(strings.TrimSpace(category))
-	if c == categorySecurity {
+	if c == CategorySecurity {
 		return true
 	}
 	return strings.Contains(c, "vuln") || strings.Contains(c, "auth") || strings.Contains(c, "inject")

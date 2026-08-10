@@ -10,9 +10,11 @@
 //
 // Public surface: Reconcile, Options, Result, Summary, Merged, Source, Finding,
 // AmbiguousCluster, Verification and the Verdict* constants; the merge/cluster/
-// dedupe/confidence/attribution building blocks; and the severity rubric
-// (SeverityRank, NormalizeSeverity). Path-validation fields, the findings.json
-// schema, the disagreement radar, and adjudication stay ATCR-internal by design.
+// dedupe/confidence/attribution building blocks; the severity rubric
+// (SeverityRank, NormalizeSeverity); and the closed reviewer CATEGORY vocabulary
+// (Categories plus the Category* constants). Path-validation fields, the
+// findings.json schema, the disagreement radar, and adjudication stay
+// ATCR-internal by design.
 //
 // Casing conventions: severity tiers (Severity*, Sev*) and confidence tiers
 // (Conf*, ConfidenceVerified) are canonical UPPER-CASE strings. Verdict enum
