@@ -130,6 +130,42 @@ func TestBenchmarkExport_RejectsEmptyReviewers(t *testing.T) {
 	require.Contains(t, out, "no reviewers")
 }
 
+// A hand-supplied run-result carrying an out-of-range out_of_vocabulary_rate is
+// rejected rather than accepted as a measurement. The value is a RATE — a share of
+// findings — so anything outside [0,1] is not a pessimistic reading, it is a
+// corrupt file, and export is the boundary where a hand-authored run-result first
+// enters the tool. In range (including a real 0.0 and a real 1.0) still exports.
+func TestBenchmarkExport_RejectsOutOfRangeVocabularyRate(t *testing.T) {
+	const reviewers = `"reviewers":[{"model":"m","persona":"p","runs":2,` +
+		`"findings_raised_avg":10.5,"corroboration_rate":0.6,"latency_p50_ms":8900}]`
+
+	for _, tc := range []struct {
+		name    string
+		rate    string
+		wantErr bool
+	}{
+		{name: "above one", rate: "1.5", wantErr: true},
+		{name: "negative", rate: "-0.25", wantErr: true},
+		{name: "exactly zero", rate: "0.0"},
+		{name: "exactly one", rate: "1.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"out_of_vocabulary_rate":` + tc.rate + `,` + reviewers + `}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			if tc.wantErr {
+				require.NotEqual(t, 0, code, "rate %s must fail export: %s", tc.rate, out)
+				require.Contains(t, out, "out_of_vocabulary_rate")
+				return
+			}
+			require.Equal(t, 0, code, "rate %s is a legal measurement: %s", tc.rate, out)
+		})
+	}
+}
+
 func TestBenchmarkExport_MissingInputFails(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", filepath.Join(t.TempDir(), "nope.json"))
 	require.NotEqual(t, 0, code, "a missing run-result file must fail export: %s", out)
