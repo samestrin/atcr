@@ -89,7 +89,10 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	var totalFindings, matchedFindings, ratedCases int
 	var recallSum float64
 	for _, c := range r.Cases {
-		expected, _ := normalizeSet(c.Expected)
+		// The expected side needs only the distinct set, so it uses normalizeDistinct
+		// rather than normalizeSet — whose parallel per-finding slice exists for the
+		// RAISED side alone and would otherwise be built and discarded every case.
+		expected := normalizeDistinct(c.Expected)
 		raised, normalizedRaised := normalizeSet(c.Raised)
 		totalFindings += len(c.Raised)
 
@@ -159,6 +162,19 @@ func normalizeSet(cats []string) (map[string]bool, []string) {
 		}
 	}
 	return set, normalized
+}
+
+// normalizeDistinct returns just the distinct non-empty normalized categories —
+// normalizeSet without the parallel per-finding slice, for callers that only need
+// the set. Same membership semantics; the two must stay in step.
+func normalizeDistinct(cats []string) map[string]bool {
+	set := make(map[string]bool, len(cats))
+	for _, c := range cats {
+		if n := normalize(c); n != "" {
+			set[n] = true
+		}
+	}
+	return set
 }
 
 // clamp01 bounds a rate to [0,1]; a well-formed recall is already in range, this

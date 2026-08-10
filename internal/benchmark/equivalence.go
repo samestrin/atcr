@@ -170,10 +170,20 @@ func satisfactions(expected, raised map[string]bool) (hit int, satisfying map[st
 	satisfying = make(map[string]bool, len(expected))
 	for cat := range expected {
 		catHit := false
-		for _, member := range familyOf(cat) {
-			satisfying[member] = true
-			if raised[member] {
-				catHit = true
+		// Read the table directly rather than through familyOf: the identity
+		// fallback there returns a fresh one-element slice, which would heap-allocate
+		// once per unfamilied expected category per case for no gain. Semantics are
+		// identical — this IS familyOf's two branches, inlined.
+		family, ok := categoryFamilies[cat]
+		if !ok {
+			satisfying[cat] = true
+			catHit = raised[cat]
+		} else {
+			for _, member := range family {
+				satisfying[member] = true
+				if raised[member] {
+					catHit = true
+				}
 			}
 		}
 		if catHit {
