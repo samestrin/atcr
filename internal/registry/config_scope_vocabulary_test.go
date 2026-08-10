@@ -2,6 +2,7 @@ package registry
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -64,4 +65,31 @@ func TestValidateAgent_ScopeWarningSuggestsNearestMember(t *testing.T) {
 	far := scopeWarnFor(t, []string{"efficiency"})
 	assert.NotContains(t, far, "did you mean",
 		"an entry with no close member must not be given a fabricated suggestion")
+}
+
+// TestDocsRegistryDocumentsOffVocabularyScopeAsWarning pins docs/registry.md to
+// the load behaviour the tests above assert. The scope row described validation
+// as "every entry must be non-empty" and the section footer declared every
+// out-of-range value a load error — so the doc said the single most likely scope
+// misconfiguration could not happen, and a reader had no reason to stop writing
+// arbitrary focus words.
+//
+// The phrase is shared with the live warning rather than written out twice, so a
+// reword of the warning without a doc update trips this test instead of silently
+// drifting.
+func TestDocsRegistryDocumentsOffVocabularyScopeAsWarning(t *testing.T) {
+	const phrase = "not a member of the closed CATEGORY vocabulary"
+	require.Contains(t, scopeWarnFor(t, []string{"efficiency"}), phrase,
+		"guard: the load warning must still use the phrase this test pins the doc to")
+
+	data, err := os.ReadFile("../../docs/registry.md")
+	require.NoError(t, err)
+	doc := string(data)
+
+	require.Contains(t, doc, phrase,
+		"registry.md must document that an off-vocabulary scope entry is reported as a non-member")
+	require.Contains(t, doc, "reconcile.Categories()",
+		"registry.md must point at reconcile.Categories() as the scope vocabulary authority")
+	require.Contains(t, doc, "is not a load error",
+		"registry.md must correct the claim that every out-of-range scope value is caught at load")
 }
