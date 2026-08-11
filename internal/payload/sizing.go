@@ -109,6 +109,11 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 // declaration is fewer, larger chunks, never a chunk larger than
 // payload_byte_budget. The unbounded case is payload_byte_budget: 0 (no global
 // cap configured).
+// ClampLinesToByteBudget narrows a per-chunk line budget to a byte ceiling.
+func ClampLinesToByteBudget(maxLines int, byteBudget int64) int {
+	return maxLines // STUB — replaced in GREEN
+}
+
 func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
 	if maxLines < minChunkLines {
