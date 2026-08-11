@@ -53,36 +53,26 @@ var contextWindowTokens = map[string]int{
 	"z-ai/glm-5.2":              128000,
 }
 
-// ContextWindowTokens returns model's context-window size in tokens, resolved in
+// ContextWindowTokens returns the model's context-window size in tokens, resolved in
 // three tiers (Epic 35.16.5.1):
 //
 //	declared (the agent's own context_window_tokens) -> static table -> default
 //
 // declared is the operator's per-agent declaration, nil when the agent did not
-// make one. It wins over the static table on purpose: the table's keys are
-// provider-qualified ids whose entries are conservative floors for models served
-// at their full published window, while a declaration is machine-specific truth
-// about how THIS proxy serves THIS deployment. A model id not present in the
-// table and carrying no declaration receives the conservative default. The
-// function never returns zero and never errors, so callers can size a payload
-// against the result unconditionally without a nil/zero guard.
+// make one; it wins over the static table. A model id absent from the table and
+// carrying no declaration receives the conservative default. The function never
+// returns zero and never errors, so callers can size a payload unconditionally.
 //
-// A non-positive declaration is ignored rather than propagated. validateAgent
-// already rejects it at load (registry.ContextWindowTokensCap), so this only
-// guards a directly-constructed AgentConfig — the same defense-in-depth
-// AgentConfig.EffectiveMaxContextLines applies for the same reason: a 0 here
-// would drive EffectiveByteBudget to 0, which the bulk path records as the
-// "window too small to reserve output headroom" overflow degradation.
-//
-// No network call enters this path (Determinism NFR) — the declaration is read
-// from config exactly as supports_function_calling is. This function stays the
-// single seam Epic 19.7 will later populate from a live catalog, feeding that
-// catalog's windows behind this same signature as a fourth tier.
+// A non-positive declaration is ignored rather than propagated — defense-in-depth
+// against a directly-constructed AgentConfig bypassing validateAgent. See
+// AgentConfig.ContextWindowTokens in internal/registry/config.go for the full
+// operator-facing rationale (why declarations win, Determinism NFR, the
+// supports_function_calling precedent).
 //
 // The returned value is the model's FULL window; callers reserve the output-cap
-// and prompt overhead from it when deriving an effective input budget (F2). It
-// is intentionally distinct from the per-chunk diff-line budget MaxContextLines,
-// which counts diff lines, not tokens.
+// and prompt overhead from it when deriving an effective input budget. It is
+// distinct from the per-chunk diff-line budget MaxContextLines, which counts
+// diff lines, not tokens.
 func ContextWindowTokens(model string, declared *int) int {
 	if declared != nil && *declared > 0 {
 		return *declared
