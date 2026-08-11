@@ -1403,6 +1403,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// non-diff payload (no `diff --git` markers), where chunkDiff cannot split and
 	// the strategy silently degrades to a single bulk chunk.
 	warnedChunkedNoop := false
+	// Fires at most once per (primary → fallback) lane: buildChain runs inside the
+	// per-chunk loops, so an AC4 overflow warning emitted per call would repeat
+	// once per chunk per chain link — up to 128 identical multi-line warnings for a
+	// single 64-chunk persona with a 2-deep chain. The condition is a property of
+	// the lane's two windows, identical for every chunk, so the operator needs it
+	// once.
+	warnedFallbackOverflow := map[string]bool{}
 
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
@@ -1416,7 +1423,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				break // registry validation guarantees acyclic; defensive stop
 			}
 			seen[fb] = true
-			agent, err := buildFallbackAgent(cfg, primary, fb)
+			lane := name + "\x00" + fb
+			agent, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane])
+			warnedFallbackOverflow[lane] = true
 			if err != nil {
 				return nil, err
 			}
@@ -2229,7 +2238,13 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
 // payload as the primary (AC 01-04: "fallback agent tried (same persona)"), only
 // the provider/model/temperature/timeout differ.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, error) {
+//
+// warnOversized gates the AC4 overflow warning below, matching every sibling
+// warning in buildSlots: resume.go passes false so a resume rebuild does not
+// re-emit warnings the operator already saw at prepare time. It gates only the
+// stderr line — the degradation RECORD is a property of the slot and is stamped
+// either way, so a resumed run's status.json stays truthful.
+func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool) (Agent, error) {
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
 		return Agent{}, fmt.Errorf("fallback agent %q not found in registry", name)
@@ -2290,8 +2305,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	// actually shipped, which is exactly what the byte budget governs.
 	fbDegradation := primary.DegradationAction
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
-		fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
-			name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+		if warnOversized {
+			fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
+				name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+		}
 		fbDegradation = degradationOverflow
 	}
 	return Agent{

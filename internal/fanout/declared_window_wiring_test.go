@@ -148,7 +148,7 @@ func TestBuildFallbackAgent_ResolvesItsOwnDeclaration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 512000, primary.ResolvedWindow, "precondition: the primary carries its own large declaration")
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 
 	assert.Equal(t, 64000, fb.ResolvedWindow,
@@ -169,7 +169,7 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesResolutionChain(t *testing.T) 
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.Equal(t, 32768, fb.ResolvedWindow,
 		"an undeclared fallback keeps the conservative default, not the primary's 512000")
@@ -193,7 +193,7 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesStaticTableTier(t *testing.T) 
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.Equal(t, 128000, fb.ResolvedWindow,
 		"an undeclared fallback on a table-listed model resolves the TABLE entry, not the 32768 default and not the primary's 512000")
@@ -217,7 +217,7 @@ func TestBuildFallbackAgent_WarnsWhenInheritingAnOversizedPrompt(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, err = buildFallbackAgent(cfg, primary, "kai")
+		fb, err = buildFallbackAgent(cfg, primary, "kai", true)
 	})
 	require.NoError(t, err)
 
@@ -247,7 +247,7 @@ func TestBuildFallbackAgent_NoWarningWhenBudgetsMatch(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, err = buildFallbackAgent(cfg, primary, "kai")
+		fb, err = buildFallbackAgent(cfg, primary, "kai", true)
 	})
 	require.NoError(t, err)
 
@@ -276,7 +276,7 @@ func TestBuildFallbackAgent_NoWarningWhenFallbackWindowIsLarger(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, err = buildFallbackAgent(cfg, primary, "kai")
+		fb, err = buildFallbackAgent(cfg, primary, "kai", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, fb.EffectiveBudget, primary.EffectiveBudget,
@@ -305,7 +305,7 @@ func TestBuildFallbackAgent_WarnsWhenFallbackIsOnlyMarginallySmaller(t *testing.
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, err = buildFallbackAgent(cfg, primary, "kai")
+		fb, err = buildFallbackAgent(cfg, primary, "kai", true)
 	})
 	require.NoError(t, err)
 	require.Less(t, fb.EffectiveBudget, primary.EffectiveBudget,
@@ -376,7 +376,7 @@ func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t
 			"precondition: the budget comparison alone WOULD fire — the fallback's budget is the smaller one")
 
 		var fb Agent
-		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai", true) })
 		require.NoError(t, err)
 
 		assert.NotContains(t, out, "may overflow",
@@ -397,7 +397,7 @@ func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t
 			"precondition: the shipped payload really does exceed the fallback's budget")
 
 		var fb Agent
-		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai", true) })
 		require.NoError(t, err)
 
 		assert.Contains(t, out, "may overflow", "a payload past the fallback's budget must still warn")
@@ -471,7 +471,7 @@ func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T)
 		"precondition: a primary whose budget DOES fund the cap still records it")
 
 	var fb Agent
-	_ = captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+	_ = captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai", true) })
 	require.NoError(t, err)
 	require.Equal(t, 1, fb.ResolvedWindow, "precondition: the fallback's declaration is honoured")
 	require.Zero(t, fb.EffectiveBudget, "precondition: a 1-token window funds no input budget")
