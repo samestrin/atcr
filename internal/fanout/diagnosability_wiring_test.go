@@ -26,6 +26,8 @@ func TestBuildSlots_BulkAgentCarriesSizingRecord(t *testing.T) {
 
 	// Window + budget are this model's own, matching the payload package's own
 	// resolution (no independent recomputation, no global cap since budget is 0).
+	// The declared argument is nil (undeclared agent), so the resolver falls
+	// through to the static table / default.
 	assert.Equal(t, payload.ContextWindowTokens("unlisted-small-model", nil), small.ResolvedWindow)
 	assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens), small.EffectiveBudget)
 	assert.Equal(t, defaultMaxTokens, small.ReservedOutputTokens, "a sized agent reserves the output cap")
