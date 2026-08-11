@@ -114,7 +114,23 @@ func TestChunkMaxLines_HonorsDeclaration(t *testing.T) {
 
 	got := ChunkMaxLines("glm-5.2", declared(128000), testOutputTokens)
 	assert.Equal(t, 8437, got)
-	assert.Greater(t, got, base*5, "a 4x window must yield a ~5.6x line budget")
+
+	// Monotonic sweep: a larger declared window must yield a larger per-chunk
+	// line budget. With both endpoints pinned by Equal above, a simple Greater
+	// would be arithmetic over two constants (zero detection power); a sweep
+	// catches a ChunkMaxLines that ignores the declaration for some subrange.
+	for _, tc := range []struct {
+		small, large int
+	}{
+		{32768, 65536},
+		{65536, 128000},
+		{128000, 200000},
+	} {
+		assert.Greater(t,
+			ChunkMaxLines("glm-5.2", declared(tc.large), testOutputTokens),
+			ChunkMaxLines("glm-5.2", declared(tc.small), testOutputTokens),
+			"declared %d must yield a larger chunk line budget than declared %d", tc.large, tc.small)
+	}
 }
 
 func TestChunkMaxLines_DeclarationStillClampsToFloor(t *testing.T) {
