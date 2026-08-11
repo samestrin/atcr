@@ -82,6 +82,8 @@ func TestBuildSlots_ChunkedLineBudgetRisesWithDeclaration(t *testing.T) {
 	//
 	//	32768 default  -> ChunkMaxLines 1493 -> a 900-line file per chunk
 	//	128000 declared -> ChunkMaxLines 8437 -> the whole 3600-line diff in one
+	// NOTE: these values are derived from the formula in payload.ChunkMaxLines; if the
+	// formula changes (B/token ratio, rounding), these assertions must be updated.
 	require.Equal(t, 1493, payload.ChunkMaxLines("unlisted-small-model", nil, defaultMaxTokens))
 	require.Equal(t, 8437, payload.ChunkMaxLines("unlisted-small-model", ptrInt(128000), defaultMaxTokens))
 
