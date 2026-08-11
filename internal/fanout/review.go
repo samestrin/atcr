@@ -1459,9 +1459,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentScopeConstraint := scopeConstraint
-		agentEff := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
-		if len(agentScopeConstraint) > 0 && agentEff > 0 {
-			planCap := agentEff / 8
+		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
+		// and referenced everywhere below: this pair was previously recomputed inline
+		// at five further call sites, so a signature change had to find nine sites
+		// where three suffice — and an incomplete edit across duplicated call sites is
+		// exactly the failure this epic was chartered to prevent. Nothing enforced
+		// that the copies agreed; hoisting makes disagreement impossible.
+		agentWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
+		if len(agentScopeConstraint) > 0 && agentBudget > 0 {
+			planCap := agentBudget / 8
 			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 				planCap = mspb
 			}
@@ -1541,7 +1548,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// per-agent chunk budget is derived identically to the bulk path below:
 			// EffectiveByteBudget capped by the global PayloadByteBudget, less the SCOPE
 			// CONSTRAINT reservation.
-			chunkBudget := agentEff
+			chunkBudget := agentBudget
 			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
 				chunkBudget = global
 			}
@@ -1572,8 +1579,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
 					}
 					chunkSizing := agentSizing{
-						effectiveBudget: payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens),
-						resolvedWindow:  payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens),
+						effectiveBudget: agentBudget,
+						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
 						action:          "chunk",
 					}
@@ -1669,17 +1676,17 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					ml = 1
 				}
 			}
-			// The chunked twin of the bulk agentEff == 0 arm below. A window that
+			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
 			// reserves no input budget at all is honest degradation on either
 			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
 			// run presents as an ordinary "chunk" plan while shipping chunks the
 			// model provably cannot hold. Mark the same action and emit the same
 			// warning the bulk path does, so the operator's too-small declaration
-			// surfaces regardless of review_strategy. Keyed on agentEff (not ml),
+			// surfaces regardless of review_strategy. Keyed on agentBudget (not ml),
 			// because an explicit max_context_lines overrides the line budget
 			// without making the window any bigger.
 			chunkAction := "chunk"
-			if agentEff == 0 {
+			if agentBudget == 0 {
 				chunkAction = "overflow"
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n", name, ml)
@@ -1724,8 +1731,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// override or model-derived). The action is "chunk" — the default,
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
-					effectiveBudget: payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens),
-					resolvedWindow:  payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens),
+					effectiveBudget: agentBudget,
+					resolvedWindow:  agentWindow,
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
 					action:          chunkAction,
@@ -1769,10 +1776,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// EVERY sized agent (the "was this agent sized" signal), independent of
 		// whether shedding actually dropped a file. appliedBudget is the byte budget
 		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
-		bulkWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 		var appliedBudget int64
-		if agentEff > 0 {
-			appliedBudget = agentEff
+		if agentBudget > 0 {
+			appliedBudget = agentBudget
 			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < appliedBudget {
 				appliedBudget = global
 			}
@@ -1789,7 +1795,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
-		if agentEff == 0 && len(mp.Entries) > 0 {
+		if agentBudget == 0 && len(mp.Entries) > 0 {
 			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead makes
 			// EffectiveByteBudget return 0, so the shed below is skipped and the agent keeps
 			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
@@ -1875,7 +1881,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		}
 		bulkSizing := agentSizing{
 			effectiveBudget: appliedBudget,
-			resolvedWindow:  bulkWindow,
+			resolvedWindow:  agentWindow,
 			action:          bulkDegradation,
 		}
 		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
