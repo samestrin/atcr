@@ -57,7 +57,14 @@ var contextWindowTokens = map[string]int{
 // per-agent declaration. It matches registry.ContextWindowTokensCap (10M tokens)
 // so a directly-constructed AgentConfig carrying a value above the registry's
 // validateAgent ceiling is clamped to the static table / default, mirroring the
-// non-positive-declaration guard below. A declaration at or above this cap would
+// non-positive-declaration guard below.
+//
+// The bound is INCLUSIVE, matching the registry's own "must be within 1..%d"
+// (config.go), which accepts the cap value exactly — as max_context_lines does at
+// its cap. An exclusive bound here made the two ends disagree by one and did it
+// SILENTLY: a legal declaration of exactly 10000000 loaded without error and then
+// resolved to the static table or the 32768 default, with nothing logged. That is
+// the same silent mis-resolution the loader rejects a declared 0 to prevent. A declaration at or above this cap would
 // drive effectiveTokens * conservativeBytesPerTokenNum toward int64 overflow in
 // EffectiveByteBudget, returning a NEGATIVE byte count and breaking the
 // "never a negative byte count" contract.
@@ -88,7 +95,7 @@ const contextWindowTokensCap = 10000000
 // distinct from the per-chunk diff-line budget MaxContextLines, which counts
 // diff lines, not tokens.
 func ContextWindowTokens(model string, declared *int) int {
-	if declared != nil && *declared > 0 && *declared < contextWindowTokensCap {
+	if declared != nil && *declared > 0 && *declared <= contextWindowTokensCap {
 		return *declared
 	}
 	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
