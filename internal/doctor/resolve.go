@@ -27,6 +27,11 @@ type AgentTarget struct {
 	Serial    bool
 	TargetIdx int
 	Source    string
+	// ContextWindowTokens is the agent's RESOLVED context window and
+	// WindowSource the tier it resolved from. Per-agent, not per-target: two
+	// agents can share one probe target while declaring different windows.
+	ContextWindowTokens int
+	WindowSource        string
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct

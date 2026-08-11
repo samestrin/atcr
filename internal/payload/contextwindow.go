@@ -118,11 +118,20 @@ func MaxStaticContextWindow() int {
 // distinct from the per-chunk diff-line budget MaxContextLines, which counts
 // diff lines, not tokens.
 func ContextWindowTokens(model string, declared *int) int {
-	if declared != nil && *declared > 0 && *declared <= contextWindowTokensCap {
-		return *declared
-	}
-	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
-		return w
-	}
-	return defaultContextWindowTokens
+	tokens, _ := ResolveContextWindow(model, declared)
+	return tokens
+}
+
+// Window-resolution tiers, as reported by ResolveContextWindow.
+const (
+	WindowSourceDeclaration = "declaration" // the agent's own context_window_tokens
+	WindowSourceTable       = "table"       // the static model table above
+	WindowSourceDefault     = "default"     // the conservative fallback
+)
+
+// ResolveContextWindow returns the same window ContextWindowTokens returns,
+// plus the tier it came from.
+func ResolveContextWindow(model string, declared *int) (int, string) {
+	_ = strings.TrimSpace(model)
+	return defaultContextWindowTokens, WindowSourceDefault // STUB — replaced in GREEN
 }

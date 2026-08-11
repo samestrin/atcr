@@ -79,6 +79,12 @@ type AgentResult struct {
 	Hint      string `json:"hint,omitempty"`
 	Detail    string `json:"detail,omitempty"` // bounded error snippet; for network_error may include base_url host/path — never the API key, which lives only in Authorization headers
 	Source    string `json:"source,omitempty"` // definition tier: user | project
+	// ContextWindowTokens is the window the payload layer will size this agent's
+	// prompt against, and WindowSource the tier it came from (declaration |
+	// table | default) — the pre-flight view of a context_window_tokens
+	// declaration, which is otherwise observable only as a failed provider call.
+	ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
+	WindowSource        string `json:"window_source,omitempty"`
 }
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
