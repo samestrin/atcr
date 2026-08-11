@@ -1091,6 +1091,15 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
 	}
+	// context_window_tokens (Epic 35.16.5.1): an unset field falls through to the
+	// static model table; any explicit value must be a positive token count within
+	// the sanity ceiling. A non-positive value is rejected rather than read as
+	// "unset" because a declared 0 would drive EffectiveByteBudget to 0, which the
+	// bulk path records as the honest "window too small to reserve output
+	// headroom" degradation — turning a typo into a silent over-window payload.
+	if a.ContextWindowTokens != nil && (*a.ContextWindowTokens <= 0 || *a.ContextWindowTokens > ContextWindowTokensCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': context_window_tokens must be within 1..%d", name, ContextWindowTokensCap))
+	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive. Same range as the registry tier.
 	for _, m := range validateRetryBounds(a.MaxRetries, a.InitialBackoffMs) {
