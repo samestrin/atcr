@@ -562,7 +562,9 @@ type AgentConfig struct {
 	// before dispatching one call per chunk. Optional and backward-compatible — a
 	// pointer so an unset field (nil) inherits DefaultMaxContextLines while any
 	// explicit value survives, distinguishing "use the default" from a real
-	// override. Ignored entirely in bulk mode.
+	// override. Ignored entirely in bulk mode. NOTE an explicit value also defeats
+	// any ContextWindowTokens declaration below, since it pins the chunk budget to
+	// a constant instead of deriving it from the window.
 	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
 
 	// ContextWindowTokens declares THIS agent's model context window in tokens
@@ -586,6 +588,12 @@ type AgentConfig struct {
 	// context-window error. A pointer so unset (nil) is distinguishable from an
 	// explicit value, mirroring MaxContextLines above; an unset field changes
 	// nothing, so a pre-35.16.5.1 registry keeps loading and sizing identically.
+	//
+	// SCOPE: consumed by the review fan-out only (internal/fanout). The skeptic,
+	// executor, and debate lanes construct their agents with no sizing record at
+	// all, so a declaration is inert there — a pre-existing gap, not one this
+	// field introduces, but an operator will otherwise see no effect and get no
+	// warning.
 	ContextWindowTokens *int `yaml:"context_window_tokens,omitempty"`
 }
 

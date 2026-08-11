@@ -134,7 +134,8 @@ func TestContextWindowTokens_RejectsNonIntegerAtLoad(t *testing.T) {
 	// decoder behavior, not a property of this field, and AC5 scopes itself to
 	// "matching existing registry validation behavior". Rejecting it for this one
 	// field would require a bespoke unmarshaler that breaks the plain *int shape
-	// the payload resolver consumes. Captured as technical debt instead.
+	// the payload resolver consumes. Recorded as technical debt by this epic
+	// instead, to be fixed registry-wide rather than for one field.
 	for _, bad := range []string{`"512k"`, `true`, `[1, 2]`, `{a: 1}`} {
 		_, err := LoadRegistry(writeRegistry(t, `
 providers:

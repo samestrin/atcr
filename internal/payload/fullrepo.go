@@ -408,7 +408,7 @@ func ensureWithinRoot(root, abs, rel string) error {
 //	  error (CLI exit 2). A [][]FileEntry-only signature cannot express that, so
 //	  the error is returned here rather than smuggled through a panic or a sentinel
 //	  empty result. chunkBudget is supplied by the caller from sizing.go's
-//	  EffectiveByteBudget(model, outputTokens) — no new sizing constant is
+//	  EffectiveByteBudget(model, declared, outputTokens) — no new sizing constant is
 //	  introduced (AC 01-03 Story-Specific DoD).
 //
 //	Ordering / determinism rule (AC 01-03 Edge Case 2, Story-Specific DoD):
