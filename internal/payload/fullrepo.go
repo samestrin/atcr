@@ -18,9 +18,11 @@ import (
 // ErrNoEffectiveByteBudget is returned by PartitionByBudget when the per-chunk
 // budget is non-positive. The budget is machine-derived from the model window via
 // sizing.EffectiveByteBudget, so 0 unambiguously means the model cannot fit any
-// review payload — an error, NOT ApplyByteBudget's "0 = unlimited" convention. The
-// caller (which knows the model name) wraps this into AC 01-03 Error Scenario 1's
-// exact `model %q ...` usage-error message.
+// review payload — an error, NOT ApplyByteBudget's "0 = unlimited" convention.
+// NOTE: the shipped caller (PrepareReviewFromRepo in internal/fanout/review.go)
+// pre-guards `if chunkBudget > 0` before calling PartitionByBudget, so the
+// sentinel is unreachable through that path today — it is a direct-call contract,
+// not a wrapped user-facing error.
 var ErrNoEffectiveByteBudget = errors.New("full-repo scan: no effective byte budget for a review payload (context window too small for the configured output reservation)")
 
 // errTrackedFileTooLarge marks a tracked file that exceeds maxTrackedFileReadBytes
@@ -440,10 +442,10 @@ func ensureWithinRoot(root, abs, rel string) error {
 //
 //	Zero-effective-budget fail-fast (AC 01-03 Edge Case 3 / Error Scenario 1):
 //	  chunkBudget <= 0 returns, at entry and before any packing work, the sentinel
-//	  ErrNoEffectiveByteBudget. This function does not know the model name, so the
-//	  CALLER (PrepareReviewFromRepo) wraps the sentinel into AC 01-03 Error Scenario
-//	  1's exact user-facing "full-repo scan: model %q has no effective byte budget
-//	  ..." message (CLI exit 2).
+//	  ErrNoEffectiveByteBudget. The shipped caller (PrepareReviewFromRepo) pre-
+//	  guards `if chunkBudget > 0` and falls through to the bulk path on non-
+//	  positive budgets, so the sentinel is a direct-call contract today — no
+//	  caller wraps it into a model-qualified usage error.
 //	  This DELIBERATELY diverges from ApplyByteBudget's `budget <= 0` == "unlimited"
 //	  convention: here the budget is machine-derived from the model window, so 0
 //	  unambiguously means the model cannot fit any payload — an error, not an
