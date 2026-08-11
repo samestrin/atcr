@@ -40,16 +40,6 @@ func TestContextWindowTokens_DeclarationBeatsDefaultForProxyAlias(t *testing.T) 
 	}
 }
 
-func TestContextWindowTokens_NilDeclarationIsByteIdenticalToPreEpic(t *testing.T) {
-	// AC2: a roster declaring nothing must produce exactly the pre-epic
-	// resolution — table hit where the table has the id, default otherwise.
-	for model, want := range contextWindowTokens {
-		assert.Equal(t, want, ContextWindowTokens(model, nil),
-			"nil declaration must still resolve the static table for %q", model)
-	}
-	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("no-such-model", nil))
-}
-
 func TestContextWindowTokens_StaticTablePrecedesDefault(t *testing.T) {
 	// Pin the static table's MEMBERSHIP as literals so adding a stray bare proxy
 	// alias (an AC3 violation) fails immediately rather than silently raising
@@ -76,6 +66,8 @@ func TestContextWindowTokens_StaticTablePrecedesDefault(t *testing.T) {
 		assert.Equal(t, want, ContextWindowTokens(model, nil),
 			"nil declaration must resolve the static table entry for %q, not the default", model)
 	}
+	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("no-such-model", nil),
+		"an unknown model with no declaration must fall through to the conservative default")
 }
 
 func TestContextWindowTokens_NonPositiveDeclarationIgnored(t *testing.T) {
