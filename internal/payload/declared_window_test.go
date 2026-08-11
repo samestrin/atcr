@@ -147,4 +147,10 @@ func TestEffectiveByteBudget_DeclarationBelowOverheadYieldsZero(t *testing.T) {
 	// "no budget available" 0 rather than a negative byte count.
 	assert.Equal(t, int64(0), EffectiveByteBudget("glm-5.2", declared(12288), testOutputTokens))
 	assert.Equal(t, int64(0), EffectiveByteBudget("glm-5.2", declared(1), testOutputTokens))
+	// One token above the (output + overhead) floor must yield a positive
+	// budget, not 0. Without this, a mutation widening the zero band to
+	// `effectiveTokens <= promptOverheadTokens` — silently zeroing every
+	// window under about 16k — survives the suite because every existing
+	// case is either far above the band or already returns 0.
+	assert.Equal(t, int64(3), EffectiveByteBudget("glm-5.2", declared(12289), testOutputTokens))
 }
