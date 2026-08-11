@@ -2204,6 +2204,28 @@ func derefInt64(p *int64) int64 {
 	return *p
 }
 
+// inheritedPayloadFits reports whether the payload the primary actually shipped
+// is KNOWN to fit within budget bytes. It sums primary.CodeContext — the
+// per-file bodies recovered from the payload this slot was rendered over — so it
+// counts exactly the bytes an effective byte budget governs, unlike the rendered
+// prompt (which also carries the uncounted persona wrapper).
+//
+// An unmeasurable payload reads as "may not fit", never as "fits": a payload
+// shape EntriesFromRenderedPayload does not recognize yields no CodeContext, and
+// treating a missing measurement as proof of safety would silently drop the AC4
+// warning for exactly the payloads nothing else can vouch for. A zero budget is
+// covered by the same arithmetic — no non-empty payload fits in 0 bytes.
+func inheritedPayloadFits(primary Agent, budget int64) bool {
+	if len(primary.CodeContext) == 0 {
+		return false
+	}
+	var total int64
+	for _, ref := range primary.CodeContext {
+		total += int64(len(ref.Body))
+	}
+	return total <= budget
+}
+
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
 // payload as the primary (AC 01-04: "fallback agent tried (same persona)"), only
 // the provider/model/temperature/timeout differ.
@@ -2257,12 +2279,17 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	// separate design question (it would diverge the slot's chunk accounting and
 	// coverage tag). What AC4 forbids is doing this SILENTLY, so surface it — warn
 	// pre-dispatch and record the honest overflow degradation instead of copying the
-	// primary's action. Compare BUDGETS, not len(primary.Prompt): the rendered
-	// prompt includes the persona wrapper that the byte budget does not count, so a
-	// length comparison would fire on every shed-to-fit review even when the two
-	// agents resolve identical windows.
+	// Measure the PAYLOAD before claiming it overflows. len(primary.Prompt) is the
+	// wrong measure — the rendered prompt carries the persona wrapper that the byte
+	// budget does not count — but a budget-only comparison is worse: it is true for
+	// ANY fallback resolving a smaller window, whether the payload is 5 KB or
+	// 500 KB, so the epic's own recommended roster (declared primaries paired with
+	// undeclared 32768 backups) would warn on every pair of an ordinary small-diff
+	// review and stamp overflow on fallbacks that held the payload with room to
+	// spare. primary.CodeContext is the per-file breakdown of what this slot
+	// actually shipped, which is exactly what the byte budget governs.
 	fbDegradation := primary.DegradationAction
-	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget {
+	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
 		fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
 			name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
 		fbDegradation = degradationOverflow
