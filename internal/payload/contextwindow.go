@@ -53,6 +53,16 @@ var contextWindowTokens = map[string]int{
 	"z-ai/glm-5.2":              128000,
 }
 
+// contextWindowTokensCap is the payload-layer defense-in-depth ceiling for a
+// per-agent declaration. It matches registry.ContextWindowTokensCap (10M tokens)
+// so a directly-constructed AgentConfig carrying a value above the registry's
+// validateAgent ceiling is clamped to the static table / default, mirroring the
+// non-positive-declaration guard below. A declaration at or above this cap would
+// drive effectiveTokens * conservativeBytesPerTokenNum toward int64 overflow in
+// EffectiveByteBudget, returning a NEGATIVE byte count and breaking the
+// "never a negative byte count" contract.
+const contextWindowTokensCap = 10000000
+
 // ContextWindowTokens returns the model's context-window size in tokens, resolved in
 // three tiers (Epic 35.16.5.1):
 //
@@ -63,18 +73,18 @@ var contextWindowTokens = map[string]int{
 // carrying no declaration receives the conservative default. The function never
 // returns zero and never errors, so callers can size a payload unconditionally.
 //
-// A non-positive declaration is ignored rather than propagated — defense-in-depth
-// against a directly-constructed AgentConfig bypassing validateAgent. See
-// AgentConfig.ContextWindowTokens in internal/registry/config.go for the full
-// operator-facing rationale (why declarations win, Determinism NFR, the
-// supports_function_calling precedent).
+// A non-positive or above-cap declaration is ignored rather than propagated —
+// defense-in-depth against a directly-constructed AgentConfig bypassing
+// validateAgent. See AgentConfig.ContextWindowTokens in internal/registry/config.go
+// for the full operator-facing rationale (why declarations win, Determinism NFR,
+// the supports_function_calling precedent).
 //
 // The returned value is the model's FULL window; callers reserve the output-cap
 // and prompt overhead from it when deriving an effective input budget. It is
 // distinct from the per-chunk diff-line budget MaxContextLines, which counts
 // diff lines, not tokens.
 func ContextWindowTokens(model string, declared *int) int {
-	if declared != nil && *declared > 0 {
+	if declared != nil && *declared > 0 && *declared < contextWindowTokensCap {
 		return *declared
 	}
 	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {

@@ -83,6 +83,22 @@ func TestContextWindowTokens_NonPositiveDeclarationIgnored(t *testing.T) {
 		"a negative declaration must fall through to the default")
 }
 
+func TestContextWindowTokens_DeclarationAboveCapIgnored(t *testing.T) {
+	// Symmetric clamp: a declaration at or above contextWindowTokensCap
+	// (defense-in-depth against a directly-constructed AgentConfig bypassing
+	// validateAgent) falls through to the static table, mirroring the
+	// non-positive guard. Without this, a declaration near math.MaxInt drives
+	// EffectiveByteBudget's effectiveTokens * conservativeBytesPerTokenNum
+	// product into int64 overflow, returning a NEGATIVE byte count and
+	// breaking the "never a negative byte count" contract.
+	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", declared(contextWindowTokensCap)),
+		"a declaration at the cap must fall through to the static table")
+	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", declared(contextWindowTokensCap+1)),
+		"a declaration above the cap must fall through to the static table")
+	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("glm-5.2", declared(1<<62)),
+		"a huge declaration must fall through to the default for an unknown model")
+}
+
 func TestContextWindowTokens_DeclarationTrimsNothingFromModel(t *testing.T) {
 	// The declaration short-circuits before the table lookup, so a whitespace-y
 	// model id is irrelevant when a declaration is present.
