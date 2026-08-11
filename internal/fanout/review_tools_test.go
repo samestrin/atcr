@@ -51,7 +51,7 @@ func TestBuildFallbackAgent_InheritsLaneToolSettings(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.True(t, fb.Tools, "fallback inherits lane tools=true despite its own tools=false")
 	assert.Equal(t, 5, fb.MaxTurns)
@@ -68,7 +68,7 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Prompt: "// FILE:a.go\npackage a\n", PayloadMode: "files", chunkFiles: []string{"a.go"}}
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.Equal(t, primary.Prompt, fb.Prompt,
 		"a fallback must review the SAME payload as the primary it substitutes for — baseline coverage attributes it to the primary's tag")
@@ -80,7 +80,7 @@ func TestBuildFallbackAgent_NonToolPrimaryStaysNonTool(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: false, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.False(t, fb.Tools)
 	assert.Equal(t, 0, fb.MaxTurns)
@@ -95,7 +95,7 @@ func TestBuildFallbackAgent_OwnCapabilityNotInheritedFromLane(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.True(t, fb.Tools, "lane tools inherited")
 	assert.False(t, fb.SupportsFC, "fallback uses its own incapable model, not the primary's capability")
@@ -107,7 +107,7 @@ func TestBuildFallbackAgent_CapableFallbackKeepsCapability(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, err := buildFallbackAgent(cfg, primary, "zoe")
+	fb, _, err := buildFallbackAgent(cfg, primary, "zoe", true)
 	require.NoError(t, err)
 	assert.True(t, fb.Tools)
 	assert.True(t, fb.SupportsFC, "capable fallback model keeps its capability")
@@ -140,7 +140,7 @@ func TestBuildFallbackAgent_PrimaryReviewConstraintsWin(t *testing.T) {
 
 	primary := Agent{Prompt: "p", PayloadMode: "blocks", MinSeverity: "HIGH", MaxFindings: ptrInt(3)}
 
-	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
 	require.NoError(t, err)
 	assert.Equal(t, "HIGH", fb.MinSeverity, "primary min_severity governs, not the fallback's own LOW")
 	require.NotNil(t, fb.MaxFindings)

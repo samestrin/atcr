@@ -283,6 +283,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Tools = out.Tools || r.Tools
 		out.ToolsRequested = out.ToolsRequested || r.ToolsRequested
 		out.ToolsDegraded = out.ToolsDegraded || r.ToolsDegraded
+		// First cause wins: every chunk of one persona dispatches through the same
+		// capability and harness state, so the chunks cannot disagree — and taking
+		// the first keeps the merge order-stable rather than last-writer-wins.
+		if out.ToolsDegradedReason == "" {
+			out.ToolsDegradedReason = r.ToolsDegradedReason
+		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
 		allCacheHit = allCacheHit && r.CacheHit
 		switch r.Status {

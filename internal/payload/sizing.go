@@ -53,8 +53,11 @@ const (
 )
 
 // EffectiveByteBudget returns the byte budget a model's payload must fit within
-// so that estimated input tokens ≤ ContextWindowTokens(model) - outputTokens -
-// promptOverheadTokens. It converts the reserved token budget to bytes using the
+// so that estimated input tokens ≤ ContextWindowTokens(model, declared) -
+// outputTokens - promptOverheadTokens. declared is the agent's own
+// context_window_tokens (nil when it made no declaration) and is resolved ahead
+// of the static table — see ContextWindowTokens for the tier order. It converts
+// the reserved token budget to bytes using the
 // conservative ~3.5 B/token ratio (rounding DOWN, so the byte budget never
 // overshoots the token reservation). Returns 0 ("no budget available") when the
 // reservation leaves zero or negative input tokens for the model — never a
@@ -63,11 +66,21 @@ const (
 // This closes the confirmed dax boundary overflow: for a 32768-token window with
 // outputTokens = 8192, the reserved input tokens are strictly below 32768 - 8192
 // = 24576, so the 24577 input + 8192 output > 32768 class cannot recur (F2/AC2).
-func EffectiveByteBudget(model string, outputTokens int) int64 {
+//
+// The 0 return is reachable for the current callers (which pass defaultMaxTokens
+// 8192) when the resolved window is at or below outputTokens + promptOverheadTokens
+// (12288 at the defaults). Registry validation permits declarations down to 1
+// token, so an explicit declaration in that band now drives this path — but the
+// function itself has always returned 0 for large enough outputTokens regardless
+// of the declaration tier (EffectiveByteBudget(model, nil, 28672) returned 0 on
+// the pre-epic 32768 floor too). Callers handle 0 as honest degradation rather
+// than treating it as unreachable defense-in-depth (see the bulk path in
+// internal/fanout).
+func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	if outputTokens < 0 {
 		outputTokens = 0
 	}
-	effectiveTokens := ContextWindowTokens(model) - outputTokens - promptOverheadTokens
+	effectiveTokens := ContextWindowTokens(model, declared) - outputTokens - promptOverheadTokens
 	if effectiveTokens <= 0 {
 		return 0
 	}
@@ -84,9 +97,56 @@ func EffectiveByteBudget(model string, outputTokens int) int64 {
 //
 // It consumes EffectiveByteBudget directly rather than introducing a parallel
 // budget representation, so the same conservative ratio and output reservation
-// govern both the shed-to-fit (bulk) and chunk-to-fit paths.
-func ChunkMaxLines(model string, outputTokens int) int {
-	maxLines := int(EffectiveByteBudget(model, outputTokens) / avgBytesPerLine)
+// govern both the shed-to-fit (bulk) and chunk-to-fit paths — and so a declared
+// window (Epic 35.16.5.1) reaches the per-chunk line budget through exactly one
+// resolution chain. declared is the agent's own context_window_tokens, nil when
+// it made no declaration.
+//
+// NOTE ChunkMaxLines itself derives the LINE budget from the window alone; the
+// global payload_byte_budget is applied on top of it by ClampLinesToByteBudget
+// at the fan-out call site (settings are not this function's to know). Before
+// that clamp existed, a legal 10,000,000-token declaration derived ~728,000
+// lines (~34.9 MB) per chunk — the chunk BYTES were bounded only indirectly, by
+// the entries having passed through ApplyByteBudgetPreferEscalated in review.go.
+// With the clamp the practical effect of a large declaration stays "fewer,
+// larger chunks", and the still-unbounded case is payload_byte_budget: 0 (no
+// global cap configured), where the operator has declined to set a ceiling.
+// ClampLinesToByteBudget narrows a per-chunk line budget to the lines that fit
+// within byteBudget, using the same avgBytesPerLine ratio ChunkMaxLines derived
+// it with. A byteBudget of 0 means "no cap configured" (the settings-tier
+// convention everywhere else) and passes maxLines through untouched.
+//
+// This is the line-budget twin of fanout's appliedByteBudget: the per-model
+// derivation belongs to the model, but the global payload_byte_budget is a
+// settings-tier ceiling, so it is applied at the call site where settings are
+// known rather than threaded into ChunkMaxLines.
+//
+// It exists because ContextWindowTokensCap admits a 10,000,000-token
+// declaration, which derives ~728,000 lines (~34.9 MB) per chunk — past any
+// real proxy request-body limit. payload_byte_budget is the operator's own
+// statement of how many bytes may ride one call, so honoring it here keeps a
+// large declaration meaning "fewer, larger chunks" rather than "one chunk no
+// endpoint will accept".
+//
+// The result is floored at minChunkLines for the same reason ChunkMaxLines is:
+// chunkDiff reads a non-positive maxLines as "disable chunking", the exact
+// opposite of what a tight budget needs.
+func ClampLinesToByteBudget(maxLines int, byteBudget int64) int {
+	if byteBudget <= 0 || maxLines <= 0 {
+		return maxLines
+	}
+	allowed := int(byteBudget / avgBytesPerLine)
+	if allowed >= maxLines {
+		return maxLines
+	}
+	if allowed < minChunkLines {
+		return minChunkLines
+	}
+	return allowed
+}
+
+func ChunkMaxLines(model string, declared *int, outputTokens int) int {
+	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
 	if maxLines < minChunkLines {
 		return minChunkLines
 	}

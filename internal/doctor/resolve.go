@@ -7,6 +7,7 @@ package doctor
 import (
 	"fmt"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 )
 
@@ -27,6 +28,11 @@ type AgentTarget struct {
 	Serial    bool
 	TargetIdx int
 	Source    string
+	// ContextWindowTokens is the agent's RESOLVED context window and
+	// WindowSource the tier it resolved from. Per-agent, not per-target: two
+	// agents can share one probe target while declaring different windows.
+	ContextWindowTokens int
+	WindowSource        string
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct
@@ -84,11 +90,14 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		}
 		if !agentSeen[name] {
 			agentSeen[name] = true
+			window, windowSrc := payload.ResolveContextWindow(ac.Model, ac.ContextWindowTokens)
 			res.Agents = append(res.Agents, AgentTarget{
-				Agent:     name,
-				Serial:    serial,
-				TargetIdx: idx,
-				Source:    reg.AgentTier(name),
+				Agent:               name,
+				Serial:              serial,
+				TargetIdx:           idx,
+				Source:              reg.AgentTier(name),
+				ContextWindowTokens: window,
+				WindowSource:        windowSrc,
 			})
 		}
 		return nil

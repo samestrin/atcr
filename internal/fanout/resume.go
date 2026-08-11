@@ -767,5 +767,6 @@ func reviewStageFromStatuses(statuses []AgentStatus) *payload.ReviewStage {
 	return reviewStageForAgents(statuses,
 		func(s AgentStatus) bool { return s.ToolsRequested },
 		func(s AgentStatus) bool { return s.ToolsDegraded },
-		func(s AgentStatus) string { return s.Agent })
+		func(s AgentStatus) string { return s.Agent },
+		func(s AgentStatus) string { return s.ToolsDegradedReason })
 }

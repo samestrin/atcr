@@ -338,6 +338,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		st.ToolCalls = &calls
 		st.ToolBytes = &bytes
 		st.ToolsDegraded = r.ToolsDegraded
+		st.ToolsDegradedReason = r.ToolsDegradedReason
 		st.ToolsRequested = r.ToolsRequested
 		st.TrippedBudgets = r.TrippedBudgets
 	}

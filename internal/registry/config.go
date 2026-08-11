@@ -116,6 +116,18 @@ const (
 	// lines). nil = unset (inherit the default); any explicit value must be
 	// within 1..MaxContextLinesCap.
 	MaxContextLinesCap = 1000000
+	// ContextWindowTokensCap is a generous sanity ceiling on the per-agent
+	// context_window_tokens declaration (Epic 35.16.5.1). It bounds TOKENS, not
+	// diff lines — do not conflate it with MaxContextLinesCap above, and do not
+	// collapse the two into one constant: the static model table in
+	// internal/payload already resolves exactly 1,000,000 tokens for the Gemini
+	// entries, so a 1,000,000 ceiling would leave the declaration tier unable to
+	// exceed the very table tier it exists to override. 10,000,000 clears every
+	// shipping model's published window while still rejecting the garbage class
+	// this guard is for (a fat-fingered extra digit, e.g. 128000 -> 1280000000).
+	// nil = unset (fall through to the static table); any explicit value must be
+	// within 1..ContextWindowTokensCap.
+	ContextWindowTokensCap = 10000000
 	// MaxEscalationHunkGapLines, MaxEscalationFiles, and
 	// MaxEscalationSkeletonLines are sanity ceilings on the payload_escalation
 	// thresholds (Epic 35.1). Values above them reinstate precisely the payload
@@ -550,8 +562,41 @@ type AgentConfig struct {
 	// before dispatching one call per chunk. Optional and backward-compatible — a
 	// pointer so an unset field (nil) inherits DefaultMaxContextLines while any
 	// explicit value survives, distinguishing "use the default" from a real
-	// override. Ignored entirely in bulk mode.
+	// override. Ignored entirely in bulk mode. NOTE an explicit value overrides
+	// ONLY the per-chunk LINE budget under review_strategy=chunked; the
+	// ContextWindowTokens declaration below still drives the payload byte budget,
+	// the bulk fall-through, the fallback budget, and the sizing record. See
+	// EffectiveContextWindowTokens for the single guarded read of the declaration.
 	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
+
+	// ContextWindowTokens declares THIS agent's model context window in tokens
+	// (Epic 35.16.5.1), resolved by internal/payload AHEAD of its static model
+	// table: declaration -> static table -> defaultContextWindowTokens. It exists
+	// because a litellm-backed roster reaches models through bare proxy aliases
+	// ("glm-5.2", "kimi-k3") that no provider-qualified table key matches, so the
+	// whole roster silently resolves the conservative 32,768-token default and
+	// under-fills by up to 30x. Those aliases are proxy-LOCAL and meaningless to
+	// any other atcr user, which is why machine-specific truth lives here rather
+	// than in the shipped table.
+	//
+	// Declaration, not detection — the Determinism NFR forbids a hot-path network
+	// call, and the proxy cannot be trusted to self-report (a live audit found 0
+	// of 28 litellm deployments declaring max_input_tokens). Same precedent as
+	// supports_function_calling.
+	//
+	// Declare min(model window, proxy ceiling), NOT the model's published spec: a
+	// request-body guardrail in front of the model can cap the usable window far
+	// below the model's own, and it surfaces as an opaque HTTP 400 rather than a
+	// context-window error. A pointer so unset (nil) is distinguishable from an
+	// explicit value, mirroring MaxContextLines above; an unset field changes
+	// nothing, so a pre-35.16.5.1 registry keeps loading and sizing identically.
+	//
+	// SCOPE: consumed by the review fan-out only (internal/fanout). The skeptic,
+	// executor, and debate lanes construct their agents with no sizing record at
+	// all, so a declaration is inert there — a pre-existing gap, not one this
+	// field introduces, but an operator will otherwise see no effect and get no
+	// warning.
+	ContextWindowTokens *int `yaml:"context_window_tokens,omitempty"`
 }
 
 // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
@@ -1056,6 +1101,20 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.MaxContextLines != nil && (*a.MaxContextLines <= 0 || *a.MaxContextLines > MaxContextLinesCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_context_lines must be within 1..%d", name, MaxContextLinesCap))
 	}
+	// context_window_tokens (Epic 35.16.5.1): an unset field falls through to the
+	// static model table; any explicit value must be a positive token count within
+	// the sanity ceiling. A non-positive value is rejected at load because an
+	// operator typo (0, -1) would otherwise be SILENTLY IGNORED downstream: the
+	// payload resolver's `declared > 0` guard at internal/payload/contextwindow.go
+	// fails on a 0 and the call falls through to the static model table or the
+	// conservative default, so the declaration is neither honored nor flagged —
+	// an operator declaring 8192 for a small model would watch the resolver
+	// silently hand back the table's 32768 (or larger) instead. Rejecting at
+	// load converts that silent mis-resolution into a loud error that names the
+	// offending agent.
+	if a.ContextWindowTokens != nil && (*a.ContextWindowTokens <= 0 || *a.ContextWindowTokens > ContextWindowTokensCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': context_window_tokens must be within 1..%d", name, ContextWindowTokensCap))
+	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive. Same range as the registry tier.
 	for _, m := range validateRetryBounds(a.MaxRetries, a.InitialBackoffMs) {
@@ -1312,6 +1371,26 @@ func (a AgentConfig) EffectiveMaxContextLines() int {
 		return *a.MaxContextLines
 	}
 	return DefaultMaxContextLines
+}
+
+// EffectiveContextWindowTokens returns the agent's declared context window in
+// tokens (Epic 35.16.5.1), or 0 when the declaration is unset. Unlike
+// EffectiveMaxContextLines there is no clamp-on-non-positive branch here: the
+// loader rejects any non-positive declaration at load (config.go:1108-1110), so
+// a non-nil value here is already a positive integer. A 0 return is therefore
+// an unambiguous "no declaration" sentinel that callers (internal/payload,
+// internal/fanout) can branch on without re-duplicating the range guard.
+//
+// The single guarded read exists so the payload resolver and the fan-out share
+// one source of truth for the declaration — the same defense-in-depth role
+// EffectiveMaxContextLines plays for the chunked line budget — and any future
+// accessor-side policy (e.g., capping at ContextWindowTokensCap) lives here
+// rather than being re-implemented at each call site.
+func (a AgentConfig) EffectiveContextWindowTokens() int {
+	if a.ContextWindowTokens == nil {
+		return 0
+	}
+	return *a.ContextWindowTokens
 }
 
 // EffectivePayloadMode returns the agent's own payload override when set,

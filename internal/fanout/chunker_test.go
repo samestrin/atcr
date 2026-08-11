@@ -90,8 +90,8 @@ func TestChunkDiff_WindowDerivedMaxLines(t *testing.T) {
 	}
 	diff := b.String()
 
-	smallML := payload.ChunkMaxLines("unlisted-small-model", outputTokens) // 32768 window
-	largeML := payload.ChunkMaxLines("openai/gpt-5.5", outputTokens)       // 128000 window
+	smallML := payload.ChunkMaxLines("unlisted-small-model", nil, outputTokens) // 32768 window
+	largeML := payload.ChunkMaxLines("openai/gpt-5.5", nil, outputTokens)       // 128000 window
 	require.Less(t, smallML, largeML, "a 32k window must derive fewer lines-per-chunk than a 128k window")
 
 	smallChunks := chunkDiff(diff, smallML)

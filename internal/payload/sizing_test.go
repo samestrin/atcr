@@ -19,7 +19,7 @@ const unknownModel = "no-such-model/never-listed"
 // budget stays strictly below `window - output` in tokens (AC1) — the output cap
 // is genuinely reserved, not spent on input.
 func TestEffectiveByteBudget_32kReservesOutput(t *testing.T) {
-	got := EffectiveByteBudget(unknownModel, testOutputTokens) // window 32768
+	got := EffectiveByteBudget(unknownModel, nil, testOutputTokens) // window 32768
 	// tokens implied by the returned byte budget, inverting the 7/2 ratio.
 	inputTokens := got * conservativeBytesPerTokenDen / conservativeBytesPerTokenNum
 	assert.Greater(t, got, int64(0), "a 32k window must leave a positive input budget")
@@ -31,8 +31,8 @@ func TestEffectiveByteBudget_32kReservesOutput(t *testing.T) {
 // proportionally larger budget than a 32k model, still within its own reservation
 // (AC1). openai/gpt-5.5 resolves to 128000 in the F1 table.
 func TestEffectiveByteBudget_LargeWindowScalesUp(t *testing.T) {
-	small := EffectiveByteBudget(unknownModel, testOutputTokens)     // 32768
-	large := EffectiveByteBudget("openai/gpt-5.5", testOutputTokens) // 128000
+	small := EffectiveByteBudget(unknownModel, nil, testOutputTokens)     // 32768
+	large := EffectiveByteBudget("openai/gpt-5.5", nil, testOutputTokens) // 128000
 	assert.Greater(t, large, small, "a 128k window must yield a larger budget than a 32k window")
 
 	inputTokens := large * conservativeBytesPerTokenDen / conservativeBytesPerTokenNum
@@ -47,7 +47,7 @@ func TestEffectiveByteBudget_LargeWindowScalesUp(t *testing.T) {
 // (AC2). A future refactor that drops the output reservation fails here.
 func TestEffectiveByteBudget_DaxBoundaryRegression(t *testing.T) {
 	const window = 32768
-	budget := EffectiveByteBudget(unknownModel, testOutputTokens) // window 32768
+	budget := EffectiveByteBudget(unknownModel, nil, testOutputTokens) // window 32768
 	inputTokens := budget * conservativeBytesPerTokenDen / conservativeBytesPerTokenNum
 
 	// The dax failure was 24577 + 8192 > 32768. Assert input + output <= window,
@@ -62,10 +62,10 @@ func TestEffectiveByteBudget_DaxBoundaryRegression(t *testing.T) {
 // TestEffectiveByteBudget_UnknownModelUsesDefault asserts an unknown model does
 // not panic and sizes against the conservative default window rather than zero.
 func TestEffectiveByteBudget_UnknownModelUsesDefault(t *testing.T) {
-	assert.NotPanics(t, func() { EffectiveByteBudget(unknownModel, testOutputTokens) })
+	assert.NotPanics(t, func() { EffectiveByteBudget(unknownModel, nil, testOutputTokens) })
 	assert.Equal(t,
-		EffectiveByteBudget(unknownModel, testOutputTokens),
-		EffectiveByteBudget("another-unlisted/model", testOutputTokens),
+		EffectiveByteBudget(unknownModel, nil, testOutputTokens),
+		EffectiveByteBudget("another-unlisted/model", nil, testOutputTokens),
 		"all unknown models share the conservative default window")
 }
 
@@ -74,7 +74,7 @@ func TestEffectiveByteBudget_UnknownModelUsesDefault(t *testing.T) {
 // or wrapped byte count. Reserving the full 32768 window as output leaves
 // nothing for input.
 func TestEffectiveByteBudget_DegenerateWindowReturnsZero(t *testing.T) {
-	got := EffectiveByteBudget(unknownModel, 32768) // output >= window
+	got := EffectiveByteBudget(unknownModel, nil, 32768) // output >= window
 	assert.Equal(t, int64(0), got, "a degenerate window must return 0, not a negative budget")
 }
 
@@ -84,8 +84,8 @@ func TestEffectiveByteBudget_DegenerateWindowReturnsZero(t *testing.T) {
 // `window - outputTokens - overhead` grows as outputTokens becomes more
 // negative, returning an oversized byte budget that would over-fill the window.
 func TestEffectiveByteBudget_NegativeOutputTokens(t *testing.T) {
-	got := EffectiveByteBudget(unknownModel, -1000)
-	want := EffectiveByteBudget(unknownModel, 0)
+	got := EffectiveByteBudget(unknownModel, nil, -1000)
+	want := EffectiveByteBudget(unknownModel, nil, 0)
 	assert.LessOrEqual(t, got, want,
 		"negative outputTokens must not inflate the budget past the zero-output case")
 }
@@ -94,8 +94,8 @@ func TestEffectiveByteBudget_NegativeOutputTokens(t *testing.T) {
 // maxLines than a 128k model, so chunkDiff opens MORE chunks for the small window
 // (AC3), from the same effective-budget source.
 func TestChunkMaxLines_SmallerForSmallWindow(t *testing.T) {
-	small := ChunkMaxLines(unknownModel, testOutputTokens)     // 32768
-	large := ChunkMaxLines("openai/gpt-5.5", testOutputTokens) // 128000
+	small := ChunkMaxLines(unknownModel, nil, testOutputTokens)     // 32768
+	large := ChunkMaxLines("openai/gpt-5.5", nil, testOutputTokens) // 128000
 	assert.Less(t, small, large, "a 32k window must yield fewer lines-per-chunk than a 128k window")
 	assert.GreaterOrEqual(t, small, minChunkLines, "must never drop below the positive floor")
 }
@@ -105,6 +105,6 @@ func TestChunkMaxLines_SmallerForSmallWindow(t *testing.T) {
 // rather than returning 0/negative, which chunkDiff would treat as "disable
 // chunking".
 func TestChunkMaxLines_ClampedFloor(t *testing.T) {
-	got := ChunkMaxLines(unknownModel, 32768) // degenerate: EffectiveByteBudget == 0
+	got := ChunkMaxLines(unknownModel, nil, 32768) // degenerate: EffectiveByteBudget == 0
 	assert.Equal(t, minChunkLines, got, "a degenerate window must clamp to the positive floor")
 }
