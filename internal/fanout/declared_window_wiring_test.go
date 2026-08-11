@@ -131,6 +131,71 @@ func TestBuildSlots_ChunkedRecordsDeclaredLineBudget(t *testing.T) {
 	}
 }
 
+func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *testing.T) {
+	// This epic introduced a SECOND source for ml at review.go:1665-1678: an
+	// explicit max_context_lines overrides the declaration-derived value, and a
+	// scope constraint shaves the derived one — but no test paired a declaration
+	// with either, leaving exactly the precedence a future change is most likely to
+	// invert unpinned. It is also the precedence docs/registry.md and the config
+	// field comment describe, so the prose had nothing enforcing it.
+	//
+	// The three cases below are mutually discriminating: each fails under a
+	// different plausible inversion of the branch.
+	const declared = 128000
+	const explicit = 700
+	derived := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, 8437, derived, "precondition: the declaration derives a much larger budget than the explicit 700")
+
+	// The plan block is prepended to every chunk, so its presence is what triggers
+	// the ml/8 reservation. Format it the way resolveScopeConstraint does.
+	plan, _ := payload.ScopeConstraint("phase 1: do the thing", registry.DefaultMaxSprintPlanBytes)
+	require.NotEmpty(t, plan, "precondition: a formatted scope-constraint block")
+
+	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 900), FileCount: 12}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	roster := func(t *testing.T, withExplicit bool) *ReviewConfig {
+		t.Helper()
+		cfg := declaredWindowRoster(t, declared)
+		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+		cfg.Settings.ReviewStrategy = "chunked"
+		if withExplicit {
+			g := cfg.Registry.Agents["greta"]
+			lines := explicit
+			g.MaxContextLines = &lines
+			cfg.Registry.Agents["greta"] = g
+		}
+		return cfg
+	}
+
+	t.Run("explicit max_context_lines beats the declaration", func(t *testing.T) {
+		slots, _, err := buildSlots(roster(t, true), payloads, rng, "", "", true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1, "precondition: a 700-line budget must split this diff")
+		assert.Equal(t, explicit, slots[0].Primary.chunkMaxLines,
+			"an operator's explicit max_context_lines wins over the declaration-derived line budget")
+	})
+
+	t.Run("a scope constraint shaves the declaration-derived budget", func(t *testing.T) {
+		slots, _, err := buildSlots(roster(t, false), payloads, rng, "", plan, true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1, "precondition: the shaved budget must still split this diff")
+		assert.Equal(t, derived-derived/8, slots[0].Primary.chunkMaxLines,
+			"the plan block is prepended to every chunk, so the derived budget reserves ml/8 for it")
+	})
+
+	t.Run("a scope constraint does NOT shave an explicit max_context_lines", func(t *testing.T) {
+		// The branch is an else-if by design: an explicit operator value is left
+		// untouched (least surprise). Without this case, folding the reservation
+		// into both arms would pass the other two.
+		slots, _, err := buildSlots(roster(t, true), payloads, rng, "", plan, true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1)
+		assert.Equal(t, explicit, slots[0].Primary.chunkMaxLines,
+			"an explicit max_context_lines is used verbatim, with no scope-constraint reservation taken out of it")
+	})
+}
+
 func TestBuildFallbackAgent_ResolvesItsOwnDeclaration(t *testing.T) {
 	// AC4: a fallback must resolve its OWN window. Inheriting the primary's
 	// larger declaration would overflow a smaller backup model — the one
