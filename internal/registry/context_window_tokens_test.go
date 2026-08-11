@@ -199,6 +199,31 @@ func TestContextWindowTokensCap_ExceedsLargestStaticTableWindow(t *testing.T) {
 	assert.Equal(t, 10000000, ContextWindowTokensCap)
 }
 
+func TestValidateCommunityPersonaYAML_RejectsContextWindowTokens(t *testing.T) {
+	// context_window_tokens is machine-LOCAL by this field's own stated design:
+	// it exists to describe a proxy alias that is meaningless to any other atcr
+	// user. A community persona is fetched and installed verbatim onto a consumer
+	// whose proxy may serve that model at a fraction of the declared window, so a
+	// published declaration produces guaranteed over-window payloads on the
+	// consumer's machine. The strict community validator must therefore fail
+	// closed on it rather than accept it as an ordinary inlined agent field.
+	const y = "name: sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\ncontext_window_tokens: 128000\n"
+	err := ValidateCommunityPersonaYAML("sample", []byte(y))
+	require.Error(t, err, "a published context_window_tokens declaration must be rejected")
+	assert.Contains(t, err.Error(), "context_window_tokens",
+		"the error must name the offending key so the persona author can remove it")
+	assert.Contains(t, err.Error(), "sample",
+		"the error must name the persona, matching the rest of this validator's messages")
+}
+
+func TestValidateCommunityPersonaYAML_AcceptsUndeclaredContextWindow(t *testing.T) {
+	// The rejection must be scoped to the declaration itself: a persona that
+	// simply omits the key stays valid, so the guard cannot degrade into a
+	// blanket rejection of every community persona.
+	const y = "name: sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\n"
+	require.NoError(t, ValidateCommunityPersonaYAML("sample", []byte(y)))
+}
+
 func TestAgentConfig_EffectiveContextWindowTokens(t *testing.T) {
 	// The single guarded read mirrors EffectiveMaxContextLines's role for the
 	// chunked line budget: payload/fanout callers share one source of truth
