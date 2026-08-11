@@ -484,6 +484,59 @@ func TestBuildFallbackAgent_OverflowSupersedesInheritedActionWithoutLosingTheReg
 	assert.Greater(t, fb.ChunkTotal, 1, "precondition: chunk_count is a meaningful record here")
 }
 
+func TestBuildFallbackAgent_CacheKeyNeverCollidesWithItsPrimarys(t *testing.T) {
+	// A fallback keys on the PRIMARY's prompt under its OWN sizing token, so the
+	// question is whether the token can ever stop distinguishing them. It can
+	// collapse: sizingToken(fbBudget, primary.chunkMaxLines) renders the unsized
+	// "0:0" whenever the slot is bulk AND the fallback's window funds no input
+	// budget. This pins that the collapse is harmless — the key also carries the
+	// model, the backend and the temperature, so a substitute model still gets its
+	// own entry — and that the ordinary differing-budget case is distinguished too.
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	t.Run("differing budgets", func(t *testing.T) {
+		cfg := declaredWindowRoster(t, 128000)
+		kai := cfg.Registry.Agents["kai"]
+		kai.Model = "unlisted-backup-model"
+		cfg.Registry.Agents["kai"] = kai
+
+		primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "")
+		require.NoError(t, err)
+		var fb Agent
+		_ = captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai", true) })
+		require.NoError(t, err)
+
+		require.Equal(t, primary.Prompt, fb.Prompt, "precondition: the fallback reviews the identical prompt text")
+		require.NotEqual(t, primary.EffectiveBudget, fb.EffectiveBudget, "precondition: their budgets differ")
+		assert.NotEqual(t, primary.CacheKey, fb.CacheKey, "a substitute model must not replay the primary's cache entry")
+	})
+
+	t.Run("both sizing tokens collapse to 0:0", func(t *testing.T) {
+		// greta declares 12288 → effective budget 0; kai declares 1 → also 0. The
+		// slot is bulk, so chunkMaxLines is 0 on both sides: identical tokens.
+		cfg := declaredWindowRoster(t, 12288)
+		kai := cfg.Registry.Agents["kai"]
+		kai.Model = "unlisted-backup-model"
+		tiny := 1
+		kai.ContextWindowTokens = &tiny
+		cfg.Registry.Agents["kai"] = kai
+
+		var primary Agent
+		var err error
+		_ = captureStderr(t, func() { primary, _, err = buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "") })
+		require.NoError(t, err)
+		var fb Agent
+		_ = captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai", true) })
+		require.NoError(t, err)
+
+		require.Zero(t, primary.EffectiveBudget, "precondition: the primary's token collapses")
+		require.Zero(t, fb.EffectiveBudget, "precondition: the fallback's token collapses to the same 0:0")
+		require.Zero(t, primary.chunkMaxLines, "precondition: a bulk slot contributes 0 lines to the token")
+		assert.NotEqual(t, primary.CacheKey, fb.CacheKey,
+			"the model/backend/temperature in the key must keep the entries apart even when the sizing token cannot")
+	})
+}
+
 func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T) {
 	// `if fbWindow > 0 { fbReserved = defaultMaxTokens }` is a dead branch:
 	// ContextWindowTokens never returns 0 by contract (contextwindow.go:90-98), so

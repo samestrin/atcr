@@ -2384,6 +2384,17 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// model must not collide with the primary's cache entry. Its sizing token
 		// (Epic 19.10 F7) uses the fallback's OWN effective budget under the slot's
 		// chunk regime, so it also never collides across sizing regimes.
+		//
+		// The sizing token DOES collapse to the unsized "0:0" when the slot is bulk
+		// (chunkMaxLines 0) and this fallback's window funds no input budget
+		// (fbBudget 0) — the same token an unsized agent renders. That is not a
+		// collision risk: the key also carries the model, the backend and the
+		// temperature, so two entries can only meet when a substitute resolves the
+		// SAME model on the SAME provider at the SAME temperature over the same
+		// prompt — inputs that produce the same review, which is what a shared cache
+		// entry is for. Cache invalidation on a prompt-size change is likewise not
+		// implicit: the prompt itself is hashed, so a re-sized payload is a different
+		// key by construction.
 		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbBudget, primary.chunkMaxLines)),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
