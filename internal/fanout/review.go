@@ -2318,7 +2318,8 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 	return reviewStageForAgents(results,
 		func(r Result) bool { return r.ToolsRequested },
 		func(r Result) bool { return r.ToolsDegraded },
-		func(r Result) string { return r.Agent })
+		func(r Result) string { return r.Agent },
+		func(r Result) string { return r.ToolsDegradedReason })
 }
 
 // reviewStageForAgents is the single manifest review-stage classifier shared by
@@ -2330,8 +2331,9 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 // manifest omits the review entry for a pure 1.x roster. Agents is a distinct
 // copy of ToolsEnabled so the two slices never alias (a later mutation of one
 // must not silently mutate the other).
-func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string) *payload.ReviewStage {
+func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string, reason func(T) string) *payload.ReviewStage {
 	var enabled, deg []string
+	var reasons map[string]string
 	for _, it := range items {
 		if !requested(it) {
 			continue
@@ -2339,12 +2341,25 @@ func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded fun
 		enabled = append(enabled, name(it))
 		if degraded(it) {
 			deg = append(deg, name(it))
+			// Built lazily so a run with no degradation (and every run predating
+			// the field) marshals without the key at all.
+			if rsn := reason(it); rsn != "" {
+				if reasons == nil {
+					reasons = map[string]string{}
+				}
+				reasons[name(it)] = rsn
+			}
 		}
 	}
 	if len(enabled) == 0 {
 		return nil
 	}
-	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: deg}
+	return &payload.ReviewStage{
+		Agents:              append([]string(nil), enabled...),
+		ToolsEnabled:        enabled,
+		ToolsDegraded:       deg,
+		ToolsDegradedReason: reasons,
+	}
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /

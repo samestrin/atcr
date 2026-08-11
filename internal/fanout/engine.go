@@ -662,6 +662,14 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// is unique.
 			r.FallbackModel = a.Invocation.Model
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
+			// Failing over to a backup that lacks function calling is a distinct
+			// diagnosis from a primary that never had it — the first points at the
+			// backup declaration in the registry, the second at the primary's. Only
+			// the incapable-model reason is promoted: a missing dispatcher or
+			// non-chat completer is engine-wide and identical on every attempt.
+			if r.ToolsDegradedReason == degradeReasonModelNotCapable {
+				r.ToolsDegradedReason = degradeReasonFallbackNotCapable
+			}
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
 		// finish_reason=length with zero RAW parsed findings (stream.ParseModelOutput,
@@ -828,17 +836,26 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 // wrapper there spans every path uniformly.
 func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 	if a.Tools {
+		// The three causes are distinguishable here and nowhere later, so each
+		// one is named as the branch is taken rather than inferred afterward
+		// from a registry the run does not carry.
+		reason := degradeReasonModelNotCapable
 		if a.SupportsFC {
 			cc, ok := e.completer.(ChatCompleter)
-			if ok && e.dispatcher != nil {
+			switch {
+			case ok && e.dispatcher != nil:
 				return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
+			case !ok:
+				reason = degradeReasonNoChatCompleter
+			default:
+				reason = degradeReasonNoDispatcher
 			}
 		}
 		// A degraded tool agent runs single-shot but is intentionally NOT cached:
 		// it was configured to read live code via the tool loop, so its output is
 		// not a pure function of the payload and a payload-keyed cache could serve
 		// a stale degraded answer. Tool agents always call live.
-		return e.invokeDegraded(ctx, a, "")
+		return e.invokeDegraded(ctx, a, reason)
 	}
 	return e.invokeCachedSingleShot(ctx, a)
 }
