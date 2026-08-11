@@ -1669,6 +1669,22 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					ml = 1
 				}
 			}
+			// The chunked twin of the bulk agentEff == 0 arm below. A window that
+			// reserves no input budget at all is honest degradation on either
+			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
+			// run presents as an ordinary "chunk" plan while shipping chunks the
+			// model provably cannot hold. Mark the same action and emit the same
+			// warning the bulk path does, so the operator's too-small declaration
+			// surfaces regardless of review_strategy. Keyed on agentEff (not ml),
+			// because an explicit max_context_lines overrides the line budget
+			// without making the window any bigger.
+			chunkAction := "chunk"
+			if agentEff == 0 {
+				chunkAction = "overflow"
+				if warnOversized {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n", name, ml)
+				}
+			}
 			chunks := chunkDiff(mp.Text, ml)
 			// Warn on any chunk that is a lone file exceeding the budget (it could
 			// not be split). This runs over EVERY chunk — not just multi-chunk
@@ -1712,7 +1728,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					resolvedWindow:  payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens),
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
-					action:          "chunk",
+					action:          chunkAction,
 				}
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
