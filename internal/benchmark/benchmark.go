@@ -113,15 +113,45 @@ func (m *Manifest) Validate() error {
 		if len(c.ExpectedCategories) == 0 {
 			return fmt.Errorf("case %q: at least one expected_category is required", c.ID)
 		}
+		// Dedupe on the NORMALIZED category, which is how the scorer counts distinct
+		// expected categories (normalizeSet). Checking the raw string here would let
+		// ["maintainability", "Maintainability"] validate as two categories and then
+		// score as one, changing the recall denominator from 2 to 1 with no
+		// diagnostic anywhere.
 		seenCats := make(map[string]bool, len(c.ExpectedCategories))
+		normCats := make([]string, 0, len(c.ExpectedCategories))
 		for _, cat := range c.ExpectedCategories {
-			if strings.TrimSpace(cat) == "" {
+			n := normalize(cat)
+			if n == "" {
 				return fmt.Errorf("case %q: expected_category must not be empty or blank", c.ID)
 			}
-			if seenCats[cat] {
+			if seenCats[n] {
 				return fmt.Errorf("case %q: duplicate expected_category %q", c.ID, cat)
 			}
-			seenCats[cat] = true
+			seenCats[n] = true
+			normCats = append(normCats, n)
+		}
+		// Make familyOf's identity fallback TOTAL. The fallback overlaps the family
+		// table: a case expecting both a coarse category and a member of that
+		// category's family lets ONE raised finding satisfy BOTH — Expected
+		// ["maintainability","style"] with Raised ["style"] measures recall 1.0 where
+		// exact matching gave 0.5. Rejecting the shape here is what lets
+		// equivalence.go keep saying an unfamilied expected category is "still scored
+		// by exact match, exactly as before": it can no longer ALSO be reached
+		// through a sibling's family. Costs valid suites nothing — the families are
+		// disjoint (TestEquivalence_FamiliesAreDisjoint), so only a hand-authored
+		// suite planting a fine word beside its coarse parent can trip this.
+		for i, a := range normCats {
+			for j, b := range normCats {
+				if i == j {
+					continue
+				}
+				for _, member := range familyOf(b) {
+					if member == a {
+						return fmt.Errorf("case %q: expected_category %q is already satisfied by %q's equivalence family; one raised finding would satisfy both and inflate recall", c.ID, a, b)
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -241,6 +271,27 @@ type RunResult struct {
 	SuiteVersion string                   `json:"suite_version"`
 	GeneratedAt  string                   `json:"generated_at"`
 	Reviewers    []scorecard.PublicRecord `json:"reviewers"`
+
+	// OutOfVocabularyRate is the share of the run's findings whose category is not
+	// a member of the closed reviewer vocabulary. The value is produced by the
+	// package-level OutOfVocabularyRate FUNCTION in vocabulary.go, which documents
+	// the metric's three definitional choices; this field only carries it. (The
+	// function and this field deliberately share a name — say which one you mean at
+	// a call site, since `benchmark.OutOfVocabularyRate` alone is ambiguous.)
+	//
+	// It is a DIAGNOSTIC on the run, not a reviewer metric, which is why it sits
+	// here rather than on scorecard.PublicRecord: that type is the frozen public
+	// schema shared with the production leaderboard export, and a benchmark-only
+	// column does not belong in a public submission. BuildSubmission accordingly
+	// does not carry this field forward.
+	//
+	// A POINTER for the same reason CostPerCorroboratedFindingUSD is one: 0.0 is a
+	// real and desirable measurement (perfect vocabulary agreement) and must not
+	// read identically to "nobody measured". omitempty drops the key only when the
+	// pointer is nil, so a producer that computed a clean run still emits an
+	// explicit 0 — while a run-result file predating epic 35.16.5 unmarshals to nil
+	// and is honestly reported as unmeasured rather than as flawless.
+	OutOfVocabularyRate *float64 `json:"out_of_vocabulary_rate,omitempty"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the

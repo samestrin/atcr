@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -8,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +57,24 @@ func (stubCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string
 	return "HIGH|x.go:1|planted defect|fix it|correctness|15|evidence", nil
 }
 
+// stubCategoryCompleter raises one finding under a caller-chosen category, so a
+// test can drive the out-of-vocabulary rate off a word the closed vocabulary does
+// not contain.
+type stubCategoryCompleter struct{ category string }
+
+func (s stubCategoryCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "HIGH|x.go:1|planted defect|fix it|" + s.category + "|15|evidence", nil
+}
+
+// stubNoFindingsCompleter reviews successfully and reports no defect at all — the
+// only path that leaves a run with zero findings to measure. Distinct from a failed
+// reviewer: the review itself succeeds, so the run is scored rather than aborted.
+type stubNoFindingsCompleter struct{}
+
+func (stubNoFindingsCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "No findings.", nil
+}
+
 // executeBenchmarkRun loads + validates the suite, executes each case's diff
 // through the review pipeline with the injected Completer, scores findings against
 // the case's expected categories, and aggregates per-reviewer PublicRecord into a
@@ -81,6 +102,72 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 	assert.InDelta(t, 0.0, *greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
 	assert.Equal(t, int64(0), greta.LatencyP50MS, "stub reports no usage -> deterministic 0")
 	assert.Equal(t, "m-kai", rr.Reviewers[1].Model)
+
+	// The out-of-vocabulary diagnostic must reach the run result, or an operator
+	// has no signal that reviewers drifted off the closed vocabulary. Without this
+	// assertion the wiring could be deleted and the whole suite would stay green.
+	// stubCompleter raises only `correctness`, a taxonomy member, so a measured 0.
+	require.NotNil(t, rr.OutOfVocabularyRate, "a run that raised findings must report a rate")
+	assert.InDelta(t, 0.0, *rr.OutOfVocabularyRate, 1e-9,
+		"every stub finding uses a taxonomy member -> measured 0, not unmeasured")
+}
+
+// A run whose reviewers all drift off the vocabulary reports it. Paired with the
+// clean case above so the wiring is pinned in both directions rather than by a
+// single value that a hardcoded 0 would also satisfy.
+func TestExecuteBenchmarkRun_ReportsVocabularyDrift(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: "not-a-taxonomy-word"}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	require.NotNil(t, rr.OutOfVocabularyRate)
+	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
+		"every finding used a non-member word -> full drift")
+}
+
+// An EMPTY category counts as drift, exactly like a non-member word — the third of
+// vocabulary.go's definitional choices, whose absence would produce a rate that
+// IMPROVES when a reviewer stops labelling entirely. Driven through the CLI wiring
+// rather than the library because an unlabelled finding also has to survive the
+// parser's short-row padding to reach the scorer at all.
+func TestExecuteBenchmarkRun_EmptyCategoryCountsAsDrift(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: ""}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	require.NotNil(t, rr.OutOfVocabularyRate, "findings were raised -> measured, not unmeasured")
+	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
+		"an unlabelled finding is drift, not an exemption from the metric")
+	require.Len(t, rr.Reviewers, 1)
+	assert.InDelta(t, 1.0, rr.Reviewers[0].FindingsRaisedAvg, 1e-9,
+		"the unlabelled finding still counts as a finding, so it is in the denominator too")
+}
+
+// A run that raised NO findings reports the rate as absent, never 0.0 — the
+// nil-vs-zero distinction RunResult.OutOfVocabularyRate's pointer exists to carry.
+// Asserted here at the CLI wiring level and against the MARSHALED JSON, because
+// omitempty on the nil pointer is what actually drops the key from the run-result
+// file an operator reads; the library-level test cannot observe that.
+func TestExecuteBenchmarkRun_NoFindingsOmitsVocabularyRate(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	assert.Nil(t, rr.OutOfVocabularyRate, "no findings -> unmeasured, not a clean 0.0")
+
+	raw, err := json.Marshal(rr)
+	require.NoError(t, err)
+	var decoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	_, present := decoded["out_of_vocabulary_rate"]
+	assert.False(t, present, "a nil rate must drop the key entirely — not emit null, not emit 0")
 }
 
 // Two runs over the same suite + transcript are byte-identical (generatedAt is
@@ -163,4 +250,85 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
 	require.Equal(t, "m-greta", sub.Reviewers[0].Model)
 	require.Equal(t, 2, sub.Reviewers[0].Runs, "two cases scored")
 	require.InDelta(t, 0.75, sub.Reviewers[0].CorroborationRate, 1e-9, "category recall (1.0 + 0.5)/2")
+}
+
+// A pool row whose PROBLEM leaked an unescaped pipe is recorded by the parser as
+// SKIPPED, not as a finding. Discarding it shrinks the out-of-vocabulary
+// DENOMINATOR, so the reviewer emitting the worst-formed output earns the best
+// drift rate — the metric rewards exactly the behaviour it exists to detect. A
+// skipped row must fold into its reviewer's raised categories as "" and count as
+// drift, by the same rule that already makes an empty CATEGORY column drift.
+//
+// REVIEWER is the engine's last-appended column, so the final field survives an
+// overflow earlier in the row; parse() strips trailing empty fields BEFORE
+// classifying a row as skipped, so that field is non-empty by construction.
+func TestReadCaseFindings_SkippedRowsCountAsDrift(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+
+	body := stream.Version + "\n" +
+		// well-formed, in-vocabulary
+		"HIGH|a.go:1|clean problem|clean fix|correctness|15|evidence|greta\n" +
+		// unescaped pipe in PROBLEM -> 9 columns -> parser records it as skipped
+		"HIGH|b.go:2|leaked | pipe here|some fix|security|15|evidence|greta\n"
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "findings.txt"), []byte(body), 0o600))
+
+	got, err := readCaseFindings(dir)
+	require.NoError(t, err)
+	require.Contains(t, got, "greta", "the skipped row's REVIEWER must still be recovered")
+	assert.ElementsMatch(t, []string{"correctness", ""}, got["greta"],
+		"the malformed row joins the denominator as an unlabelled finding")
+
+	// The recipe from the TD row: one in-vocabulary row + one malformed row is a
+	// rate of 0.5, not 0.0.
+	rate := benchmark.OutOfVocabularyRate([]benchmark.ReviewerScore{
+		{Model: "m", Persona: "p", Cases: []benchmark.CaseScore{
+			{Expected: []string{"correctness"}, Raised: got["greta"]},
+		}},
+	})
+	require.NotNil(t, rate)
+	assert.InDelta(t, 0.5, *rate, 1e-9, "1 drifted of 2 findings, not 0 of 1")
+}
+
+// A run whose reviewers breached the vocabulary ceiling must SAY SO to the
+// operator. Before this, MaxOutOfVocabularyRate had no non-test consumer at all: a
+// run measuring 0.72 drift wrote the number to JSON and exited 0 silently, while
+// the constant's doc and the CHANGELOG both announced enforcement that did not
+// exist. The warning names both the ceiling and the measured value, and goes to
+// stderr so `--output <path>` (which prints nothing to stdout) still surfaces it.
+func TestBenchmarkRun_WarnsWhenVocabularyCeilingExceeded(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: "not-a-taxonomy-word"}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotNil(t, rr.OutOfVocabularyRate)
+
+	var buf bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&buf, rr.OutOfVocabularyRate)
+	got := buf.String()
+	assert.Contains(t, got, "out_of_vocabulary_rate", "the warning must name the metric")
+	assert.Contains(t, got, "0.20", "the warning must name the ceiling")
+	assert.Contains(t, got, "1.00", "the warning must name the measured value")
+}
+
+// The clean and unmeasured paths stay silent — a warning on every run is a warning
+// nobody reads.
+func TestBenchmarkRun_NoVocabularyWarningWhenCleanOrUnmeasured(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	clean, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotNil(t, clean.OutOfVocabularyRate)
+
+	var buf bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&buf, clean.OutOfVocabularyRate)
+	assert.Empty(t, buf.String(), "a measured-clean run must not warn")
+
+	buf.Reset()
+	warnIfVocabularyCeilingExceeded(&buf, nil)
+	assert.Empty(t, buf.String(), "an unmeasured run is not a breach")
 }

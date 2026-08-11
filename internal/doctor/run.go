@@ -233,8 +233,14 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 	if errors.As(err, &se) {
 		status, hint := StatusProviderError, ""
 		switch se.Status {
-		case 401, 403:
+		case 401:
 			status, hint = StatusAuthFailed, "check the API key in "+tgt.APIKeyEnv
+		case 403:
+			// A 403 is authenticated-but-refused: quota exhaustion, billing state,
+			// or a permission scope far more often than a bad credential. Naming
+			// the key here misdirects the whole investigation, so point at the
+			// captured upstream body instead — it carries the real reason.
+			status, hint = StatusAuthFailed, "authenticated but refused — likely quota, billing, or a permission scope; read detail for the upstream reason"
 		case 404:
 			status, hint = StatusNotFound, "check the model name and the provider base_url"
 		case 429:
@@ -279,11 +285,16 @@ func scrubCredentials(detail string, tgt Target) string {
 
 // bounded clamps a detail string to maxDetailBytes on a rune boundary so
 // multi-byte UTF-8 sequences are never split, producing invalid output.
-func bounded(s string) string {
-	if len(s) <= maxDetailBytes {
+func bounded(s string) string { return clampRunes(s, maxDetailBytes) }
+
+// clampRunes truncates s to at most max bytes, walking back to the last valid
+// rune boundary. Shared by the probe's detail bound and the table renderer's
+// tighter per-row bound so the two cannot drift in how they cut UTF-8.
+func clampRunes(s string, limit int) string {
+	if len(s) <= limit {
 		return s
 	}
-	s = s[:maxDetailBytes]
+	s = s[:limit]
 	// Walk back to the last valid rune boundary (at most utf8.UTFMax-1 steps).
 	for !utf8.ValidString(s) {
 		s = s[:len(s)-1]

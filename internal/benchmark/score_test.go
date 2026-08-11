@@ -189,3 +189,54 @@ func TestScore_SortedAndScrubbed(t *testing.T) {
 	// the email is gone; "bruce" survives.
 	assert.Equal(t, "bruce", got[0].Persona)
 }
+
+// The cost-per-corroborated denominator counts FINDINGS, not distinct categories.
+//
+// Every other cost fixture raises categories that are all distinct, so it pins the
+// same number under either unit — verified by mutation: replacing the loop over
+// normalizedRaised with a loop over the deduplicated `raised` set leaves the whole
+// package green. This is the fixture that discriminates.
+//
+// Six findings under ONE label and six under SIX labels must both yield 6. The
+// first half pins the unit; the second is the gaming surface the equivalence
+// widening opened — varied family labels buy denominator without extra detection,
+// where exact matching made the same inflation visible as duplicate-label spam.
+// findings_raised_avg on the same published row is the counter-signal.
+func TestScore_CostDenominatorCountsFindingsNotDistinctCategories(t *testing.T) {
+	sixOfOne := Score([]ReviewerScore{{
+		Model: "m", Persona: "p", CostUSD: 0.6,
+		Cases: []CaseScore{{
+			Expected: []string{"maintainability"},
+			Raised: []string{
+				"maintainability", "maintainability", "maintainability",
+				"maintainability", "maintainability", "maintainability",
+			},
+		}},
+	}})
+	require.Len(t, sixOfOne, 1)
+	require.NotNil(t, sixOfOne[0].CostPerCorroboratedFindingUSD)
+	assert.InDelta(t, 0.1, *sixOfOne[0].CostPerCorroboratedFindingUSD, 1e-9,
+		"0.6 / 6 FINDINGS — deduplicating to 1 distinct category would give 0.6")
+
+	sixOfSix := Score([]ReviewerScore{{
+		Model: "m", Persona: "p", CostUSD: 0.6,
+		Cases: []CaseScore{{
+			Expected: []string{"maintainability"},
+			Raised: []string{
+				"maintainability", "complexity", "duplication",
+				"naming", "bloat", "style",
+			},
+		}},
+	}})
+	require.Len(t, sixOfSix, 1)
+	require.NotNil(t, sixOfSix[0].CostPerCorroboratedFindingUSD)
+	assert.InDelta(t, 0.1, *sixOfSix[0].CostPerCorroboratedFindingUSD, 1e-9,
+		"six family labels buy the same denominator as six identical ones — the unit is findings")
+
+	assert.InDelta(t,
+		*sixOfOne[0].CostPerCorroboratedFindingUSD,
+		*sixOfSix[0].CostPerCorroboratedFindingUSD, 1e-9,
+		"relabelling across the family must not change the denominator")
+	assert.InDelta(t, sixOfOne[0].FindingsRaisedAvg, sixOfSix[0].FindingsRaisedAvg, 1e-9,
+		"findings_raised_avg rises in lockstep either way — the counter-signal to label spam")
+}

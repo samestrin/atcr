@@ -3,8 +3,6 @@ package benchmarkimport_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/reconcile"
 )
 
 // suiteDir is the committed standard-v1 suite, relative to this package.
@@ -21,81 +20,147 @@ const suiteDir = "../../benchmarks/standard-v1"
 // shipped data: they run offline in CI and fail if an edit makes the bundled
 // suite unloadable, unscoreable, or unreviewable.
 
-func TestBundledSuite_SatisfiesTheManifestContract(t *testing.T) {
+// loadSuite loads the committed suite through the same path `atcr benchmark
+// verify` uses. Every test below goes through it rather than calling
+// benchmark.Load itself, so the failure message for an unloadable suite is
+// written once.
+func loadSuite(t *testing.T) *benchmark.Manifest {
+	t.Helper()
 	m, err := benchmark.Load(suiteDir)
-
 	require.NoError(t, err, "the committed suite must load through the same path atcr benchmark verify uses")
+	return m
+}
+
+// distinctPlantedCategories maps each expected category the suite plants to the
+// ids of the cases planting it. Returning the case ids rather than a bare set
+// lets the membership guard below name the offending case in its failure
+// message while still sharing one derivation with the category-bar test — two
+// independent walks of m.Cases is how the two came to disagree about what the
+// suite plants.
+func distinctPlantedCategories(m *benchmark.Manifest) map[string][]string {
+	out := map[string][]string{}
+	for _, c := range m.Cases {
+		for _, cat := range c.ExpectedCategories {
+			out[cat] = append(out[cat], c.ID)
+		}
+	}
+	return out
+}
+
+func TestBundledSuite_SatisfiesTheManifestContract(t *testing.T) {
+	m := loadSuite(t)
+
 	assert.Equal(t, "standard-v1", m.Suite)
 	assert.Equal(t, "1.0.0", m.SuiteVersion)
 }
 
 func TestBundledSuite_MeetsTheEpicsCaseAndCategoryBar(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	assert.GreaterOrEqual(t, len(m.Cases), 12, "the suite must carry at least 12 cases")
 
-	distinct := map[string]struct{}{}
-	for _, c := range m.Cases {
-		for _, cat := range c.ExpectedCategories {
-			distinct[cat] = struct{}{}
-		}
-	}
+	distinct := distinctPlantedCategories(m)
 	assert.GreaterOrEqual(t, len(distinct), 3, "the suite must span at least 3 categories, got %v", distinct)
-
-	// Every category must be emittable under the prompt each reviewer actually
-	// receives. The shipped personas resolve to their own files — never
-	// personas/_base.md, which registry.ResolvePersona reaches only as a
-	// fallback for agents with no persona file of their own — so this guard
-	// reads the personas' own prompts. A persona that declares no CATEGORY
-	// enumeration is unconstrained (any lowercase word is emittable); one that
-	// declares an explicit list must cover every suite category, or that
-	// reviewer's recall on it is structurally zero.
-	for _, pf := range shippedPersonaFiles(t) {
-		raw, err := os.ReadFile(pf)
-		require.NoError(t, err)
-		vocab := declaredCategoryVocabulary(raw)
-		if len(vocab) == 0 {
-			continue
-		}
-		for cat := range distinct {
-			assert.Contains(t, vocab, cat,
-				"%q is excluded by %s's CATEGORY vocabulary, so that reviewer is never prompted to emit it", cat, filepath.Base(pf))
-		}
-	}
 }
 
-// shippedPersonaFiles returns the prompts reviewers actually receive: every
-// top-level personas/*.md except _base.md, the resolution fallback no shipped
-// persona consults.
-func shippedPersonaFiles(t *testing.T) []string {
+// Every category the suite plants must be a member of the closed reviewer
+// vocabulary, whose authority is reconcile/category.go (epic 35.16.4).
+//
+// This asserts membership against the taxonomy CONSTANT directly rather than
+// scraping an allowlist out of a persona prompt. Scraping is both obsolete and
+// unsound here: since 35.16.4 the vocabulary is injected into all 29 prompts
+// through internal/payload's ScopeRule rather than written into any prompt file,
+// so there is nothing left in a persona to parse — and the regex that used to try
+// silently matched nothing, while an "extracted no vocabulary" branch turned that
+// miss into a pass. A category outside the taxonomy is never offered to any
+// reviewer, so every case planting it scores a structural zero.
+func TestBundledSuite_PlantsOnlyTaxonomyCategories(t *testing.T) {
+	vocabulary := taxonomyVocabulary(t)
+
+	planted := distinctPlantedCategories(loadSuite(t))
+	for cat, caseIDs := range planted {
+		if reason := unplantableReason(cat, vocabulary); reason != "" {
+			assert.Fail(t, "suite plants an illegal expected category",
+				"%q is planted by case(s) %v: %s", cat, caseIDs, reason)
+		}
+	}
+
+	// A suite that planted nothing would satisfy the loop above vacuously — the
+	// exact shape of the escape hatch this guard replaces.
+	assert.NotEmpty(t, planted, "the suite must plant at least one expected category")
+}
+
+// unplantableReason returns why cat is illegal as a suite EXPECTED category, or
+// "" when it is legal. Extracted from the loop in the guard above so the rule
+// can be exercised directly: a guard that only ever runs over the committed
+// suite proves the suite is currently clean, not that the guard would object to
+// a suite that was not.
+//
+// Two distinct rules, because membership alone is not sufficient for the
+// EXPECTED side of a case.
+func unplantableReason(cat string, vocabulary map[string]struct{}) string {
+	if _, ok := vocabulary[cat]; !ok {
+		return "not a member of reconcile.Categories() — no reviewer is prompted to emit it, so the case's recall is structurally zero"
+	}
+	// `other` and `out-of-scope` are members of the vocabulary (they are legal
+	// EMISSIONS — the escape hatch that makes the set closed rather than lossy),
+	// but internal/benchmark's equivalence relation hard-excludes both from every
+	// family precisely so `other` cannot become a free hit on every case. A suite
+	// that plants one is therefore asking for a detection that can never be
+	// credited.
+	if cat == reconcile.CategoryOther || cat == reconcile.CategoryOutOfScope {
+		return "a routing value: legal to emit, but hard-excluded from every equivalence family, so a case planting it can never be satisfied"
+	}
+	return ""
+}
+
+// The guard must FIRE, not merely pass on today's data. Both halves are checked:
+// a word outside the taxonomy, and a word inside it that is nonetheless illegal
+// to plant.
+func TestUnplantableReason_RejectsWhatTheSuiteMayNotPlant(t *testing.T) {
+	vocabulary := taxonomyVocabulary(t)
+
+	t.Run("non-member is rejected", func(t *testing.T) {
+		// No reviewer is ever prompted to emit this, so a case planting it scores
+		// a structural zero.
+		assert.NotEmpty(t, unplantableReason("wobbliness", vocabulary),
+			"a category outside reconcile.Categories() must be rejected")
+	})
+
+	t.Run("routing values are rejected", func(t *testing.T) {
+		// `other` and `out-of-scope` ARE taxonomy members, so a bare membership
+		// test admits them — but equivalence.go hard-excludes both from every
+		// family, so a case planting one can never be satisfied by any raised
+		// category. Membership alone is the wrong question for the expected side.
+		for _, routing := range []string{reconcile.CategoryOther, reconcile.CategoryOutOfScope} {
+			assert.NotEmpty(t, unplantableReason(routing, vocabulary),
+				"%q is a taxonomy member but is unsatisfiable as a planted expectation", routing)
+		}
+	})
+
+	t.Run("an ordinary member is accepted", func(t *testing.T) {
+		// The negative cases above would all pass if the rule rejected everything.
+		assert.Empty(t, unplantableReason(reconcile.CategoryCorrectness, vocabulary),
+			"a plain taxonomy member must remain plantable")
+	})
+}
+
+// taxonomyVocabulary is the closed reviewer vocabulary as a set.
+//
+// The NotEmpty check is a DIAGNOSTIC AID, not a guard: it is deliberately not
+// load-bearing. If reconcile.Categories() ever came back empty the callers would
+// already fail — unplantableReason would reject every planted category, and
+// TestUnplantableReason's "ordinary member is accepted" subtest would fail too.
+// What this buys is one precise message naming the real cause, instead of N
+// confusing per-category failures pointing at the suite.
+func taxonomyVocabulary(t *testing.T) map[string]struct{} {
 	t.Helper()
-	files, err := filepath.Glob("../../personas/*.md")
-	require.NoError(t, err)
+	cats := reconcile.Categories()
+	require.NotEmpty(t, cats, "reconcile must publish a non-empty category vocabulary")
 
-	out := make([]string, 0, len(files))
-	for _, f := range files {
-		if filepath.Base(f) != "_base.md" {
-			out = append(out, f)
-		}
-	}
-	require.NotEmpty(t, out, "the shipped panel must resolve to persona files of its own")
-	return out
-}
-
-// declaredCategoryVocabulary extracts an explicit CATEGORY allowlist from a
-// prompt, or nil when the prompt constrains CATEGORY only to a lowercase word
-// — in which case every category is emittable.
-func declaredCategoryVocabulary(raw []byte) []string {
-	m := regexp.MustCompile(`CATEGORY is a single lowercase word \(([^)]*)\)`).FindSubmatch(raw)
-	if m == nil {
-		return nil
-	}
-	var out []string
-	for _, w := range strings.Split(string(m[1]), ",") {
-		if w = strings.TrimSpace(w); w != "" {
-			out = append(out, w)
-		}
+	out := make(map[string]struct{}, len(cats))
+	for _, c := range cats {
+		out[c] = struct{}{}
 	}
 	return out
 }
@@ -125,8 +190,7 @@ func TestBundledSuite_CaseIdsAreTheGoldenSeededSelection(t *testing.T) {
 		"vllm-project-vllm-pr-17425",
 	}
 
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	got := make([]string, 0, len(m.Cases))
 	for _, c := range m.Cases {
@@ -149,8 +213,7 @@ func TestBundledSuite_ReproHashIsPinned(t *testing.T) {
 }
 
 func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	for _, c := range m.Cases {
 		t.Run(c.ID, func(t *testing.T) {
@@ -168,8 +231,7 @@ func TestBundledSuite_EveryDiffYieldsReviewableContent(t *testing.T) {
 }
 
 func TestBundledSuite_DiffsStayWithinTheRunnersSizeCeiling(t *testing.T) {
-	m, err := benchmark.Load(suiteDir)
-	require.NoError(t, err)
+	m := loadSuite(t)
 
 	for _, c := range m.Cases {
 		info, err := os.Stat(filepath.Join(suiteDir, c.Diff))

@@ -1,0 +1,73 @@
+{
+  "_note": "4 out-of-vocabulary of 20 findings = exactly 0.20 - AT the ceiling, must FAIL. One in-vocabulary finding fewer than run-boundary-under: a true neighbour pair, so an inverted comparison cannot pass both.",
+  "suite": "fixture-vocabulary",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "case-alpha",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style",
+            "race",
+            "bug"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "style",
+            "race",
+            "bug"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "case-beta",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling",
+            "naming",
+            "input"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "security",
+            "performance",
+            "error-handling",
+            "naming",
+            "input"
+          ]
+        }
+      ]
+    }
+  ]
+}

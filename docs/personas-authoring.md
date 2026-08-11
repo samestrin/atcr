@@ -112,6 +112,14 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 {{.Payload}}
 ```
 
+> **The Rules line is not the whole CATEGORY contract.** "One lowercase word" is
+> the *shape*; the permitted words are a closed vocabulary that reaches the model
+> through `{{.ScopeRule}}` in the `## Scope` section above, whose authority is
+> `reconcile.Categories()`. Do **not** restate or narrow that list inside your own
+> prompt — a persona-local list is exactly the drift the injection exists to
+> prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
+> as written and let `{{.ScopeRule}}` carry the enumeration.
+
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
 **Do not tell your persona to stay silent when it finds nothing.** A clean review must be a positive signal — the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`), case-insensitive and whitespace-tolerant. An empty response is treated as a dead call: the engine fails the slot over to its backup and, if there is none, fails the slot. That gate exists because a provider returning a null completion without setting `finish_reason=length` is otherwise recorded as a clean review — indistinguishable from a real one on a leaderboard. A persona that instructs silence will therefore report failures on exactly the reviews it handled correctly.
@@ -169,7 +177,7 @@ Before submitting your persona, confirm every item:
 - [ ] **`language` scope** (if present) is in canonical form (no leading dot, lowercased, e.g. `["go", "ts"]`); omit it entirely for a generalist persona.
 - [ ] **Prompt template** mirrors the canonical structure: `## Role`, `## Focus`, `## Scope` (`{{.ScopeRule}}`), `## Severity Rubric`, the exact 7-column `## Output Format` contract, and `## Payload` (`{{.Payload}}`).
 - [ ] **Required template variables** are all present and the template renders with no leftover `{{ }}` actions.
-- [ ] **Category word** for the persona's target class appears in the prompt template itself.
+- [ ] **Category word** for the persona's target class appears in the prompt template itself. For a **community submission**, that word **should also be a member of `reconcile.Categories()`** — a word outside the closed vocabulary is never offered to the model by `{{.ScopeRule}}`, so a persona whose worked example emits one is asking the model to contradict its own prompt. If your target class has no member that fits, propose one against `reconcile/category.go` rather than inventing a persona-local word. **Not currently enforced, and the shipped built-ins are a standing exception:** `sasha` is bound to `injection`, `penny` to `n+1`, and `ingrid` to `error` (`personas/personas_test.go`), none of which is a member — the nearest members are `input-validation`, `performance`, and `error-handling`. The worked examples earlier in this document use those same non-member words for that reason. Reconciling the built-ins with the taxonomy belongs to the parse-boundary canonicalization work, not to your submission.
 - [ ] **Fixture** is a `.patch`/`.diff` in `personas/testdata/` (built-in) or `personas/community/testdata/` (community persona), named `<slug>_fixture.patch`, mode `0644`, containing a **synthetic** instance of the target class (no real secrets).
 - [ ] **Fixture test passes** locally with no network access.
 - [ ] **No secrets, credentials, or network instructions** in the prompt.

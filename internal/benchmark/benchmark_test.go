@@ -77,12 +77,71 @@ func TestValidate_RejectsEmptyAndDuplicateCategories(t *testing.T) {
 			Suite: "s", SuiteVersion: "1.0.0",
 			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", "security"}}},
 		},
+		// The scorer dedupes on the NORMALIZED category (normalizeSet), so a
+		// manifest that validates these as two distinct categories then scores them
+		// as one — silently halving the recall denominator with no diagnostic.
+		// Validate must apply the same notion of distinct that the scorer does.
+		"case-differing duplicate": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"maintainability", "Maintainability"}}},
+		},
+		"whitespace-differing duplicate": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", " security "}}},
+		},
 	}
 	for name, m := range cases {
 		t.Run(name, func(t *testing.T) {
 			require.Error(t, m.Validate(), "%s must be rejected", name)
 		})
 	}
+}
+
+// familyOf's identity fallback OVERLAPS the family table, so a case that plants
+// both a coarse category and a member of that category's family lets ONE raised
+// finding satisfy TWO distinct expected categories: with Expected
+// ["maintainability", "style"] and Raised ["style"], `style` is satisfied by the
+// identity fallback AND `maintainability` by the family — measured recall 1.0 where
+// exact matching gave 0.5. Validate rejects that shape, which is what makes the
+// fallback TOTAL: an expected category with no family of its own is scored by exact
+// match and can never also be reachable through another expected category's family.
+func TestValidate_RejectsOverlappingExpectedCategories(t *testing.T) {
+	overlapping := map[string][]string{
+		"fine member alongside its coarse parent": {"maintainability", "style"},
+		"declared in the other order":             {"style", "maintainability"},
+		"security family":                         {"security", "secret"},
+		"normalized before comparing":             {"Maintainability", "  STYLE "},
+	}
+	for name, cats := range overlapping {
+		t.Run(name, func(t *testing.T) {
+			m := Manifest{
+				Suite: "s", SuiteVersion: "1.0.0",
+				Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: cats}},
+			}
+			require.Error(t, m.Validate(), "%v: one raised finding would satisfy both", cats)
+		})
+	}
+
+	// The families are disjoint, so every shape the bundled suite can express stays
+	// valid — this guard costs existing suites nothing.
+	t.Run("disjoint coarse categories stay valid", func(t *testing.T) {
+		m := Manifest{
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff",
+				ExpectedCategories: []string{"correctness", "security", "maintainability", "performance"}}},
+		}
+		require.NoError(t, m.Validate())
+	})
+
+	// Two fine words, neither of which is a family key, are each scored by exact
+	// match and cannot double-count.
+	t.Run("two fine words with no family stay valid", func(t *testing.T) {
+		m := Manifest{
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"style", "naming"}}},
+		}
+		require.NoError(t, m.Validate())
+	})
 }
 
 func TestValidate_Errors(t *testing.T) {

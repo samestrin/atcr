@@ -20,10 +20,20 @@ import (
 // countingCompleter wraps the stub's single-finding behavior and counts every
 // Complete call, so a resumed run can be asserted to make ZERO LLM calls for
 // already-checkpointed cases (AC2).
-type countingCompleter struct{ calls atomic.Int32 }
+//
+// category selects which stub backs it: empty (the default every AC1–AC4 test uses)
+// raises the in-vocabulary `correctness` finding; a non-member word drives a
+// non-zero out_of_vocabulary_rate so a resume assertion over it is discriminating.
+type countingCompleter struct {
+	calls    atomic.Int32
+	category string
+}
 
 func (c *countingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	c.calls.Add(1)
+	if c.category != "" {
+		return stubCategoryCompleter{category: c.category}.Complete(ctx, inv)
+	}
 	return stubCompleter{}.Complete(ctx, inv)
 }
 
@@ -32,15 +42,21 @@ func (c *countingCompleter) Complete(ctx context.Context, inv llmclient.Invocati
 // lets case 0 complete (and checkpoint) while case 1's only agent fails — driving
 // the total-roster abort so the checkpoint is asserted to hold exactly the completed
 // cases (AC1).
+//
+// category selects the backing stub on the same rule as countingCompleter.
 type failAfterCompleter struct {
-	ok    int
-	calls int
+	ok       int
+	calls    int
+	category string
 }
 
 func (c *failAfterCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	c.calls++
 	if c.calls > c.ok {
 		return "", fmt.Errorf("simulated transient failure on call %d", c.calls)
+	}
+	if c.category != "" {
+		return stubCategoryCompleter{category: c.category}.Complete(ctx, inv)
 	}
 	return stubCompleter{}.Complete(ctx, inv)
 }
@@ -172,6 +188,51 @@ func TestExecuteBenchmarkRun_PartialResumeExecutesOnlyRemainder(t *testing.T) {
 	jResume, err := json.Marshal(rr)
 	require.NoError(t, err)
 	assert.Equal(t, string(jBaseline), string(jResume), "partial resume is byte-identical to uninterrupted (AC3)")
+}
+
+// AC3, out-of-vocabulary edge: a partially-resumed run reproduces a NON-ZERO
+// out_of_vocabulary_rate exactly.
+//
+// Every other resume test drives a correctness-only stub, whose rate is 0.0 — so
+// their whole-JSON equality assertions would be satisfied identically by a rate
+// hardcoded to zero, leaving this field unpinned across the checkpoint boundary.
+// Driving it off a non-member word makes the same assertion discriminating: the
+// replayed case's drifted findings must survive the checkpoint and fold back into
+// the run-level denominator, or the resumed rate drops below the baseline.
+func TestExecuteBenchmarkRun_PartialResumeReproducesVocabularyDrift(t *testing.T) {
+	const drift = "not-a-taxonomy-word"
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	baseline, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: drift}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotNil(t, baseline.OutOfVocabularyRate)
+	require.InDelta(t, 1.0, *baseline.OutOfVocabularyRate, 1e-9,
+		"the baseline must be non-zero, or the resume comparison below proves nothing")
+
+	// First attempt completes case 0 (checkpointed) then fails on case 1.
+	_, err = executeBenchmarkRun(context.Background(), cfg,
+		&failAfterCompleter{ok: 1, category: drift}, suiteValidPath, gen, path)
+	require.Error(t, err)
+
+	// Resume: case 0 replayed from the checkpoint, only case 1 executed.
+	resume := &countingCompleter{category: drift}
+	rr, err := executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, int(resume.calls.Load()), "only the one unscored case's agent executes")
+
+	require.NotNil(t, rr.OutOfVocabularyRate)
+	assert.InDelta(t, 1.0, *rr.OutOfVocabularyRate, 1e-9,
+		"the replayed case's drifted findings must still count toward the run-level rate")
+
+	jBaseline, err := json.Marshal(baseline)
+	require.NoError(t, err)
+	jResume, err := json.Marshal(rr)
+	require.NoError(t, err)
+	assert.Equal(t, string(jBaseline), string(jResume),
+		"partial resume is byte-identical to uninterrupted, drift rate included (AC3)")
 }
 
 // AC4: a checkpoint whose recorded suite identity differs from the current suite is

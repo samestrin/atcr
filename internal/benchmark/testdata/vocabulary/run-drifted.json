@@ -1,0 +1,73 @@
+{
+  "_note": "Heavy drift: reviewers ignoring the enumeration and inventing words. Rate 0.60 - must FAIL.",
+  "suite": "fixture-vocabulary",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "case-alpha",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "bug",
+            "clarity",
+            "failure"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "correctness",
+            "maintainability",
+            "bug",
+            "clarity",
+            "failure"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "case-beta",
+      "expected": [
+        "maintainability",
+        "correctness"
+      ],
+      "reviewers": [
+        {
+          "agent": "kai",
+          "model": "model-kai",
+          "persona": "kai",
+          "raised": [
+            "security",
+            "performance",
+            "input",
+            "structure",
+            "stability"
+          ]
+        },
+        {
+          "agent": "brad",
+          "model": "model-brad",
+          "persona": "brad",
+          "raised": [
+            "security",
+            "performance",
+            "input",
+            "structure",
+            "stability"
+          ]
+        }
+      ]
+    }
+  ]
+}

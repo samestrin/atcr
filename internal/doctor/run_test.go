@@ -231,6 +231,40 @@ func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
 	assert.NotContains(t, got.hint, "raise --timeout")
 }
 
+// A 403 is commonly quota exhaustion, billing, or a permission scope — not a
+// bad credential. Reproduced live 2026-08-10: a Moonshot billing-cycle cap
+// returned 403 and doctor reported auth_failed with "check the API key" on a
+// key that authenticated 19 other agents in the same run.
+func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
+	t.Setenv("ATCR_QUOTA_PROBE_KEY", "k")
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_QUOTA_PROBE_KEY"}
+	got := classify("", &llmclient.HTTPStatusError{
+		Status:  403,
+		Snippet: "You have reached your usage limit for this billing cycle",
+	}, testNonce, 5, tgt)
+
+	assert.Equal(t, StatusAuthFailed, got.status, "403 stays in the auth class")
+	assert.NotContains(t, got.hint, "API key", "a 403 hint must not blame the credential")
+	assert.NotContains(t, got.hint, tgt.APIKeyEnv, "a 403 hint must not name the key env var")
+	assert.Contains(t, got.hint, "quota", "a 403 hint should name quota as a likely cause")
+	assert.Contains(t, got.hint, "billing", "a 403 hint should name billing as a likely cause")
+	assert.Contains(t, got.hint, "permission", "a 403 hint should name permission as a likely cause")
+	assert.Contains(t, got.hint, "detail", "a 403 hint should direct the reader to the captured detail")
+	assert.Contains(t, got.detail, "usage limit", "the upstream body stays available as evidence")
+}
+
+// The 401 hint is the one case where the credential IS the likely cause, so
+// splitting the cases must not cost 401 its actionable pointer.
+func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
+	t.Setenv("ATCR_AUTH_PROBE_KEY", "k")
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_AUTH_PROBE_KEY"}
+	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt)
+
+	assert.Equal(t, StatusAuthFailed, got.status)
+	assert.Contains(t, got.hint, "API key")
+	assert.Contains(t, got.hint, tgt.APIKeyEnv, "the 401 hint names the env var to check")
+}
+
 func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt)
@@ -312,7 +346,10 @@ func TestRenderTable_DetailPrefixedWhenHintEmpty(t *testing.T) {
 	assert.NotContains(t, out, "\tconnection refused", "undecorated Detail must not appear as-is in the HINT column")
 }
 
-func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
+// The hint is a guess; the detail is the upstream's own account of the failure.
+// The default table must carry both — hint first — rather than making the guess
+// the only thing a reader sees without re-running with --json.
+func TestRenderTable_HintAndDetailBothRendered(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusNetworkError, Hint: "check firewall", Detail: "connection refused"},
 	}}
@@ -320,7 +357,48 @@ func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
 	RenderTable(&b, rep)
 	out := b.String()
 	assert.Contains(t, out, "check firewall", "Hint should appear when set")
-	assert.NotContains(t, out, "connection refused", "Detail must not appear when Hint is set")
+	assert.Contains(t, out, "connection refused", "Detail is the evidence and must not be dropped when a Hint is set")
+	assert.Less(t, strings.Index(out, "check firewall"), strings.Index(out, "connection refused"),
+		"the hint leads; the detail follows it")
+}
+
+// The live 2026-08-10 failure: the table said "check the API key" while the
+// captured detail said the account had hit its billing-cycle limit.
+func TestRenderTable_NonOKStatusCarriesUpstreamDetail(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{{
+		Agent: "kai", Provider: "moonshot", Model: "kimi-k3", Status: StatusAuthFailed,
+		Hint:   "authenticated but refused — likely quota, billing, or a permission scope",
+		Detail: "You have reached your usage limit for this billing cycle",
+	}}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.Contains(t, out, "usage limit", "the diagnostic evidence belongs in the default view")
+}
+
+// An ok row has nothing to diagnose, so a stray Detail must not add noise to
+// the common case.
+func TestRenderTable_OKStatusOmitsDetail(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK, Detail: "should not surface"},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	assert.NotContains(t, b.String(), "should not surface", "ok rows render no detail")
+}
+
+// A verbose upstream body must not blow out the table; it is truncated with a
+// pointer to --json for the full text.
+func TestRenderTable_LongDetailTruncatedWithJSONPointer(t *testing.T) {
+	long := strings.Repeat("x", 400)
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusProviderError, Detail: long},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.NotContains(t, out, long, "a 400-char detail must not be rendered whole")
+	assert.Contains(t, out, "--json", "truncation must point at where the full text lives")
 }
 
 func TestRenderTableError_EmptySourcePassesThrough(t *testing.T) {

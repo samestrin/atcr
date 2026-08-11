@@ -124,10 +124,10 @@ schema** (the same row shape `export` and `leaderboard --export` emit):
 
 | Field | Benchmark meaning |
 |-------|-------------------|
-| `corroboration_rate` | **Category recall** — the macro-average across cases of (distinct `expected_categories` the reviewer surfaced ≥1 matching finding for) ÷ (distinct expected categories). This is the headline benchmark metric. |
+| `corroboration_rate` | **Category recall** — the macro-average across cases of (distinct `expected_categories` the reviewer satisfied with ≥1 finding) ÷ (distinct expected categories). This is the headline benchmark metric. A finding satisfies an expected category when its own category is a member of that category's **equivalence family** — so a raised `style` satisfies an expected `maintainability`, because aacr-bench's single upstream "Maintainability and Readability" label spans both. The families are scorer-side only (no product category is merged) and are listed in `internal/benchmark/equivalence.go`. **The relation runs coarse-expected → fine-raised only and is *not* symmetric:** a raised `maintainability` does not satisfy an expected `style`, because a vague finding does not corroborate a specific planted defect. An expected category that has no family — any fine word, which a hand-authored `--suite-path` suite is free to plant — is scored by **exact match**, exactly as it was before families existed. |
 | `findings_raised_avg` | Mean findings raised per case (volume/thoroughness). |
 | `runs` | Number of cases scored. |
-| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one. **Omitted from the JSON entirely** when zero findings matched an expected category — the metric is undefined, not `0.0` (a paid-but-uncorroborated reviewer must not read identically to a genuinely free one). Present as `0.0` only when matched findings exist and the provider reports no usage cost. |
+| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category satisfied an expected one (the same equivalence relation `corroboration_rate` uses — the two never disagree about what counts as a match). **Omitted from the JSON entirely** when zero findings matched an expected category — the metric is undefined, not `0.0` (a paid-but-uncorroborated reviewer must not read identically to a genuinely free one). Present as `0.0` only when matched findings exist and the provider reports no usage cost. |
 | `latency_p50_ms` | Median per-case latency over cases with reported usage (0 otherwise). |
 
 > **`corroboration_rate` is repurposed as a recall proxy here.** In a production
@@ -228,6 +228,35 @@ The `reviewers[]` rows reuse the **same public reviewer schema** as
 `leaderboard --export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
 public board renders one consistent set of columns for both submission sources.
 
+#### `atcr_version` is the scorer discriminator
+
+`suite`, `suite_version`, and the reproducibility hash pin the **inputs** — the
+cases, their planted categories, and the raw diff bytes. They say nothing about
+how those inputs were **scored**, and the hash is deliberately blind to scorer
+changes.
+
+That gap is real. Epic 35.16.5 introduced benchmark-side equivalence-class
+matching, so `corroboration_rate` and `cost_per_corroborated_finding_usd` mean
+something different before and after it — for the *same* `standard-v1` `1.0.0`.
+Two submissions can therefore carry identical suite identity and
+non-comparable numbers.
+
+**`atcr_version` is the only field that separates them, and it is
+scoring-relevant for exactly this reason.** When comparing or aggregating
+submissions:
+
+- Treat `(suite, suite_version, atcr_version)` — not `(suite, suite_version)` —
+  as the comparability key for any recall- or cost-derived metric.
+- Do not aggregate `corroboration_rate` or
+  `cost_per_corroborated_finding_usd` across differing `atcr_version` values
+  without stating that the scorer changed between them.
+
+A dedicated scoring/metric version in the envelope would say this more directly,
+but `submission_schema` is a frozen public contract; adding a field is a
+schema-versioning decision, not a documentation fix. Until such a field exists,
+`atcr_version` carries the meaning, and consumers must be told so — which is what
+this section does.
+
 ### The run-result contract
 
 `export` reads a **run-result** file rather than your local scorecard — so a
@@ -238,9 +267,47 @@ production run can never be passed off as a suite submission. A run-result is:
   "suite": "standard-v1",
   "suite_version": "1.0.0",
   "generated_at": "2026-06-24T12:00:00Z",
+  "out_of_vocabulary_rate": 0.04,
   "reviewers": [ /* public reviewer rows */ ]
 }
 ```
+
+`out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
+share of the run's findings whose category is not a member of the closed reviewer
+vocabulary. It answers "did the models actually use the categories they were
+offered?", which no other field reveals — a reviewer that invents its own words
+quietly zeroes its own recall, and the low score is indistinguishable from one that
+simply found less. Five details matter when reading it:
+
+- A run is guarded against a **ceiling of `0.20`**, and the ceiling is **exclusive** —
+  a run sitting exactly on `0.20` trips the guard. Treat `0.20` as a *provisional
+  fixture guard*, not an empirical bound on model behaviour: it is deliberately loose
+  so that the words `reconcile`'s merge table records as *meaning* a taxonomy member
+  without *being* one (`bug`, `input`, `clarity`, `consistency`, `structure`, …) have
+  headroom until epic 35.16.6 lands parse-boundary canonicalization. It is **not**
+  derived from the 35.16.2 dry-run's 72.3%, which measured a different denominator
+  entirely. The intent is to **tighten** this once a post-merge validation run supplies
+  the first real number under this metric — never to loosen it when a run fails.
+
+- The denominator is **findings, not distinct categories**, so one prolific
+  in-vocabulary category cannot mask thirty drifted findings.
+- It is **micro-averaged over the whole run**, not averaged per reviewer — and the
+  denominator is only the findings that actually survived. On a *partial* roster
+  failure (some reviewers errored, see Behavior above) the rate is computed from the
+  survivors alone, and nothing in the payload states how many findings that was: a
+  run where 8 of 10 reviewers failed on every case can publish a clean-looking rate
+  drawn from two reviewers. Reconstruct the denominator from the `reviewers[]` rows
+  as the sum of `findings_raised_avg × runs` before trusting a rate as
+  representative.
+- A finding with an **empty** category counts as drift. Otherwise the rate would
+  improve when a reviewer stopped labelling entirely.
+- The key is **absent** (not `0.0`) for a run that raised no findings at all, and
+  for any run-result predating the field. Absent means *unmeasured*; an explicit
+  `0.0` means *measured and clean*. Do not read one as the other.
+
+It is deliberately **not** carried into the submission envelope: the public board
+schema is the same allowlist production uses, and this is a benchmark-run
+diagnostic.
 
 `atcr benchmark run --output <path>` produces a conforming run-result; you can also
 supply one by hand. `export` reuses the run-result's `generated_at` as the

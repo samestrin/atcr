@@ -1,3 +1,20 @@
+## [35.16.5] - 2026-08-10
+
+### Added
+- Equivalence-class matching in the benchmark scorer: a coarse expected category is now satisfied by any member of the ATCR family it spans, so a reviewer that writes `style` for a planted `maintainability` defect is credited for detecting it. Previously the scorer compared by exact string equality, and aacr-bench's single upstream "Maintainability and Readability" label could only ever be satisfied by the literal word `maintainability` — recall measured vocabulary agreement rather than detection ability. The families are the steering set `reconcile/category.go` names for each coarse word and nothing wider; they are scorer-side only and merge no product category.
+- `out_of_vocabulary_rate` on the benchmark run result — the share of a run's findings whose category is not a member of the closed reviewer vocabulary. Nothing previously measured model drift away from the enumeration: a reviewer that invents its own words quietly zeroes its own recall, and the resulting low score is indistinguishable from one that simply found less. The key is absent (never `0.0`) for a run that raised nothing, so unmeasured and clean stay distinguishable.
+- `MaxOutOfVocabularyRate` (0.20) plus four committed scorer-input fixtures, including a neighbouring boundary pair, so the ceiling is proven to fail as well as to pass.
+- `atcr benchmark run` now warns on stderr when a run's measured `out_of_vocabulary_rate` is at or above the ceiling, naming both the ceiling and the measured value. The constant previously had no non-test consumer: a run measuring 0.72 drift wrote the number to JSON and exited 0 silently, and `--output <path>` prints nothing to stdout, so the documented resumable invocation gave the operator no signal at all. Deliberately a warning and not an exit code — failing a multi-hour validation run at the end over a diagnostic would discard the work the run existed to produce.
+
+### Changed
+- The bundled-suite vocabulary guard now asserts membership against `reconcile.Categories()` directly instead of scraping an allowlist out of the persona prompts. The old guard was inert in two independent ways: its regex matched the `_base.md` phrasing rather than the "CATEGORY is **one** lowercase word" every shipped persona uses, so it extracted nothing, and an "extracted no vocabulary" branch turned that miss into a pass. Verified by mutation — a suite planting a non-taxonomy category passed the old guard and fails the new one.
+- The cost-per-corroborated denominator resolves through the same equivalence relation as recall, so the two never disagree about what counts as a match. Widening only recall would have left a reviewer with perfect recall publishing `cost_per_corroborated_finding_usd` as omitted — the encoding reserved exclusively for a priced reviewer that matched nothing.
+
+### Fixed
+- `docs/benchmark.md`'s scoring table described exact category matching and documented no out-of-vocabulary diagnostic, so every number a run emits would have been mis-read.
+
+*Shipped via /execute-epic (epic 35.16.5)*
+
 ## [35.16.4] - 2026-08-09
 
 ### Added

@@ -58,7 +58,7 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 | 2 | `FILE:LINE` | Path and 1-based line | Split on the **last** colon; a non-numeric or missing line parses as `0`, and a path containing a colon is preserved. |
 | 3 | `PROBLEM` | What is wrong | On merge: the longest/most-detailed wins; severity disagreements are appended inline. |
 | 4 | `FIX` | Suggested remediation | Longest wins on merge. |
-| 5 | `CATEGORY` | Free-text tag (`security`, `performance`, `correctness`, …) | Modal value wins on merge. |
+| 5 | `CATEGORY` | One lowercase word from the **closed reviewer vocabulary** (`security`, `performance`, `correctness`, `maintainability`, …) | The vocabulary is rendered into every reviewer prompt through `{{.ScopeRule}}`; its authority is `reconcile.Categories()`, never a persona file. **Not enforced at parse time** — a word outside the vocabulary is accepted as written, so drift shows up as a lower score rather than an error (the benchmark surfaces it as `out_of_vocabulary_rate`). Modal value wins on merge. |
 | 6 | `EST_MINUTES` | Integer effort estimate | Best-effort; non-numeric parses as `0`. Max wins on merge. Also consumed as a routing input by the executor's complexity ceiling (`max_estimated_minutes`) — see [registry.md](registry.md#executor-fix-generation-active-in-70). |
 | 7 | `EVIDENCE` | Supporting snippet or rationale | In reconciled rows, prefixed with the reviewer name. |
 | 8 | `REVIEWER` (per-source) / `REVIEWERS` (reconciled) | Source attribution | Single name vs. comma-joined set. |
