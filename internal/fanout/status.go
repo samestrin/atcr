@@ -355,6 +355,10 @@ type AgentStatus struct {
 	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
 	ToolsRequested bool     `json:"tools_requested,omitempty"`
 	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
+	// ToolsDegradedReason mirrors the manifest's tools_degraded_reason entry for
+	// this agent so the two artifacts agree without a reader correlating them.
+	// Empty (and omitted) whenever ToolsDegraded is false.
+	ToolsDegradedReason string `json:"tools_degraded_reason,omitempty"`
 
 	// CacheHit marks a result replayed from the diff cache (Epic 5.2) instead of
 	// a live API call. omitempty so a live review's status.json is byte-identical

@@ -281,6 +281,11 @@ type Result struct {
 	ToolsDegraded  bool
 	ToolsRequested bool
 	TrippedBudgets []string
+	// ToolsDegradedReason names WHY this agent fell back to single-shot, from
+	// the closed vocabulary in degradeReason* below. Empty whenever
+	// ToolsDegraded is false. Recorded because tools_degraded alone cannot
+	// distinguish an incapable backup model from an unwired harness.
+	ToolsDegradedReason string
 
 	// CacheHit marks a result served from the diff cache (Epic 5.2) instead of a
 	// live API call. The replayed result carries the cached Content with zero
@@ -833,7 +838,7 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 		// it was configured to read live code via the tool loop, so its output is
 		// not a pure function of the payload and a payload-keyed cache could serve
 		// a stale degraded answer. Tool agents always call live.
-		return e.invokeDegraded(ctx, a)
+		return e.invokeDegraded(ctx, a, "")
 	}
 	return e.invokeCachedSingleShot(ctx, a)
 }
@@ -953,14 +958,31 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	return r
 }
 
+// The closed vocabulary for Result.ToolsDegradedReason. Every value is decided
+// at dispatchAgent — the single site that chooses the degraded path — except
+// degradeReasonFallbackNotCapable, which invokeSlot promotes
+// degradeReasonModelNotCapable to once it knows the attempt was a fallback. The
+// set is deliberately small: these are the only ways the tool harness can be
+// unavailable to an agent that asked for it.
+const (
+	degradeReasonModelNotCapable    = "model_not_capable"
+	degradeReasonFallbackNotCapable = "fallback_not_capable"
+	degradeReasonNoChatCompleter    = "no_chat_completer"
+	degradeReasonNoDispatcher       = "no_dispatcher"
+)
+
 // invokeDegraded runs a tool-enabled agent through the single-shot path because
 // the harness is unavailable (the completer is not a ChatCompleter, or no
 // dispatcher was wired). The result is marked Tools+ToolsDegraded so status.json
 // records the degrade with explicit zero counters (AC 01-05, AC 02-04 EC3).
-func (e *Engine) invokeDegraded(ctx context.Context, a Agent) Result {
+// reason carries WHY, from the degradeReason* vocabulary, so the artifacts
+// record the cause instead of leaving it to be reconstructed from a live
+// registry probe after the fact.
+func (e *Engine) invokeDegraded(ctx context.Context, a Agent, reason string) Result {
 	r := e.invokeSingleShot(ctx, a)
 	r.Tools = true
 	r.ToolsDegraded = true
+	r.ToolsDegradedReason = reason
 	return r
 }
 
