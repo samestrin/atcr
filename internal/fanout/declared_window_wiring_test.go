@@ -169,6 +169,23 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesResolutionChain(t *testing.T) 
 		"an undeclared fallback keeps the conservative default, not the primary's 512000")
 }
 
+func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
+	// A declaration is valid down to 1 token, so the zero-effective-budget arm in
+	// the bulk path — defense-in-depth while ContextWindowTokens floored at 32768
+	// — is now REACHABLE. It must record the honest "overflow" degradation rather
+	// than silently shipping an over-window payload with the action unmarked.
+	//
+	// 12288 = defaultMaxTokens (8192) + promptOverheadTokens (4096).
+	cfg := declaredWindowRoster(t, 12288)
+	agent, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	assert.Equal(t, 12288, agent.ResolvedWindow, "the declaration is recorded even when it buys no budget")
+	assert.Zero(t, agent.EffectiveBudget, "output cap + prompt overhead consume the whole declared window")
+	assert.Equal(t, "overflow", agent.DegradationAction,
+		"a declaration too small to reserve output headroom must be marked, not silently shipped")
+}
+
 func TestBuildSlots_UndeclaredRosterIsUnchanged(t *testing.T) {
 	// AC2: a roster declaring nothing must produce byte-identical sizing to the
 	// pre-epic build. The declaration is additive and inert when absent.

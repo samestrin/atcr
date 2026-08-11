@@ -1459,7 +1459,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentScopeConstraint := scopeConstraint
-		agentEff := payload.EffectiveByteBudget(ac.Model, nil, defaultMaxTokens)
+		agentEff := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
 		if len(agentScopeConstraint) > 0 && agentEff > 0 {
 			planCap := agentEff / 8
 			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
@@ -1572,8 +1572,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
 					}
 					chunkSizing := agentSizing{
-						effectiveBudget: payload.EffectiveByteBudget(ac.Model, nil, defaultMaxTokens),
-						resolvedWindow:  payload.ContextWindowTokens(ac.Model, nil),
+						effectiveBudget: payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens),
+						resolvedWindow:  payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens),
 						chunkTotal:      len(chunks),
 						action:          "chunk",
 					}
@@ -1655,7 +1655,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
-			ml := payload.ChunkMaxLines(ac.Model, nil, defaultMaxTokens)
+			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
 			} else if len(agentScopeConstraint) > 0 {
@@ -1708,8 +1708,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// override or model-derived). The action is "chunk" — the default,
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
-					effectiveBudget: payload.EffectiveByteBudget(ac.Model, nil, defaultMaxTokens),
-					resolvedWindow:  payload.ContextWindowTokens(ac.Model, nil),
+					effectiveBudget: payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens),
+					resolvedWindow:  payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens),
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
 					action:          "chunk",
@@ -1753,7 +1753,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// EVERY sized agent (the "was this agent sized" signal), independent of
 		// whether shedding actually dropped a file. appliedBudget is the byte budget
 		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
-		bulkWindow := payload.ContextWindowTokens(ac.Model, nil)
+		bulkWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 		var appliedBudget int64
 		if agentEff > 0 {
 			appliedBudget = agentEff
@@ -1779,9 +1779,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
 			// room for any input regardless of value), so mark the same honest-degradation
 			// state the AllDropped arm records instead of leaving the action unmarked while
-			// silently shipping an over-window payload. Currently unreachable — ContextWindowTokens
-			// floors at 32768 (eff >= 71680) — so this is defense-in-depth for a future
-			// sub-overhead window or a lowered default.
+			// silently shipping an over-window payload. REACHABLE since Epic 35.16.5.1: it
+			// was defense-in-depth while ContextWindowTokens floored at 32768 (eff >= 71680),
+			// but an agent may now declare context_window_tokens as low as 1, and any
+			// declaration at or below defaultMaxTokens + promptOverheadTokens (12288) makes
+			// EffectiveByteBudget return 0. The warning below is the operator's signal that
+			// their declaration is too small to review anything.
 			bulkDegradation = "overflow"
 			if warnOversized {
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
@@ -2173,8 +2176,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	// reuses the primary's chunk regime (chunkMaxLines / ChunkTotal / degradation
 	// action) because the diff was already split for the slot; only the byte budget
 	// is model-specific.
-	fbBudget := payload.EffectiveByteBudget(ac.Model, nil, defaultMaxTokens)
-	fbWindow := payload.ContextWindowTokens(ac.Model, nil)
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	fbReserved := 0
 	if fbWindow > 0 {
 		fbReserved = defaultMaxTokens
