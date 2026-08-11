@@ -1423,11 +1423,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				break // registry validation guarantees acyclic; defensive stop
 			}
 			seen[fb] = true
+			// Suppress only after a warning was actually EMITTED, never merely
+			// after a call. Packing is greedy, so a lane's first chunk can be the
+			// small remainder that fits (silent) while a later one genuinely
+			// overflows: marking the lane on every call would swallow that second
+			// warning entirely, which is the opposite of the dedup's purpose.
 			lane := name + "\x00" + fb
-			agent, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane])
-			warnedFallbackOverflow[lane] = true
+			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane])
 			if err != nil {
 				return nil, err
+			}
+			if warned {
+				warnedFallbackOverflow[lane] = true
 			}
 			fbs = append(fbs, agent)
 		}
@@ -2260,14 +2267,18 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 // re-emit warnings the operator already saw at prepare time. It gates only the
 // stderr line — the degradation RECORD is a property of the slot and is stamped
 // either way, so a resumed run's status.json stays truthful.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool) (Agent, error) {
+//
+// The second return reports whether the warning was actually emitted, so a
+// caller deduplicating it across a lane's chunks suppresses only what the
+// operator has really seen.
+func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool) (Agent, bool, error) {
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
-		return Agent{}, fmt.Errorf("fallback agent %q not found in registry", name)
+		return Agent{}, false, fmt.Errorf("fallback agent %q not found in registry", name)
 	}
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
-		return Agent{}, fmt.Errorf("fallback agent %q references unknown provider %q", name, ac.Provider)
+		return Agent{}, false, fmt.Errorf("fallback agent %q references unknown provider %q", name, ac.Provider)
 	}
 	// A fallback answers in the primary's place, so the primary's review
 	// constraints (min_severity, max_findings, scope) govern — the fallback's
@@ -2310,6 +2321,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// separate design question (it would diverge the slot's chunk accounting and
 	// coverage tag). What AC4 forbids is doing this SILENTLY, so surface it — warn
 	// pre-dispatch and record the honest overflow degradation instead of copying the
+	// primary's action.
+	//
 	// Measure the PAYLOAD before claiming it overflows. len(primary.Prompt) is the
 	// wrong measure — the rendered prompt carries the persona wrapper that the byte
 	// budget does not count — but a budget-only comparison is worse: it is true for
@@ -2328,8 +2341,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// is part of the status.json contract; see the DegradationAction doc in
 	// status.go, which enumerates all four values.
 	fbDegradation := primary.DegradationAction
+	warned := false
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
 		if warnOversized {
+			warned = true
 			fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
 				name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
 		}
@@ -2404,7 +2419,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			MaxTokens:   maxTokensPtr(),
 			Prompt:      primary.Prompt,
 		},
-	}, nil
+	}, warned, nil
 }
 
 // writePayloadArtifacts persists each distinct payload under payload/<mode>.txt
