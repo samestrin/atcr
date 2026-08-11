@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -39,6 +40,56 @@ func TestBuildSlots_BulkClampsToGlobalBudgetButRecordsFullDeclaration(t *testing
 		"the bulk applied budget is min(per-agent budget, payload_byte_budget) — the global cap wins here")
 	assert.Equal(t, 512000, agent.ResolvedWindow,
 		"the recorded window stays the FULL declaration: the cap bounds the payload, it does not rewrite what the model can hold")
+}
+
+func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.T) {
+	// status.json's effective_budget meant two different things depending on which
+	// payload strategy ran: the bulk path recorded the APPLIED budget (global-capped,
+	// scope-reservation-reduced) while the chunked and baseline paths recorded the
+	// RAW per-agent budget, so one roster could report a multi-megabyte budget on a
+	// 100000-byte-capped run and a consumer comparing two agents was comparing
+	// unlike quantities. Only the recorded byte budget is unified here — the
+	// per-chunk LINE regime stays derived from the unclamped window, the deliberate
+	// asymmetry the sibling test above pins.
+	const globalCap = 100000
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	declaredBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(512000), defaultMaxTokens)
+	require.Greater(t, declaredBudget, int64(globalCap),
+		"precondition: the declaration's own budget must exceed the global cap, or nothing is being capped")
+
+	t.Run("chunked", func(t *testing.T) {
+		cfg := declaredWindowRoster(t, 512000)
+		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+		cfg.Settings.ReviewStrategy = "chunked"
+		cfg.Settings.PayloadByteBudget = globalCap
+
+		slots, _, err := buildSlots(cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}, rng, "", "", true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1, "precondition: the diff must actually split into chunk slots")
+
+		assert.Equal(t, int64(globalCap), slots[0].Primary.EffectiveBudget,
+			"a chunked slot must record the same globally-capped budget the bulk path records")
+		assert.Equal(t, 512000, slots[0].Primary.ResolvedWindow,
+			"the recorded window still stays the FULL declaration")
+	})
+
+	t.Run("baseline", func(t *testing.T) {
+		entries := make([]payload.FileEntry, 0, 20)
+		for i := 0; i < 20; i++ {
+			entries = append(entries, baselineEntry(fmt.Sprintf("f%02d.go", i), 20000))
+		}
+		cfg := declaredWindowRoster(t, 512000)
+		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+		cfg.Settings.PayloadByteBudget = globalCap
+
+		slots, _, err := buildSlots(cfg, baselinePayloads(entries), rng, string(payload.ModeFiles), "", true, true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1, "precondition: 400000 bytes must split at a 100000-byte cap")
+
+		assert.Equal(t, int64(globalCap), slots[0].Primary.EffectiveBudget,
+			"a baseline chunk slot must record the budget its partition actually used, not the uncapped one")
+	})
 }
 
 func TestBuildSlots_ChunkedLineBudgetIsNotClampedByGlobalBudget(t *testing.T) {
