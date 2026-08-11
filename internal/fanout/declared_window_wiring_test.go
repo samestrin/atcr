@@ -448,6 +448,42 @@ func TestBuildSlots_FallbackOverflowWarningIsGatedAndDeduped(t *testing.T) {
 		"warnOversized=false (the resume rebuild path) must silence it, like every sibling warning in buildSlots")
 }
 
+func TestBuildFallbackAgent_OverflowSupersedesInheritedActionWithoutLosingTheRegime(t *testing.T) {
+	// Contract characterization for the status.json DegradationAction enum, which
+	// documents FOUR values and gives "overflow" precedence: it is the only action
+	// that says the review may not have been read in full, so a fallback serving a
+	// CHUNKED slot records "overflow", not the "chunk" it inherited. The overwrite
+	// must not cost the reader the chunk regime — chunk_count still carries it, so
+	// both facts remain reconstructible from one status.json. Pinned because the
+	// value was previously written by three producers and enumerated by none.
+	cfg := declaredWindowRoster(t, 256000)
+	greta := cfg.Registry.Agents["greta"]
+	greta.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = greta
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model"
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+
+	var slots []Slot
+	var err error
+	_ = captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 3000), FileCount: 12}},
+			ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the slot is a chunked one")
+	fb := slots[0].Fallbacks[0]
+
+	assert.Equal(t, "chunk", slots[0].Primary.DegradationAction, "precondition: the primary is on the chunk regime")
+	assert.Equal(t, "overflow", fb.DegradationAction,
+		"overflow supersedes the inherited action — it is the only one that says the review may be incomplete")
+	assert.Equal(t, slots[0].Primary.ChunkTotal, fb.ChunkTotal,
+		"the chunk regime must survive the overwrite in chunk_count")
+	assert.Greater(t, fb.ChunkTotal, 1, "precondition: chunk_count is a meaningful record here")
+}
+
 func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T) {
 	// `if fbWindow > 0 { fbReserved = defaultMaxTokens }` is a dead branch:
 	// ContextWindowTokens never returns 0 by contract (contextwindow.go:90-98), so

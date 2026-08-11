@@ -2303,6 +2303,14 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// review and stamp overflow on fallbacks that held the payload with room to
 	// spare. primary.CodeContext is the per-file breakdown of what this slot
 	// actually shipped, which is exactly what the byte budget governs.
+	//
+	// The stamp OVERWRITES the inherited action rather than composing with it:
+	// "overflow" takes precedence because it is the only action that says the
+	// review may not have been read in full, so a fallback serving a chunked slot
+	// records "overflow", not "chunk". Nothing is lost — ChunkTotal still carries
+	// the chunk plan and Truncation still lists the dropped files. That precedence
+	// is part of the status.json contract; see the DegradationAction doc in
+	// status.go, which enumerates all four values.
 	fbDegradation := primary.DegradationAction
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
 		if warnOversized {

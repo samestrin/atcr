@@ -385,11 +385,28 @@ type AgentStatus struct {
 	// signal — a legitimately single-chunk, non-degraded reviewer has chunk_count 0
 	// and degradation_action "", indistinguishable from "not chunked", which is the
 	// correct observable state. DegradationAction reports the degradation MECHANISM
-	// that actually fired ("chunk" for a window-aware chunk split, "truncate" for a
-	// per-agent byte shed that dropped files, "" for none) — NOT the configured
-	// on_overflow policy, since on_overflow dispatch (applyOverflowPolicy) is not yet
-	// wired into the live review path (chunking is driven by review_strategy). See
-	// tech-debt-captured.md TD-004.
+	// that actually fired — NOT the configured on_overflow policy, since on_overflow
+	// dispatch (applyOverflowPolicy) is not yet wired into the live review path
+	// (chunking is driven by review_strategy). See tech-debt-captured.md TD-004.
+	//
+	// The value is one of FOUR, written from the degradation* constants in
+	// review.go:
+	//
+	//	""         no degradation.
+	//	"chunk"    a window-aware chunk split. No loss.
+	//	"truncate" a per-agent byte shed that dropped files. Lossy.
+	//	"overflow" the payload was dispatched knowing it exceeds what the model
+	//	           can hold, because no smaller framing was available.
+	//
+	// "overflow" has PRECEDENCE: where it coexists with another mechanism it is
+	// the value recorded, because it is the only one that says the review may not
+	// have been read in full. That happens on a fallback (review.go
+	// buildFallbackAgent), which inherits its primary's action and then overwrites
+	// it when its own smaller window cannot hold the inherited payload — so a
+	// fallback serving a chunked slot reports "overflow", not "chunk". No regime
+	// information is lost by the overwrite: chunk_count still reports the chunk
+	// plan, and the truncation record still lists the dropped files, so a reader
+	// reconstructs both facts from the same status.json.
 	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
 	ResolvedWindow       int    `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`
