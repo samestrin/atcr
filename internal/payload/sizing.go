@@ -102,10 +102,13 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 // resolution chain. declared is the agent's own context_window_tokens, nil when
 // it made no declaration.
 //
-// NOTE this is the one sizing path the global payload_byte_budget does NOT
-// bound: the bulk and baseline budgets are min(EffectiveByteBudget, budget),
-// while maxLines here keeps scaling with the declared window. A declaration far
-// above the global cap therefore grows per-chunk size without limit.
+// NOTE ChunkMaxLines raises the per-chunk LINE budget with no direct
+// payload_byte_budget clamp, but the entries fed to chunkDiff have already
+// passed through ApplyByteBudgetPreferEscalated (review.go), so the chunk BYTES
+// are still bounded by the global cap — the practical effect of a large
+// declaration is fewer, larger chunks, never a chunk larger than
+// payload_byte_budget. The unbounded case is payload_byte_budget: 0 (no global
+// cap configured).
 func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
 	if maxLines < minChunkLines {
