@@ -53,8 +53,11 @@ const (
 )
 
 // EffectiveByteBudget returns the byte budget a model's payload must fit within
-// so that estimated input tokens ≤ ContextWindowTokens(model) - outputTokens -
-// promptOverheadTokens. It converts the reserved token budget to bytes using the
+// so that estimated input tokens ≤ ContextWindowTokens(model, declared) -
+// outputTokens - promptOverheadTokens. declared is the agent's own
+// context_window_tokens (nil when it made no declaration) and is resolved ahead
+// of the static table — see ContextWindowTokens for the tier order. It converts
+// the reserved token budget to bytes using the
 // conservative ~3.5 B/token ratio (rounding DOWN, so the byte budget never
 // overshoots the token reservation). Returns 0 ("no budget available") when the
 // reservation leaves zero or negative input tokens for the model — never a
@@ -63,6 +66,12 @@ const (
 // This closes the confirmed dax boundary overflow: for a 32768-token window with
 // outputTokens = 8192, the reserved input tokens are strictly below 32768 - 8192
 // = 24576, so the 24577 input + 8192 output > 32768 class cannot recur (F2/AC2).
+//
+// The 0 return became REACHABLE in Epic 35.16.5.1: a declaration is valid down
+// to 1 token, so an operator can now declare a window at or below outputTokens +
+// promptOverheadTokens where the 32768 floor previously made that impossible.
+// Callers already handle 0 as honest degradation rather than treating it as
+// unreachable defense-in-depth (see the bulk path in internal/fanout).
 func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	if outputTokens < 0 {
 		outputTokens = 0
@@ -84,7 +93,15 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 //
 // It consumes EffectiveByteBudget directly rather than introducing a parallel
 // budget representation, so the same conservative ratio and output reservation
-// govern both the shed-to-fit (bulk) and chunk-to-fit paths.
+// govern both the shed-to-fit (bulk) and chunk-to-fit paths — and so a declared
+// window (Epic 35.16.5.1) reaches the per-chunk line budget through exactly one
+// resolution chain. declared is the agent's own context_window_tokens, nil when
+// it made no declaration.
+//
+// NOTE this is the one sizing path the global payload_byte_budget does NOT
+// bound: the bulk and baseline budgets are min(EffectiveByteBudget, budget),
+// while maxLines here keeps scaling with the declared window. A declaration far
+// above the global cap therefore grows per-chunk size without limit.
 func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
 	if maxLines < minChunkLines {
