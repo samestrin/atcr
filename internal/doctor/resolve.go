@@ -7,6 +7,7 @@ package doctor
 import (
 	"fmt"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 )
 
@@ -89,11 +90,14 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		}
 		if !agentSeen[name] {
 			agentSeen[name] = true
+			window, windowSrc := payload.ResolveContextWindow(ac.Model, ac.ContextWindowTokens)
 			res.Agents = append(res.Agents, AgentTarget{
-				Agent:     name,
-				Serial:    serial,
-				TargetIdx: idx,
-				Source:    reg.AgentTier(name),
+				Agent:               name,
+				Serial:              serial,
+				TargetIdx:           idx,
+				Source:              reg.AgentTier(name),
+				ContextWindowTokens: window,
+				WindowSource:        windowSrc,
 			})
 		}
 		return nil

@@ -68,8 +68,11 @@ func TestResolve_WindowIsPerAgentNotPerTarget(t *testing.T) {
 	reg := &registry.Registry{
 		Providers: map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
 		Agents: map[string]registry.AgentConfig{
-			"a": {Provider: "p", Model: "glm-5.2", ContextWindowTokens: &declared},
-			"b": {Provider: "p", Model: "glm-5.2"},
+			// A table-KEYED model, so the undeclared sibling has a table window to
+			// fall back to — the point being that it keeps that window rather than
+			// inheriting its target-mate's declaration.
+			"a": {Provider: "p", Model: "openai/gpt-5.5", ContextWindowTokens: &declared},
+			"b": {Provider: "p", Model: "openai/gpt-5.5"},
 		},
 	}
 	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a", "b"}})

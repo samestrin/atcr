@@ -131,15 +131,17 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
 		rep.Agents = append(rep.Agents, AgentResult{
-			Agent:     at.Agent,
-			Serial:    at.Serial,
-			Provider:  tgt.Provider,
-			Model:     tgt.Model,
-			Status:    pr.status,
-			LatencyMS: pr.latencyMS,
-			Hint:      pr.hint,
-			Detail:    pr.detail,
-			Source:    at.Source,
+			Agent:               at.Agent,
+			Serial:              at.Serial,
+			Provider:            tgt.Provider,
+			Model:               tgt.Model,
+			Status:              pr.status,
+			LatencyMS:           pr.latencyMS,
+			Hint:                pr.hint,
+			Detail:              pr.detail,
+			Source:              at.Source,
+			ContextWindowTokens: at.ContextWindowTokens,
+			WindowSource:        at.WindowSource,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)

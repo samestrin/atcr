@@ -27,15 +27,35 @@ func RenderJSON(w io.Writer, rep *Report) error {
 // over RenderTable.
 func RenderTableError(w io.Writer, rep *Report) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSOURCE\tSTATUS\tLATENCY\tHINT")
+	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSOURCE\tWINDOW\tSTATUS\tLATENCY\tHINT")
 	for _, a := range rep.Agents {
 		latency := "-"
 		if a.LatencyMS > 0 {
 			latency = fmt.Sprintf("%dms", a.LatencyMS)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Source, a.Status, latency, diagnostic(a))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Source, window(a), a.Status, latency, diagnostic(a))
 	}
 	return tw.Flush()
+}
+
+// window builds the WINDOW cell: the resolved context window and the tier it
+// came from, e.g. "262144 (declaration)".
+//
+// The tier is rendered alongside the number rather than instead of it because
+// neither answers the operator's question alone. The number cannot show whether
+// a declaration took effect — a declaration that was ignored and a static-table
+// hit that happens to match look identical. The tier cannot show whether the
+// value is plausible for the model. Seeing "512000 (declaration)" next to a
+// model the table pins at 128000 is what makes an over-declaration diagnosable
+// here instead of as an opaque provider HTTP 400 mid-run.
+func window(a AgentResult) string {
+	if a.ContextWindowTokens <= 0 {
+		return "-"
+	}
+	if a.WindowSource == "" {
+		return fmt.Sprintf("%d", a.ContextWindowTokens)
+	}
+	return fmt.Sprintf("%d (%s)", a.ContextWindowTokens, a.WindowSource)
 }
 
 // maxTableDetailBytes bounds the upstream detail rendered in the table. The

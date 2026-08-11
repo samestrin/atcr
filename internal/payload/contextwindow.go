@@ -130,8 +130,19 @@ const (
 )
 
 // ResolveContextWindow returns the same window ContextWindowTokens returns,
-// plus the tier it came from.
+// plus the tier it came from. ContextWindowTokens delegates here, so the value
+// and its reported provenance cannot drift.
+//
+// The tier is what makes a declaration diagnosable before a run: the number
+// alone cannot distinguish "the declaration took effect" from "the declaration
+// was ignored and the static table happened to agree", and an over-declaration
+// is otherwise visible only as an opaque provider HTTP 400.
 func ResolveContextWindow(model string, declared *int) (int, string) {
-	_ = strings.TrimSpace(model)
-	return defaultContextWindowTokens, WindowSourceDefault // STUB — replaced in GREEN
+	if declared != nil && *declared > 0 && *declared <= contextWindowTokensCap {
+		return *declared, WindowSourceDeclaration
+	}
+	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
+		return w, WindowSourceTable
+	}
+	return defaultContextWindowTokens, WindowSourceDefault
 }
