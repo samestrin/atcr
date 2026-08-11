@@ -175,6 +175,31 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesResolutionChain(t *testing.T) 
 		"an undeclared fallback keeps the conservative default, not the primary's 512000")
 }
 
+func TestBuildFallbackAgent_UndeclaredFallbackUsesStaticTableTier(t *testing.T) {
+	// The middle tier of the same chain. The sibling test above only proves an
+	// undeclared fallback reaches the DEFAULT, which an implementation that
+	// ignored the static table entirely would also satisfy. Pin the table tier
+	// with a model that has an entry, so "falls through the resolution chain"
+	// means the whole chain and not just its last step.
+	require.Equal(t, 128000, payload.ContextWindowTokens("openai/gpt-5.5", nil),
+		"precondition: openai/gpt-5.5 IS in the static table, unlike unlisted-backup-model")
+
+	cfg := declaredWindowRoster(t, 512000)
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "openai/gpt-5.5"
+	kai.ContextWindowTokens = nil // undeclared → must land on the TABLE, not the default
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	require.NoError(t, err)
+	assert.Equal(t, 128000, fb.ResolvedWindow,
+		"an undeclared fallback on a table-listed model resolves the TABLE entry, not the 32768 default and not the primary's 512000")
+	assert.Equal(t, payload.EffectiveByteBudget("openai/gpt-5.5", nil, defaultMaxTokens), fb.EffectiveBudget)
+}
+
 func TestBuildFallbackAgent_WarnsWhenInheritingAnOversizedPrompt(t *testing.T) {
 	// AC4's other half. Resolving the fallback's OWN window is only half the
 	// guarantee: the prompt it inherits was sized to the PRIMARY's window, so a
@@ -196,6 +221,12 @@ func TestBuildFallbackAgent_WarnsWhenInheritingAnOversizedPrompt(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// COUPLING: these two assertions match substrings of the warning literal in
+	// buildFallbackAgent (review.go). The warning is plain stderr text, not a
+	// structured log field, so there is nothing more stable to key on — a reword
+	// of that message must update these strings. Kept deliberately short (the
+	// agent name and "may overflow") so ordinary rewording of the surrounding
+	// prose does not break them. captureStderr lives in engine_degrade_test.go.
 	assert.Contains(t, out, `fallback agent "kai"`, "the mismatch must be surfaced pre-dispatch")
 	assert.Contains(t, out, "may overflow")
 	assert.Equal(t, "overflow", fb.DegradationAction,
@@ -223,6 +254,66 @@ func TestBuildFallbackAgent_NoWarningWhenBudgetsMatch(t *testing.T) {
 	assert.NotContains(t, out, "may overflow", "equal windows must not warn")
 	assert.Equal(t, primary.DegradationAction, fb.DegradationAction,
 		"an equally-sized fallback keeps the slot's degradation action")
+}
+
+func TestBuildFallbackAgent_NoWarningWhenFallbackWindowIsLarger(t *testing.T) {
+	// DIRECTION. The guard is `fbBudget < primary.EffectiveBudget` — strictly
+	// smaller. The two existing cases (a ~24x gap that fires, exact equality that
+	// does not) leave the ordering unpinned: a mutation to `fbBudget !=
+	// primary.EffectiveBudget` passes both, and under it a fallback with a LARGER
+	// window than its primary — the desirable configuration — would be falsely
+	// warned about and falsely stamped degradation_action "overflow".
+	cfg := declaredWindowRoster(t, 64000) // primary declares SMALL
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model"
+	big := 512000
+	kai.ContextWindowTokens = &big // fallback declares BIG
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, 64000, primary.ResolvedWindow, "precondition: the primary is the SMALLER of the pair")
+
+	var fb Agent
+	out := captureStderr(t, func() {
+		fb, err = buildFallbackAgent(cfg, primary, "kai")
+	})
+	require.NoError(t, err)
+	require.Greater(t, fb.EffectiveBudget, primary.EffectiveBudget,
+		"precondition: the fallback's budget really is the larger one")
+
+	assert.NotContains(t, out, "may overflow",
+		"a fallback with a LARGER window than its primary is the desirable case and must not warn")
+	assert.Equal(t, primary.DegradationAction, fb.DegradationAction,
+		"a larger-windowed fallback keeps the slot's action; it must not be stamped overflow")
+}
+
+func TestBuildFallbackAgent_WarnsWhenFallbackIsOnlyMarginallySmaller(t *testing.T) {
+	// BOUNDARY. The only firing case in the suite is a ~24x gap, so a mutation
+	// that requires a large multiple (`fbBudget*4 < primary.EffectiveBudget`)
+	// survives untouched. A fallback barely below its primary must still warn:
+	// the guard is a strict `<`, not "meaningfully smaller".
+	cfg := declaredWindowRoster(t, 33000)
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model"
+	near := 32768
+	kai.ContextWindowTokens = &near // 232 tokens below the primary
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	var fb Agent
+	out := captureStderr(t, func() {
+		fb, err = buildFallbackAgent(cfg, primary, "kai")
+	})
+	require.NoError(t, err)
+	require.Less(t, fb.EffectiveBudget, primary.EffectiveBudget,
+		"precondition: 32768 really is below 33000 after the same reservation")
+
+	assert.Contains(t, out, "may overflow",
+		"a marginally smaller fallback must still warn — the guard is a strict <, not a multiple")
+	assert.Equal(t, "overflow", fb.DegradationAction)
 }
 
 func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
@@ -274,8 +365,11 @@ func TestBuildSlots_BaselineChunkedRecordsDeclaredWindow(t *testing.T) {
 }
 
 func TestBuildSlots_UndeclaredRosterIsUnchanged(t *testing.T) {
-	// AC2: a roster declaring nothing must produce byte-identical sizing to the
-	// pre-epic build. The declaration is additive and inert when absent.
+	// AC2, bulk path: an undeclared agent resolves the pre-epic window, budget,
+	// and output reservation. Scoped deliberately — this covers the BULK sizing
+	// scalars for one agent, not "byte-identical sizing" for the whole roster;
+	// the chunked line regime and the table tier are covered by the sibling test
+	// below, which is what the broader claim actually requires.
 	rng := ReviewRange{Base: "a", Head: "b"}
 	agent, _, err := buildOneAgent(sizingRosterConfig(), "greta", oversizedBlocksPayload(), rng, "", "")
 	require.NoError(t, err)
@@ -283,4 +377,46 @@ func TestBuildSlots_UndeclaredRosterIsUnchanged(t *testing.T) {
 	assert.Equal(t, 32768, agent.ResolvedWindow)
 	assert.Equal(t, int64(71680), agent.EffectiveBudget)
 	assert.Equal(t, defaultMaxTokens, agent.ReservedOutputTokens)
+}
+
+func TestBuildSlots_UndeclaredRosterIsUnchangedOnChunkedAndTableTiers(t *testing.T) {
+	// The other half of AC2's claim, which the bulk test above cannot make. An
+	// undeclared roster must be inert on the CHUNKED path too (the derived
+	// per-chunk line budget, not just the byte budget), and for the roster's
+	// table-listed agent (the middle resolution tier) as well as its unlisted one
+	// — a regression in the declared==nil table lookup would otherwise only
+	// surface in the payload package's own unit tests, never at the fan-out layer.
+	cfg := sizingRosterConfig() // greta: unlisted → 32768; kai: openai/gpt-5.5 → 128000
+	cfg.Settings.ReviewStrategy = "chunked"
+	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 900), FileCount: 12}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	// Expected values are derived from the payload package rather than hardcoded:
+	// what this test pins is that the fan-out layer agrees with the resolver for
+	// an undeclared agent on BOTH tiers, not the arithmetic of the formula (which
+	// payload's own tests own, and which hardcoding here would couple us to).
+	for _, tc := range []struct {
+		agent, model string
+	}{
+		{"greta", "unlisted-small-model"}, // default tier
+		{"kai", "openai/gpt-5.5"},         // static-table tier
+	} {
+		wantWin := payload.ContextWindowTokens(tc.model, nil)
+		wantLines := payload.ChunkMaxLines(tc.model, nil, defaultMaxTokens)
+		scoped := *cfg
+		proj := *cfg.Project
+		proj.Agents = []string{tc.agent}
+		proj.SerialAgents = nil
+		scoped.Project = &proj
+
+		slots, _, err := buildSlots(&scoped, payloads, rng, "", "", true)
+		require.NoError(t, err)
+		require.Greater(t, len(slots), 1, "precondition: %s must split this diff into chunks", tc.agent)
+
+		for i, s := range slots {
+			assert.Equal(t, wantWin, s.Primary.ResolvedWindow, "%s chunk %d", tc.agent, i)
+			assert.Equal(t, wantLines, s.Primary.chunkMaxLines,
+				"%s chunk %d must carry the undeclared-derived line regime", tc.agent, i)
+		}
+	}
 }
