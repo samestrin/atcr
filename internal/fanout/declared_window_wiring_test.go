@@ -316,6 +316,95 @@ func TestBuildFallbackAgent_WarnsWhenFallbackIsOnlyMarginallySmaller(t *testing.
 	assert.Equal(t, "overflow", fb.DegradationAction)
 }
 
+// measurablePayload returns a files-mode modePayload of nFiles entries of
+// fileBytes each, written with the real "=== FILE: p ===" marker so
+// EntriesFromRenderedPayload can recover the per-file bodies from the rendered
+// text — i.e. so the slot's CodeContext is populated and the payload's byte
+// total is measurable downstream. The other helpers in this package
+// (oversizedBlocksPayload, baselinePayloads) deliberately use unmarked or
+// "// FILE:"-marked bodies, which the parser does not recognize.
+func measurablePayload(nFiles, fileBytes int) map[string]modePayload {
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < nFiles; i++ {
+		marker := fmt.Sprintf("=== FILE: f%d.go ===\n", i)
+		pad := fileBytes - len(marker)
+		if pad < 0 {
+			pad = 0
+		}
+		body := marker + strings.Repeat("z", pad)
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("f%d.go", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	return map[string]modePayload{
+		string(payload.ModeFiles): {Entries: entries, Text: full.String(), FileCount: nFiles},
+	}
+}
+
+func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t *testing.T) {
+	// The AC4 guard compared two BUDGETS and never consulted the payload it claims
+	// may overflow: `primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget`
+	// is true for ANY fallback resolving a smaller window, whether the prompt is
+	// 5 KB or 500 KB. The epic's own Post-Epic Operator Step pairs declared
+	// primaries with undeclared 32768 backups, so on the recommended roster an
+	// ordinary small-diff review warned on every pair and stamped
+	// degradation_action=overflow on fallbacks that would have held the payload
+	// with room to spare — making false exactly the diagnosability record this
+	// epic exists to make honest.
+	//
+	// The fallback's budget is fixed at 71680 B (the undeclared 32768 default) in
+	// both halves below; only the payload size changes, which is the whole point.
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Equal(t, int64(71680), fbBudget, "precondition: the undeclared fallback's budget")
+
+	roster := func(t *testing.T) *ReviewConfig {
+		t.Helper()
+		cfg := declaredWindowRoster(t, 128000) // primary declares BIG
+		kai := cfg.Registry.Agents["kai"]
+		kai.Model = "unlisted-backup-model" // undeclared → 32768 default
+		cfg.Registry.Agents["kai"] = kai
+		return cfg
+	}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	t.Run("fits: no warning, no overflow stamp", func(t *testing.T) {
+		cfg := roster(t)
+		primary, _, err := buildOneAgent(cfg, "greta", measurablePayload(2, 3000), rng, string(payload.ModeFiles), "")
+		require.NoError(t, err)
+		require.NotEmpty(t, primary.CodeContext, "precondition: the shipped payload is measurable")
+		require.Greater(t, primary.EffectiveBudget, fbBudget,
+			"precondition: the budget comparison alone WOULD fire — the fallback's budget is the smaller one")
+
+		var fb Agent
+		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+		require.NoError(t, err)
+
+		assert.NotContains(t, out, "may overflow",
+			"a 6 KB payload cannot overflow a 71680-byte budget, whatever the window gap")
+		assert.Equal(t, primary.DegradationAction, fb.DegradationAction,
+			"a fallback that comfortably holds the payload must not be stamped overflow")
+	})
+
+	t.Run("does not fit: still warns", func(t *testing.T) {
+		// The complement, so the fix cannot be satisfied by suppressing the warning
+		// outright: a payload genuinely larger than the fallback's budget must still
+		// warn and still record the overflow.
+		cfg := roster(t)
+		primary, _, err := buildOneAgent(cfg, "greta", measurablePayload(20, 10000), rng, string(payload.ModeFiles), "")
+		require.NoError(t, err)
+		require.NotEmpty(t, primary.CodeContext)
+		require.Greater(t, int64(len(primary.CodeContext[0].Body)*len(primary.CodeContext)), fbBudget,
+			"precondition: the shipped payload really does exceed the fallback's budget")
+
+		var fb Agent
+		out := captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+		require.NoError(t, err)
+
+		assert.Contains(t, out, "may overflow", "a payload past the fallback's budget must still warn")
+		assert.Equal(t, "overflow", fb.DegradationAction)
+	})
+}
+
 func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T) {
 	// `if fbWindow > 0 { fbReserved = defaultMaxTokens }` is a dead branch:
 	// ContextWindowTokens never returns 0 by contract (contextwindow.go:90-98), so
