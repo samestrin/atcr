@@ -1799,28 +1799,6 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		appliedBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
-		if agentBudget == 0 && len(mp.Entries) > 0 {
-			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead makes
-			// EffectiveByteBudget return 0, so the shed below is skipped and the agent keeps
-			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
-			// room for any input regardless of value), so mark the same honest-degradation
-			// state the AllDropped arm records instead of leaving the action unmarked while
-			// silently shipping an over-window payload. REACHABLE since Epic 35.16.5.1: it
-			// was defense-in-depth while ContextWindowTokens floored at 32768 (eff >= 71680),
-			// but an agent may now declare context_window_tokens as low as 1, and any
-			// declaration at or below defaultMaxTokens + promptOverheadTokens (12288) makes
-			// EffectiveByteBudget return 0. The warning below is the operator's signal that
-			// their declaration is too small to review anything.
-			bulkDegradation = degradationOverflow
-			if warnOversized {
-				// Name the resolved window and the reservation that consumed it: the
-				// operator's next action is to raise or drop the declaration, and
-				// "effective budget 0" alone does not say which number to change or
-				// what it has to clear.
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n",
-					name, agentWindow, defaultMaxTokens)
-			}
-		}
 		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
 		// which is what the no-shed and AllDropped arms genuinely dispatch — and is
 		// narrowed to the kept subset when the per-agent budget sheds files. The
@@ -1828,6 +1806,54 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// rendered prompt does not contain.
 		bulkEntries := mp.Entries
 		bulkShed := false
+		if agentBudget == 0 && len(mp.Entries) > 0 {
+			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead
+			// makes EffectiveByteBudget return 0. REACHABLE since Epic 35.16.5.1: it was
+			// defense-in-depth while ContextWindowTokens floored at 32768 (eff >= 71680),
+			// but an agent may now declare context_window_tokens as low as 1, and any
+			// declaration at or below defaultMaxTokens + promptOverheadTokens (12288)
+			// lands here.
+			//
+			// This arm used to skip the shed below and dispatch the FULL global-budget
+			// payload. That inverted the Conservatism NFR at exactly the wrong moment:
+			// honestly declaring a small window sent MORE bytes than leaving the agent
+			// undeclared (which resolves the 32768 default and sheds to ~71680). A zero
+			// budget is not "no opinion about size" — it is the strongest possible
+			// overflow signal, so it is handled as an overflow.
+			//
+			// Two arms, mirroring how a shed-driven overflow is already handled below:
+			//
+			//   1. The operator's on_overflow policy decides first. fail/fallback return
+			//      their typed errors, which propagate out of add()/buildSlots() and
+			//      hard-fail the run PRE-DISPATCH rather than sending a payload known
+			//      not to fit.
+			//   2. Otherwise ship the SMALLEST single entry. An empty payload is not an
+			//      option (it returns a false-clean "no findings" review — the same class
+			//      ErrPayloadFullyDropped guards), and one small file is the least this
+			//      can send while still being a real review. It is also the arm most
+			//      likely to actually succeed: promptOverheadTokens is deliberately
+			//      over-estimated and defaultMaxTokens is a cap rather than a floor, so
+			//      the true usable window is wider than this arithmetic admits.
+			if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
+				if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedBudget); err != nil {
+					return err
+				}
+			}
+			smallest := smallestEntry(mp.Entries)
+			bulkEntries = []payload.FileEntry{smallest}
+			bulkShed = len(mp.Entries) > 1
+			bulkText, bulkFileCount = smallest.Body, 1
+			bulkTrunc = payload.Truncation{Truncated: bulkShed, FilesDropped: droppedPathsExcept(mp.Entries, smallest.Path)}
+			bulkDegradation = degradationOverflow
+			if warnOversized {
+				// Name the resolved window and the reservation that consumed it: the
+				// operator's next action is to raise or drop the declaration, and
+				// "effective budget 0" alone does not say which number to change or
+				// what it has to clear.
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — raise or drop its context_window_tokens declaration\n",
+					name, agentWindow, defaultMaxTokens, smallest.Path)
+			}
+		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			// PreferEscalated, not the plain pass: escalating a file to a
 			// higher-context mode makes it the largest entry, so plain largest-first
@@ -2205,6 +2231,37 @@ func derefInt64(p *int64) int64 {
 		return 0
 	}
 	return *p
+}
+
+// smallestEntry returns the entry with the fewest body bytes, and the first such
+// entry on a tie so the choice is deterministic across runs (the diff-cache key
+// and the baseline coverage tag both depend on which file was shipped).
+//
+// Body length is measured directly rather than trusting FileEntry.Size: Size is
+// the pre-render source size, and it is Body that is actually dispatched.
+// Callers guarantee a non-empty slice.
+func smallestEntry(entries []payload.FileEntry) payload.FileEntry {
+	best := entries[0]
+	for _, e := range entries[1:] {
+		if len(e.Body) < len(best.Body) {
+			best = e
+		}
+	}
+	return best
+}
+
+// droppedPathsExcept lists the paths of every entry except keep — the shed
+// record for an arm that keeps exactly one file. Returns nil (not an empty
+// slice) when nothing was dropped, matching the "no truncation" shape callers
+// and the status.json omitempty tags expect.
+func droppedPathsExcept(entries []payload.FileEntry, keep string) []string {
+	var dropped []string
+	for _, e := range entries {
+		if e.Path != keep {
+			dropped = append(dropped, e.Path)
+		}
+	}
+	return dropped
 }
 
 // appliedByteBudget narrows a per-agent input byte budget to the one a slot is
