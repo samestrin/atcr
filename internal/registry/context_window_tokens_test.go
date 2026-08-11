@@ -135,14 +135,13 @@ func TestContextWindowTokens_RejectsNonIntegerAtLoad(t *testing.T) {
 	// AC5's "non-integer declarations are rejected at load" — a quoted string, a
 	// bool, or a collection must fail the strict decode rather than coercing.
 	//
-	// A YAML FLOAT (128000.5) is deliberately NOT asserted here: gopkg.in/yaml.v3
-	// silently truncates a float into any *int field, so max_context_lines: 1200.5
-	// and max_findings: 7.9 load as 1200 and 7 today. That is registry-WIDE
-	// decoder behavior, not a property of this field, and AC5 scopes itself to
-	// "matching existing registry validation behavior". Rejecting it for this one
-	// field would require a bespoke unmarshaler that breaks the plain *int shape
-	// the payload resolver consumes. Recorded as technical debt by this epic
-	// instead, to be fixed registry-wide rather than for one field.
+	// A YAML FLOAT (128000.5) is not asserted HERE because it is not a property
+	// of this field: gopkg.in/yaml.v3 truncates a float into any *int field, so
+	// max_context_lines and max_findings were affected identically. That was
+	// recorded as technical debt by this epic and has since been fixed
+	// registry-wide by the shared guard in decode.go — see
+	// TestStrictInt_RejectsFractionalAgentField and its siblings, which cover
+	// this field's float case among the others.
 	for _, bad := range []string{`"512k"`, `true`, `[1, 2]`, `{a: 1}`} {
 		_, err := LoadRegistry(writeRegistry(t, `
 providers:
