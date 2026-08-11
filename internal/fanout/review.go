@@ -1557,13 +1557,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// per-agent chunk budget is derived identically to the bulk path below:
 			// EffectiveByteBudget capped by the global PayloadByteBudget, less the SCOPE
 			// CONSTRAINT reservation.
-			chunkBudget := agentBudget
-			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
-				chunkBudget = global
-			}
-			if s := int64(len(agentScopeConstraint)); s > 0 {
-				chunkBudget -= s
-			}
+			chunkBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 			// A non-positive per-agent budget (over-window model, or the scope reservation
 			// consumed the whole window) cannot drive PartitionByBudget's machine-budget
 			// contract — fall through to the bulk path, which keeps the whole payload and
@@ -1588,7 +1582,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
 					}
 					chunkSizing := agentSizing{
-						effectiveBudget: agentBudget,
+						// The budget the partition ACTUALLY used, not the raw per-agent
+						// one: effective_budget must mean the same quantity on every
+						// payload strategy or a consumer comparing two agents is
+						// comparing unlike numbers.
+						effectiveBudget: chunkBudget,
 						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
 						action:          degradationChunk,
@@ -1741,7 +1739,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// override or model-derived). The action is "chunk" — the default,
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
-					effectiveBudget: agentBudget,
+					// The globally-capped, scope-reserved budget — the same quantity
+					// the bulk path records below. The per-chunk LINE budget (maxLines)
+					// stays derived from the UNCAPPED window: that asymmetry is
+					// deliberate and documented in payload.ChunkMaxLines, and unifying
+					// the recorded byte budget does not disturb it.
+					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
@@ -1786,23 +1789,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// EVERY sized agent (the "was this agent sized" signal), independent of
 		// whether shedding actually dropped a file. appliedBudget is the byte budget
 		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
-		var appliedBudget int64
-		if agentBudget > 0 {
-			appliedBudget = agentBudget
-			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < appliedBudget {
-				appliedBudget = global
-			}
-			// (A) reserve room for the per-agent SCOPE CONSTRAINT block, prepended
-			// uncounted in renderAgent, so plan + budgeted diff together fit this model's
-			// window (Epic 19.10 HIGH TD). Floor at 0; the AllDropped guard below is the
-			// net when the reservation leaves too little for even one file.
-			if s := int64(len(agentScopeConstraint)); s > 0 {
-				appliedBudget -= s
-				if appliedBudget < 0 {
-					appliedBudget = 0
-				}
-			}
-		}
+		appliedBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
 		if agentBudget == 0 && len(mp.Entries) > 0 {
@@ -2211,6 +2198,35 @@ func derefInt64(p *int64) int64 {
 		return 0
 	}
 	return *p
+}
+
+// appliedByteBudget narrows a per-agent input byte budget to the one a slot is
+// actually sized to: capped by the global payload_byte_budget when configured,
+// then reduced by the SCOPE CONSTRAINT block that renderAgent prepends UNCOUNTED
+// to every payload (Epic 19.10 HIGH TD), floored at 0.
+//
+// One definition, three call sites (bulk, chunked record, baseline partition).
+// They were three independently-written copies of the same arithmetic, which had
+// already drifted: the bulk path applied both narrowings while the chunked and
+// baseline sizing records reported the raw budget, so status.json's
+// effective_budget meant a different quantity depending on payload strategy.
+// A non-positive agent budget stays 0 — the honest "no budget available" state
+// callers already branch on.
+func appliedByteBudget(agentBudget, globalBudget int64, scopeConstraint string) int64 {
+	if agentBudget <= 0 {
+		return 0
+	}
+	applied := agentBudget
+	if globalBudget > 0 && globalBudget < applied {
+		applied = globalBudget
+	}
+	if s := int64(len(scopeConstraint)); s > 0 {
+		applied -= s
+		if applied < 0 {
+			applied = 0
+		}
+	}
+	return applied
 }
 
 // inheritedPayloadFits reports whether the payload the primary actually shipped
