@@ -70,6 +70,11 @@ var contextWindowTokens = map[string]int{
 // "never a negative byte count" contract.
 const contextWindowTokensCap = 10000000
 
+// MaxStaticContextWindow returns the largest window in the static table.
+func MaxStaticContextWindow() int {
+	return contextWindowTokensCap // STUB — wrong answer, replaced in GREEN
+}
+
 // ContextWindowTokens returns the model's context-window size in tokens, resolved in
 // three tiers (Epic 35.16.5.1):
 //

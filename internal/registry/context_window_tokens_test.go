@@ -3,6 +3,7 @@ package registry
 import (
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -194,7 +195,12 @@ func TestContextWindowTokensCap_ExceedsLargestStaticTableWindow(t *testing.T) {
 	// static table in internal/payload already resolves exactly 1,000,000 for the
 	// Gemini entries, so a 1,000,000 ceiling would leave the declaration tier
 	// unable to exceed the very table tier it exists to override.
-	assert.Greater(t, ContextWindowTokensCap, 1000000,
+	//
+	// The bound is read from the table itself rather than restated as a literal:
+	// the invariant is "the declaration tier outranks the table tier", so adding a
+	// table entry at or above the cap must break THIS test rather than pass it
+	// silently. A 10M-context model is one published release away from that.
+	assert.Greater(t, ContextWindowTokensCap, payload.MaxStaticContextWindow(),
 		"the declaration tier must be able to exceed the largest static-table window")
 	assert.Equal(t, 10000000, ContextWindowTokensCap)
 }
