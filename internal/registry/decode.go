@@ -106,7 +106,7 @@ func walkIntFields(node *yaml.Node, t reflect.Type) error {
 	if node == nil || t == nil {
 		return nil
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if node.Kind == yaml.AliasNode {
@@ -165,7 +165,7 @@ func walkIntFields(node *yaml.Node, t reflect.Type) error {
 // key names the offending YAML key ("" for a sequence element, where the
 // enclosing field name is not available at this level).
 func checkIntScalar(key string, val *yaml.Node, t reflect.Type) error {
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t == nil || val == nil || val.Kind != yaml.ScalarNode || val.Tag != "!!float" {
@@ -197,7 +197,7 @@ func yamlFieldTypes(t reflect.Type) map[string]reflect.Type {
 		}
 		if strings.Contains(opts, "inline") {
 			ft := f.Type
-			for ft.Kind() == reflect.Ptr {
+			for ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct {
