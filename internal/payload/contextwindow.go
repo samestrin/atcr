@@ -70,9 +70,27 @@ var contextWindowTokens = map[string]int{
 // "never a negative byte count" contract.
 const contextWindowTokensCap = 10000000
 
-// MaxStaticContextWindow returns the largest window in the static table.
+// MaxStaticContextWindow returns the largest window in the static table above
+// (the default when the table is empty, so the result is never zero).
+//
+// It exists to make the declaration tier's reason for existing testable. The
+// per-agent declaration wins over this table, so registry.ContextWindowTokensCap
+// MUST stay strictly above the table's largest entry — a cap at or below it
+// leaves the declaration tier unable to override the tier it exists to override.
+// Restating that bound as a literal in a test decouples it from the table, so
+// adding a 10M-context model here would destroy the invariant with the suite
+// still green. Exporting the real maximum lets the assertion read the table.
+//
+// Computed rather than cached: the table is a handful of entries, and a package
+// var would have to be kept in sync with it by hand — the same coupling failure.
 func MaxStaticContextWindow() int {
-	return contextWindowTokensCap // STUB — wrong answer, replaced in GREEN
+	max := defaultContextWindowTokens
+	for _, w := range contextWindowTokens {
+		if w > max {
+			max = w
+		}
+	}
+	return max
 }
 
 // ContextWindowTokens returns the model's context-window size in tokens, resolved in
