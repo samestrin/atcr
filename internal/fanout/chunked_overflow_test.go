@@ -39,8 +39,9 @@ func TestBuildSlots_ChunkedTinyWindowRecordsOverflowNotSilentClamp(t *testing.T)
 		assert.Equal(t, "overflow", s.Primary.DegradationAction,
 			"chunk slot %d must record overflow, not a clean chunk, when the window reserves no input budget", i)
 	}
-	assert.Contains(t, out, "window too small to reserve output headroom",
+	assert.Contains(t, out, "leaves no input budget once the",
 		"the chunked path must emit the same operator warning as the bulk path")
+	assert.Contains(t, out, "may overflow")
 }
 
 // The ordinary chunked path must keep recording "chunk": the overflow marking

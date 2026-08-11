@@ -1582,7 +1582,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						effectiveBudget: agentBudget,
 						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
-						action:          "chunk",
+						action:          degradationChunk,
 					}
 					for _, ck := range chunks {
 						var pb strings.Builder
@@ -1685,11 +1685,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// surfaces regardless of review_strategy. Keyed on agentBudget (not ml),
 			// because an explicit max_context_lines overrides the line budget
 			// without making the window any bigger.
-			chunkAction := "chunk"
+			chunkAction := degradationChunk
 			if agentBudget == 0 {
-				chunkAction = "overflow"
+				chunkAction = degradationOverflow
 				if warnOversized {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n", name, ml)
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n",
+						name, agentWindow, defaultMaxTokens, ml)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -1807,9 +1808,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// declaration at or below defaultMaxTokens + promptOverheadTokens (12288) makes
 			// EffectiveByteBudget return 0. The warning below is the operator's signal that
 			// their declaration is too small to review anything.
-			bulkDegradation = "overflow"
+			bulkDegradation = degradationOverflow
 			if warnOversized {
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
+				// Name the resolved window and the reservation that consumed it: the
+				// operator's next action is to raise or drop the declaration, and
+				// "effective budget 0" alone does not say which number to change or
+				// what it has to clear.
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n",
+					name, agentWindow, defaultMaxTokens)
 			}
 		}
 		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
@@ -1859,7 +1865,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// dispatch the whole thing rather than an empty (false-clean) review.
 				// Record this high-risk state so status.json/summary.json can distinguish
 				// an at-risk over-window reviewer from a clean comfortable fit.
-				bulkDegradation = "overflow"
+				bulkDegradation = degradationOverflow
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: no file fits its model window (%d-byte budget); sending the whole payload (may overflow) rather than an empty review\n", name, appliedBudget)
 				}
@@ -1875,7 +1881,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// The per-agent shed dropped files to fit this model's window — a lossy
 				// degradation. Record it as the diagnosability degradation_action (F8).
 				if trunc.Truncated {
-					bulkDegradation = "truncate"
+					bulkDegradation = degradationTruncate
 				}
 			}
 		}
@@ -1956,6 +1962,24 @@ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 // and timeout scaling (F6). The zero value (an unsized/direct-constructed caller)
 // collapses the cache sizing token to "0:0" — the pre-F7 key — and leaves every
 // diagnosability field absent.
+// The degradation actions recorded on agentSizing.action (and surfaced as
+// Agent.DegradationAction / status.json degradation_action). Constants rather
+// than literals because the value is written at six sites and read by artifact
+// consumers, so a typo at any one of them would silently produce an action no
+// reader recognizes. The strings deliberately coincide with OverflowChunk /
+// OverflowTruncate — the on_overflow POLICY names — but the two vocabularies are
+// distinct: a policy is what the operator configured, an action is what actually
+// happened, and degradationOverflow has no policy counterpart at all.
+const (
+	// degradationChunk: the diff was split across window-sized chunks. No loss.
+	degradationChunk = "chunk"
+	// degradationTruncate: files were shed to fit the budget. Lossy.
+	degradationTruncate = "truncate"
+	// degradationOverflow: the payload was dispatched knowing it exceeds what the
+	// model can hold, because no smaller framing was available.
+	degradationOverflow = "overflow"
+)
+
 type agentSizing struct {
 	effectiveBudget int64 // per-agent input byte budget the payload was sized to (0 = unsized)
 	// ContextWindowTokens(model, declared) — the window in tokens, from the
@@ -1964,7 +1988,7 @@ type agentSizing struct {
 	resolvedWindow int
 	maxLines       int    // per-model chunk line budget (0 = bulk/non-chunked)
 	chunkTotal     int    // chunks this persona's diff was split into (0/1 = unchunked)
-	action         string // degradation action: "chunk"/"truncate"/"" (none)
+	action         string // degradation action: one of the degradation* constants above, or "" (none)
 }
 
 // sizingToken renders the per-agent effective-budget/chunk-plan identifier folded
@@ -2229,7 +2253,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget {
 		fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
 			name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
-		fbDegradation = "overflow"
+		fbDegradation = degradationOverflow
 	}
 	return Agent{
 		Name: name,
