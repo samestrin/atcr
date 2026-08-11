@@ -50,6 +50,34 @@ func TestContextWindowTokens_NilDeclarationIsByteIdenticalToPreEpic(t *testing.T
 	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("no-such-model", nil))
 }
 
+func TestContextWindowTokens_StaticTablePrecedesDefault(t *testing.T) {
+	// Pin the static table's MEMBERSHIP as literals so adding a stray bare proxy
+	// alias (an AC3 violation) fails immediately rather than silently raising
+	// every undeclared window that matches it. The existing
+	// NilDeclarationIsByteIdenticalToPreEpic iterates the production map, which
+	// moves with the map and pins nothing.
+	literals := map[string]int{
+		"anthropic/claude-opus-4.8": 200000,
+		"anthropic/claude-sonnet-5": 200000,
+		"google/gemini-2.5-pro":     1000000,
+		"google/gemini-2.5-flash":   1000000,
+		"openai/gpt-5.5":            128000,
+		"openai/gpt-5.4-mini":       128000,
+		"deepseek/deepseek-v4-pro":  128000,
+		"moonshotai/kimi-k2.7-code": 128000,
+		"qwen/qwen3-coder-plus":     128000,
+		"z-ai/glm-5.2":              128000,
+	}
+	assert.Len(t, contextWindowTokens, len(literals),
+		"static table has gained or lost entries — update the literal golden if intentional")
+	for model, want := range literals {
+		assert.Contains(t, model, "/",
+			"every static-table key must be provider-qualified (AC3: no bare proxy alias)")
+		assert.Equal(t, want, ContextWindowTokens(model, nil),
+			"nil declaration must resolve the static table entry for %q, not the default", model)
+	}
+}
+
 func TestContextWindowTokens_NonPositiveDeclarationIgnored(t *testing.T) {
 	// Defense-in-depth for a directly-constructed AgentConfig that bypasses
 	// validateAgent (which already rejects <= 0 at load), mirroring how
