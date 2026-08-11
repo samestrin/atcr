@@ -67,11 +67,15 @@ const (
 // outputTokens = 8192, the reserved input tokens are strictly below 32768 - 8192
 // = 24576, so the 24577 input + 8192 output > 32768 class cannot recur (F2/AC2).
 //
-// The 0 return became REACHABLE in Epic 35.16.5.1: a declaration is valid down
-// to 1 token, so an operator can now declare a window at or below outputTokens +
-// promptOverheadTokens where the 32768 floor previously made that impossible.
-// Callers already handle 0 as honest degradation rather than treating it as
-// unreachable defense-in-depth (see the bulk path in internal/fanout).
+// The 0 return is reachable for the current callers (which pass defaultMaxTokens
+// 8192) when the resolved window is at or below outputTokens + promptOverheadTokens
+// (12288 at the defaults). Registry validation permits declarations down to 1
+// token, so an explicit declaration in that band now drives this path — but the
+// function itself has always returned 0 for large enough outputTokens regardless
+// of the declaration tier (EffectiveByteBudget(model, nil, 28672) returned 0 on
+// the pre-epic 32768 floor too). Callers handle 0 as honest degradation rather
+// than treating it as unreachable defense-in-depth (see the bulk path in
+// internal/fanout).
 func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	if outputTokens < 0 {
 		outputTokens = 0
