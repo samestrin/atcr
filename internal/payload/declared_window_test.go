@@ -84,19 +84,32 @@ func TestContextWindowTokens_NonPositiveDeclarationIgnored(t *testing.T) {
 }
 
 func TestContextWindowTokens_DeclarationAboveCapIgnored(t *testing.T) {
-	// Symmetric clamp: a declaration at or above contextWindowTokensCap
+	// Symmetric clamp: a declaration ABOVE contextWindowTokensCap
 	// (defense-in-depth against a directly-constructed AgentConfig bypassing
 	// validateAgent) falls through to the static table, mirroring the
 	// non-positive guard. Without this, a declaration near math.MaxInt drives
 	// EffectiveByteBudget's effectiveTokens * conservativeBytesPerTokenNum
 	// product into int64 overflow, returning a NEGATIVE byte count and
 	// breaking the "never a negative byte count" contract.
-	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", declared(contextWindowTokensCap)),
-		"a declaration at the cap must fall through to the static table")
+	//
+	// The boundary is INCLUSIVE of the cap, because registry validation is: the
+	// loader accepts context_window_tokens within 1..ContextWindowTokensCap and
+	// says so in its error message ("must be within 1..10000000"), matching
+	// max_context_lines. Dropping the exact cap value here made the two ends
+	// disagree by one, and disagreed silently — the operator's legal declaration
+	// resolved to the table window with no error and no warning, the precise
+	// silent mis-resolution the load-time rejection of 0 exists to prevent.
+	assert.Equal(t, contextWindowTokensCap, ContextWindowTokens("z-ai/glm-5.2", declared(contextWindowTokensCap)),
+		"a declaration AT the cap is legal at load, so the resolver must honor it rather than silently dropping it")
 	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", declared(contextWindowTokensCap+1)),
 		"a declaration above the cap must fall through to the static table")
 	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("glm-5.2", declared(1<<62)),
 		"a huge declaration must fall through to the default for an unknown model")
+
+	// Honoring the cap value must not reintroduce the overflow the cap exists to
+	// prevent: 10000000 tokens is ~34.9 MB, far inside int64.
+	assert.Positive(t, EffectiveByteBudget("z-ai/glm-5.2", declared(contextWindowTokensCap), 8192),
+		"the cap-valued declaration must still produce a positive byte budget")
 }
 
 func TestContextWindowTokens_DeclarationTrimsNothingFromModel(t *testing.T) {
