@@ -2331,6 +2331,27 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 	return total <= budget
 }
 
+// entriesFromPrimary reconstructs the shipped payload as a FileEntry list from
+// the primary's CodeContext — the per-file breakdown of what that slot actually
+// sent, which is the same set inheritedPayloadFits measures.
+//
+// It exists so the overflow-policy call in buildFallbackAgent is handed the real
+// payload rather than nil. The arms reachable there (fail, fallback) ignore the
+// entries entirely, so this is defensive: a later change that wires the truncate
+// arm in would otherwise silently shed EVERY file against an empty list, which
+// looks like a working re-fit and is not one.
+func entriesFromPrimary(primary Agent) []payload.FileEntry {
+	entries := make([]payload.FileEntry, 0, len(primary.CodeContext))
+	for _, ref := range primary.CodeContext {
+		entries = append(entries, payload.FileEntry{
+			Path: ref.Path,
+			Size: int64(len(ref.Body)),
+			Body: ref.Body,
+		})
+	}
+	return entries
+}
+
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
 // payload as the primary (AC 01-04: "fallback agent tried (same persona)"), only
 // the provider/model/temperature/timeout differ.
@@ -2391,10 +2412,20 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// Re-shedding the payload here is deliberately out of scope: buildFallbackAgent
 	// receives the already-rendered prompt, not the FileEntry list it would have to
 	// re-pack, and a fallback reviewing a different file set than its primary is a
-	// separate design question (it would diverge the slot's chunk accounting and
-	// coverage tag). What AC4 forbids is doing this SILENTLY, so surface it — warn
-	// pre-dispatch and record the honest overflow degradation instead of copying the
-	// primary's action.
+	// separate design question — chunkFiles and ChunkTotal are SLOT-level and
+	// inherited unconditionally below, so a re-packed fallback would falsify the
+	// baseline coverage attribution and require the Slot/Agent model to grow a
+	// fallback-owned chunk chain. What AC4 forbids is doing this SILENTLY, so
+	// surface it — warn pre-dispatch and record the honest overflow degradation
+	// instead of copying the primary's action.
+	//
+	// The operator's on_overflow policy decides first, mirroring the primary path's
+	// own pre-dispatch gate: fail and fallback return their typed errors, which
+	// propagate out of buildChain/buildSlots and hard-fail the run BEFORE a prompt
+	// the backup provably cannot hold is dispatched. chunk and truncate keep the
+	// warn-and-ship behavior below, because both would need exactly the FileEntry
+	// re-packing ruled out above — routing them here would promise a re-fit this
+	// function cannot perform.
 	//
 	// Measure the PAYLOAD before claiming it overflows. len(primary.Prompt) is the
 	// wrong measure — the rendered prompt carries the persona wrapper that the byte
@@ -2416,6 +2447,21 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	fbDegradation := primary.DegradationAction
 	warned := false
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
+		// Gated on the SAME condition as the warning — an actual measured overflow,
+		// not a bare budget comparison. Enabling on_overflow=fail must not break
+		// every ordinary small-diff run that merely has a smaller-windowed backup.
+		//
+		// The entries passed are the primary's shipped set and the budget is the
+		// FALLBACK's own, so the truncate arm (unreachable here) would still be
+		// self-consistent if it were ever wired in. ErrFallbackUnavailable is the
+		// right error for the fallback arm despite this already being a fallback:
+		// the policy means "hand this lane to a backup", and the backup in hand is
+		// the one that cannot hold the payload.
+		if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
+			if _, err := applyOverflowPolicy(p, "", 0, entriesFromPrimary(primary), fbBudget); err != nil {
+				return Agent{}, false, err
+			}
+		}
 		if warnOversized {
 			warned = true
 			fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
