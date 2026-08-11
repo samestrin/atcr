@@ -116,6 +116,18 @@ const (
 	// lines). nil = unset (inherit the default); any explicit value must be
 	// within 1..MaxContextLinesCap.
 	MaxContextLinesCap = 1000000
+	// ContextWindowTokensCap is a generous sanity ceiling on the per-agent
+	// context_window_tokens declaration (Epic 35.16.5.1). It bounds TOKENS, not
+	// diff lines — do not conflate it with MaxContextLinesCap above, and do not
+	// collapse the two into one constant: the static model table in
+	// internal/payload already resolves exactly 1,000,000 tokens for the Gemini
+	// entries, so a 1,000,000 ceiling would leave the declaration tier unable to
+	// exceed the very table tier it exists to override. 10,000,000 clears every
+	// shipping model's published window while still rejecting the garbage class
+	// this guard is for (a fat-fingered extra digit, e.g. 128000 -> 1280000000).
+	// nil = unset (fall through to the static table); any explicit value must be
+	// within 1..ContextWindowTokensCap.
+	ContextWindowTokensCap = 10000000
 	// MaxEscalationHunkGapLines, MaxEscalationFiles, and
 	// MaxEscalationSkeletonLines are sanity ceilings on the payload_escalation
 	// thresholds (Epic 35.1). Values above them reinstate precisely the payload
@@ -552,6 +564,29 @@ type AgentConfig struct {
 	// explicit value survives, distinguishing "use the default" from a real
 	// override. Ignored entirely in bulk mode.
 	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
+
+	// ContextWindowTokens declares THIS agent's model context window in tokens
+	// (Epic 35.16.5.1), resolved by internal/payload AHEAD of its static model
+	// table: declaration -> static table -> defaultContextWindowTokens. It exists
+	// because a litellm-backed roster reaches models through bare proxy aliases
+	// ("glm-5.2", "kimi-k3") that no provider-qualified table key matches, so the
+	// whole roster silently resolves the conservative 32,768-token default and
+	// under-fills by up to 30x. Those aliases are proxy-LOCAL and meaningless to
+	// any other atcr user, which is why machine-specific truth lives here rather
+	// than in the shipped table.
+	//
+	// Declaration, not detection — the Determinism NFR forbids a hot-path network
+	// call, and the proxy cannot be trusted to self-report (a live audit found 0
+	// of 28 litellm deployments declaring max_input_tokens). Same precedent as
+	// supports_function_calling.
+	//
+	// Declare min(model window, proxy ceiling), NOT the model's published spec: a
+	// request-body guardrail in front of the model can cap the usable window far
+	// below the model's own, and it surfaces as an opaque HTTP 400 rather than a
+	// context-window error. A pointer so unset (nil) is distinguishable from an
+	// explicit value, mirroring MaxContextLines above; an unset field changes
+	// nothing, so a pre-35.16.5.1 registry keeps loading and sizing identically.
+	ContextWindowTokens *int `yaml:"context_window_tokens,omitempty"`
 }
 
 // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
