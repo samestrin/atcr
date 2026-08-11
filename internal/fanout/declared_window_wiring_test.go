@@ -71,6 +71,7 @@ func TestBuildSlots_BulkBudgetActuallySizesAgainstDeclaredWindow(t *testing.T) {
 
 	// The budget is not cosmetic: the same oversized payload sheds fewer files.
 	assert.True(t, undeclared.Truncation.Truncated, "precondition: the 32768 agent sheds this payload")
+	assert.Greater(t, len(undeclared.Truncation.FilesDropped), 0, "precondition: the undeclared agent drops at least one file")
 	assert.Less(t, len(declaredAgent.Truncation.FilesDropped), len(undeclared.Truncation.FilesDropped),
 		"a larger declared window must drop FEWER files from the identical payload")
 }
