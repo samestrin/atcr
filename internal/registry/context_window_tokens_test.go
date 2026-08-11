@@ -52,6 +52,30 @@ agents:
 		"the probed max_model_len of the local vLLM deployment must survive load verbatim")
 }
 
+func TestContextWindowTokens_VagueAssertionWouldAcceptDecodeError_RED(t *testing.T) {
+	// RED demonstration (to be removed once the sibling tests' assertions are
+	// tightened): a misspelled field name produces a STRICT-decode error that
+	// happens to contain the substring "context_window_tokens", so the vague
+	// assert.Contains used by the AC5 rejection tests would pass on a parse
+	// error rather than on a validation error. Asserting the discriminating
+	// validation message below MUST fail here to prove the distinction.
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce:
+    provider: p
+    model: m
+    context_window_tokenz: 0
+`))
+	require.Error(t, err)
+	// This is the TIGHTENED assertion the AC5 tests will use. It must fail on a
+	// decode error, proving the current vague form cannot tell the two apart.
+	assert.Contains(t, err.Error(), "must be within",
+		"a decode error must NOT satisfy the validation-message assertion")
+}
+
 func TestContextWindowTokens_RejectsZeroAtLoad(t *testing.T) {
 	// 0 is rejected rather than treated as "unset": a declared 0 would otherwise
 	// drive EffectiveByteBudget to 0, which the bulk path reads as the honest
