@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -127,6 +129,8 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	warnIfVocabularyCeilingExceeded(cmd.ErrOrStderr(), rr.OutOfVocabularyRate)
+
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding run-result: %w", err)
@@ -178,6 +182,15 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
+	// A run-result may be hand-supplied, so the diagnostic is untrusted input here.
+	// out_of_vocabulary_rate is a SHARE of findings: a value outside [0,1] (or NaN)
+	// is a corrupt file rather than a pessimistic reading, and must not be carried
+	// forward as a measurement. nil stays legal — it means unmeasured.
+	if rr.OutOfVocabularyRate != nil {
+		if v := *rr.OutOfVocabularyRate; math.IsNaN(v) || v < 0 || v > 1 {
+			return fmt.Errorf("run-result %s has out_of_vocabulary_rate %v outside [0,1]", in, v)
+		}
+	}
 
 	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)
 	if err != nil {
@@ -194,4 +207,29 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	}
 	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
 	return writeExportFile(output, out)
+}
+
+// warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
+// measured out-of-vocabulary rate breaches benchmark.MaxOutOfVocabularyRate.
+//
+// It writes to STDERR deliberately: `benchmark run --output <path>` prints nothing
+// to stdout, so the documented resumable invocation would otherwise give the
+// operator no signal at all that the reviewers ignored the offered vocabulary.
+//
+// It is deliberately NOT an exit-code change. A V1 validation run is 2-5 hours of
+// paid LLM work, and failing it at the very end over a diagnostic would discard
+// that work for a number the run was executed to discover.
+//
+// A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
+// a warning nobody reads.
+func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
+	if !benchmark.ExceedsVocabularyCeiling(rate) {
+		return
+	}
+	_, _ = fmt.Fprintf(w,
+		"warning: out_of_vocabulary_rate %.2f is at or above the %.2f ceiling — "+
+			"reviewers are labelling findings with words outside the offered vocabulary, "+
+			"which zeroes their recall independently of what they actually detected. "+
+			"Treat this run's corroboration_rate as a measure of vocabulary agreement, not detection.\n",
+		*rate, benchmark.MaxOutOfVocabularyRate)
 }

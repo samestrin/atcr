@@ -693,3 +693,44 @@ func TestBuildSuite_WritesDiffFilesInsideTheSuiteDirectory(t *testing.T) {
 	assert.Equal(t, referenced, onDisk,
 		"the *.diff files on disk and the diffs the manifest names must be the same set")
 }
+
+// The ground-truth categories this package EMITS must be exactly the coarse
+// categories the scorer's equivalence relation SPANS.
+//
+// These are two hand-maintained lists in two packages, and nothing bound them. A
+// fifth categoryMap output value would be scored by familyOf's identity fallback —
+// exact match only — while its four siblings are scored by family, splitting one
+// ground-truth category off from family semantics with no diagnostic anywhere. A
+// dead family key is the mirror failure: a family nothing can ever plant.
+//
+// ElementsMatch is bidirectional, so ONE assertion catches both directions.
+//
+// This lives here rather than in internal/benchmark because that package cannot
+// import this one — internal/benchmarkimport imports internal/benchmark, so an
+// in-package test importing back is an import cycle. This file is already
+// package benchmarkimport and already reads categoryMap directly, so the binding
+// costs no new exported API on this side.
+//
+// Severity note: the committed standard-v1 suite is frozen and hash-pinned, so a
+// fifth value cannot reach live scoring without a suite rebuild and a version bump.
+// This guards a future suite_version bump, not a live defect.
+func TestCategoryMap_OutputsMatchScorerFamilyKeys(t *testing.T) {
+	require.NotEmpty(t, categoryMap, "guard: an empty map would make this test vacuous")
+
+	seen := make(map[string]bool, len(categoryMap))
+	distinct := make([]string, 0, len(categoryMap))
+	for _, out := range categoryMap {
+		if !seen[out] {
+			seen[out] = true
+			distinct = append(distinct, out)
+		}
+	}
+
+	keys := benchmark.FamilyKeys()
+	require.NotEmpty(t, keys, "guard: an empty family table would make this test vacuous")
+
+	assert.ElementsMatch(t, keys, distinct,
+		"the coarse categories categoryMap emits must be exactly the keys of the scorer's "+
+			"equivalence relation — a value here with no family is scored by exact match "+
+			"while its siblings are scored by family; a family key nothing emits is dead weight")
+}

@@ -89,25 +89,67 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	var totalFindings, matchedFindings, ratedCases int
 	var recallSum float64
 	for _, c := range r.Cases {
-		expected, _ := normalizeSet(c.Expected)
+		// The expected side needs only the distinct set, so it uses normalizeDistinct
+		// rather than normalizeSet — whose parallel per-finding slice exists for the
+		// RAISED side alone and would otherwise be built and discarded every case.
+		expected := normalizeDistinct(c.Expected)
 		raised, normalizedRaised := normalizeSet(c.Raised)
 		totalFindings += len(c.Raised)
 
+		// Both quantities below resolve through the equivalence relation in
+		// equivalence.go: a coarse expected category is satisfied by any member of
+		// the ATCR family it spans, so a reviewer that writes `style` for a planted
+		// `maintainability` defect is credited for detecting it. The relation is
+		// scorer-side only — no product category is merged — and reduces to exact
+		// matching for any expected category with no family.
+		//
+		// One walk of the families yields both: hit (recall's numerator, decided
+		// per expected category) and satisfying (their union, the cost denominator's
+		// membership test).
+		hit, satisfying := satisfactions(expected, raised)
+
 		if len(expected) > 0 {
 			ratedCases++
-			hit := 0
-			for cat := range expected {
-				if raised[cat] {
-					hit++
-				}
-			}
 			recallSum += float64(hit) / float64(len(expected))
 		}
-		// Cost-per-corroborated denominator: every finding whose category matched
-		// an expected (planted) category. Counts findings, not distinct categories.
-		// Drive the count off normalizedRaised so normalize() runs once per finding.
+		// Cost-per-corroborated denominator: every finding whose category satisfied
+		// an expected (planted) category.
+		//
+		// The unit is FINDINGS, not distinct categories, and that is deliberate. It
+		// mirrors the production producer scorecard.costPer, whose denominator
+		// accumulates FindingsCorroborated — a count of findings — because
+		// cost_per_corroborated_finding_usd is not a benchmark field: it sits on the
+		// frozen PublicRecord allowlist shared verbatim between `benchmark export`
+		// and production `leaderboard --export`. It also matches CaseScore.Raised's
+		// one-entry-per-finding semantics and the out-of-vocabulary rate's denominator.
+		// Pinned by TestScore_CostDenominatorCountsFindingsNotDistinctCategories —
+		// every other cost fixture raises all-distinct categories and so pins the same
+		// number under either unit.
+		//
+		// KNOWN GAMING SURFACE, accepted rather than closed. The widened satisfying
+		// set admits six words for `maintainability`, so a reviewer emitting one nit
+		// six times under style/naming/bloat/complexity/duplication/maintainability
+		// buys six denominator and publishes a 6x cheaper number with no extra
+		// detection. Exact matching made the same inflation visible as duplicate-label
+		// spam; varied family labels read as legitimate. The magnitude is unchanged —
+		// six findings bought six before too — only the detectability. The
+		// counter-signal is findings_raised_avg, which sits on the same published row
+		// and rises in lockstep, so compare the two.
+		//
+		// Do NOT "fix" this by switching the unit here. Forking a frozen shared key's
+		// meaning between its two producers — cost-per-finding from production,
+		// cost-per-detected-category from the benchmark, distinguishable only by the
+		// envelope's source tag — is a worse defect than the hole. A unit change must
+		// version or rename the metric, in an epic scoped to touch PublicRecord.
+		//
+		// Drive the count off normalizedRaised so this pass normalizes each finding
+		// once rather than twice. It is NOT once per finding per RUN: OutOfVocabularyRate
+		// is a separate top-level walk over the same ReviewerScores and normalizes them
+		// again. That duplication is deliberate — it keeps the run diagnostic off
+		// Score's signature and out of the frozen PublicRecord — and is negligible
+		// against an LLM-bound run.
 		for _, cat := range normalizedRaised {
-			if expected[cat] {
+			if satisfying[cat] {
 				matchedFindings++
 			}
 		}
@@ -135,7 +177,8 @@ func normalize(cat string) string { return strings.ToLower(strings.TrimSpace(cat
 
 // normalizeSet returns the distinct non-empty normalized categories in cats
 // and a parallel slice of every normalized value (preserving order, including
-// empty entries) so callers can iterate findings without re-normalizing.
+// empty entries) so a caller can iterate findings without re-normalizing them
+// within the same pass.
 func normalizeSet(cats []string) (map[string]bool, []string) {
 	set := make(map[string]bool, len(cats))
 	normalized := make([]string, len(cats))
@@ -147,6 +190,19 @@ func normalizeSet(cats []string) (map[string]bool, []string) {
 		}
 	}
 	return set, normalized
+}
+
+// normalizeDistinct returns just the distinct non-empty normalized categories —
+// normalizeSet without the parallel per-finding slice, for callers that only need
+// the set. Same membership semantics; the two must stay in step.
+func normalizeDistinct(cats []string) map[string]bool {
+	set := make(map[string]bool, len(cats))
+	for _, c := range cats {
+		if n := normalize(c); n != "" {
+			set[n] = true
+		}
+	}
+	return set
 }
 
 // clamp01 bounds a rate to [0,1]; a well-formed recall is already in range, this

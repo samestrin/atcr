@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -209,6 +210,11 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		SuiteVersion: m.SuiteVersion,
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 		Reviewers:    benchmark.Score(reviewers),
+		// Computed from the same accumulated ReviewerScores Score consumes, so a
+		// resumed run reports the same rate as an uninterrupted one — replayed cases
+		// fold in through applyReviewerOutcome before this point. nil when the run
+		// raised no findings at all, which must not read as perfect agreement.
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
 	}, nil
 }
 
@@ -290,6 +296,28 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 	out := make(map[string][]string, len(parsed.Findings))
 	for _, f := range parsed.Findings {
 		out[f.Reviewer] = append(out[f.Reviewer], f.Category)
+	}
+	// A SKIPPED row is a finding the reviewer really emitted whose columns the
+	// parser could not align (an unescaped pipe in PROBLEM is the usual cause).
+	// Dropping it here would shrink the out-of-vocabulary DENOMINATOR, so the
+	// reviewer producing the worst-formed output would earn the best drift rate —
+	// the metric would reward exactly the behaviour it exists to detect. Fold each
+	// one in with an EMPTY category, which counts as drift by the same rule that
+	// already governs an empty CATEGORY column.
+	//
+	// REVIEWER is the engine's last-appended column, so the final field survives an
+	// overflow earlier in the row. parse() strips trailing empty fields BEFORE
+	// classifying a row as skipped, so that field is non-empty by construction;
+	// mirror the strip here to land on the same one. An unrecognized reviewer name
+	// keys a map entry no agent reads, exactly as an unrecognized REVIEWER on a
+	// well-formed row already does.
+	for _, s := range parsed.Skipped {
+		fields := strings.Split(s.Content, "|")
+		for len(fields) > 1 && fields[len(fields)-1] == "" {
+			fields = fields[:len(fields)-1]
+		}
+		reviewer := fields[len(fields)-1]
+		out[reviewer] = append(out[reviewer], "")
 	}
 	return out, nil
 }
