@@ -154,6 +154,15 @@ agents:
     context_window_tokens: `+bad+`
 `))
 		require.Error(t, err, "context_window_tokens: %s must not load", bad)
+		// The strict decoder's TYPE-mismatch error does not name the offending
+		// field (only UNKNOWN-FIELD errors do: "field X not found in type"). So
+		// we pin the REJECT PATH: it must be a parse error (not a successful
+		// load followed by silent ignore) and must mention either the file or
+		// the YAML unmarshal mechanism. If a sibling field's decoder were ever
+		// to change and this loop passed on a different field's error, that
+		// error would still have to come through the registry parse path.
+		assert.Contains(t, err.Error(), "parse registry.yaml",
+			"the rejection must come from the registry parse path, not a downstream validator that would mask a sibling field change")
 	}
 }
 
