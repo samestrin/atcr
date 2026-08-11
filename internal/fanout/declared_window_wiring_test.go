@@ -316,6 +316,49 @@ func TestBuildFallbackAgent_WarnsWhenFallbackIsOnlyMarginallySmaller(t *testing.
 	assert.Equal(t, "overflow", fb.DegradationAction)
 }
 
+func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T) {
+	// `if fbWindow > 0 { fbReserved = defaultMaxTokens }` is a dead branch:
+	// ContextWindowTokens never returns 0 by contract (contextwindow.go:90-98), so
+	// the reservation was stamped unconditionally. With a declaration as low as 1
+	// token now legal, that produces a self-contradictory record — resolved_window
+	// 1 with reserved_output_tokens 8192 and, via omitempty on a zero budget, no
+	// effective_budget field at all, so status.json asserts the agent reserved 8192
+	// output tokens out of a 1-token window. Gate on the BUDGET, the quantity that
+	// actually funds the output cap. renderAgent (:2126-2129) carries the same
+	// shape for the primary lane, so both are pinned here.
+	cfg := declaredWindowRoster(t, 512000)
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model"
+	tiny := 1
+	kai.ContextWindowTokens = &tiny
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, defaultMaxTokens, primary.ReservedOutputTokens,
+		"precondition: a primary whose budget DOES fund the cap still records it")
+
+	var fb Agent
+	_ = captureStderr(t, func() { fb, err = buildFallbackAgent(cfg, primary, "kai") })
+	require.NoError(t, err)
+	require.Equal(t, 1, fb.ResolvedWindow, "precondition: the fallback's declaration is honoured")
+	require.Zero(t, fb.EffectiveBudget, "precondition: a 1-token window funds no input budget")
+	assert.Zero(t, fb.ReservedOutputTokens,
+		"a fallback whose window cannot fund the output cap must not record reserving it")
+
+	// The primary lane's twin: sized (resolved_window is recorded) but with a
+	// budget of zero, so the reservation is equally unfunded there.
+	var tinyPrimary Agent
+	_ = captureStderr(t, func() {
+		tinyPrimary, _, err = buildOneAgent(declaredWindowRoster(t, 12288), "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	})
+	require.NoError(t, err)
+	require.Equal(t, 12288, tinyPrimary.ResolvedWindow, "precondition: the primary was sized")
+	require.Zero(t, tinyPrimary.EffectiveBudget, "precondition: the declaration funds no input budget")
+	assert.Zero(t, tinyPrimary.ReservedOutputTokens,
+		"a primary whose window cannot fund the output cap must not record reserving it either")
+}
+
 func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
 	// A declaration is valid down to 1 token, so the zero-effective-budget arm in
 	// the bulk path — defense-in-depth while ContextWindowTokens floored at 32768
