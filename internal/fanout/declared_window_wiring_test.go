@@ -138,6 +138,8 @@ func TestBuildFallbackAgent_ResolvesItsOwnDeclaration(t *testing.T) {
 	cfg := declaredWindowRoster(t, 512000) // greta (primary) declares BIG
 	kai := cfg.Registry.Agents["kai"]
 	kai.Model = "unlisted-backup-model" // absent from the table
+	assert.Equal(t, 32768, payload.ContextWindowTokens("unlisted-backup-model", nil),
+		"precondition: unlisted-backup-model has no static table entry (resolves to default)")
 	small := 64000
 	kai.ContextWindowTokens = &small // the fallback declares SMALL
 	cfg.Registry.Agents["kai"] = kai
