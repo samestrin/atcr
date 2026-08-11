@@ -1,0 +1,114 @@
+package payload
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Epic 35.16.5.1 (T2/AC1/AC2): the resolver accepts a caller-supplied declared
+// window and resolves it AHEAD of the static table:
+//
+//	agent declaration -> static table -> defaultContextWindowTokens
+//
+// The declaration exists because a litellm-backed roster names models by bare
+// proxy alias, which no provider-qualified table key matches, so the whole
+// roster silently resolves the 32,768-token default.
+
+func declared(n int) *int { return &n }
+
+func TestContextWindowTokens_DeclarationBeatsStaticTable(t *testing.T) {
+	// A model that IS in the static table still yields to an explicit
+	// declaration: the operator knows how their proxy serves this deployment,
+	// and the table's entry is only a conservative floor for the OpenRouter-style
+	// id. This is the tier order AC2 fixes, not merely a fallback.
+	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", nil),
+		"precondition: the static table resolves this id to 128000")
+	assert.Equal(t, 262144, ContextWindowTokens("z-ai/glm-5.2", declared(262144)),
+		"an explicit declaration must win over the static table")
+}
+
+func TestContextWindowTokens_DeclarationBeatsDefaultForProxyAlias(t *testing.T) {
+	// The motivating case: `glm-5.2` is the proxy-local alias, absent from the
+	// table by design (AC3), so it resolves the conservative default today.
+	for _, alias := range []string{"glm-5.2", "kimi-k3", "qwen3.8-max", "deepseek-v4-pro"} {
+		assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens(alias, nil),
+			"precondition: proxy-local alias %q must stay absent from the static table", alias)
+		assert.Equal(t, 128000, ContextWindowTokens(alias, declared(128000)),
+			"a declaration must lift proxy-local alias %q off the 32768 default", alias)
+	}
+}
+
+func TestContextWindowTokens_NilDeclarationIsByteIdenticalToPreEpic(t *testing.T) {
+	// AC2: a roster declaring nothing must produce exactly the pre-epic
+	// resolution — table hit where the table has the id, default otherwise.
+	for model, want := range contextWindowTokens {
+		assert.Equal(t, want, ContextWindowTokens(model, nil),
+			"nil declaration must still resolve the static table for %q", model)
+	}
+	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("no-such-model", nil))
+}
+
+func TestContextWindowTokens_NonPositiveDeclarationIgnored(t *testing.T) {
+	// Defense-in-depth for a directly-constructed AgentConfig that bypasses
+	// validateAgent (which already rejects <= 0 at load), mirroring how
+	// EffectiveMaxContextLines clamps a non-positive value to the default rather
+	// than propagating it. A declared 0 must NOT resolve as a 0-token window:
+	// that drives EffectiveByteBudget to 0, which the bulk path reads as the
+	// "window too small to reserve output headroom" overflow degradation.
+	assert.Equal(t, 128000, ContextWindowTokens("z-ai/glm-5.2", declared(0)),
+		"a non-positive declaration must fall through to the static table")
+	assert.Equal(t, defaultContextWindowTokens, ContextWindowTokens("glm-5.2", declared(-1)),
+		"a negative declaration must fall through to the default")
+}
+
+func TestContextWindowTokens_DeclarationTrimsNothingFromModel(t *testing.T) {
+	// The declaration short-circuits before the table lookup, so a whitespace-y
+	// model id is irrelevant when a declaration is present.
+	assert.Equal(t, 500000, ContextWindowTokens("  kimi-k3  ", declared(500000)))
+}
+
+func TestEffectiveByteBudget_HonorsDeclaration(t *testing.T) {
+	// AC1: the declared window must flow into the payload byte budget, not just
+	// into the diagnosability record.
+	//
+	//	(128000 - 8192 output - 4096 overhead) * 7/2 = 115712 * 3.5 = 404992
+	got := EffectiveByteBudget("glm-5.2", declared(128000), testOutputTokens)
+	assert.Equal(t, int64(404992), got)
+
+	base := EffectiveByteBudget("glm-5.2", nil, testOutputTokens)
+	assert.Equal(t, int64(71680), base, "undeclared stays at the 32768-default budget")
+	assert.Greater(t, got, base, "a declaration must raise the byte budget")
+}
+
+func TestChunkMaxLines_HonorsDeclaration(t *testing.T) {
+	// AC1's second, SEPARATE assertion: the chunked per-chunk line budget must
+	// rise too. The status.json record alone can carry a declared window while
+	// every budget still sizes against 32768 — that is the failure mode this
+	// epic exists to prevent, so the line budget is asserted on its own.
+	//
+	//	404992 / 48 = 8437 lines (vs 71680 / 48 = 1493 today)
+	base := ChunkMaxLines("glm-5.2", nil, testOutputTokens)
+	require.Equal(t, 1493, base, "the pre-epic derived value at the 32768 default window")
+
+	got := ChunkMaxLines("glm-5.2", declared(128000), testOutputTokens)
+	assert.Equal(t, 8437, got)
+	assert.Greater(t, got, base*5, "a 4x window must yield a ~5.6x line budget")
+}
+
+func TestChunkMaxLines_DeclarationStillClampsToFloor(t *testing.T) {
+	// A declaration small enough that the output reservation eats the whole
+	// window still clamps to the positive floor, never to the <= 0 value
+	// chunkDiff reads as "disable chunking".
+	assert.Equal(t, minChunkLines, ChunkMaxLines("glm-5.2", declared(1), testOutputTokens))
+}
+
+func TestEffectiveByteBudget_DeclarationBelowOverheadYieldsZero(t *testing.T) {
+	// registry validation permits any value in 1..ContextWindowTokensCap, so a
+	// declaration at or below (output + overhead) is now REACHABLE where the
+	// 32768 floor previously made it impossible. It must return the documented
+	// "no budget available" 0 rather than a negative byte count.
+	assert.Equal(t, int64(0), EffectiveByteBudget("glm-5.2", declared(12288), testOutputTokens))
+	assert.Equal(t, int64(0), EffectiveByteBudget("glm-5.2", declared(1), testOutputTokens))
+}

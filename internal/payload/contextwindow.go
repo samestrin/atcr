@@ -62,7 +62,7 @@ var contextWindowTokens = map[string]int{
 // and prompt overhead from it when deriving an effective input budget (F2). It
 // is intentionally distinct from the per-chunk diff-line budget MaxContextLines,
 // which counts diff lines, not tokens.
-func ContextWindowTokens(model string) int {
+func ContextWindowTokens(model string, declared *int) int {
 	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
 		return w
 	}

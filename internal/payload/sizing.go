@@ -63,11 +63,11 @@ const (
 // This closes the confirmed dax boundary overflow: for a 32768-token window with
 // outputTokens = 8192, the reserved input tokens are strictly below 32768 - 8192
 // = 24576, so the 24577 input + 8192 output > 32768 class cannot recur (F2/AC2).
-func EffectiveByteBudget(model string, outputTokens int) int64 {
+func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 	if outputTokens < 0 {
 		outputTokens = 0
 	}
-	effectiveTokens := ContextWindowTokens(model) - outputTokens - promptOverheadTokens
+	effectiveTokens := ContextWindowTokens(model, declared) - outputTokens - promptOverheadTokens
 	if effectiveTokens <= 0 {
 		return 0
 	}
@@ -85,8 +85,8 @@ func EffectiveByteBudget(model string, outputTokens int) int64 {
 // It consumes EffectiveByteBudget directly rather than introducing a parallel
 // budget representation, so the same conservative ratio and output reservation
 // govern both the shed-to-fit (bulk) and chunk-to-fit paths.
-func ChunkMaxLines(model string, outputTokens int) int {
-	maxLines := int(EffectiveByteBudget(model, outputTokens) / avgBytesPerLine)
+func ChunkMaxLines(model string, declared *int, outputTokens int) int {
+	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
 	if maxLines < minChunkLines {
 		return minChunkLines
 	}

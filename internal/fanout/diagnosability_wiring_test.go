@@ -26,8 +26,8 @@ func TestBuildSlots_BulkAgentCarriesSizingRecord(t *testing.T) {
 
 	// Window + budget are this model's own, matching the payload package's own
 	// resolution (no independent recomputation, no global cap since budget is 0).
-	assert.Equal(t, payload.ContextWindowTokens("unlisted-small-model"), small.ResolvedWindow)
-	assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", defaultMaxTokens), small.EffectiveBudget)
+	assert.Equal(t, payload.ContextWindowTokens("unlisted-small-model", nil), small.ResolvedWindow)
+	assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", nil, defaultMaxTokens), small.EffectiveBudget)
 	assert.Equal(t, defaultMaxTokens, small.ReservedOutputTokens, "a sized agent reserves the output cap")
 	// The oversized payload was shed to fit the 32k window → a lossy degradation.
 	assert.True(t, small.Truncation.Truncated, "precondition: the 32k agent sheds this payload")

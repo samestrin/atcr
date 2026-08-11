@@ -25,7 +25,7 @@ func TestContextWindowTokens_KnownModels(t *testing.T) {
 	}
 	for model, want := range cases {
 		t.Run(model, func(t *testing.T) {
-			assert.Equal(t, want, ContextWindowTokens(model))
+			assert.Equal(t, want, ContextWindowTokens(model, nil))
 		})
 	}
 }
@@ -35,8 +35,8 @@ func TestContextWindowTokens_KnownModels(t *testing.T) {
 // correctly-ordered windows so downstream per-agent sizing (F2) can chunk a
 // small-window model more than a large one.
 func TestContextWindowTokens_SmallAndLargeWindow(t *testing.T) {
-	small := ContextWindowTokens("some-local-32k-alias") // unlisted → default
-	large := ContextWindowTokens("anthropic/claude-opus-4.8")
+	small := ContextWindowTokens("some-local-32k-alias", nil) // unlisted → default
+	large := ContextWindowTokens("anthropic/claude-opus-4.8", nil)
 	assert.Equal(t, 32768, small)
 	assert.Equal(t, 200000, large)
 	assert.Greater(t, large, small)
@@ -56,7 +56,7 @@ func TestContextWindowTokens_UnknownDefaults(t *testing.T) {
 	}
 	for _, m := range unknown {
 		t.Run(m, func(t *testing.T) {
-			got := ContextWindowTokens(m)
+			got := ContextWindowTokens(m, nil)
 			assert.Equal(t, defaultContextWindowTokens, got)
 			assert.NotZero(t, got)
 		})
@@ -66,7 +66,7 @@ func TestContextWindowTokens_UnknownDefaults(t *testing.T) {
 // TestContextWindowTokens_TrimsWhitespace asserts keys resolve after trimming,
 // matching the trimmed-string handling used across the config precedence chain.
 func TestContextWindowTokens_TrimsWhitespace(t *testing.T) {
-	assert.Equal(t, 200000, ContextWindowTokens("  anthropic/claude-opus-4.8  "))
+	assert.Equal(t, 200000, ContextWindowTokens("  anthropic/claude-opus-4.8  ", nil))
 }
 
 // TestContextWindowTokens_AllPersonasCoveredOrDefault is the AC1 regression
@@ -96,7 +96,7 @@ func TestContextWindowTokens_AllPersonasCoveredOrDefault(t *testing.T) {
 	}
 	for _, m := range rosterModels {
 		t.Run(m, func(t *testing.T) {
-			w := ContextWindowTokens(m)
+			w := ContextWindowTokens(m, nil)
 			assert.GreaterOrEqual(t, w, defaultContextWindowTokens,
 				"every roster model must resolve to at least the conservative default, never zero")
 		})
