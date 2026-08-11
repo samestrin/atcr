@@ -169,6 +169,56 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesResolutionChain(t *testing.T) 
 		"an undeclared fallback keeps the conservative default, not the primary's 512000")
 }
 
+func TestBuildFallbackAgent_WarnsWhenInheritingAnOversizedPrompt(t *testing.T) {
+	// AC4's other half. Resolving the fallback's OWN window is only half the
+	// guarantee: the prompt it inherits was sized to the PRIMARY's window, so a
+	// declared primary hands its undeclared backup a payload that backup cannot
+	// hold. AC4 forbids doing that SILENTLY, so the condition must be surfaced —
+	// a warning pre-dispatch and the honest overflow degradation on the fallback,
+	// rather than copying the primary's action.
+	cfg := declaredWindowRoster(t, 512000)
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model" // undeclared → 32768 default
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	var fb Agent
+	out := captureStderr(t, func() {
+		fb, err = buildFallbackAgent(cfg, primary, "kai")
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, out, `fallback agent "kai"`, "the mismatch must be surfaced pre-dispatch")
+	assert.Contains(t, out, "may overflow")
+	assert.Equal(t, "overflow", fb.DegradationAction,
+		"a fallback whose own budget is smaller than the payload's sizing must record overflow, not copy the primary's action")
+}
+
+func TestBuildFallbackAgent_NoWarningWhenBudgetsMatch(t *testing.T) {
+	// The guard must not fire in the ordinary case where primary and fallback
+	// resolve the same window — otherwise every truncated bulk review would warn.
+	cfg := sizingRosterConfig()
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-small-model" // same model/window as greta
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	require.True(t, primary.Truncation.Truncated, "precondition: the primary's payload was shed to its budget")
+
+	var fb Agent
+	out := captureStderr(t, func() {
+		fb, err = buildFallbackAgent(cfg, primary, "kai")
+	})
+	require.NoError(t, err)
+
+	assert.NotContains(t, out, "may overflow", "equal windows must not warn")
+	assert.Equal(t, primary.DegradationAction, fb.DegradationAction,
+		"an equally-sized fallback keeps the slot's degradation action")
+}
+
 func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
 	// A declaration is valid down to 1 token, so the zero-effective-budget arm in
 	// the bulk path — defense-in-depth while ContextWindowTokens floored at 32768

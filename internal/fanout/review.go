@@ -2182,6 +2182,30 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	if fbWindow > 0 {
 		fbReserved = defaultMaxTokens
 	}
+	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
+	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
+	// larger-windowed primary hands its smaller backup a payload that backup cannot
+	// hold. The mechanism predates this epic — the static table already spreads
+	// 200000 against 32768 — but a per-agent declaration makes it reachable on a
+	// roster that previously resolved ONE uniform default for every agent, and the
+	// epic's own operator step pairs declared primaries with undeclared backups.
+	//
+	// Re-shedding the payload here is deliberately out of scope: buildFallbackAgent
+	// receives the already-rendered prompt, not the FileEntry list it would have to
+	// re-pack, and a fallback reviewing a different file set than its primary is a
+	// separate design question (it would diverge the slot's chunk accounting and
+	// coverage tag). What AC4 forbids is doing this SILENTLY, so surface it — warn
+	// pre-dispatch and record the honest overflow degradation instead of copying the
+	// primary's action. Compare BUDGETS, not len(primary.Prompt): the rendered
+	// prompt includes the persona wrapper that the byte budget does not count, so a
+	// length comparison would fire on every shed-to-fit review even when the two
+	// agents resolve identical windows.
+	fbDegradation := primary.DegradationAction
+	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget {
+		fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
+			name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+		fbDegradation = "overflow"
+	}
 	return Agent{
 		Name: name,
 		// A fallback keys on its OWN provider: if it uses a different provider than
@@ -2223,7 +2247,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		EffectiveBudget:      fbBudget,
 		ResolvedWindow:       fbWindow,
 		ReservedOutputTokens: fbReserved,
-		DegradationAction:    primary.DegradationAction,
+		DegradationAction:    fbDegradation,
 		chunkMaxLines:        primary.chunkMaxLines,
 		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
 		// the primary but on its OWN model and temperature, so it keys on the
