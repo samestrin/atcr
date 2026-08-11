@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2262,6 +2263,12 @@ func smallestEntry(entries []payload.FileEntry) payload.FileEntry {
 // record for an arm that keeps exactly one file. Returns nil (not an empty
 // slice) when nothing was dropped, matching the "no truncation" shape callers
 // and the status.json omitempty tags expect.
+//
+// Sorted by path, matching payload.ApplyByteBudget's own contract for
+// Truncation.FilesDropped ("the dropped list is returned sorted by path so the
+// same input always produces the same Truncation"). Entry order would already be
+// deterministic, but a status.json consumer reading FilesDropped should not have
+// to know which arm produced it.
 func droppedPathsExcept(entries []payload.FileEntry, keep string) []string {
 	var dropped []string
 	for _, e := range entries {
@@ -2269,6 +2276,7 @@ func droppedPathsExcept(entries []payload.FileEntry, keep string) []string {
 			dropped = append(dropped, e.Path)
 		}
 	}
+	sort.Strings(dropped)
 	return dropped
 }
 
