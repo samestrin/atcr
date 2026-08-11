@@ -405,6 +405,49 @@ func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t
 	})
 }
 
+func TestBuildSlots_FallbackOverflowWarningIsGatedAndDeduped(t *testing.T) {
+	// Two compounding defects in the AC4 warning. (1) Every sibling warning in
+	// buildSlots is gated by warnOversized, and resume.go passes warnOversized=false
+	// precisely so the resume rebuild stays quiet — but buildFallbackAgent took no
+	// such parameter, so every resumed review re-emitted warnings the operator
+	// already saw at prepare time. (2) buildChain (and thus buildFallbackAgent) is
+	// called inside the per-chunk loop, not once per persona, so a 64-chunk persona
+	// with a 2-deep chain emitted up to 128 identical multi-line warnings.
+	//
+	// 256000 declared → an 852992-byte budget → a ~17770-line chunk regime, whose
+	// chunks are ~106 KB each: comfortably past the fallback's 71680 B, so the
+	// (now payload-aware) guard genuinely fires on every chunk.
+	cfg := declaredWindowRoster(t, 256000)
+	greta := cfg.Registry.Agents["greta"]
+	greta.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = greta
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model" // undeclared → 32768 default → 71680 B
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+
+	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 3000), FileCount: 12}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	var slots []Slot
+	var err error
+	out := captureStderr(t, func() { slots, _, err = buildSlots(cfg, payloads, rng, "", "", true) })
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the diff must split into several chunks")
+	require.Len(t, slots[0].Fallbacks, 1, "precondition: the lane has a fallback")
+	require.Equal(t, "overflow", slots[0].Fallbacks[0].DegradationAction,
+		"precondition: each chunk really does overflow the fallback's budget")
+
+	assert.Equal(t, 1, strings.Count(out, "may overflow"),
+		"the fallback-overflow warning must fire once per lane, not once per chunk")
+
+	quiet := captureStderr(t, func() { _, _, err = buildSlots(cfg, payloads, rng, "", "", false) })
+	require.NoError(t, err)
+	assert.NotContains(t, quiet, "may overflow",
+		"warnOversized=false (the resume rebuild path) must silence it, like every sibling warning in buildSlots")
+}
+
 func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T) {
 	// `if fbWindow > 0 { fbReserved = defaultMaxTokens }` is a dead branch:
 	// ContextWindowTokens never returns 0 by contract (contextwindow.go:90-98), so
