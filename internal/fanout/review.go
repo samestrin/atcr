@@ -2120,11 +2120,16 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
-	// Reserved output cap (Epic 19.10 F8) is recorded only for an agent that
-	// actually went through per-model sizing (resolvedWindow > 0). A bare/unsized
-	// caller (agentSizing{}) leaves it 0 so its status.json stays byte-identical.
+	// Reserved output cap (Epic 19.10 F8) is recorded only for an agent whose
+	// effective budget actually funds it. A bare/unsized caller (agentSizing{})
+	// leaves it 0 so its status.json stays byte-identical, and so does a sized
+	// agent whose declared window is consumed entirely by the output cap and the
+	// prompt overhead — recording 8192 reserved tokens out of a 12288-token window
+	// that yielded a zero input budget is a record that contradicts itself.
+	// resolvedWindow is the "was this agent sized" signal (status.go); the
+	// reservation follows the budget, the quantity that pays for it.
 	reservedOut := 0
-	if sz.resolvedWindow > 0 {
+	if sz.effectiveBudget > 0 {
 		reservedOut = defaultMaxTokens
 	}
 	return Agent{
@@ -2227,8 +2232,15 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	// is model-specific.
 	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
+	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
+	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
+	// and with a declaration as low as 1 token now legal it produced a
+	// self-contradictory record: resolved_window 1, reserved_output_tokens 8192,
+	// and no effective_budget field at all (omitempty on the zero budget). The
+	// budget is the quantity that actually funds the output cap, so an agent whose
+	// window cannot fund it now honestly reports reserving nothing.
 	fbReserved := 0
-	if fbWindow > 0 {
+	if fbBudget > 0 {
 		fbReserved = defaultMaxTokens
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
