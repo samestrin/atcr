@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -234,6 +235,37 @@ func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
 	assert.Zero(t, agent.EffectiveBudget, "output cap + prompt overhead consume the whole declared window")
 	assert.Equal(t, "overflow", agent.DegradationAction,
 		"a declaration too small to reserve output headroom must be marked, not silently shipped")
+}
+
+func TestBuildSlots_BaselineChunkedRecordsDeclaredWindow(t *testing.T) {
+	// The BASELINE chunked sizing record at review.go:1575-1576 is never reached
+	// by the existing tests because they all call the 6-arg buildSlots form
+	// (baseline defaults to false). This test exercises that path by calling
+	// buildSlots with baseline=true and enough entries to force multiple chunks.
+	declared := 128000
+	entries := make([]payload.FileEntry, 0, 50)
+	for i := 0; i < 50; i++ {
+		// Each entry is 10000 bytes; 50 entries = 500000 bytes total, which exceeds
+		// the effective budget of 404992 for a 128000-token declaration, forcing
+		// multiple chunks.
+		entries = append(entries, baselineEntry(fmt.Sprintf("f%03d.go", i), 10000))
+	}
+	payloads := baselinePayloads(entries)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, string(payload.ModeFiles), "", true, true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: 500000 bytes must split at a 404992-byte budget")
+
+	expectedBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	for i, s := range slots {
+		assert.Equal(t, declared, s.Primary.ResolvedWindow,
+			"baseline chunk slot %d must record the declaration", i)
+		assert.Equal(t, expectedBudget, s.Primary.EffectiveBudget,
+			"baseline chunk slot %d must size against the declaration", i)
+	}
 }
 
 func TestBuildSlots_UndeclaredRosterIsUnchanged(t *testing.T) {
