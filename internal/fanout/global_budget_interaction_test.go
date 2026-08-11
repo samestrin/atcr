@@ -10,16 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The declared window and the global payload_byte_budget interact ASYMMETRICALLY
-// by design: the bulk path clamps to min(per-agent budget, global cap), while
-// ChunkMaxLines derives the per-chunk LINE budget from the unclamped window. That
-// asymmetry is documented in production prose but was untestable in practice,
-// because sizingRosterConfig() sets PayloadByteBudget = 0 and every declared-window
-// test inherits it — so a change that started clamping ChunkMaxLines, or stopped
-// clamping the bulk budget, would pass the whole suite silently.
+// The declared window and the global payload_byte_budget interact on BOTH paths:
+// the bulk path clamps its byte budget to min(per-agent budget, global cap), and
+// the chunked path clamps its derived per-chunk LINE budget to the same ceiling.
 //
-// It is also the interaction that decides whether the epic's headline benefit is
-// real: at the shipped default of 524288 the bulk path saturates near a
+// That was not always true. The line budget used to be derived from the
+// unclamped window, which let a legal 10,000,000-token declaration derive
+// ~728,000 lines (~34.9 MB) per chunk — past any real proxy request-body limit
+// — and epic 35.16.5.1 recorded the gap as technical debt. The asymmetry is
+// closed; the tests below pin both halves.
+//
+// They are worth their weight because sizingRosterConfig() sets
+// PayloadByteBudget = 0 and every declared-window test inherits it, so a change
+// that stopped clamping either path would otherwise pass the whole suite
+// silently.
+//
+// This is also the interaction that decides whether the epic's headline benefit
+// is real: at the shipped default of 524288 the bulk path saturates near a
 // 162000-token declaration, and everything above that buys no extra payload.
 
 func TestBuildSlots_BulkClampsToGlobalBudgetButRecordsFullDeclaration(t *testing.T) {
@@ -48,9 +55,8 @@ func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.
 	// scope-reservation-reduced) while the chunked and baseline paths recorded the
 	// RAW per-agent budget, so one roster could report a multi-megabyte budget on a
 	// 100000-byte-capped run and a consumer comparing two agents was comparing
-	// unlike quantities. Only the recorded byte budget is unified here — the
-	// per-chunk LINE regime stays derived from the unclamped window, the deliberate
-	// asymmetry the sibling test above pins.
+	// unlike quantities. This case covers the recorded BYTE budget only; the
+	// per-chunk LINE regime is pinned by the sibling test below.
 	const globalCap = 100000
 	rng := ReviewRange{Base: "a", Head: "b"}
 
@@ -92,12 +98,12 @@ func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.
 	})
 }
 
-func TestBuildSlots_ChunkedLineBudgetIsNotClampedByGlobalBudget(t *testing.T) {
+func TestBuildSlots_ChunkedLineBudgetIsClampedByGlobalBudget(t *testing.T) {
 	const globalCap = 100000
 
 	// Same roster and same global cap as the bulk case above, so the only
-	// difference is the strategy — which is what makes the asymmetry visible
-	// rather than merely asserted in a comment.
+	// difference is the strategy — which is what makes the two paths' agreement
+	// visible rather than merely asserted in a comment.
 	capped := declaredWindowRoster(t, 512000)
 	capped.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	capped.Settings.ReviewStrategy = "chunked"
@@ -110,21 +116,28 @@ func TestBuildSlots_ChunkedLineBudgetIsNotClampedByGlobalBudget(t *testing.T) {
 
 	// Enough lines to split even at the declaration's large line budget, so both
 	// runs produce chunk slots carrying a recorded line regime.
-	wantLines := payload.ChunkMaxLines("unlisted-small-model", ptrInt(512000), defaultMaxTokens)
+	derived := payload.ChunkMaxLines("unlisted-small-model", ptrInt(512000), defaultMaxTokens)
+	// 100000 bytes / 48 bytes-per-line = 2083 lines. A literal, not a second call
+	// to the clamp: an expectation computed by the code under test asserts nothing.
+	const wantCappedLines = 2083
+	require.Greater(t, derived, wantCappedLines,
+		"precondition: the declaration must derive a line budget the global cap actually binds")
+
 	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
 	cappedSlots, _, err := buildSlots(capped, payloads, rng, "", "", true)
 	require.NoError(t, err)
-	require.Greater(t, len(cappedSlots), 1, "precondition: this diff must split at the declared line budget")
+	require.Greater(t, len(cappedSlots), 1, "precondition: this diff must split at the clamped line budget")
 
 	uncappedSlots, _, err := buildSlots(uncapped, payloads, rng, "", "", true)
 	require.NoError(t, err)
+	require.Greater(t, len(uncappedSlots), 1, "precondition: this diff must split at the declared line budget too")
 
-	assert.Equal(t, wantLines, cappedSlots[0].Primary.chunkMaxLines,
-		"the per-chunk LINE budget is derived from the unclamped window — payload_byte_budget must not shrink it")
-	assert.Equal(t, uncappedSlots[0].Primary.chunkMaxLines, cappedSlots[0].Primary.chunkMaxLines,
-		"a global cap must leave the chunked line regime identical to an uncapped run")
-	assert.Len(t, cappedSlots, len(uncappedSlots),
-		"and therefore must not change how many chunks the diff splits into")
+	assert.Equal(t, wantCappedLines, cappedSlots[0].Primary.chunkMaxLines,
+		"the per-chunk LINE budget must be clamped to payload_byte_budget — an unclamped 10M-token declaration would otherwise derive a ~34.9 MB chunk")
+	assert.Equal(t, derived, uncappedSlots[0].Primary.chunkMaxLines,
+		"with NO global cap configured the derived budget stands: the clamp must not invent a ceiling")
+	assert.Greater(t, len(cappedSlots), len(uncappedSlots),
+		"a smaller line budget must split the same diff into more chunks — proving the clamp reached dispatch, not just the recorded number")
 }

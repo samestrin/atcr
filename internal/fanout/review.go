@@ -1677,6 +1677,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
 			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+			// Clamp the model-derived budget to the operator's global byte ceiling.
+			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
+			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
+			// request-body limit. Applied BEFORE the branch below so an explicit
+			// max_context_lines still replaces it verbatim (least surprise), and the
+			// scope-constraint reservation is taken out of the clamped value rather
+			// than the raw one.
+			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.PayloadByteBudget)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
 			} else if len(agentScopeConstraint) > 0 {

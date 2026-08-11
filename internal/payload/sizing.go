@@ -102,16 +102,47 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 // resolution chain. declared is the agent's own context_window_tokens, nil when
 // it made no declaration.
 //
-// NOTE ChunkMaxLines raises the per-chunk LINE budget with no direct
-// payload_byte_budget clamp, but the entries fed to chunkDiff have already
-// passed through ApplyByteBudgetPreferEscalated (review.go), so the chunk BYTES
-// are still bounded by the global cap — the practical effect of a large
-// declaration is fewer, larger chunks, never a chunk larger than
-// payload_byte_budget. The unbounded case is payload_byte_budget: 0 (no global
-// cap configured).
-// ClampLinesToByteBudget narrows a per-chunk line budget to a byte ceiling.
+// NOTE ChunkMaxLines itself derives the LINE budget from the window alone; the
+// global payload_byte_budget is applied on top of it by ClampLinesToByteBudget
+// at the fan-out call site (settings are not this function's to know). Before
+// that clamp existed, a legal 10,000,000-token declaration derived ~728,000
+// lines (~34.9 MB) per chunk — the chunk BYTES were bounded only indirectly, by
+// the entries having passed through ApplyByteBudgetPreferEscalated in review.go.
+// With the clamp the practical effect of a large declaration stays "fewer,
+// larger chunks", and the still-unbounded case is payload_byte_budget: 0 (no
+// global cap configured), where the operator has declined to set a ceiling.
+// ClampLinesToByteBudget narrows a per-chunk line budget to the lines that fit
+// within byteBudget, using the same avgBytesPerLine ratio ChunkMaxLines derived
+// it with. A byteBudget of 0 means "no cap configured" (the settings-tier
+// convention everywhere else) and passes maxLines through untouched.
+//
+// This is the line-budget twin of fanout's appliedByteBudget: the per-model
+// derivation belongs to the model, but the global payload_byte_budget is a
+// settings-tier ceiling, so it is applied at the call site where settings are
+// known rather than threaded into ChunkMaxLines.
+//
+// It exists because ContextWindowTokensCap admits a 10,000,000-token
+// declaration, which derives ~728,000 lines (~34.9 MB) per chunk — past any
+// real proxy request-body limit. payload_byte_budget is the operator's own
+// statement of how many bytes may ride one call, so honoring it here keeps a
+// large declaration meaning "fewer, larger chunks" rather than "one chunk no
+// endpoint will accept".
+//
+// The result is floored at minChunkLines for the same reason ChunkMaxLines is:
+// chunkDiff reads a non-positive maxLines as "disable chunking", the exact
+// opposite of what a tight budget needs.
 func ClampLinesToByteBudget(maxLines int, byteBudget int64) int {
-	return maxLines // STUB — replaced in GREEN
+	if byteBudget <= 0 || maxLines <= 0 {
+		return maxLines
+	}
+	allowed := int(byteBudget / avgBytesPerLine)
+	if allowed >= maxLines {
+		return maxLines
+	}
+	if allowed < minChunkLines {
+		return minChunkLines
+	}
+	return allowed
 }
 
 func ChunkMaxLines(model string, declared *int, outputTokens int) int {
