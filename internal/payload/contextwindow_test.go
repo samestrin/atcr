@@ -102,3 +102,28 @@ func TestContextWindowTokens_AllPersonasCoveredOrDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestContextWindowTokens_NonPositiveFallsThroughToTable(t *testing.T) {
+	// This pins the behavior the registry's non-positive rejection comment USED
+	// to describe falsely ("a declared 0 would drive EffectiveByteBudget to 0"):
+	// the payload resolver's guard is `declared != nil && *declared > 0 &&
+	// *declared < cap`, so a 0 declaration FAILS the guard and falls through
+	// to the static table (or the default). The loader rejects 0 at load so no
+	// real registry ever reaches here with a 0, but the resolver's own
+	// defense-in-depth contract must match what the registry's comment says it
+	// does — not the opposite.
+	gemini := "google/gemini-2.5-pro"
+	zero := 0
+	neg := -1
+
+	assert.Equal(t, ContextWindowTokens(gemini, &zero), ContextWindowTokens(gemini, nil),
+		"a declared 0 must resolve identically to undeclared (static table), not to 0")
+	assert.Equal(t, ContextWindowTokens(gemini, nil), 1000000,
+		"pin the static-table value the fall-through resolves to — if this moves, the registry's rejection comment must move with it")
+	assert.Equal(t, ContextWindowTokens(gemini, &neg), ContextWindowTokens(gemini, nil),
+		"a declared negative must resolve identically to undeclared (static table), not to 0")
+
+	unknown := "acme/nonexistent-model"
+	assert.Equal(t, ContextWindowTokens(unknown, &zero), defaultContextWindowTokens,
+		"unknown model + declared 0 must fall through to the default, not return 0")
+}

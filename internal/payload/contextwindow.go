@@ -73,11 +73,15 @@ const contextWindowTokensCap = 10000000
 // carrying no declaration receives the conservative default. The function never
 // returns zero and never errors, so callers can size a payload unconditionally.
 //
-// A non-positive or above-cap declaration is ignored rather than propagated —
-// defense-in-depth against a directly-constructed AgentConfig bypassing
-// validateAgent. See AgentConfig.ContextWindowTokens in internal/registry/config.go
-// for the full operator-facing rationale (why declarations win, Determinism NFR,
-// the supports_function_calling precedent).
+// A non-positive or above-cap declaration is ignored and the resolver falls
+// through to the static table (or the default) — defense-in-depth against a
+// directly-constructed AgentConfig bypassing validateAgent. The loader at
+// internal/registry/config.go rejects non-positive values at load for a
+// different reason: a declared 0 would otherwise be silently ignored by THIS
+// guard (the > 0 check fails, falling through to the table), so an operator
+// typo like `context_window_tokens: 0` would watch the resolver hand back the
+// static-table window (or 32768) without any error. Load-time rejection
+// converts that silent mis-resolution into a loud, attributable error.
 //
 // The returned value is the model's FULL window; callers reserve the output-cap
 // and prompt overhead from it when deriving an effective input budget. It is

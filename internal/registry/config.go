@@ -1103,10 +1103,15 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	// context_window_tokens (Epic 35.16.5.1): an unset field falls through to the
 	// static model table; any explicit value must be a positive token count within
-	// the sanity ceiling. A non-positive value is rejected rather than read as
-	// "unset" because a declared 0 would drive EffectiveByteBudget to 0, which the
-	// bulk path records as the honest "window too small to reserve output
-	// headroom" degradation — turning a typo into a silent over-window payload.
+	// the sanity ceiling. A non-positive value is rejected at load because an
+	// operator typo (0, -1) would otherwise be SILENTLY IGNORED downstream: the
+	// payload resolver's `declared > 0` guard at internal/payload/contextwindow.go
+	// fails on a 0 and the call falls through to the static model table or the
+	// conservative default, so the declaration is neither honored nor flagged —
+	// an operator declaring 8192 for a small model would watch the resolver
+	// silently hand back the table's 32768 (or larger) instead. Rejecting at
+	// load converts that silent mis-resolution into a loud error that names the
+	// offending agent.
 	if a.ContextWindowTokens != nil && (*a.ContextWindowTokens <= 0 || *a.ContextWindowTokens > ContextWindowTokensCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': context_window_tokens must be within 1..%d", name, ContextWindowTokensCap))
 	}
