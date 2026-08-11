@@ -1935,11 +1935,14 @@ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 // collapses the cache sizing token to "0:0" — the pre-F7 key — and leaves every
 // diagnosability field absent.
 type agentSizing struct {
-	effectiveBudget int64  // per-agent input byte budget the payload was sized to (0 = unsized)
-	resolvedWindow  int    // ContextWindowTokens(model, declared) — the window in tokens, from the agent's own context_window_tokens when it declared one, else the static table or the default
-	maxLines        int    // per-model chunk line budget (0 = bulk/non-chunked)
-	chunkTotal      int    // chunks this persona's diff was split into (0/1 = unchunked)
-	action          string // degradation action: "chunk"/"truncate"/"" (none)
+	effectiveBudget int64 // per-agent input byte budget the payload was sized to (0 = unsized)
+	// ContextWindowTokens(model, declared) — the window in tokens, from the
+	// agent's own context_window_tokens when it declared one, else the static
+	// table or the default.
+	resolvedWindow int
+	maxLines       int    // per-model chunk line budget (0 = bulk/non-chunked)
+	chunkTotal     int    // chunks this persona's diff was split into (0/1 = unchunked)
+	action         string // degradation action: "chunk"/"truncate"/"" (none)
 }
 
 // sizingToken renders the per-agent effective-budget/chunk-plan identifier folded
