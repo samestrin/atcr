@@ -198,3 +198,26 @@ func TestContextWindowTokensCap_ExceedsLargestStaticTableWindow(t *testing.T) {
 		"the declaration tier must be able to exceed the largest static-table window")
 	assert.Equal(t, 10000000, ContextWindowTokensCap)
 }
+
+func TestAgentConfig_EffectiveContextWindowTokens(t *testing.T) {
+	// The single guarded read mirrors EffectiveMaxContextLines's role for the
+	// chunked line budget: payload/fanout callers share one source of truth
+	// for the declaration, and the loader's range guard need not be duplicated
+	// at each call site.
+
+	// unset → 0 sentinel
+	var unset AgentConfig
+	assert.Equal(t, 0, unset.EffectiveContextWindowTokens(),
+		"an unset declaration must return the 'no declaration' sentinel, not a default")
+
+	// declared positive → verbatim (loader has already rejected non-positive)
+	declared := 128000
+	set := AgentConfig{ContextWindowTokens: &declared}
+	assert.Equal(t, 128000, set.EffectiveContextWindowTokens(),
+		"a positive declaration must survive verbatim — the accessor performs no clamping")
+
+	// declared = cap boundary
+	atCap := ContextWindowTokensCap
+	atCapCfg := AgentConfig{ContextWindowTokens: &atCap}
+	assert.Equal(t, ContextWindowTokensCap, atCapCfg.EffectiveContextWindowTokens())
+}

@@ -562,9 +562,11 @@ type AgentConfig struct {
 	// before dispatching one call per chunk. Optional and backward-compatible — a
 	// pointer so an unset field (nil) inherits DefaultMaxContextLines while any
 	// explicit value survives, distinguishing "use the default" from a real
-	// override. Ignored entirely in bulk mode. NOTE an explicit value also defeats
-	// any ContextWindowTokens declaration below, since it pins the chunk budget to
-	// a constant instead of deriving it from the window.
+	// override. Ignored entirely in bulk mode. NOTE an explicit value overrides
+	// ONLY the per-chunk LINE budget under review_strategy=chunked; the
+	// ContextWindowTokens declaration below still drives the payload byte budget,
+	// the bulk fall-through, the fallback budget, and the sizing record. See
+	// EffectiveContextWindowTokens for the single guarded read of the declaration.
 	MaxContextLines *int `yaml:"max_context_lines,omitempty"`
 
 	// ContextWindowTokens declares THIS agent's model context window in tokens
@@ -1364,6 +1366,26 @@ func (a AgentConfig) EffectiveMaxContextLines() int {
 		return *a.MaxContextLines
 	}
 	return DefaultMaxContextLines
+}
+
+// EffectiveContextWindowTokens returns the agent's declared context window in
+// tokens (Epic 35.16.5.1), or 0 when the declaration is unset. Unlike
+// EffectiveMaxContextLines there is no clamp-on-non-positive branch here: the
+// loader rejects any non-positive declaration at load (config.go:1108-1110), so
+// a non-nil value here is already a positive integer. A 0 return is therefore
+// an unambiguous "no declaration" sentinel that callers (internal/payload,
+// internal/fanout) can branch on without re-duplicating the range guard.
+//
+// The single guarded read exists so the payload resolver and the fan-out share
+// one source of truth for the declaration — the same defense-in-depth role
+// EffectiveMaxContextLines plays for the chunked line budget — and any future
+// accessor-side policy (e.g., capping at ContextWindowTokensCap) lives here
+// rather than being re-implemented at each call site.
+func (a AgentConfig) EffectiveContextWindowTokens() int {
+	if a.ContextWindowTokens == nil {
+		return 0
+	}
+	return *a.ContextWindowTokens
 }
 
 // EffectivePayloadMode returns the agent's own payload override when set,
