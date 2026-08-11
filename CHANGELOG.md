@@ -1,3 +1,18 @@
+## [35.16.5.1] - 2026-08-10
+
+### Added
+- Per-agent `context_window_tokens` in the registry, declaring a model's real context window in tokens. Resolution order is **agent declaration → static model table → the `32768` default**, so a roster that reaches models through bare proxy aliases (`glm-5.2`, `kimi-k3`) is no longer sized as if every agent had a 32,768-token window. Those aliases match no key in the static table — whose keys are provider-qualified ids like `deepseek/deepseek-v4-pro` — so the entire roster silently resolved the conservative default, an under-fill of up to 30×. The table itself gains no proxy-local alias: those names are machine-specific and meaningless to any other user, so the truth belongs in that user's own registry. Declaration, not detection — no network call enters window resolution, matching the precedent set by `supports_function_calling`.
+- Validation of the new field within `1..10000000` (`ContextWindowTokensCap`), rejected at load with an error naming both the field and the file that defined the agent. The ceiling deliberately does not reuse `max_context_lines`' 1,000,000: the static table already resolves exactly 1,000,000 for the Gemini entries, so that ceiling would leave the declaration tier unable to exceed the tier it exists to override.
+
+### Changed
+- `ContextWindowTokens`, `EffectiveByteBudget`, and `ChunkMaxLines` accept a declared window, and the review fan-out threads each agent's own declaration through every one of its nine window/budget resolutions. Both consumers that matter are covered: the payload byte budget **and** the chunked per-chunk line budget, which rises from ≈1,493 lines to ≈8,437 at a `128000` declaration. Updating only the sizing record would have made `status.json` report the declared window while every budget still sized against 32,768.
+- A fallback agent now warns before dispatch, and records an `overflow` degradation, when its own effective budget is smaller than the budget its inherited prompt was sized to. A fallback reviews its primary's already-rendered payload, so a declared primary can hand a smaller backup a payload it cannot hold; the fallback resolves its own window rather than inheriting the primary's, but the payload it receives was still sized elsewhere.
+
+### Fixed
+- `docs/registry.md` documents the new field — default, range, no CLI override, resolution order, and an explicit warning to declare `min(model window, proxy ceiling)` rather than the model's published spec, because a request-body guardrail in front of a model surfaces an over-large payload as an opaque HTTP 400 with no hint that size was the cause. The `max_context_lines` row's derivation formula and three code comments falsified by the widened signature were corrected alongside it.
+
+*Shipped via /execute-epic (epic 35.16.5.1)*
+
 ## [35.16.5] - 2026-08-10
 
 ### Added

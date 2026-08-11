@@ -152,7 +152,7 @@ func embeddedScopePlan(t *testing.T, prompt string) string {
 func TestBuildSlots_ScopeConstraintFitsPerAgentWindow(t *testing.T) {
 	cfg := sizingRosterConfig() // greta → 32768 window, PayloadByteBudget 0
 	cfg.Settings.MaxSprintPlanBytes = 64 * 1024
-	eff := payload.EffectiveByteBudget("unlisted-small-model", 8192) // 71680
+	eff := payload.EffectiveByteBudget("unlisted-small-model", nil, 8192) // 71680
 
 	scope := scopeBlock(t, 64*1024) // 64 KiB plan, far larger than eff/8 (8960)
 

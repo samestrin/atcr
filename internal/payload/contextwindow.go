@@ -53,18 +53,96 @@ var contextWindowTokens = map[string]int{
 	"z-ai/glm-5.2":              128000,
 }
 
-// ContextWindowTokens returns model's context-window size in tokens. A model id
-// not present in the static table receives a conservative default. The function
-// never returns zero and never errors, so callers can size a payload against
-// the result unconditionally without a nil/zero guard.
+// contextWindowTokensCap is the payload-layer defense-in-depth ceiling for a
+// per-agent declaration. It matches registry.ContextWindowTokensCap (10M tokens)
+// so a directly-constructed AgentConfig carrying a value above the registry's
+// validateAgent ceiling is clamped to the static table / default, mirroring the
+// non-positive-declaration guard below.
+//
+// The bound is INCLUSIVE, matching the registry's own "must be within 1..%d"
+// (config.go), which accepts the cap value exactly — as max_context_lines does at
+// its cap. An exclusive bound here made the two ends disagree by one and did it
+// SILENTLY: a legal declaration of exactly 10000000 loaded without error and then
+// resolved to the static table or the 32768 default, with nothing logged. That is
+// the same silent mis-resolution the loader rejects a declared 0 to prevent. A declaration at or above this cap would
+// drive effectiveTokens * conservativeBytesPerTokenNum toward int64 overflow in
+// EffectiveByteBudget, returning a NEGATIVE byte count and breaking the
+// "never a negative byte count" contract.
+const contextWindowTokensCap = 10000000
+
+// MaxStaticContextWindow returns the largest window in the static table above
+// (the default when the table is empty, so the result is never zero).
+//
+// It exists to make the declaration tier's reason for existing testable. The
+// per-agent declaration wins over this table, so registry.ContextWindowTokensCap
+// MUST stay strictly above the table's largest entry — a cap at or below it
+// leaves the declaration tier unable to override the tier it exists to override.
+// Restating that bound as a literal in a test decouples it from the table, so
+// adding a 10M-context model here would destroy the invariant with the suite
+// still green. Exporting the real maximum lets the assertion read the table.
+//
+// Computed rather than cached: the table is a handful of entries, and a package
+// var would have to be kept in sync with it by hand — the same coupling failure.
+func MaxStaticContextWindow() int {
+	max := defaultContextWindowTokens
+	for _, w := range contextWindowTokens {
+		if w > max {
+			max = w
+		}
+	}
+	return max
+}
+
+// ContextWindowTokens returns the model's context-window size in tokens, resolved in
+// three tiers (Epic 35.16.5.1):
+//
+//	declared (the agent's own context_window_tokens) -> static table -> default
+//
+// declared is the operator's per-agent declaration, nil when the agent did not
+// make one; it wins over the static table. A model id absent from the table and
+// carrying no declaration receives the conservative default. The function never
+// returns zero and never errors, so callers can size a payload unconditionally.
+//
+// A non-positive or above-cap declaration is ignored and the resolver falls
+// through to the static table (or the default) — defense-in-depth against a
+// directly-constructed AgentConfig bypassing validateAgent. The loader at
+// internal/registry/config.go rejects non-positive values at load for a
+// different reason: a declared 0 would otherwise be silently ignored by THIS
+// guard (the > 0 check fails, falling through to the table), so an operator
+// typo like `context_window_tokens: 0` would watch the resolver hand back the
+// static-table window (or 32768) without any error. Load-time rejection
+// converts that silent mis-resolution into a loud, attributable error.
 //
 // The returned value is the model's FULL window; callers reserve the output-cap
-// and prompt overhead from it when deriving an effective input budget (F2). It
-// is intentionally distinct from the per-chunk diff-line budget MaxContextLines,
-// which counts diff lines, not tokens.
-func ContextWindowTokens(model string) int {
-	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
-		return w
+// and prompt overhead from it when deriving an effective input budget. It is
+// distinct from the per-chunk diff-line budget MaxContextLines, which counts
+// diff lines, not tokens.
+func ContextWindowTokens(model string, declared *int) int {
+	tokens, _ := ResolveContextWindow(model, declared)
+	return tokens
+}
+
+// Window-resolution tiers, as reported by ResolveContextWindow.
+const (
+	WindowSourceDeclaration = "declaration" // the agent's own context_window_tokens
+	WindowSourceTable       = "table"       // the static model table above
+	WindowSourceDefault     = "default"     // the conservative fallback
+)
+
+// ResolveContextWindow returns the same window ContextWindowTokens returns,
+// plus the tier it came from. ContextWindowTokens delegates here, so the value
+// and its reported provenance cannot drift.
+//
+// The tier is what makes a declaration diagnosable before a run: the number
+// alone cannot distinguish "the declaration took effect" from "the declaration
+// was ignored and the static table happened to agree", and an over-declaration
+// is otherwise visible only as an opaque provider HTTP 400.
+func ResolveContextWindow(model string, declared *int) (int, string) {
+	if declared != nil && *declared > 0 && *declared <= contextWindowTokensCap {
+		return *declared, WindowSourceDeclaration
 	}
-	return defaultContextWindowTokens
+	if w, ok := contextWindowTokens[strings.TrimSpace(model)]; ok {
+		return w, WindowSourceTable
+	}
+	return defaultContextWindowTokens, WindowSourceDefault
 }

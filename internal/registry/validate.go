@@ -46,6 +46,11 @@ func ValidateAgentYAML(name string, data []byte) error {
 // validation the registry applies at load. This is the strict counterpart of
 // ValidateAgentYAML — a fetched community unit is untrusted input, so a smuggled
 // unknown field must fail closed rather than be silently ignored.
+//
+// It additionally rejects the machine-LOCAL agent fields listed in
+// communityForbiddenFields, which are recognized registry keys (so the strict
+// decode alone would accept them) but are meaningless — and actively harmful —
+// when published to another user's machine.
 func ValidateCommunityPersonaYAML(name string, data []byte) error {
 	var cf communityPersonaFile
 	if err := decodeStrictYAML(data, &cf); err != nil {
@@ -53,6 +58,9 @@ func ValidateCommunityPersonaYAML(name string, data []byte) error {
 			return fmt.Errorf("community persona %q has no content", name)
 		}
 		return fmt.Errorf("parse community persona %q: %w", name, err)
+	}
+	if err := rejectMachineLocalFields(name, cf.AgentConfig); err != nil {
+		return err
 	}
 	r := &Registry{
 		Providers: map[string]Provider{cf.Provider: {APIKeyEnv: "PLACEHOLDER"}},
@@ -74,4 +82,30 @@ type communityPersonaFile struct {
 	Tags        []string `yaml:"tags,omitempty"`
 	Fixture     string   `yaml:"fixture,omitempty"`
 	Path        string   `yaml:"path,omitempty"`
+}
+
+// rejectMachineLocalFields fails a community persona that declares an agent
+// field whose truth is specific to the AUTHOR's machine and cannot transfer.
+//
+// The exclusion cannot be expressed in communityPersonaFile's shape: these are
+// real AgentConfig keys reached through the `,inline` embed, and re-declaring
+// one on the outer struct to shadow it makes yaml.v3 reject the whole type as a
+// duplicated key. So the schema admits them and this guard removes them, which
+// keeps the strict decode's unknown-key behavior untouched.
+//
+// context_window_tokens is the only member today: it describes a proxy-local
+// alias's real window (config.go's ContextWindowTokens — "proxy-LOCAL and
+// meaningless to any other atcr user"). Installed verbatim onto a consumer whose
+// proxy serves that model at 32,768, an author's 128,000 declaration resolves
+// AHEAD of the static table and produces guaranteed over-window payloads — the
+// one direction the Conservatism NFR forbids. Rejecting at validation means the
+// persona never reaches disk (internal/personas/install.go writes only after
+// this returns nil), rather than being silently stripped after the fact.
+func rejectMachineLocalFields(name string, cfg AgentConfig) error {
+	if cfg.ContextWindowTokens != nil {
+		return fmt.Errorf("community persona %q must not declare context_window_tokens: "+
+			"the window of a proxy-local model alias is specific to the machine that authored it, "+
+			"so each consumer declares it in their own registry", name)
+	}
+	return nil
 }

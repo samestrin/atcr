@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1403,6 +1404,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// non-diff payload (no `diff --git` markers), where chunkDiff cannot split and
 	// the strategy silently degrades to a single bulk chunk.
 	warnedChunkedNoop := false
+	// Fires at most once per (primary → fallback) lane: buildChain runs inside the
+	// per-chunk loops, so an AC4 overflow warning emitted per call would repeat
+	// once per chunk per chain link — up to 128 identical multi-line warnings for a
+	// single 64-chunk persona with a 2-deep chain. The condition is a property of
+	// the lane's two windows, identical for every chunk, so the operator needs it
+	// once.
+	warnedFallbackOverflow := map[string]bool{}
 
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
@@ -1416,9 +1424,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				break // registry validation guarantees acyclic; defensive stop
 			}
 			seen[fb] = true
-			agent, err := buildFallbackAgent(cfg, primary, fb)
+			// Suppress only after a warning was actually EMITTED, never merely
+			// after a call. Packing is greedy, so a lane's first chunk can be the
+			// small remainder that fits (silent) while a later one genuinely
+			// overflows: marking the lane on every call would swallow that second
+			// warning entirely, which is the opposite of the dedup's purpose.
+			lane := name + "\x00" + fb
+			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane])
 			if err != nil {
 				return nil, err
+			}
+			if warned {
+				warnedFallbackOverflow[lane] = true
 			}
 			fbs = append(fbs, agent)
 		}
@@ -1459,9 +1476,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentScopeConstraint := scopeConstraint
-		agentEff := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
-		if len(agentScopeConstraint) > 0 && agentEff > 0 {
-			planCap := agentEff / 8
+		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
+		// and referenced everywhere below: this pair was previously recomputed inline
+		// at five further call sites, so a signature change had to find nine sites
+		// where three suffice — and an incomplete edit across duplicated call sites is
+		// exactly the failure this epic was chartered to prevent. Nothing enforced
+		// that the copies agreed; hoisting makes disagreement impossible.
+		agentWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
+		if len(agentScopeConstraint) > 0 && agentBudget > 0 {
+			planCap := agentBudget / 8
 			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 				planCap = mspb
 			}
@@ -1541,13 +1565,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// per-agent chunk budget is derived identically to the bulk path below:
 			// EffectiveByteBudget capped by the global PayloadByteBudget, less the SCOPE
 			// CONSTRAINT reservation.
-			chunkBudget := agentEff
-			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < chunkBudget {
-				chunkBudget = global
-			}
-			if s := int64(len(agentScopeConstraint)); s > 0 {
-				chunkBudget -= s
-			}
+			chunkBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 			// A non-positive per-agent budget (over-window model, or the scope reservation
 			// consumed the whole window) cannot drive PartitionByBudget's machine-budget
 			// contract — fall through to the bulk path, which keeps the whole payload and
@@ -1572,10 +1590,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
 					}
 					chunkSizing := agentSizing{
-						effectiveBudget: payload.EffectiveByteBudget(ac.Model, defaultMaxTokens),
-						resolvedWindow:  payload.ContextWindowTokens(ac.Model),
+						// The budget the partition ACTUALLY used, not the raw per-agent
+						// one: effective_budget must mean the same quantity on every
+						// payload strategy or a consumer comparing two agents is
+						// comparing unlike numbers.
+						effectiveBudget: chunkBudget,
+						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
-						action:          "chunk",
+						action:          degradationChunk,
 					}
 					for _, ck := range chunks {
 						var pb strings.Builder
@@ -1655,7 +1677,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
-			ml := payload.ChunkMaxLines(ac.Model, defaultMaxTokens)
+			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+			// Clamp the model-derived budget to the operator's global byte ceiling.
+			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
+			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
+			// request-body limit. Applied BEFORE the branch below so an explicit
+			// max_context_lines still replaces it verbatim (least surprise), and the
+			// scope-constraint reservation is taken out of the clamped value rather
+			// than the raw one.
+			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.PayloadByteBudget)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
 			} else if len(agentScopeConstraint) > 0 {
@@ -1667,6 +1697,23 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				ml -= ml / 8
 				if ml < 1 {
 					ml = 1
+				}
+			}
+			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
+			// reserves no input budget at all is honest degradation on either
+			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
+			// run presents as an ordinary "chunk" plan while shipping chunks the
+			// model provably cannot hold. Mark the same action and emit the same
+			// warning the bulk path does, so the operator's too-small declaration
+			// surfaces regardless of review_strategy. Keyed on agentBudget (not ml),
+			// because an explicit max_context_lines overrides the line budget
+			// without making the window any bigger.
+			chunkAction := degradationChunk
+			if agentBudget == 0 {
+				chunkAction = degradationOverflow
+				if warnOversized {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n",
+						name, agentWindow, defaultMaxTokens, ml)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -1708,11 +1755,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// override or model-derived). The action is "chunk" — the default,
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
-					effectiveBudget: payload.EffectiveByteBudget(ac.Model, defaultMaxTokens),
-					resolvedWindow:  payload.ContextWindowTokens(ac.Model),
+					// The globally-capped, scope-reserved budget — the same quantity
+					// the bulk path records below. The per-chunk LINE budget (maxLines)
+					// stays derived from the UNCAPPED window: that asymmetry is
+					// deliberate and documented in payload.ChunkMaxLines, and unifying
+					// the recorded byte budget does not disturb it.
+					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
+					resolvedWindow:  agentWindow,
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
-					action:          "chunk",
+					action:          chunkAction,
 				}
 				for _, ct := range chunks {
 					fileCount := countDiffFiles(ct)
@@ -1753,40 +1805,9 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// EVERY sized agent (the "was this agent sized" signal), independent of
 		// whether shedding actually dropped a file. appliedBudget is the byte budget
 		// the payload was sized to (per-model, capped by any global PayloadByteBudget).
-		bulkWindow := payload.ContextWindowTokens(ac.Model)
-		var appliedBudget int64
-		if agentEff > 0 {
-			appliedBudget = agentEff
-			if global := cfg.Settings.PayloadByteBudget; global > 0 && global < appliedBudget {
-				appliedBudget = global
-			}
-			// (A) reserve room for the per-agent SCOPE CONSTRAINT block, prepended
-			// uncounted in renderAgent, so plan + budgeted diff together fit this model's
-			// window (Epic 19.10 HIGH TD). Floor at 0; the AllDropped guard below is the
-			// net when the reservation leaves too little for even one file.
-			if s := int64(len(agentScopeConstraint)); s > 0 {
-				appliedBudget -= s
-				if appliedBudget < 0 {
-					appliedBudget = 0
-				}
-			}
-		}
+		appliedBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
-		if agentEff == 0 && len(mp.Entries) > 0 {
-			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead makes
-			// EffectiveByteBudget return 0, so the shed below is skipped and the agent keeps
-			// the FULL global-budget payload. A positive byte floor is meaningless here (zero
-			// room for any input regardless of value), so mark the same honest-degradation
-			// state the AllDropped arm records instead of leaving the action unmarked while
-			// silently shipping an over-window payload. Currently unreachable — ContextWindowTokens
-			// floors at 32768 (eff >= 71680) — so this is defense-in-depth for a future
-			// sub-overhead window or a lowered default.
-			bulkDegradation = "overflow"
-			if warnOversized {
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: model window too small to reserve output headroom (effective budget 0); sending the whole payload (may overflow) rather than sizing it\n", name)
-			}
-		}
 		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
 		// which is what the no-shed and AllDropped arms genuinely dispatch — and is
 		// narrowed to the kept subset when the per-agent budget sheds files. The
@@ -1794,6 +1815,54 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// rendered prompt does not contain.
 		bulkEntries := mp.Entries
 		bulkShed := false
+		if agentBudget == 0 && len(mp.Entries) > 0 {
+			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead
+			// makes EffectiveByteBudget return 0. REACHABLE since Epic 35.16.5.1: it was
+			// defense-in-depth while ContextWindowTokens floored at 32768 (eff >= 71680),
+			// but an agent may now declare context_window_tokens as low as 1, and any
+			// declaration at or below defaultMaxTokens + promptOverheadTokens (12288)
+			// lands here.
+			//
+			// This arm used to skip the shed below and dispatch the FULL global-budget
+			// payload. That inverted the Conservatism NFR at exactly the wrong moment:
+			// honestly declaring a small window sent MORE bytes than leaving the agent
+			// undeclared (which resolves the 32768 default and sheds to ~71680). A zero
+			// budget is not "no opinion about size" — it is the strongest possible
+			// overflow signal, so it is handled as an overflow.
+			//
+			// Two arms, mirroring how a shed-driven overflow is already handled below:
+			//
+			//   1. The operator's on_overflow policy decides first. fail/fallback return
+			//      their typed errors, which propagate out of add()/buildSlots() and
+			//      hard-fail the run PRE-DISPATCH rather than sending a payload known
+			//      not to fit.
+			//   2. Otherwise ship the SMALLEST single entry. An empty payload is not an
+			//      option (it returns a false-clean "no findings" review — the same class
+			//      ErrPayloadFullyDropped guards), and one small file is the least this
+			//      can send while still being a real review. It is also the arm most
+			//      likely to actually succeed: promptOverheadTokens is deliberately
+			//      over-estimated and defaultMaxTokens is a cap rather than a floor, so
+			//      the true usable window is wider than this arithmetic admits.
+			if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
+				if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedBudget); err != nil {
+					return err
+				}
+			}
+			smallest := smallestEntry(mp.Entries)
+			bulkEntries = []payload.FileEntry{smallest}
+			bulkShed = len(mp.Entries) > 1
+			bulkText, bulkFileCount = smallest.Body, 1
+			bulkTrunc = payload.Truncation{Truncated: bulkShed, FilesDropped: droppedPathsExcept(mp.Entries, smallest.Path)}
+			bulkDegradation = degradationOverflow
+			if warnOversized {
+				// Name the resolved window and the reservation that consumed it: the
+				// operator's next action is to raise or drop the declaration, and
+				// "effective budget 0" alone does not say which number to change or
+				// what it has to clear.
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — raise or drop its context_window_tokens declaration\n",
+					name, agentWindow, defaultMaxTokens, smallest.Path)
+			}
+		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
 			// PreferEscalated, not the plain pass: escalating a file to a
 			// higher-context mode makes it the largest entry, so plain largest-first
@@ -1834,7 +1903,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// dispatch the whole thing rather than an empty (false-clean) review.
 				// Record this high-risk state so status.json/summary.json can distinguish
 				// an at-risk over-window reviewer from a clean comfortable fit.
-				bulkDegradation = "overflow"
+				bulkDegradation = degradationOverflow
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: no file fits its model window (%d-byte budget); sending the whole payload (may overflow) rather than an empty review\n", name, appliedBudget)
 				}
@@ -1850,13 +1919,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// The per-agent shed dropped files to fit this model's window — a lossy
 				// degradation. Record it as the diagnosability degradation_action (F8).
 				if trunc.Truncated {
-					bulkDegradation = "truncate"
+					bulkDegradation = degradationTruncate
 				}
 			}
 		}
 		bulkSizing := agentSizing{
 			effectiveBudget: appliedBudget,
-			resolvedWindow:  bulkWindow,
+			resolvedWindow:  agentWindow,
 			action:          bulkDegradation,
 		}
 		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
@@ -1931,12 +2000,33 @@ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 // and timeout scaling (F6). The zero value (an unsized/direct-constructed caller)
 // collapses the cache sizing token to "0:0" — the pre-F7 key — and leaves every
 // diagnosability field absent.
+// The degradation actions recorded on agentSizing.action (and surfaced as
+// Agent.DegradationAction / status.json degradation_action). Constants rather
+// than literals because the value is written at six sites and read by artifact
+// consumers, so a typo at any one of them would silently produce an action no
+// reader recognizes. The strings deliberately coincide with OverflowChunk /
+// OverflowTruncate — the on_overflow POLICY names — but the two vocabularies are
+// distinct: a policy is what the operator configured, an action is what actually
+// happened, and degradationOverflow has no policy counterpart at all.
+const (
+	// degradationChunk: the diff was split across window-sized chunks. No loss.
+	degradationChunk = "chunk"
+	// degradationTruncate: files were shed to fit the budget. Lossy.
+	degradationTruncate = "truncate"
+	// degradationOverflow: the payload was dispatched knowing it exceeds what the
+	// model can hold, because no smaller framing was available.
+	degradationOverflow = "overflow"
+)
+
 type agentSizing struct {
-	effectiveBudget int64  // per-agent input byte budget the payload was sized to (0 = unsized)
-	resolvedWindow  int    // ContextWindowTokens(model) — the model's context window in tokens
-	maxLines        int    // per-model chunk line budget (0 = bulk/non-chunked)
-	chunkTotal      int    // chunks this persona's diff was split into (0/1 = unchunked)
-	action          string // degradation action: "chunk"/"truncate"/"" (none)
+	effectiveBudget int64 // per-agent input byte budget the payload was sized to (0 = unsized)
+	// ContextWindowTokens(model, declared) — the window in tokens, from the
+	// agent's own context_window_tokens when it declared one, else the static
+	// table or the default.
+	resolvedWindow int
+	maxLines       int    // per-model chunk line budget (0 = bulk/non-chunked)
+	chunkTotal     int    // chunks this persona's diff was split into (0/1 = unchunked)
+	action         string // degradation action: one of the degradation* constants above, or "" (none)
 }
 
 // sizingToken renders the per-agent effective-budget/chunk-plan identifier folded
@@ -2068,11 +2158,16 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, 
 	if !ok {
 		return Agent{}, fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
-	// Reserved output cap (Epic 19.10 F8) is recorded only for an agent that
-	// actually went through per-model sizing (resolvedWindow > 0). A bare/unsized
-	// caller (agentSizing{}) leaves it 0 so its status.json stays byte-identical.
+	// Reserved output cap (Epic 19.10 F8) is recorded only for an agent whose
+	// effective budget actually funds it. A bare/unsized caller (agentSizing{})
+	// leaves it 0 so its status.json stays byte-identical, and so does a sized
+	// agent whose declared window is consumed entirely by the output cap and the
+	// prompt overhead — recording 8192 reserved tokens out of a 12288-token window
+	// that yielded a zero input budget is a record that contradicts itself.
+	// resolvedWindow is the "was this agent sized" signal (status.go); the
+	// reservation follows the budget, the quantity that pays for it.
 	reservedOut := 0
-	if sz.resolvedWindow > 0 {
+	if sz.effectiveBudget > 0 {
 		reservedOut = defaultMaxTokens
 	}
 	return Agent{
@@ -2147,17 +2242,137 @@ func derefInt64(p *int64) int64 {
 	return *p
 }
 
+// smallestEntry returns the entry with the fewest body bytes, and the first such
+// entry on a tie so the choice is deterministic across runs (the diff-cache key
+// and the baseline coverage tag both depend on which file was shipped).
+//
+// Body length is measured directly rather than trusting FileEntry.Size: Size is
+// the pre-render source size, and it is Body that is actually dispatched.
+// Callers guarantee a non-empty slice.
+func smallestEntry(entries []payload.FileEntry) payload.FileEntry {
+	best := entries[0]
+	for _, e := range entries[1:] {
+		if len(e.Body) < len(best.Body) {
+			best = e
+		}
+	}
+	return best
+}
+
+// droppedPathsExcept lists the paths of every entry except keep — the shed
+// record for an arm that keeps exactly one file. Returns nil (not an empty
+// slice) when nothing was dropped, matching the "no truncation" shape callers
+// and the status.json omitempty tags expect.
+//
+// Sorted by path, matching payload.ApplyByteBudget's own contract for
+// Truncation.FilesDropped ("the dropped list is returned sorted by path so the
+// same input always produces the same Truncation"). Entry order would already be
+// deterministic, but a status.json consumer reading FilesDropped should not have
+// to know which arm produced it.
+func droppedPathsExcept(entries []payload.FileEntry, keep string) []string {
+	var dropped []string
+	for _, e := range entries {
+		if e.Path != keep {
+			dropped = append(dropped, e.Path)
+		}
+	}
+	sort.Strings(dropped)
+	return dropped
+}
+
+// appliedByteBudget narrows a per-agent input byte budget to the one a slot is
+// actually sized to: capped by the global payload_byte_budget when configured,
+// then reduced by the SCOPE CONSTRAINT block that renderAgent prepends UNCOUNTED
+// to every payload (Epic 19.10 HIGH TD), floored at 0.
+//
+// One definition, three call sites (bulk, chunked record, baseline partition).
+// They were three independently-written copies of the same arithmetic, which had
+// already drifted: the bulk path applied both narrowings while the chunked and
+// baseline sizing records reported the raw budget, so status.json's
+// effective_budget meant a different quantity depending on payload strategy.
+// A non-positive agent budget stays 0 — the honest "no budget available" state
+// callers already branch on.
+func appliedByteBudget(agentBudget, globalBudget int64, scopeConstraint string) int64 {
+	if agentBudget <= 0 {
+		return 0
+	}
+	applied := agentBudget
+	if globalBudget > 0 && globalBudget < applied {
+		applied = globalBudget
+	}
+	if s := int64(len(scopeConstraint)); s > 0 {
+		applied -= s
+		if applied < 0 {
+			applied = 0
+		}
+	}
+	return applied
+}
+
+// inheritedPayloadFits reports whether the payload the primary actually shipped
+// is KNOWN to fit within budget bytes. It sums primary.CodeContext — the
+// per-file bodies recovered from the payload this slot was rendered over — so it
+// counts exactly the bytes an effective byte budget governs, unlike the rendered
+// prompt (which also carries the uncounted persona wrapper).
+//
+// An unmeasurable payload reads as "may not fit", never as "fits": a payload
+// shape EntriesFromRenderedPayload does not recognize yields no CodeContext, and
+// treating a missing measurement as proof of safety would silently drop the AC4
+// warning for exactly the payloads nothing else can vouch for. A zero budget is
+// covered by the same arithmetic — no non-empty payload fits in 0 bytes.
+func inheritedPayloadFits(primary Agent, budget int64) bool {
+	if len(primary.CodeContext) == 0 {
+		return false
+	}
+	var total int64
+	for _, ref := range primary.CodeContext {
+		total += int64(len(ref.Body))
+	}
+	return total <= budget
+}
+
+// entriesFromPrimary reconstructs the shipped payload as a FileEntry list from
+// the primary's CodeContext — the per-file breakdown of what that slot actually
+// sent, which is the same set inheritedPayloadFits measures.
+//
+// It exists so the overflow-policy call in buildFallbackAgent is handed the real
+// payload rather than nil. The arms reachable there (fail, fallback) ignore the
+// entries entirely, so this is defensive: a later change that wires the truncate
+// arm in would otherwise silently shed EVERY file against an empty list, which
+// looks like a working re-fit and is not one.
+func entriesFromPrimary(primary Agent) []payload.FileEntry {
+	entries := make([]payload.FileEntry, 0, len(primary.CodeContext))
+	for _, ref := range primary.CodeContext {
+		entries = append(entries, payload.FileEntry{
+			Path: ref.Path,
+			Size: int64(len(ref.Body)),
+			Body: ref.Body,
+		})
+	}
+	return entries
+}
+
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
 // payload as the primary (AC 01-04: "fallback agent tried (same persona)"), only
 // the provider/model/temperature/timeout differ.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, error) {
+//
+// warnOversized gates the AC4 overflow warning below, matching every sibling
+// warning in buildSlots: resume.go passes false so a resume rebuild does not
+// re-emit warnings the operator already saw at prepare time. It gates only the
+// stderr line — the degradation RECORD is a property of the slot and is stamped
+// either way, so a resumed run's status.json stays truthful.
+//
+// The second return reports whether the warning was actually emitted, so a
+// caller deduplicating it across a lane's chunks suppresses only what the
+// operator has really seen.
+func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool) (Agent, bool, error) {
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
-		return Agent{}, fmt.Errorf("fallback agent %q not found in registry", name)
+		return Agent{}, false, fmt.Errorf("fallback agent %q not found in registry", name)
 	}
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
-		return Agent{}, fmt.Errorf("fallback agent %q references unknown provider %q", name, ac.Provider)
+		return Agent{}, false, fmt.Errorf("fallback agent %q references unknown provider %q", name, ac.Provider)
 	}
 	// A fallback answers in the primary's place, so the primary's review
 	// constraints (min_severity, max_findings, scope) govern — the fallback's
@@ -2173,11 +2388,86 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	// reuses the primary's chunk regime (chunkMaxLines / ChunkTotal / degradation
 	// action) because the diff was already split for the slot; only the byte budget
 	// is model-specific.
-	fbBudget := payload.EffectiveByteBudget(ac.Model, defaultMaxTokens)
-	fbWindow := payload.ContextWindowTokens(ac.Model)
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
+	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
+	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
+	// and with a declaration as low as 1 token now legal it produced a
+	// self-contradictory record: resolved_window 1, reserved_output_tokens 8192,
+	// and no effective_budget field at all (omitempty on the zero budget). The
+	// budget is the quantity that actually funds the output cap, so an agent whose
+	// window cannot fund it now honestly reports reserving nothing.
 	fbReserved := 0
-	if fbWindow > 0 {
+	if fbBudget > 0 {
 		fbReserved = defaultMaxTokens
+	}
+	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
+	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
+	// larger-windowed primary hands its smaller backup a payload that backup cannot
+	// hold. The mechanism predates this epic — the static table already spreads
+	// 200000 against 32768 — but a per-agent declaration makes it reachable on a
+	// roster that previously resolved ONE uniform default for every agent, and the
+	// epic's own operator step pairs declared primaries with undeclared backups.
+	//
+	// Re-shedding the payload here is deliberately out of scope: buildFallbackAgent
+	// receives the already-rendered prompt, not the FileEntry list it would have to
+	// re-pack, and a fallback reviewing a different file set than its primary is a
+	// separate design question — chunkFiles and ChunkTotal are SLOT-level and
+	// inherited unconditionally below, so a re-packed fallback would falsify the
+	// baseline coverage attribution and require the Slot/Agent model to grow a
+	// fallback-owned chunk chain. What AC4 forbids is doing this SILENTLY, so
+	// surface it — warn pre-dispatch and record the honest overflow degradation
+	// instead of copying the primary's action.
+	//
+	// The operator's on_overflow policy decides first, mirroring the primary path's
+	// own pre-dispatch gate: fail and fallback return their typed errors, which
+	// propagate out of buildChain/buildSlots and hard-fail the run BEFORE a prompt
+	// the backup provably cannot hold is dispatched. chunk and truncate keep the
+	// warn-and-ship behavior below, because both would need exactly the FileEntry
+	// re-packing ruled out above — routing them here would promise a re-fit this
+	// function cannot perform.
+	//
+	// Measure the PAYLOAD before claiming it overflows. len(primary.Prompt) is the
+	// wrong measure — the rendered prompt carries the persona wrapper that the byte
+	// budget does not count — but a budget-only comparison is worse: it is true for
+	// ANY fallback resolving a smaller window, whether the payload is 5 KB or
+	// 500 KB, so the epic's own recommended roster (declared primaries paired with
+	// undeclared 32768 backups) would warn on every pair of an ordinary small-diff
+	// review and stamp overflow on fallbacks that held the payload with room to
+	// spare. primary.CodeContext is the per-file breakdown of what this slot
+	// actually shipped, which is exactly what the byte budget governs.
+	//
+	// The stamp OVERWRITES the inherited action rather than composing with it:
+	// "overflow" takes precedence because it is the only action that says the
+	// review may not have been read in full, so a fallback serving a chunked slot
+	// records "overflow", not "chunk". Nothing is lost — ChunkTotal still carries
+	// the chunk plan and Truncation still lists the dropped files. That precedence
+	// is part of the status.json contract; see the DegradationAction doc in
+	// status.go, which enumerates all four values.
+	fbDegradation := primary.DegradationAction
+	warned := false
+	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
+		// Gated on the SAME condition as the warning — an actual measured overflow,
+		// not a bare budget comparison. Enabling on_overflow=fail must not break
+		// every ordinary small-diff run that merely has a smaller-windowed backup.
+		//
+		// The entries passed are the primary's shipped set and the budget is the
+		// FALLBACK's own, so the truncate arm (unreachable here) would still be
+		// self-consistent if it were ever wired in. ErrFallbackUnavailable is the
+		// right error for the fallback arm despite this already being a fallback:
+		// the policy means "hand this lane to a backup", and the backup in hand is
+		// the one that cannot hold the payload.
+		if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
+			if _, err := applyOverflowPolicy(p, "", 0, entriesFromPrimary(primary), fbBudget); err != nil {
+				return Agent{}, false, err
+			}
+		}
+		if warnOversized {
+			warned = true
+			fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
+				name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+		}
+		fbDegradation = degradationOverflow
 	}
 	return Agent{
 		Name: name,
@@ -2220,7 +2510,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		EffectiveBudget:      fbBudget,
 		ResolvedWindow:       fbWindow,
 		ReservedOutputTokens: fbReserved,
-		DegradationAction:    primary.DegradationAction,
+		DegradationAction:    fbDegradation,
 		chunkMaxLines:        primary.chunkMaxLines,
 		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
 		// the primary but on its OWN model and temperature, so it keys on the
@@ -2228,6 +2518,17 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// model must not collide with the primary's cache entry. Its sizing token
 		// (Epic 19.10 F7) uses the fallback's OWN effective budget under the slot's
 		// chunk regime, so it also never collides across sizing regimes.
+		//
+		// The sizing token DOES collapse to the unsized "0:0" when the slot is bulk
+		// (chunkMaxLines 0) and this fallback's window funds no input budget
+		// (fbBudget 0) — the same token an unsized agent renders. That is not a
+		// collision risk: the key also carries the model, the backend and the
+		// temperature, so two entries can only meet when a substitute resolves the
+		// SAME model on the SAME provider at the SAME temperature over the same
+		// prompt — inputs that produce the same review, which is what a shared cache
+		// entry is for. Cache invalidation on a prompt-size change is likewise not
+		// implicit: the prompt itself is hashed, so a re-sized payload is a different
+		// key by construction.
 		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbBudget, primary.chunkMaxLines)),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
@@ -2237,7 +2538,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 			MaxTokens:   maxTokensPtr(),
 			Prompt:      primary.Prompt,
 		},
-	}, nil
+	}, warned, nil
 }
 
 // writePayloadArtifacts persists each distinct payload under payload/<mode>.txt
@@ -2288,7 +2589,8 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 	return reviewStageForAgents(results,
 		func(r Result) bool { return r.ToolsRequested },
 		func(r Result) bool { return r.ToolsDegraded },
-		func(r Result) string { return r.Agent })
+		func(r Result) string { return r.Agent },
+		func(r Result) string { return r.ToolsDegradedReason })
 }
 
 // reviewStageForAgents is the single manifest review-stage classifier shared by
@@ -2300,8 +2602,9 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 // manifest omits the review entry for a pure 1.x roster. Agents is a distinct
 // copy of ToolsEnabled so the two slices never alias (a later mutation of one
 // must not silently mutate the other).
-func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string) *payload.ReviewStage {
+func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string, reason func(T) string) *payload.ReviewStage {
 	var enabled, deg []string
+	var reasons map[string]string
 	for _, it := range items {
 		if !requested(it) {
 			continue
@@ -2309,12 +2612,25 @@ func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded fun
 		enabled = append(enabled, name(it))
 		if degraded(it) {
 			deg = append(deg, name(it))
+			// Built lazily so a run with no degradation (and every run predating
+			// the field) marshals without the key at all.
+			if rsn := reason(it); rsn != "" {
+				if reasons == nil {
+					reasons = map[string]string{}
+				}
+				reasons[name(it)] = rsn
+			}
 		}
 	}
 	if len(enabled) == 0 {
 		return nil
 	}
-	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: deg}
+	return &payload.ReviewStage{
+		Agents:              append([]string(nil), enabled...),
+		ToolsEnabled:        enabled,
+		ToolsDegraded:       deg,
+		ToolsDegradedReason: reasons,
+	}
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /

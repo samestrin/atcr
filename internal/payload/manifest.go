@@ -138,6 +138,21 @@ type ReviewStage struct {
 	ToolsEnabled  []string `json:"tools_enabled"`
 	ToolsDegraded []string `json:"tools_degraded"`
 
+	// ToolsDegradedReason maps each ToolsDegraded agent to WHY it fell back to
+	// single-shot, drawn from a closed vocabulary decided at the single dispatch
+	// site: "model_not_capable" (the served model is not declared
+	// function-calling capable), "fallback_not_capable" (the same, after failing
+	// over to a backup), "no_chat_completer" (the completer does not implement
+	// ChatCompleter), and "no_dispatcher" (no tool harness was wired). Without
+	// it a reader can see THAT an agent degraded but not why, and the causes are
+	// materially different — an incapable backup is a registry problem, a
+	// missing dispatcher is a wiring one. omitempty so a manifest with no
+	// degradation (and every pre-field manifest) is byte-identical to before.
+	// Budget trips and provider errors are deliberately absent: neither sets
+	// ToolsDegraded (the loop did run), and TrippedBudgets already names the
+	// former.
+	ToolsDegradedReason map[string]string `json:"tools_degraded_reason,omitempty"`
+
 	// SnapshotMode records the filesystem snapshot the tool harness reviewed at:
 	// "live" when head matched HEAD on a clean worktree (fast path), "worktree"
 	// when a detached git worktree was created (AC 03-02 / 03-03), or "failed"
