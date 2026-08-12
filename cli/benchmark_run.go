@@ -546,13 +546,10 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 // value in the pool summary and falling back to the configured model when the
 // provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
 //
-// The FallbackModel step in the middle exists because the usage-reported model is
-// only stamped when the provider returned token counts (statusFor, artifacts.go:326).
-// A case that FAILED after the slot had already failed over therefore reports no
-// model at all — and resolving straight to the registry would credit that case to the
-// configured primary, a model which by definition did not serve it. That is exactly
-// the misattribution this epic exists to remove, so the fallback model that actually
-// attempted the slot is preferred over the primary that did not.
+// The FallbackModel step covers a case that FAILED after the slot had already
+// failed over: no usage was returned, so no usage-reported model was stamped, and
+// resolving straight to the registry would credit the configured primary — a model
+// that by definition did not serve the case.
 //
 // Every non-failover path is unchanged: FallbackUsed is false, so resolution is the
 // original prefer-usage-then-registry pair.
