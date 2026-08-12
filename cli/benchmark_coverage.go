@@ -12,7 +12,8 @@ import (
 // maxNamedMissingCases caps how many missing case ids the shortfall message spells
 // out per row. The message exists to make the shortfall ACTIONABLE, and a row short
 // by fifty cases is diagnosed by the first few plus the count; printing all of them
-// buries the other short rows below it.
+// buries the other short rows below it. It is a fixed limit, not a configuration
+// knob — no flag or setting surfaces it.
 const maxNamedMissingCases = 3
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
