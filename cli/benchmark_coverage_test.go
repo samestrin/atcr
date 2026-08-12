@@ -3,10 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,4 +112,26 @@ func TestRunResult_CoverageAbsentWhenUnmeasured(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &decoded))
 	assert.NotContains(t, decoded, "suite_case_ids", "nil coverage drops the key entirely — not null, not []")
 	assert.NotContains(t, decoded, "reviewer_coverage")
+}
+
+// The shortfall message names up to maxNamedMissingCases missing case ids per
+// row on the principle that an over-long list "buries the other short rows below
+// it" — but the number of short ROWS joined into that same single-line message
+// must get the same cap, or a many-row file re-creates the burial one level up.
+// The first rows are named; the rest collapse to an "and K more rows" tail.
+func TestCheckCoverage_ShortRowListIsCapped(t *testing.T) {
+	rr := benchmark.RunResult{SuiteCaseIDs: []string{"case-01"}}
+	for i := 0; i < 5; i++ {
+		model := fmt.Sprintf("m-%d", i)
+		rr.Reviewers = append(rr.Reviewers, scorecard.PublicRecord{Model: model, Persona: "p", Runs: 0})
+		rr.Coverage = append(rr.Coverage, benchmark.ReviewerCoverage{Model: model, Persona: "p"})
+	}
+
+	err := checkCoverage(io.Discard, rr, "rr.json", false)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "m-0/p", "the first short rows are named")
+	assert.Contains(t, msg, "m-2/p")
+	assert.NotContains(t, msg, "m-4/", "rows past the cap are summarized, not named")
+	assert.Contains(t, msg, "and 2 more rows")
 }
