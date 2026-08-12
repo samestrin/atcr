@@ -22,6 +22,10 @@ import (
 // prose in a code review because the preceding dry-run's raw output was never kept;
 // committing this one makes the regression permanent instead of repeating that loss.
 // It contains no secrets — public-OSS case ids, category words, model names, timings.
+// It is preserved verbatim, INCLUDING a production finding-parse artifact: three
+// cases (index 9, 12, 16) record numeric or empty strings in `raised` — EST_MINUTES
+// values a finding-parse misalignment captured into the category column. Do not
+// sanitize them; the fixture's value is that it is what a real run actually wrote.
 const runBCheckpointPath = "../internal/benchmark/testdata/run-b.ckpt.json"
 
 // runBManifest reconstructs the suite manifest Run B executed against, from the
