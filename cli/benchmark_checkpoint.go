@@ -51,10 +51,12 @@ type checkpointCase struct {
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds
-// into a reviewerAcc for one case: identity (model/persona, locked at first
-// sighting), the case score (raised categories), and the usage-gated cost/latency
-// contribution. Expected categories live on checkpointCase because they are
-// identical for every reviewer of a case and originate from the suite manifest.
+// into a reviewerAcc for one case: identity (the model/persona that actually
+// served this case — the realized per-case value, which is what makes a
+// checkpointed model safe to replay across a failover boundary), the case score
+// (raised categories), and the usage-gated cost/latency contribution. Expected
+// categories live on checkpointCase because they are identical for every
+// reviewer of a case and originate from the suite manifest.
 // Storing the already-computed cost contribution (not the raw tokens) and replaying
 // it in case order keeps the float sum and latency median byte-identical to an
 // uninterrupted run.
