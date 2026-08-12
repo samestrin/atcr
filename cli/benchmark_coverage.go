@@ -68,6 +68,17 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 
 	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
 	for _, id := range rr.SuiteCaseIDs {
+		// The denominator comes from the same untrusted file it validates, so it
+		// must be a set by construction: a repeated id would shrink the required
+		// set while inflating the reported suite size (["case-01"] x3 would read as
+		// full coverage of a "3-case suite"). The producer writes the manifest's
+		// case list, which cannot repeat — same malformed-file rule as a repeated
+		// covered id below.
+		if suite[id] {
+			return fmt.Errorf("run-result %s lists suite case %q more than once; "+
+				"the producer writes the manifest's case list, which cannot repeat, so this file is malformed",
+				path, id)
+		}
 		suite[id] = true
 	}
 
