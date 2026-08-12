@@ -53,7 +53,7 @@ func foldRunB(t *testing.T) (*runCheckpoint, *benchmark.RunResult) {
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey
 	for _, entry := range cp.Cases {
-		replayCheckpointCase(accs, &order, entry, entry.Expected)
+		require.NoError(t, replayCheckpointCase(accs, &order, entry, entry.Expected))
 	}
 	gen := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
 	return cp, buildRunResult(accs, order, runBManifest(t, cp), gen)

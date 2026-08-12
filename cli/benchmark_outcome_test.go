@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -248,7 +250,14 @@ func TestExecuteBenchmarkRun_FallbackCaseKeepsConfiguredPersona(t *testing.T) {
 // misdiagnosing it as tampering. The producer must detect the repeated (key,
 // caseID) and fail loudly, naming the colliding lanes.
 func TestExecuteBenchmarkRun_FailsWhenTwoLanesRealizeTheSameIdentity(t *testing.T) {
-	cfg := benchCfg([3]string{"brad", "m-shared", "shared"}, [3]string{"brad-backup", "m-shared", "shared"})
+	// brad-backup shares brad's persona, so the persona ref must resolve to a real
+	// file (a persona distinct from the agent name never falls through to embedded
+	// defaults) — write one into a temp project persona dir.
+	personaDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(personaDir, "brad.md"), []byte("shared persona prompt"), 0o600))
+
+	cfg := benchCfg([3]string{"brad", "m-shared", "brad"}, [3]string{"brad-backup", "m-shared", "brad"})
+	cfg.PersonaDirs = registry.PersonaDirs{Project: personaDir}
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
 	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
@@ -268,13 +277,13 @@ func TestReplayCheckpointCase_PreOutcomeCheckpointReplaysAsUnknown(t *testing.T)
 	var order []reviewerKey
 
 	// A checkpoint entry as an older binary wrote it: no Outcome field at all.
-	replayCheckpointCase(accs, &order, checkpointCase{
+	require.NoError(t, replayCheckpointCase(accs, &order, checkpointCase{
 		Index:  0,
 		CaseID: "case-01",
 		Reviewers: []checkpointReviewer{
 			{Agent: "greta", Model: "m-greta", Persona: "greta", Raised: nil},
 		},
-	}, []string{"correctness"})
+	}, []string{"correctness"}))
 
 	acc := accs[reviewerKey{model: "m-greta", persona: "greta"}]
 	require.NotNil(t, acc)
@@ -393,10 +402,10 @@ func TestExecuteBenchmarkRun_TruncatedOutcomeReachesCoverageAndSurvivesResume(t 
 func TestApplyReviewerOutcome_TalliesFallbackSeparatelyFromOutcome(t *testing.T) {
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey
-	applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+	require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 		model: "llm-large", persona: "brad", caseID: "case-01",
 		expected: []string{"correctness"}, outcome: benchmark.OutcomeClean, fallbackUsed: true,
-	})
+	}))
 
 	acc := accs[reviewerKey{model: "llm-large", persona: "brad"}]
 	require.NotNil(t, acc)

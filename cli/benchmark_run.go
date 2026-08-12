@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -118,7 +119,9 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
 					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
 			}
-			replayCheckpointCase(accs, &order, entry, c.ExpectedCategories)
+			if err := replayCheckpointCase(accs, &order, entry, c.ExpectedCategories); err != nil {
+				return nil, err
+			}
 			continue
 		}
 
@@ -181,7 +184,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 
 			outcome := reviewerOutcome(a, raised)
 
-			applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+			if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 				model:         model,
 				persona:       persona,
 				caseID:        c.ID,
@@ -192,7 +195,10 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latencyMS:     latency,
 				outcome:       outcome,
 				fallbackUsed:  a.FallbackUsed,
-			})
+				agent:         a.Agent,
+			}); err != nil {
+				return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
+			}
 
 			if cp != nil {
 				caseReviewers = append(caseReviewers, checkpointReviewer{
@@ -367,8 +373,13 @@ type reviewerAcc struct {
 	caseIDs       []string       // suite case ids this identity actually scored, in case order
 	outcomes      map[string]int // benchmark.Outcome* -> number of this identity's cases
 	fallbackCases int            // cases fanout served from a fallback rather than the primary
-	costUSD       float64
-	latencies     []int64 // per-case wall-clock, recorded only when usage was reported
+	// agents records which LANES folded into this identity, purely so the
+	// duplicate-case diagnostic can name the colliding lanes. The accepted
+	// raw-identity merge (two lanes, same model AND persona, DISJOINT case sets) is
+	// unaffected by this bookkeeping.
+	agents    map[string]struct{}
+	costUSD   float64
+	latencies []int64 // per-case wall-clock, recorded only when usage was reported
 }
 
 // reviewerOutcome classifies what actually happened when one reviewer met one case,
@@ -429,6 +440,10 @@ type reviewerCaseOutcome struct {
 	// fallbackUsed records that fanout served this case from a fallback model rather
 	// than the slot's configured primary. Tracked alongside outcome, never inside it.
 	fallbackUsed bool
+	// agent is the lane (configured agent name) that produced this outcome. It plays
+	// no part in the fold — only in the duplicate-case diagnostic, which must name
+	// the colliding lanes.
+	agent string
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
@@ -445,16 +460,37 @@ type reviewerCaseOutcome struct {
 // sighting, which is precisely how a mid-suite failover ended up publishing another
 // model's work under the primary's name.
 //
+// Two lanes realizing the SAME identity with DISJOINT case sets merge into one row
+// — the accepted design (see reviewerKey's doc). But a repeated (key, caseID) means
+// two lanes scored the SAME case under one identity: the merged row would list the
+// case twice, doubling Runs past the suite size and failing the export gate as
+// "malformed" — a legitimate run destroyed and misdiagnosed as tampering. That
+// shape is rejected here, at the fold, with the colliding lanes named.
+//
 // Cost and latency are still accumulated in case order within each key, so the float
 // sum and the latency median stay byte-identical to an uninterrupted run.
-func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, o reviewerCaseOutcome) {
+func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, o reviewerCaseOutcome) error {
 	key := reviewerKey{model: o.model, persona: o.persona}
 	acc := accs[key]
 	if acc == nil {
-		acc = &reviewerAcc{}
+		acc = &reviewerAcc{agents: map[string]struct{}{}}
 		accs[key] = acc
 		*order = append(*order, key)
+	} else if slices.Contains(acc.caseIDs, o.caseID) {
+		lanes := make([]string, 0, len(acc.agents)+1)
+		for a := range acc.agents {
+			lanes = append(lanes, a)
+		}
+		lanes = append(lanes, o.agent)
+		sort.Strings(lanes)
+		return fmt.Errorf("case %q scored twice under realized identity %s/%s (lanes %s); "+
+			"two lanes realizing the same (model, persona) must partition the suite, not both score it",
+			o.caseID, o.model, o.persona, strings.Join(lanes, ", "))
 	}
+	if acc.agents == nil {
+		acc.agents = map[string]struct{}{}
+	}
+	acc.agents[o.agent] = struct{}{}
 	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: o.expected, Raised: o.raised})
 	acc.caseIDs = append(acc.caseIDs, o.caseID)
 	if acc.outcomes == nil {
@@ -468,6 +504,7 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 		acc.costUSD += o.costUSD
 		acc.latencies = append(acc.latencies, o.latencyMS)
 	}
+	return nil
 }
 
 // replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
@@ -475,9 +512,9 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 // uses — no review re-execution and no Completer call (AC2). Expected categories
 // are re-read from the suite manifest (passed in as expected) because they are
 // identical for every reviewer of a case and are not durable per-reviewer state.
-func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, entry checkpointCase, expected []string) {
+func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, entry checkpointCase, expected []string) error {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, reviewerCaseOutcome{
+		if err := applyReviewerOutcome(accs, order, reviewerCaseOutcome{
 			model:         r.Model,
 			persona:       r.Persona,
 			caseID:        entry.CaseID,
@@ -493,8 +530,12 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			// would manufacture the claim the epic set out to stop making.
 			outcome:      r.Outcome,
 			fallbackUsed: r.FallbackUsed,
-		})
+			agent:        r.Agent,
+		}); err != nil {
+			return fmt.Errorf("replaying checkpointed case %q: %w", entry.CaseID, err)
+		}
 	}
+	return nil
 }
 
 // readCaseFindings parses the merged pool findings.txt for one review and groups

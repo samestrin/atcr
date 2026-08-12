@@ -202,11 +202,11 @@ func TestExecuteBenchmarkRun_InvalidSuiteErrors(t *testing.T) {
 func TestBuildRunResult_DoesNotAliasAccumulatorState(t *testing.T) {
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey
-	applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+	require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 		model: "m", persona: "p", caseID: "case-01",
 		expected: []string{"correctness"}, raised: []string{"correctness"},
 		outcome: benchmark.OutcomeFindings,
-	})
+	}))
 	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
 
 	rr := buildRunResult(accs, order, m, time.Unix(0, 0))
