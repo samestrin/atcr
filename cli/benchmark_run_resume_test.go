@@ -325,6 +325,37 @@ func TestExecuteBenchmarkRun_RejectsCheckpointCaseIDDrift(t *testing.T) {
 	assert.Equal(t, 0, int(resume.calls.Load()), "per-index guard fires before any LLM call")
 }
 
+// validateCheckpointIntegrity has no access to the suite's case count, so its
+// out-of-range check can only cover negative indices. The upper bound is
+// enforced at resume, where len(m.Cases) is known: an entry indexed beyond the
+// suite was recorded against a different case list and must abort as
+// errCheckpointCorrupt — otherwise it is counted in the replayed total yet never
+// replayed by the loop, silently vanishing from the score and rendering a
+// negative remaining count.
+func TestExecuteBenchmarkRun_RejectsCheckpointIndexBeyondSuite(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	// Produce a valid checkpoint (correct repro hash / suite / version).
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	// Tamper one entry's index beyond the 2-case suite — non-negative, unique,
+	// and with a non-empty case id, so the load-time integrity checks pass and
+	// only the resume-time upper bound can catch it.
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	cp.Cases[0].Index = 999
+	require.NoError(t, saveCheckpoint(path, cp))
+
+	resume := &countingCompleter{}
+	_, err = executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointCorrupt, "an index outside [0, len(cases)) aborts the resume")
+	assert.Equal(t, 0, int(resume.calls.Load()), "the bound check fires before any LLM call")
+}
+
 // Resume reports how many cases are being replayed from the checkpoint vs
 // executed fresh, so an operator can tell the run resumed and gauge progress.
 func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
