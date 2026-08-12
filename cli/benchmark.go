@@ -184,6 +184,13 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
+	// An unidentifiable reviewer row on a public leaderboard is worse than a
+	// rejected file: same TrimSpace rule as the suite identity above.
+	for i, rev := range rr.Reviewers {
+		if strings.TrimSpace(rev.Model) == "" || strings.TrimSpace(rev.Persona) == "" {
+			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona", in, i)
+		}
+	}
 	// A run-result may be hand-supplied, so the diagnostic is untrusted input here.
 	// out_of_vocabulary_rate is a SHARE of findings: a value outside [0,1] (or NaN)
 	// is a corrupt file rather than a pessimistic reading, and must not be carried
