@@ -142,9 +142,12 @@ func TestBenchmarkExport_UnmeasuredCoverageWarnsButExports(t *testing.T) {
 		"the warning goes to stderr — it must never corrupt the JSON a caller pipes off stdout")
 }
 
-// Coverage rows present but the suite case-id list missing is equally unverifiable:
-// there is no denominator to be short of. Treated as unmeasured, not as a violation.
-func TestBenchmarkExport_CoverageWithoutSuiteCaseIDsIsUnmeasured(t *testing.T) {
+// Coverage rows present but the suite case-id list missing is MALFORMED, not
+// unmeasured: the producer writes suite_case_ids and reviewer_coverage together,
+// so a post-epic file missing exactly the denominator had it stripped — the
+// cheapest way past this gate. Only a file with NEITHER field (genuinely
+// pre-epic) takes the warn-only unmeasured path.
+func TestBenchmarkExport_CoverageWithoutSuiteCaseIDsIsMalformed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run-result.json")
 	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
 		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
@@ -153,7 +156,9 @@ func TestBenchmarkExport_CoverageWithoutSuiteCaseIDsIsUnmeasured(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
-	require.Equal(t, 0, code, "no denominator -> unmeasured, not rejected: %s", out)
+	require.NotEqual(t, 0, code,
+		"a stripped denominator on a demonstrably post-epic file must fail, not warn and publish: %s", out)
+	assert.Contains(t, out, "malformed")
 }
 
 // A duplicate coverage identity is rejected rather than resolved. Indexing coverage
