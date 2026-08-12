@@ -7,7 +7,19 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/scorecard"
 )
+
+// coverageKey is the identity the gate joins on: the SCRUBBED (model, persona).
+// Publication re-scrubs every reviewer via scorecard.ScrubPublicRecord as a
+// defense-in-depth backstop, so the board keys on the scrubbed value — and a
+// check keyed on the pre-transform string is bypassable by construction: two raw
+// identities differing only by a scrub-stripped token would be distinct to the
+// duplicate check yet identical on the public board.
+func coverageKey(model, persona string) reviewerKey {
+	s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: model, Persona: persona})
+	return reviewerKey{model: s.Model, persona: s.Persona}
+}
 
 // maxNamedMissingCases caps how many missing case ids the shortfall message spells
 // out per row. The message exists to make the shortfall ACTIONABLE, and a row short
@@ -88,7 +100,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// past this gate, and export is where hand-supplied files first enter the tool.
 	byIdentity := make(map[reviewerKey]benchmark.ReviewerCoverage, len(rr.Coverage))
 	for _, c := range rr.Coverage {
-		key := reviewerKey{model: c.Model, persona: c.Persona}
+		key := coverageKey(c.Model, c.Persona)
 		// A DUPLICATE identity is rejected outright rather than resolved. The
 		// producer emits one row per unique identity by construction, so a duplicate
 		// means the file was hand-assembled — and last-write-wins would let a full
@@ -105,7 +117,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	var short []string
 	consumed := make(map[reviewerKey]bool, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
-		key := reviewerKey{model: rev.Model, persona: rev.Persona}
+		key := coverageKey(rev.Model, rev.Persona)
 		consumed[key] = true
 		cov, ok := byIdentity[key]
 		if !ok {
@@ -152,7 +164,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// as the forward direction — and rejecting leftovers before the short-coverage
 	// diagnostics below means every later message can trust the join.
 	for _, c := range rr.Coverage {
-		key := reviewerKey{model: c.Model, persona: c.Persona}
+		key := coverageKey(c.Model, c.Persona)
 		if !consumed[key] {
 			return fmt.Errorf("run-result %s records coverage for %s/%s with no matching reviewer row; "+
 				"the producer writes the two arrays from the same accumulator, so this file is malformed",
