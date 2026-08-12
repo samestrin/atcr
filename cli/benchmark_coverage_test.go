@@ -73,8 +73,10 @@ func TestExecuteBenchmarkRun_CoverageOrderMatchesReviewerOrder(t *testing.T) {
 
 // A resumed run reports the SAME coverage as an uninterrupted one. Coverage is
 // accumulated on the shared fold path, so replay reconstructs it rather than
-// recomputing it from a different source — the property that keeps a resume across a
-// failover boundary honest (AC4).
+// recomputing it from a different source — the property that keeps a same-model
+// resume honest (AC4). The failover boundary itself — replayed entries folding
+// under model A while live cases fold under model B — is covered by
+// TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage.
 func TestExecuteBenchmarkRun_ResumeReportsSameCoverage(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
@@ -114,12 +116,11 @@ func TestRunResult_CoverageAbsentWhenUnmeasured(t *testing.T) {
 	assert.NotContains(t, decoded, "reviewer_coverage")
 }
 
-// The shortfall message names up to maxNamedMissingCases missing case ids per
-// row on the principle that an over-long list "buries the other short rows below
-// it" — but the number of short ROWS joined into that same single-line message
-// must get the same cap, or a many-row file re-creates the burial one level up.
-// The first rows are named; the rest collapse to an "and K more rows" tail.
-func TestCheckCoverage_ShortRowListIsCapped(t *testing.T) {
+// The shortfall message caps missing case ids per row at maxNamedMissingCases,
+// but deliberately names EVERY short row: each row is a distinct reviewer
+// identity whose re-runs the operator must schedule, so an overflow count on the
+// outer list would hide who owes work — the actionable unit of the message.
+func TestCheckCoverage_EveryShortRowIsNamed(t *testing.T) {
 	rr := benchmark.RunResult{SuiteCaseIDs: []string{"case-01"}}
 	for i := 0; i < 5; i++ {
 		model := fmt.Sprintf("m-%d", i)
@@ -130,8 +131,7 @@ func TestCheckCoverage_ShortRowListIsCapped(t *testing.T) {
 	err := checkCoverage(io.Discard, rr, "rr.json", false)
 	require.Error(t, err)
 	msg := err.Error()
-	assert.Contains(t, msg, "m-0/p", "the first short rows are named")
-	assert.Contains(t, msg, "m-2/p")
-	assert.NotContains(t, msg, "m-4/", "rows past the cap are summarized, not named")
-	assert.Contains(t, msg, "and 2 more rows")
+	for i := 0; i < 5; i++ {
+		assert.Contains(t, msg, fmt.Sprintf("m-%d/p", i), "every short row is named, past any cap")
+	}
 }

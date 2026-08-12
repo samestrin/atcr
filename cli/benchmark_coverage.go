@@ -26,6 +26,14 @@ func coverageKey(model, persona string) reviewerKey {
 // by fifty cases is diagnosed by the first few plus the count; printing all of them
 // buries the other short rows below it. It is a fixed limit, not a configuration
 // knob — no flag or setting surfaces it.
+//
+// The cap applies to the INNER list (case ids within one row) and deliberately NOT
+// to the OUTER one (the short rows themselves): each short row is a distinct
+// reviewer identity whose re-runs the operator must schedule, so dropping one
+// behind an overflow count would hide WHO owes work — the actionable unit of this
+// message. Missing case ids within a row are interchangeable by contrast; the
+// first few plus the count diagnose the row fully. Pinned by
+// TestCheckCoverage_EveryShortRowIsNamed and TestRunBFixture_RejectedByExportGate.
 const maxNamedMissingCases = 3
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
@@ -207,12 +215,12 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s. "+
 				"The shortfall is recorded in this run-result only and is not carried into the submission, "+
 				"so a consumer cannot distinguish these rows from fully-covered ones.\n",
-			path, summarizeShortRows(short))
+			path, strings.Join(short, "; "))
 		return nil
 	}
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
 		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
-		path, len(suite), summarizeShortRows(short))
+		path, len(suite), strings.Join(short, "; "))
 }
 
 // validateCoveredSet rejects a coverage row that is not a subset-without-repeats of
@@ -261,16 +269,4 @@ func summarizeMissing(missing []string) string {
 	}
 	return fmt.Sprintf("%s and %d more",
 		strings.Join(missing[:maxNamedMissingCases], ", "), len(missing)-maxNamedMissingCases)
-}
-
-// summarizeShortRows applies the maxNamedMissingCases principle one level up:
-// the shortfall message is a single line, so an uncapped list of short rows
-// re-creates exactly the burial the constant exists to prevent. The first rows
-// stay named and actionable; the rest collapse to an overflow count.
-func summarizeShortRows(short []string) string {
-	if len(short) <= maxNamedMissingCases {
-		return strings.Join(short, "; ")
-	}
-	return fmt.Sprintf("%s; and %d more rows",
-		strings.Join(short[:maxNamedMissingCases], "; "), len(short)-maxNamedMissingCases)
 }
