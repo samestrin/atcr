@@ -144,6 +144,21 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 				"the two are written together by `atcr benchmark run`, so this file is malformed",
 				path, rev.Model, rev.Persona, rev.Runs, len(cov.CaseIDs))
 		}
+		// The outcomes tally is written together with the covered set by the same
+		// fold (one outcome per case), so its values must sum to len(cov.CaseIDs) —
+		// the same tamper family as the runs/coverage pair, one field over. An
+		// absent tally stays legal (omitempty): pre-field files have none.
+		if cov.Outcomes != nil {
+			tally := 0
+			for _, n := range cov.Outcomes {
+				tally += n
+			}
+			if tally != len(cov.CaseIDs) {
+				return fmt.Errorf("run-result %s: reviewer %s/%s records outcomes summing to %d over %d covered case(s); "+
+					"the two are written together by `atcr benchmark run`, so this file is malformed",
+					path, rev.Model, rev.Persona, tally, len(cov.CaseIDs))
+			}
+		}
 		// A covered set must be a set OF THE SUITE. Checking only for missing ids
 		// lets ["case-01","case-02","case-03","case-01"] satisfy a 3-case suite while
 		// reporting runs=4 — full marks for a row that scored one case twice and
