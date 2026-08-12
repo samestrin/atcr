@@ -38,12 +38,22 @@ const maxNamedMissingCases = 3
 // what it does not know instead of inventing a violation. Failing closed here would
 // reject every pre-existing run-result over a field they had no way to write.
 func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartial bool) error {
-	if len(rr.SuiteCaseIDs) == 0 || len(rr.Coverage) == 0 {
+	// UNMEASURED is keyed on the DENOMINATOR being absent, not on the coverage rows
+	// being absent. A file that records suite_case_ids but no coverage rows is not a
+	// pre-epic artifact — it is one whose coverage was removed, and treating that as
+	// "unmeasured" would make deleting the whole array a cheaper way past this gate
+	// than any of the tampering shapes below.
+	if len(rr.SuiteCaseIDs) == 0 {
 		_, _ = fmt.Fprintf(w,
 			"warning: run-result %s carries no case coverage, so it cannot be verified against the full suite — "+
 				"publishing it asserts nothing about how many cases each reviewer actually scored. "+
 				"Re-run `atcr benchmark run` to produce a run-result that records coverage.\n", path)
 		return nil
+	}
+	if len(rr.Coverage) == 0 {
+		return fmt.Errorf("run-result %s lists a %d-case suite but records no reviewer coverage; "+
+			"`atcr benchmark run` writes the two together, so this file is malformed",
+			path, len(rr.SuiteCaseIDs))
 	}
 
 	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
@@ -88,13 +98,28 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 				"the two are written together by `atcr benchmark run`, so this file is malformed",
 				path, rev.Model, rev.Persona, rev.Runs, len(cov.CaseIDs))
 		}
+		// A covered set must be a set OF THE SUITE. Checking only for missing ids
+		// lets ["case-01","case-02","case-03","case-01"] satisfy a 3-case suite while
+		// reporting runs=4 — full marks for a row that scored one case twice and
+		// carries a bigger denominator than the suite has cases.
+		if err := validateCoveredSet(suite, rr.SuiteCaseIDs, cov.CaseIDs, path, rev.Model, rev.Persona); err != nil {
+			return err
+		}
 		missing := missingCases(suite, cov.CaseIDs)
 		if len(missing) == 0 {
 			continue
 		}
-		covered := len(rr.SuiteCaseIDs) - len(missing)
+		// Counted by MEMBERSHIP rather than derived as len(suite)-len(missing): the
+		// two differ whenever the hand-supplied suite list repeats an id, and a
+		// diagnostic that misreports the shortfall is worse than none.
+		covered := 0
+		for _, id := range cov.CaseIDs {
+			if suite[id] {
+				covered++
+			}
+		}
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			rev.Model, rev.Persona, covered, len(rr.SuiteCaseIDs), summarizeMissing(missing)))
+			rev.Model, rev.Persona, covered, len(suite), summarizeMissing(missing)))
 	}
 
 	if len(short) == 0 {
@@ -110,6 +135,26 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
 		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
 		path, len(rr.SuiteCaseIDs), strings.Join(short, "; "))
+}
+
+// validateCoveredSet rejects a coverage row that is not a subset-without-repeats of
+// the suite. Both shapes are impossible from the producer — it appends one case id
+// per fold, from the manifest — so either one means the file was assembled by hand,
+// and both inflate a row's apparent coverage past what the suite can support.
+func validateCoveredSet(suite map[string]bool, suiteIDs, covered []string, path, model, persona string) error {
+	seen := make(map[string]bool, len(covered))
+	for _, id := range covered {
+		if seen[id] {
+			return fmt.Errorf("run-result %s: reviewer %s/%s lists case %q more than once in its coverage; "+
+				"a case is scored at most once per reviewer, so this file is malformed", path, model, persona, id)
+		}
+		seen[id] = true
+		if !suite[id] {
+			return fmt.Errorf("run-result %s: reviewer %s/%s records case %q, which is not one of the "+
+				"%d cases in this suite", path, model, persona, id, len(suiteIDs))
+		}
+	}
+	return nil
 }
 
 // missingCases returns the suite case ids absent from covered, sorted so the

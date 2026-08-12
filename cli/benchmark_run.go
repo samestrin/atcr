@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -218,24 +219,41 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 // from a recorded checkpoint — the Run B fixture folds through this exact path in
 // tests, without a suite on disk, a Completer, or a network.
 func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *benchmark.Manifest, generatedAt time.Time) *benchmark.RunResult {
-	sortReviewerKeys(order)
-	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
-	coverage := make([]benchmark.ReviewerCoverage, 0, len(order))
+	// Scrub the identity BEFORE sorting and before it is written to either slice.
+	//
+	// benchmark.Score re-scrubs the rows it emits (scorecard.ScrubPublicRecord), so
+	// without this the reviewer rows would carry post-scrub identities while the
+	// coverage rows carried pre-scrub ones. Any identity the scrub rewrites — it
+	// strips path-, email- and credential-shaped substrings — would then fail to join
+	// at export, turning a legitimate full-coverage run into a hard
+	// "no coverage recorded" rejection. Scrubbing here makes both sides identical by
+	// construction, and Score's own pass is then idempotent.
+	rows := make([]scoredRow, 0, len(order))
 	for _, k := range order {
-		acc := accs[k]
+		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
+		rows = append(rows, scoredRow{id: reviewerKey{model: s.Model, persona: s.Persona}, acc: accs[k]})
+	}
+	// Sort the SCRUBBED identities so this order matches the order Score will sort
+	// its (equally scrubbed) rows into — the property that keeps the two slices
+	// positionally aligned.
+	sortScoredRows(rows)
+
+	reviewers := make([]benchmark.ReviewerScore, 0, len(rows))
+	coverage := make([]benchmark.ReviewerCoverage, 0, len(rows))
+	for _, r := range rows {
+		acc, id := r.acc, r.id
 		reviewers = append(reviewers, benchmark.ReviewerScore{
-			Model:        k.model,
-			Persona:      k.persona,
+			Model:        id.model,
+			Persona:      id.persona,
 			Cases:        acc.cases,
 			CostUSD:      acc.costUSD,
 			LatencyP50MS: medianInt64(acc.latencies),
 		})
-		// Emitted in the same order as the reviewer rows (both walk the sorted key
-		// set), so a consumer can join coverage to its row positionally as well as by
-		// identity.
+		// Emitted in the same order as the reviewer rows, so a consumer can join
+		// coverage to its row positionally as well as by identity.
 		coverage = append(coverage, benchmark.ReviewerCoverage{
-			Model:         k.model,
-			Persona:       k.persona,
+			Model:         id.model,
+			Persona:       id.persona,
 			CaseIDs:       acc.caseIDs,
 			Outcomes:      acc.outcomes,
 			FallbackCases: acc.fallbackCases,
@@ -298,17 +316,25 @@ type reviewerKey struct {
 	persona string
 }
 
-// sortReviewerKeys orders keys ascending by (model, persona) so aggregation never
+// scoredRow pairs one row's PUBLIC (post-scrub) identity with the accumulator behind
+// it, so the reviewer rows and the coverage rows are emitted from a single ordered
+// sequence and cannot fall out of alignment.
+type scoredRow struct {
+	id  reviewerKey
+	acc *reviewerAcc
+}
+
+// sortScoredRows orders rows ascending by (model, persona) so aggregation never
 // depends on map iteration — determinism is an acceptance criterion here, not a
 // nicety (the reproducibility contract requires byte-identical output for identical
 // input). It matches Score's own sort, so the accumulator hands Score a slice that
 // is already in the order Score will keep.
-func sortReviewerKeys(keys []reviewerKey) {
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].model != keys[j].model {
-			return keys[i].model < keys[j].model
+func sortScoredRows(rows []scoredRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].id.model != rows[j].id.model {
+			return rows[i].id.model < rows[j].id.model
 		}
-		return keys[i].persona < keys[j].persona
+		return rows[i].id.persona < rows[j].id.persona
 	})
 }
 
@@ -331,7 +357,15 @@ type reviewerAcc struct {
 // against raw content, because excluding the sentinel is exactly what preserves the
 // clean-vs-garbage distinction.
 //
-// See benchmark.OutcomePrecedence for why the order is what it is.
+// PRECEDENCE — failed > unparseable > truncated > findings > clean. The signals are
+// not mutually exclusive on the wire (a truncated response can also raise findings; a
+// failed slot has no findings either way), so the order is a decision rather than an
+// implication, and this switch is its single statement of record.
+//
+// Data-integrity signals outrank volume signals throughout. A truncated response that
+// raised five findings reports "truncated", not "findings", because the
+// incompleteness is the load-bearing fact about that row — the five categories it did
+// raise are still recorded in the score, so nothing is lost by saying so.
 func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 	switch {
 	case a.Status != fanout.StatusOK || a.Error != "":
@@ -399,7 +433,7 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	if acc.outcomes == nil {
 		acc.outcomes = map[string]int{}
 	}
-	acc.outcomes[o.outcome]++
+	acc.outcomes[benchmark.OutcomeTallyKey(o.outcome)]++
 	if o.fallbackUsed {
 		acc.fallbackCases++
 	}
@@ -484,9 +518,23 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported
 // value in the pool summary and falling back to the configured model when the
 // provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
+//
+// The FallbackModel step in the middle exists because the usage-reported model is
+// only stamped when the provider returned token counts (statusFor, artifacts.go:326).
+// A case that FAILED after the slot had already failed over therefore reports no
+// model at all — and resolving straight to the registry would credit that case to the
+// configured primary, a model which by definition did not serve it. That is exactly
+// the misattribution this epic exists to remove, so the fallback model that actually
+// attempted the slot is preferred over the primary that did not.
+//
+// Every non-failover path is unchanged: FallbackUsed is false, so resolution is the
+// original prefer-usage-then-registry pair.
 func reviewerModel(cfg *fanout.ReviewConfig, a fanout.AgentStatus) string {
 	if a.Model != "" {
 		return a.Model
+	}
+	if a.FallbackUsed && a.FallbackModel != "" {
+		return a.FallbackModel
 	}
 	return cfg.Registry.Agents[a.Agent].Model
 }

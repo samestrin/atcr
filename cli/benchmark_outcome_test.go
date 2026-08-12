@@ -164,7 +164,7 @@ func TestReplayCheckpointCase_PreOutcomeCheckpointReplaysAsUnknown(t *testing.T)
 
 	acc := accs[reviewerKey{model: "m-greta", persona: "greta"}]
 	require.NotNil(t, acc)
-	assert.Equal(t, 1, acc.outcomes[benchmark.OutcomeUnknown],
+	assert.Equal(t, 1, acc.outcomes[benchmark.OutcomeUnknownLabel],
 		"an unrecorded outcome replays as unknown")
 	assert.Zero(t, acc.outcomes[benchmark.OutcomeClean],
 		"absence of a recorded outcome must NEVER be read as a clean review")

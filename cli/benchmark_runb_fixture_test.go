@@ -136,12 +136,13 @@ func TestRunBFixture_RejectedByExportGate(t *testing.T) {
 		assert.Contains(t, msg, want, "the rejection must name the short rows and their shortfall")
 	}
 
-	// The opt-out publishes the same run WITH the shortfall carried into the record,
-	// so an operator who insists cannot do so invisibly.
-	code, stdout, _ := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
-	require.Equal(t, 0, code, "the explicit opt-out permits publication: %s", stdout)
-	assert.Contains(t, stdout, "reviewer_coverage")
-	assert.Contains(t, stdout, "qwen3.8-max")
+	// The opt-out publishes the same run, but names the shortfall on stderr so an
+	// operator who insists cannot do so silently.
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
+	require.Equal(t, 0, code, "the explicit opt-out permits publication: %s%s", stdout, stderr)
+	assert.Contains(t, stdout, "benchmark-suite")
+	assert.Contains(t, stderr, "partial coverage")
+	assert.Contains(t, stderr, "qwen3.8-max")
 }
 
 // AC8: Run B's checkpoint predates the outcome vocabulary, so every one of its cases
@@ -167,11 +168,11 @@ func TestRunBFixture_PreOutcomeCasesReplayAsUnknown(t *testing.T) {
 
 	total := 0
 	for _, c := range rr.Coverage {
-		assert.Equal(t, len(c.CaseIDs), c.Outcomes[benchmark.OutcomeUnknown],
+		assert.Equal(t, len(c.CaseIDs), c.Outcomes[benchmark.OutcomeUnknownLabel],
 			"row %s/%s: every replayed case is unknown", c.Model, c.Persona)
 		assert.Zero(t, c.Outcomes[benchmark.OutcomeClean],
 			"row %s/%s: an unrecorded outcome must NEVER read as a clean review", c.Model, c.Persona)
-		total += c.Outcomes[benchmark.OutcomeUnknown]
+		total += c.Outcomes[benchmark.OutcomeUnknownLabel]
 	}
 	assert.Equal(t, 34, total, "2 lanes x 17 cases, all unknown")
 }

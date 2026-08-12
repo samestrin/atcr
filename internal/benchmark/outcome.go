@@ -52,15 +52,21 @@ const (
 	OutcomeFailed = "failed"
 )
 
-// OutcomePrecedence is the order in which outcome signals are tested, most severe
-// first. The signals are not mutually exclusive on the wire (a truncated response can
-// also raise findings; a failed slot has no findings either way), so a single enum
-// needs a stated precedence rather than an implied one:
+// OutcomeUnknownLabel is how OutcomeUnknown is spelled in a TALLY, as distinct from
+// on the wire.
 //
-//	failed > unparseable > truncated > findings > clean
-//
-// Data-integrity signals outrank volume signals throughout. A truncated response that
-// raised five findings reports "truncated", not "findings", because the incompleteness
-// is the load-bearing fact about that row — the five categories it did raise are still
-// recorded in the score, so nothing is lost by saying so.
-var OutcomePrecedence = []string{OutcomeFailed, OutcomeUnparseable, OutcomeTruncated, OutcomeFindings, OutcomeClean}
+// OutcomeUnknown must be the empty string where it is stored, so a checkpoint written
+// before the field existed decodes into it for free. But a tally is a JSON OBJECT
+// keyed by outcome, and the empty string is a legal-but-awful key: a pre-epic run
+// would serialize as {"": 17}, which a consumer renders as a blank label and cannot
+// tell from a corrupt entry. OutcomeTallyKey maps the wire value to this label so the
+// published artifact always names what it means.
+const OutcomeUnknownLabel = "unknown"
+
+// OutcomeTallyKey maps a stored outcome value to the key it is tallied under.
+func OutcomeTallyKey(outcome string) string {
+	if outcome == OutcomeUnknown {
+		return OutcomeUnknownLabel
+	}
+	return outcome
+}

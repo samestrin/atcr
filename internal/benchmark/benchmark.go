@@ -358,21 +358,18 @@ type Submission struct {
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
 
-	// SuiteCaseIDs and Coverage carry the run-result's per-row coverage into the
-	// published submission, so a consumer can see which cases each row was actually
-	// measured over instead of taking `runs` on trust.
+	// COVERAGE IS DELIBERATELY NOT CARRIED HERE. It would be genuinely useful on the
+	// board — an opted-out partial submission is otherwise indistinguishable from a
+	// full one — but adding a key to this envelope is a schema-versioning decision,
+	// not a documentation fix (docs/benchmark.md, "the run-result contract"), and
+	// submission_schema is scorecard.SubmissionSchema: the SHARED constant the
+	// production `leaderboard --export` envelope also stamps. Bumping it here would
+	// version the production envelope for a benchmark-only reason — the same
+	// fork-a-shared-schema hazard that keeps coverage off scorecard.PublicRecord.
 	//
-	// They are what makes `--allow-partial-coverage` an honest escape hatch rather
-	// than a way to launder a partial run: an opted-out submission is visibly short,
-	// not silently indistinguishable from a full one.
-	//
-	// Widening THIS envelope is legitimate where widening scorecard.PublicRecord is
-	// not. Submission is the benchmark-only wrapper — it already carries
-	// source/suite/suite_version, which the production envelope has no notion of.
-	// PublicRecord is the row schema shared byte-for-byte with production
-	// `leaderboard --export`, and stays untouched.
-	SuiteCaseIDs []string           `json:"suite_case_ids,omitempty"`
-	Coverage     []ReviewerCoverage `json:"reviewer_coverage,omitempty"`
+	// Coverage therefore lives on RunResult only, where `benchmark export` reads it
+	// to gate publication and an operator can inspect it directly. Putting it in the
+	// envelope belongs to an epic scoped to bump submission_schema.
 }
 
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not
@@ -403,7 +400,5 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
 		Reviewers:        scrubbed,
-		SuiteCaseIDs:     rr.SuiteCaseIDs,
-		Coverage:         rr.Coverage,
 	}
 }

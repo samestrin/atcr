@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/fanout"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,19 +93,50 @@ func TestApplyReviewerOutcome_SameModelDifferentPersonasStaySeparate(t *testing.
 	require.Len(t, order, 2, "persona is part of the row identity, not a label on it")
 }
 
+// A case that FAILED after its slot had already failed over must be attributed to
+// the model that actually attempted it, not to the configured primary.
+//
+// fanout stamps AgentStatus.Model only when the provider reported token usage, so a
+// failed call reports no model at all — and resolving straight to the registry would
+// credit that case to a primary which by definition did not serve it. AC1 forbids
+// exactly that. FallbackModel is populated unconditionally and is the honest answer.
+func TestReviewerModel_FailedFallbackCaseIsNotCreditedToThePrimary(t *testing.T) {
+	cfg := benchCfg([3]string{"brad", "qwen3.8-max", "brad"})
+
+	failedAfterFailover := fanout.AgentStatus{
+		Agent:         "brad",
+		Status:        fanout.StatusFailed,
+		FallbackUsed:  true,
+		FallbackFrom:  "brad",
+		FallbackModel: "llm-large",
+		// No Model: statusFor stamps it only when tokens were reported.
+	}
+	assert.Equal(t, "llm-large", reviewerModel(cfg, failedAfterFailover),
+		"the fallback attempted this case; the primary did not")
+
+	// Every non-failover path is unchanged.
+	assert.Equal(t, "qwen3.8-max", reviewerModel(cfg, fanout.AgentStatus{Agent: "brad", Status: fanout.StatusFailed}),
+		"no failover -> the configured model is still the right answer")
+	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{Agent: "brad", Model: "kimi-k3"}),
+		"a usage-reported model still wins over everything")
+	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{
+		Agent: "brad", Model: "kimi-k3", FallbackUsed: true, FallbackModel: "llm-large",
+	}), "usage-reported beats FallbackModel — it is the model that actually produced the tokens")
+}
+
 // Aggregation order is produced by an explicit sort, never by map iteration or by
 // arrival order — the reproducibility contract requires identical input to yield
 // byte-identical output.
-func TestSortReviewerKeys_DeterministicByModelThenPersona(t *testing.T) {
-	keys := []reviewerKey{
-		{model: "m-kai", persona: "kai"},
-		{model: "m-greta", persona: "zeta"},
-		{model: "m-greta", persona: "alpha"},
+func TestSortScoredRows_DeterministicByModelThenPersona(t *testing.T) {
+	rows := []scoredRow{
+		{id: reviewerKey{model: "m-kai", persona: "kai"}},
+		{id: reviewerKey{model: "m-greta", persona: "zeta"}},
+		{id: reviewerKey{model: "m-greta", persona: "alpha"}},
 	}
-	sortReviewerKeys(keys)
+	sortScoredRows(rows)
 	assert.Equal(t, []reviewerKey{
 		{model: "m-greta", persona: "alpha"},
 		{model: "m-greta", persona: "zeta"},
 		{model: "m-kai", persona: "kai"},
-	}, keys, "ascending by model, then persona")
+	}, []reviewerKey{rows[0].id, rows[1].id, rows[2].id}, "ascending by model, then persona")
 }
