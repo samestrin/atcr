@@ -221,6 +221,12 @@ func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	assert.Contains(t, stderr, "partial coverage", "the operator is told what they opted into")
 	assert.Contains(t, stderr, "2/3", "and the shortfall is quantified, not merely named")
 	assert.Contains(t, stderr, "1/3")
+	// The warning must state the consequence truthfully: the shortfall lives in the
+	// run-result ONLY. benchmark.Submission carries no coverage field, so once
+	// published, a consumer cannot tell these rows from fully-covered ones.
+	assert.Contains(t, stderr, "not carried into the submission",
+		"the one reassurance attached to bypassing a data-integrity gate must be true")
+	assert.NotContains(t, stderr, "submission records each row's covered cases")
 
 	// The envelope stays at the frozen schema with no new keys.
 	assert.NotContains(t, stdout, "reviewer_coverage",
