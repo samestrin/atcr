@@ -88,6 +88,28 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// Duplicate (model, persona) identities are rejected in reviewer_coverage; the
+// reviewer array gets the same rule. Two identical reviewer rows both join the
+// single coverage row and both publish, putting two different metric sets on the
+// board under one identity — the rejection rationale ("a reviewer identity has
+// exactly one covered case set") applies verbatim to the reviewer array.
+func TestBenchmarkExport_RejectsDuplicateReviewerIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m","persona":"p","runs":3,` +
+		`"findings_raised_avg":9.0,"corroboration_rate":0.9,"latency_p50_ms":20}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code,
+		"two reviewer rows of one identity must be rejected, not both published: %s", out)
+	assert.Contains(t, out, "more than once")
+}
+
 // The gate must key identity on the SCRUBBED (model, persona), because publication
 // re-scrubs every reviewer via scorecard.ScrubPublicRecord and the board keys on
 // the scrubbed value. Two raw identities that differ only by a scrub-stripped token
