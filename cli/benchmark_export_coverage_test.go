@@ -88,6 +88,27 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// The suite case-id list is the gate's denominator and comes from the same file
+// it validates, so it must be a SET BY CONSTRUCTION: a repeated id would shrink
+// the required set while inflating the reported suite size (["case-01"] x3 reads
+// as "full coverage of a 3-case suite"). The producer writes the manifest's case
+// list, which cannot repeat — a repeat means the file was hand-assembled.
+func TestBenchmarkExport_RejectsDuplicateSuiteCaseIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-01","case-01"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code,
+		"a repeated suite_case_ids entry must be malformed, not full coverage of an inflated suite: %s", out)
+	assert.Contains(t, out, "more than once")
+	assert.Contains(t, out, "case-01")
+}
+
 // suite_case_ids present but the coverage array stripped is MALFORMED, not
 // unmeasured. Treating it as unmeasured would make deleting the whole array a
 // cheaper bypass than any of the tampering shapes this gate defends against — the
