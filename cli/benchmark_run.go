@@ -308,10 +308,27 @@ func sortReviewerKeys(keys []reviewerKey) {
 // and persona are NOT stored here — they are the map key, so there is no second copy
 // that could drift from it.
 type reviewerAcc struct {
-	cases     []benchmark.CaseScore
-	caseIDs   []string // suite case ids this identity actually scored, in case order
-	costUSD   float64
-	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+	cases         []benchmark.CaseScore
+	caseIDs       []string       // suite case ids this identity actually scored, in case order
+	outcomes      map[string]int // benchmark.Outcome* -> number of this identity's cases
+	fallbackCases int            // cases fanout served from a fallback rather than the primary
+	costUSD       float64
+	latencies     []int64 // per-case wall-clock, recorded only when usage was reported
+}
+
+// reviewerOutcome classifies what actually happened when one reviewer met one case,
+// reading signals fanout already computed and stamped onto the AgentStatus. Nothing
+// here re-derives them: UnparseableResponse in particular encodes a decision about
+// the clean-review sentinel (stream.IsNoFindings) that must not be re-implemented
+// against raw content, because excluding the sentinel is exactly what preserves the
+// clean-vs-garbage distinction.
+//
+// See benchmark.OutcomePrecedence for why the order is what it is.
+func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
+	if len(raised) > 0 {
+		return benchmark.OutcomeFindings
+	}
+	return benchmark.OutcomeClean
 }
 
 // reviewerCaseOutcome is everything one reviewer produced on one case: the realized
@@ -329,6 +346,13 @@ type reviewerCaseOutcome struct {
 	usageReported bool
 	costUSD       float64
 	latencyMS     int64
+	// outcome is a benchmark.Outcome* value. The empty string is benchmark.OutcomeUnknown
+	// — a checkpoint written before the field existed — and must stay distinguishable
+	// from OutcomeClean.
+	outcome string
+	// fallbackUsed records that fanout served this case from a fallback model rather
+	// than the slot's configured primary. Tracked alongside outcome, never inside it.
+	fallbackUsed bool
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
@@ -356,6 +380,13 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	}
 	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: o.expected, Raised: o.raised})
 	acc.caseIDs = append(acc.caseIDs, o.caseID)
+	if acc.outcomes == nil {
+		acc.outcomes = map[string]int{}
+	}
+	acc.outcomes[o.outcome]++
+	if o.fallbackUsed {
+		acc.fallbackCases++
+	}
 	if o.usageReported {
 		acc.costUSD += o.costUSD
 		acc.latencies = append(acc.latencies, o.latencyMS)
