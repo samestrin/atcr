@@ -657,3 +657,39 @@ func TestExecuteBenchmarkRun_UsageGatedPartialResumeReproducesCost(t *testing.T)
 			"partial resume per-reviewer cost equals uninterrupted (replayed case 0 + executed case 1)")
 	}
 }
+
+// A checkpoint is operator-supplied JSON and its outcome field is folded straight
+// into the published outcomes tally, so validateCheckpointIntegrity must reject any
+// value outside the outcome vocabulary. Two adversarial cases: an arbitrary string
+// (which would become an arbitrary tally key in the run-result) and the literal
+// "unknown" — the TALLY label, never a stored value — whose acceptance would make a
+// fabricated outcome indistinguishable from the genuine absence the enum exists to
+// protect.
+func TestLoadCheckpoint_RejectsOutOfVocabularyOutcome(t *testing.T) {
+	writeCp := func(t *testing.T, outcome string) string {
+		t.Helper()
+		cp := runCheckpoint{
+			ReproHash: "h", Suite: "s", SuiteVersion: "1", Roster: []string{"a=m=p"},
+			Cases: []checkpointCase{{
+				Index: 0, CaseID: "case-01", Expected: []string{"correctness"},
+				Reviewers: []checkpointReviewer{{Agent: "a", Model: "m", Persona: "p", Outcome: outcome}},
+			}},
+		}
+		data, err := json.Marshal(cp)
+		require.NoError(t, err)
+		path := filepath.Join(t.TempDir(), "ckpt.json")
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		return path
+	}
+
+	for _, bad := range []string{"unknown", "fabricated"} {
+		_, err := loadCheckpoint(writeCp(t, bad))
+		require.ErrorIs(t, err, errCheckpointCorrupt,
+			"outcome %q is not a storable vocabulary value — the checkpoint must fail closed", bad)
+	}
+
+	for _, good := range []string{"", "clean", "findings", "unparseable", "truncated", "incomplete", "failed"} {
+		_, err := loadCheckpoint(writeCp(t, good))
+		require.NoError(t, err, "outcome %q is a legitimate stored value", good)
+	}
+}
