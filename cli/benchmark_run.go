@@ -166,6 +166,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
+			outcome := reviewerOutcome(a, raised)
+
 			applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 				model:         model,
 				persona:       persona,
@@ -175,6 +177,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				usageReported: usageReported,
 				costUSD:       cost,
 				latencyMS:     latency,
+				outcome:       outcome,
+				fallbackUsed:  a.FallbackUsed,
 			})
 
 			if cp != nil {
@@ -186,6 +190,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 					UsageReported: usageReported,
 					CostUSD:       cost,
 					LatencyMS:     latency,
+					Outcome:       outcome,
+					FallbackUsed:  a.FallbackUsed,
 				})
 			}
 		}
@@ -228,9 +234,11 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		// set), so a consumer can join coverage to its row positionally as well as by
 		// identity.
 		coverage = append(coverage, benchmark.ReviewerCoverage{
-			Model:   k.model,
-			Persona: k.persona,
-			CaseIDs: acc.caseIDs,
+			Model:         k.model,
+			Persona:       k.persona,
+			CaseIDs:       acc.caseIDs,
+			Outcomes:      acc.outcomes,
+			FallbackCases: acc.fallbackCases,
 		})
 	}
 
@@ -325,10 +333,18 @@ type reviewerAcc struct {
 //
 // See benchmark.OutcomePrecedence for why the order is what it is.
 func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
-	if len(raised) > 0 {
+	switch {
+	case a.Status != fanout.StatusOK || a.Error != "":
+		return benchmark.OutcomeFailed
+	case a.UnparseableResponse:
+		return benchmark.OutcomeUnparseable
+	case a.ResponseTruncated:
+		return benchmark.OutcomeTruncated
+	case len(raised) > 0:
 		return benchmark.OutcomeFindings
+	default:
+		return benchmark.OutcomeClean
 	}
-	return benchmark.OutcomeClean
 }
 
 // reviewerCaseOutcome is everything one reviewer produced on one case: the realized
@@ -409,6 +425,13 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			usageReported: r.UsageReported,
 			costUSD:       r.CostUSD,
 			latencyMS:     r.LatencyMS,
+			// A checkpoint written before the outcome field existed decodes to the
+			// empty string — benchmark.OutcomeUnknown — and is folded as such. It must
+			// not be inferred from Raised: "no categories recorded" is exactly the
+			// ambiguity the vocabulary exists to resolve, so guessing "clean" here
+			// would manufacture the claim the epic set out to stop making.
+			outcome:      r.Outcome,
+			fallbackUsed: r.FallbackUsed,
 		})
 	}
 }

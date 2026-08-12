@@ -66,6 +66,22 @@ type checkpointReviewer struct {
 	UsageReported bool     `json:"usage_reported"`
 	CostUSD       float64  `json:"cost_usd"`
 	LatencyMS     int64    `json:"latency_ms"`
+
+	// Outcome is a benchmark.Outcome* value describing what actually happened on
+	// this case — the signal that separates a clean review from unparseable prose
+	// from a failed call, all three of which record zero Raised categories.
+	//
+	// PURELY ADDITIVE. A checkpoint written before this field existed omits it,
+	// decodes to the empty string (benchmark.OutcomeUnknown), and replays as
+	// unknown — never as clean. That is the entire reason the vocabulary is a string
+	// enum rather than a pair of booleans, which would both default to false and so
+	// assert a clean review about cases nobody recorded one for.
+	Outcome string `json:"outcome,omitempty"`
+
+	// FallbackUsed records that fanout served this case from a fallback model rather
+	// than the slot's configured primary. Kept beside Outcome, not inside it: the
+	// substitution is orthogonal to how the review turned out.
+	FallbackUsed bool `json:"fallback_used,omitempty"`
 }
 
 // errCheckpointSuiteMismatch reports that a checkpoint's recorded suite identity

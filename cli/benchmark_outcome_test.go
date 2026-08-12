@@ -9,6 +9,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,8 +43,10 @@ func TestExecuteBenchmarkRun_DistinguishesZeroFindingOutcomes(t *testing.T) {
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
 	rr, err := executeBenchmarkRun(context.Background(), cfg, perModelCompleter{
-		// The specified way to report nothing: a clean review.
-		"m-clean": func() (string, error) { return "No findings.", nil },
+		// The specified way to report nothing: the literal clean-review sentinel.
+		// Note this is NOT free-form prose that happens to say "no findings" — see
+		// TestExecuteBenchmarkRun_NearMissProseIsNotACleanReview.
+		"m-clean": func() (string, error) { return stream.NoFindingsSentinel, nil },
 		// Content present, nothing parseable, and NOT the sentinel.
 		"m-prose": func() (string, error) {
 			return "I looked over the diff and honestly it seems fine to me overall.", nil
@@ -80,6 +83,29 @@ func TestExecuteBenchmarkRun_DistinguishesZeroFindingOutcomes(t *testing.T) {
 	assert.NotEqual(t, prose.Outcomes, broken.Outcomes, "unparseable must not read as failed")
 }
 
+// Prose that merely SOUNDS like a clean review is not one. `stream.IsNoFindings`
+// matches the literal sentinel (case- and whitespace-insensitively) and nothing else,
+// so "No findings." — a sentence, not the token — is unparseable output.
+//
+// This is the distinction the whole vocabulary rests on, and it is easy to get
+// backwards: a reviewer that ignored the prompt contract and wrote its own sentence
+// must not earn the same row as one that followed it. Pinned separately from the
+// three-way test above because a near miss is the realistic failure, not an obvious
+// wall of prose.
+func TestExecuteBenchmarkRun_NearMissProseIsNotACleanReview(t *testing.T) {
+	cfg := benchCfg([3]string{"nearly", "m-nearly", "nearly"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	cov := coverageFor(t, rr, "m-nearly", "nearly")
+	assert.Equal(t, 2, cov.Outcomes[benchmark.OutcomeUnparseable],
+		`"No findings." is a sentence, not the sentinel — it is unparseable output`)
+	assert.Zero(t, cov.Outcomes[benchmark.OutcomeClean],
+		"crediting it as a clean review would let a reviewer that ignored the contract publish as if it followed it")
+}
+
 // A reviewer that raised findings tallies as findings — the positive control, without
 // which every assertion above is satisfied by a tally that is always "clean".
 func TestExecuteBenchmarkRun_TalliesFindingsOutcome(t *testing.T) {
@@ -102,14 +128,16 @@ func TestExecuteBenchmarkRun_OutcomeSurvivesResume(t *testing.T) {
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	path := t.TempDir() + "/ckpt.json"
 
-	baseline, err := executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, "")
+	sentinel := perModelCompleter{"m-greta": func() (string, error) { return stream.NoFindingsSentinel, nil }}
+
+	baseline, err := executeBenchmarkRun(context.Background(), cfg, sentinel, suiteValidPath, gen, "")
 	require.NoError(t, err)
 	require.Equal(t, 2, coverageFor(t, baseline, "m-greta", "greta").Outcomes[benchmark.OutcomeClean],
 		"the baseline must actually tally clean reviews or the comparison is vacuous")
 
-	_, err = executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, path)
+	_, err = executeBenchmarkRun(context.Background(), cfg, sentinel, suiteValidPath, gen, path)
 	require.NoError(t, err)
-	resumed, err := executeBenchmarkRun(context.Background(), cfg, stubNoFindingsCompleter{}, suiteValidPath, gen, path)
+	resumed, err := executeBenchmarkRun(context.Background(), cfg, sentinel, suiteValidPath, gen, path)
 	require.NoError(t, err)
 
 	assert.Equal(t, mustMarshal(t, baseline.Coverage), mustMarshal(t, resumed.Coverage),
