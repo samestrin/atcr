@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -132,6 +133,35 @@ func TestBenchmarkExport_RejectsEmptyReviewers(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
 	require.NotEqual(t, 0, code, "empty reviewers must fail: %s", out)
 	require.Contains(t, out, "no reviewers")
+}
+
+// A reviewer row with an empty (or whitespace-only) model or persona is an
+// unidentifiable row: it would publish to a public leaderboard with no
+// identity. Export must reject it the same way it rejects an empty suite
+// identity, rather than emitting the row at exit 0.
+func TestBenchmarkExport_RejectsEmptyReviewerIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		model   string
+		persona string
+	}{
+		{name: "empty model", model: "", persona: "bruce"},
+		{name: "whitespace model", model: "  ", persona: "bruce"},
+		{name: "empty persona", model: "claude-sonnet-4-6", persona: ""},
+		{name: "whitespace persona", model: "claude-sonnet-4-6", persona: " "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"reviewers":[{"model":` + strconv.Quote(tc.model) + `,"persona":` + strconv.Quote(tc.persona) + `,"runs":2,` +
+				`"findings_raised_avg":10.5,"corroboration_rate":0.6,` +
+				`"cost_per_corroborated_finding_usd":0.006,"latency_p50_ms":8900}]}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code, "%s must fail export: %s", tc.name, out)
+			require.Contains(t, out, "empty model/persona")
+		})
+	}
 }
 
 // A hand-supplied run-result carrying an out-of-range out_of_vocabulary_rate is
