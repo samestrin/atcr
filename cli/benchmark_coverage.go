@@ -120,6 +120,26 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 				"a reviewer identity has exactly one covered case set, so this file is malformed",
 				path, c.Model, c.Persona)
 		}
+		// The outcomes tally is untrusted input here, exactly like
+		// out_of_vocabulary_rate at the load boundary: the producer writes one
+		// closed-vocabulary outcome per case, so a negative count or a key outside
+		// the vocabulary can only come from a hand-assembled file. The sum check
+		// below cannot catch either shape — a -1 paired with an inflated positive
+		// still sums to the covered-set size. The "unknown" TALLY label is a legal
+		// key (OutcomeTallyKey spells OutcomeUnknown that way); every other key is
+		// a stored wire value, so ValidOutcome is the allowlist.
+		for k, n := range c.Outcomes {
+			if n < 0 {
+				return fmt.Errorf("run-result %s records a negative outcome tally for %s/%s (%q: %d); "+
+					"the producer counts one outcome per case, so this file is malformed",
+					path, c.Model, c.Persona, k, n)
+			}
+			if k != benchmark.OutcomeUnknownLabel && !benchmark.ValidOutcome(k) {
+				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary; "+
+					"the producer writes only benchmark.Outcome* values, so this file is malformed",
+					path, k, c.Model, c.Persona)
+			}
+		}
 		byIdentity[key] = c
 	}
 
