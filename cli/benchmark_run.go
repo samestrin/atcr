@@ -378,15 +378,18 @@ type reviewerAcc struct {
 // against raw content, because excluding the sentinel is exactly what preserves the
 // clean-vs-garbage distinction.
 //
-// PRECEDENCE — failed > unparseable > truncated > findings > clean. The signals are
-// not mutually exclusive on the wire (a truncated response can also raise findings; a
-// failed slot has no findings either way), so the order is a decision rather than an
-// implication, and this switch is its single statement of record.
+// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > clean.
+// The signals are not mutually exclusive on the wire (a truncated response can also
+// raise findings; a failed slot has no findings either way), so the order is a
+// decision rather than an implication, and this switch is its single statement of
+// record.
 //
 // Data-integrity signals outrank volume signals throughout. A truncated response that
 // raised five findings reports "truncated", not "findings", because the
 // incompleteness is the load-bearing fact about that row — the five categories it did
-// raise are still recorded in the score, so nothing is lost by saying so.
+// raise are still recorded in the score, so nothing is lost by saying so. A chunked
+// reviewer that saw only some of its bins reports "incomplete" for the same reason:
+// it may have raised nothing, but only about the fraction it read.
 func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 	switch {
 	case a.Status != fanout.StatusOK || a.Error != "":
@@ -395,6 +398,8 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 		return benchmark.OutcomeUnparseable
 	case a.ResponseTruncated:
 		return benchmark.OutcomeTruncated
+	case a.UnreviewedChunks > 0:
+		return benchmark.OutcomeIncomplete
 	case len(raised) > 0:
 		return benchmark.OutcomeFindings
 	default:
