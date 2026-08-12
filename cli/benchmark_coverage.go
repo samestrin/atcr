@@ -37,7 +37,17 @@ func coverageKey(model, persona string) reviewerKey {
 const maxNamedMissingCases = 3
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
-// having been scored over less than the full suite.
+// having been scored over less than the suite the run-result declares.
+//
+// SCOPE — read this before quoting the gate as a suite-coverage guarantee. The
+// denominator (rr.SuiteCaseIDs) is supplied by the same file the gate validates, so
+// on its own this is an INTERNAL-CONSISTENCY check: it proves every reviewer row
+// covers the declared case list, not that the declared case list is the suite's. A
+// caller who truncates suite_case_ids and every row's case_ids to the same subset
+// passes every check below. anchorSuiteDenominator closes that gap by comparing the
+// declared list against the suite manifest, and `atcr benchmark export --suite-path`
+// is what promotes this gate to the full guarantee. Without that flag, what follows
+// is the weaker claim.
 //
 // The gate exists because `runs` is a count and case difficulty on this suite varies
 // enormously — two rows built from different subsets are not comparable, and reading
@@ -236,6 +246,78 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
 		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
 		path, len(suite), strings.Join(short, "; "))
+}
+
+// anchorSuiteDenominator ties the run-result's declared denominator to the suite
+// manifest at suitePath, turning checkCoverage's internal-consistency check into the
+// suite-coverage guarantee its doc describes.
+//
+// It is opt-in (`--suite-path`) rather than mandatory because export must keep
+// accepting a run-result whose suite is not on the exporting machine — the file is
+// portable and the suite tree is not.
+//
+// The three checks run in this order deliberately: suite identity first, so anchoring
+// to the wrong suite reports the wrong suite rather than reporting every case as
+// missing; then the presence of a denominator, since an unmeasured file has nothing to
+// anchor and passing the flag must not read as a check that silently did nothing; then
+// the case list itself, compared as a SET in both directions — a missing id is the
+// truncation this exists to catch, and an EXTRA id is a denominator inflated past what
+// the suite can support.
+func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) error {
+	m, err := benchmark.Load(suitePath)
+	if err != nil {
+		return fmt.Errorf("loading suite %s to anchor %s: %w", suitePath, path, err)
+	}
+	if m.Suite != rr.Suite || m.SuiteVersion != rr.SuiteVersion {
+		return fmt.Errorf("run-result %s is for suite %s/%s but the manifest at %s is %s/%s; "+
+			"anchoring a run-result to a different suite compares two unrelated case lists",
+			path, rr.Suite, rr.SuiteVersion, suitePath, m.Suite, m.SuiteVersion)
+	}
+	if len(rr.SuiteCaseIDs) == 0 {
+		return fmt.Errorf("run-result %s records no suite_case_ids, so there is nothing to anchor "+
+			"against the suite manifest at %s; drop --suite-path to publish it as unmeasured, "+
+			"or re-run `atcr benchmark run` to produce a run-result that records coverage",
+			path, suitePath)
+	}
+
+	// Both directions are compared, and the declared list is deduped on the way in so
+	// a repeated id cannot pad the set — checkCoverage rejects that shape too, but this
+	// function runs first and must not be the looser of the two.
+	declared := make(map[string]bool, len(rr.SuiteCaseIDs))
+	for _, id := range rr.SuiteCaseIDs {
+		declared[id] = true
+	}
+	manifestIDs := make(map[string]bool, len(m.Cases))
+	var missing []string
+	for _, c := range m.Cases {
+		manifestIDs[c.ID] = true
+		if !declared[c.ID] {
+			missing = append(missing, c.ID)
+		}
+	}
+	var extra []string
+	for id := range declared {
+		if !manifestIDs[id] {
+			extra = append(extra, id)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+
+	switch {
+	case len(missing) > 0 && len(extra) > 0:
+		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d: "+
+			"missing %s; not in the suite: %s",
+			path, len(declared), suitePath, len(m.Cases), summarizeMissing(missing), summarizeMissing(extra))
+	case len(missing) > 0:
+		return fmt.Errorf("run-result %s declares a %d-case suite but the suite manifest at %s has %d, "+
+			"missing %s; every reviewer row was therefore scored against a shrunken denominator",
+			path, len(declared), suitePath, len(m.Cases), summarizeMissing(missing))
+	case len(extra) > 0:
+		return fmt.Errorf("run-result %s declares case(s) the suite manifest at %s does not contain: %s",
+			path, suitePath, summarizeMissing(extra))
+	}
+	return nil
 }
 
 // validateCoveredSet rejects a coverage row that is not a subset-without-repeats of

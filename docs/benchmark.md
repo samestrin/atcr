@@ -196,11 +196,12 @@ Emit a **suite-tagged** public submission record from a suite run-result.
 ```bash
 atcr benchmark export --in run.json
 atcr benchmark export --in run.json --output /tmp/submission.json
+atcr benchmark export --in run.json --suite-path benchmarks/standard-v1
 atcr benchmark export --in run.json --allow-partial-coverage
 ```
 
-**Export refuses a run-result whose reviewer rows do not each cover the full suite.**
-Case difficulty varies enormously across the suite, so a recall computed over one
+**Export refuses a run-result whose reviewer rows do not each cover the case list
+the run-result declares.** Case difficulty varies enormously across the suite, so a recall computed over one
 8-case subset is not comparable to one computed over a different 8 — publishing them
 side by side silently compares different measurements. Since a run-result reports one
 row per *realized* model (see [Realized-model attribution](#realized-model-attribution-and-coverage)),
@@ -224,6 +225,33 @@ not self-describing to the board. Prefer re-running the missing cases.
 A run-result that records **no** coverage at all — any file written before coverage
 existed — is treated as *unmeasured* rather than short: export warns that it could not
 be verified and proceeds, mirroring how a nil `out_of_vocabulary_rate` is read.
+
+### What the coverage gate does and does not prove
+
+The denominator the gate divides by is `suite_case_ids`, which comes from the same
+run-result the gate is checking. On its own the check is therefore an
+**internal-consistency** one: it proves every reviewer row covers the declared case
+list. It does not, by itself, prove the declared list is the suite's — a caller who
+truncates `suite_case_ids` and every row's `case_ids` to the same 8 of 17 cases
+produces a file that passes every check and publishes as fully covered.
+
+`--suite-path <dir>` closes that gap and is what promotes the gate to a real
+suite-coverage guarantee: the run-result's `suite`/`suite_version` must match the
+manifest, and its `suite_case_ids` must equal the manifest's case list exactly (both
+directions — a missing id is a truncated denominator, an extra one is an inflated
+one). It is optional because a run-result is portable and the suite tree may not be
+on the exporting machine; pass it whenever the suite *is* available, and always for
+anything headed to the public board.
+
+```
+run-result run.json declares a 8-case suite but the suite manifest at benchmarks/standard-v1
+has 17, missing case-09, case-10, case-11 and 6 more; every reviewer row was therefore
+scored against a shrunken denominator
+```
+
+With `--suite-path`, a run-result recording no coverage at all is an **error** rather
+than an unmeasured warning: there is nothing to anchor, and the flag must not read as
+a check that silently did nothing.
 
 The output envelope is **distinct from the production `leaderboard --export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public
@@ -365,9 +393,13 @@ submission's `submitted_at`, so the same run-result always exports identically.
 
 Behavior:
 - Missing/malformed run-result, or one missing `suite`/`suite_version` → error.
-- Any reviewer row not covering the full suite → error, unless
+- Any reviewer row not covering the run-result's declared case list → error, unless
   `--allow-partial-coverage` is passed. A run-result with no coverage at all warns
   and proceeds (unmeasured, not short).
+- `--suite-path <dir>` (optional) anchors that declared case list to the suite
+  manifest: a mismatched `suite`/`suite_version`, a missing denominator, or a case
+  list that differs from the manifest's in either direction → error. Without it the
+  gate can only prove internal consistency.
 - A malformed coverage payload → error: a duplicate `(model, persona)` identity, a
   reviewer row with no coverage row, a `runs` that disagrees with the row's covered
   case count, a repeated case id within a row, or a case id absent from the suite.

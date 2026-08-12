@@ -157,6 +157,7 @@ func newBenchmarkExportCmd() *cobra.Command {
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json) the run-result was produced from. Optional: when given, the run-result's suite_case_ids must equal the manifest's case list, which anchors the coverage gate's denominator to the suite instead of to the file being checked. Without it the gate can only prove the file is internally consistent — a run-result that truncated its own case list passes.")
 	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, the shortfall is recorded in the run-result only — the submission does not carry it, so consumers cannot distinguish these rows from fully-covered ones.")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
@@ -169,6 +170,7 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	in, _ := cmd.Flags().GetString("in")
 	output, _ := cmd.Flags().GetString("output")
 	allowPartial, _ := cmd.Flags().GetBool("allow-partial-coverage")
+	suitePath, _ := cmd.Flags().GetString("suite-path")
 
 	data, err := os.ReadFile(in)
 	if err != nil {
@@ -201,6 +203,14 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Anchor before the gate, not after: checkCoverage's every diagnostic is phrased
+	// against rr.SuiteCaseIDs, so a truncated denominator would otherwise produce a
+	// clean bill of health that the anchor then contradicts.
+	if suitePath != "" {
+		if err := anchorSuiteDenominator(rr, suitePath, in); err != nil {
+			return err
+		}
+	}
 	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
 		return err
 	}
