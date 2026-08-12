@@ -407,11 +407,12 @@ call failed all raise zero categories and score identically:
 | `clean` | Reviewed successfully and emitted the `NO FINDINGS` sentinel. |
 | `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
+| `incomplete` | A chunked reviewer saw only a fraction of the diff (some bins failed while the slot still reported ok). |
 | `failed` | The call never produced a reviewable response. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
-Precedence when signals overlap is `failed > unparseable > truncated > findings >
-clean`: data-integrity signals outrank volume signals.
+Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
+findings > clean`: data-integrity signals outrank volume signals.
 
 `unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
 predates this field reports `unknown`, never "reviewed and found nothing" — the
