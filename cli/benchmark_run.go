@@ -87,8 +87,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	accs := map[string]*reviewerAcc{}
-	var order []string // reviewer names, sorted for deterministic aggregation
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey // realized identities, sorted for deterministic aggregation
 
 	for i, c := range m.Cases {
 		// Resume: a case already in the checkpoint is replayed into the accumulator
@@ -166,7 +166,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			applyReviewerOutcome(accs, &order, a.Agent, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
+			applyReviewerOutcome(accs, &order, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
 
 			if cp != nil {
 				caseReviewers = append(caseReviewers, checkpointReviewer{
@@ -192,13 +192,13 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		}
 	}
 
-	sort.Strings(order)
+	sortReviewerKeys(order)
 	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
-	for _, name := range order {
-		acc := accs[name]
+	for _, k := range order {
+		acc := accs[k]
 		reviewers = append(reviewers, benchmark.ReviewerScore{
-			Model:        acc.model,
-			Persona:      acc.persona,
+			Model:        k.model,
+			Persona:      k.persona,
 			Cases:        acc.cases,
 			CostUSD:      acc.costUSD,
 			LatencyP50MS: medianInt64(acc.latencies),
@@ -236,10 +236,42 @@ func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	return sig
 }
 
-// reviewerAcc accumulates one reviewer's outcomes across every case.
+// reviewerKey identifies one leaderboard row by the REALIZED (model, persona) pair
+// — the model that actually served the case, not the lane it was configured under.
+//
+// It is deliberately the same identity benchmark.Score already sorts and publishes
+// on (score.go:60-75), so a lane that failed over mid-suite yields one row per model
+// actually used instead of crediting every case to whichever model happened to serve
+// the first one. Keying by the LANE (the agent name) is what silently attributed 9 of
+// Run B's 17 cases to a model that never saw them.
+//
+// Consequence, accepted: two lanes that realize the same model AND the same persona
+// merge into a single row, where the lane-keyed accumulator emitted two rows of
+// identical public identity. reviewerPersona falls back to the agent name when no
+// persona is configured, so distinct lanes keep distinct personas by default.
+type reviewerKey struct {
+	model   string
+	persona string
+}
+
+// sortReviewerKeys orders keys ascending by (model, persona) so aggregation never
+// depends on map iteration — determinism is an acceptance criterion here, not a
+// nicety (the reproducibility contract requires byte-identical output for identical
+// input). It matches Score's own sort, so the accumulator hands Score a slice that
+// is already in the order Score will keep.
+func sortReviewerKeys(keys []reviewerKey) {
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].model != keys[j].model {
+			return keys[i].model < keys[j].model
+		}
+		return keys[i].persona < keys[j].persona
+	})
+}
+
+// reviewerAcc accumulates one realized identity's outcomes across every case. Model
+// and persona are NOT stored here — they are the map key, so there is no second copy
+// that could drift from it.
 type reviewerAcc struct {
-	model     string
-	persona   string
 	cases     []benchmark.CaseScore
 	costUSD   float64
 	latencies []int64 // per-case wall-clock, recorded only when usage was reported
@@ -252,12 +284,13 @@ type reviewerAcc struct {
 // uninterrupted one (AC3): model/persona are locked at first sighting (matching the
 // original first-case-wins behavior), and the usage-gated cost/latency are added in
 // the same case order, keeping the float sum and latency median byte-identical.
-func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
-	acc := accs[agent]
+func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
+	key := reviewerKey{persona: persona}
+	acc := accs[key]
 	if acc == nil {
-		acc = &reviewerAcc{model: model, persona: persona}
-		accs[agent] = acc
-		*order = append(*order, agent)
+		acc = &reviewerAcc{}
+		accs[key] = acc
+		*order = append(*order, key)
 	}
 	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
 	if usageReported {
@@ -271,9 +304,9 @@ func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, 
 // uses — no review re-execution and no Completer call (AC2). Expected categories
 // are re-read from the suite manifest (passed in as expected) because they are
 // identical for every reviewer of a case and are not durable per-reviewer state.
-func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase, expected []string) {
+func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, entry checkpointCase, expected []string) {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+		applyReviewerOutcome(accs, order, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
 	}
 }
 
