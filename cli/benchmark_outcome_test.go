@@ -241,6 +241,23 @@ func TestExecuteBenchmarkRun_FallbackCaseKeepsConfiguredPersona(t *testing.T) {
 	assert.Equal(t, 2, cov.Outcomes[benchmark.OutcomeClean])
 }
 
+// Two lanes realizing the SAME (model, persona) would fold the same case twice
+// under one accumulator key: Runs doubles the suite size and the coverage row lists
+// the case id twice — which the export gate then rejects as "malformed...
+// hand-assembled" (cli/benchmark_coverage.go), destroying a legitimate paid run and
+// misdiagnosing it as tampering. The producer must detect the repeated (key,
+// caseID) and fail loudly, naming the colliding lanes.
+func TestExecuteBenchmarkRun_FailsWhenTwoLanesRealizeTheSameIdentity(t *testing.T) {
+	cfg := benchCfg([3]string{"brad", "m-shared", "shared"}, [3]string{"brad-backup", "m-shared", "shared"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+	require.Error(t, err, "two lanes scoring the same case under one realized identity must not silently merge")
+	assert.Contains(t, err.Error(), "brad", "the diagnostic names the colliding lanes")
+	assert.Contains(t, err.Error(), "brad-backup", "the diagnostic names BOTH colliding lanes")
+	assert.Contains(t, err.Error(), "m-shared", "and the realized identity they collided on")
+}
+
 // AC4/AC8: a checkpoint written BEFORE the outcome field existed replays as
 // `unknown`, never as `clean`. This is the whole reason the vocabulary is a string
 // enum rather than a pair of booleans — two bools both default to false, which would
