@@ -116,20 +116,19 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 
 	var short []string
 	consumed := make(map[reviewerKey]bool, len(rr.Reviewers))
-	seen := make(map[reviewerKey]bool, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := coverageKey(rev.Model, rev.Persona)
 		// The reviewer array gets the same duplicate-identity rule as the coverage
 		// array above: two identical reviewer rows both join the single coverage row
 		// and both publish, putting two different metric sets on the board under one
 		// identity. The rejection rationale — a reviewer identity has exactly one
-		// covered case set — applies verbatim here.
-		if seen[key] {
+		// covered case set — applies verbatim here. The consumed set doubles as the
+		// seen set: every joined identity is recorded exactly once.
+		if consumed[key] {
 			return fmt.Errorf("run-result %s records reviewer %s/%s more than once; "+
 				"a reviewer identity has exactly one covered case set, so this file is malformed",
 				path, rev.Model, rev.Persona)
 		}
-		seen[key] = true
 		consumed[key] = true
 		cov, ok := byIdentity[key]
 		if !ok {
