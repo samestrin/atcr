@@ -164,7 +164,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// lets ["case-01","case-02","case-03","case-01"] satisfy a 3-case suite while
 		// reporting runs=4 — full marks for a row that scored one case twice and
 		// carries a bigger denominator than the suite has cases.
-		if err := validateCoveredSet(suite, rr.SuiteCaseIDs, cov.CaseIDs, path, rev.Model, rev.Persona); err != nil {
+		if err := validateCoveredSet(suite, cov.CaseIDs, path, rev.Model, rev.Persona); err != nil {
 			return err
 		}
 		missing := missingCases(suite, cov.CaseIDs)
@@ -219,7 +219,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 // the suite. Both shapes are impossible from the producer — it appends one case id
 // per fold, from the manifest — so either one means the file was assembled by hand,
 // and both inflate a row's apparent coverage past what the suite can support.
-func validateCoveredSet(suite map[string]bool, suiteIDs, covered []string, path, model, persona string) error {
+func validateCoveredSet(suite map[string]bool, covered []string, path, model, persona string) error {
 	seen := make(map[string]bool, len(covered))
 	for _, id := range covered {
 		if seen[id] {
