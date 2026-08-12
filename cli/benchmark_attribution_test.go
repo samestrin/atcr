@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,9 +20,14 @@ type foldCase struct {
 func foldAll(folds []foldCase) (map[reviewerKey]*reviewerAcc, []reviewerKey) {
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey
-	for _, f := range folds {
-		applyReviewerOutcome(accs, &order, f.model, f.persona,
-			[]string{"correctness"}, f.raised, false, 0, 0)
+	for i, f := range folds {
+		applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+			model:    f.model,
+			persona:  f.persona,
+			caseID:   fmt.Sprintf("case-%02d", i+1),
+			expected: []string{"correctness"},
+			raised:   f.raised,
+		})
 	}
 	return accs, order
 }

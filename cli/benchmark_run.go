@@ -166,7 +166,16 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			applyReviewerOutcome(accs, &order, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
+			applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+				model:         model,
+				persona:       persona,
+				caseID:        c.ID,
+				expected:      c.ExpectedCategories,
+				raised:        raised,
+				usageReported: usageReported,
+				costUSD:       cost,
+				latencyMS:     latency,
+			})
 
 			if cp != nil {
 				caseReviewers = append(caseReviewers, checkpointReviewer{
@@ -192,8 +201,20 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		}
 	}
 
+	return buildRunResult(accs, order, m, generatedAt), nil
+}
+
+// buildRunResult folds the finished accumulator into the suite-tagged RunResult:
+// the scored reviewer rows, the run diagnostic, and the coverage sibling that names
+// the cases behind each row.
+//
+// It is separated from executeBenchmarkRun so the aggregation can be driven directly
+// from a recorded checkpoint — the Run B fixture folds through this exact path in
+// tests, without a suite on disk, a Completer, or a network.
+func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *benchmark.Manifest, generatedAt time.Time) *benchmark.RunResult {
 	sortReviewerKeys(order)
 	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
+	coverage := make([]benchmark.ReviewerCoverage, 0, len(order))
 	for _, k := range order {
 		acc := accs[k]
 		reviewers = append(reviewers, benchmark.ReviewerScore{
@@ -203,6 +224,19 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			CostUSD:      acc.costUSD,
 			LatencyP50MS: medianInt64(acc.latencies),
 		})
+		// Emitted in the same order as the reviewer rows (both walk the sorted key
+		// set), so a consumer can join coverage to its row positionally as well as by
+		// identity.
+		coverage = append(coverage, benchmark.ReviewerCoverage{
+			Model:   k.model,
+			Persona: k.persona,
+			CaseIDs: acc.caseIDs,
+		})
+	}
+
+	suiteCaseIDs := make([]string, len(m.Cases))
+	for i, c := range m.Cases {
+		suiteCaseIDs[i] = c.ID
 	}
 
 	return &benchmark.RunResult{
@@ -215,7 +249,9 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// fold in through applyReviewerOutcome before this point. nil when the run
 		// raised no findings at all, which must not read as perfect agreement.
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
-	}, nil
+		SuiteCaseIDs:        suiteCaseIDs,
+		Coverage:            coverage,
+	}
 }
 
 // rosterSignature builds the deterministic "agent=model=persona" signature of the
@@ -273,8 +309,26 @@ func sortReviewerKeys(keys []reviewerKey) {
 // that could drift from it.
 type reviewerAcc struct {
 	cases     []benchmark.CaseScore
+	caseIDs   []string // suite case ids this identity actually scored, in case order
 	costUSD   float64
 	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+}
+
+// reviewerCaseOutcome is everything one reviewer produced on one case: the realized
+// identity that served it, which case it was, the score inputs, and the usage-gated
+// cost/latency contribution. It is a struct rather than a positional argument list
+// because the fold path is shared by fresh execution and checkpoint replay — two call
+// sites that must stay in step, and that a nine-argument signature makes easy to
+// silently transpose.
+type reviewerCaseOutcome struct {
+	model         string
+	persona       string
+	caseID        string
+	expected      []string
+	raised        []string
+	usageReported bool
+	costUSD       float64
+	latencyMS     int64
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
@@ -292,18 +346,19 @@ type reviewerAcc struct {
 //
 // Cost and latency are still accumulated in case order within each key, so the float
 // sum and the latency median stay byte-identical to an uninterrupted run.
-func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
-	key := reviewerKey{model: model, persona: persona}
+func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, o reviewerCaseOutcome) {
+	key := reviewerKey{model: o.model, persona: o.persona}
 	acc := accs[key]
 	if acc == nil {
 		acc = &reviewerAcc{}
 		accs[key] = acc
 		*order = append(*order, key)
 	}
-	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
-	if usageReported {
-		acc.costUSD += costUSD
-		acc.latencies = append(acc.latencies, latencyMS)
+	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: o.expected, Raised: o.raised})
+	acc.caseIDs = append(acc.caseIDs, o.caseID)
+	if o.usageReported {
+		acc.costUSD += o.costUSD
+		acc.latencies = append(acc.latencies, o.latencyMS)
 	}
 }
 
@@ -314,7 +369,16 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 // identical for every reviewer of a case and are not durable per-reviewer state.
 func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, entry checkpointCase, expected []string) {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+		applyReviewerOutcome(accs, order, reviewerCaseOutcome{
+			model:         r.Model,
+			persona:       r.Persona,
+			caseID:        entry.CaseID,
+			expected:      expected,
+			raised:        r.Raised,
+			usageReported: r.UsageReported,
+			costUSD:       r.CostUSD,
+			latencyMS:     r.LatencyMS,
+		})
 	}
 }
 
