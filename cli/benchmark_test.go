@@ -62,8 +62,8 @@ func writeRunResult(t *testing.T) string {
 // be valid JSON" assert something the command never actually does.
 func TestBenchmarkExport_ProducesSuiteTaggedJSON(t *testing.T) {
 	in := writeRunResult(t)
-	code, out, _ := execCmdSplit(t, "benchmark", "export", "--in", in)
-	require.Equal(t, 0, code, out)
+	code, out, stderr := execCmdSplit(t, "benchmark", "export", "--in", in)
+	require.Equal(t, 0, code, out+stderr)
 
 	var sub struct {
 		SubmissionSchema int    `json:"submission_schema"`
@@ -99,8 +99,8 @@ func TestBenchmarkExport_OutputFlagWritesFile(t *testing.T) {
 
 func TestBenchmarkExport_UsesGeneratedAtForSubmittedAt(t *testing.T) {
 	in := writeRunResult(t)
-	code, out, _ := execCmdSplit(t, "benchmark", "export", "--in", in)
-	require.Equal(t, 0, code, out)
+	code, out, stderr := execCmdSplit(t, "benchmark", "export", "--in", in)
+	require.Equal(t, 0, code, out+stderr)
 
 	var sub struct {
 		SubmittedAt string `json:"submitted_at"`
