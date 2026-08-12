@@ -357,6 +357,22 @@ type Submission struct {
 	Suite            string                   `json:"suite"`
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
+
+	// SuiteCaseIDs and Coverage carry the run-result's per-row coverage into the
+	// published submission, so a consumer can see which cases each row was actually
+	// measured over instead of taking `runs` on trust.
+	//
+	// They are what makes `--allow-partial-coverage` an honest escape hatch rather
+	// than a way to launder a partial run: an opted-out submission is visibly short,
+	// not silently indistinguishable from a full one.
+	//
+	// Widening THIS envelope is legitimate where widening scorecard.PublicRecord is
+	// not. Submission is the benchmark-only wrapper — it already carries
+	// source/suite/suite_version, which the production envelope has no notion of.
+	// PublicRecord is the row schema shared byte-for-byte with production
+	// `leaderboard --export`, and stays untouched.
+	SuiteCaseIDs []string           `json:"suite_case_ids,omitempty"`
+	Coverage     []ReviewerCoverage `json:"reviewer_coverage,omitempty"`
 }
 
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not
@@ -387,5 +403,7 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
 		Reviewers:        scrubbed,
+		SuiteCaseIDs:     rr.SuiteCaseIDs,
+		Coverage:         rr.Coverage,
 	}
 }

@@ -157,6 +157,7 @@ func newBenchmarkExportCmd() *cobra.Command {
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, the shortfall is carried into the submission rather than hidden.")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
 }
@@ -167,6 +168,7 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// default, never an error. Project-wide convention (27 sites).
 	in, _ := cmd.Flags().GetString("in")
 	output, _ := cmd.Flags().GetString("output")
+	allowPartial, _ := cmd.Flags().GetBool("allow-partial-coverage")
 
 	data, err := os.ReadFile(in)
 	if err != nil {
@@ -190,6 +192,10 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		if v := *rr.OutOfVocabularyRate; math.IsNaN(v) || v < 0 || v > 1 {
 			return fmt.Errorf("run-result %s has out_of_vocabulary_rate %v outside [0,1]", in, v)
 		}
+	}
+
+	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
+		return err
 	}
 
 	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)

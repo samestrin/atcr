@@ -55,9 +55,13 @@ func writeRunResult(t *testing.T) string {
 	return path
 }
 
+// Uses execCmdSplit, not execCmdCapture: this run-result predates coverage, so
+// export emits an unverifiable-coverage warning on STDERR. The two streams are
+// separate in the real CLI, and conflating them here would make "export stdout must
+// be valid JSON" assert something the command never actually does.
 func TestBenchmarkExport_ProducesSuiteTaggedJSON(t *testing.T) {
 	in := writeRunResult(t)
-	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	code, out, _ := execCmdSplit(t, "benchmark", "export", "--in", in)
 	require.Equal(t, 0, code, out)
 
 	var sub struct {
@@ -94,7 +98,7 @@ func TestBenchmarkExport_OutputFlagWritesFile(t *testing.T) {
 
 func TestBenchmarkExport_UsesGeneratedAtForSubmittedAt(t *testing.T) {
 	in := writeRunResult(t)
-	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	code, out, _ := execCmdSplit(t, "benchmark", "export", "--in", in)
 	require.Equal(t, 0, code, out)
 
 	var sub struct {

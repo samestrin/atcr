@@ -73,12 +73,13 @@ func TestBenchmarkExport_RejectsRightCountWrongCases(t *testing.T) {
 // misrepresentation this epic exists to remove.
 func TestBenchmarkExport_AllowPartialCoveragePublishesShortfall(t *testing.T) {
 	in := writeCoverageRunResult(t, shortCoverageRows)
-	code, out := execCmdCapture(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
 
-	require.Equal(t, 0, code, "the explicit opt-out permits publication: %s", out)
-	assert.Contains(t, out, "reviewer_coverage", "the submission carries the coverage it was published under")
-	assert.Contains(t, out, "suite_case_ids", "and the denominator that makes it interpretable")
-	assert.Contains(t, out, "case-03")
+	require.Equal(t, 0, code, "the explicit opt-out permits publication: %s%s", stdout, stderr)
+	assert.Contains(t, stdout, "reviewer_coverage", "the submission carries the coverage it was published under")
+	assert.Contains(t, stdout, "suite_case_ids", "and the denominator that makes it interpretable")
+	assert.Contains(t, stdout, "case-03")
+	assert.Contains(t, stderr, "partial coverage", "and the operator is told what they opted into")
 }
 
 // A run-result carrying NO coverage at all — any file produced before coverage
@@ -87,11 +88,13 @@ func TestBenchmarkExport_AllowPartialCoveragePublishesShortfall(t *testing.T) {
 // over a field they had no way to write.
 func TestBenchmarkExport_UnmeasuredCoverageWarnsButExports(t *testing.T) {
 	in := writeRunResult(t) // no suite_case_ids, no reviewer_coverage
-	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in)
 
-	require.Equal(t, 0, code, "an unmeasured run-result still exports: %s", out)
-	assert.Contains(t, out, "coverage", "but the operator is told it could not be verified")
-	assert.Contains(t, out, "benchmark-suite", "and the submission is still produced")
+	require.Equal(t, 0, code, "an unmeasured run-result still exports: %s%s", stdout, stderr)
+	assert.Contains(t, stderr, "no case coverage", "the operator is told it could not be verified")
+	assert.Contains(t, stdout, "benchmark-suite", "and the submission is still produced")
+	assert.NotContains(t, stdout, "warning",
+		"the warning goes to stderr — it must never corrupt the JSON a caller pipes off stdout")
 }
 
 // Coverage rows present but the suite case-id list missing is equally unverifiable:
