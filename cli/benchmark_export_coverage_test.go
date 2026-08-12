@@ -88,6 +88,24 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// The empty-coverage error must not report the RAW suite-id count: with a
+// repeated suite_case_ids entry it would claim a larger suite than the distinct
+// denominator every other diagnostic uses. The duplicate-id rejection fires
+// first, so this file is told the truth about which shape of malformed it is.
+func TestBenchmarkExport_DuplicateSuiteIDsWithStrippedCoverageReportsDuplicate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-01"],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a doubly-malformed file still fails: %s", out)
+	assert.Contains(t, out, "more than once", "the duplicate-id shape is named, not a miscounted suite size")
+	assert.NotContains(t, out, "2-case suite")
+}
+
 // The Outcomes tally is written together with case_ids by the producer
 // (applyReviewerOutcome increments one outcome per folded case), so its values
 // must sum to len(case_ids). A hand-assembled run-result can otherwise present
