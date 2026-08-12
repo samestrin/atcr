@@ -88,6 +88,23 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// The Outcomes tally is written together with case_ids by the producer
+// (applyReviewerOutcome increments one outcome per folded case), so its values
+// must sum to len(case_ids). A hand-assembled run-result can otherwise present
+// outcomes {"clean":17} on a row that covered two cases — the same tamper family
+// the runs/coverage pair check closed, one field over. A present-but-wrong tally
+// is malformed; an absent one stays legal (omitempty — pre-field files).
+func TestBenchmarkExport_RejectsOutcomesTallyMismatch(t *testing.T) {
+	in := writeCoverageRunResult(t,
+		`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"],`+
+			`"outcomes":{"clean":17}},`+
+			`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`, 3, 3)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.NotEqual(t, 0, code, "a tally exceeding the covered set is a malformed file: %s", out)
+	assert.Contains(t, out, "outcomes")
+	assert.Contains(t, out, "malformed")
+}
+
 // Duplicate (model, persona) identities are rejected in reviewer_coverage; the
 // reviewer array gets the same rule. Two identical reviewer rows both join the
 // single coverage row and both publish, putting two different metric sets on the
