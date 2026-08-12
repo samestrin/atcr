@@ -313,8 +313,14 @@ func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	return sig
 }
 
-// reviewerKey identifies one leaderboard row by the REALIZED (model, persona) pair
-// — the model that actually served the case, not the lane it was configured under.
+// reviewerKey identifies one leaderboard row by (REALIZED model, CONFIGURED
+// persona). Only the model half is realized: reviewerModel resolves the model that
+// actually served the case. The persona half is always the slot's configured value —
+// reviewerPersona resolves cfg.Registry.Agents[a.Agent].Persona where a.Agent is the
+// PRIMARY slot name even when a fallback served the case. That is correct only by
+// registry convention (every -backup agent declares its primary's persona); a backup
+// declaring its own persona would publish the primary's regardless of which system
+// prompt actually ran.
 //
 // It is deliberately the same identity benchmark.Score already sorts and publishes
 // on (score.go:60-75), so a lane that failed over mid-suite yields one row per model

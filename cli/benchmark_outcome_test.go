@@ -215,6 +215,32 @@ func TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage(t *testi
 		"the public run-result wire form carries the fallback_cases key — the in-memory fold alone does not prove the field serializes")
 }
 
+// The persona half of a coverage row is the slot's CONFIGURED value, never a
+// realized one (see reviewerKey's doc): when the backup declares its OWN persona, a
+// case the backup served still folds under the primary's persona. Pinned with a
+// divergent-persona registry so the misattribution boundary is executable, not
+// conventional — if persona resolution is ever fixed to track the serving agent,
+// this test is the thing that should change.
+func TestExecuteBenchmarkRun_FallbackCaseKeepsConfiguredPersona(t *testing.T) {
+	cfg := benchCfg([3]string{"brad", "m-primary", "brad"})
+	agents := cfg.Registry.Agents
+	brad := agents["brad"]
+	brad.Fallback = "brad-backup"
+	agents["brad"] = brad
+	agents["brad-backup"] = registry.AgentConfig{Provider: "p", Model: "m-backup", Persona: "brad-backup-persona", Temperature: ptrF(0.7)}
+
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	rr, err := executeBenchmarkRun(context.Background(), cfg, perModelCompleter{
+		"m-primary": func() (string, error) { return "", errors.New("primary down") },
+		"m-backup":  func() (string, error) { return stream.NoFindingsSentinel, nil },
+	}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+
+	cov := coverageFor(t, rr, "m-backup", "brad")
+	assert.Equal(t, 2, cov.FallbackCases, "both cases were served by the backup")
+	assert.Equal(t, 2, cov.Outcomes[benchmark.OutcomeClean])
+}
+
 // AC4/AC8: a checkpoint written BEFORE the outcome field existed replays as
 // `unknown`, never as `clean`. This is the whole reason the vocabulary is a string
 // enum rather than a pair of booleans — two bools both default to false, which would
