@@ -201,9 +201,10 @@ atcr benchmark export --in run.json --allow-partial-coverage
 ```
 
 **Export refuses a run-result whose reviewer rows do not each cover the case list
-the run-result declares.** Case difficulty varies enormously across the suite, so a recall computed over one
-8-case subset is not comparable to one computed over a different 8 — publishing them
-side by side silently compares different measurements. Since a run-result reports one
+the run-result declares.** Case difficulty varies enormously across the suite, so a
+recall computed over one 8-case subset is not comparable to one computed over a
+different 8 — publishing them side by side silently compares different
+measurements. Since a run-result reports one
 row per *realized* model (see [Realized-model attribution](#realized-model-attribution-and-coverage)),
 a run that crossed a provider quota boundary mid-suite normally produces short rows,
 and this is the routine case rather than an exotic one.
@@ -244,7 +245,7 @@ on the exporting machine; pass it whenever the suite *is* available, and always 
 anything headed to the public board.
 
 ```
-run-result run.json declares a 8-case suite but the suite manifest at benchmarks/standard-v1
+run-result run.json declares an 8-case suite but the suite manifest at benchmarks/standard-v1
 has 17, missing case-09, case-10, case-11 and 6 more; every reviewer row was therefore
 scored against a shrunken denominator
 ```
