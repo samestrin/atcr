@@ -179,17 +179,12 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if len(missing) == 0 {
 			continue
 		}
-		// Counted by MEMBERSHIP rather than derived as len(suite)-len(missing): the
-		// two differ whenever the hand-supplied suite list repeats an id, and a
-		// diagnostic that misreports the shortfall is worse than none.
-		covered := 0
-		for _, id := range cov.CaseIDs {
-			if suite[id] {
-				covered++
-			}
-		}
+		// covered is len(cov.CaseIDs) unconditionally: validateCoveredSet just
+		// rejected any repeat and any non-member, so every id in the row is a
+		// distinct suite member. A defensive recount would describe a state the
+		// checks above have already made unreachable.
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			rev.Model, rev.Persona, covered, len(suite), summarizeMissing(missing)))
+			rev.Model, rev.Persona, len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
