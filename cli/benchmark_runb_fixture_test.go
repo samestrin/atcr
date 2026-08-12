@@ -37,19 +37,6 @@ const runBCheckpointPath = "../internal/benchmark/testdata/run-b.ckpt.json"
 // guard armed instead of against a manifest derived from the checkpoint itself.
 const runBSuitePath = "../benchmarks/standard-v1"
 
-// runBManifest reconstructs the suite manifest Run B executed against, from the
-// checkpoint's own recorded case ids and expected categories. The suite content is
-// not needed — no diff is read and no review is executed — only the case identity
-// list that coverage is measured against.
-func runBManifest(t *testing.T, cp *runCheckpoint) *benchmark.Manifest {
-	t.Helper()
-	m := &benchmark.Manifest{Suite: cp.Suite, SuiteVersion: cp.SuiteVersion}
-	for _, c := range cp.Cases {
-		m.Cases = append(m.Cases, benchmark.Case{ID: c.CaseID, ExpectedCategories: c.Expected})
-	}
-	return m
-}
-
 // resumeRunB drives a checkpoint at cpPath through the PRODUCTION resume entry
 // point — executeBenchmarkRun against the committed standard-v1 suite — and returns
 // the run-result, or the error the resume guards raised.
@@ -62,23 +49,8 @@ func resumeRunB(t *testing.T, cpPath string) (*benchmark.RunResult, error) {
 	// rejects it — which is the point: that guard is one of the things this path
 	// exercises and the hand-written loop skipped.
 	cfg := benchCfg([3]string{"brad", "qwen3.8-max", "brad"}, [3]string{"kai", "kimi-k3", "kai"})
-	_ = cfg
 	gen := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
-
-	// STUB (RED): the hand-written fold this item exists to replace — no suite is
-	// loaded, so no hash, roster or case-identity guard can fire.
-	cp, err := loadCheckpoint(cpPath)
-	if err != nil {
-		return nil, err
-	}
-	accs := map[reviewerKey]*reviewerAcc{}
-	var order []reviewerKey
-	for _, entry := range cp.Cases {
-		if ferr := replayCheckpointCase(accs, &order, entry, entry.Expected); ferr != nil {
-			return nil, ferr
-		}
-	}
-	return buildRunResult(accs, order, runBManifest(t, cp), gen)
+	return executeBenchmarkRun(context.Background(), cfg, mustNotCallCompleter{t}, runBSuitePath, gen, cpPath)
 }
 
 // mustNotCallCompleter fails the test if the resume path reaches an LLM at all. A
@@ -107,8 +79,16 @@ func copyRunBCheckpoint(t *testing.T, mutate func(string) string) string {
 	return path
 }
 
-// foldRunB replays every checkpointed case through the SAME accumulator path a live
-// run uses, and folds the result into a RunResult.
+// foldRunB resumes the committed Run B checkpoint through executeBenchmarkRun and
+// returns both the checkpoint as loaded and the resulting RunResult.
+//
+// It goes through the production entry point rather than a hand-written replay loop,
+// so every resume guard the real command applies is armed here: the reproducibility
+// hash and suite identity (validateCheckpoint), the configured panel
+// (validateCheckpointRoster), the per-index case identity, and doneIndex's
+// already-scored bookkeeping. The suite is the real standard-v1 tree, so the
+// denominator coverage is measured against is the manifest's — not, as before, a
+// manifest derived from the checkpoint being tested.
 func foldRunB(t *testing.T) (*runCheckpoint, *benchmark.RunResult) {
 	t.Helper()
 	cp, err := loadCheckpoint(runBCheckpointPath)
@@ -116,13 +96,8 @@ func foldRunB(t *testing.T) (*runCheckpoint, *benchmark.RunResult) {
 	require.NotNil(t, cp, "the Run B fixture must be committed and loadable")
 	require.Len(t, cp.Cases, 17, "Run B is a 17-case suite run")
 
-	accs := map[reviewerKey]*reviewerAcc{}
-	var order []reviewerKey
-	for _, entry := range cp.Cases {
-		require.NoError(t, replayCheckpointCase(accs, &order, entry, entry.Expected))
-	}
-	gen := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
-	rr, err := buildRunResult(accs, order, runBManifest(t, cp), gen)
+	// A verbatim copy, so a resume can never write back into the committed artifact.
+	rr, err := resumeRunB(t, copyRunBCheckpoint(t, nil))
 	require.NoError(t, err)
 	return cp, rr
 }
@@ -270,9 +245,10 @@ func TestRunBFixture_PreOutcomeCasesReplayAsUnknown(t *testing.T) {
 }
 
 // The fixture must remain loadable through the ordinary checkpoint path — including
-// its integrity checks — so it keeps testing the real resume contract rather than a
-// hand-shaped struct. It also proves the T5 fields are purely additive: a checkpoint
-// written before they existed still parses.
+// its integrity checks — rather than as a hand-shaped struct. The resume CONTRACT is
+// covered by the tests above, which drive this same artifact through
+// executeBenchmarkRun; this one pins the load boundary itself, and proves the T5
+// fields are purely additive: a checkpoint written before they existed still parses.
 func TestRunBFixture_LoadsThroughTheRealCheckpointPath(t *testing.T) {
 	cp, err := loadCheckpoint(runBCheckpointPath)
 	require.NoError(t, err, "a pre-epic checkpoint must still load — the new fields are additive")
