@@ -88,6 +88,31 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// The gate must key identity on the SCRUBBED (model, persona), because publication
+// re-scrubs every reviewer via scorecard.ScrubPublicRecord and the board keys on
+// the scrubbed value. Two raw identities that differ only by a scrub-stripped token
+// are distinct to a raw-keyed duplicate check but identical on the public board —
+// they pass here as two rows and publish as two rows of one identity.
+func TestBenchmarkExport_RejectsScrubCollidingCoverageIdentities(t *testing.T) {
+	// The reviewers array carries the same two raw identities, so the join
+	// direction checks pass and only the scrub-collision duplicate check can fire.
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m ~x","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code,
+		"two raw identities scrubbing to one public identity must be rejected as a duplicate: %s", out)
+	assert.Contains(t, out, "more than once")
+}
+
 // The reverse direction of the reviewer/coverage join is checked too: a coverage
 // row with NO matching reviewer row is silently discarded today, so a row citing
 // cases the suite never saw exports at exit 0 with no warning. A file whose two
