@@ -3,12 +3,14 @@ package cli
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,6 +144,67 @@ func TestExecuteBenchmarkRun_OutcomeSurvivesResume(t *testing.T) {
 
 	assert.Equal(t, mustMarshal(t, baseline.Coverage), mustMarshal(t, resumed.Coverage),
 		"a fully-replayed run reports the same outcomes as an uninterrupted one")
+}
+
+// failoverThenAbortCompleter serves case 0 from the FALLBACK model (the primary is
+// down) and then fails every call, so the run aborts with case 0 checkpointed under
+// the backup's realized identity. Paired with a healthy resume it produces the one
+// shape the realized-attribution epic exists for: a checkpoint whose lane changed
+// model mid-file, resumed live.
+type failoverThenAbortCompleter struct{ calls atomic.Int32 }
+
+func (c *failoverThenAbortCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	if c.calls.Add(1) > 2 {
+		return "", errors.New("total outage past case 0")
+	}
+	if inv.Model == "m-primary" {
+		return "", errors.New("primary down")
+	}
+	return stubCompleter{}.Complete(ctx, inv)
+}
+
+// AC3/AC4 across the FAILOVER BOUNDARY: a checkpoint whose lane changed realized
+// model mid-file, resumed live, must yield one coverage row per realized model,
+// the two partitioning the suite. Replayed entries fold under the model the
+// checkpoint recorded; live cases fold under the model serving them now. This is
+// the case where key-vs-order bugs live — both fold paths must key on the
+// REALIZED identity, or case 0 lands under the configured primary.
+func TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage(t *testing.T) {
+	cfg := benchCfg([3]string{"brad", "m-primary", "brad"})
+	agents := cfg.Registry.Agents
+	brad := agents["brad"]
+	brad.Fallback = "brad-backup"
+	agents["brad"] = brad
+	agents["brad-backup"] = registry.AgentConfig{Provider: "p", Model: "m-backup", Persona: "brad", Temperature: ptrF(0.7)}
+
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := t.TempDir() + "/ckpt.json"
+
+	// First run: the primary is down, so case 0 is served by the backup and
+	// checkpointed under ITS model; case 1 then fails outright, aborting the run.
+	_, err := executeBenchmarkRun(context.Background(), cfg, &failoverThenAbortCompleter{}, suiteValidPath, gen, path)
+	require.Error(t, err, "the total-roster failure on case 1 aborts the run, leaving case 0 checkpointed")
+
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	require.Len(t, cp.Cases, 1, "only case 0 was scored before the abort")
+	require.Equal(t, "m-backup", cp.Cases[0].Reviewers[0].Model,
+		"the checkpoint records the REALIZED model, not the configured primary")
+
+	// Resume healthy: case 0 replays (folding under m-backup), case 1 executes
+	// live under the primary.
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	require.Len(t, rr.Coverage, 2, "one row per realized model across the failover boundary")
+	backup := coverageFor(t, rr, "m-backup", "brad")
+	primary := coverageFor(t, rr, "m-primary", "brad")
+	assert.Equal(t, []string{"case-01-nil-deref"}, backup.CaseIDs,
+		"the replayed case stays under the model that actually served it")
+	assert.Equal(t, []string{"case-02-sql-injection"}, primary.CaseIDs,
+		"the live case folds under the model serving it now — the rows partition the suite")
+	assert.Equal(t, 1, backup.FallbackCases, "the replayed case is remembered as fallback-served")
+	assert.Zero(t, primary.FallbackCases)
 }
 
 // AC4/AC8: a checkpoint written BEFORE the outcome field existed replays as

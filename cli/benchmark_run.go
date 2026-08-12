@@ -422,7 +422,8 @@ type reviewerCaseOutcome struct {
 // SINGLE fold path shared by fresh execution and checkpoint replay, so a resumed run
 // reconstructs accs identically to an uninterrupted one (AC3) — including across a
 // failover boundary, because checkpointReviewer.Model already stores the realized
-// model rather than the configured one.
+// model rather than the configured one (pinned end to end by
+// TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage).
 //
 // The identity is the map KEY, so a case can never be folded under a model that did
 // not serve it. The previous lane-keyed version locked model/persona at first
