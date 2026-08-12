@@ -172,10 +172,10 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// lets ["case-01","case-02","case-03","case-01"] satisfy a 3-case suite while
 		// reporting runs=4 — full marks for a row that scored one case twice and
 		// carries a bigger denominator than the suite has cases.
-		if err := validateCoveredSet(suite, cov.CaseIDs, path, rev.Model, rev.Persona); err != nil {
-			return err
+		missing, verr := validateCoveredSet(suite, cov.CaseIDs, path, rev.Model, rev.Persona)
+		if verr != nil {
+			return verr
 		}
-		missing := missingCases(suite, cov.CaseIDs)
 		if len(missing) == 0 {
 			continue
 		}
@@ -227,39 +227,33 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 // the suite. Both shapes are impossible from the producer — it appends one case id
 // per fold, from the manifest — so either one means the file was assembled by hand,
 // and both inflate a row's apparent coverage past what the suite can support.
-func validateCoveredSet(suite map[string]bool, covered []string, path, model, persona string) error {
+//
+// On success it returns the suite case ids the row still owes, sorted so the
+// diagnostic is deterministic. The membership map it must build anyway doubles as
+// the missing-id lookup, so the gate builds ONE map per row rather than two — a
+// caller-supplied file can carry thousands of rows, and the per-row constant factor
+// is the only cost this function controls.
+func validateCoveredSet(suite map[string]bool, covered []string, path, model, persona string) ([]string, error) {
 	seen := make(map[string]bool, len(covered))
 	for _, id := range covered {
 		if seen[id] {
-			return fmt.Errorf("run-result %s: reviewer %s/%s lists case %q more than once in its coverage; "+
+			return nil, fmt.Errorf("run-result %s: reviewer %s/%s lists case %q more than once in its coverage; "+
 				"a case is scored at most once per reviewer, so this file is malformed", path, model, persona, id)
 		}
 		seen[id] = true
 		if !suite[id] {
-			return fmt.Errorf("run-result %s: reviewer %s/%s records case %q, which is not one of the "+
+			return nil, fmt.Errorf("run-result %s: reviewer %s/%s records case %q, which is not one of the "+
 				"%d cases in this suite", path, model, persona, id, len(suite))
 		}
 	}
-	return nil
-}
-
-// missingCases returns the suite case ids absent from covered, sorted so the
-// diagnostic is deterministic. Extra ids in covered that the suite does not contain
-// are NOT reported as missing — they are already implied by the shortfall count, and
-// the actionable fact is which suite cases the row still owes.
-func missingCases(suite map[string]bool, covered []string) []string {
-	have := make(map[string]bool, len(covered))
-	for _, id := range covered {
-		have[id] = true
-	}
 	var missing []string
 	for id := range suite {
-		if !have[id] {
+		if !seen[id] {
 			missing = append(missing, id)
 		}
 	}
 	sort.Strings(missing)
-	return missing
+	return missing, nil
 }
 
 // summarizeMissing renders up to maxNamedMissingCases ids, then an overflow count.
