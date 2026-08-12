@@ -100,8 +100,11 @@ var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed
 
 // errCheckpointCorrupt reports that a checkpoint file parsed as JSON but failed
 // internal self-consistency checks (duplicate indices, out-of-range indices, or
-// empty case IDs). Resume fails closed so a hand-edited or damaged checkpoint
-// cannot silently drop completed cases.
+// empty case IDs). Negative indices are rejected at load by
+// validateCheckpointIntegrity; the beyond-suite upper bound is rejected at
+// resume by executeBenchmarkRun, the only place the case count is known. Resume
+// fails closed so a hand-edited or damaged checkpoint cannot silently drop
+// completed cases.
 var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
 
 // maxCheckpointBytes caps a checkpoint read so an operator-supplied or crafted

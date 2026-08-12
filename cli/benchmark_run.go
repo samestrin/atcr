@@ -75,6 +75,17 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
 		}
 		done = cp.doneIndex()
+		// validateCheckpointIntegrity runs at load, before the suite is in scope, so
+		// it can only reject negative indices. The upper bound is checked here, where
+		// len(m.Cases) is known: an entry indexed beyond the suite was recorded
+		// against a different case list — left unchecked it would be counted in the
+		// replayed total yet never replayed by the loop below, silently vanishing
+		// from the score and rendering a negative remaining count.
+		for idx := range done {
+			if idx < 0 || idx >= len(m.Cases) {
+				return nil, fmt.Errorf("%w: case index %d outside [0, %d)", errCheckpointCorrupt, idx, len(m.Cases))
+			}
+		}
 		if existing != nil {
 			replayed := len(done)
 			remaining := len(m.Cases) - replayed
