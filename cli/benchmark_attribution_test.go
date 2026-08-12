@@ -60,8 +60,10 @@ func TestApplyReviewerOutcome_SplitsRowsByRealizedModel(t *testing.T) {
 
 	assert.Len(t, primary.cases, 2, "the primary is credited with exactly the cases it served")
 	assert.Len(t, backup.cases, 2, "the backup is credited with exactly the cases it served")
-	assert.Equal(t, 4, len(primary.cases)+len(backup.cases),
-		"the two rows are disjoint and sum to the suite size — nothing discarded, nothing double-counted")
+	assert.Equal(t, []string{"case-01", "case-02"}, primary.caseIDs,
+		"the primary holds exactly the cases it served")
+	assert.Equal(t, []string{"case-03", "case-04"}, backup.caseIDs,
+		"the backup holds exactly the cases it served — disjoint from the primary's, summing to the suite size")
 }
 
 // A run with NO failover is unchanged: one realized model per lane means one row per
