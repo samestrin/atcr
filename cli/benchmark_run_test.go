@@ -195,6 +195,33 @@ func TestExecuteBenchmarkRun_InvalidSuiteErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+// buildRunResult must not alias accumulator state into the returned RunResult: it
+// is documented as the shared fold path for fresh runs and recorded checkpoints, so
+// a future caller that keeps folding after building a result would otherwise mutate
+// an already-published artifact.
+func TestBuildRunResult_DoesNotAliasAccumulatorState(t *testing.T) {
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+		model: "m", persona: "p", caseID: "case-01",
+		expected: []string{"correctness"}, raised: []string{"correctness"},
+		outcome: benchmark.OutcomeFindings,
+	})
+	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
+
+	rr := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.Len(t, rr.Coverage, 1)
+
+	// Mutate the accumulator AFTER the result is built: every mutation must be
+	// invisible to the returned artifact.
+	acc := accs[reviewerKey{model: "m", persona: "p"}]
+	acc.caseIDs[0] = "mutated"
+	acc.outcomes[benchmark.OutcomeFindings] = 99
+
+	assert.Equal(t, "case-01", rr.Coverage[0].CaseIDs[0])
+	assert.Equal(t, 1, rr.Coverage[0].Outcomes[benchmark.OutcomeFindings])
+}
+
 // medianInt64 returns the lower-middle p50, and 0 for an empty slice (the
 // deterministic no-usage path), independent of input order.
 func TestMedianInt64(t *testing.T) {
