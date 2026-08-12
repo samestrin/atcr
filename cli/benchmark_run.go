@@ -278,14 +278,22 @@ type reviewerAcc struct {
 }
 
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
-// accumulator, creating the accumulator (and registering the reviewer in order) on
-// first sighting. It is the SINGLE fold path shared by fresh execution and
-// checkpoint replay, so a resumed run reconstructs accs identically to an
-// uninterrupted one (AC3): model/persona are locked at first sighting (matching the
-// original first-case-wins behavior), and the usage-gated cost/latency are added in
-// the same case order, keeping the float sum and latency median byte-identical.
+// accumulator under its REALIZED (model, persona) identity, creating the accumulator
+// (and registering the key in order) on first sighting of that identity. It is the
+// SINGLE fold path shared by fresh execution and checkpoint replay, so a resumed run
+// reconstructs accs identically to an uninterrupted one (AC3) — including across a
+// failover boundary, because checkpointReviewer.Model already stores the realized
+// model rather than the configured one.
+//
+// The identity is the map KEY, so a case can never be folded under a model that did
+// not serve it. The previous lane-keyed version locked model/persona at first
+// sighting, which is precisely how a mid-suite failover ended up publishing another
+// model's work under the primary's name.
+//
+// Cost and latency are still accumulated in case order within each key, so the float
+// sum and the latency median stay byte-identical to an uninterrupted run.
 func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
-	key := reviewerKey{persona: persona}
+	key := reviewerKey{model: model, persona: persona}
 	acc := accs[key]
 	if acc == nil {
 		acc = &reviewerAcc{}
