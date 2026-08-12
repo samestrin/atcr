@@ -72,12 +72,6 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 				"Re-run `atcr benchmark run` to produce a run-result that records coverage.\n", path)
 		return nil
 	}
-	if len(rr.Coverage) == 0 {
-		return fmt.Errorf("run-result %s lists a %d-case suite but records no reviewer coverage; "+
-			"`atcr benchmark run` writes the two together, so this file is malformed",
-			path, len(rr.SuiteCaseIDs))
-	}
-
 	suite := make(map[string]bool, len(rr.SuiteCaseIDs))
 	for _, id := range rr.SuiteCaseIDs {
 		// The denominator comes from the same untrusted file it validates, so it
@@ -85,13 +79,20 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// set while inflating the reported suite size (["case-01"] x3 would read as
 		// full coverage of a "3-case suite"). The producer writes the manifest's
 		// case list, which cannot repeat — same malformed-file rule as a repeated
-		// covered id below.
+		// covered id below. This runs BEFORE the empty-coverage check so every
+		// later diagnostic can use len(suite) — the distinct denominator — rather
+		// than the raw count a repeated id would inflate.
 		if suite[id] {
 			return fmt.Errorf("run-result %s lists suite case %q more than once; "+
 				"the producer writes the manifest's case list, which cannot repeat, so this file is malformed",
 				path, id)
 		}
 		suite[id] = true
+	}
+	if len(rr.Coverage) == 0 {
+		return fmt.Errorf("run-result %s lists a %d-case suite but records no reviewer coverage; "+
+			"`atcr benchmark run` writes the two together, so this file is malformed",
+			path, len(suite))
 	}
 
 	// Index coverage by the (model, persona) identity the reviewer rows carry, so a
@@ -211,7 +212,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 	return fmt.Errorf("run-result %s has reviewer row(s) scored over less than the full %d-case suite: %s; "+
 		"re-run the missing cases, or pass --allow-partial-coverage to publish the shortfall explicitly",
-		path, len(rr.SuiteCaseIDs), summarizeShortRows(short))
+		path, len(suite), summarizeShortRows(short))
 }
 
 // validateCoveredSet rejects a coverage row that is not a subset-without-repeats of
@@ -228,7 +229,7 @@ func validateCoveredSet(suite map[string]bool, suiteIDs, covered []string, path,
 		seen[id] = true
 		if !suite[id] {
 			return fmt.Errorf("run-result %s: reviewer %s/%s records case %q, which is not one of the "+
-				"%d cases in this suite", path, model, persona, id, len(suiteIDs))
+				"%d cases in this suite", path, model, persona, id, len(suite))
 		}
 	}
 	return nil
