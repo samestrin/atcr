@@ -126,6 +126,41 @@ func TestReviewerModel_FailedFallbackCaseIsNotCreditedToThePrimary(t *testing.T)
 	}), "usage-reported beats FallbackModel — it is the model that actually produced the tokens")
 }
 
+// A CHUNKED case whose slot partly failed over must not be credited to the primary.
+//
+// Under review_strategy chunked — the shipped setting — mergeResultGroup builds the
+// merged result as `out := g[0]` and never recomputes Model, while unioning
+// FallbackUsed and computing a modal FallbackModel across the chunks. A slot where
+// only SOME chunks fell back therefore reaches this function as Model="primary",
+// FallbackUsed=true, FallbackModel="backup". Returning Model unconditionally
+// publishes that whole case, and its summed token cost, under a model that served
+// only part of it — the exact attribution AC1 forbids, in the mode this project
+// actually runs.
+//
+// A mixed-chunk case cannot be attributed exactly without a per-chunk breakdown the
+// merge does not keep. FallbackUsed is the load-bearing signal: it says the primary
+// did not serve all of this, so the primary is the one answer known to be wrong.
+func TestReviewerModel_MixedChunkFailoverIsNotCreditedToThePrimary(t *testing.T) {
+	cfg := benchCfg([3]string{"brad", "qwen3.8-max", "brad"})
+
+	mergedChunks := fanout.AgentStatus{
+		Agent:         "brad",
+		Status:        fanout.StatusOK,
+		Model:         "qwen3.8-max", // inherited from chunk 0, which the primary served
+		FallbackUsed:  true,          // unioned: at least one chunk fell back
+		FallbackFrom:  "brad",
+		FallbackModel: "llm-large", // modal across the chunks that did
+	}
+	assert.Equal(t, "llm-large", reviewerModel(cfg, mergedChunks),
+		"a partly-failed-over chunked case must not publish under the primary that served only chunk 0")
+
+	// A slot that failed over WHOLLY reports the same model in both fields, so this
+	// rule cannot change its answer — the two shapes must stay distinguishable.
+	assert.Equal(t, "llm-large", reviewerModel(cfg, fanout.AgentStatus{
+		Agent: "brad", Model: "llm-large", FallbackUsed: true, FallbackModel: "llm-large",
+	}), "a wholly-failed-over slot already agrees with itself")
+}
+
 // Aggregation order is produced by an explicit sort, never by map iteration or by
 // arrival order — the reproducibility contract requires identical input to yield
 // byte-identical output.
