@@ -57,7 +57,18 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// past this gate, and export is where hand-supplied files first enter the tool.
 	byIdentity := make(map[reviewerKey]benchmark.ReviewerCoverage, len(rr.Coverage))
 	for _, c := range rr.Coverage {
-		byIdentity[reviewerKey{model: c.Model, persona: c.Persona}] = c
+		key := reviewerKey{model: c.Model, persona: c.Persona}
+		// A DUPLICATE identity is rejected outright rather than resolved. The
+		// producer emits one row per unique identity by construction, so a duplicate
+		// means the file was hand-assembled — and last-write-wins would let a full
+		// row mask a short one carrying the same identity, which is the cheapest
+		// possible way to walk a partial run past this gate.
+		if _, dup := byIdentity[key]; dup {
+			return fmt.Errorf("run-result %s records coverage for %s/%s more than once; "+
+				"a reviewer identity has exactly one covered case set, so this file is malformed",
+				path, c.Model, c.Persona)
+		}
+		byIdentity[key] = c
 	}
 
 	var short []string
@@ -67,6 +78,15 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if !ok {
 			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", rev.Model, rev.Persona))
 			continue
+		}
+		// `runs` and the covered set are appended together by the producer, so they
+		// are equal by construction and a mismatch can only come from editing. Left
+		// unchecked, a row could publish `runs` measured over two cases while
+		// presenting a seventeen-case coverage list as its provenance.
+		if rev.Runs != len(cov.CaseIDs) {
+			return fmt.Errorf("run-result %s: reviewer %s/%s reports runs=%d but records %d covered case(s); "+
+				"the two are written together by `atcr benchmark run`, so this file is malformed",
+				path, rev.Model, rev.Persona, rev.Runs, len(cov.CaseIDs))
 		}
 		missing := missingCases(suite, cov.CaseIDs)
 		if len(missing) == 0 {

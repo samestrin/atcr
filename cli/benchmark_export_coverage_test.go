@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,18 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeCoverageRunResult writes a run-result whose single suite has three cases and
-// whose reviewer rows cover the case-id lists given, returning the file path.
-func writeCoverageRunResult(t *testing.T, rows string) string {
+// writeCoverageRunResult writes a run-result whose suite has three cases and whose
+// two reviewer rows carry the given coverage rows, returning the file path.
+//
+// runsPrimary/runsBackup are explicit rather than fixed because `runs` and the
+// covered case set are written together by the real producer and must agree; a
+// helper that hardcoded one of them would produce fixtures the gate rightly rejects
+// as malformed, masking the property each test is actually about.
+func writeCoverageRunResult(t *testing.T, rows string, runsPrimary, runsBackup int) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "run-result.json")
-	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
-		`"suite_case_ids":["case-01","case-02","case-03"],` +
-		`"reviewer_coverage":[` + rows + `],` +
-		`"reviewers":[{"model":"m-primary","persona":"brad","runs":2,` +
-		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
-		`{"model":"m-backup","persona":"brad","runs":1,` +
-		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	body := fmt.Sprintf(`{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",`+
+		`"suite_case_ids":["case-01","case-02","case-03"],`+
+		`"reviewer_coverage":[%s],`+
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":%d,`+
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},`+
+		`{"model":"m-backup","persona":"brad","runs":%d,`+
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`,
+		rows, runsPrimary, runsBackup)
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	return path
 }
@@ -36,7 +43,7 @@ const shortCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["ca
 // subsets are not comparable — and splitting rows by realized model makes partial
 // coverage the NORMAL outcome of a quota-limited run, not an exotic one.
 func TestBenchmarkExport_RejectsPartialCoverage(t *testing.T) {
-	in := writeCoverageRunResult(t, shortCoverageRows)
+	in := writeCoverageRunResult(t, shortCoverageRows, 2, 1)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 
 	require.NotEqual(t, 0, code, "a partial-coverage run-result must not export by default: %s", out)
@@ -49,7 +56,7 @@ func TestBenchmarkExport_RejectsPartialCoverage(t *testing.T) {
 
 // Full coverage exports normally — the gate must not fire on the healthy path.
 func TestBenchmarkExport_AcceptsFullCoverage(t *testing.T) {
-	in := writeCoverageRunResult(t, fullCoverageRows)
+	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.Equal(t, 0, code, "a fully-covered run-result exports: %s", out)
 	assert.Contains(t, out, "benchmark-suite")
@@ -61,7 +68,7 @@ func TestBenchmarkExport_AcceptsFullCoverage(t *testing.T) {
 func TestBenchmarkExport_RejectsRightCountWrongCases(t *testing.T) {
 	in := writeCoverageRunResult(t,
 		`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-99"]},`+
-			`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`)
+			`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`, 3, 3)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.NotEqual(t, 0, code, "three ids that are not THE three ids is still partial coverage: %s", out)
 	assert.Contains(t, out, "case-03", "the missing suite case is named")
@@ -72,7 +79,7 @@ func TestBenchmarkExport_RejectsRightCountWrongCases(t *testing.T) {
 // indistinguishable from a full one, it would reintroduce exactly the
 // misrepresentation this epic exists to remove.
 func TestBenchmarkExport_AllowPartialCoveragePublishesShortfall(t *testing.T) {
-	in := writeCoverageRunResult(t, shortCoverageRows)
+	in := writeCoverageRunResult(t, shortCoverageRows, 2, 1)
 	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
 
 	require.Equal(t, 0, code, "the explicit opt-out permits publication: %s%s", stdout, stderr)
@@ -111,12 +118,47 @@ func TestBenchmarkExport_CoverageWithoutSuiteCaseIDsIsUnmeasured(t *testing.T) {
 	require.Equal(t, 0, code, "no denominator -> unmeasured, not rejected: %s", out)
 }
 
+// A duplicate coverage identity is rejected rather than resolved. Indexing coverage
+// by identity is last-write-wins, so a file carrying a SHORT row and a FULL row under
+// the same (model, persona) would have the full one mask the short one — the cheapest
+// possible way to walk a partial run past this gate. The producer emits one row per
+// identity, so a duplicate can only come from hand-assembly.
+func TestBenchmarkExport_RejectsDuplicateCoverageIdentity(t *testing.T) {
+	in := writeCoverageRunResult(t,
+		`{"model":"m-primary","persona":"brad","case_ids":["case-01"]},`+
+			`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]},`+
+			`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`, 3, 3)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.NotEqual(t, 0, code, "a full row must not be able to mask a short row of the same identity: %s", out)
+	assert.Contains(t, out, "more than once")
+	assert.Contains(t, out, "m-primary")
+}
+
+// `runs` and the covered case set are written together by the producer, so they are
+// equal by construction. A mismatch means the file was edited — and accepting it
+// would let a row publish a number measured over two cases while presenting a
+// full-suite coverage list as its provenance.
+func TestBenchmarkExport_RejectsRunsCoverageMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "runs=2 with a 3-case coverage list is a malformed file: %s", out)
+	assert.Contains(t, out, "runs=2")
+	assert.Contains(t, out, "3 covered case")
+}
+
 // A reviewer row with NO matching coverage row cannot be verified either, and must
 // not pass silently — an unverifiable row is precisely what a hand-supplied
 // run-result would use to slip past the gate.
 func TestBenchmarkExport_RejectsReviewerRowWithoutCoverage(t *testing.T) {
 	in := writeCoverageRunResult(t,
-		`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]}`)
+		`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]}`, 3, 1)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.NotEqual(t, 0, code, "a reviewer row with no coverage row must not publish: %s", out)
 	assert.Contains(t, out, "m-backup", "the unverifiable row is named")
