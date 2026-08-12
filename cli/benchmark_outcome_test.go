@@ -25,6 +25,10 @@ type perModelCompleter map[string]func() (string, error)
 func (p perModelCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	fn, ok := p[inv.Model]
 	if !ok {
+		// Unmapped model: returns empty content, which fanout's truncation
+		// failover (engine.go:710, applied unconditionally by ExecuteReview)
+		// demotes to StatusFailed — so a typo'd key fails loudly, never
+		// silently classifies as a clean review.
 		return "", nil
 	}
 	return fn()
