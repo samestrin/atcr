@@ -330,15 +330,17 @@ type ReviewerCoverage struct {
 	// the suite was measured over less than the full benchmark.
 	CaseIDs []string `json:"case_ids"`
 
-	// Outcomes tallies this row's per-case outcomes by OutcomeKind. A map rather
-	// than a struct so the tally cannot drift out of step with the enum, and because
-	// encoding/json emits map keys sorted — keeping the run-result deterministic.
-	// Absent keys are zero; an all-zero tally is omitted entirely.
+	// Outcomes tallies this row's per-case outcomes, keyed by outcome tally key
+	// (OutcomeTallyKey: the benchmark.Outcome* wire values, with OutcomeUnknown
+	// spelled "unknown"). A map rather than a struct so the tally cannot drift out
+	// of step with the enum, and because encoding/json emits map keys sorted —
+	// keeping the run-result deterministic. A row with no recorded outcomes omits
+	// the key.
 	Outcomes map[string]int `json:"outcomes,omitempty"`
 
 	// FallbackCases counts this row's cases that fanout served from a fallback model
-	// rather than the slot's configured primary. It is deliberately NOT an
-	// OutcomeKind: a fallback-served case is independently clean, unparseable, or
+	// rather than the slot's configured primary. It is deliberately NOT an outcome
+	// enum member: a fallback-served case is independently clean, unparseable, or
 	// failed, so folding it into the outcome enum would admit exactly the impossible
 	// combined states the enum exists to prevent.
 	FallbackCases int `json:"fallback_cases,omitempty"`
