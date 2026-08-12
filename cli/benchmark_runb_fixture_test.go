@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +31,12 @@ import (
 // sanitize them; the fixture's value is that it is what a real run actually wrote.
 const runBCheckpointPath = "../internal/benchmark/testdata/run-b.ckpt.json"
 
+// runBSuitePath is the standard-v1 suite Run B executed against, bundled in this
+// repo. Its reproducibility hash equals the one the checkpoint recorded, which is
+// what lets the fixture resume through the production path with every suite-identity
+// guard armed instead of against a manifest derived from the checkpoint itself.
+const runBSuitePath = "../benchmarks/standard-v1"
+
 // runBManifest reconstructs the suite manifest Run B executed against, from the
 // checkpoint's own recorded case ids and expected categories. The suite content is
 // not needed — no diff is read and no review is executed — only the case identity
@@ -39,6 +48,63 @@ func runBManifest(t *testing.T, cp *runCheckpoint) *benchmark.Manifest {
 		m.Cases = append(m.Cases, benchmark.Case{ID: c.CaseID, ExpectedCategories: c.Expected})
 	}
 	return m
+}
+
+// resumeRunB drives a checkpoint at cpPath through the PRODUCTION resume entry
+// point — executeBenchmarkRun against the committed standard-v1 suite — and returns
+// the run-result, or the error the resume guards raised.
+//
+// Nothing is executed and nothing is paid for: the checkpoint holds all 17 cases, so
+// every index is replayed and the completer below is never reached.
+func resumeRunB(t *testing.T, cpPath string) (*benchmark.RunResult, error) {
+	t.Helper()
+	// The roster must be the panel the checkpoint recorded, or validateCheckpointRoster
+	// rejects it — which is the point: that guard is one of the things this path
+	// exercises and the hand-written loop skipped.
+	cfg := benchCfg([3]string{"brad", "qwen3.8-max", "brad"}, [3]string{"kai", "kimi-k3", "kai"})
+	_ = cfg
+	gen := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
+
+	// STUB (RED): the hand-written fold this item exists to replace — no suite is
+	// loaded, so no hash, roster or case-identity guard can fire.
+	cp, err := loadCheckpoint(cpPath)
+	if err != nil {
+		return nil, err
+	}
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	for _, entry := range cp.Cases {
+		if ferr := replayCheckpointCase(accs, &order, entry, entry.Expected); ferr != nil {
+			return nil, ferr
+		}
+	}
+	return buildRunResult(accs, order, runBManifest(t, cp), gen)
+}
+
+// mustNotCallCompleter fails the test if the resume path reaches an LLM at all. A
+// fully-checkpointed run must replay every case; a single call here would mean the
+// fixture silently stopped being a resume test.
+type mustNotCallCompleter struct{ t *testing.T }
+
+func (c mustNotCallCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	c.t.Fatal("the Run B checkpoint covers every case; resuming it must execute no review")
+	return "", nil
+}
+
+// copyRunBCheckpoint copies the committed fixture into a temp dir so a test may
+// tamper with it, and so the resume path can never write back to the real artifact.
+// mutate may rewrite the raw JSON before it is written; nil copies verbatim.
+func copyRunBCheckpoint(t *testing.T, mutate func(string) string) string {
+	t.Helper()
+	raw, err := os.ReadFile(runBCheckpointPath)
+	require.NoError(t, err)
+	body := string(raw)
+	if mutate != nil {
+		body = mutate(body)
+	}
+	path := filepath.Join(t.TempDir(), "run-b.ckpt.json")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
 }
 
 // foldRunB replays every checkpointed case through the SAME accumulator path a live
@@ -59,6 +125,26 @@ func foldRunB(t *testing.T) (*runCheckpoint, *benchmark.RunResult) {
 	rr, err := buildRunResult(accs, order, runBManifest(t, cp), gen)
 	require.NoError(t, err)
 	return cp, rr
+}
+
+// The resume guards must actually fire on this fixture. A checkpoint whose case at
+// one index no longer names the suite's case at that index is a changed suite, and
+// resuming it would score a recorded result against the wrong case.
+//
+// This is the property the hand-written fold loop could not have: it derived the
+// manifest from the checkpoint's own case ids, so the identity guard compared the
+// artifact against itself and could never fail.
+func TestRunBFixture_TamperedCaseIDIsRejectedByTheResumeGuards(t *testing.T) {
+	cpPath := copyRunBCheckpoint(t, func(body string) string {
+		return strings.Replace(body,
+			`"case_id": "bluewave-labs-checkmate-pr-2883"`,
+			`"case_id": "not-a-suite-case"`, 1)
+	})
+
+	_, err := resumeRunB(t, cpPath)
+
+	require.Error(t, err, "a checkpoint case that is not the suite's case at that index must be rejected")
+	assert.Contains(t, err.Error(), "not-a-suite-case", "the diagnostic names the offending id")
 }
 
 // AC1 + AC6: folding the real Run B checkpoint yields ONE ROW PER REALIZED MODEL.
