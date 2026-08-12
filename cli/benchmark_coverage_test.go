@@ -135,3 +135,34 @@ func TestCheckCoverage_EveryShortRowIsNamed(t *testing.T) {
 		assert.Contains(t, msg, fmt.Sprintf("m-%d/p", i), "every short row is named, past any cap")
 	}
 }
+
+// The outcomes tally is untrusted input at the export boundary, same as
+// out_of_vocabulary_rate at load: the producer writes one closed-vocabulary outcome
+// per case, so a NEGATIVE count or a key outside the vocabulary can only come from a
+// hand-assembled file. The sum check alone catches neither — a -1 paired with an
+// inflated positive still sums to the covered-set size, and a fabricated key simply
+// adds to the tally.
+func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
+	base := func(outcomes map[string]int) benchmark.RunResult {
+		return benchmark.RunResult{
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+			Coverage: []benchmark.ReviewerCoverage{{
+				Model: "m", Persona: "p", CaseIDs: []string{"case-01"}, Outcomes: outcomes,
+			}},
+		}
+	}
+
+	for name, outcomes := range map[string]map[string]int{
+		"negative count":        {"clean": -1, "findings": 2}, // sums to 1: the sum check passes it
+		"out-of-vocabulary key": {"fabricated": 1},            // sums to 1: also passes
+	} {
+		err := checkCoverage(io.Discard, base(outcomes), "rr.json", false)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "malformed", name)
+	}
+
+	// The legitimate vocabulary — including the "unknown" tally label — stays legal.
+	err := checkCoverage(io.Discard, base(map[string]int{"unknown": 1}), "rr.json", false)
+	require.NoError(t, err, "the unknown tally label is a legitimate key")
+}
