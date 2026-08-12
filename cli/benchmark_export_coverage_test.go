@@ -88,6 +88,22 @@ func TestBenchmarkExport_RejectsDuplicateCaseIDsWithinARow(t *testing.T) {
 	assert.Contains(t, out, "more than once in its coverage")
 }
 
+// The reverse direction of the reviewer/coverage join is checked too: a coverage
+// row with NO matching reviewer row is silently discarded today, so a row citing
+// cases the suite never saw exports at exit 0 with no warning. A file whose two
+// arrays disagree on which reviewers exist is malformed by the same argument as
+// the forward direction.
+func TestBenchmarkExport_RejectsOrphanCoverageRow(t *testing.T) {
+	in := writeCoverageRunResult(t,
+		`{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]},`+
+			`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]},`+
+			`{"model":"m-ghost","persona":"brad","case_ids":["case-99"]}`, 3, 3)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.NotEqual(t, 0, code, "an unjoined coverage row must not be silently discarded: %s", out)
+	assert.Contains(t, out, "m-ghost", "the orphan coverage row is named")
+	assert.Contains(t, out, "no matching reviewer row")
+}
+
 // The suite case-id list is the gate's denominator and comes from the same file
 // it validates, so it must be a SET BY CONSTRUCTION: a repeated id would shrink
 // the required set while inflating the reported suite size (["case-01"] x3 reads
