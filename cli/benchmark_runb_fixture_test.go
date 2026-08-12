@@ -56,7 +56,9 @@ func foldRunB(t *testing.T) (*runCheckpoint, *benchmark.RunResult) {
 		require.NoError(t, replayCheckpointCase(accs, &order, entry, entry.Expected))
 	}
 	gen := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
-	return cp, buildRunResult(accs, order, runBManifest(t, cp), gen)
+	rr, err := buildRunResult(accs, order, runBManifest(t, cp), gen)
+	require.NoError(t, err)
+	return cp, rr
 }
 
 // AC1 + AC6: folding the real Run B checkpoint yields ONE ROW PER REALIZED MODEL.

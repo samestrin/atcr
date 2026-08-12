@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -209,7 +210,8 @@ func TestBuildRunResult_DoesNotAliasAccumulatorState(t *testing.T) {
 	}))
 	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
 
-	rr := buildRunResult(accs, order, m, time.Unix(0, 0))
+	rr, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.NoError(t, err)
 	require.Len(t, rr.Coverage, 1)
 
 	// Mutate the accumulator AFTER the result is built: every mutation must be
@@ -220,6 +222,35 @@ func TestBuildRunResult_DoesNotAliasAccumulatorState(t *testing.T) {
 
 	assert.Equal(t, "case-01", rr.Coverage[0].CaseIDs[0])
 	assert.Equal(t, 1, rr.Coverage[0].Outcomes[benchmark.OutcomeFindings])
+}
+
+// scrubField is NOT injective: it deletes whole path-, home- and credential-shaped
+// tokens, so two distinct realized identities can collapse to the same public one
+// (an email-shaped model id strips to empty, matching a genuinely empty one). Left
+// undetected, buildRunResult would emit two coverage rows of identical public
+// identity — which the export gate rejects as hand-assembled, misdiagnosing a
+// legitimate run as tampering. The producer must fail loudly at build time, naming
+// the colliding pre-scrub identities.
+func TestBuildRunResult_FailsOnPostScrubIdentityCollision(t *testing.T) {
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	// Distinct raw keys (so the fold's own duplicate guard does not fire), distinct
+	// cases, but both scrub to the same public identity.
+	for i, model := range []string{"admin@internal.host", ""} {
+		require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+			model: model, persona: "p", caseID: fmt.Sprintf("case-%02d", i+1),
+			expected: []string{"correctness"}, raised: []string{"correctness"},
+			outcome: benchmark.OutcomeFindings, agent: fmt.Sprintf("lane-%d", i+1),
+		}))
+	}
+	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{
+		{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		{ID: "case-02", ExpectedCategories: []string{"correctness"}},
+	}}
+
+	_, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.Error(t, err, "two raw identities scrubbing to the same public identity must not publish")
+	assert.Contains(t, err.Error(), "admin@internal.host", "the diagnostic names the colliding pre-scrub identities")
 }
 
 // medianInt64 returns the lower-middle p50, and 0 for an empty slice (the

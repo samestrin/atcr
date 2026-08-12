@@ -226,7 +226,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		}
 	}
 
-	return buildRunResult(accs, order, m, generatedAt), nil
+	return buildRunResult(accs, order, m, generatedAt)
 }
 
 // buildRunResult folds the finished accumulator into the suite-tagged RunResult:
@@ -236,7 +236,14 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 // It is separated from executeBenchmarkRun so the aggregation can be driven directly
 // from a recorded checkpoint — the Run B fixture folds through this exact path in
 // tests, without a suite on disk, a Completer, or a network.
-func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *benchmark.Manifest, generatedAt time.Time) *benchmark.RunResult {
+//
+// It fails when two DISTINCT raw identities scrub to the same public one:
+// scorecard.scrubField is not injective (it deletes path-, home- and
+// credential-shaped tokens), and emitting two coverage rows of identical public
+// identity would be rejected by the export gate as hand-assembled — misdiagnosing a
+// legitimate run as tampering. The collision is the producer's to report, so the
+// error names both pre-scrub identities.
+func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *benchmark.Manifest, generatedAt time.Time) (*benchmark.RunResult, error) {
 	// Scrub the identity BEFORE sorting and before it is written to either slice.
 	//
 	// benchmark.Score re-scrubs the rows it emits (scorecard.ScrubPublicRecord), so
@@ -247,9 +254,17 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	// "no coverage recorded" rejection. Scrubbing here makes both sides identical by
 	// construction, and Score's own pass is then idempotent.
 	rows := make([]scoredRow, 0, len(order))
+	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
-		rows = append(rows, scoredRow{id: reviewerKey{model: s.Model, persona: s.Persona}, acc: accs[k]})
+		id := reviewerKey{model: s.Model, persona: s.Persona}
+		if prev, dup := scrubbed[id]; dup {
+			return nil, fmt.Errorf("distinct reviewer identities %q/%q and %q/%q scrub to the same public identity %q/%q: "+
+				"scorecard's path/credential scrub is not injective, so publishing would emit two coverage rows under one identity",
+				prev.model, prev.persona, k.model, k.persona, id.model, id.persona)
+		}
+		scrubbed[id] = k
+		rows = append(rows, scoredRow{id: id, acc: accs[k]})
 	}
 	// Sort the SCRUBBED identities so this order matches the order Score will sort
 	// its (equally scrubbed) rows into — the property that keeps the two slices
@@ -298,7 +313,7 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
 		SuiteCaseIDs:        suiteCaseIDs,
 		Coverage:            coverage,
-	}
+	}, nil
 }
 
 // rosterSignature builds the deterministic "agent=model=persona" signature of the
