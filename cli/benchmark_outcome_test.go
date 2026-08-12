@@ -283,6 +283,51 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 	}
 }
 
+// truncatedCompleter answers every call with a parseable finding AND the
+// finish_reason=length marker, via MetaCompleter — the interface a real
+// *llmclient.Client satisfies — so the engine stamps ResponseTruncated onto the
+// AgentStatus exactly as production does. The finding matters: truncated outranks
+// findings in reviewerOutcome's precedence, so this is the case that proves the
+// tally says "truncated" even when the partial response DID raise something.
+type truncatedCompleter struct{}
+
+func (truncatedCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "HIGH|x.go:1|planted defect|fix it|correctness|15|evidence", nil
+}
+
+func (truncatedCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return llmclient.Completion{
+		Content:   "HIGH|x.go:1|planted defect|fix it|correctness|15|evidence",
+		Truncated: true,
+	}, nil
+}
+
+// The truncated outcome must travel the WHOLE path — fanout's ResponseTruncated
+// marker → reviewerOutcome → the checkpoint's outcome field → OutcomeTallyKey → the
+// reviewer_coverage.outcomes JSON — not just the pure-unit precedence table. It is
+// the outcome most likely to appear on a real long-context run, and the only one
+// whose serialization a unit test cannot see.
+func TestExecuteBenchmarkRun_TruncatedOutcomeReachesCoverageAndSurvivesResume(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := t.TempDir() + "/ckpt.json"
+
+	baseline, err := executeBenchmarkRun(context.Background(), cfg, truncatedCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+	cov := coverageFor(t, baseline, "m-greta", "greta")
+	assert.Equal(t, 2, cov.Outcomes[benchmark.OutcomeTruncated],
+		"a truncated response tallies as truncated on both cases, even though its partial content raised a finding")
+	assert.Zero(t, cov.Outcomes[benchmark.OutcomeFindings],
+		"data-integrity signals outrank volume signals: the finding it did raise must not reclassify the case")
+
+	resumed, err := executeBenchmarkRun(context.Background(), cfg, truncatedCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+	assert.Equal(t, mustMarshal(t, baseline.Coverage), mustMarshal(t, resumed.Coverage),
+		"the truncated tally survives the checkpoint round trip — a resumed run reports what the interrupted one recorded")
+	assert.Contains(t, mustMarshal(t, resumed.Coverage), `"truncated":2`,
+		"the wire form itself carries the truncated tally key")
+}
+
 // FallbackUsed is tallied SEPARATELY from the outcome, not folded into the enum: a
 // fallback-served case is independently clean, unparseable, or failed, so making it
 // an enum member would admit exactly the impossible combined states the enum exists
