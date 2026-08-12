@@ -194,6 +194,8 @@ func TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage(t *testi
 	require.Len(t, cp.Cases, 1, "only case 0 was scored before the abort")
 	require.Equal(t, "m-backup", cp.Cases[0].Reviewers[0].Model,
 		"the checkpoint records the REALIZED model, not the configured primary")
+	assert.True(t, cp.Cases[0].Reviewers[0].FallbackUsed,
+		"the checkpoint persists fallback_used — a dropped field or wrong JSON tag turns the resume below into silent misattribution")
 
 	// Resume healthy: case 0 replays (folding under m-backup), case 1 executes
 	// live under the primary.
@@ -209,6 +211,8 @@ func TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage(t *testi
 		"the live case folds under the model serving it now — the rows partition the suite")
 	assert.Equal(t, 1, backup.FallbackCases, "the replayed case is remembered as fallback-served")
 	assert.Zero(t, primary.FallbackCases)
+	assert.Contains(t, mustMarshal(t, rr.Coverage), `"fallback_cases":1`,
+		"the public run-result wire form carries the fallback_cases key — the in-memory fold alone does not prove the field serializes")
 }
 
 // AC4/AC8: a checkpoint written BEFORE the outcome field existed replays as
