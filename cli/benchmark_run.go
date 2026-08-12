@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -261,12 +262,15 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 			LatencyP50MS: medianInt64(acc.latencies),
 		})
 		// Emitted in the same order as the reviewer rows, so a consumer can join
-		// coverage to its row positionally as well as by identity.
+		// coverage to its row positionally as well as by identity. CaseIDs and
+		// Outcomes are COPIED, not aliased: this function is the shared fold path
+		// for fresh runs and recorded checkpoints, so the returned artifact must
+		// not change if a caller keeps folding into accs afterwards.
 		coverage = append(coverage, benchmark.ReviewerCoverage{
 			Model:         id.model,
 			Persona:       id.persona,
-			CaseIDs:       acc.caseIDs,
-			Outcomes:      acc.outcomes,
+			CaseIDs:       append([]string(nil), acc.caseIDs...),
+			Outcomes:      maps.Clone(acc.outcomes),
 			FallbackCases: acc.fallbackCases,
 		})
 	}
