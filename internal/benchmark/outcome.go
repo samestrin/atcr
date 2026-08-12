@@ -47,6 +47,14 @@ const (
 	// incomplete by construction.
 	OutcomeTruncated = "truncated"
 
+	// OutcomeIncomplete marks a chunked reviewer that saw only a FRACTION of the
+	// diff: fanout.AgentStatus.UnreviewedChunks counts the bins that failed while
+	// the persona still reported StatusOK. Publishing such a case as "clean" would
+	// assert "reviewed the whole diff and correctly found nothing" about a reviewer
+	// that never saw most of it — a positive false claim, the exact class this
+	// vocabulary exists to prevent. Data-integrity, same class as truncated.
+	OutcomeIncomplete = "incomplete"
+
 	// OutcomeFailed marks a slot whose call did not succeed at all — the reviewer
 	// never produced a reviewable response for this case.
 	OutcomeFailed = "failed"

@@ -300,6 +300,17 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeTruncated,
 		},
 		{
+			name:   "unreviewed chunks with nothing raised is NOT clean",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 2},
+			want:   benchmark.OutcomeIncomplete,
+		},
+		{
+			name:   "incomplete outranks findings",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, UnreviewedChunks: 3},
+			raised: []string{"correctness"},
+			want:   benchmark.OutcomeIncomplete,
+		},
+		{
 			name:   "findings",
 			status: fanout.AgentStatus{Status: fanout.StatusOK},
 			raised: []string{"correctness"},
