@@ -121,9 +121,13 @@ func TestReviewerModel_FailedFallbackCaseIsNotCreditedToThePrimary(t *testing.T)
 		"no failover -> the configured model is still the right answer")
 	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{Agent: "brad", Model: "kimi-k3"}),
 		"a usage-reported model still wins over everything")
-	assert.Equal(t, "kimi-k3", reviewerModel(cfg, fanout.AgentStatus{
+	// Superseded by TestReviewerModel_MixedChunkFailoverIsNotCreditedToThePrimary:
+	// the two fields disagreeing is the chunked-merge shape, where the usage-reported
+	// value is chunk 0's and the case was NOT served wholly by it. The precedence is
+	// inverted deliberately — see reviewerModel's doc.
+	assert.Equal(t, "llm-large", reviewerModel(cfg, fanout.AgentStatus{
 		Agent: "brad", Model: "kimi-k3", FallbackUsed: true, FallbackModel: "llm-large",
-	}), "usage-reported beats FallbackModel — it is the model that actually produced the tokens")
+	}), "a disagreement between the two means chunk 0's model is not the whole story")
 }
 
 // A CHUNKED case whose slot partly failed over must not be credited to the primary.

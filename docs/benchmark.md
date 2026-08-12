@@ -426,6 +426,14 @@ The failover is not corruption; it is data about the backup model. Scoring it as
 itself is what keeps both numbers honest, and `reviewer_coverage` is what makes the
 resulting uneven coverage visible instead of silently incomparable.
 
+**One exception, stated rather than hidden:** under `review_strategy: chunked` a
+single case is split into bins, and a slot whose bins *partly* failed over produced
+that case from two models. The merge keeps only one model id per slot, so such a case
+cannot be attributed exactly. It is credited to the **fallback** model, never to the
+primary — the primary is the one answer known to be wrong, since it demonstrably did
+not serve all of the case. Exact attribution would need per-bin model ids carried
+through the chunk merge.
+
 ### Reviewer outcomes
 
 `reviewer_coverage[].outcomes` tallies what happened on each case, because a

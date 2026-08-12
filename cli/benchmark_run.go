@@ -602,19 +602,37 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 // value in the pool summary and falling back to the configured model when the
 // provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
 //
-// The FallbackModel step covers a case that FAILED after the slot had already
-// failed over: no usage was returned, so no usage-reported model was stamped, and
-// resolving straight to the registry would credit the configured primary — a model
-// that by definition did not serve the case.
+// FALLBACK OUTRANKS THE USAGE-REPORTED MODEL when the two disagree. They can only
+// disagree on the chunked path: fanout stamps Result.Model from the invocation that
+// actually ran, so a wholly-failed-over slot reports the SAME model in both fields,
+// but mergeResultGroup builds a chunked slot's merged result as `out := g[0]` and
+// never recomputes Model while unioning FallbackUsed and taking a modal
+// FallbackModel (internal/fanout/chunker.go). A slot whose chunks partly fell back
+// therefore arrives here carrying chunk 0's model beside another model's
+// FallbackUsed — and preferring Model would publish the whole case, and its summed
+// token cost, under a model that served only part of it. Since chunked is the
+// shipped review_strategy, that is the ordinary path, not a corner of it.
+//
+// A mixed-chunk case cannot be attributed EXACTLY without a per-chunk breakdown the
+// merge does not keep, so this is the least-wrong answer rather than a precise one:
+// FallbackUsed is the durable signal that the primary did not serve all of this, so
+// the primary is the single answer known to be false. Recovering exact attribution
+// needs fanout to carry per-chunk models through the merge — until then the row is
+// credited to the model that displaced the primary.
+//
+// The remaining FallbackModel step covers a case that FAILED after the slot had
+// already failed over: no usage was returned, so no usage-reported model was
+// stamped, and resolving straight to the registry would credit the configured
+// primary — a model that by definition did not serve the case.
 //
 // Every non-failover path is unchanged: FallbackUsed is false, so resolution is the
 // original prefer-usage-then-registry pair.
 func reviewerModel(cfg *fanout.ReviewConfig, a fanout.AgentStatus) string {
-	if a.Model != "" {
-		return a.Model
-	}
 	if a.FallbackUsed && a.FallbackModel != "" {
 		return a.FallbackModel
+	}
+	if a.Model != "" {
+		return a.Model
 	}
 	return cfg.Registry.Agents[a.Agent].Model
 }
