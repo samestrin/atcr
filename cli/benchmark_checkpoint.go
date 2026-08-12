@@ -8,6 +8,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/benchmark"
 )
 
 // runCheckpoint is the on-disk durable record of a benchmark run's completed,
@@ -161,7 +163,10 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 
 // validateCheckpointIntegrity rejects malformed-but-parseable checkpoints before
 // they can silently corrupt replay. Duplicate indices are particularly dangerous:
-// doneIndex would last-write-win, dropping the earlier completed case.
+// doneIndex would last-write-win, dropping the earlier completed case. The outcome
+// allowlist is the same kind of guard one level down: an out-of-vocabulary outcome
+// would otherwise become an arbitrary key in the published outcomes tally, and the
+// tally label "unknown" would pose as genuine absence.
 func validateCheckpointIntegrity(cp *runCheckpoint) error {
 	seen := make(map[int]struct{}, len(cp.Cases))
 	for i, c := range cp.Cases {
@@ -175,6 +180,11 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 			return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
 		}
 		seen[c.Index] = struct{}{}
+		for j, r := range c.Reviewers {
+			if !benchmark.ValidOutcome(r.Outcome) {
+				return fmt.Errorf("%w: case %d reviewer %d has out-of-vocabulary outcome %q", errCheckpointCorrupt, i, j, r.Outcome)
+			}
+		}
 	}
 	return nil
 }

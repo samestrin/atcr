@@ -71,6 +71,26 @@ const (
 // published artifact always names what it means.
 const OutcomeUnknownLabel = "unknown"
 
+// ValidOutcome reports whether s is a value the outcome vocabulary can legitimately
+// STORE — one of the Outcome* wire values above, or OutcomeUnknown (the empty
+// string, a pre-vocabulary checkpoint's recorded absence). It exists for the
+// checkpoint-resume trust boundary: a checkpoint is operator-supplied JSON, and
+// without this gate an arbitrary string in its outcome field would fold through
+// OutcomeTallyKey into an arbitrary key in the published run-result.
+//
+// OutcomeUnknownLabel ("unknown") is deliberately NOT valid here: it is a TALLY
+// spelling, never a stored one. Accepting it would make a fabricated outcome
+// indistinguishable from genuine absence — the one distinction the enum exists to
+// protect.
+func ValidOutcome(s string) bool {
+	switch s {
+	case OutcomeUnknown, OutcomeFindings, OutcomeClean,
+		OutcomeUnparseable, OutcomeTruncated, OutcomeIncomplete, OutcomeFailed:
+		return true
+	}
+	return false
+}
+
 // OutcomeTallyKey maps a stored outcome value to the key it is tallied under.
 func OutcomeTallyKey(outcome string) string {
 	if outcome == OutcomeUnknown {
