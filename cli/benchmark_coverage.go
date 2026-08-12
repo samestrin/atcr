@@ -43,8 +43,17 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// being absent. A file that records suite_case_ids but no coverage rows is not a
 	// pre-epic artifact — it is one whose coverage was removed, and treating that as
 	// "unmeasured" would make deleting the whole array a cheaper way past this gate
-	// than any of the tampering shapes below.
+	// than any of the tampering shapes below. The reverse shape is malformed for the
+	// same reason: the producer writes suite_case_ids and reviewer_coverage together,
+	// so a coverage array with a stripped denominator is a demonstrably post-epic file
+	// missing exactly one key — deleting it must not be a cheaper bypass than the
+	// --allow-partial-coverage opt-out. Only a file with NEITHER field is genuinely
+	// unmeasurable, and keeps the warn-only path below.
 	if len(rr.SuiteCaseIDs) == 0 {
+		if len(rr.Coverage) > 0 {
+			return fmt.Errorf("run-result %s records reviewer coverage but no suite_case_ids; "+
+				"`atcr benchmark run` writes the two together, so this file is malformed", path)
+		}
 		_, _ = fmt.Fprintf(w,
 			"warning: run-result %s carries no case coverage, so it cannot be verified against the full suite — "+
 				"publishing it asserts nothing about how many cases each reviewer actually scored. "+
