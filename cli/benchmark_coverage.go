@@ -103,8 +103,10 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 
 	var short []string
+	consumed := make(map[reviewerKey]bool, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := reviewerKey{model: rev.Model, persona: rev.Persona}
+		consumed[key] = true
 		cov, ok := byIdentity[key]
 		if !ok {
 			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", rev.Model, rev.Persona))
@@ -141,6 +143,21 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		}
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
 			rev.Model, rev.Persona, covered, len(suite), summarizeMissing(missing)))
+	}
+
+	// The join is checked in BOTH directions: a coverage row no reviewer row
+	// consumed is silently discarded by the loop above, so a row citing cases the
+	// suite never saw would export at exit 0 with no warning. A file whose two
+	// arrays disagree on which reviewers exist is malformed by the same argument
+	// as the forward direction — and rejecting leftovers before the short-coverage
+	// diagnostics below means every later message can trust the join.
+	for _, c := range rr.Coverage {
+		key := reviewerKey{model: c.Model, persona: c.Persona}
+		if !consumed[key] {
+			return fmt.Errorf("run-result %s records coverage for %s/%s with no matching reviewer row; "+
+				"the producer writes the two arrays from the same accumulator, so this file is malformed",
+				path, c.Model, c.Persona)
+		}
 	}
 
 	if len(short) == 0 {
