@@ -100,7 +100,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	accs := map[reviewerKey]*reviewerAcc{}
-	var order []reviewerKey // realized identities, sorted for deterministic aggregation
+	var order []reviewerKey // realized identities in first-sighting order; buildRunResult sorts them for deterministic aggregation
 
 	for i, c := range m.Cases {
 		// Resume: a case already in the checkpoint is replayed into the accumulator
