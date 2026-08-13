@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -788,6 +789,19 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// stamps coming from the same agent in the same block.
 			r.servedChunkFiles = a.chunkFiles
 			r.servedRePacked = a.rePacked
+			// Invariant, derived here because rePacked is DECLARED upstream, not
+			// derived from the payload actually shipped: a served tag that differs
+			// from the primary's without the re-pack flag breaks the assumption
+			// servedCoverage's guard rests on (a future re-fit arm that sets its
+			// own chunkFiles but forgets the flag would otherwise pass the guard
+			// silently). Promote the divergence to re-packed — the differing tag
+			// governs attribution, allOK declines to short-circuit, and a nil tag
+			// vouches for nothing — and make it loud.
+			if !r.servedRePacked && !slices.Equal(r.servedChunkFiles, s.Primary.chunkFiles) {
+				log.FromContext(ctx).Warn("baseline coverage: the serving agent's tag differs from its primary's without the re-pack flag set — promoting to re-packed (fail-open) rather than trusting a possibly-stale tag",
+					"agent", a.Name, "slot", s.Primary.Name)
+				r.servedRePacked = true
+			}
 			return r
 		}
 		last = r
