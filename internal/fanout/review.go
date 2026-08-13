@@ -831,7 +831,7 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 	// Entries keeps the raw pre-budget files so buildSlots re-sheds them per agent
 	// against each model's window (Epic 19.10 F2), identical to buildPayloads.
 	return map[string]modePayload{
-		string(payload.ModeFiles): {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		string(payload.ModeFiles): {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}, nil
 }
 
@@ -884,7 +884,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	payloads := map[string]modePayload{
 		// Entries keeps the raw pre-budget diff files so buildSlots re-sheds them
 		// per agent against each model's window (Epic 19.10 F2).
-		diffMode: {Entries: entries, Text: b.String(), FileCount: len(kept), Truncation: trunc},
+		diffMode: {Entries: entries, Kept: kept, Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}
 	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
 	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
@@ -1851,9 +1851,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		//
 		// mp.Kept, not mp.Entries: Entries is the PRE-budget list, so on a run where
 		// the global payload_byte_budget dropped files the two differ and mp.Entries
-		// would name files absent from mp.Text. Kept is nil on the payload builders
-		// that do not populate it, so fall back to Entries there — those paths apply
-		// no global budget pass, which makes the two lists identical anyway.
+		// would name files absent from mp.Text. Every production payload builder
+		// populates Kept from its global budget pass (buildPayloads, and the two
+		// decomposed builders in this file), so the Entries fallback is reachable
+		// only from hand-built modePayload literals in tests — kept as a defensive
+		// default rather than a production path.
 		bulkEntries := mp.Kept
 		if bulkEntries == nil {
 			bulkEntries = mp.Entries
