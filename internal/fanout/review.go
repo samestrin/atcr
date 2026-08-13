@@ -2622,6 +2622,25 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				fbPrompt = rp.agent.Prompt
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
+				// Compose with the primary's shed record rather than replacing it:
+				// every file the primary dropped before this slot was built is absent
+				// from THIS agent's payload too, so the serving agent's files_dropped
+				// must name it (AC6) — otherwise the agent that reviewed the LEAST
+				// reports the SHORTEST omission list. Dedup + sort by path, matching
+				// payload.ApplyByteBudget's Truncation contract.
+				if len(primary.Truncation.FilesDropped) > 0 {
+					seen := make(map[string]struct{}, len(fbTrunc.FilesDropped)+len(primary.Truncation.FilesDropped))
+					for _, p := range fbTrunc.FilesDropped {
+						seen[p] = struct{}{}
+					}
+					for _, p := range primary.Truncation.FilesDropped {
+						if _, ok := seen[p]; !ok {
+							fbTrunc.FilesDropped = append(fbTrunc.FilesDropped, p)
+							seen[p] = struct{}{}
+						}
+					}
+					sort.Strings(fbTrunc.FilesDropped)
+				}
 				fbChunkFiles = entryPaths(rp.kept)
 				// One re-fit payload, not the slot's split: ChunkTotal must be 1 or the
 				// per-call deadline (timeout.go) and status.json's chunk_count both
