@@ -407,6 +407,15 @@ type AgentStatus struct {
 	// information is lost by the overwrite: chunk_count still reports the chunk
 	// plan, and the truncation record still lists the dropped files, so a reader
 	// reconstructs both facts from the same status.json.
+	//
+	// EXCEPT when that fallback RE-FIT the payload (Epic 35.16.5.4, on_overflow=
+	// truncate with a re-packable payload): it then records "truncate", because
+	// the review WAS read in full — of a deliberately smaller payload. Such an
+	// agent's whole record describes what it actually sent rather than the slot it
+	// inherited: its own truncation, its own effective_budget, and chunk_count 1
+	// (it ships one re-fit payload, not the slot's split). The chunk plan is the
+	// one thing genuinely not reconstructable from its status.json — read the
+	// primary's for that.
 	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
 	ResolvedWindow       int    `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`
