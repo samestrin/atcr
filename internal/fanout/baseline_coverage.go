@@ -12,13 +12,17 @@ import (
 // is uncovered; the result is always a subset of reviewed.
 //
 // PRECONDITION: call on RAW, pre-merge results — mergeResultGroup discards chunk
-// identity. Attribution is by INDEX (results[i] describes slots[i], pinned by
-// TestEngineRun_ResultsMatchSlotInputOrder); a fallback-served slot is attributed to
-// its primary's tag. Coverage is a UNION across personas: a file is covered once ANY
-// succeeded chunk carried it. An UNTAGGED (nil chunkFiles) slot vouches for NOTHING,
-// never "everything" — that polarity is what makes an unattributable slot degrade to
-// re-review rather than to a silent skip. Full coverage is therefore established by
-// the all-succeeded shortcut below, not by any per-slot sentinel.
+// identity (and with it the per-chunk serving identity). Attribution is by INDEX
+// (results[i] describes slots[i], pinned by
+// TestEngineRun_ResultsMatchSlotInputOrder), and it follows the agent that SERVED
+// the slot — servedCoverage(slots[i], results[i]) — not the slot's Primary: a
+// re-packed fallback reviewed a strict subset of the primary's tag, so reading
+// the primary's tag would vouch for files nothing read. Coverage is a UNION
+// across personas: a file is covered once ANY succeeded chunk carried it. A slot
+// whose SERVED tag is nil vouches for NOTHING, never "everything" — that
+// polarity is what makes an unattributable slot degrade to re-review rather than
+// to a silent skip. Full coverage is therefore established by the all-succeeded
+// AND no-re-pack shortcut below, not by any per-slot sentinel.
 //
 // ctx carries the run logger: both defensive degradations below forfeit the whole
 // incremental optimization, so neither may be silent.
