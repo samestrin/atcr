@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -136,6 +137,19 @@ func TestBuildFallbackAgent_TruncateRefitsPayloadToItsOwnBudget(t *testing.T) {
 			assert.NotEqual(t, dropped, ref.Path, "a file recorded as dropped must not be in the payload sent")
 		}
 	}
+
+	// But it must COMPOSE with the primary's record, not replace it: a file the
+	// primary shed before the slot was built is absent from this agent's payload
+	// too, so the serving agent's files_dropped must name it (AC6) — otherwise
+	// the agent that reviewed the LEAST reports the SHORTEST omission list.
+	require.NotEmpty(t, primary.Truncation.FilesDropped,
+		"precondition: this fixture's primary must itself shed, or there is nothing to compose")
+	for _, p := range primary.Truncation.FilesDropped {
+		assert.Contains(t, fb.Truncation.FilesDropped, p,
+			"the serving agent's files_dropped must name what the primary already shed")
+	}
+	assert.True(t, sort.StringsAreSorted(fb.Truncation.FilesDropped),
+		"files_dropped stays sorted by path, per payload.ApplyByteBudget's contract")
 }
 
 func TestBuildFallbackAgent_RefitNeverShipsAnEmptyPayload(t *testing.T) {
