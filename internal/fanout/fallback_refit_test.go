@@ -653,3 +653,50 @@ func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
 		}
 	}
 }
+
+// TD (review.go:2795): the re-fit's budget pass sums FileEntry.Size (the
+// pre-render source size) while the bytes dispatched are len(Body). Entries
+// whose sizes fit kai's budget but whose BODIES do not must still be re-fit —
+// sizing the shed on the source bytes means the keep-decision is made against a
+// number the wire never carries.
+func TestBuildFallbackAgent_RefitBudgetsOnDispatchedBodyBytes(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+
+	mk := func(path string, size int64, bodyBytes int) payload.FileEntry {
+		body := fmt.Sprintf("=== FILE: %s ===\n", path) + strings.Repeat("x", bodyBytes) + "\n"
+		return payload.FileEntry{Path: path, Size: size, Body: body}
+	}
+	// Sizes total 65050 (fits kai's 71680); bodies total ~75000 (does not).
+	entries := []payload.FileEntry{
+		mk("a.go", 50, 60000),
+		mk("b.go", 60000, 8000),
+		mk("c.go", 5000, 7000),
+	}
+	var full strings.Builder
+	for _, e := range entries {
+		full.WriteString(e.Body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: 3},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 1)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.True(t, fb.rePacked,
+		"the dispatched bodies exceed the fallback's budget even though the source sizes fit it — the re-fit must fire")
+	if fb.rePacked {
+		assert.Equal(t, []string{"c.go"}, fb.Truncation.FilesDropped,
+			"the body-sized shed drops the entry that pushes the dispatched bytes over budget")
+		assert.NotContains(t, fb.Prompt, entries[2].Body)
+		assert.Contains(t, fb.Prompt, entries[0].Body)
+		assert.Contains(t, fb.Prompt, entries[1].Body)
+	}
+}
