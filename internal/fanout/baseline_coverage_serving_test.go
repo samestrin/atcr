@@ -206,6 +206,69 @@ func TestInvokeSlot_StampsServingAgentCoverageTag(t *testing.T) {
 	assert.True(t, r.servedRePacked, "a re-packed serving agent must be flagged so allOK can decline to short-circuit")
 }
 
+// AC2 end-to-end, composing the real pieces rather than hand-built Results:
+// buildSlots re-fits the fallback (T2), Engine.Run stamps the served tag (T3), and
+// uncoveredBaselineFiles reads it. The primary fails and the re-packed fallback
+// succeeds, so EVERY slot is StatusOK — the allOK path, which is the one that
+// fires in production and the one a mixed pass/fail test would never exercise.
+//
+// The two halves are pinned separately above; this pins that they compose. A
+// plumbing gap between them (a served tag stamped but never read, or read from an
+// agent that never re-packed) would leave both unit tests green while production
+// silently recorded the shed files as reviewed.
+func TestBaselineRun_RePackedFallbackRecordsOnlyTheFilesItReviewed(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	payloads := markedOversizedPayload()
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 1, "precondition: greta's large window holds the payload in one baseline slot")
+	require.Len(t, slots[0].Fallbacks, 1)
+
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: the backup's budget must force a re-fit, or this asserts nothing")
+	require.Greater(t, len(slots[0].Primary.chunkFiles), len(fb.chunkFiles),
+		"precondition: the re-fit must shed files, so the two tags genuinely differ")
+
+	// The primary's model fails; the re-packed fallback answers.
+	f := newFake()
+	f.failFor["unlisted-small-model"] = errors.New("boom")
+	results := NewEngine(f).Run(context.Background(), slots)
+	require.Len(t, results, 1)
+	require.Equal(t, StatusOK, results[0].Status,
+		"precondition: this must be an ALL-OK run — that is the path under test")
+
+	reviewed := map[string]string{}
+	for _, e := range payloads["blocks"].Entries {
+		reviewed[e.Path] = "hash-" + e.Path
+	}
+
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
+
+	// The complement, per AC2: every file the fallback shed must come back
+	// uncovered so the next scan re-reads it.
+	kept := map[string]struct{}{}
+	for _, p := range fb.chunkFiles {
+		kept[p] = struct{}{}
+	}
+	require.NotEmpty(t, kept)
+	assert.Len(t, got, len(reviewed)-len(kept),
+		"exactly the shed files must be reported uncovered")
+	for p := range kept {
+		assert.NotContains(t, got, p, "the file the fallback really reviewed must stay covered")
+	}
+	for p := range reviewed {
+		if _, ok := kept[p]; !ok {
+			assert.Contains(t, got, p,
+				"shed file %q must be re-scanned, not silently recorded as reviewed", p)
+		}
+	}
+}
+
 func TestInvokeSlot_PrimaryServedStampsItsOwnTag(t *testing.T) {
 	t.Parallel()
 	slot := Slot{
