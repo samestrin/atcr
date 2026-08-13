@@ -19,17 +19,18 @@ type foldCase struct {
 	raised  []string
 }
 
-func foldAll(folds []foldCase) (map[reviewerKey]*reviewerAcc, []reviewerKey) {
+func foldAll(t *testing.T, folds []foldCase) (map[reviewerKey]*reviewerAcc, []reviewerKey) {
 	accs := map[reviewerKey]*reviewerAcc{}
 	var order []reviewerKey
 	for i, f := range folds {
-		applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+		err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
 			model:    f.model,
 			persona:  f.persona,
 			caseID:   fmt.Sprintf("case-%02d", i+1),
 			expected: []string{"correctness"},
 			raised:   f.raised,
 		})
+		require.NoError(t, err)
 	}
 	return accs, order
 }
@@ -44,7 +45,7 @@ func foldAll(folds []foldCase) (map[reviewerKey]*reviewerAcc, []reviewerKey) {
 func TestApplyReviewerOutcome_SplitsRowsByRealizedModel(t *testing.T) {
 	// One lane (persona "brad"), two realized models across four cases: the primary
 	// served cases 1-2, then the lane failed over and the backup served cases 3-4.
-	accs, order := foldAll([]foldCase{
+	accs, order := foldAll(t, []foldCase{
 		{model: "qwen3.8-max", persona: "brad", raised: []string{"correctness"}},
 		{model: "qwen3.8-max", persona: "brad", raised: []string{"security"}},
 		{model: "llm-large", persona: "brad", raised: []string{"correctness"}},
@@ -71,7 +72,7 @@ func TestApplyReviewerOutcome_SplitsRowsByRealizedModel(t *testing.T) {
 // the re-keying is pinned in both directions rather than by a split-only assertion
 // that a key of "always split" would also satisfy.
 func TestApplyReviewerOutcome_NoFailoverKeepsOneRowPerLane(t *testing.T) {
-	accs, order := foldAll([]foldCase{
+	accs, order := foldAll(t, []foldCase{
 		{model: "m-greta", persona: "greta", raised: []string{"correctness"}},
 		{model: "m-kai", persona: "kai", raised: []string{"correctness"}},
 		{model: "m-greta", persona: "greta", raised: []string{"security"}},
@@ -88,7 +89,7 @@ func TestApplyReviewerOutcome_NoFailoverKeepsOneRowPerLane(t *testing.T) {
 // collapsing on model alone would merge two genuinely different reviewers. This is
 // the case that a model-only key would silently get wrong.
 func TestApplyReviewerOutcome_SameModelDifferentPersonasStaySeparate(t *testing.T) {
-	_, order := foldAll([]foldCase{
+	_, order := foldAll(t, []foldCase{
 		{model: "llm-large", persona: "brad", raised: []string{"correctness"}},
 		{model: "llm-large", persona: "kai", raised: []string{"correctness"}},
 	})
