@@ -61,11 +61,15 @@ func TestBuildSlots_BulkSlotCarriesTheEntriesItShipped(t *testing.T) {
 
 	got := entryPathSet(slots[0].entries)
 	require.NotEmpty(t, got, "a bulk slot built from a decomposed payload must carry its entries")
-	assert.Len(t, got, len(payloads["blocks"].Entries)-len(dropped),
-		"the carried set must be exactly the kept subset (whole payload minus the shed files)")
+	// Exact-set equality, matching T1's success criterion: cardinality plus
+	// absence would also pass a set that omitted one kept file and included one
+	// file that was never in the payload at all.
+	want := entryPathSet(payloads["blocks"].Entries)
 	for p := range dropped {
-		assert.NotContains(t, got, p, "a shed file must NOT appear in the carried entry list")
+		delete(want, p)
 	}
+	assert.Equal(t, want, got,
+		"the carried set must be exactly the kept subset (whole payload minus the shed files)")
 	// And every carried entry's body must really be in the rendered payload.
 	for _, e := range slots[0].entries {
 		assert.Contains(t, slots[0].Primary.Prompt, e.Body,
