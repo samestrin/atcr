@@ -190,5 +190,8 @@ func TestPrepareReviewFromRepo_BaselineSlotEntriesSubsetOfPrompt(t *testing.T) {
 			assert.Contains(t, slot.Primary.Prompt, e.Body,
 				"slot %d: carried entry %q must be present in the prompt the primary actually shipped", i, e.Path)
 		}
+		require.NotEmpty(t, slot.Primary.chunkFiles, "slot %d: precondition, a baseline bulk slot is coverage-tagged", i)
+		assert.NotContains(t, pathSet(slot.Primary.chunkFiles), "big.go",
+			"slot %d: the coverage tag must not vouch for a file the GLOBAL budget dropped from the prompt", i)
 	}
 }
