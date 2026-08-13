@@ -452,6 +452,46 @@ func TestInvokeSlot_TwoFallbackChainStampsTheActualServer(t *testing.T) {
 	assert.True(t, r.servedRePacked)
 }
 
+// The re-pack flag is DECLARED, not derived: nothing couples rePacked to "this
+// agent ships something other than what its primary shipped". A future fallback
+// arm that ships its own payload but forgets the flag must not silently pass
+// servedCoverage's guard — invokeSlot promotes the divergence to re-packed
+// (fail-open: the differing tag governs, and allOK declines to short-circuit)
+// and makes it loud.
+func TestInvokeSlot_TagDivergenceWithoutRePackFlagIsPromotedAndLoud(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.failFor["primary-model"] = errors.New("boom")
+
+	slot := Slot{
+		Primary: Agent{
+			Name:        "greta",
+			Invocation:  llmclient.Invocation{Model: "primary-model"},
+			PayloadMode: "blocks",
+			chunkFiles:  []string{"a.go", "b.go", "c.go"},
+		},
+		Fallbacks: []Agent{{
+			Name:        "kai",
+			Invocation:  llmclient.Invocation{Model: "backup-model"},
+			PayloadMode: "blocks",
+			// A DIFFERENT tag but no re-pack flag — the divergence shape a
+			// forgotten field assignment would produce.
+			chunkFiles: []string{"a.go"},
+			rePacked:   false,
+		}},
+	}
+
+	results := NewEngine(f).Run(context.Background(), []Slot{slot})
+	require.Len(t, results, 1)
+	r := results[0]
+
+	require.Equal(t, StatusOK, r.Status, "precondition: the fallback must serve the slot successfully")
+	assert.Equal(t, []string{"a.go"}, r.servedChunkFiles,
+		"the honest served tag still governs attribution")
+	assert.True(t, r.servedRePacked,
+		"a served tag differing from the primary's without the re-pack flag must be promoted to re-packed — the guard's assumption is broken, so fail open")
+}
+
 func TestInvokeSlot_PrimaryServedStampsItsOwnTag(t *testing.T) {
 	t.Parallel()
 	slot := Slot{
