@@ -1990,18 +1990,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// slot would vouch for files a sibling persona's failed chunk never reviewed,
 		// and those files would be recorded and then silently skipped next scan.
 		//
-		// The over-tag is unreachable today only because chunkBudget (the baseline
-		// partition budget) and appliedBudget (the per-agent shed budget) are two
-		// independently-written copies of the same arithmetic, so reaching this path
-		// implies no shed can occur. Nothing enforces that coupling, so the tag is taken
-		// from the shipped set rather than resting on it.
+		// BOTH arms below take the tag from bulkEntries for exactly that reason. A
+		// global payload_byte_budget shed is the case where mp.Entries and the
+		// shipped set diverge, and the no-shed (shared-tag) branch is still reachable
+		// after one — the AllDropped whole-payload dispatch leaves bulkShed false
+		// while mp.Text carries only the kept subset. When nothing was shed anywhere
+		// the two lists coincide, so the memoized shared tag is the same set either
+		// way — but it is bulkEntries either way, never the pre-budget list.
 		if baseline {
 			if bulkShed {
 				primary.chunkFiles = entryPaths(bulkEntries)
 			} else {
 				shared, ok := wholePayloadPaths[mode]
 				if !ok {
-					shared = entryPaths(mp.Entries)
+					// bulkEntries here, not mp.Entries: on the arms that reach
+					// this branch after a GLOBAL budget shed (the AllDropped
+					// whole-payload dispatch), bulkEntries is mp.Kept — the set
+					// mp.Text actually carries — while mp.Entries still names the
+					// dropped files. With no shed at all the two are identical.
+					shared = entryPaths(bulkEntries)
 					wholePayloadPaths[mode] = shared
 				}
 				primary.chunkFiles = shared
@@ -2388,9 +2395,10 @@ func inheritedPayloadFits(primary Agent, budget int64) bool {
 //
 // It exists so the overflow-policy call in buildFallbackAgent is handed the real
 // payload rather than nil. The arms reachable there (fail, fallback) ignore the
-// entries entirely, so this is defensive: a later change that wires the truncate
-// arm in would otherwise silently shed EVERY file against an empty list, which
-// looks like a working re-fit and is not one.
+// entries entirely, so this is defensive. The truncate arm is wired since Epic
+// 35.16.5.4, but it re-packs the slot's CARRIED entries (fallbackRefit), never
+// this reconstruction — this function's only consumer remains the fail/fallback
+// policy call.
 func entriesFromPrimary(primary Agent) []payload.FileEntry {
 	entries := make([]payload.FileEntry, 0, len(primary.CodeContext))
 	for _, ref := range primary.CodeContext {
@@ -2477,7 +2485,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// entry must not collide with the primary's and must reflect its own model. It
 	// reuses the primary's chunk regime (chunkMaxLines / ChunkTotal / degradation
 	// action) because the diff was already split for the slot; only the byte budget
-	// is model-specific.
+	// is model-specific. The truncate re-fit below is the exception: it overrides
+	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
+	// the re-fit's own truncate/overflow action).
 	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
@@ -2503,7 +2513,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// receives the already-rendered prompt, not the FileEntry list it would have to
 	// re-pack, and a fallback reviewing a different file set than its primary is a
 	// separate design question — chunkFiles and ChunkTotal are SLOT-level and
-	// inherited unconditionally below, so a re-packed fallback would falsify the
+	// inherited below (the truncate re-fit is the one exception, carrying the
+	// smaller set it actually kept — the narrowing the next paragraph describes),
+	// so a re-packed fallback would falsify the
 	// baseline coverage attribution and require the Slot/Agent model to grow a
 	// fallback-owned chunk chain. What AC4 forbids is doing this SILENTLY, so
 	// surface it — warn pre-dispatch and record the honest overflow degradation
