@@ -197,6 +197,142 @@ func TestBuildFallbackAgent_RefitNeverKeepsAZeroByteFile(t *testing.T) {
 	}
 }
 
+// emptyBodiedPayload builds entries whose Size claims content their Body does
+// not carry — every body empty. keepSmallestEntry declines (ok=false) on this
+// shape on EITHER re-fit arm, so the fallback must keep the inherited prompt
+// and the pre-epic warn-and-ship rather than re-pack its way to a 0-byte
+// dispatch. The bodies carry no `=== FILE:` markers, so the primary's
+// CodeContext is unmeasurable and the overflow gate opens by design.
+func emptyBodiedPayload() map[string]modePayload {
+	entries := []payload.FileEntry{
+		{Path: "a.py", Size: 400000, Body: ""},
+		{Path: "py.typed", Size: 0, Body: ""},
+	}
+	return map[string]modePayload{
+		"blocks": {Entries: entries, Text: "", FileCount: 2},
+	}
+}
+
+// keepSmallestEntry's ok=false arm, reached through the zero-budget arm: every
+// entry is empty, so there is no non-empty payload to send and the re-fit must
+// be DECLINED — the fallback ships the inherited prompt unchanged.
+func TestBuildFallbackAgent_RefitDeclinedWhenEveryEntryIsEmptyZeroBudget(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0 → the budget<=0 arm
+	cfg.Registry.Agents["kai"] = kai
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "no non-empty payload exists to send, so no re-fit may be recorded")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"a declined re-fit ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the honest overflow record stands — the backup cannot hold this lane")
+}
+
+// keepSmallestEntry's ok=false arm on the POSITIVE-budget arm: ApplyByteBudget's
+// largest-first shed drops the big (empty-bodied) file and keeps the 0-byte
+// py.typed, so the kept BODIES total zero — the same "nothing to send" state
+// AllDropped names, and the same decline must follow.
+func TestBuildFallbackAgent_RefitDeclinedWhenKeptBodiesAreEmpty(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default, a positive budget
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "a kept set whose bodies total 0 bytes is not a payload — the re-fit must be declined")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"a declined re-fit ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction)
+}
+
+// The no-shed early return: the entries measurably fit the backup's budget, but
+// the payload shape is one EntriesFromRenderedPayload does not recognize, so
+// the primary's CodeContext is empty and the overflow gate opened on "may not
+// fit". The re-pack must then shed nothing and report no re-fit — warn-and-ship
+// with a byte-identical prompt, which is what makes the Conservatism NFR hold
+// by construction.
+func TestBuildFallbackAgent_NoShedEarlyReturnKeepsWarnAndShip(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default
+
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < 3; i++ {
+		body := fmt.Sprintf("small file %d contents, no markers anywhere\n", i)
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("s%d.txt", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: 3},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "nothing was shed, so no re-fit happened")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"the no-shed arm ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the unmeasurable payload keeps the honest overflow record, not a fabricated truncate")
+}
+
+// AC5 on the POSITIVE-budget arm (the arm the zero-budget tests never reach):
+// one oversized entry plus a 0-byte py.typed. ApplyByteBudget drops largest-
+// first and zero-size entries sort LAST — never dropped — so the budget pass
+// keeps py.typed with AllDropped=false, and the re-fit would concatenate the
+// kept bodies into a 0-byte payload: a false-clean "no findings" review that
+// also tags py.typed as reviewed. The kept-body measurement must route this
+// into keepSmallestEntry exactly as the AllDropped arm does.
+func TestBuildFallbackAgent_ZeroByteKeptEntryRoutesToKeepSmallest(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default, a positive budget
+
+	big := "=== FILE: big.go ===\n" + strings.Repeat("y", 400000) + "\n"
+	entries := []payload.FileEntry{
+		{Path: "big.go", Size: int64(len(big)), Body: big},
+		{Path: "py.typed", Size: 0, Body: ""},
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: big, FileCount: 2},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.NotZero(t, codeContextBytes(fb),
+		"the re-fit must never dispatch a 0-byte payload — that is a false-clean review, not a small one")
+	assert.NotEqual(t, []string{"py.typed"}, fb.chunkFiles,
+		"an empty file must not be the re-fit's whole coverage tag")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the smallest available framing (big.go alone) still exceeds this budget — that is overflow, not truncate")
+}
+
 // A re-fit that shrank the payload but still cannot reach its budget has NOT
 // truncated its way to safety. Recording "truncate" there would drop the only
 // signal saying the review may not have been read in full — precisely when the
