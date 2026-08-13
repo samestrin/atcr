@@ -1416,9 +1416,26 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
 	// (a fallback reviews the same persona prompt/payload as its primary — here,
 	// the same chunk).
-	buildChain := func(name string, primary Agent) ([]Agent, error) {
+	//
+	// entries is the slot's payload as the FileEntry list the primary shipped —
+	// the re-pack source a fallback needs to shed against its OWN budget (Epic
+	// 35.16.5.4). It is passed rather than recovered for the reason documented on
+	// Slot.entries, and it is EMPTY for the chunked-diff path, which has no such
+	// list; buildFallbackAgent reads empty as "cannot re-fit" and keeps the
+	// warn-and-ship behavior unchanged there. The re-render inputs (mode, rng,
+	// agentScopeConstraint) travel with it because renderAgent needs all three and
+	// this closure captured none of them.
+	buildChain := func(name string, primary Agent, ac registry.AgentConfig, mode, agentScopeConstraint string, entries []payload.FileEntry) ([]Agent, error) {
 		var fbs []Agent
 		seen := map[string]bool{name: true}
+		refit := fallbackRefit{
+			primaryName:     name,
+			primaryConfig:   ac,
+			mode:            mode,
+			rng:             rng,
+			scopeConstraint: agentScopeConstraint,
+			entries:         entries,
+		}
 		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
 			if seen[fb] {
 				break // registry validation guarantees acyclic; defensive stop
@@ -1430,7 +1447,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// overflows: marking the lane on every call would swallow that second
 			// warning entirely, which is the opposite of the dedup's purpose.
 			lane := name + "\x00" + fb
-			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane])
+			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane], refit)
 			if err != nil {
 				return nil, err
 			}
@@ -1621,11 +1638,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// attribution reads the slot's Primary, and a fallback reviews the SAME
 						// chunk as the primary it substitutes for.
 						primary.chunkFiles = chunkFiles
-						fbs, cerr := buildChain(name, primary)
+						// Carry this chunk's entries (Epic 35.16.5.4 T1) so a fallback whose
+						// own budget cannot hold the chunk can re-pack it. ck IS the shipped
+						// set — pb above is built from exactly these entries — so the carried
+						// list, the rendered payload, and chunkFiles above are the same fact
+						// recorded three ways and cannot drift.
+						fbs, cerr := buildChain(name, primary, ac, mode, agentScopeConstraint, ck)
 						if cerr != nil {
 							return cerr
 						}
-						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck})
 					}
 					return nil
 				}
@@ -1779,7 +1801,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					if err != nil {
 						return err
 					}
-					fbs, err := buildChain(name, primary)
+					// No entries carried (Epic 35.16.5.4 T1): chunkDiff splits TEXT on
+					// column-0 diff markers, so there is no FileEntry list for this chunk
+					// and no honest way to build one — a list recovered from the chunk text
+					// would be the shape-dependent reconstruction Slot.entries exists to
+					// avoid. The slot therefore carries EMPTY, and buildFallbackAgent
+					// declines to re-fit it and keeps the pre-epic warn-and-ship.
+					fbs, err := buildChain(name, primary, ac, mode, agentScopeConstraint, nil)
 					if err != nil {
 						return err
 					}
@@ -1961,11 +1989,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				primary.chunkFiles = shared
 			}
 		}
-		fbs, err := buildChain(name, primary)
+		// bulkEntries is what this slot SHIPS (the kept subset after any per-agent
+		// shed, or the single smallest entry on the zero-budget arm) — never the
+		// pre-shed mp.Entries. Carrying the pre-shed set would offer a fallback files
+		// the primary's prompt does not contain, and the same reasoning that makes the
+		// baseline coverage tag read bulkEntries above applies here.
+		fbs, err := buildChain(name, primary, ac, mode, agentScopeConstraint, bulkEntries)
 		if err != nil {
 			return err
 		}
-		slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial})
+		slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: bulkEntries})
 		return nil
 	}
 
@@ -2352,6 +2385,40 @@ func entriesFromPrimary(primary Agent) []payload.FileEntry {
 	return entries
 }
 
+// fallbackRefit carries everything buildFallbackAgent needs to RE-RENDER a slot's
+// payload at the fallback's own byte budget (Epic 35.16.5.4 T2): the slot's
+// shipped FileEntry list plus the three render inputs renderAgent requires and
+// buildChain did not previously capture (mode, rng, scopeConstraint). The primary's
+// name and AgentConfig travel with it because a fallback reviews the SAME PERSONA
+// as the primary it substitutes for (AC 01-04) — only the model, temperature and
+// timeout are the fallback's own — so the re-render must resolve the PRIMARY's
+// persona, not the backup's.
+//
+// It is passed as a variadic option rather than a required parameter so every
+// caller that has no re-pack source keeps working, and keeps its pre-epic
+// behavior, without a signature change: a bare buildFallbackAgent call cannot
+// construct slot-level entries, and "no refit context → warn and ship" is the
+// correct answer for such a caller, not a degraded one. Same idiom buildSlots
+// itself uses for baselineOpt.
+type fallbackRefit struct {
+	primaryName     string
+	primaryConfig   registry.AgentConfig
+	mode            string
+	rng             ReviewRange
+	scopeConstraint string
+	// entries is the payload the primary shipped. EMPTY means the slot's payload
+	// was never entry-decomposed (the chunked-diff path), which disables the
+	// re-fit — see Slot.entries.
+	entries []payload.FileEntry
+}
+
+// canRefit reports whether a refit context is usable as a re-pack source. An
+// absent context and an entry-less one are the same answer — there is nothing to
+// re-pack — and both must leave the pre-epic warn-and-ship path untouched rather
+// than re-packing against an empty list, which would shed EVERY file and ship an
+// empty (false-clean) review.
+func (r fallbackRefit) canRefit() bool { return len(r.entries) > 0 }
+
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
 // payload as the primary (AC 01-04: "fallback agent tried (same persona)"), only
 // the provider/model/temperature/timeout differ.
@@ -2365,7 +2432,14 @@ func entriesFromPrimary(primary Agent) []payload.FileEntry {
 // The second return reports whether the warning was actually emitted, so a
 // caller deduplicating it across a lane's chunks suppresses only what the
 // operator has really seen.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool) (Agent, bool, error) {
+func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool, refitOpt ...fallbackRefit) (Agent, bool, error) {
+	// Variadic-optional (same idiom as buildSlots' baselineOpt): a caller with no
+	// re-pack source omits it and gets the pre-epic behavior exactly.
+	var refit fallbackRefit
+	if len(refitOpt) > 0 {
+		refit = refitOpt[0]
+	}
+	_ = refit // wired by T2's truncate arm
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
 		return Agent{}, false, fmt.Errorf("fallback agent %q not found in registry", name)
