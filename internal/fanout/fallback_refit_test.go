@@ -577,7 +577,7 @@ func TestBuildFallbackAgent_TruncateWithoutEntriesStillWarnsAndShips(t *testing.
 	const nFiles = 6
 	diff := wideDiffOfNFiles(nFiles, 1000)
 	payloads := map[string]modePayload{
-		"blocks": {Text: diff, FileCount: nFiles, Entries: []payload.FileEntry{{Path: "f0.go", Size: int64(len(diff)), Body: diff}}},
+		"blocks": {Text: diff, FileCount: nFiles},
 	}
 
 	var slots []Slot
