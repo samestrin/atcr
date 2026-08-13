@@ -2840,7 +2840,16 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 			planCap = mspb
 		}
-		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+		if planCap < 1 {
+			// A budget that funds not even one byte of plan cannot present a
+			// scoped review: capping to 0 would blank the plan body while the
+			// wrapper still instructs the model to obey it. Drop the block
+			// entirely instead — the review proceeds unconstrained and the
+			// prompt says so.
+			scopeConstraint = ""
+		} else {
+			scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+		}
 	}
 	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, scopeConstraint)
 	var kept []payload.FileEntry
