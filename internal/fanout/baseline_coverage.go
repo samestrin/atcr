@@ -62,13 +62,18 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 	// serving agent therefore forces the per-slot attribution below, which reads
 	// what each slot's server actually reviewed.
 	//
-	// COST, deliberately accepted: ONE re-packed slot disables the short-circuit for
-	// the WHOLE run, so every other slot must then carry a tag to stay covered and
-	// any untagged-but-succeeded slot starts reporting its files uncovered. That is
-	// the fail-open direction (a needless re-scan, never a silent skip), and it is
-	// the same trade the untagged-slot polarity already makes. Gating per-slot
-	// instead would mean trusting the short-circuit's whole-payload inference for
-	// some slots while denying it for others, which is not a coherent middle.
+	// COST, deliberately accepted: ONE re-packed slot disables the short-circuit
+	// for the WHOLE run, forcing the O(slots × tagged files) attribution pass
+	// below instead of the whole-payload inference. Coverage itself does not
+	// change: every baseline slot is tagged by construction (the chunk-partition
+	// and bulk paths tag every slot; the only untagged-slot producer is the
+	// chunkDiff path, gated on ReviewStrategy == chunked && !baseline), so the
+	// untagged-but-succeeded degradation is defensive only — it fires on a
+	// broken engine contract, not on any payload this epic creates, and when it
+	// does fire it fails open (a needless re-scan, never a silent skip). Gating
+	// per-slot instead would mean trusting the short-circuit's whole-payload
+	// inference for some slots while denying it for others, which is not a
+	// coherent middle.
 	allOK := len(results) == len(slots)
 	for _, r := range results {
 		if r.Status != StatusOK || r.servedRePacked {
@@ -120,19 +125,26 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 // reviewed — the only set it may vouch for (Epic 35.16.5.4 T3).
 //
 // invokeSlot stamps the served tag onto every succeeding result, so in production
-// the first return is always the operative one. The fall-back to the slot's
-// Primary covers a result built OUTSIDE that path (the engine's synthesized
-// panic/cancel results, and direct construction in tests), where "which agent
-// served" was never recorded and the primary is the only agent it could have
-// been. That preserves the pre-epic contract for such a result rather than
-// silently making it vouch for nothing.
+// the SECOND return is always the operative one for a tagged slot. The fall-back
+// to the slot's Primary covers a result built OUTSIDE that path (the engine's
+// synthesized panic/cancel results, and direct construction in tests), where
+// "which agent served" was never recorded and the primary is the only agent it
+// could have been. That preserves the pre-epic contract for such a result rather
+// than silently making it vouch for nothing.
 //
 // The guard is what keeps that safe: the fall-back is available ONLY when the
 // result is known not to have re-packed. A re-packed server always carries its own
-// tag (invokeSlot stamps both fields from the same agent, on the same line), so a
+// tag (invokeSlot stamps both fields from the same agent, in the same block), so a
 // re-pack can never reach the primary's full tag through here — which is the exact
 // falsification this function exists to prevent. A re-packed result with no tag
 // vouches for nothing, the safe direction.
+//
+// The nil test is deliberate, not a shortcut for len() == 0: an EMPTY-but-non-nil
+// tag vouches for NOTHING, where nil falls back to the primary's whole tag. The
+// empty case is unreachable from the re-fit arm — its keepSmallestEntry/AllDropped
+// handling guarantees a non-empty kept set when it succeeds — so the polarity
+// above never has to arbitrate it, but the distinction is load-bearing if a future
+// producer ever stamps an empty tag.
 func servedCoverage(s Slot, r Result) []string {
 	if r.servedChunkFiles == nil && !r.servedRePacked {
 		return s.Primary.chunkFiles

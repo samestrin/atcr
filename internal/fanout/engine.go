@@ -784,7 +784,8 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			// copies the primary's tag onto every fallback — so a run with no re-pack
 			// records byte-identical coverage. Only a re-packed fallback differs, and
 			// it is exactly the case where the primary's tag would vouch for files
-			// nothing read.
+			// nothing read. servedCoverage's re-pack guard leans on these two
+			// stamps coming from the same agent in the same block.
 			r.servedChunkFiles = a.chunkFiles
 			r.servedRePacked = a.rePacked
 			return r
