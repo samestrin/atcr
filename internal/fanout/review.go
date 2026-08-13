@@ -2570,9 +2570,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// The coverage tag follows the payload, so it is copied from the primary here
 	// (a non-re-fit fallback DID review the primary's chunk) and replaced by the
 	// kept subset on the re-fit arm. Epic 35.16.5.4 T3 reads this off whichever
-	// chain member actually served the slot; before this copy a fallback carried no
-	// tag at all, so that read would have made every fallback-served slot vouch for
-	// nothing and silently re-scanned its files.
+	// chain member actually served the slot. The copy is belt-and-braces:
+	// servedCoverage's (nil, false) fall-back arm would return the primary's tag
+	// for an untagged non-re-packed result anyway — copying here keeps the tag on
+	// the AGENT that shipped it, so the stamped served tag and the slot's primary
+	// tag are the same fact recorded at the source rather than reconstructed two
+	// files away.
 	fbChunkFiles := primary.chunkFiles
 	fbChunkTotal := primary.ChunkTotal
 	fbMaxLines := primary.chunkMaxLines
