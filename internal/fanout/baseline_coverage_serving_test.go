@@ -226,6 +226,42 @@ func TestMergeChunkResults_PromotesOverflowOverTruncate(t *testing.T) {
 	require.Len(t, merged, 1)
 	assert.Equal(t, degradationOverflow, merged[0].DegradationAction,
 		"overflow is the only action saying the review may not have been read in full — it must survive the merge")
+	assert.Equal(t, int64(0), merged[0].EffectiveBudget,
+		"a re-packed member that genuinely ran at budget 0 is the tightest budget in the group — 0 is a recorded value, not an unknown")
+}
+
+// The min must not depend on iteration order: a zero budget wins whether it
+// appears before or after a larger one.
+func TestMergeChunkResults_ZeroBudgetWinsRegardlessOfOrder(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationOverflow, EffectiveBudget: 0, servedRePacked: true, Content: "c0"},
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationTruncate, EffectiveBudget: 71680, servedRePacked: true, Content: "c1"},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Equal(t, degradationOverflow, merged[0].DegradationAction)
+	assert.Equal(t, int64(0), merged[0].EffectiveBudget,
+		"a genuine 0 seen FIRST must not be overwritten by a later larger budget")
+}
+
+// A promoted zero budget must not sit beside an inherited non-zero
+// reserved_output_tokens: status.json omits both fields at 0, so leaving the
+// reservation in place would render "no budget recorded" next to "output
+// reserved" — two fields contradicting each other on the same record.
+func TestMergeChunkResults_PromotedZeroBudgetKeepsFieldsConsistent(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationChunk, EffectiveBudget: 400000, ReservedOutputTokens: 4096, Content: "c0"},
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationOverflow, EffectiveBudget: 0, servedRePacked: true, Content: "c1"},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Equal(t, int64(0), merged[0].EffectiveBudget)
+	assert.Equal(t, 0, merged[0].ReservedOutputTokens,
+		"reserved_output_tokens must not survive a promoted zero budget — the two fields must agree")
 }
 
 // AC4: with no re-pack anywhere the promotion is inert and the merged record is
