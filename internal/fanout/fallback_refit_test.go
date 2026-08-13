@@ -512,16 +512,33 @@ func TestBuildFallbackAgent_RefitRecordsOneChunkAndBulkSizing(t *testing.T) {
 	// T4: the sizing record must describe the payload actually sent. A re-fit ships
 	// ONE payload, so inheriting the primary's ChunkTotal would scale the per-call
 	// deadline (timeout.go) and the diff-cache sizing token by a split it does not
-	// follow.
+	// follow. Driven from the baseline multi-chunk branch (review.go:1600-1656):
+	// greta's 404992-byte budget partitions the 500 KB payload into two chunks, so
+	// each primary REALLY carries ChunkTotal 2 — the only configuration where the
+	// T4 override matters. (The previous fixture never passed baseline=true, so the
+	// slot fell through to the bulk path with ChunkTotal 0 and the assertions below
+	// were self-guaranteeing.)
 	cfg := refitRoster(t, 128000, OverflowTruncate)
-	cfg.Settings.ReviewStrategy = reviewStrategyChunked
-	slot := buildRefitSlot(t, cfg)
-	fb := slot.Fallbacks[0]
 
-	assert.Equal(t, 1, fb.ChunkTotal, "a re-fit fallback ships exactly one payload")
-	assert.Equal(t, 0, fb.chunkMaxLines, "a re-fit fallback is bulk-sized; the bulk sentinel is 0")
-	assert.Equal(t, scaledTimeoutSecs(fb.TimeoutSecs, fb.ChunkTotal), fb.TimeoutSecs,
-		"ChunkTotal 1 must leave the per-call deadline unscaled")
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 2, "precondition: greta's budget must partition the payload into two chunk slots")
+
+	for i, s := range slots {
+		require.Greater(t, s.Primary.ChunkTotal, 1,
+			"slot %d: precondition, the primary must be genuinely multi-chunk", i)
+		require.Len(t, s.Fallbacks, 1, "slot %d: precondition, the fallback chain is attached", i)
+		require.True(t, s.Fallbacks[0].rePacked, "slot %d: precondition, the chunk must overflow kai's budget so the re-fit fires", i)
+		fb := s.Fallbacks[0]
+		assert.Equal(t, 1, fb.ChunkTotal, "slot %d: a re-fit fallback ships exactly one payload", i)
+		assert.Equal(t, 0, fb.chunkMaxLines, "slot %d: a re-fit fallback is bulk-sized; the bulk sentinel is 0", i)
+		assert.Equal(t, scaledTimeoutSecs(fb.TimeoutSecs, fb.ChunkTotal), fb.TimeoutSecs,
+			"slot %d: ChunkTotal 1 must leave the per-call deadline unscaled", i)
+	}
 }
 
 func TestBuildFallbackAgent_NonTruncatePoliciesDoNotRefit(t *testing.T) {
