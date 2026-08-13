@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -168,6 +169,78 @@ func TestUncoveredBaselineFiles_RePackedResultNeverFallsBackToPrimaryTag(t *test
 	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
 	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}, "c.go": {}}, got,
 		"a re-packed server with no tag must vouch for NOTHING — never for its primary's full chunk")
+}
+
+// AC6 on the multi-chunk baseline path: the merge inherits its record from g[0],
+// so a re-fit that happens on any chunk but the first would be invisible in
+// status.json — the persona would present as a clean "chunk" review while a
+// substitute reviewed strictly less than it was sent.
+func TestMergeChunkResults_PromotesARePackedChunksDegradationRecord(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationChunk, EffectiveBudget: 400000, Content: "c0"},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			DegradationAction: degradationTruncate,
+			EffectiveBudget:   71680,
+			Truncation:        payload.Truncation{Truncated: true, FilesDropped: []string{"b.go", "a.go"}},
+			servedRePacked:    true,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c2",
+			DegradationAction: degradationTruncate,
+			EffectiveBudget:   71680,
+			Truncation:        payload.Truncation{Truncated: true, FilesDropped: []string{"c.go", "a.go"}},
+			servedRePacked:    true,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	assert.Equal(t, degradationTruncate, out.DegradationAction,
+		"a re-fit on a later chunk must not be reported as an ordinary chunk split")
+	assert.True(t, out.Truncation.Truncated)
+	assert.Equal(t, []string{"a.go", "b.go", "c.go"}, out.Truncation.FilesDropped,
+		"the persona's shed record is the deduplicated, sorted union across its re-packed chunks")
+	assert.Equal(t, int64(71680), out.EffectiveBudget,
+		"effective_budget must be the tightest budget any of this persona's payloads was sized to")
+}
+
+func TestMergeChunkResults_PromotesOverflowOverTruncate(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationTruncate, EffectiveBudget: 71680, servedRePacked: true, Content: "c0"},
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationOverflow, EffectiveBudget: 0, servedRePacked: true, Content: "c1"},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Equal(t, degradationOverflow, merged[0].DegradationAction,
+		"overflow is the only action saying the review may not have been read in full — it must survive the merge")
+}
+
+// AC4: with no re-pack anywhere the promotion is inert and the merged record is
+// exactly the pre-epic one (g[0]'s).
+func TestMergeChunkResults_NoRePackLeavesTheMergedRecordUntouched(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationChunk, EffectiveBudget: 400000, Content: "c0"},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			DegradationAction: degradationTruncate,
+			EffectiveBudget:   1234,
+			Truncation:        payload.Truncation{Truncated: true, FilesDropped: []string{"z.go"}},
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Equal(t, degradationChunk, merged[0].DegradationAction,
+		"without a re-pack the pre-epic g[0] inheritance must stand, byte-identical")
+	assert.Equal(t, int64(400000), merged[0].EffectiveBudget)
+	assert.False(t, merged[0].Truncation.Truncated)
 }
 
 // The stamping half, through the real engine: invokeSlot must record the SERVING

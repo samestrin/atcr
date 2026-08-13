@@ -5,6 +5,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // reviewStrategyChunked is the review_strategy value (Epic 14.3) that enables
@@ -220,6 +222,68 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 // by the same model. When chunks fell back to different models, pick the modal
 // (most frequent) model, tie-breaking by first appearance, instead of joining them
 // into a composite value that would never match another persona's key.
+// promoteRePackedDegradation lifts a re-packed chunk's degradation record into the
+// merged persona result (Epic 35.16.5.4 AC6).
+//
+// The merge otherwise inherits Truncation / DegradationAction / EffectiveBudget
+// wholesale from g[0], so a fallback that re-fit its payload on any chunk but the
+// FIRST is invisible in status.json — degradation_action would still read "chunk"
+// with an empty truncation, on exactly the multi-chunk baseline path this epic
+// targets. The persona would present as a clean full-coverage review while a
+// substitute reviewed strictly less than it was sent.
+//
+// Deliberately inert unless some chunk actually re-packed, so a run with no re-fit
+// keeps a byte-identical merged record (AC4) and the pre-existing g[0] semantics
+// stand everywhere else. What it promotes:
+//
+//   - degradation_action: overflow over truncate. Same precedence status.go
+//     documents — overflow is the only value that says the review may not have
+//     been read in full, so it must survive a merge with a milder sibling.
+//   - truncation: the UNION of the shed files, deduplicated and sorted, since each
+//     re-packed chunk shed its own set and the persona's record has to name all of
+//     them.
+//   - effective_budget: the SMALLEST across re-packed chunks — the tightest budget
+//     any of this persona's payloads was actually sized to.
+//
+// chunk_count is left alone: it describes the persona's split, which is still
+// exactly what happened, and the per-chunk re-fits do not change it.
+func promoteRePackedDegradation(out *Result, g []Result) {
+	dropped := map[string]struct{}{}
+	var budget int64
+	action := ""
+	any := false
+	for _, r := range g {
+		if !r.servedRePacked {
+			continue
+		}
+		any = true
+		for _, p := range r.Truncation.FilesDropped {
+			dropped[p] = struct{}{}
+		}
+		if action != degradationOverflow {
+			action = r.DegradationAction
+		}
+		if budget == 0 || (r.EffectiveBudget > 0 && r.EffectiveBudget < budget) {
+			budget = r.EffectiveBudget
+		}
+	}
+	if !any {
+		return
+	}
+	if action != "" {
+		out.DegradationAction = action
+	}
+	out.EffectiveBudget = budget
+	if len(dropped) > 0 {
+		paths := make([]string, 0, len(dropped))
+		for p := range dropped {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		out.Truncation = payload.Truncation{Truncated: true, FilesDropped: paths}
+	}
+}
+
 func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out := g[0] // inherit stable per-slot identity (Agent, Model, PayloadMode, constraints)
 	out.Err = nil
@@ -308,6 +372,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	promoteRePackedDegradation(&out, g)
 	if len(fallbackFromSet) > 0 {
 		fallbacks := make([]string, 0, len(fallbackFromSet))
 		for fb := range fallbackFromSet {

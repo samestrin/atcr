@@ -61,6 +61,14 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 	// by the next scan: a file nothing ever read, never read again. A re-packed
 	// serving agent therefore forces the per-slot attribution below, which reads
 	// what each slot's server actually reviewed.
+	//
+	// COST, deliberately accepted: ONE re-packed slot disables the short-circuit for
+	// the WHOLE run, so every other slot must then carry a tag to stay covered and
+	// any untagged-but-succeeded slot starts reporting its files uncovered. That is
+	// the fail-open direction (a needless re-scan, never a silent skip), and it is
+	// the same trade the untagged-slot polarity already makes. Gating per-slot
+	// instead would mean trusting the short-circuit's whole-payload inference for
+	// some slots while denying it for others, which is not a coherent middle.
 	allOK := len(results) == len(slots)
 	for _, r := range results {
 		if r.Status != StatusOK || r.servedRePacked {

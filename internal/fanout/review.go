@@ -1841,12 +1841,23 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		appliedBudget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)
 		bulkDegradation := ""
 		bulkText, bulkFileCount, bulkTrunc := mp.Text, mp.FileCount, mp.Truncation
-		// The entries this slot will ACTUALLY ship. It starts as the whole payload —
-		// which is what the no-shed and AllDropped arms genuinely dispatch — and is
-		// narrowed to the kept subset when the per-agent budget sheds files. The
-		// baseline coverage tag below reads it, so the tag can never name a file the
-		// rendered prompt does not contain.
-		bulkEntries := mp.Entries
+		// The entries this slot will ACTUALLY ship. It starts as the GLOBAL-budget
+		// survivor set — which is what bulkText (mp.Text) contains, and therefore what
+		// the no-shed and AllDropped arms genuinely dispatch — and is narrowed to the
+		// kept subset when the per-agent budget sheds files. The baseline coverage tag
+		// and the fallback re-pack source below both read it, so the tag can never name
+		// a file the rendered prompt does not contain and a re-fit can never offer a
+		// fallback a file its primary never sent.
+		//
+		// mp.Kept, not mp.Entries: Entries is the PRE-budget list, so on a run where
+		// the global payload_byte_budget dropped files the two differ and mp.Entries
+		// would name files absent from mp.Text. Kept is nil on the payload builders
+		// that do not populate it, so fall back to Entries there — those paths apply
+		// no global budget pass, which makes the two lists identical anyway.
+		bulkEntries := mp.Kept
+		if bulkEntries == nil {
+			bulkEntries = mp.Entries
+		}
 		bulkShed := false
 		if agentBudget == 0 && len(mp.Entries) > 0 {
 			// Epic 19.10 TD-002: a model whose window <= output cap + prompt overhead
@@ -2603,22 +2614,43 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// must be the bulk sentinel 0 for the same reason (T4).
 				fbChunkTotal, fbMaxLines = 1, 0
 				fbSizingBudget = rp.budget
-				fbDegradation = degradationTruncate
-				if warnOversized {
-					warned = true
-					// "warning", not a softer prefix: the re-fit is LOSSY — files were
-					// dropped — and every other degradation this package surfaces uses
-					// the same prefix, so an operator grepping for atcr: warning: sees
-					// all of them or none.
-					fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q (effective budget %d B) re-fit the payload it inherited from primary %q (%d B) to its own budget under on_overflow=truncate; %d file(s) shed — the fallback reviewed LESS than its primary was sent\n",
-						name, rp.budget, primary.Name, primary.EffectiveBudget, len(rp.trunc.FilesDropped))
+				// truncate when the re-packed payload fits; overflow when even the
+				// smallest framing still exceeds this budget. The second case must not
+				// be recorded as a successful truncate — it is the "no smaller framing
+				// available" state, and it keeps the overflow warning below.
+				fbDegradation = rp.action
+				// The reservation follows the budget that was actually recorded, not
+				// the raw per-model one. A re-fit records the APPLIED budget, so
+				// gating on fbBudget here would re-create the self-contradictory
+				// record 35.16.5.1 removed: effective_budget absent (0, omitempty)
+				// beside reserved_output_tokens 8192.
+				fbReserved = 0
+				if fbSizingBudget > 0 {
+					fbReserved = defaultMaxTokens
 				}
-				// Re-fit: the payload now fits, so the overflow warning and the
-				// overflow stamp below are both wrong for this agent and are skipped.
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was
 				// covered" over a slot that reviewed a strict subset of its tag (T3a).
+				// This holds whether or not the result fits: coverage must follow the
+				// SMALLER file set either way.
 				refitted = true
+				// A SUCCESSFUL re-fit is recorded, not warned — exactly how the primary
+				// path treats its own byte shed (bulkDegradation = degradationTruncate
+				// with no stderr line). The shed is in this agent's own Truncation and
+				// degradation_action, and mergeResultGroup carries it through the
+				// chunk collapse, so nothing is silent; adding a per-chunk stderr line
+				// here would instead have to share the lane's overflow dedup flag,
+				// where either message could swallow the other.
+				//
+				// A re-fit that still does not fit is a different matter: the lane's
+				// real problem — a backup too small to hold this review at all — is
+				// unsolved and needs operator action, so it keeps the overflow warning
+				// below. Leaving `warned` false here is what lets that fire.
+				if warnOversized && !rp.fits {
+					warned = true
+					fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q re-packed the payload inherited from primary %q down to %d file(s) (%d shed), but the smallest available framing still exceeds its %d B budget; it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
+						name, primary.Name, len(rp.kept), len(rp.trunc.FilesDropped), rp.budget, name)
+				}
 			}
 		}
 		if !refitted {
@@ -2716,19 +2748,40 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	}, warned, nil
 }
 
-// keepSmallestEntry reduces a payload to its single smallest entry with the
-// matching shed record — the "no file fits, but an empty payload is not an
+// keepSmallestEntry reduces a payload to its single smallest NON-EMPTY entry with
+// the matching shed record — the "no file fits, but an empty payload is not an
 // option" answer. Truncated is false for a one-entry input because nothing was
 // actually dropped, which is what tells the re-fit caller there is no smaller
 // payload to send and the honest overflow record must stand.
 //
-// Callers guarantee a non-empty slice (smallestEntry indexes entries[0]).
-func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payload.Truncation) {
-	smallest := smallestEntry(entries)
+// Zero-byte entries are skipped rather than preferred, and that is the whole
+// point of not reusing smallestEntry here. Empty tracked files are ordinary
+// (py.typed, __init__.py, .gitkeep), and "fewest bytes" would pick one every
+// time — shipping a payload of exactly 0 bytes, which comes back as a
+// false-clean "no findings" review. That is the precise failure AC5 forbids, so
+// the entry that survives must carry real content.
+//
+// The second return is false when every entry is empty: there is no non-empty
+// payload to send, so the caller must decline the re-fit rather than invent one.
+// Callers guarantee a non-empty slice.
+func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payload.Truncation, bool) {
+	var smallest payload.FileEntry
+	found := false
+	for _, e := range entries {
+		if len(e.Body) == 0 {
+			continue
+		}
+		if !found || len(e.Body) < len(smallest.Body) {
+			smallest, found = e, true
+		}
+	}
+	if !found {
+		return nil, payload.Truncation{}, false
+	}
 	return []payload.FileEntry{smallest}, payload.Truncation{
 		Truncated:    len(entries) > 1,
 		FilesDropped: droppedPathsExcept(entries, smallest.Path),
-	}
+	}, true
 }
 
 // refitPayload is the outcome of re-packing a slot's payload at a fallback's own
@@ -2741,6 +2794,13 @@ type refitPayload struct {
 	trunc  payload.Truncation
 	kept   []payload.FileEntry
 	budget int64
+	// action is the degradation this re-fit actually achieved: truncate when the
+	// re-packed payload fits, overflow when even the smallest framing does not.
+	action string
+	// fits reports whether the dispatched bytes are within budget. False keeps the
+	// pre-epic overflow warning, because the operator's problem — a backup too
+	// small for this lane — is real and unsolved even though the payload shrank.
+	fits bool
 }
 
 // refitFallbackPayload re-packs refit.entries against the fallback's own budget
@@ -2766,7 +2826,20 @@ type refitPayload struct {
 // payload is genuinely sized to, so it is what effective_budget must report for an
 // agent that re-fit (AC6), and it is the more conservative of the two.
 func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64, fbWindow int) (refitPayload, bool, error) {
-	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, refit.scopeConstraint)
+	// Re-cap the SCOPE CONSTRAINT against the FALLBACK's window before reserving
+	// it. It arrives capped to the PRIMARY's budget/8 (see add()), and renderAgent
+	// prepends it UNCOUNTED, so a plan sized for a 128k primary would ride whole
+	// into a 32k backup and the payload would not really be within this agent's
+	// budget. Same arithmetic as the primary path, on this agent's own numbers.
+	scopeConstraint := refit.scopeConstraint
+	if len(scopeConstraint) > 0 && fbBudget > 0 {
+		planCap := fbBudget / 8
+		if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
+			planCap = mspb
+		}
+		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
+	}
+	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, scopeConstraint)
 	var kept []payload.FileEntry
 	var trunc payload.Truncation
 	switch {
@@ -2777,7 +2850,11 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		// arm was written to prevent, since a window that funds no input budget at
 		// all is the strongest possible overflow signal, not the absence of one.
 		// Keep the smallest entry, the same answer the bulk arm gives.
-		kept, trunc = keepSmallestEntry(refit.entries)
+		var ok bool
+		kept, trunc, ok = keepSmallestEntry(refit.entries)
+		if !ok {
+			return refitPayload{}, false, nil
+		}
 	default:
 		// PreferEscalated, not the plain pass — the same reason the bulk path
 		// gives: escalating a file to a higher-context mode makes it the largest
@@ -2788,7 +2865,11 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		if trunc.AllDropped {
 			// Not even one file fits. Shipping "" comes back as a false-clean "no
 			// findings" review, so keep the smallest entry instead (AC5).
-			kept, trunc = keepSmallestEntry(refit.entries)
+			var ok bool
+			kept, trunc, ok = keepSmallestEntry(refit.entries)
+			if !ok {
+				return refitPayload{}, false, nil
+			}
 		}
 	}
 	// Nothing shed: either the entries measurably fit this budget after all (the
@@ -2803,19 +2884,36 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	for _, e := range kept {
 		pb.WriteString(e.Body)
 	}
+	// Measure what is actually DISPATCHED. The budget pass sums FileEntry.Size,
+	// which is the pre-render source size; the bytes that reach the model are
+	// len(Body) — the same distinction smallestEntry is documented to care about.
+	// Both smallest-entry arms above also keep their entry whatever its size, so
+	// without this the function could report a clean fit while shipping a payload
+	// many times the budget.
+	fits := int64(pb.Len()) <= budget
+	// A re-fit that still does not fit has not truncated its way to safety — it
+	// found the smallest framing available and that framing is still too big. That
+	// is exactly what degradationOverflow means, and it is what the bulk
+	// zero-budget arm records in the identical situation. Claiming "truncate" here
+	// would drop the one signal saying the review may not have been read in full,
+	// precisely when the agent is worst off.
+	action := degradationTruncate
+	if !fits {
+		action = degradationOverflow
+	}
 	sz := agentSizing{
 		effectiveBudget: budget,
 		resolvedWindow:  fbWindow,
 		// One re-fit payload: no chunk plan, so the bulk sentinels (T4).
 		maxLines:   0,
 		chunkTotal: 1,
-		action:     degradationTruncate,
+		action:     action,
 	}
-	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.mode, pb.String(), len(kept), trunc, refit.rng, refit.scopeConstraint, sz)
+	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.mode, pb.String(), len(kept), trunc, refit.rng, scopeConstraint, sz)
 	if err != nil {
 		return refitPayload{}, false, err
 	}
-	return refitPayload{agent: a, trunc: trunc, kept: kept, budget: budget}, true, nil
+	return refitPayload{agent: a, trunc: trunc, kept: kept, budget: budget, action: action, fits: fits}, true, nil
 }
 
 // writePayloadArtifacts persists each distinct payload under payload/<mode>.txt

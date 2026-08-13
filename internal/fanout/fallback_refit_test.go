@@ -160,6 +160,121 @@ func TestBuildFallbackAgent_RefitNeverShipsAnEmptyPayload(t *testing.T) {
 		"every entry except the kept one must be recorded as dropped")
 }
 
+// AC5, the case a "fewest bytes" rule gets wrong: empty tracked files are
+// ordinary (py.typed, __init__.py, .gitkeep). Picking one as "smallest" ships a
+// payload of exactly 0 bytes — a false-clean "no findings" review that also tags
+// the empty file as covered.
+func TestBuildFallbackAgent_RefitNeverKeepsAZeroByteFile(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0 → the keep-smallest arm
+	cfg.Registry.Agents["kai"] = kai
+
+	payloads := markedOversizedPayload()
+	mp := payloads["blocks"]
+	mp.Entries = append([]payload.FileEntry{{Path: "py.typed", Size: 0, Body: ""}}, mp.Entries...)
+	payloads["blocks"] = mp
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	require.Equal(t, int64(0), payload.EffectiveByteBudget("unlisted-backup-model", &one, defaultMaxTokens),
+		"precondition: the backup must fund no input budget, so the keep-smallest arm runs")
+	assert.NotEmpty(t, codeContextBytes(fb),
+		"the re-fit must never ship a 0-byte payload — that is a false-clean review, not a small one")
+	for _, ref := range fb.CodeContext {
+		assert.NotEqual(t, "py.typed", ref.Path, "an empty file must not be chosen as the kept entry")
+	}
+	for _, p := range fb.chunkFiles {
+		assert.NotEqual(t, "py.typed", p, "an empty file must not be tagged as covered by the re-fit")
+	}
+}
+
+// A re-fit that shrank the payload but still cannot reach its budget has NOT
+// truncated its way to safety. Recording "truncate" there would drop the only
+// signal saying the review may not have been read in full — precisely when the
+// agent is worst off — and the bulk zero-budget arm records overflow in the
+// identical situation.
+func TestBuildFallbackAgent_RefitThatStillOverflowsRecordsOverflow(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0; no file can ever fit
+	cfg.Registry.Agents["kai"] = kai
+
+	var out string
+	var slots []Slot
+	var err error
+	out = captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	fb := slots[0].Fallbacks[0]
+
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the kept entry still exceeds a 0-byte budget, so this is overflow — not a successful truncate")
+	assert.Contains(t, out, "may overflow",
+		"the operator must still be told the backup cannot hold this lane's review")
+	// The payload was still re-packed, so coverage must follow the smaller set.
+	assert.True(t, fb.rePacked, "coverage attribution must follow the re-packed set whether or not it fits")
+	assert.Len(t, fb.chunkFiles, 1, "the tag names only the single entry it kept")
+	assert.Less(t, len(fb.Prompt), len(slots[0].Primary.Prompt), "the payload still shrank")
+}
+
+// The reservation must follow the budget actually recorded. Recording
+// effective_budget 0 (absent under omitempty) beside reserved_output_tokens 8192
+// is the self-contradictory status record 35.16.5.1 removed.
+func TestBuildFallbackAgent_RefitReservationFollowsRecordedBudget(t *testing.T) {
+	// The reservation is gated on the RAW per-model budget while a re-fit records
+	// the APPLIED one, so the two can disagree. Exercised across a zero-window
+	// backup and a --sprint-plan scope reservation (the path that narrows an
+	// otherwise-positive budget), asserting the biconditional rather than one
+	// scenario's constant: whatever budget is recorded, the reservation must agree
+	// with it.
+	for _, tc := range []struct {
+		name   string
+		window *int
+		scope  string
+	}{
+		{name: "zero-window backup", window: func() *int { n := 1; return &n }()},
+		{name: "scope constraint narrows the budget", scope: strings.Repeat("plan line\n", 8000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := refitRoster(t, 512000, OverflowTruncate)
+			if tc.window != nil {
+				kai := cfg.Registry.Agents["kai"]
+				kai.ContextWindowTokens = tc.window
+				cfg.Registry.Agents["kai"] = kai
+			}
+
+			var slots []Slot
+			var err error
+			captureStderr(t, func() {
+				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", tc.scope, true)
+			})
+			require.NoError(t, err)
+			require.Len(t, slots[0].Fallbacks, 1)
+			fb := slots[0].Fallbacks[0]
+			require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+			if fb.EffectiveBudget > 0 {
+				assert.Equal(t, defaultMaxTokens, fb.ReservedOutputTokens,
+					"a recorded budget that funds the output cap must report reserving it")
+			} else {
+				assert.Equal(t, 0, fb.ReservedOutputTokens,
+					"an agent whose recorded budget funds nothing must not also claim to reserve an output cap")
+			}
+		})
+	}
+}
+
 func TestBuildFallbackAgent_RefitKeepsCacheKeyDistinct(t *testing.T) {
 	// T4: a re-fit fallback reviews a payload that is neither its primary's nor its
 	// own un-refit form, so it must not replay either one's cached review.
