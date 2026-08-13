@@ -1,3 +1,25 @@
+## [35.16.5.2] - 2026-08-12
+
+### Fixed
+- `atcr benchmark run` no longer misattributes a failed-over lane's cases to the model that did not serve them. The score accumulator is now keyed on the **realized `(model, persona)` pair** rather than the lane, so a lane whose primary exhausts its provider quota mid-suite emits one row per model actually used, each carrying only the cases it served. This was a live data-integrity defect at exactly the point the public leaderboard consumes: epic 35.16.5.3's Run B credited `qwen3.8-max` with all 17 cases when `llm-large` had served 9 of them. Every quota-limited primary in the registry ships with a cross-provider fallback by design, so this was the routine outcome of a long run, not an exceptional one.
+- A case that **failed after its slot had already failed over** is attributed to the fallback model that attempted it rather than to the configured primary. `fanout` stamps the usage-reported model only when tokens were returned, so a failed call previously resolved to the registry's primary — a model which by definition did not serve that case.
+
+### Added
+- Per-row case coverage on the run-result: `suite_case_ids` (the suite's case list, recorded once) and `reviewer_coverage` (the case ids each reviewer row actually scored, plus its outcome tally). `runs` is a count, not a set, and case difficulty varies enormously across the suite, so a recall computed over one 8-case subset is not comparable to one computed over a different 8 — and splitting rows by realized model makes uneven coverage the normal case.
+- `atcr benchmark export` refuses by default to publish a run-result whose reviewer rows do not each cover the full suite, naming every short row and its shortfall. `--allow-partial-coverage` overrides it with a stderr warning. Coverage is chosen over "degradation" as the gate deliberately: flagging any failover as degraded would mark most real runs and train operators to pass the override reflexively.
+- The export gate also rejects coverage payloads that `atcr benchmark run` cannot produce — a duplicate `(model, persona)` identity, a reviewer row with no coverage row, a `runs` disagreeing with its covered case count, a repeated case id within a row, or a case id absent from the suite. Each indicates a hand-assembled file, and the first would otherwise let a full row mask a short one of the same identity.
+- A per-case reviewer **outcome** (`findings` / `clean` / `unparseable` / `truncated` / `failed` / `unknown`), persisted in the checkpoint and tallied per row. A zero-finding result was previously ambiguous: a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed all raised zero categories and scored identically. The signal was never missing — `fanout` computed it and the benchmark discarded it before scoring.
+- Epic 35.16.5.3's Run B checkpoint is committed as a test fixture (`internal/benchmark/testdata/run-b.ckpt.json`). Its original home is gitignored and so could not serve as CI evidence; 35.16.5.3 had to reconstruct its entire before-side from prose in a code review because the preceding dry-run's output was never kept. The fixture pins all four realized rows (`qwen3.8-max` 8, `llm-large` 9, `kimi-k3` 16, `kimi-k3-256k` 1 — a **second** failover the epic's own acceptance criteria did not record) and the resulting export rejection.
+
+### Changed
+- The reviewer outcome is a string enum rather than a pair of booleans, and absence is the empty string. Two booleans would both default to `false`, so a checkpoint written before the field existed would replay its zero-finding cases as "reviewed and found nothing" — inventing the very claim this change removes. A pre-existing checkpoint replays as `unknown`, pinned against the committed Run B fixture rather than asserted in prose.
+- `scorecard.PublicRecord` and the `benchmark.Submission` envelope are **unchanged**. Coverage lives on the run-result only: `PublicRecord` is shared byte-for-byte with production `leaderboard --export`, and adding a key to the submission envelope would require bumping `submission_schema`, a constant the production exporter also stamps. A consequence is recorded as technical debt — an opted-out partial submission is not self-describing to the board.
+
+### Note
+- Reviewer rows for a run with no failover are byte-identical to the previous scorer, and every existing score and resume fixture passes unmodified. The run-result *document* is not byte-identical: it gains the two coverage keys.
+
+*Shipped via /execute-epic (epic 35.16.5.2)*
+
 ## [35.16.5.1] - 2026-08-10
 
 ### Added

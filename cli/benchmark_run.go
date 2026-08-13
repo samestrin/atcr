@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -74,6 +77,17 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
 		}
 		done = cp.doneIndex()
+		// validateCheckpointIntegrity runs at load, before the suite is in scope, so
+		// it can only reject negative indices. The upper bound is checked here, where
+		// len(m.Cases) is known: an entry indexed beyond the suite was recorded
+		// against a different case list — left unchecked it would be counted in the
+		// replayed total yet never replayed by the loop below, silently vanishing
+		// from the score and rendering a negative remaining count.
+		for idx := range done {
+			if idx < 0 || idx >= len(m.Cases) {
+				return nil, fmt.Errorf("%w: case index %d outside [0, %d)", errCheckpointCorrupt, idx, len(m.Cases))
+			}
+		}
 		if existing != nil {
 			replayed := len(done)
 			remaining := len(m.Cases) - replayed
@@ -87,8 +101,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	accs := map[string]*reviewerAcc{}
-	var order []string // reviewer names, sorted for deterministic aggregation
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey // realized identities in first-sighting order; buildRunResult sorts them for deterministic aggregation
 
 	for i, c := range m.Cases {
 		// Resume: a case already in the checkpoint is replayed into the accumulator
@@ -105,7 +119,9 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
 					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
 			}
-			replayCheckpointCase(accs, &order, entry, c.ExpectedCategories)
+			if err := replayCheckpointCase(accs, &order, entry, c.ExpectedCategories); err != nil {
+				return nil, err
+			}
 			continue
 		}
 
@@ -166,7 +182,23 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			applyReviewerOutcome(accs, &order, a.Agent, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
+			outcome := reviewerOutcome(a, raised)
+
+			if err := applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+				model:         model,
+				persona:       persona,
+				caseID:        c.ID,
+				expected:      c.ExpectedCategories,
+				raised:        raised,
+				usageReported: usageReported,
+				costUSD:       cost,
+				latencyMS:     latency,
+				outcome:       outcome,
+				fallbackUsed:  a.FallbackUsed,
+				agent:         a.Agent,
+			}); err != nil {
+				return nil, fmt.Errorf("scoring case %q: %w", c.ID, err)
+			}
 
 			if cp != nil {
 				caseReviewers = append(caseReviewers, checkpointReviewer{
@@ -177,6 +209,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 					UsageReported: usageReported,
 					CostUSD:       cost,
 					LatencyMS:     latency,
+					Outcome:       outcome,
+					FallbackUsed:  a.FallbackUsed,
 				})
 			}
 		}
@@ -192,17 +226,79 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		}
 	}
 
-	sort.Strings(order)
-	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
-	for _, name := range order {
-		acc := accs[name]
+	return buildRunResult(accs, order, m, generatedAt)
+}
+
+// buildRunResult folds the finished accumulator into the suite-tagged RunResult:
+// the scored reviewer rows, the run diagnostic, and the coverage sibling that names
+// the cases behind each row.
+//
+// It is separated from executeBenchmarkRun so the aggregation can be driven directly
+// from a recorded checkpoint — the Run B fixture folds through this exact path in
+// tests, without a suite on disk, a Completer, or a network.
+//
+// It fails when two DISTINCT raw identities scrub to the same public one:
+// scorecard.scrubField is not injective (it deletes path-, home- and
+// credential-shaped tokens), and emitting two coverage rows of identical public
+// identity would be rejected by the export gate as hand-assembled — misdiagnosing a
+// legitimate run as tampering. The collision is the producer's to report, so the
+// error names both pre-scrub identities.
+func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *benchmark.Manifest, generatedAt time.Time) (*benchmark.RunResult, error) {
+	// Scrub the identity BEFORE sorting and before it is written to either slice.
+	//
+	// benchmark.Score re-scrubs the rows it emits (scorecard.ScrubPublicRecord), so
+	// without this the reviewer rows would carry post-scrub identities while the
+	// coverage rows carried pre-scrub ones. Any identity the scrub rewrites — it
+	// strips path-, email- and credential-shaped substrings — would then fail to join
+	// at export, turning a legitimate full-coverage run into a hard
+	// "no coverage recorded" rejection. Scrubbing here makes both sides identical by
+	// construction, and Score's own pass is then idempotent.
+	rows := make([]scoredRow, 0, len(order))
+	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
+	for _, k := range order {
+		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
+		id := reviewerKey{model: s.Model, persona: s.Persona}
+		if prev, dup := scrubbed[id]; dup {
+			return nil, fmt.Errorf("distinct reviewer identities %q/%q and %q/%q scrub to the same public identity %q/%q: "+
+				"scorecard's path/credential scrub is not injective, so publishing would emit two coverage rows under one identity",
+				prev.model, prev.persona, k.model, k.persona, id.model, id.persona)
+		}
+		scrubbed[id] = k
+		rows = append(rows, scoredRow{id: id, acc: accs[k]})
+	}
+	// Sort the SCRUBBED identities so this order matches the order Score will sort
+	// its (equally scrubbed) rows into — the property that keeps the two slices
+	// positionally aligned.
+	sortScoredRows(rows)
+
+	reviewers := make([]benchmark.ReviewerScore, 0, len(rows))
+	coverage := make([]benchmark.ReviewerCoverage, 0, len(rows))
+	for _, r := range rows {
+		acc, id := r.acc, r.id
 		reviewers = append(reviewers, benchmark.ReviewerScore{
-			Model:        acc.model,
-			Persona:      acc.persona,
+			Model:        id.model,
+			Persona:      id.persona,
 			Cases:        acc.cases,
 			CostUSD:      acc.costUSD,
 			LatencyP50MS: medianInt64(acc.latencies),
 		})
+		// Emitted in the same order as the reviewer rows, so a consumer can join
+		// coverage to its row positionally as well as by identity. CaseIDs and
+		// Outcomes are COPIED, not aliased: this function is the shared fold path
+		// for fresh runs and recorded checkpoints, so the returned artifact must
+		// not change if a caller keeps folding into accs afterwards.
+		coverage = append(coverage, benchmark.ReviewerCoverage{
+			Model:         id.model,
+			Persona:       id.persona,
+			CaseIDs:       append([]string(nil), acc.caseIDs...),
+			Outcomes:      maps.Clone(acc.outcomes),
+			FallbackCases: acc.fallbackCases,
+		})
+	}
+
+	suiteCaseIDs := make([]string, len(m.Cases))
+	for i, c := range m.Cases {
+		suiteCaseIDs[i] = c.ID
 	}
 
 	return &benchmark.RunResult{
@@ -215,6 +311,8 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// fold in through applyReviewerOutcome before this point. nil when the run
 		// raised no findings at all, which must not read as perfect agreement.
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
+		SuiteCaseIDs:        suiteCaseIDs,
+		Coverage:            coverage,
 	}, nil
 }
 
@@ -236,34 +334,192 @@ func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	return sig
 }
 
-// reviewerAcc accumulates one reviewer's outcomes across every case.
+// reviewerKey identifies one leaderboard row by (REALIZED model, CONFIGURED
+// persona). Only the model half is realized: reviewerModel resolves the model that
+// actually served the case. The persona half is always the slot's configured value —
+// reviewerPersona resolves cfg.Registry.Agents[a.Agent].Persona where a.Agent is the
+// PRIMARY slot name even when a fallback served the case. That is correct only by
+// registry convention (every -backup agent declares its primary's persona); a backup
+// declaring its own persona would publish the primary's regardless of which system
+// prompt actually ran.
+//
+// It is deliberately the same identity benchmark.Score already sorts and publishes
+// on (score.go:60-75), so a lane that failed over mid-suite yields one row per model
+// actually used instead of crediting every case to whichever model happened to serve
+// the first one. Keying by the LANE (the agent name) is what silently attributed 9 of
+// Run B's 17 cases to a model that never saw them.
+//
+// Consequence, accepted: two lanes that realize the same model AND the same persona
+// merge into a single row, where the lane-keyed accumulator emitted two rows of
+// identical public identity. reviewerPersona falls back to the agent name when no
+// persona is configured, so distinct lanes keep distinct personas by default.
+type reviewerKey struct {
+	model   string
+	persona string
+}
+
+// scoredRow pairs one row's PUBLIC (post-scrub) identity with the accumulator behind
+// it, so the reviewer rows and the coverage rows are emitted from a single ordered
+// sequence and cannot fall out of alignment.
+type scoredRow struct {
+	id  reviewerKey
+	acc *reviewerAcc
+}
+
+// sortScoredRows orders rows ascending by (model, persona) so aggregation never
+// depends on map iteration — determinism is an acceptance criterion here, not a
+// nicety (the reproducibility contract requires byte-identical output for identical
+// input). It matches Score's own sort, so the accumulator hands Score a slice that
+// is already in the order Score will keep.
+func sortScoredRows(rows []scoredRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].id.model != rows[j].id.model {
+			return rows[i].id.model < rows[j].id.model
+		}
+		return rows[i].id.persona < rows[j].id.persona
+	})
+}
+
+// reviewerAcc accumulates one realized identity's outcomes across every case. Model
+// and persona are NOT stored here — they are the map key, so there is no second copy
+// that could drift from it.
 type reviewerAcc struct {
-	model     string
-	persona   string
-	cases     []benchmark.CaseScore
+	cases         []benchmark.CaseScore
+	caseIDs       []string       // suite case ids this identity actually scored, in case order
+	outcomes      map[string]int // benchmark.Outcome* -> number of this identity's cases
+	fallbackCases int            // cases fanout served from a fallback rather than the primary
+	// agents records which LANES folded into this identity, purely so the
+	// duplicate-case diagnostic can name the colliding lanes. The accepted
+	// raw-identity merge (two lanes, same model AND persona, DISJOINT case sets) is
+	// unaffected by this bookkeeping.
+	agents    map[string]struct{}
 	costUSD   float64
 	latencies []int64 // per-case wall-clock, recorded only when usage was reported
 }
 
+// reviewerOutcome classifies what actually happened when one reviewer met one case,
+// reading signals fanout already computed and stamped onto the AgentStatus. Nothing
+// here re-derives them: UnparseableResponse in particular encodes a decision about
+// the clean-review sentinel (stream.IsNoFindings) that must not be re-implemented
+// against raw content, because excluding the sentinel is exactly what preserves the
+// clean-vs-garbage distinction.
+//
+// PRECEDENCE — failed > unparseable > truncated > incomplete > findings > clean.
+// The signals are not mutually exclusive on the wire (a truncated response can also
+// raise findings; a failed slot has no findings either way), so the order is a
+// decision rather than an implication, and this switch is its single statement of
+// record.
+//
+// Data-integrity signals outrank volume signals throughout. A truncated response that
+// raised five findings reports "truncated", not "findings", because the
+// incompleteness is the load-bearing fact about that row — the five categories it did
+// raise are still recorded in the score, so nothing is lost by saying so. A chunked
+// reviewer that saw only some of its bins reports "incomplete" for the same reason:
+// it may have raised nothing, but only about the fraction it read.
+func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
+	switch {
+	case a.Status != fanout.StatusOK || a.Error != "":
+		return benchmark.OutcomeFailed
+	case a.UnparseableResponse:
+		return benchmark.OutcomeUnparseable
+	case a.ResponseTruncated:
+		return benchmark.OutcomeTruncated
+	case a.UnreviewedChunks > 0:
+		return benchmark.OutcomeIncomplete
+	case len(raised) > 0:
+		return benchmark.OutcomeFindings
+	default:
+		return benchmark.OutcomeClean
+	}
+}
+
+// reviewerCaseOutcome is everything one reviewer produced on one case: the realized
+// identity that served it, which case it was, the score inputs, and the usage-gated
+// cost/latency contribution. It is a struct rather than a positional argument list
+// because the fold path is shared by fresh execution and checkpoint replay — two call
+// sites that must stay in step, and that a nine-argument signature makes easy to
+// silently transpose.
+type reviewerCaseOutcome struct {
+	model         string
+	persona       string
+	caseID        string
+	expected      []string
+	raised        []string
+	usageReported bool
+	costUSD       float64
+	latencyMS     int64
+	// outcome is a benchmark.Outcome* value. The empty string is benchmark.OutcomeUnknown
+	// — a checkpoint written before the field existed — and must stay distinguishable
+	// from OutcomeClean.
+	outcome string
+	// fallbackUsed records that fanout served this case from a fallback model rather
+	// than the slot's configured primary. Tracked alongside outcome, never inside it.
+	fallbackUsed bool
+	// agent is the lane (configured agent name) that produced this outcome. It plays
+	// no part in the fold — only in the duplicate-case diagnostic, which must name
+	// the colliding lanes.
+	agent string
+}
+
 // applyReviewerOutcome folds one reviewer's single-case outcome into the
-// accumulator, creating the accumulator (and registering the reviewer in order) on
-// first sighting. It is the SINGLE fold path shared by fresh execution and
-// checkpoint replay, so a resumed run reconstructs accs identically to an
-// uninterrupted one (AC3): model/persona are locked at first sighting (matching the
-// original first-case-wins behavior), and the usage-gated cost/latency are added in
-// the same case order, keeping the float sum and latency median byte-identical.
-func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
-	acc := accs[agent]
+// accumulator under its REALIZED (model, persona) identity, creating the accumulator
+// (and registering the key in order) on first sighting of that identity. It is the
+// SINGLE fold path shared by fresh execution and checkpoint replay, so a resumed run
+// reconstructs accs identically to an uninterrupted one (AC3) — including across a
+// failover boundary, because checkpointReviewer.Model already stores the realized
+// model rather than the configured one (pinned end to end by
+// TestExecuteBenchmarkRun_ResumeAcrossFailoverBoundarySplitsCoverage).
+//
+// The identity is the map KEY, so a case can never be folded under a model that did
+// not serve it. The previous lane-keyed version locked model/persona at first
+// sighting, which is precisely how a mid-suite failover ended up publishing another
+// model's work under the primary's name.
+//
+// Two lanes realizing the SAME identity with DISJOINT case sets merge into one row
+// — the accepted design (see reviewerKey's doc). But a repeated (key, caseID) means
+// two lanes scored the SAME case under one identity: the merged row would list the
+// case twice, doubling Runs past the suite size and failing the export gate as
+// "malformed" — a legitimate run destroyed and misdiagnosed as tampering. That
+// shape is rejected here, at the fold, with the colliding lanes named.
+//
+// Cost and latency are still accumulated in case order within each key, so the float
+// sum and the latency median stay byte-identical to an uninterrupted run.
+func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, o reviewerCaseOutcome) error {
+	key := reviewerKey{model: o.model, persona: o.persona}
+	acc := accs[key]
 	if acc == nil {
-		acc = &reviewerAcc{model: model, persona: persona}
-		accs[agent] = acc
-		*order = append(*order, agent)
+		acc = &reviewerAcc{agents: map[string]struct{}{}}
+		accs[key] = acc
+		*order = append(*order, key)
+	} else if slices.Contains(acc.caseIDs, o.caseID) {
+		lanes := make([]string, 0, len(acc.agents)+1)
+		for a := range acc.agents {
+			lanes = append(lanes, a)
+		}
+		lanes = append(lanes, o.agent)
+		sort.Strings(lanes)
+		return fmt.Errorf("case %q scored twice under realized identity %s/%s (lanes %s); "+
+			"two lanes realizing the same (model, persona) must partition the suite, not both score it",
+			o.caseID, o.model, o.persona, strings.Join(lanes, ", "))
 	}
-	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
-	if usageReported {
-		acc.costUSD += costUSD
-		acc.latencies = append(acc.latencies, latencyMS)
+	if acc.agents == nil {
+		acc.agents = map[string]struct{}{}
 	}
+	acc.agents[o.agent] = struct{}{}
+	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: o.expected, Raised: o.raised})
+	acc.caseIDs = append(acc.caseIDs, o.caseID)
+	if acc.outcomes == nil {
+		acc.outcomes = map[string]int{}
+	}
+	acc.outcomes[benchmark.OutcomeTallyKey(o.outcome)]++
+	if o.fallbackUsed {
+		acc.fallbackCases++
+	}
+	if o.usageReported {
+		acc.costUSD += o.costUSD
+		acc.latencies = append(acc.latencies, o.latencyMS)
+	}
+	return nil
 }
 
 // replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
@@ -271,10 +527,30 @@ func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, 
 // uses — no review re-execution and no Completer call (AC2). Expected categories
 // are re-read from the suite manifest (passed in as expected) because they are
 // identical for every reviewer of a case and are not durable per-reviewer state.
-func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase, expected []string) {
+func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKey, entry checkpointCase, expected []string) error {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+		if err := applyReviewerOutcome(accs, order, reviewerCaseOutcome{
+			model:         r.Model,
+			persona:       r.Persona,
+			caseID:        entry.CaseID,
+			expected:      expected,
+			raised:        r.Raised,
+			usageReported: r.UsageReported,
+			costUSD:       r.CostUSD,
+			latencyMS:     r.LatencyMS,
+			// A checkpoint written before the outcome field existed decodes to the
+			// empty string — benchmark.OutcomeUnknown — and is folded as such. It must
+			// not be inferred from Raised: "no categories recorded" is exactly the
+			// ambiguity the vocabulary exists to resolve, so guessing "clean" here
+			// would manufacture the claim the epic set out to stop making.
+			outcome:      r.Outcome,
+			fallbackUsed: r.FallbackUsed,
+			agent:        r.Agent,
+		}); err != nil {
+			return fmt.Errorf("replaying checkpointed case %q: %w", entry.CaseID, err)
+		}
 	}
+	return nil
 }
 
 // readCaseFindings parses the merged pool findings.txt for one review and groups
@@ -325,7 +601,36 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 // reviewerModel resolves a reviewer's model id, preferring the usage-reported
 // value in the pool summary and falling back to the configured model when the
 // provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
+//
+// FALLBACK OUTRANKS THE USAGE-REPORTED MODEL when the two disagree. They can only
+// disagree on the chunked path: fanout stamps Result.Model from the invocation that
+// actually ran, so a wholly-failed-over slot reports the SAME model in both fields,
+// but mergeResultGroup builds a chunked slot's merged result as `out := g[0]` and
+// never recomputes Model while unioning FallbackUsed and taking a modal
+// FallbackModel (internal/fanout/chunker.go). A slot whose chunks partly fell back
+// therefore arrives here carrying chunk 0's model beside another model's
+// FallbackUsed — and preferring Model would publish the whole case, and its summed
+// token cost, under a model that served only part of it. Since chunked is the
+// shipped review_strategy, that is the ordinary path, not a corner of it.
+//
+// A mixed-chunk case cannot be attributed EXACTLY without a per-chunk breakdown the
+// merge does not keep, so this is the least-wrong answer rather than a precise one:
+// FallbackUsed is the durable signal that the primary did not serve all of this, so
+// the primary is the single answer known to be false. Recovering exact attribution
+// needs fanout to carry per-chunk models through the merge — until then the row is
+// credited to the model that displaced the primary.
+//
+// The remaining FallbackModel step covers a case that FAILED after the slot had
+// already failed over: no usage was returned, so no usage-reported model was
+// stamped, and resolving straight to the registry would credit the configured
+// primary — a model that by definition did not serve the case.
+//
+// Every non-failover path is unchanged: FallbackUsed is false, so resolution is the
+// original prefer-usage-then-registry pair.
 func reviewerModel(cfg *fanout.ReviewConfig, a fanout.AgentStatus) string {
+	if a.FallbackUsed && a.FallbackModel != "" {
+		return a.FallbackModel
+	}
 	if a.Model != "" {
 		return a.Model
 	}

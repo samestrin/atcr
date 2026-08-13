@@ -292,6 +292,58 @@ type RunResult struct {
 	// explicit 0 — while a run-result file predating epic 35.16.5 unmarshals to nil
 	// and is honestly reported as unmeasured rather than as flawless.
 	OutOfVocabularyRate *float64 `json:"out_of_vocabulary_rate,omitempty"`
+
+	// SuiteCaseIDs is the suite's full case-id list, in manifest order, recorded
+	// ONCE for the whole run. It is the denominator every ReviewerCoverage row is
+	// measured against: without it a covered case set has nothing to be short of,
+	// and `benchmark export` cannot tell a complete run from a partial one.
+	//
+	// omitempty so a run-result written before this field existed unmarshals to nil
+	// and is honestly reported as unmeasured coverage, exactly as a nil
+	// OutOfVocabularyRate reports an unmeasured rate.
+	SuiteCaseIDs []string `json:"suite_case_ids,omitempty"`
+
+	// Coverage records which cases each reviewer row actually scored, plus the
+	// per-row outcome tally. It sits HERE rather than on scorecard.PublicRecord
+	// deliberately: that type is the frozen public schema shared byte-for-byte
+	// between `benchmark export` and production `leaderboard --export`, and forking
+	// a shared schema for a benchmark-only concern is a worse defect than the hole
+	// it would close (see score.go:139-143 for the same argument applied to the cost
+	// denominator's unit).
+	//
+	// It exists because Runs is a COUNT, not a SET. Case difficulty on this suite
+	// varies enormously, so a recall computed over one 8-case subset is not
+	// comparable to a recall computed over a different 8-case subset — and splitting
+	// rows by realized model makes uneven coverage the normal case rather than an
+	// exceptional one.
+	Coverage []ReviewerCoverage `json:"reviewer_coverage,omitempty"`
+}
+
+// ReviewerCoverage names the cases behind one reviewer row of the same run-result,
+// joined to that row by its (Model, Persona) identity — the same pair PublicRecord
+// carries and Score sorts on.
+type ReviewerCoverage struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+	// CaseIDs are the suite case ids this row actually scored, in manifest order.
+	// Compared as a SET against RunResult.SuiteCaseIDs; a row whose set is short of
+	// the suite was measured over less than the full benchmark.
+	CaseIDs []string `json:"case_ids"`
+
+	// Outcomes tallies this row's per-case outcomes, keyed by outcome tally key
+	// (OutcomeTallyKey: the benchmark.Outcome* wire values, with OutcomeUnknown
+	// spelled "unknown"). A map rather than a struct so the tally cannot drift out
+	// of step with the enum, and because encoding/json emits map keys sorted —
+	// keeping the run-result deterministic. A row with no recorded outcomes omits
+	// the key.
+	Outcomes map[string]int `json:"outcomes,omitempty"`
+
+	// FallbackCases counts this row's cases that fanout served from a fallback model
+	// rather than the slot's configured primary. It is deliberately NOT an outcome
+	// enum member: a fallback-served case is independently clean, unparseable, or
+	// failed, so folding it into the outcome enum would admit exactly the impossible
+	// combined states the enum exists to prevent.
+	FallbackCases int `json:"fallback_cases,omitempty"`
 }
 
 // Submission is the suite-tagged public submission envelope — DISTINCT from the
@@ -307,6 +359,19 @@ type Submission struct {
 	Suite            string                   `json:"suite"`
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
+
+	// COVERAGE IS DELIBERATELY NOT CARRIED HERE. It would be genuinely useful on the
+	// board — an opted-out partial submission is otherwise indistinguishable from a
+	// full one — but adding a key to this envelope is a schema-versioning decision,
+	// not a documentation fix (docs/benchmark.md, "the run-result contract"), and
+	// submission_schema is scorecard.SubmissionSchema: the SHARED constant the
+	// production `leaderboard --export` envelope also stamps. Bumping it here would
+	// version the production envelope for a benchmark-only reason — the same
+	// fork-a-shared-schema hazard that keeps coverage off scorecard.PublicRecord.
+	//
+	// Coverage therefore lives on RunResult only, where `benchmark export` reads it
+	// to gate publication and an operator can inspect it directly. Putting it in the
+	// envelope belongs to an epic scoped to bump submission_schema.
 }
 
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not
