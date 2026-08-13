@@ -609,3 +609,47 @@ func TestBuildFallbackAgent_TruncateWithoutEntriesStillWarnsAndShips(t *testing.
 			"slot %d: with no re-pack source the fallback must ship the inherited prompt unchanged", i)
 	}
 }
+
+// Benchmark for the review.go:2912 TD row: in the multi-chunk baseline
+// configuration every chunk's primary render — and every fallback re-fit —
+// resolved the persona from disk again. 48 files x 100 KB partitions into 24
+// chunks for greta's declared window, and each chunk overflows kai's undeclared
+// 32768 budget, so a re-fit fires per chunk.
+func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
+	cfg := sizingRosterConfig()
+	g := cfg.Registry.Agents["greta"]
+	w := 69431 // ~200 KB effective budget → 2 files per chunk
+	g.ContextWindowTokens = &w
+	g.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model" // undeclared → 71680 B, smaller than any chunk
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Settings.OnOverflow = OverflowTruncate
+	cfg.Project.Agents = []string{"greta"}
+
+	const nFiles = 48
+	const fileBytes = 100000
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < nFiles; i++ {
+		body := fmt.Sprintf("=== FILE: f%02d.go ===\n", i) + strings.Repeat("x", fileBytes) + "\n"
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("f%02d.go", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: nFiles},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(slots) < 2 {
+			b.Fatalf("precondition: expected a multi-chunk fan-out, got %d slot(s)", len(slots))
+		}
+	}
+}

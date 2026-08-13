@@ -1412,6 +1412,27 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// once.
 	warnedFallbackOverflow := map[string]bool{}
 
+	// Personas are resolved ONCE per agent per run (review.go:2912 TD):
+	// registry.ResolvePersona is a filesystem walk plus read, and renderAgent runs
+	// per chunk per persona — plus once more per fallback re-fit — so an
+	// un-memoized call costs up to 2 x maxChunksPerAgent resolutions per persona
+	// at prepare time. Resolution is deterministic within a run (the agent name,
+	// its persona ref, and the dirs are all fixed), so memoizing changes nothing
+	// but the I/O count. Errors surface at the same point they always did —
+	// immediately before the render that needs the persona.
+	resolvedPersonas := map[string]registry.ResolvedPersona{}
+	personaFor := func(name string, ac registry.AgentConfig) (registry.ResolvedPersona, error) {
+		if p, ok := resolvedPersonas[name]; ok {
+			return p, nil
+		}
+		p, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
+		if err != nil {
+			return registry.ResolvedPersona{}, err
+		}
+		resolvedPersonas[name] = p
+		return p, nil
+	}
+
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
 	// (a fallback reviews the same persona prompt/payload as its primary — here,
@@ -1423,11 +1444,17 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// Slot.entries, and it is EMPTY for the chunked-diff path, which has no such
 	// list; buildFallbackAgent reads empty as "cannot re-fit" and keeps the
 	// warn-and-ship behavior unchanged there. The re-render inputs (mode, rng,
-	// agentScopeConstraint) travel with it because renderAgent needs all three and
-	// this closure captured none of them.
+	// agentScopeConstraint, persona) travel with it because renderAgent needs all
+	// four and this closure captured none of them.
 	buildChain := func(name string, primary Agent, ac registry.AgentConfig, mode, agentScopeConstraint string, entries []payload.FileEntry) ([]Agent, error) {
 		var fbs []Agent
 		seen := map[string]bool{name: true}
+		// Always a cache hit: the primary's renderAgent resolved this persona
+		// moments ago on every path that reaches buildChain.
+		persona, err := personaFor(name, ac)
+		if err != nil {
+			return nil, err
+		}
 		refit := fallbackRefit{
 			primaryName:     name,
 			primaryConfig:   ac,
@@ -1435,6 +1462,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			rng:             rng,
 			scopeConstraint: agentScopeConstraint,
 			entries:         entries,
+			persona:         persona,
 		}
 		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
 			if seen[fb] {
@@ -1625,7 +1653,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						}
 						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
 						// event decided upstream, not a per-chunk property (mirrors the chunked path).
-						primary, rerr := renderAgent(cfg, name, ac, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+						persona, perr := personaFor(name, ac)
+						if perr != nil {
+							return perr
+						}
+						primary, rerr := renderAgent(cfg, name, ac, persona, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 						if rerr != nil {
 							return rerr
 						}
@@ -1802,7 +1834,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// may not even appear in this chunk. Use a neutral truncation for
 					// individual chunks; the single-chunk/bulk path below still carries
 					// the real diff-wide truncation.
-					primary, err := renderAgent(cfg, name, ac, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+					persona, perr := personaFor(name, ac)
+					if perr != nil {
+						return perr
+					}
+					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -1974,7 +2010,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			resolvedWindow:  agentWindow,
 			action:          bulkDegradation,
 		}
-		primary, err := renderAgent(cfg, name, ac, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
+		persona, perr := personaFor(name, ac)
+		if perr != nil {
+			return perr
+		}
+		primary, err := renderAgent(cfg, name, ac, persona, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
 		if err != nil {
 			return err
 		}
@@ -2177,11 +2217,10 @@ func entryPaths(entries []payload.FileEntry) []string {
 // identity but a different diff subset. Passing the payload text in (rather than reading a
 // modePayload) is the seam that lets a chunk render its own slice of the diff
 // and report its own file count in the prompt.
-func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string, sz agentSizing) (Agent, error) {
-	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
-	if err != nil {
-		return Agent{}, err
-	}
+func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, persona registry.ResolvedPersona, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string, sz agentSizing) (Agent, error) {
+	// persona arrives resolved: buildSlots memoizes registry.ResolvePersona per
+	// agent per run (a filesystem walk plus read), so this function's per-chunk
+	// and per-re-fit callers never re-resolve.
 	// Sprint-plan SCOPE CONSTRAINT (Epic 12.2): prepend the formatted constraint
 	// to the payload so it lands in EVERY persona — every reviewer renders
 	// {{.Payload}} (it carries the diff), so prepending guarantees delivery
@@ -2432,6 +2471,10 @@ type fallbackRefit struct {
 	mode            string
 	rng             ReviewRange
 	scopeConstraint string
+	// persona is the primary's ALREADY-resolved persona (memoized per agent in
+	// buildSlots): the re-fit re-render must not pay a fresh filesystem
+	// resolution per chunk.
+	persona registry.ResolvedPersona
 	// entries is the payload the primary shipped. EMPTY means the slot's payload
 	// was never entry-decomposed (the chunked-diff path), which disables the
 	// re-fit — see Slot.entries.
@@ -2973,7 +3016,7 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		chunkTotal: 1,
 		action:     action,
 	}
-	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.mode, pb.String(), len(kept), trunc, refit.rng, scopeConstraint, sz)
+	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), len(kept), trunc, refit.rng, scopeConstraint, sz)
 	if err != nil {
 		return refitPayload{}, false, err
 	}
