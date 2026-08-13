@@ -1930,11 +1930,33 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					return err
 				}
 			}
-			smallest := smallestEntry(mp.Entries)
-			bulkEntries = []payload.FileEntry{smallest}
-			bulkShed = len(mp.Entries) > 1
+			// keepSmallestEntry, not a local smallest-by-bytes pick: it skips
+			// ZERO-BYTE entries. Empty tracked files are ordinary (py.typed,
+			// __init__.py, .gitkeep) and "fewest bytes" selects one every time,
+			// shipping a payload of exactly 0 bytes — which comes back as a
+			// false-clean "no findings" review, the very failure this arm's
+			// "an empty payload is not an option" rule exists to prevent.
+			//
+			// Shared with the fallback re-fit arm rather than duplicated: the two
+			// are the same decision ("keep exactly one real file"), and the epic
+			// that added the re-fit fixed the empty-skip only on its own copy,
+			// leaving this one a function away from the identical defect.
+			kept, keptTrunc, ok := keepSmallestEntry(mp.Entries)
+			if !ok {
+				// Every entry is empty. There is no non-empty payload to prefer, so
+				// keep the first and let the record say what was shed — shipping zero
+				// entries would trade a false-clean review for a broken one.
+				kept = []payload.FileEntry{mp.Entries[0]}
+				keptTrunc = payload.Truncation{
+					Truncated:    len(mp.Entries) > 1,
+					FilesDropped: droppedPathsExcept(mp.Entries, mp.Entries[0].Path),
+				}
+			}
+			smallest := kept[0]
+			bulkEntries = kept
+			bulkShed = keptTrunc.Truncated
 			bulkText, bulkFileCount = smallest.Body, 1
-			bulkTrunc = payload.Truncation{Truncated: bulkShed, FilesDropped: droppedPathsExcept(mp.Entries, smallest.Path)}
+			bulkTrunc = keptTrunc
 			bulkDegradation = degradationOverflow
 			if warnOversized {
 				// Name the resolved window and the reservation that consumed it: the
@@ -2339,22 +2361,10 @@ func derefInt64(p *int64) int64 {
 	return *p
 }
 
-// smallestEntry returns the entry with the fewest body bytes, and the first such
-// entry on a tie so the choice is deterministic across runs (the diff-cache key
-// and the baseline coverage tag both depend on which file was shipped).
-//
-// Body length is measured directly rather than trusting FileEntry.Size: Size is
-// the pre-render source size, and it is Body that is actually dispatched.
-// Callers guarantee a non-empty slice.
-func smallestEntry(entries []payload.FileEntry) payload.FileEntry {
-	best := entries[0]
-	for _, e := range entries[1:] {
-		if len(e.Body) < len(best.Body) {
-			best = e
-		}
-	}
-	return best
-}
+// smallestEntry was removed: its sole caller (the zero-budget bulk arm) now shares
+// keepSmallestEntry, which applies the same fewest-body-bytes rule AND skips
+// zero-byte entries. Keeping two parallel "keep the smallest file" helpers is what
+// let the empty-body fix land on one arm and not the other.
 
 // droppedPathsExcept lists the paths of every entry except keep — the shed
 // record for an arm that keeps exactly one file. Returns nil (not an empty
