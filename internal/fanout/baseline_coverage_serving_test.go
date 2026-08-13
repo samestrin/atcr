@@ -146,6 +146,30 @@ func TestUncoveredBaselineFiles_UntaggedServingAgentVouchesForNothing(t *testing
 		"an untagged serving agent must vouch for NOTHING, never for everything")
 }
 
+// The fall-back to the Primary's tag (for a Result built outside invokeSlot) must
+// be unavailable to a re-packed server. This is the single assertion standing
+// between the epic and the silent-skip bug it exists to prevent: if a re-packed
+// result with no tag of its own could reach the primary's full tag, every shed
+// file would be recorded as reviewed.
+func TestUncoveredBaselineFiles_RePackedResultNeverFallsBackToPrimaryTag(t *testing.T) {
+	t.Parallel()
+	slots := []Slot{
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go", "b.go", "c.go"}}},
+		{Primary: Agent{Name: "vera", chunkFiles: []string{"a.go"}}},
+	}
+	results := []Result{
+		// Re-packed, but carrying no tag of its own — the shape that must NOT
+		// inherit the primary's three files.
+		{Agent: "greta", Status: StatusOK, FallbackUsed: true, servedRePacked: true},
+		{Agent: "vera", Status: StatusFailed},
+	}
+	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
+
+	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
+	assert.Equal(t, map[string]struct{}{"a.go": {}, "b.go": {}, "c.go": {}}, got,
+		"a re-packed server with no tag must vouch for NOTHING — never for its primary's full chunk")
+}
+
 // The stamping half, through the real engine: invokeSlot must record the SERVING
 // chain member's tag on the Result. Without it every assertion above is testing a
 // field production never populates.

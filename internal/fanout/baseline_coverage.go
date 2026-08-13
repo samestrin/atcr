@@ -44,15 +44,26 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		log.FromContext(ctx).Warn("baseline coverage: fewer results than dispatched slots — the Engine.Run index-correspondence contract is broken; the unmatched slots' files stay uncovered and will be re-scanned",
 			"slots", len(slots), "results", len(results))
 	}
-	// Every dispatched slot succeeded → the whole payload was covered regardless of
-	// how it was partitioned, so no attribution is needed and nothing is excluded.
+	// Every dispatched slot succeeded AND every slot reviewed its full tagged set →
+	// the whole payload was covered regardless of how it was partitioned, so no
+	// attribution is needed and nothing is excluded.
 	// Requires an outcome for EVERY slot: with fewer results than slots some slot has
 	// no outcome at all, and with MORE some result has no corresponding slot, so in
 	// either direction "all succeeded" is not established and the per-slot
 	// attribution below (which leaves unmatched slots uncovered) must run instead.
+	//
+	// The second condition is Epic 35.16.5.4 T3a, and it is not defensive — it is
+	// the arm that fires. A slot served by a successful fallback returns StatusOK
+	// (invokeSlot returns the fallback's own Result), so the scenario this epic
+	// creates — primary fails, fallback re-packs the payload to its own budget and
+	// succeeds — is an ALL-OK run. Under the pre-epic inference it short-circuited
+	// here and the files the fallback SHED were recorded as reviewed, then skipped
+	// by the next scan: a file nothing ever read, never read again. A re-packed
+	// serving agent therefore forces the per-slot attribution below, which reads
+	// what each slot's server actually reviewed.
 	allOK := len(results) == len(slots)
 	for _, r := range results {
-		if r.Status != StatusOK {
+		if r.Status != StatusOK || r.servedRePacked {
 			allOK = false
 			break
 		}
@@ -61,7 +72,7 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		return nil
 	}
 	covered := make(map[string]struct{}, len(reviewed))
-	for i, s := range slots {
+	for i := range slots {
 		// Defensive bound: Engine.Run always returns one result per slot, but an
 		// index mismatch must leave the unmatched slots UNCOVERED (fail-open toward
 		// re-review) rather than panic or silently over-record.
@@ -71,10 +82,16 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		if results[i].Status != StatusOK {
 			continue
 		}
-		// An untagged (nil chunkFiles) slot iterates zero times here, so it
-		// contributes NO coverage even when it succeeded — see the
-		// sentinel-polarity note above.
-		for _, p := range s.Primary.chunkFiles {
+		// The tag of the agent that SERVED this slot (Epic 35.16.5.4 T3b), not the
+		// slot's Primary. They are the same list unless a fallback re-packed the
+		// payload against its own budget, in which case only the files it kept were
+		// actually reviewed. Reading the Primary's tag there would record the shed
+		// files as covered, and CommitBaselineIndex would skip them next scan.
+		//
+		// An untagged server iterates zero times here, so it contributes NO coverage
+		// even when it succeeded — see the sentinel-polarity note above. That
+		// polarity is unchanged; it now hangs off the serving agent's tag.
+		for _, p := range servedCoverage(slots[i], results[i]) {
 			covered[p] = struct{}{}
 		}
 	}
@@ -89,6 +106,30 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		uncovered[path] = struct{}{}
 	}
 	return uncovered
+}
+
+// servedCoverage returns the files the agent that actually served this slot
+// reviewed — the only set it may vouch for (Epic 35.16.5.4 T3).
+//
+// invokeSlot stamps the served tag onto every succeeding result, so in production
+// the first return is always the operative one. The fall-back to the slot's
+// Primary covers a result built OUTSIDE that path (the engine's synthesized
+// panic/cancel results, and direct construction in tests), where "which agent
+// served" was never recorded and the primary is the only agent it could have
+// been. That preserves the pre-epic contract for such a result rather than
+// silently making it vouch for nothing.
+//
+// The guard is what keeps that safe: the fall-back is available ONLY when the
+// result is known not to have re-packed. A re-packed server always carries its own
+// tag (invokeSlot stamps both fields from the same agent, on the same line), so a
+// re-pack can never reach the primary's full tag through here — which is the exact
+// falsification this function exists to prevent. A re-packed result with no tag
+// vouches for nothing, the safe direction.
+func servedCoverage(s Slot, r Result) []string {
+	if r.servedChunkFiles == nil && !r.servedRePacked {
+		return s.Primary.chunkFiles
+	}
+	return r.servedChunkFiles
 }
 
 // allUncovered returns every reviewed path as uncovered — the fail-open answer when

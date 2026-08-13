@@ -682,6 +682,11 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // substitute that may have seen a different payload. DurationMS covers the
 // whole chain — a failed primary's wall time counts toward the slot, so a slow
 // primary plus fast fallback is not misreported as a fast slot.
+//
+// BASELINE COVERAGE (Epic 35.16.5.4 T3): the succeeding attempt also stamps the
+// coverage tag of the agent that actually served, because a re-packed fallback
+// reviews a strict SUBSET of the files its primary was tagged with. Attribution
+// by name still follows the slot — only the coverage tag follows the server.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	start := time.Now()
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
@@ -773,6 +778,15 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()
+			// The coverage evidence this slot produced is the SERVING agent's, not
+			// the slot's (Epic 35.16.5.4 T3). For the primary and for a fallback that
+			// shipped the inherited payload these are the same list — buildFallbackAgent
+			// copies the primary's tag onto every fallback — so a run with no re-pack
+			// records byte-identical coverage. Only a re-packed fallback differs, and
+			// it is exactly the case where the primary's tag would vouch for files
+			// nothing read.
+			r.servedChunkFiles = a.chunkFiles
+			r.servedRePacked = a.rePacked
 			return r
 		}
 		last = r

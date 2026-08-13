@@ -2606,6 +2606,9 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				}
 				// Re-fit: the payload now fits, so the overflow warning and the
 				// overflow stamp below are both wrong for this agent and are skipped.
+				// It also marks the agent as re-packed, which is what stops baseline
+				// coverage from inferring "every slot succeeded → the whole payload was
+				// covered" over a slot that reviewed a strict subset of its tag (T3a).
 				refitted = true
 			}
 		}
@@ -2666,6 +2669,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		ReservedOutputTokens: fbReserved,
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
+		rePacked:             refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
 		// the kept subset when it re-fit.
