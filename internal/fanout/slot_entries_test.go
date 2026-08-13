@@ -1,6 +1,9 @@
 package fanout
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -118,5 +121,74 @@ func TestBuildSlots_ChunkedDiffSlotCarriesNoEntries(t *testing.T) {
 		assert.Empty(t, s.entries,
 			"slot %d: a chunked-diff slot has no FileEntry source and must carry an empty list, not a reconstructed one", i)
 		require.NotEmpty(t, strings.TrimSpace(s.Primary.Prompt), "slot %d: precondition, the slot still ships a payload", i)
+	}
+}
+
+// TD (review.go:1852): both nil-Kept production builders apply a GLOBAL byte-budget
+// pass, so on the arms where bulkEntries survives initialization (the AllDropped
+// whole-payload dispatch) a nil Kept makes the carried set the PRE-budget mp.Entries
+// — naming files the rendered prompt does not contain. Populating Kept at the two
+// builders makes the carried set the global-kept subset on every arm.
+func TestPrepareReviewFromDiff_SlotEntriesNeverNameGloballyDroppedFiles(t *testing.T) {
+	// greta declares 12289 tokens → a 3-byte effective budget: positive, so the
+	// per-agent shed runs, but no file fits it (AllDropped) and the whole
+	// global-kept payload is dispatched under the overflow record. The global
+	// budget (200 bytes) keeps small.go and drops big.go from the payload text.
+	cfg := declaredWindowRoster(t, 12289)
+	cfg.Settings.PayloadByteBudget = 200
+	cfg.Project.Agents = []string{"greta"}
+
+	diff := "diff --git a/small.go b/small.go\n--- a/small.go\n+++ b/small.go\n@@ -1,1 +1,1 @@\n+tiny\n" +
+		"diff --git a/big.go b/big.go\n--- a/big.go\n+++ b/big.go\n@@ -1,5000 +1,5000 @@\n" +
+		strings.Repeat("+big line of content here\n", 5000)
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, diffReq(t.TempDir(), filepath.Join(t.TempDir(), "review")), diff)
+	require.NoError(t, err)
+	require.Len(t, prep.Slots, 1)
+	slot := prep.Slots[0]
+
+	require.True(t, slot.Primary.Truncation.Truncated || slot.Primary.DegradationAction != "",
+		"precondition: the global budget must have shed big.go from the payload")
+	got := entryPathSet(slot.entries)
+	require.NotEmpty(t, got, "a bulk slot must carry its entries")
+	assert.NotContains(t, got, "big.go",
+		"a file the GLOBAL budget dropped is not in the prompt, so the carried set must not name it")
+	for _, e := range slot.entries {
+		assert.Contains(t, slot.Primary.Prompt, e.Body,
+			"carried entry %q must be present in the prompt the primary actually shipped", e.Path)
+	}
+}
+
+// Baseline companion (review.go:834 buildRepoPayloads): same subset invariant on
+// the over-window bulk fall-through of a baseline run — small payload_byte_budget
+// plus an UNCAPPED scope-constraint wrapper, the configuration
+// TestBaselineWriteback_ExcludesGloballyDroppedFiles proves reachable.
+func TestPrepareReviewFromRepo_BaselineSlotEntriesSubsetOfPrompt(t *testing.T) {
+	cfg := sizingRosterConfig()
+	cfg.Project.Agents = []string{"greta"}
+	cfg.Settings.PayloadByteBudget = 100
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("# Plan\n\nreview the auth code carefully\n"), 0o644))
+	repo := baselineRepo(t, map[string]string{
+		"small.go": "package a\n",
+		"big.go":   "package b\n" + strings.Repeat("x", 5000),
+	})
+	req := repoReq(repo, filepath.Join(t.TempDir(), "review"))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	for i, slot := range prep.Slots {
+		got := entryPathSet(slot.entries)
+		require.NotEmpty(t, got, "slot %d: a bulk slot must carry its entries", i)
+		assert.NotContains(t, got, "big.go",
+			"slot %d: a file the GLOBAL budget dropped is not in the prompt, so the carried set must not name it", i)
+		for _, e := range slot.entries {
+			assert.Contains(t, slot.Primary.Prompt, e.Body,
+				"slot %d: carried entry %q must be present in the prompt the primary actually shipped", i, e.Path)
+		}
 	}
 }
