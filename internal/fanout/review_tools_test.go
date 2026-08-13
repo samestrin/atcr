@@ -58,12 +58,16 @@ func TestBuildFallbackAgent_InheritsLaneToolSettings(t *testing.T) {
 	assert.EqualValues(t, 8192, fb.ToolBudgetBytes)
 }
 
-// Epic 35.2 baseline coverage attributes a fallback-served slot to its PRIMARY's
-// chunkFiles tag, which is sound only because the fallback reviews the same chunk.
-// That rested on buildFallbackAgent happening to reuse primary.Prompt verbatim, with
-// nothing stating it must. Pin it: a fallback rendered from a different payload would
-// make the primary's tag vouch for files the fallback never saw, and those files would
-// be recorded then silently skipped on the next scan.
+// Epic 35.2 baseline coverage attributes a fallback-served slot to the tag of
+// the agent that SERVED it (Epic 35.16.5.4 T3). On the NO-REFIT arm the fallback
+// reviews the same chunk as its primary, so reusing primary.Prompt verbatim is
+// what makes that attribution sound: a fallback rendered from a different
+// payload without a re-fit would make the primary's tag vouch for files the
+// fallback never saw, and those files would be recorded then silently skipped on
+// the next scan. The re-fit arm is the sanctioned exception — it renders a
+// smaller payload BY DESIGN and carries the smaller tag it actually kept, so
+// attribution follows IT. Pin both arms: the verbatim invariant on the no-refit
+// arm, and its deliberate violation on the re-fit arm.
 func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Prompt: "// FILE:a.go\npackage a\n", PayloadMode: "files", chunkFiles: []string{"a.go"}}
@@ -71,8 +75,27 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.Equal(t, primary.Prompt, fb.Prompt,
-		"a fallback must review the SAME payload as the primary it substitutes for — baseline coverage attributes it to the primary's tag")
+		"a fallback with no re-pack source must review the SAME payload as the primary it substitutes for — baseline coverage attributes it to the serving tag")
 	assert.Equal(t, primary.PayloadMode, fb.PayloadMode, "same payload implies the same mode")
+
+	// The complementary arm: a fallback built WITH a re-pack source must render a
+	// DIFFERENT prompt and carry the smaller tag of the files it actually kept.
+	// If the re-fit arm is reverted, rePacked stays false and this fails.
+	cfg2 := refitRoster(t, 128000, OverflowTruncate)
+	var slots []Slot
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg2, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+	s := slots[0]
+	require.Len(t, s.Fallbacks, 1, "precondition: the fallback chain is attached")
+	require.True(t, s.Fallbacks[0].rePacked, "precondition: this fixture's fallback re-fits (fails if the re-fit arm is reverted)")
+	fb2 := s.Fallbacks[0]
+	assert.NotEqual(t, s.Primary.Prompt, fb2.Prompt,
+		"a re-fit fallback renders a different payload than its primary — the verbatim pin above covers only the no-refit arm")
+	assert.Less(t, len(fb2.chunkFiles), len(s.Primary.chunkFiles),
+		"a re-fit fallback carries the smaller tag of the files it actually kept, so attribution follows the server")
 }
 
 // Non-tool primary yields non-tool fallback (no spurious tool enablement).
