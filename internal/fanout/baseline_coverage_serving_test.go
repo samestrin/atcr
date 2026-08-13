@@ -544,17 +544,16 @@ func TestServedCoverage_PrimaryFallbackArmLogs(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	_ = ctx // threaded into servedCoverage by the GREEN change; the pre-fix signature has no logger
 
 	slot := Slot{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}}
 
-	got := servedCoverage(slot, Result{Status: StatusOK})
+	got := servedCoverage(ctx, slot, Result{Status: StatusOK})
 	assert.Equal(t, []string{"a.go"}, got, "the fall-back returns the primary's tag")
 	assert.Contains(t, buf.String(), "primary",
 		"the primary-tag fall-back must log — any production firing means the stamping seam regressed")
 
 	buf.Reset()
-	got = servedCoverage(slot, Result{Status: StatusOK, servedChunkFiles: []string{"b.go"}})
+	got = servedCoverage(ctx, slot, Result{Status: StatusOK, servedChunkFiles: []string{"b.go"}})
 	assert.Equal(t, []string{"b.go"}, got)
 	assert.Empty(t, buf.String(), "the served-tag arm is the normal path and must not log")
 }

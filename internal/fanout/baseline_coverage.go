@@ -108,7 +108,7 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 		// An untagged server iterates zero times here, so it contributes NO coverage
 		// even when it succeeded — see the sentinel-polarity note above. That
 		// polarity is unchanged; it now hangs off the serving agent's tag.
-		for _, p := range servedCoverage(slots[i], results[i]) {
+		for _, p := range servedCoverage(ctx, slots[i], results[i]) {
 			covered[p] = struct{}{}
 		}
 	}
@@ -149,8 +149,13 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 // handling guarantees a non-empty kept set when it succeeds — so the polarity
 // above never has to arbitrate it, but the distinction is load-bearing if a future
 // producer ever stamps an empty tag.
-func servedCoverage(s Slot, r Result) []string {
+func servedCoverage(ctx context.Context, s Slot, r Result) []string {
 	if r.servedChunkFiles == nil && !r.servedRePacked {
+		// Dead in production (invokeSlot stamps every StatusOK result, and results
+		// synthesized elsewhere are never StatusOK), so a firing here means the
+		// stamping seam regressed — log it rather than silently over-crediting.
+		log.FromContext(ctx).Debug("baseline coverage: result carries no served tag; falling back to the slot's primary tag (expected only for results built outside invokeSlot)",
+			"agent", s.Primary.Name)
 		return s.Primary.chunkFiles
 	}
 	return r.servedChunkFiles
