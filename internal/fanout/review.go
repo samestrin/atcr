@@ -2635,6 +2635,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// warning and the overflow stamp: a re-fit payload FITS, so claiming it may
 	// overflow would be the same false record this epic exists to remove.
 	refitted := false
+	// The per-call deadline. It defaults to the fallback's own configured timeout
+	// and is PRE-SCALED on the re-fit arm — see the assignment there for why the
+	// deadline cannot simply ride ChunkTotal like the rest of the sizing record.
+	fbTimeoutSecs := ac.EffectiveTimeoutSecs(cfg.Settings)
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
 		// Gated on the SAME condition as the warning — an actual measured overflow,
 		// not a bare budget comparison. Enabling on_overflow=fail must not break
@@ -2695,6 +2699,22 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// describe a partition this agent does not follow, and chunkMaxLines
 				// must be the bulk sentinel 0 for the same reason (T4).
 				fbChunkTotal, fbMaxLines = 1, 0
+				// ChunkTotal is overloaded, and forcing it to 1 answers only ONE of
+				// the two questions it carries. It is the sizing RECORD (chunk_count,
+				// the cache token) — correct at 1, since this agent ships one payload
+				// — but invokeAgent also feeds it to scaledTimeoutSecs to scale the
+				// per-call DEADLINE. Left alone, a fallback substituting into a
+				// 20-chunk persona would get the base timeout while the primary it
+				// replaces got up to chunkTimeoutCeilingFactor times it, and the
+				// substitute is the agent least able to absorb a tight deadline.
+				//
+				// So pre-scale here by the PRIMARY's split and let the record stay 1.
+				// This cannot double-scale: invokeAgent applies
+				// scaledTimeoutSecs(a.TimeoutSecs, a.ChunkTotal), and scaledTimeoutSecs
+				// is a no-op at chunkTotal <= 1 — which is exactly what this agent now
+				// carries. A bulk primary (ChunkTotal 0 or 1) contributes no
+				// multiplier, so the non-chunked re-fit keeps its own base timeout.
+				fbTimeoutSecs = scaledTimeoutSecs(fbTimeoutSecs, primary.ChunkTotal)
 				fbSizingBudget = rp.budget
 				// truncate when the re-packed payload fits; overflow when even the
 				// smallest framing still exceeds this budget. The second case must not
@@ -2761,7 +2781,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// unless it re-fit that payload above, in which case every field here
 		// describes the smaller payload IT ships.
 		CodeContext: fbCodeContext,
-		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		TimeoutSecs: fbTimeoutSecs,
 		// Retry/backoff follow the fallback's OWN config (Epic 4.6), like
 		// TimeoutSecs: the fallback makes its own call to its own provider, so its
 		// own resilience budget governs.
