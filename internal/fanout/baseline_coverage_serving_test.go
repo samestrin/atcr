@@ -264,6 +264,27 @@ func TestMergeChunkResults_PromotedZeroBudgetKeepsFieldsConsistent(t *testing.T)
 		"reserved_output_tokens must not survive a promoted zero budget — the two fields must agree")
 }
 
+// Chunk-level serving identity must not survive the collapse into one persona
+// record: inheriting chunk 0's tag would name only its files as if they were
+// the persona's reviewed set, beside a degradation record possibly lifted from
+// a DIFFERENT chunk. Coverage attribution reads RAW results pre-merge (the
+// uncoveredBaselineFiles PRECONDITION), so the merged Result vouches for
+// nothing.
+func TestMergeChunkResults_ServingIdentityDoesNotSurviveTheMerge(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, Content: "c0", servedChunkFiles: []string{"a.go"}, servedRePacked: true},
+		{Agent: "greta", Status: StatusOK, Content: "c1", servedChunkFiles: []string{"b.go", "c.go"}, servedRePacked: true},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Nil(t, merged[0].servedChunkFiles,
+		"the merged persona record must not inherit chunk 0's tag as if it were the persona's reviewed set")
+	assert.False(t, merged[0].servedRePacked,
+		"the merged persona record must not inherit chunk 0's re-pack flag")
+}
+
 // AC4: with no re-pack anywhere the promotion is inert and the merged record is
 // exactly the pre-epic one (g[0]'s).
 func TestMergeChunkResults_NoRePackLeavesTheMergedRecordUntouched(t *testing.T) {
