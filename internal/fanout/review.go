@@ -1634,9 +1634,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// identity matches the slot actually dispatched. runEngine reads it
 						// pre-merge to attribute a failed chunk to its files, so a partially
 						// failed baseline run records the succeeded chunks' files instead of
-						// discarding the whole write-back. Only the Primary is tagged: the
-						// attribution reads the slot's Primary, and a fallback reviews the SAME
-						// chunk as the primary it substitutes for.
+						// discarding the whole write-back.
+						//
+						// The Primary is tagged here, and buildFallbackAgent copies this tag
+						// onto each fallback because a fallback reviews the SAME chunk as the
+						// primary it substitutes for — except when it re-fits that chunk to
+						// its own budget (Epic 35.16.5.4), where it carries the smaller set it
+						// actually kept. Attribution reads the tag of whichever chain member
+						// SERVED the slot, so either way it names the files really reviewed.
 						primary.chunkFiles = chunkFiles
 						// Carry this chunk's entries (Epic 35.16.5.4 T1) so a fallback whose
 						// own budget cannot hold the chunk can re-pack it. ck IS the shipped
@@ -2601,7 +2606,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				fbDegradation = degradationTruncate
 				if warnOversized {
 					warned = true
-					fmt.Fprintf(os.Stderr, "atcr: notice: fallback agent %q (effective budget %d B) re-fit the payload it inherited from primary %q (%d B) to its own budget under on_overflow=truncate; %d file(s) shed\n",
+					// "warning", not a softer prefix: the re-fit is LOSSY — files were
+					// dropped — and every other degradation this package surfaces uses
+					// the same prefix, so an operator grepping for atcr: warning: sees
+					// all of them or none.
+					fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q (effective budget %d B) re-fit the payload it inherited from primary %q (%d B) to its own budget under on_overflow=truncate; %d file(s) shed — the fallback reviewed LESS than its primary was sent\n",
 						name, rp.budget, primary.Name, primary.EffectiveBudget, len(rp.trunc.FilesDropped))
 				}
 				// Re-fit: the payload now fits, so the overflow warning and the
