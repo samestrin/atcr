@@ -195,6 +195,14 @@ type Agent struct {
 	MinSeverity string
 	MaxFindings *int
 
+	// rePacked marks an agent whose payload was RE-PACKED against its own byte
+	// budget rather than inherited from the primary it substitutes for (Epic
+	// 35.16.5.4 T2). Only a fallback can carry it. It is what tells baseline
+	// coverage that this slot's "all succeeded" no longer implies "everything the
+	// slot was tagged with was reviewed" — the inference the allOK short-circuit
+	// rests on.
+	rePacked bool
+
 	// CacheKey is the diff-cache key (Epic 5.2) for this agent's review call,
 	// derived by renderAgent/buildFallbackAgent from the FULL rendered prompt
 	// (which subsumes payload, persona, the per-agent scope focus, and the
@@ -258,6 +266,24 @@ type Result struct {
 	FallbackModel string
 	PayloadMode   string
 	Truncation    payload.Truncation
+
+	// servedChunkFiles is the baseline coverage tag of the chain member that
+	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It
+	// equals the primary's tag in every case except a re-packed fallback, which
+	// reviewed a strict subset — so attributing coverage to the primary's tag
+	// would mark files as reviewed that nothing read, and CommitBaselineIndex
+	// would then skip them on the next scan.
+	//
+	// Unexported for the same reason Agent.chunkFiles is: it is fan-out-internal
+	// attribution state, not part of the engine's public result contract. nil
+	// means "this slot's server vouches for nothing" — never "for everything";
+	// see uncoveredBaselineFiles for why that polarity is load-bearing.
+	servedChunkFiles []string
+	// servedRePacked is true when the serving agent re-packed its payload. It
+	// gates the allOK short-circuit: "every slot succeeded" only implies "the
+	// whole payload was covered" while every slot reviewed its full tagged set,
+	// and a re-pack is precisely the case where that stops being true.
+	servedRePacked bool
 
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
 	// AgentConfig by renderAgent so findingsFor can enforce them per source.
