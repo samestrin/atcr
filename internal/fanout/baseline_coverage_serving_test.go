@@ -512,3 +512,22 @@ func TestInvokeSlot_PrimaryServedStampsItsOwnTag(t *testing.T) {
 	assert.False(t, results[0].servedRePacked,
 		"no re-pack happened, so the allOK short-circuit must stay available")
 }
+
+// A re-packed chunk 0 carries ChunkCount 1 (its own re-fit record), so the
+// merge inheriting g[0] wholesale would report a split of 1 for a persona that
+// really shipped 3 chunks — and status.json is written from this merged record.
+// chunk_count describes the persona's split, so it must be restored.
+func TestMergeChunkResults_RePackedChunkZeroKeepsThePersonasSplit(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{Agent: "greta", Status: StatusOK, Content: "c0",
+			DegradationAction: degradationTruncate, EffectiveBudget: 71680, ChunkCount: 1, servedRePacked: true},
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationChunk, EffectiveBudget: 400000, ChunkCount: 3, Content: "c1"},
+		{Agent: "greta", Status: StatusOK, DegradationAction: degradationChunk, EffectiveBudget: 400000, ChunkCount: 3, Content: "c2"},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	assert.Equal(t, 3, merged[0].ChunkCount,
+		"chunk_count describes the persona's split — a re-packing chunk 0 must not under-report it")
+}
