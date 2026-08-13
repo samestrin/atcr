@@ -2361,11 +2361,6 @@ func derefInt64(p *int64) int64 {
 	return *p
 }
 
-// smallestEntry was removed: its sole caller (the zero-budget bulk arm) now shares
-// keepSmallestEntry, which applies the same fewest-body-bytes rule AND skips
-// zero-byte entries. Keeping two parallel "keep the smallest file" helpers is what
-// let the empty-body fix land on one arm and not the other.
-
 // droppedPathsExcept lists the paths of every entry except keep — the shed
 // record for an arm that keeps exactly one file. Returns nil (not an empty
 // slice) when nothing was dropped, matching the "no truncation" shape callers
