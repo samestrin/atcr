@@ -693,10 +693,14 @@ func TestBuildFallbackAgent_RefitBudgetsOnDispatchedBodyBytes(t *testing.T) {
 	assert.True(t, fb.rePacked,
 		"the dispatched bodies exceed the fallback's budget even though the source sizes fit it — the re-fit must fire")
 	if fb.rePacked {
-		assert.Equal(t, []string{"c.go"}, fb.Truncation.FilesDropped,
-			"the body-sized shed drops the entry that pushes the dispatched bytes over budget")
-		assert.NotContains(t, fb.Prompt, entries[2].Body)
-		assert.Contains(t, fb.Prompt, entries[0].Body)
+		// The shed drops largest-first, so the body-sized pass sheds a.go (the
+		// 60 KB body) — the entry whose BODY actually overflows the budget. A
+		// size-sized pass would either shed b.go (the largest source) or, as
+		// pre-fix, shed nothing at all because the sizes total under budget.
+		assert.Equal(t, []string{"a.go"}, fb.Truncation.FilesDropped,
+			"the body-sized shed drops the entry whose dispatched bytes dominate the budget")
+		assert.NotContains(t, fb.Prompt, entries[0].Body)
 		assert.Contains(t, fb.Prompt, entries[1].Body)
+		assert.Contains(t, fb.Prompt, entries[2].Body)
 	}
 }

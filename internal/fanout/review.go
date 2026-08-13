@@ -2953,7 +2953,18 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		// entry, so plain largest-first sheds exactly the file the heuristic
 		// flagged as hardest to review, on precisely the tight-window agents
 		// escalation targets.
-		kept, trunc = payload.ApplyByteBudgetPreferEscalated(refit.entries, budget, payload.PayloadMode(refit.mode))
+		//
+		// Sized on the bytes actually DISPATCHED (len(Body)), not the pre-render
+		// source Size: the two diverge for entry sources that re-render content,
+		// and the keep-decision must fit what the wire carries. The fits
+		// measurement below already reads the dispatched total; sizing the shed
+		// on the same quantity keeps the two from disagreeing.
+		sized := make([]payload.FileEntry, len(refit.entries))
+		for i, e := range refit.entries {
+			sized[i] = e
+			sized[i].Size = int64(len(e.Body))
+		}
+		kept, trunc = payload.ApplyByteBudgetPreferEscalated(sized, budget, payload.PayloadMode(refit.mode))
 		// AllDropped alone tests the wrong predicate — "no entries survived"
 		// rather than "no CONTENT survived". The largest-first shed sizes on
 		// FileEntry.Size and zero-size entries sort LAST, so they are never
