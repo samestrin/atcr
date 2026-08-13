@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,4 +199,44 @@ func TestPrepareReviewFromRepo_BaselineSlotEntriesSubsetOfPrompt(t *testing.T) {
 		assert.NotContains(t, pathSet(slot.Primary.chunkFiles), "big.go",
 			"slot %d: the coverage tag must not vouch for a file the GLOBAL budget dropped from the prompt", i)
 	}
+}
+
+// TD (slot_entries_test.go:41, clarified): the Kept-preference at
+// review.go:1895-1897 (bulkEntries := mp.Kept, falling back to mp.Entries) is
+// only observable on the arms where bulkEntries survives initialization — the
+// normal per-agent shed overwrites it from mp.Entries unconditionally. This
+// case forces the AllDropped arm (a positive-but-tiny agent budget drops every
+// entry), so a hand-set Kept strict subset is the carried set. Reverting the
+// preference to mp.Entries fails this test.
+func TestBuildSlots_BulkSlotCarriesKeptSubsetOnAllDroppedArm(t *testing.T) {
+	// greta declares 12289 tokens → a 3-byte effective budget: positive, so the
+	// per-agent shed runs, but no 100-byte entry fits it (AllDropped) and the
+	// whole global-kept payload is dispatched under the overflow record.
+	cfg := declaredWindowRoster(t, 12289)
+	cfg.Project.Agents = []string{"greta"}
+
+	mk := func(path string) payload.FileEntry {
+		body := fmt.Sprintf("=== FILE: %s ===\n", path) + strings.Repeat("x", 100) + "\n"
+		return payload.FileEntry{Path: path, Size: int64(len(body)), Body: body}
+	}
+	kept := []payload.FileEntry{mk("a.go"), mk("b.go")}
+	entries := append([]payload.FileEntry{}, kept...)
+	entries = append(entries, mk("c.go")) // "dropped by the global budget": absent from Kept and Text
+	var full strings.Builder
+	for _, e := range kept {
+		full.WriteString(e.Body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Kept: kept, Text: full.String(), FileCount: 2},
+	}
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	require.NoError(t, err)
+	require.Len(t, slots, 1)
+
+	require.Equal(t, degradationOverflow, slots[0].Primary.DegradationAction,
+		"precondition: the AllDropped arm must be the one taken, or the hand-set Kept is overwritten from mp.Entries")
+	assert.Equal(t, entryPathSet(kept), entryPathSet(slots[0].entries),
+		"the carried entries must be drawn from Kept, never from the Entries-only files")
+	assert.NotContains(t, entryPathSet(slots[0].entries), "c.go")
 }
