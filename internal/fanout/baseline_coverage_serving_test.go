@@ -385,6 +385,52 @@ func TestBaselineRun_RePackedFallbackRecordsOnlyTheFilesItReviewed(t *testing.T)
 	}
 }
 
+// A chain deeper than one fallback: each member is built independently by
+// buildFallbackAgent, so member 3 may carry its own re-packed tag, and only the
+// member that SERVED may be stamped. Fallback 1 re-packs and fails; fallback 2
+// re-packs to a different set and succeeds — the stamp must be fallback 2's,
+// never fallback 1's or the primary's.
+func TestInvokeSlot_TwoFallbackChainStampsTheActualServer(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.failFor["primary-model"] = errors.New("boom")
+	f.failFor["backup-model-1"] = errors.New("boom")
+
+	slot := Slot{
+		Primary: Agent{
+			Name:        "greta",
+			Invocation:  llmclient.Invocation{Model: "primary-model"},
+			PayloadMode: "blocks",
+			chunkFiles:  []string{"a.go", "b.go", "c.go"},
+		},
+		Fallbacks: []Agent{
+			{
+				Name:        "kai",
+				Invocation:  llmclient.Invocation{Model: "backup-model-1"},
+				PayloadMode: "blocks",
+				chunkFiles:  []string{"a.go"},
+				rePacked:    true,
+			},
+			{
+				Name:        "brad",
+				Invocation:  llmclient.Invocation{Model: "backup-model-2"},
+				PayloadMode: "blocks",
+				chunkFiles:  []string{"b.go", "c.go"},
+				rePacked:    true,
+			},
+		},
+	}
+
+	results := NewEngine(f).Run(context.Background(), []Slot{slot})
+	require.Len(t, results, 1)
+	r := results[0]
+
+	require.Equal(t, StatusOK, r.Status, "precondition: fallback 2 must serve the slot successfully")
+	assert.Equal(t, []string{"b.go", "c.go"}, r.servedChunkFiles,
+		"one slot, one result, one server: the stamped tag must be fallback 2's, not fallback 1's or the primary's")
+	assert.True(t, r.servedRePacked)
+}
+
 func TestInvokeSlot_PrimaryServedStampsItsOwnTag(t *testing.T) {
 	t.Parallel()
 	slot := Slot{
