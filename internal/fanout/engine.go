@@ -214,6 +214,26 @@ type Slot struct {
 	Primary   Agent
 	Fallbacks []Agent
 	Serial    bool
+
+	// entries is the payload this slot was built from, as the FileEntry list its
+	// Primary actually shipped — the re-pack source a fallback needs to shed
+	// against its OWN budget (Epic 35.16.5.4 T1). Unexported: it is fan-out
+	// internal state, not part of the engine's public contract.
+	//
+	// It is carried rather than recovered because recovery is shape-dependent:
+	// Agent.CodeContext comes from EntriesFromRenderedPayload, which does not
+	// recognize every payload shape and yields nothing for the ones it misses
+	// (see inheritedPayloadFits). A re-fit driven off that would silently shed
+	// EVERY file for exactly the payloads nothing else can vouch for, which
+	// looks like a working re-fit and is not one.
+	//
+	// EMPTY means "this slot's payload was never entry-decomposed", never "this
+	// slot shipped nothing" — the review_strategy=chunked diff path splits text
+	// on diff markers (chunkDiff) and has no FileEntry list at all. That
+	// polarity is load-bearing: buildFallbackAgent must decline to re-fit an
+	// entry-less slot and keep the honest warn-and-ship, rather than re-pack
+	// against an empty list.
+	entries []payload.FileEntry
 }
 
 // Result is the outcome of one slot after fallback resolution. Status is one of
