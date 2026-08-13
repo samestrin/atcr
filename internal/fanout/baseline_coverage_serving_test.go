@@ -1,11 +1,14 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -530,4 +533,28 @@ func TestMergeChunkResults_RePackedChunkZeroKeepsThePersonasSplit(t *testing.T) 
 	require.Len(t, merged, 1)
 	assert.Equal(t, 3, merged[0].ChunkCount,
 		"chunk_count describes the persona's split — a re-packing chunk 0 must not under-report it")
+}
+
+// The primary-tag fall-back arm is dead in production (invokeSlot stamps every
+// StatusOK result, and results synthesized elsewhere are never StatusOK), so it
+// is the canary for a plumbing regression in the stamping seam: if it ever fires
+// for real, the stamp was lost. It must log when taken, and stay silent on the
+// normal served-tag path.
+func TestServedCoverage_PrimaryFallbackArmLogs(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	_ = ctx // threaded into servedCoverage by the GREEN change; the pre-fix signature has no logger
+
+	slot := Slot{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}}
+
+	got := servedCoverage(slot, Result{Status: StatusOK})
+	assert.Equal(t, []string{"a.go"}, got, "the fall-back returns the primary's tag")
+	assert.Contains(t, buf.String(), "primary",
+		"the primary-tag fall-back must log — any production firing means the stamping seam regressed")
+
+	buf.Reset()
+	got = servedCoverage(slot, Result{Status: StatusOK, servedChunkFiles: []string{"b.go"}})
+	assert.Equal(t, []string{"b.go"}, got)
+	assert.Empty(t, buf.String(), "the served-tag arm is the normal path and must not log")
 }
