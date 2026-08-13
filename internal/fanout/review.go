@@ -2439,7 +2439,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	if len(refitOpt) > 0 {
 		refit = refitOpt[0]
 	}
-	_ = refit // wired by T2's truncate arm
+
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
 		return Agent{}, false, fmt.Errorf("fallback agent %q not found in registry", name)
@@ -2493,13 +2493,23 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// surface it — warn pre-dispatch and record the honest overflow degradation
 	// instead of copying the primary's action.
 	//
+	// EPIC 35.16.5.4 NARROWS THAT, for `truncate` only. The slot now carries the
+	// FileEntry list its primary shipped (Slot.entries, threaded here as
+	// fallbackRefit), so the truncate arm CAN re-pack — and the coverage-falsifying
+	// objection above is answered by T3, which makes baseline attribution read the
+	// files the SERVING agent reviewed rather than the primary's tag. The rest of
+	// the paragraph still stands verbatim for `chunk` (which needs a
+	// fallback-owned chunk chain, still out of scope) and for any slot with no
+	// entries to re-pack.
+	//
 	// The operator's on_overflow policy decides first, mirroring the primary path's
 	// own pre-dispatch gate: fail and fallback return their typed errors, which
 	// propagate out of buildChain/buildSlots and hard-fail the run BEFORE a prompt
-	// the backup provably cannot hold is dispatched. chunk and truncate keep the
-	// warn-and-ship behavior below, because both would need exactly the FileEntry
-	// re-packing ruled out above — routing them here would promise a re-fit this
-	// function cannot perform.
+	// the backup provably cannot hold is dispatched. truncate re-fits when it has a
+	// source; chunk — and truncate without one — keep the warn-and-ship behavior
+	// below, because both would need exactly the FileEntry re-packing ruled out
+	// above and routing them here would promise a re-fit this function cannot
+	// perform.
 	//
 	// Measure the PAYLOAD before claiming it overflows. len(primary.Prompt) is the
 	// wrong measure — the rendered prompt carries the persona wrapper that the byte
@@ -2520,6 +2530,32 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// status.go, which enumerates all four values.
 	fbDegradation := primary.DegradationAction
 	warned := false
+	// The payload-describing record. Every field defaults to the primary's — a
+	// fallback that does not re-fit reviews exactly the primary's payload, so its
+	// record must stay byte-identical to the pre-epic one (AC4). Only the truncate
+	// re-fit arm below overwrites them, and it overwrites ALL of them together:
+	// prompt, per-file breakdown, shed record, coverage tag and sizing describe one
+	// payload, so a partial overwrite would leave the record describing two.
+	fbPrompt := primary.Prompt
+	fbTrunc := primary.Truncation
+	fbCodeContext := primary.CodeContext
+	// The coverage tag follows the payload, so it is copied from the primary here
+	// (a non-re-fit fallback DID review the primary's chunk) and replaced by the
+	// kept subset on the re-fit arm. Epic 35.16.5.4 T3 reads this off whichever
+	// chain member actually served the slot; before this copy a fallback carried no
+	// tag at all, so that read would have made every fallback-served slot vouch for
+	// nothing and silently re-scanned its files.
+	fbChunkFiles := primary.chunkFiles
+	fbChunkTotal := primary.ChunkTotal
+	fbMaxLines := primary.chunkMaxLines
+	// The budget the payload was actually sized to, recorded as effective_budget
+	// and folded into the cache sizing token. It is the raw per-model budget until
+	// a re-fit sizes a payload to the globally-capped, scope-reserved one.
+	fbSizingBudget := fbBudget
+	// True once the truncate arm has actually re-packed. It gates the overflow
+	// warning and the overflow stamp: a re-fit payload FITS, so claiming it may
+	// overflow would be the same false record this epic exists to remove.
+	refitted := false
 	if primary.EffectiveBudget > 0 && fbBudget < primary.EffectiveBudget && !inheritedPayloadFits(primary, fbBudget) {
 		// Gated on the SAME condition as the warning — an actual measured overflow,
 		// not a bare budget comparison. Enabling on_overflow=fail must not break
@@ -2536,12 +2572,51 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				return Agent{}, false, err
 			}
 		}
-		if warnOversized {
-			warned = true
-			fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
-				name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+		// The truncate re-fit (Epic 35.16.5.4 T2). Reached only with a real re-pack
+		// source: an absent or entry-less refit context falls straight through to the
+		// warn-and-ship below, because re-packing against an empty list would shed
+		// EVERY file and ship the empty, false-clean payload AC5 forbids.
+		//
+		// It returns ok=false when the re-pack sheds nothing — the payload measurably
+		// fits this budget after all, or it is a single file that cannot be made any
+		// smaller. Both keep today's behavior exactly, which is what makes the
+		// Conservatism NFR hold by construction: the arm can only be taken when it
+		// strictly reduces the bytes sent.
+		if cfg.Settings.OnOverflow == OverflowTruncate && refit.canRefit() {
+			rp, ok, err := refitFallbackPayload(cfg, refit, fbBudget, fbWindow)
+			if err != nil {
+				return Agent{}, false, err
+			}
+			if ok {
+				fbPrompt = rp.agent.Prompt
+				fbCodeContext = rp.agent.CodeContext
+				fbTrunc = rp.trunc
+				fbChunkFiles = entryPaths(rp.kept)
+				// One re-fit payload, not the slot's split: ChunkTotal must be 1 or the
+				// per-call deadline (timeout.go) and status.json's chunk_count both
+				// describe a partition this agent does not follow, and chunkMaxLines
+				// must be the bulk sentinel 0 for the same reason (T4).
+				fbChunkTotal, fbMaxLines = 1, 0
+				fbSizingBudget = rp.budget
+				fbDegradation = degradationTruncate
+				if warnOversized {
+					warned = true
+					fmt.Fprintf(os.Stderr, "atcr: notice: fallback agent %q (effective budget %d B) re-fit the payload it inherited from primary %q (%d B) to its own budget under on_overflow=truncate; %d file(s) shed\n",
+						name, rp.budget, primary.Name, primary.EffectiveBudget, len(rp.trunc.FilesDropped))
+				}
+				// Re-fit: the payload now fits, so the overflow warning and the
+				// overflow stamp below are both wrong for this agent and are skipped.
+				refitted = true
+			}
 		}
-		fbDegradation = degradationOverflow
+		if !refitted {
+			if warnOversized {
+				warned = true
+				fmt.Fprintf(os.Stderr, "atcr: warning: fallback agent %q resolves a %d-token window (effective budget %d B) but inherits a prompt sized for primary %q's %d-token window (%d B); it may overflow — declare context_window_tokens on %q, or point the lane at a backup with a comparable window\n",
+					name, fbWindow, fbBudget, primary.Name, primary.ResolvedWindow, primary.EffectiveBudget, name)
+			}
+			fbDegradation = degradationOverflow
+		}
 	}
 	return Agent{
 		Name: name,
@@ -2549,12 +2624,14 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// the primary, it gets that provider's breaker (so a fallback can succeed
 		// while the primary's circuit is open).
 		Provider:    ac.Provider,
-		Prompt:      primary.Prompt,
+		Prompt:      fbPrompt,
 		PayloadMode: primary.PayloadMode,
-		Truncation:  primary.Truncation,
+		Truncation:  fbTrunc,
 		// A fallback reviews the primary's already-sized/chunked payload, so it
-		// saw exactly the same files and inherits the primary's record of them.
-		CodeContext: primary.CodeContext,
+		// saw exactly the same files and inherits the primary's record of them —
+		// unless it re-fit that payload above, in which case every field here
+		// describes the smaller payload IT ships.
+		CodeContext: fbCodeContext,
 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
 		// Retry/backoff follow the fallback's OWN config (Epic 4.6), like
 		// TimeoutSecs: the fallback makes its own call to its own provider, so its
@@ -2580,12 +2657,19 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		MaxFindings: primary.MaxFindings,
 		// Sizing record (Epic 19.10 F6/F8): chunk regime follows the slot (same
 		// split as the primary), byte budget/window are the fallback's OWN model's.
-		ChunkTotal:           primary.ChunkTotal,
-		EffectiveBudget:      fbBudget,
+		// A re-fit fallback (Epic 35.16.5.4 T4) instead records ONE payload of its
+		// own — ChunkTotal 1, the bulk maxLines sentinel, and the budget its payload
+		// was really sized to — because the slot's split is not the one it follows.
+		ChunkTotal:           fbChunkTotal,
+		EffectiveBudget:      fbSizingBudget,
 		ResolvedWindow:       fbWindow,
 		ReservedOutputTokens: fbReserved,
 		DegradationAction:    fbDegradation,
-		chunkMaxLines:        primary.chunkMaxLines,
+		chunkMaxLines:        fbMaxLines,
+		// The coverage tag of the payload this agent actually reviews (Epic
+		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
+		// the kept subset when it re-fit.
+		chunkFiles: fbChunkFiles,
 		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
 		// the primary but on its OWN model and temperature, so it keys on the
 		// primary's prompt with the fallback's model/temperature — a substitute
@@ -2603,16 +2687,122 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// entry is for. Cache invalidation on a prompt-size change is likewise not
 		// implicit: the prompt itself is hashed, so a re-sized payload is a different
 		// key by construction.
-		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbBudget, primary.chunkMaxLines)),
+		// A re-fit fallback keys on ITS OWN prompt and sizing token, which is what
+		// keeps it off both its primary's cache entry and its own un-refit form's:
+		// the prompt is hashed, so a re-sized payload is a different key by
+		// construction, and the sizing token additionally separates the two budgets.
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines)),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
 			MaxTokens:   maxTokensPtr(),
-			Prompt:      primary.Prompt,
+			Prompt:      fbPrompt,
 		},
 	}, warned, nil
+}
+
+// keepSmallestEntry reduces a payload to its single smallest entry with the
+// matching shed record — the "no file fits, but an empty payload is not an
+// option" answer. Truncated is false for a one-entry input because nothing was
+// actually dropped, which is what tells the re-fit caller there is no smaller
+// payload to send and the honest overflow record must stand.
+//
+// Callers guarantee a non-empty slice (smallestEntry indexes entries[0]).
+func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payload.Truncation) {
+	smallest := smallestEntry(entries)
+	return []payload.FileEntry{smallest}, payload.Truncation{
+		Truncated:    len(entries) > 1,
+		FilesDropped: droppedPathsExcept(entries, smallest.Path),
+	}
+}
+
+// refitPayload is the outcome of re-packing a slot's payload at a fallback's own
+// byte budget: the re-rendered agent plus the records describing what it now
+// ships. Grouped in a struct rather than returned as five values because they are
+// one fact — the payload this fallback sends — and splitting them invites a caller
+// to apply some and not others, leaving the record describing two payloads.
+type refitPayload struct {
+	agent  Agent
+	trunc  payload.Truncation
+	kept   []payload.FileEntry
+	budget int64
+}
+
+// refitFallbackPayload re-packs refit.entries against the fallback's own budget
+// and re-renders the result. The second return is false when NOTHING was shed —
+// the caller must then leave the inherited payload and the pre-epic warn-and-ship
+// exactly as they were.
+//
+// Two properties this function is responsible for:
+//
+//   - It re-renders under the PRIMARY's name and AgentConfig, never the backup's.
+//     A fallback answers in the primary's place and reviews the same persona
+//     (AC 01-04); only the model, temperature and timeout are its own, and those
+//     are applied by the caller. Rendering the backup's persona here would swap
+//     the reviewer's identity as a side effect of re-sizing a payload.
+//   - It never yields an EMPTY payload. When not even one file fits (AllDropped)
+//     it keeps the single smallest entry, matching the zero-budget bulk arm — an
+//     empty payload comes back as a false-clean "no findings" review, the same
+//     silent-zero class ErrPayloadFullyDropped guards against.
+//
+// The budget is the APPLIED one — the fallback's per-model budget narrowed by the
+// global payload_byte_budget and by the uncounted SCOPE CONSTRAINT block — not the
+// raw per-model figure the non-re-fit path records. That is the quantity the
+// payload is genuinely sized to, so it is what effective_budget must report for an
+// agent that re-fit (AC6), and it is the more conservative of the two.
+func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64, fbWindow int) (refitPayload, bool, error) {
+	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, refit.scopeConstraint)
+	var kept []payload.FileEntry
+	var trunc payload.Truncation
+	switch {
+	case budget <= 0:
+		// A zero budget must NEVER reach ApplyByteBudget, which reads a
+		// non-positive budget as UNLIMITED (budget.go: "0 = unlimited") and would
+		// hand back the whole payload — the exact inversion the zero-budget bulk
+		// arm was written to prevent, since a window that funds no input budget at
+		// all is the strongest possible overflow signal, not the absence of one.
+		// Keep the smallest entry, the same answer the bulk arm gives.
+		kept, trunc = keepSmallestEntry(refit.entries)
+	default:
+		// PreferEscalated, not the plain pass — the same reason the bulk path
+		// gives: escalating a file to a higher-context mode makes it the largest
+		// entry, so plain largest-first sheds exactly the file the heuristic
+		// flagged as hardest to review, on precisely the tight-window agents
+		// escalation targets.
+		kept, trunc = payload.ApplyByteBudgetPreferEscalated(refit.entries, budget, payload.PayloadMode(refit.mode))
+		if trunc.AllDropped {
+			// Not even one file fits. Shipping "" comes back as a false-clean "no
+			// findings" review, so keep the smallest entry instead (AC5).
+			kept, trunc = keepSmallestEntry(refit.entries)
+		}
+	}
+	// Nothing shed: either the entries measurably fit this budget after all (the
+	// overflow was detected off an UNMEASURABLE CodeContext, which reads as "may
+	// not fit" by design), or the slot is a single file that cannot be made any
+	// smaller. Re-rendering would produce the same payload, so report no re-fit and
+	// let the caller keep the honest overflow record.
+	if !trunc.Truncated {
+		return refitPayload{}, false, nil
+	}
+	var pb strings.Builder
+	for _, e := range kept {
+		pb.WriteString(e.Body)
+	}
+	sz := agentSizing{
+		effectiveBudget: budget,
+		resolvedWindow:  fbWindow,
+		// One re-fit payload: no chunk plan, so the bulk sentinels (T4).
+		maxLines:   0,
+		chunkTotal: 1,
+		action:     degradationTruncate,
+	}
+	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.mode, pb.String(), len(kept), trunc, refit.rng, refit.scopeConstraint, sz)
+	if err != nil {
+		return refitPayload{}, false, err
+	}
+	return refitPayload{agent: a, trunc: trunc, kept: kept, budget: budget}, true, nil
 }
 
 // writePayloadArtifacts persists each distinct payload under payload/<mode>.txt
