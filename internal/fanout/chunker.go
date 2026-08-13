@@ -395,8 +395,12 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 //     real budget (a zero-window re-fit), not "unknown": it wins the min, and
 //     reserved_output_tokens is zeroed alongside it so the two fields agree.
 //
-// chunk_count is left alone: it describes the persona's split, which is still
-// exactly what happened, and the per-chunk re-fits do not change it.
+// chunk_count is restored to the group size when a re-pack promoted anything:
+// it describes the persona's split, which is still exactly what happened — but a
+// re-packed chunk 0 carries ChunkCount 1 (its own re-fit record), so inheriting
+// g[0] wholesale would under-report the split on the only record a user reads
+// (status.json is written from this merged Result). With no re-pack the field
+// keeps the pre-epic g[0] semantics (AC4).
 func promoteRePackedDegradation(out *Result, g []Result) {
 	dropped := map[string]struct{}{}
 	var budget int64
@@ -425,6 +429,7 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 	if !rePacked {
 		return
 	}
+	out.ChunkCount = len(g)
 	if action != "" {
 		out.DegradationAction = action
 	}
