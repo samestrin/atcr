@@ -2450,13 +2450,11 @@ func (r fallbackRefit) canRefit() bool { return len(r.entries) > 0 }
 // The second return reports whether the warning was actually emitted, so a
 // caller deduplicating it across a lane's chunks suppresses only what the
 // operator has really seen.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool, refitOpt ...fallbackRefit) (Agent, bool, error) {
-	// Variadic-optional (same idiom as buildSlots' baselineOpt): a caller with no
-	// re-pack source omits it and gets the pre-epic behavior exactly.
-	var refit fallbackRefit
-	if len(refitOpt) > 0 {
-		refit = refitOpt[0]
-	}
+func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool, refit fallbackRefit) (Agent, bool, error) {
+	// refit is a REQUIRED parameter (a zero fallbackRefit declines the re-fit by
+	// construction via canRefit): every construction site must say explicitly
+	// whether it has a re-pack source, so a future production caller cannot
+	// silently get pre-epic warn-and-ship by forgetting an argument.
 
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
@@ -2620,7 +2618,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// smallest framing still exceeds this budget. The second case must not
 				// be recorded as a successful truncate — it is the "no smaller framing
 				// available" state, and it keeps the overflow warning below.
-				fbDegradation = rp.action
+				fbDegradation = degradationTruncate
+				if !rp.fits {
+					fbDegradation = degradationOverflow
+				}
 				// The reservation follows the budget that was actually recorded, not
 				// the raw per-model one. A re-fit records the APPLIED budget, so
 				// gating on fbBudget here would re-create the self-contradictory
@@ -2796,12 +2797,12 @@ type refitPayload struct {
 	trunc  payload.Truncation
 	kept   []payload.FileEntry
 	budget int64
-	// action is the degradation this re-fit actually achieved: truncate when the
-	// re-packed payload fits, overflow when even the smallest framing does not.
-	action string
-	// fits reports whether the dispatched bytes are within budget. False keeps the
-	// pre-epic overflow warning, because the operator's problem — a backup too
-	// small for this lane — is real and unsolved even though the payload shrank.
+	// fits reports whether the dispatched bytes are within budget — and thereby
+	// the degradation this re-fit achieved: truncate when it fits, overflow when
+	// even the smallest framing does not (derived at the use site, so one bit is
+	// encoded by one field). False keeps the pre-epic overflow warning, because
+	// the operator's problem — a backup too small for this lane — is real and
+	// unsolved even though the payload shrank.
 	fits bool
 }
 
@@ -2942,7 +2943,7 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	if err != nil {
 		return refitPayload{}, false, err
 	}
-	return refitPayload{agent: a, trunc: trunc, kept: kept, budget: budget, action: action, fits: fits}, true, nil
+	return refitPayload{agent: a, trunc: trunc, kept: kept, budget: budget, fits: fits}, true, nil
 }
 
 // writePayloadArtifacts persists each distinct payload under payload/<mode>.txt
