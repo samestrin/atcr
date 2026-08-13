@@ -1,3 +1,17 @@
+## [35.16.5.4] - 2026-08-12
+
+### Fixed
+- A fallback reviewer whose own context window cannot hold the payload its primary was sized for now **re-packs that payload against its own byte budget** under `on_overflow: truncate`, instead of shipping a prompt it provably cannot hold. Previously the run warned and dispatched anyway: a declared-128000 primary paired with an undeclared 32768 backup handed that backup a ~405 KB prompt. The re-fit records its own `truncation`, `effective_budget`, `chunk_count: 1`, and `degradation_action: truncate`.
+- Baseline coverage now attributes reviewed files to the agent that **actually served** the slot rather than unconditionally to its primary. This is what makes the re-fit safe: an oversized prompt fails loudly at the provider, but a falsified coverage tag is silent — `CommitBaselineIndex` records the shed files as reviewed and the next incremental scan skips them, so a file nothing ever read is never read again. Both decision points were closed, including the all-succeeded short-circuit, which is the one that fires in practice (a slot served by a successful fallback reports `StatusOK`, so a re-packed fallback produces an all-OK run).
+- A re-packed chunk's degradation record now survives the per-persona chunk merge. The merge inherited its record from the first chunk, so a re-fit on any later chunk was invisible in `status.json` — the persona presented as a clean full-coverage review while a substitute had reviewed strictly less than it was sent.
+- A re-fit never keeps a **zero-byte** file as its surviving entry. Empty tracked files are ordinary (`py.typed`, `__init__.py`, `.gitkeep`), and a plain "fewest bytes" rule selected one every time, shipping a 0-byte payload that comes back as a false-clean "no findings" review.
+- A re-fit that shrank the payload but still cannot reach its budget records `degradation_action: overflow`, not `truncate`, and keeps its stderr warning. Claiming a successful truncate there would drop the only signal saying the review may not have been read in full, precisely when the reviewer is worst off.
+
+### Changed
+- `docs/registry.md`'s `on_overflow` row distinguishes `truncate` (re-fits an overflowing fallback) from `chunk` (still warns and ships), and names the one path that cannot re-fit: `review_strategy: chunked` diff chunks are split by text on diff boundaries and carry no per-file list to re-pack, so they keep the pre-existing warn-and-ship behavior.
+
+*Shipped via /execute-epic (epic 35.16.5.4)*
+
 ## [35.16.5.2] - 2026-08-12
 
 ### Fixed
