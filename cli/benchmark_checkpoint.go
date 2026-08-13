@@ -8,6 +8,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/benchmark"
 )
 
 // runCheckpoint is the on-disk durable record of a benchmark run's completed,
@@ -51,10 +53,12 @@ type checkpointCase struct {
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds
-// into a reviewerAcc for one case: identity (model/persona, locked at first
-// sighting), the case score (raised categories), and the usage-gated cost/latency
-// contribution. Expected categories live on checkpointCase because they are
-// identical for every reviewer of a case and originate from the suite manifest.
+// into a reviewerAcc for one case: identity (the model/persona that actually
+// served this case — the realized per-case value, which is what makes a
+// checkpointed model safe to replay across a failover boundary), the case score
+// (raised categories), and the usage-gated cost/latency contribution. Expected
+// categories live on checkpointCase because they are identical for every
+// reviewer of a case and originate from the suite manifest.
 // Storing the already-computed cost contribution (not the raw tokens) and replaying
 // it in case order keeps the float sum and latency median byte-identical to an
 // uninterrupted run.
@@ -66,6 +70,22 @@ type checkpointReviewer struct {
 	UsageReported bool     `json:"usage_reported"`
 	CostUSD       float64  `json:"cost_usd"`
 	LatencyMS     int64    `json:"latency_ms"`
+
+	// Outcome is a benchmark.Outcome* value describing what actually happened on
+	// this case — the signal that separates a clean review from unparseable prose
+	// from a failed call, all three of which record zero Raised categories.
+	//
+	// PURELY ADDITIVE. A checkpoint written before this field existed omits it,
+	// decodes to the empty string (benchmark.OutcomeUnknown), and replays as
+	// unknown — never as clean. That is the entire reason the vocabulary is a string
+	// enum rather than a pair of booleans, which would both default to false and so
+	// assert a clean review about cases nobody recorded one for.
+	Outcome string `json:"outcome,omitempty"`
+
+	// FallbackUsed records that fanout served this case from a fallback model rather
+	// than the slot's configured primary. Kept beside Outcome, not inside it: the
+	// substitution is orthogonal to how the review turned out.
+	FallbackUsed bool `json:"fallback_used,omitempty"`
 }
 
 // errCheckpointSuiteMismatch reports that a checkpoint's recorded suite identity
@@ -82,8 +102,11 @@ var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed
 
 // errCheckpointCorrupt reports that a checkpoint file parsed as JSON but failed
 // internal self-consistency checks (duplicate indices, out-of-range indices, or
-// empty case IDs). Resume fails closed so a hand-edited or damaged checkpoint
-// cannot silently drop completed cases.
+// empty case IDs). Negative indices are rejected at load by
+// validateCheckpointIntegrity; the beyond-suite upper bound is rejected at
+// resume by executeBenchmarkRun, the only place the case count is known. Resume
+// fails closed so a hand-edited or damaged checkpoint cannot silently drop
+// completed cases.
 var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
 
 // maxCheckpointBytes caps a checkpoint read so an operator-supplied or crafted
@@ -140,7 +163,10 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 
 // validateCheckpointIntegrity rejects malformed-but-parseable checkpoints before
 // they can silently corrupt replay. Duplicate indices are particularly dangerous:
-// doneIndex would last-write-win, dropping the earlier completed case.
+// doneIndex would last-write-win, dropping the earlier completed case. The outcome
+// allowlist is the same kind of guard one level down: an out-of-vocabulary outcome
+// would otherwise become an arbitrary key in the published outcomes tally, and the
+// tally label "unknown" would pose as genuine absence.
 func validateCheckpointIntegrity(cp *runCheckpoint) error {
 	seen := make(map[int]struct{}, len(cp.Cases))
 	for i, c := range cp.Cases {
@@ -154,6 +180,11 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 			return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
 		}
 		seen[c.Index] = struct{}{}
+		for j, r := range c.Reviewers {
+			if !benchmark.ValidOutcome(r.Outcome) {
+				return fmt.Errorf("%w: case %d reviewer %d has out-of-vocabulary outcome %q", errCheckpointCorrupt, i, j, r.Outcome)
+			}
+		}
 	}
 	return nil
 }

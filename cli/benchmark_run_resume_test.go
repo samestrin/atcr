@@ -325,6 +325,37 @@ func TestExecuteBenchmarkRun_RejectsCheckpointCaseIDDrift(t *testing.T) {
 	assert.Equal(t, 0, int(resume.calls.Load()), "per-index guard fires before any LLM call")
 }
 
+// validateCheckpointIntegrity has no access to the suite's case count, so its
+// out-of-range check can only cover negative indices. The upper bound is
+// enforced at resume, where len(m.Cases) is known: an entry indexed beyond the
+// suite was recorded against a different case list and must abort as
+// errCheckpointCorrupt — otherwise it is counted in the replayed total yet never
+// replayed by the loop, silently vanishing from the score and rendering a
+// negative remaining count.
+func TestExecuteBenchmarkRun_RejectsCheckpointIndexBeyondSuite(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	// Produce a valid checkpoint (correct repro hash / suite / version).
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	// Tamper one entry's index beyond the 2-case suite — non-negative, unique,
+	// and with a non-empty case id, so the load-time integrity checks pass and
+	// only the resume-time upper bound can catch it.
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	cp.Cases[0].Index = 999
+	require.NoError(t, saveCheckpoint(path, cp))
+
+	resume := &countingCompleter{}
+	_, err = executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointCorrupt, "an index outside [0, len(cases)) aborts the resume")
+	assert.Equal(t, 0, int(resume.calls.Load()), "the bound check fires before any LLM call")
+}
+
 // Resume reports how many cases are being replayed from the checkpoint vs
 // executed fresh, so an operator can tell the run resumed and gauge progress.
 func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
@@ -624,5 +655,41 @@ func TestExecuteBenchmarkRun_UsageGatedPartialResumeReproducesCost(t *testing.T)
 	for i := range baseline.Reviewers {
 		assert.Equal(t, baseline.Reviewers[i].CostPerCorroboratedFindingUSD, rr.Reviewers[i].CostPerCorroboratedFindingUSD,
 			"partial resume per-reviewer cost equals uninterrupted (replayed case 0 + executed case 1)")
+	}
+}
+
+// A checkpoint is operator-supplied JSON and its outcome field is folded straight
+// into the published outcomes tally, so validateCheckpointIntegrity must reject any
+// value outside the outcome vocabulary. Two adversarial cases: an arbitrary string
+// (which would become an arbitrary tally key in the run-result) and the literal
+// "unknown" — the TALLY label, never a stored value — whose acceptance would make a
+// fabricated outcome indistinguishable from the genuine absence the enum exists to
+// protect.
+func TestLoadCheckpoint_RejectsOutOfVocabularyOutcome(t *testing.T) {
+	writeCp := func(t *testing.T, outcome string) string {
+		t.Helper()
+		cp := runCheckpoint{
+			ReproHash: "h", Suite: "s", SuiteVersion: "1", Roster: []string{"a=m=p"},
+			Cases: []checkpointCase{{
+				Index: 0, CaseID: "case-01", Expected: []string{"correctness"},
+				Reviewers: []checkpointReviewer{{Agent: "a", Model: "m", Persona: "p", Outcome: outcome}},
+			}},
+		}
+		data, err := json.Marshal(cp)
+		require.NoError(t, err)
+		path := filepath.Join(t.TempDir(), "ckpt.json")
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		return path
+	}
+
+	for _, bad := range []string{"unknown", "fabricated"} {
+		_, err := loadCheckpoint(writeCp(t, bad))
+		require.ErrorIs(t, err, errCheckpointCorrupt,
+			"outcome %q is not a storable vocabulary value — the checkpoint must fail closed", bad)
+	}
+
+	for _, good := range []string{"", "clean", "findings", "unparseable", "truncated", "incomplete", "failed"} {
+		_, err := loadCheckpoint(writeCp(t, good))
+		require.NoError(t, err, "outcome %q is a legitimate stored value", good)
 	}
 }

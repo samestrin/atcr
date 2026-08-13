@@ -157,6 +157,8 @@ func newBenchmarkExportCmd() *cobra.Command {
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json) the run-result was produced from. Optional: when given, the run-result's suite_case_ids must equal the manifest's case list, which anchors the coverage gate's denominator to the suite instead of to the file being checked. Without it the gate can only prove the file is internally consistent — a run-result that truncated its own case list passes.")
+	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, the shortfall is recorded in the run-result only — the submission does not carry it, so consumers cannot distinguish these rows from fully-covered ones.")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
 }
@@ -167,6 +169,8 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// default, never an error. Project-wide convention (27 sites).
 	in, _ := cmd.Flags().GetString("in")
 	output, _ := cmd.Flags().GetString("output")
+	allowPartial, _ := cmd.Flags().GetBool("allow-partial-coverage")
+	suitePath, _ := cmd.Flags().GetString("suite-path")
 
 	data, err := os.ReadFile(in)
 	if err != nil {
@@ -182,6 +186,13 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
+	// An unidentifiable reviewer row on a public leaderboard is worse than a
+	// rejected file: same TrimSpace rule as the suite identity above.
+	for i, rev := range rr.Reviewers {
+		if strings.TrimSpace(rev.Model) == "" || strings.TrimSpace(rev.Persona) == "" {
+			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona", in, i)
+		}
+	}
 	// A run-result may be hand-supplied, so the diagnostic is untrusted input here.
 	// out_of_vocabulary_rate is a SHARE of findings: a value outside [0,1] (or NaN)
 	// is a corrupt file rather than a pessimistic reading, and must not be carried
@@ -190,6 +201,18 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		if v := *rr.OutOfVocabularyRate; math.IsNaN(v) || v < 0 || v > 1 {
 			return fmt.Errorf("run-result %s has out_of_vocabulary_rate %v outside [0,1]", in, v)
 		}
+	}
+
+	// Anchor before the gate, not after: checkCoverage's every diagnostic is phrased
+	// against rr.SuiteCaseIDs, so a truncated denominator would otherwise produce a
+	// clean bill of health that the anchor then contradicts.
+	if suitePath != "" {
+		if err := anchorSuiteDenominator(rr, suitePath, in); err != nil {
+			return err
+		}
+	}
+	if err := checkCoverage(cmd.ErrOrStderr(), rr, in, allowPartial); err != nil {
+		return err
 	}
 
 	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)

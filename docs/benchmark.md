@@ -11,7 +11,7 @@ This page documents the in-repo tooling:
 - the **suite-manifest contract** (`internal/benchmark`),
 - `atcr benchmark verify` — validate a suite and print its reproducibility hash,
 - `atcr benchmark run` — execute a suite through the review pipeline and write a scored run-result,
-- `atcr benchmark export` — emit a suite-tagged public submission record from a run-result.
+- `atcr benchmark export` — emit a suite-tagged public submission record from a run-result, gated on full-suite coverage.
 
 The full loop is **`run` → `export`**: `run` produces a run-result by reviewing
 every case's diff and scoring the findings; `export` wraps that run-result in the
@@ -196,7 +196,63 @@ Emit a **suite-tagged** public submission record from a suite run-result.
 ```bash
 atcr benchmark export --in run.json
 atcr benchmark export --in run.json --output /tmp/submission.json
+atcr benchmark export --in run.json --suite-path benchmarks/standard-v1
+atcr benchmark export --in run.json --allow-partial-coverage
 ```
+
+**Export refuses a run-result whose reviewer rows do not each cover the case list
+the run-result declares.** Case difficulty varies enormously across the suite, so a
+recall computed over one 8-case subset is not comparable to one computed over a
+different 8 — publishing them side by side silently compares different
+measurements. Since a run-result reports one
+row per *realized* model (see [Realized-model attribution](#realized-model-attribution-and-coverage)),
+a run that crossed a provider quota boundary mid-suite normally produces short rows,
+and this is the routine case rather than an exotic one.
+
+The rejection names each short row and its shortfall:
+
+```
+run-result run.json has reviewer row(s) scored over less than the full 17-case suite:
+qwen3.8-max/brad (8/17 cases, missing case-09, case-10, case-11 and 6 more);
+llm-large/brad (9/17 cases, missing case-01, case-02, case-03 and 5 more)
+```
+
+`--allow-partial-coverage` overrides it, warning on stderr instead of failing. Note
+the override is **operator-visible, not consumer-visible**: the shortfall is recorded
+in the run-result, but the submission envelope does not carry coverage (adding a key
+there is a `submission_schema` decision — see below), so a published partial run is
+not self-describing to the board. Prefer re-running the missing cases.
+
+A run-result that records **no** coverage at all — any file written before coverage
+existed — is treated as *unmeasured* rather than short: export warns that it could not
+be verified and proceeds, mirroring how a nil `out_of_vocabulary_rate` is read.
+
+### What the coverage gate does and does not prove
+
+The denominator the gate divides by is `suite_case_ids`, which comes from the same
+run-result the gate is checking. On its own the check is therefore an
+**internal-consistency** one: it proves every reviewer row covers the declared case
+list. It does not, by itself, prove the declared list is the suite's — a caller who
+truncates `suite_case_ids` and every row's `case_ids` to the same 8 of 17 cases
+produces a file that passes every check and publishes as fully covered.
+
+`--suite-path <dir>` closes that gap and is what promotes the gate to a real
+suite-coverage guarantee: the run-result's `suite`/`suite_version` must match the
+manifest, and its `suite_case_ids` must equal the manifest's case list exactly (both
+directions — a missing id is a truncated denominator, an extra one is an inflated
+one). It is optional because a run-result is portable and the suite tree may not be
+on the exporting machine; pass it whenever the suite *is* available, and always for
+anything headed to the public board.
+
+```
+run-result run.json declares an 8-case suite but the suite manifest at benchmarks/standard-v1
+has 17, missing case-09, case-10, case-11 and 6 more; every reviewer row was therefore
+scored against a shrunken denominator
+```
+
+With `--suite-path`, a run-result recording no coverage at all is an **error** rather
+than an unmeasured warning: there is nothing to anchor, and the flag must not read as
+a check that silently did nothing.
 
 The output envelope is **distinct from the production `leaderboard --export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public
@@ -268,9 +324,31 @@ production run can never be passed off as a suite submission. A run-result is:
   "suite_version": "1.0.0",
   "generated_at": "2026-06-24T12:00:00Z",
   "out_of_vocabulary_rate": 0.04,
-  "reviewers": [ /* public reviewer rows */ ]
+  "reviewers": [ /* public reviewer rows */ ],
+  "suite_case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
+  "reviewer_coverage": [
+    {
+      "model": "qwen3.8-max",
+      "persona": "brad",
+      "case_ids": ["case-01-nil-deref"],
+      "outcomes": { "findings": 1 },
+      "fallback_cases": 0
+    },
+    {
+      "model": "llm-large",
+      "persona": "brad",
+      "case_ids": ["case-02-sql-injection"],
+      "outcomes": { "unknown": 1 },
+      "fallback_cases": 1
+    }
+  ]
 }
 ```
+
+`suite_case_ids` and `reviewer_coverage` are **run-result-only** — they gate
+publication and are not carried into the submission envelope. Both are omitted
+entirely by a producer that did not measure them, which is what lets export tell
+"unmeasured" apart from "short".
 
 `out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
 share of the run's findings whose category is not a member of the closed reviewer
@@ -316,8 +394,72 @@ submission's `submitted_at`, so the same run-result always exports identically.
 
 Behavior:
 - Missing/malformed run-result, or one missing `suite`/`suite_version` → error.
+- Any reviewer row not covering the run-result's declared case list → error, unless
+  `--allow-partial-coverage` is passed. A run-result with no coverage at all warns
+  and proceeds (unmeasured, not short).
+- `--suite-path <dir>` (optional) anchors that declared case list to the suite
+  manifest: a mismatched `suite`/`suite_version`, a missing denominator, or a case
+  list that differs from the manifest's in either direction → error. Without it the
+  gate can only prove internal consistency.
+- A malformed coverage payload → error: a duplicate `(model, persona)` identity, a
+  reviewer row with no coverage row, a `runs` that disagrees with the row's covered
+  case count, a repeated case id within a row, or a case id absent from the suite.
+  None of these are producible by `atcr benchmark run`, so each means the file was
+  assembled by hand.
 - `--in` is required. `--output` writes the JSON to a file (`0600`, parents
   created) instead of stdout.
+
+---
+
+## Realized-model attribution and coverage
+
+A reviewer row is keyed by the model that **actually served** each case, not by the
+lane it was configured under.
+
+This matters because every quota-limited primary in the registry ships with a
+cross-provider fallback *by design*, so a multi-hour suite run crossing a provider
+quota boundary is arithmetic, not bad luck. When a lane fails over mid-suite, the
+run emits **one row per realized `(model, persona)` pair**, each carrying only the
+cases its model served — rather than crediting the whole suite to whichever model
+happened to serve case 1.
+
+The failover is not corruption; it is data about the backup model. Scoring it as
+itself is what keeps both numbers honest, and `reviewer_coverage` is what makes the
+resulting uneven coverage visible instead of silently incomparable.
+
+**One exception, stated rather than hidden:** under `review_strategy: chunked` a
+single case is split into bins, and a slot whose bins *partly* failed over produced
+that case from two models. The merge keeps only one model id per slot, so such a case
+cannot be attributed exactly. It is credited to the **fallback** model, never to the
+primary — the primary is the one answer known to be wrong, since it demonstrably did
+not serve all of the case. Exact attribution would need per-bin model ids carried
+through the chunk merge.
+
+### Reviewer outcomes
+
+`reviewer_coverage[].outcomes` tallies what happened on each case, because a
+zero-finding result is otherwise ambiguous — a reviewer that read the diff and
+correctly found nothing, one that emitted prose no parser could use, and one whose
+call failed all raise zero categories and score identically:
+
+| Outcome | Meaning |
+|---------|---------|
+| `findings` | Raised at least one parseable finding. |
+| `clean` | Reviewed successfully and emitted the `NO FINDINGS` sentinel. |
+| `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
+| `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
+| `incomplete` | A chunked reviewer saw only a fraction of the diff (some bins failed while the slot still reported ok). |
+| `failed` | The call never produced a reviewable response. |
+| `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
+
+Precedence when signals overlap is `failed > unparseable > truncated > incomplete >
+findings > clean`: data-integrity signals outrank volume signals.
+
+`unknown` is deliberately distinct from `clean`. A resumed run whose checkpoint
+predates this field reports `unknown`, never "reviewed and found nothing" — the
+honest report is that nobody knows. `fallback_cases` counts cases served by a
+fallback model and is tracked separately, since a fallback-served case is
+independently clean, unparseable, or failed.
 
 ---
 
