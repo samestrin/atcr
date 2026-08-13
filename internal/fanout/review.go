@@ -2818,7 +2818,10 @@ type refitPayload struct {
 //   - It never yields an EMPTY payload. When not even one file fits (AllDropped)
 //     it keeps the single smallest entry, matching the zero-budget bulk arm — an
 //     empty payload comes back as a false-clean "no findings" review, the same
-//     silent-zero class ErrPayloadFullyDropped guards against.
+//     silent-zero class ErrPayloadFullyDropped guards against. The same reroute
+//     fires when entries survived but their BODIES total zero bytes — zero-size
+//     entries (py.typed, __init__.py) are never dropped by the largest-first
+//     shed, so AllDropped alone does not see them.
 //
 // The budget is the APPLIED one — the fallback's per-model budget narrowed by the
 // global payload_byte_budget and by the uncounted SCOPE CONSTRAINT block — not the
@@ -2862,9 +2865,24 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		// flagged as hardest to review, on precisely the tight-window agents
 		// escalation targets.
 		kept, trunc = payload.ApplyByteBudgetPreferEscalated(refit.entries, budget, payload.PayloadMode(refit.mode))
-		if trunc.AllDropped {
-			// Not even one file fits. Shipping "" comes back as a false-clean "no
-			// findings" review, so keep the smallest entry instead (AC5).
+		// AllDropped alone tests the wrong predicate — "no entries survived"
+		// rather than "no CONTENT survived". The largest-first shed sizes on
+		// FileEntry.Size and zero-size entries sort LAST, so they are never
+		// dropped: a payload of one oversized file plus a 0-byte py.typed
+		// re-packs to kept=[py.typed] with AllDropped=false, and the
+		// concatenation below would dispatch a 0-byte payload — the false-clean
+		// "no findings" review AC5 forbids, now tagged as reviewed. Measure the
+		// kept BODIES and route a zero-byte result into keepSmallestEntry
+		// exactly as the AllDropped arm does.
+		keptBodyBytes := 0
+		for _, e := range kept {
+			keptBodyBytes += len(e.Body)
+		}
+		if trunc.AllDropped || keptBodyBytes == 0 {
+			// Not even one file fits, or nothing with content survived. Shipping
+			// "" comes back as a false-clean "no findings" review, so keep the
+			// smallest non-empty entry instead (AC5) — or decline when every
+			// entry is empty.
 			var ok bool
 			kept, trunc, ok = keepSmallestEntry(refit.entries)
 			if !ok {
