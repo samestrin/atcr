@@ -243,37 +243,49 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 //     re-packed chunk shed its own set and the persona's record has to name all of
 //     them.
 //   - effective_budget: the SMALLEST across re-packed chunks — the tightest budget
-//     any of this persona's payloads was actually sized to.
+//     any of this persona's payloads was actually sized to. A recorded 0 is a
+//     real budget (a zero-window re-fit), not "unknown": it wins the min, and
+//     reserved_output_tokens is zeroed alongside it so the two fields agree.
 //
 // chunk_count is left alone: it describes the persona's split, which is still
 // exactly what happened, and the per-chunk re-fits do not change it.
 func promoteRePackedDegradation(out *Result, g []Result) {
 	dropped := map[string]struct{}{}
 	var budget int64
+	haveBudget := false
 	action := ""
-	any := false
+	rePacked := false
 	for _, r := range g {
 		if !r.servedRePacked {
 			continue
 		}
-		any = true
+		rePacked = true
 		for _, p := range r.Truncation.FilesDropped {
 			dropped[p] = struct{}{}
 		}
 		if action != degradationOverflow {
 			action = r.DegradationAction
 		}
-		if budget == 0 || (r.EffectiveBudget > 0 && r.EffectiveBudget < budget) {
+		// Presence is tracked separately from value: 0 is both the zero value of
+		// an unset field AND a genuine recorded budget, so min-by-value alone
+		// would either ignore a real 0 or let it overwrite everything.
+		if !haveBudget || r.EffectiveBudget < budget {
 			budget = r.EffectiveBudget
+			haveBudget = true
 		}
 	}
-	if !any {
+	if !rePacked {
 		return
 	}
 	if action != "" {
 		out.DegradationAction = action
 	}
 	out.EffectiveBudget = budget
+	if budget == 0 {
+		// A promoted zero budget must not sit beside an inherited non-zero
+		// reservation: status.json omits both at 0, keeping the record consistent.
+		out.ReservedOutputTokens = 0
+	}
 	if len(dropped) > 0 {
 		paths := make([]string, 0, len(dropped))
 		for p := range dropped {
