@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -409,6 +410,87 @@ func TestBuildFallbackAgent_RefitReservationFollowsRecordedBudget(t *testing.T) 
 			}
 		})
 	}
+}
+
+// scopePlanBody extracts the plan body between the SCOPE CONSTRAINT markers, so
+// tests can measure the plan a prompt actually embeds rather than its total
+// length. Returns "" when the block is absent.
+func scopePlanBody(t *testing.T, prompt string) string {
+	t.Helper()
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	bs := strings.Index(prompt, beginMark)
+	if bs < 0 {
+		return ""
+	}
+	rest := prompt[bs+len(beginMark):]
+	es := strings.Index(rest, endMark)
+	if es < 0 {
+		return ""
+	}
+	return rest[:es]
+}
+
+// The re-cap against the FALLBACK's window (review.go: the fbBudget/8 arithmetic
+// in refitFallbackPayload) must actually execute: the re-fit prompt's embedded
+// plan is capped to the backup's own numbers, not the primary's. The fixture
+// builds the block with payload.ScopeConstraint so the BEGIN/END markers exist
+// and capScopeConstraintPlan does not return early — a raw string without
+// markers never reaches the cap, which is what left this arithmetic untested.
+func TestBuildFallbackAgent_RefitReCapsScopeConstraintToItsOwnBudget(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	primaryPlan := scopePlanBody(t, slots[0].Primary.Prompt)
+	fbPlan := scopePlanBody(t, fb.Prompt)
+	require.NotEmpty(t, primaryPlan, "precondition: the primary must embed the scoped plan")
+	require.NotEmpty(t, fbPlan, "the re-fit must not silently blank the plan it still claims to enforce")
+	assert.Less(t, len(fbPlan), len(primaryPlan),
+		"the re-fit prompt's plan must be re-capped to the BACKUP's smaller window, not ride in at the primary's cap")
+
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	assert.LessOrEqual(t, int64(len(fbPlan)), fbBudget/8+1,
+		"the embedded plan must respect the backup's own budget/8 cap")
+}
+
+// A tiny-but-positive backup budget rounds the plan cap to ZERO (fbBudget/8 =
+// 0). Capping there would blank the plan body while the wrapper text still
+// instructs the model to obey the constraint — a blanked plan presented as a
+// scoped review. The block must be dropped entirely instead.
+func TestBuildFallbackAgent_RefitDropsScopeConstraintWhenBudgetFundsNoPlanByte(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	w := 12289 // yields a tiny-but-positive effective budget (fbBudget/8 == 0)
+	kai.ContextWindowTokens = &w
+	cfg.Registry.Agents["kai"] = kai
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", &w, defaultMaxTokens)
+	require.Greater(t, fbBudget, int64(0), "precondition: the budget must be positive, or the zero-budget arm runs instead")
+	require.Less(t, fbBudget, int64(8), "precondition: fbBudget/8 must round to 0 — the cap-blanking shape under test")
+
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	assert.NotContains(t, fb.Prompt, "BEGIN SPRINT PLAN",
+		"a budget that funds no plan byte must not present a blanked plan as a scoped review — drop the block")
 }
 
 func TestBuildFallbackAgent_RefitKeepsCacheKeyDistinct(t *testing.T) {
