@@ -106,34 +106,41 @@ func TestUncoveredBaselineFiles_NoRePackKeepsAllOKShortCircuit(t *testing.T) {
 		"with no re-pack the all-succeeded inference still holds: an untagged slot must not start reporting files uncovered")
 }
 
-// A fallback that served WITHOUT re-packing reviewed its primary's chunk, so the
-// served tag equals the primary's and coverage is unchanged.
-func TestUncoveredBaselineFiles_NonRePackedFallbackCoversPrimaryChunk(t *testing.T) {
+// A fallback that served WITHOUT re-packing is still attributed by its SERVED
+// tag, not the primary's. The two are identical on every production path
+// (buildFallbackAgent copies the primary's tag onto every fallback), so this
+// hand-constructed divergence is the only shape that distinguishes the two arms
+// of servedCoverage — reverting it to return s.Primary.chunkFiles must fail
+// here, not pass.
+func TestUncoveredBaselineFiles_NonRePackedFallbacksServedTagGoverns(t *testing.T) {
 	t.Parallel()
 	slots := []Slot{
 		{
 			Primary:   Agent{Name: "greta", chunkFiles: []string{"a.go", "b.go"}},
-			Fallbacks: []Agent{{Name: "kai", chunkFiles: []string{"a.go", "b.go"}}},
+			Fallbacks: []Agent{{Name: "kai", chunkFiles: []string{"a.go"}}},
 		},
 		{Primary: Agent{Name: "vera", chunkFiles: []string{"c.go"}}},
 	}
 	results := []Result{
-		servedResult("greta", []string{"a.go", "b.go"}, false),
+		servedResult("greta", []string{"a.go"}, false),
 		{Agent: "vera", Status: StatusFailed},
 	}
 	reviewed := map[string]string{"a.go": "h1", "b.go": "h2", "c.go": "h3"}
 
 	got := uncoveredBaselineFiles(context.Background(), slots, results, reviewed)
-	assert.Equal(t, map[string]struct{}{"c.go": {}}, got,
-		"a fallback that did not re-pack reviewed the primary's whole chunk and vouches for all of it")
+	assert.Equal(t, map[string]struct{}{"b.go": {}, "c.go": {}}, got,
+		"attribution follows the SERVED tag even without a re-pack — a served set naming only a.go cannot vouch for b.go")
 }
 
 // Nil polarity survives the change: a served result carrying NO tag vouches for
-// nothing, exactly as an untagged primary does.
+// nothing, exactly as an untagged primary does. The primary is deliberately
+// TAGGED here so "vouches for nothing" is distinguishable from "vouches for the
+// primary's nothing" — dropping the !r.servedRePacked half of servedCoverage's
+// guard would fall back to the primary's tag and fail this test.
 func TestUncoveredBaselineFiles_UntaggedServingAgentVouchesForNothing(t *testing.T) {
 	t.Parallel()
 	slots := []Slot{
-		{Primary: Agent{Name: "greta"}, Fallbacks: []Agent{{Name: "kai", rePacked: true}}},
+		{Primary: Agent{Name: "greta", chunkFiles: []string{"b.go"}}, Fallbacks: []Agent{{Name: "kai", rePacked: true}}},
 		{Primary: Agent{Name: "vera", chunkFiles: []string{"a.go"}}},
 	}
 	results := []Result{
