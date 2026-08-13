@@ -243,6 +243,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	// Chunk-level serving identity does not survive the collapse: the merged
+	// Result is a persona record, so inheriting chunk 0's served tag would name
+	// only its files as if they were the persona's reviewed set — beside a
+	// degradation record promoteRePackedDegradation may lift from a DIFFERENT
+	// chunk. Coverage attribution reads RAW results pre-merge (the
+	// uncoveredBaselineFiles PRECONDITION), so the merged record vouches for
+	// nothing.
+	out.servedChunkFiles = nil
+	out.servedRePacked = false
 
 	isSerial := serialSet[out.Agent]
 
