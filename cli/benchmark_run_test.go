@@ -564,10 +564,16 @@ func TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply(t *testing.T) {
 	assert.Empty(t, buf.String(), "an unmeasured run has nothing to report")
 }
 
-// The warning reaches the operator on the documented resumable invocation. `benchmark
-// run --output <path>` prints nothing to stdout, so a per-reviewer signal written
-// anywhere but stderr would be invisible in exactly the run that most needs it.
-func TestBenchmarkRun_PerReviewerDriftWarningGoesToStderr(t *testing.T) {
+// The breakdown a REAL run produces is what the warning reads — not a hand-built
+// slice. This drives executeBenchmarkRun end to end and feeds its own rr.Vocabulary
+// to the warning, so a defect anywhere in the producer chain (fold, sort, scrub,
+// buildRunResult wiring) surfaces here rather than being papered over by a fixture.
+//
+// It deliberately does NOT claim to pin stderr ROUTING: it passes its own buffer
+// rather than the command's writer. Pinning that requires driving the cobra command,
+// which runBenchmarkRun cannot do offline (it resolves a real registry and completer)
+// — tracked as tech debt rather than asserted falsely here.
+func TestBenchmarkRun_RealRunBreakdownFeedsTheWarning(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 

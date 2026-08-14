@@ -181,11 +181,15 @@ func TestMaxOutOfVocabularyRate_IsDerivedFromTheV1Measurement(t *testing.T) {
 // apart rather than one that happens to agree with both.
 //
 // The four recorded fixtures cannot: computed both ways they give 0.0/0.0
-// (run-clean), 0.6/0.6 (run-drifted) and 0.20/0.20 (run-boundary-at) — identical.
-// Only run-boundary-under separates them at all, at micro 4/21 = 0.190476 vs macro
-// 0.190909, a 4.3e-4 gap that survives solely because TestOutOfVocabularyRate_BoundaryPair
-// happens to use assert.InDelta(..., 1e-9). A documented decision resting on a
-// four-decimal-place accident is not pinned.
+// (run-clean), 0.6/0.6 (run-drifted) and 0.05/0.05 (run-boundary-at) — identical.
+// Only run-boundary-under separates them at all, at micro 1/21 = 0.047619 vs macro
+// 0.045455 — and both land on the SAME side of the ceiling, so no assertion in this
+// package changes its verdict between the two averagings. A documented decision that
+// no fixture can falsify is not pinned.
+//
+// (Those figures are for the fixtures as re-derived when epic 35.16.6.1 tightened the
+// ceiling to 0.05. Before that they read 0.20/0.20 and micro 4/21 = 0.190476 vs macro
+// 0.190909 — different numbers, same conclusion, which is why this case exists.)
 //
 // So this case is deliberately lopsided: one reviewer raising 2 findings that both
 // drifted, one raising 80 that are all clean. Micro pools them to 2/82 ≈ 0.024 —
