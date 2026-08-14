@@ -407,6 +407,19 @@ type AgentStatus struct {
 	// information is lost by the overwrite: chunk_count still reports the chunk
 	// plan, and the truncation record still lists the dropped files, so a reader
 	// reconstructs both facts from the same status.json.
+	//
+	// EXCEPT when that fallback RE-FIT the payload (Epic 35.16.5.4, on_overflow=
+	// truncate with a re-packable payload): it then records "truncate", because
+	// the review WAS read in full — of a deliberately smaller payload. Such an
+	// agent's whole per-slot record describes what it actually sent rather than
+	// the slot it inherited: its own truncation, its own effective_budget, and
+	// chunk_count 1 on that slot's record (it ships one re-fit payload, not the
+	// slot's split). On a MULTI-CHUNK persona, though, status.json is written
+	// from the MERGED Result, whose chunk_count still reports the persona's real
+	// split — mergeResultGroup restores it to the group size when a re-pack
+	// promoted anything, so a re-packing chunk 0 cannot under-report it. The
+	// per-chunk re-fit is visible on the merged record through the promoted
+	// truncation, degradation_action, and effective_budget instead.
 	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
 	ResolvedWindow       int    `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -195,6 +196,14 @@ type Agent struct {
 	MinSeverity string
 	MaxFindings *int
 
+	// rePacked marks an agent whose payload was RE-PACKED against its own byte
+	// budget rather than inherited from the primary it substitutes for (Epic
+	// 35.16.5.4 T2). Only a fallback can carry it. It is what tells baseline
+	// coverage that this slot's "all succeeded" no longer implies "everything the
+	// slot was tagged with was reviewed" — the inference the allOK short-circuit
+	// rests on.
+	rePacked bool
+
 	// CacheKey is the diff-cache key (Epic 5.2) for this agent's review call,
 	// derived by renderAgent/buildFallbackAgent from the FULL rendered prompt
 	// (which subsumes payload, persona, the per-agent scope focus, and the
@@ -214,6 +223,26 @@ type Slot struct {
 	Primary   Agent
 	Fallbacks []Agent
 	Serial    bool
+
+	// entries is the payload this slot was built from, as the FileEntry list its
+	// Primary actually shipped — the re-pack source a fallback needs to shed
+	// against its OWN budget (Epic 35.16.5.4 T1). Unexported: it is fan-out
+	// internal state, not part of the engine's public contract.
+	//
+	// It is carried rather than recovered because recovery is shape-dependent:
+	// Agent.CodeContext comes from EntriesFromRenderedPayload, which does not
+	// recognize every payload shape and yields nothing for the ones it misses
+	// (see inheritedPayloadFits). A re-fit driven off that would silently shed
+	// EVERY file for exactly the payloads nothing else can vouch for, which
+	// looks like a working re-fit and is not one.
+	//
+	// EMPTY means "this slot's payload was never entry-decomposed", never "this
+	// slot shipped nothing" — the review_strategy=chunked diff path splits text
+	// on diff markers (chunkDiff) and has no FileEntry list at all. That
+	// polarity is load-bearing: buildFallbackAgent must decline to re-fit an
+	// entry-less slot and keep the honest warn-and-ship, rather than re-pack
+	// against an empty list.
+	entries []payload.FileEntry
 }
 
 // Result is the outcome of one slot after fallback resolution. Status is one of
@@ -238,6 +267,24 @@ type Result struct {
 	FallbackModel string
 	PayloadMode   string
 	Truncation    payload.Truncation
+
+	// servedChunkFiles is the baseline coverage tag of the chain member that
+	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It
+	// equals the primary's tag in every case except a re-packed fallback, which
+	// reviewed a strict subset — so attributing coverage to the primary's tag
+	// would mark files as reviewed that nothing read, and CommitBaselineIndex
+	// would then skip them on the next scan.
+	//
+	// Unexported for the same reason Agent.chunkFiles is: it is fan-out-internal
+	// attribution state, not part of the engine's public result contract. nil
+	// means "this slot's server vouches for nothing" — never "for everything";
+	// see uncoveredBaselineFiles for why that polarity is load-bearing.
+	servedChunkFiles []string
+	// servedRePacked is true when the serving agent re-packed its payload. It
+	// gates the allOK short-circuit: "every slot succeeded" only implies "the
+	// whole payload was covered" while every slot reviewed its full tagged set,
+	// and a re-pack is precisely the case where that stops being true.
+	servedRePacked bool
 
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
 	// AgentConfig by renderAgent so findingsFor can enforce them per source.
@@ -636,6 +683,11 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // substitute that may have seen a different payload. DurationMS covers the
 // whole chain — a failed primary's wall time counts toward the slot, so a slow
 // primary plus fast fallback is not misreported as a fast slot.
+//
+// BASELINE COVERAGE (Epic 35.16.5.4 T3): the succeeding attempt also stamps the
+// coverage tag of the agent that actually served, because a re-packed fallback
+// reviews a strict SUBSET of the files its primary was tagged with. Attribution
+// by name still follows the slot — only the coverage tag follows the server.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	start := time.Now()
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
@@ -727,6 +779,29 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		}
 		if r.Status == StatusOK {
 			r.DurationMS = time.Since(start).Milliseconds()
+			// The coverage evidence this slot produced is the SERVING agent's, not
+			// the slot's (Epic 35.16.5.4 T3). For the primary and for a fallback that
+			// shipped the inherited payload these are the same list — buildFallbackAgent
+			// copies the primary's tag onto every fallback — so a run with no re-pack
+			// records byte-identical coverage. Only a re-packed fallback differs, and
+			// it is exactly the case where the primary's tag would vouch for files
+			// nothing read. servedCoverage's re-pack guard leans on these two
+			// stamps coming from the same agent in the same block.
+			r.servedChunkFiles = a.chunkFiles
+			r.servedRePacked = a.rePacked
+			// Invariant, derived here because rePacked is DECLARED upstream, not
+			// derived from the payload actually shipped: a served tag that differs
+			// from the primary's without the re-pack flag breaks the assumption
+			// servedCoverage's guard rests on (a future re-fit arm that sets its
+			// own chunkFiles but forgets the flag would otherwise pass the guard
+			// silently). Promote the divergence to re-packed — the differing tag
+			// governs attribution, allOK declines to short-circuit, and a nil tag
+			// vouches for nothing — and make it loud.
+			if !r.servedRePacked && !slices.Equal(r.servedChunkFiles, s.Primary.chunkFiles) {
+				log.FromContext(ctx).Warn("baseline coverage: the serving agent's tag differs from its primary's without the re-pack flag set — promoting to re-packed (fail-open) rather than trusting a possibly-stale tag",
+					"agent", a.Name, "slot", s.Primary.Name)
+				r.servedRePacked = true
+			}
 			return r
 		}
 		last = r

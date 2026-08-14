@@ -39,7 +39,7 @@ func TestBuildFallbackAgent_OnOverflowFailHardFailsPreDispatch(t *testing.T) {
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	_, _, err = buildFallbackAgent(cfg, primary, "kai", true)
+	_, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrOverflowPolicyFail,
 		"on_overflow=fail must hard-fail the lane rather than dispatch a prompt the fallback cannot hold")
@@ -50,7 +50,7 @@ func TestBuildFallbackAgent_OnOverflowFallbackHardFailsPreDispatch(t *testing.T)
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	_, _, err = buildFallbackAgent(cfg, primary, "kai", true)
+	_, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFallbackUnavailable,
 		"on_overflow=fallback must surface its typed error pre-dispatch, matching the primary path's arm")
@@ -67,7 +67,7 @@ func TestBuildFallbackAgent_OnOverflowChunkStillWarnsAndShips(t *testing.T) {
 
 			var fb Agent
 			out := captureStderr(t, func() {
-				fb, _, err = buildFallbackAgent(cfg, primary, "kai", true)
+				fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 			})
 			require.NoError(t, err, "a non-fail/fallback policy must still build the fallback")
 			assert.Contains(t, out, "may overflow")
@@ -88,7 +88,7 @@ func TestBuildFallbackAgent_OnOverflowFailDoesNotFireWhenPayloadFits(t *testing.
 	require.True(t, inheritedPayloadFits(primary, 32768),
 		"precondition: a 6 KB payload must be measurably within the fallback's own budget")
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true)
+	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err, "a fitting payload must not trip the overflow policy")
 	assert.NotEqual(t, degradationOverflow, fb.DegradationAction,
 		"and must not be stamped as an overflow either")
