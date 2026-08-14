@@ -212,6 +212,53 @@ func TestBuildFallbackAgent_RefitNeverKeepsAZeroByteFile(t *testing.T) {
 	}
 }
 
+// The shed record must never say "files were dropped" and name none.
+//
+// droppedPathsExcept filtered by PATH while keepSmallestEntry set Truncated from
+// the entry COUNT, so a payload carrying two entries that share a path recorded
+// Truncated: true with an empty files_dropped — the one shape status.go promises
+// cannot occur ("the truncation record still lists the dropped files, so a reader
+// reconstructs both facts"). Duplicate paths are a supported payload shape
+// (internal/payload/budget_test.go TestBudget_DuplicatePaths pins that the budget
+// pass accounts for each occurrence independently) and reach fanout through
+// PrepareReviewFromDiff on a concatenated diff.
+//
+// It is not only cosmetic: promoteRePackedDegradation gates its Truncation
+// promotion on len(dropped) > 0, so an empty shed record leaves the merged
+// persona record carrying a NON-re-packed chunk's truncation beside a promoted
+// truncate action and the re-fit's tiny effective_budget.
+func TestKeepSmallestEntry_DuplicatePathsStillNameTheDroppedOccurrence(t *testing.T) {
+	t.Parallel()
+	entries := []payload.FileEntry{
+		{Path: "dup.go", Size: 4, Body: "aaaa"},
+		{Path: "dup.go", Size: 2, Body: "bb"},
+	}
+
+	kept, trunc, ok := keepSmallestEntry(entries)
+	require.True(t, ok, "precondition: both entries have content, so one survives")
+	require.Len(t, kept, 1)
+	require.Equal(t, "bb", kept[0].Body, "precondition: the smaller occurrence is the one kept")
+
+	assert.True(t, trunc.Truncated, "one of two entries was genuinely dropped")
+	assert.Equal(t, []string{"dup.go"}, trunc.FilesDropped,
+		"the dropped occurrence must be named, even though the surviving entry shares its path")
+	assert.Equal(t, trunc.Truncated, len(trunc.FilesDropped) > 0,
+		"Truncated and FilesDropped must never disagree — that pair is the whole shed record")
+}
+
+// The complement, so the fix cannot be "always report something dropped": a
+// single entry sheds nothing, and its record must say so in both fields.
+func TestKeepSmallestEntry_SingleEntryShedsNothing(t *testing.T) {
+	t.Parallel()
+	kept, trunc, ok := keepSmallestEntry([]payload.FileEntry{{Path: "only.go", Size: 3, Body: "abc"}})
+
+	require.True(t, ok)
+	require.Len(t, kept, 1)
+	assert.False(t, trunc.Truncated,
+		"nothing was dropped, and Truncated false is what tells the re-fit caller there is no smaller payload to send")
+	assert.Empty(t, trunc.FilesDropped)
+}
+
 // emptyBodiedPayload builds entries whose Size claims content their Body does
 // not carry — every body empty. keepSmallestEntry declines (ok=false) on this
 // shape on EITHER re-fit arm, so the fallback must keep the inherited prompt
