@@ -114,9 +114,11 @@ func ExceedsVocabularyCeiling(rate *float64) bool {
 //     a small set.
 //   - Membership is decided by BARE non-membership after normalize, with
 //     reconcile.CategoryMerges() deliberately NOT applied. That table is epic
-//     35.16.6's canonicalization contract; folding it in here would reach into that
-//     epic's scope and silently change what this metric means between releases.
-//     It is also what makes 0.20 rather than 0.05 the defensible ceiling.
+//     the parse-boundary canonicalization epic's contract; folding it in here would
+//     reach into that epic's scope and silently change what this metric means between
+//     releases. This choice USED to be what made 0.20 rather than 0.05 the defensible
+//     ceiling — V1 then emitted zero merge-table words, retiring that argument without
+//     changing the choice itself, and the ceiling is now 0.05 (see MaxOutOfVocabularyRate).
 //   - A finding with an EMPTY category counts as out of vocabulary. Excluding it
 //     would produce a rate that improves when a reviewer stops labelling entirely.
 //
@@ -300,13 +302,19 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 //
 //	error_handling · "error handling" · input_validation · "resource leak" · "api contract"
 //
-// Those are SPELLINGS of a member, not vocabulary drift, and each one inflates the
-// rate against MaxOutOfVocabularyRate. Separator and hyphenation folding is epic
-// 35.16.6's parse-boundary canonicalization and is deliberately out of scope here
-// (folding reconcile.CategoryMerges() likewise — see the const doc above), so the
-// first real run may fail the ceiling on a normalization artifact rather than on
-// genuine drift. Diagnose a failure by inspecting the emitted words before treating
-// the number as model behaviour.
+// Those are SPELLINGS of a member, not vocabulary drift, and each one would inflate the
+// rate against MaxOutOfVocabularyRate. Separator and hyphenation folding belongs to the
+// parse-boundary canonicalization epic and is deliberately out of scope here (folding
+// reconcile.CategoryMerges() likewise — see the const doc above).
+//
+// The feared consequence — that the first real run would fail the ceiling on a
+// normalization artifact rather than on genuine drift — did NOT materialize: V1 emitted
+// zero separator/hyphenation variants and zero merge-table words, which is what allowed
+// the ceiling to be tightened to 0.05 rather than held loose against an artifact that
+// never appeared. The hazard is latent, not retired: a future roster could emit these
+// spellings where V1's did not. Diagnose a breach by inspecting the emitted words before
+// treating the number as model behaviour — on the only evidence available it has meant
+// malformed parser output, not a reviewer ignoring its prompt.
 //
 // Built per call rather than cached in a package var: reconcile.Categories()
 // returns a fresh copy by design, and this runs once per run result, not per
