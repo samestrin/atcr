@@ -123,18 +123,56 @@ func TestOutOfVocabularyRate_DriftedRunExceedsTheCeiling(t *testing.T) {
 }
 
 // The boundary pair. These two fixtures differ by a single in-vocabulary finding
-// (4/21 vs 4/20), so an inverted or misread comparison cannot satisfy both — which
+// (1/21 vs 1/20), so an inverted or misread comparison cannot satisfy both — which
 // two far-apart extremes would.
+//
+// Both were re-derived when epic 35.16.6.1 tightened the ceiling from 0.20 to 0.05:
+// they straddled the OLD number by construction (4/21 vs 4/20), so leaving them alone
+// was not an option — the "under" fixture measures 0.190476 and would sit above the new
+// ceiling. The pair's structure is deliberately unchanged; only the ratio moved. Rates
+// are asserted as LITERALS rather than against the constant, so a future change to the
+// ceiling cannot quietly redefine what these fixtures measure.
 func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 	under := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-under.json")))
 	at := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-at.json")))
 
-	assert.InDelta(t, 4.0/21.0, under, 1e-9)
+	assert.InDelta(t, 1.0/21.0, under, 1e-9)
 	assert.Less(t, under, MaxOutOfVocabularyRate, "just under the ceiling passes")
 
-	assert.InDelta(t, 0.20, at, 1e-9)
+	assert.InDelta(t, 0.05, at, 1e-9)
 	assert.GreaterOrEqual(t, at, MaxOutOfVocabularyRate,
 		"the ceiling is exclusive: a run AT the threshold must trip the guard")
+
+	// The pair is a NEIGHBOUR pair, and that is the property that makes it a boundary
+	// test rather than two arbitrary points: the two fixtures differ by exactly one
+	// in-vocabulary finding. Pinned so a future re-derivation cannot widen the gap and
+	// leave a test that any sloppy comparison would satisfy.
+	assert.InDelta(t, 1.0/20.0-1.0/21.0, at-under, 1e-9,
+		"one in-vocabulary finding apart — the whole point of a boundary pair")
+}
+
+// AC5. The ceiling is derived from V1's measured output, not from a fixture guess, and
+// the relationship it encodes is asserted rather than left to the doc comment: V1
+// measured 0.0100 (2 drifted of 201 findings) on the only valid run in existence, and
+// the ceiling sits a full order of magnitude above it.
+//
+// The direction of travel is also pinned. vocabulary.go is explicit that this number
+// moves ONE WAY — tightened once a real measurement exists, never loosened when a run
+// fails — so a future edit that raises it to accommodate a bad run has to delete an
+// assertion that says so out loud, rather than just editing a constant.
+func TestMaxOutOfVocabularyRate_IsDerivedFromTheV1Measurement(t *testing.T) {
+	const v1Measured = 2.0 / 201.0 // 0.00995..., the V1 validation run's Run A
+
+	assert.InDelta(t, 0.05, MaxOutOfVocabularyRate, 1e-9,
+		"the ceiling is V1-derived; changing it is a deliberate act, not a refactor")
+	assert.Greater(t, MaxOutOfVocabularyRate, v1Measured,
+		"a ceiling at or below the only valid measurement would fail a run that behaved")
+	assert.Less(t, MaxOutOfVocabularyRate, 0.20,
+		"0.20 was the pre-V1 fixture guard, justified by merge-table words V1 never emitted; "+
+			"this number may be tightened further but must never climb back")
+	assert.Greater(t, MaxOutOfVocabularyRate, v1Measured*4,
+		"n=1: variance under this metric is unmeasured, so the ceiling keeps real headroom "+
+			"over the single observation rather than hugging it")
 }
 
 // The rate is MICRO-averaged across the whole run — one pooled numerator over one
