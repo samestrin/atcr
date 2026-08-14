@@ -245,6 +245,13 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 //
 // A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
 // a warning nobody reads.
+// warnDriftingReviewers names individual reviewers whose own drift is severe enough
+// to matter even when the pooled run-level rate cleared the ceiling.
+//
+// STUB — not yet implemented.
+func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
+}
+
 func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
 	if !benchmark.ExceedsVocabularyCeiling(rate) {
 		return

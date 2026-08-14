@@ -390,3 +390,128 @@ func TestBenchmarkRun_NoVocabularyWarningWhenCleanOrUnmeasured(t *testing.T) {
 	warnIfVocabularyCeilingExceeded(&buf, nil)
 	assert.Empty(t, buf.String(), "an unmeasured run is not a breach")
 }
+
+// AC2, the defect this epic exists to close at the operator surface. The run-level
+// warning is silent here — correctly, since 12 drifted findings pooled against 80
+// clean ones is 0.130, under the ceiling — and one of the two models nevertheless
+// ignored the enumeration on every single finding it raised. The operator must be
+// told WHICH.
+func TestWarnDriftingReviewers_NamesTheReviewerTheRunLevelWarningMisses(t *testing.T) {
+	eightyClean := make([]string, 80)
+	for i := range eightyClean {
+		eightyClean[i] = "correctness"
+	}
+	twelveDrifted := make([]string, 12)
+	for i := range twelveDrifted {
+		twelveDrifted[i] = "bug"
+	}
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "clean-model", Persona: "alice", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"}, Raised: eightyClean,
+		}}},
+		{Model: "drifted-model", Persona: "bob", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"}, Raised: twelveDrifted,
+		}}},
+	}
+
+	// Precondition: the EXISTING signal says nothing about this run.
+	var runLevel bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&runLevel, benchmark.OutOfVocabularyRate(reviewers))
+	require.Empty(t, runLevel.String(),
+		"precondition: the pooled rate clears the ceiling, so the run-level warning stays silent")
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, benchmark.PerReviewerVocabulary(reviewers))
+	got := buf.String()
+
+	assert.Contains(t, got, "drifted-model", "the warning must name the drifting reviewer's model")
+	assert.Contains(t, got, "bob", "...and its persona, since the two together are the row identity")
+	assert.Contains(t, got, "12/12", "the counts must be quoted so a small-n row is visibly small-n")
+	assert.NotContains(t, got, "clean-model", "a clean reviewer must not be named")
+}
+
+// The threshold is deliberately NOT the run-level ceiling. Only one valid run exists
+// under this metric (V1, n=1), so variance is unmeasured, and a per-reviewer signal
+// set at the run-level number would assume a tightness a single observation cannot
+// support — reproducing the defect warnIfVocabularyCeilingExceeded's own doc names:
+// a warning printed on every run is a warning nobody reads.
+func TestWarnDriftingReviewers_FiresOnlyAtTheMajorityThreshold(t *testing.T) {
+	row := func(model string, drifted, findings int) benchmark.ReviewerVocabulary {
+		rate := float64(drifted) / float64(findings)
+		return benchmark.ReviewerVocabulary{
+			Model: model, Persona: "p", Findings: findings, Drifted: drifted, Rate: &rate,
+		}
+	}
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, []benchmark.ReviewerVocabulary{
+		row("just-under", 49, 100),   // 0.49
+		row("exactly-at", 50, 100),   // 0.50 — the threshold is inclusive
+		row("well-over", 90, 100),    // 0.90
+		row("above-ceiling", 6, 100), // 0.06 — over the RUN-level ceiling, under this one
+	})
+	got := buf.String()
+
+	assert.Contains(t, got, "exactly-at", "the threshold is inclusive: a reviewer AT it is named")
+	assert.Contains(t, got, "well-over")
+	assert.NotContains(t, got, "just-under", "0.49 is not a majority")
+	assert.NotContains(t, got, "above-ceiling",
+		"the per-reviewer threshold is deliberately looser than the run-level ceiling")
+}
+
+// An unmeasured row is not a drifted one. A reviewer that raised nothing carries a nil
+// rate, and treating that as drift would name the failed reviewers of a total-failure
+// run as the vocabulary problem — the same nil-vs-zero collapse the pointer prevents.
+func TestWarnDriftingReviewers_SilentOnCleanAndUnmeasuredRows(t *testing.T) {
+	clean := 0.0
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, []benchmark.ReviewerVocabulary{
+		{Model: "unmeasured", Persona: "p"},                                    // nil rate
+		{Model: "clean", Persona: "p", Findings: 40, Drifted: 0, Rate: &clean}, // 0.0
+	})
+	assert.Empty(t, buf.String(), "no row drifted, so there is nothing to say")
+
+	buf.Reset()
+	warnDriftingReviewers(&buf, nil)
+	assert.Empty(t, buf.String(), "a run with no breakdown is not a run with a problem")
+}
+
+// The two signals are independent: a run can breach the ceiling AND have the breach
+// concentrated in one reviewer, and the operator needs both facts. This pins that the
+// per-reviewer warning does not go quiet just because the run-level one fired.
+func TestWarnDriftingReviewers_FiresAlongsideTheRunLevelWarning(t *testing.T) {
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "totally-drifted", Persona: "p", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"}, Raised: []string{"bug", "clarity", "input"},
+		}}},
+	}
+	rate := benchmark.OutOfVocabularyRate(reviewers)
+	require.NotNil(t, rate)
+	require.True(t, benchmark.ExceedsVocabularyCeiling(rate), "precondition: the run also breaches")
+
+	var buf bytes.Buffer
+	warnIfVocabularyCeilingExceeded(&buf, rate)
+	warnDriftingReviewers(&buf, benchmark.PerReviewerVocabulary(reviewers))
+	got := buf.String()
+
+	assert.Contains(t, got, "out_of_vocabulary_rate", "the run-level warning still fires")
+	assert.Contains(t, got, "totally-drifted", "and the per-reviewer one names who")
+}
+
+// The warning reaches the operator on the documented resumable invocation. `benchmark
+// run --output <path>` prints nothing to stdout, so a per-reviewer signal written
+// anywhere but stderr would be invisible in exactly the run that most needs it.
+func TestBenchmarkRun_PerReviewerDriftWarningGoesToStderr(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	rr, err := executeBenchmarkRun(context.Background(), cfg,
+		stubCategoryCompleter{category: "not-a-taxonomy-word"}, suiteValidPath, gen, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Vocabulary, "the run result must carry the breakdown the warning reads")
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, rr.Vocabulary)
+	assert.Contains(t, buf.String(), "m-greta",
+		"a reviewer that drifted on every finding must be named from a real run's breakdown")
+}
