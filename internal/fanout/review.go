@@ -1949,7 +1949,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				kept = []payload.FileEntry{mp.Entries[0]}
 				keptTrunc = payload.Truncation{
 					Truncated:    len(mp.Entries) > 1,
-					FilesDropped: droppedPathsExcept(mp.Entries, mp.Entries[0].Path),
+					FilesDropped: droppedPathsExcept(mp.Entries, 0),
 				}
 			}
 			smallest := kept[0]
@@ -2361,20 +2361,31 @@ func derefInt64(p *int64) int64 {
 	return *p
 }
 
-// droppedPathsExcept lists the paths of every entry except keep — the shed
-// record for an arm that keeps exactly one file. Returns nil (not an empty
-// slice) when nothing was dropped, matching the "no truncation" shape callers
-// and the status.json omitempty tags expect.
+// droppedPathsExcept lists the paths of every entry except the one at keepIdx —
+// the shed record for an arm that keeps exactly one file. Returns nil (not an
+// empty slice) when nothing was dropped, matching the "no truncation" shape
+// callers and the status.json omitempty tags expect.
+//
+// Excluded by INDEX, not by path. Two entries may share a path — the budget pass
+// accounts for each occurrence independently (internal/payload/budget.go), and a
+// concatenated diff through PrepareReviewFromDiff produces exactly that — so
+// filtering on `e.Path != keep` dropped BOTH occurrences from the record and
+// returned nil while one of them really was shed. Callers pair this with
+// `Truncated: len(entries) > 1`, so the result was a shed record claiming files
+// were dropped and naming none: the one shape status.go promises cannot occur,
+// and the shape that makes promoteRePackedDegradation skip its Truncation
+// promotion (it gates on len(dropped) > 0). By index, the count and the list
+// cannot disagree.
 //
 // Sorted by path, matching payload.ApplyByteBudget's own contract for
 // Truncation.FilesDropped ("the dropped list is returned sorted by path so the
 // same input always produces the same Truncation"). Entry order would already be
 // deterministic, but a status.json consumer reading FilesDropped should not have
 // to know which arm produced it.
-func droppedPathsExcept(entries []payload.FileEntry, keep string) []string {
+func droppedPathsExcept(entries []payload.FileEntry, keepIdx int) []string {
 	var dropped []string
-	for _, e := range entries {
-		if e.Path != keep {
+	for i, e := range entries {
+		if i != keepIdx {
 			dropped = append(dropped, e.Path)
 		}
 	}
@@ -2871,21 +2882,24 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 // Callers guarantee a non-empty slice.
 func keepSmallestEntry(entries []payload.FileEntry) ([]payload.FileEntry, payload.Truncation, bool) {
 	var smallest payload.FileEntry
-	found := false
-	for _, e := range entries {
+	// The INDEX of the kept entry, not just its path: two entries may share a
+	// path, and the shed record has to name the occurrence that was actually
+	// dropped — see droppedPathsExcept.
+	smallestIdx := -1
+	for i, e := range entries {
 		if len(e.Body) == 0 {
 			continue
 		}
-		if !found || len(e.Body) < len(smallest.Body) {
-			smallest, found = e, true
+		if smallestIdx < 0 || len(e.Body) < len(smallest.Body) {
+			smallest, smallestIdx = e, i
 		}
 	}
-	if !found {
+	if smallestIdx < 0 {
 		return nil, payload.Truncation{}, false
 	}
 	return []payload.FileEntry{smallest}, payload.Truncation{
 		Truncated:    len(entries) > 1,
-		FilesDropped: droppedPathsExcept(entries, smallest.Path),
+		FilesDropped: droppedPathsExcept(entries, smallestIdx),
 	}, true
 }
 
