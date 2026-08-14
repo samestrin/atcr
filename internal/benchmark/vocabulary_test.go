@@ -504,6 +504,111 @@ func TestPerReviewerVocabulary_IsPositionallyAlignedWithScore(t *testing.T) {
 		"drift 0.0 with recall 0.0 — the signature, read across the two aligned arrays")
 }
 
+// The breakdown and the scalar must never be two differently-defined numbers wearing
+// the same name. Summing the entries reproduces the run-level numerator and
+// denominator exactly — so the published scalar is precisely these rows divided,
+// and any future edit that changes membership, normalization, or the empty-category
+// rule in one function without the other fails here.
+func TestPerReviewerVocabulary_TotalsReproduceTheRunLevelRate(t *testing.T) {
+	reviewers := []ReviewerScore{
+		{Model: "a", Persona: "p", Cases: []CaseScore{
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{"bug", reconcile.CategoryCorrectness, ""}},
+			{Expected: []string{reconcile.CategorySecurity}, Raised: []string{"  SECURITY ", "clarity"}},
+		}},
+		{Model: "b", Persona: "p", Cases: []CaseScore{
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{reconcile.CategoryOther, "input"}},
+		}},
+		{Model: "c", Persona: "p"}, // raised nothing — contributes to neither total
+	}
+
+	var findings, drifted int
+	for _, e := range PerReviewerVocabulary(reviewers) {
+		findings += e.Findings
+		drifted += e.Drifted
+	}
+	require.Equal(t, 7, findings, "every raised finding is counted exactly once, blanks included")
+	require.Equal(t, 4, drifted, "bug, blank, clarity, input")
+
+	assert.InDelta(t, float64(drifted)/float64(findings),
+		mustRate(t, OutOfVocabularyRate(reviewers)), 1e-9,
+		"the scalar is the summed rows divided; the two definitions must not diverge")
+}
+
+// Two reviewers sharing a (model, persona) pair is the case the alignment most needs
+// to survive, and the case a key join CANNOT: the join has no way to tell the rows
+// apart. Score's sort is stable for exactly this reason, and this array mirrors that
+// sort rather than re-deriving the pairing, so the tied rows stay in the caller's
+// order on both sides and entry i still describes Reviewers[i].
+func TestPerReviewerVocabulary_IdentityTieKeepsAlignmentWithScore(t *testing.T) {
+	tied := []ReviewerScore{
+		// Same (model, persona) twice, distinguishable ONLY by position: the first
+		// drifted entirely, the second is clean.
+		{Model: "twin", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{"bug", "clarity"},
+		}}},
+		{Model: "twin", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{reconcile.CategoryCorrectness, reconcile.CategoryCorrectness, reconcile.CategoryCorrectness, reconcile.CategoryCorrectness},
+		}}},
+	}
+
+	scored := Score(tied)
+	vocab := PerReviewerVocabulary(tied)
+	require.Len(t, vocab, 2)
+	require.Len(t, scored, 2)
+
+	// Score's own rows are distinguishable by volume; the breakdown's must line up
+	// with the same row, not merely with the same identity.
+	require.InDelta(t, 2.0, scored[0].FindingsRaisedAvg, 1e-9, "input order preserved on the Score side")
+	require.InDelta(t, 4.0, scored[1].FindingsRaisedAvg, 1e-9)
+
+	require.NotNil(t, vocab[0].Rate)
+	assert.InDelta(t, 1.0, *vocab[0].Rate, 1e-9, "the drifted twin is entry 0, matching Reviewers[0]")
+	assert.Equal(t, 2, vocab[0].Findings)
+
+	require.NotNil(t, vocab[1].Rate)
+	assert.InDelta(t, 0.0, *vocab[1].Rate, 1e-9, "the clean twin is entry 1")
+	assert.Equal(t, 4, vocab[1].Findings)
+}
+
+// Alignment survives the identity scrub. Score re-scrubs every row it emits, so an
+// identity the scrub REWRITES sorts by its post-scrub value there; a breakdown that
+// sorted the raw value would land the rows in a different order and silently
+// mis-attribute the drift. It also must not republish the pre-scrub string.
+func TestPerReviewerVocabulary_ScrubbedIdentityStillAlignsWithScore(t *testing.T) {
+	// The pair is chosen so the scrub INVERTS the order: raw, "~/tmp/zzz alpha" sorts
+	// AFTER "beta" ('~' is 0x7E), but it scrubs to "alpha", which sorts BEFORE it. A
+	// breakdown sorted on the raw identity therefore lands the drifted reviewer at the
+	// opposite index from Score's — a fixture whose raw and scrubbed values happen to
+	// sort alike could not detect that.
+	reviewers := []ReviewerScore{
+		{Model: "~/tmp/zzz alpha", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{"bug"},
+		}}},
+		{Model: "beta", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{reconcile.CategoryCorrectness},
+		}}},
+	}
+
+	scored := Score(reviewers)
+	vocab := PerReviewerVocabulary(reviewers)
+	require.Len(t, vocab, 2)
+
+	for i := range scored {
+		assert.Equal(t, scored[i].Model, vocab[i].Model, "row %d must carry Score's post-scrub identity", i)
+	}
+	assert.Equal(t, "alpha", vocab[0].Model, "the scrubbed identity, in its post-scrub position")
+	require.NotNil(t, vocab[0].Rate)
+	assert.InDelta(t, 1.0, *vocab[0].Rate, 1e-9,
+		"the drifted reviewer's own rate follows it to its post-scrub position")
+
+	for _, e := range vocab {
+		assert.NotContains(t, e.Model, "~/tmp",
+			"the diagnostic array must not republish an identity the public rows scrubbed")
+	}
+}
+
 // A reviewer that raised nothing is UNMEASURED, not clean — the same nil-vs-zero
 // distinction the run-level pointer carries, applied per row. A failed reviewer
 // reporting rate 0.0 would publish the most drifted possible row as flawless.
