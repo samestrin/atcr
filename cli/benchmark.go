@@ -130,6 +130,10 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	warnIfVocabularyCeilingExceeded(cmd.ErrOrStderr(), rr.OutOfVocabularyRate)
+	// Independent of the run-level guard above, and deliberately not gated on it: the
+	// case this exists for is a run whose pooled rate PASSED while one reviewer
+	// drifted on everything it raised.
+	warnDriftingReviewers(cmd.ErrOrStderr(), rr.Vocabulary)
 
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
@@ -245,11 +249,87 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 //
 // A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
 // a warning nobody reads.
-// warnDriftingReviewers names individual reviewers whose own drift is severe enough
-// to matter even when the pooled run-level rate cleared the ceiling.
+// maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
+// warnDriftingReviewers names a reviewer. INCLUSIVE, matching the run-level ceiling's
+// semantics: a reviewer sitting exactly on it is named.
 //
-// STUB — not yet implemented.
+// # Why this is NOT benchmark.MaxOutOfVocabularyRate
+//
+// Reusing the run-level ceiling here is the obvious move and the wrong one. That
+// number is a RUN guard, tightened to 0.05 from a single valid observation (V1's
+// 0.0100), and the epic that tightened it recorded the caveat explicitly: n=1, so
+// variance under this metric is unmeasured. Applying an n=1-derived bound to
+// individual rows assumes a tightness one observation cannot support — and a
+// per-reviewer signal that fires on ordinary between-model variation reproduces
+// exactly the defect warnIfVocabularyCeilingExceeded's own doc names: a warning
+// printed on every run is a warning nobody reads.
+//
+// 0.50 is a qualitatively different claim — a MAJORITY of this reviewer's own findings
+// missed a 32-word enumeration it was handed — rather than a quantitative reading of a
+// distribution nobody has measured yet. The case this warning exists for (one reviewer
+// at 100% drift hidden under a passing run rate) clears it by a factor of two.
+//
+// Tighten this once a second valid run makes the spread between models measurable.
+// Until then a looser threshold costs a missed moderate drifter, while a tighter one
+// costs the signal's credibility on every run.
+const maxReviewerDriftRate = 0.50
+
+// warnDriftingReviewers names individual reviewers whose own drift is severe enough to
+// matter, and is the answer to the question the run-level warning structurally cannot
+// answer: WHICH model ignored the vocabulary.
+//
+// The run-level rate is micro-averaged — correctly, since drift is a property of the
+// run's findings — but that makes it concealing rather than merely coarse. A reviewer
+// raising 12 findings that all drifted, pooled against a peer raising 80 clean ones,
+// reports 12/92 = 0.130: under the ceiling, no warning, run reads clean, and one of two
+// models never used the enumeration at all. This walks the per-reviewer breakdown so
+// that reviewer is named.
+//
+// Both signals fire independently and neither suppresses the other: a run can breach
+// the ceiling AND have the breach concentrated in one row, and those are two different
+// facts an operator needs.
+//
+// Counts are quoted alongside the rate because a rate alone is unreadable at small n —
+// 1/1 and 80/80 are both 1.00 and are not the same finding. That is deliberately in
+// place of a minimum-findings floor, which would silently drop the small-n rows rather
+// than let the operator judge them.
+//
+// Like the run-level warning this writes to STDERR and is deliberately NOT an
+// exit-code change: `benchmark run --output <path>` prints nothing to stdout, and
+// failing a multi-hour validation run at the end over a diagnostic would discard the
+// work the run existed to produce.
 func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
+	// A nil rate is UNMEASURED, not drifted — the same nil-vs-zero distinction the
+	// pointer carries. Naming the reviewers of a total-failure run as the vocabulary
+	// problem would misdiagnose a run that raised nothing to measure.
+	var drifting []benchmark.ReviewerVocabulary
+	for _, r := range rows {
+		if r.Rate != nil && *r.Rate >= maxReviewerDriftRate {
+			drifting = append(drifting, r)
+		}
+	}
+	if len(drifting) == 0 {
+		return
+	}
+
+	noun := "reviewer"
+	if len(drifting) > 1 {
+		noun = "reviewers"
+	}
+	_, _ = fmt.Fprintf(w,
+		"warning: %d %s labelled at least %.0f%% of their own findings with words outside the "+
+			"offered vocabulary. The run-level out_of_vocabulary_rate pools every reviewer's "+
+			"findings together, so a drifted reviewer measured against prolific clean peers can "+
+			"leave it under the ceiling — read these rows, not just that number:\n",
+		len(drifting), noun, maxReviewerDriftRate*100)
+	for _, r := range drifting {
+		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings out of vocabulary (%.2f)\n",
+			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate)
+	}
+	_, _ = fmt.Fprintf(w,
+		"Treat these rows' corroboration_rate as a measure of vocabulary agreement rather than "+
+			"detection: a category outside the enumeration matches no expected category, so it "+
+			"zeroes recall independently of what the reviewer actually found.\n")
 }
 
 func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
