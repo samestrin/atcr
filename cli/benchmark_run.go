@@ -417,8 +417,8 @@ type reviewerAcc struct {
 // whose INPUT was cut short reports "incomplete" for the same reason: it may have
 // raised nothing, but only about the fraction it read. Both routes to a partial input
 // map to that one value — a chunked persona whose bins failed (UnreviewedChunks) and a
-// byte-budget shed of the payload itself (Truncated, with FilesDropped naming what
-// never arrived). Reusing OutcomeIncomplete rather than minting a new value is
+// byte-budget shed of the payload itself (Truncated, with FilesDropped naming the
+// shed entries by path). Reusing OutcomeIncomplete rather than minting a new value is
 // deliberate: the vocabulary is fail-closed at the checkpoint and coverage trust
 // boundaries, so an older binary reading a newer run's outcome must find a value it
 // already knows.

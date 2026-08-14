@@ -53,7 +53,11 @@ const (
 	//     while the persona still reported StatusOK;
 	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed
 	//     (a per-agent shed to fit the model's window, or a re-fit fallback under
-	//     on_overflow=truncate), with FilesDropped naming what never arrived.
+	//     on_overflow=truncate), with FilesDropped naming the shed ENTRIES by path.
+	//     Not "the paths that never arrived": the shed is accounted per entry and a
+	//     diff can carry two sections for one path, so a listed path may still be
+	//     present via its other occurrence (fanout.droppedPathsExcept documents the
+	//     index-keyed contract).
 	// Publishing either case as "clean" would assert "reviewed the whole diff and
 	// correctly found nothing" about a reviewer that never saw most of it — a
 	// positive false claim, the exact class this vocabulary exists to prevent.

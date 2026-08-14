@@ -448,7 +448,7 @@ call failed all raise zero categories and score identically:
 | `clean` | Reviewed successfully and emitted the `NO FINDINGS` sentinel. |
 | `unparseable` | Returned content that parsed to zero findings and was not the sentinel. |
 | `truncated` | Response cut off on `finish_reason: length`; whatever it raised is incomplete. |
-| `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names what never arrived). |
+| `incomplete` | The reviewer saw only a fraction of the diff — either a chunked slot whose bins failed while it still reported ok, or a payload shed to fit a byte budget (`files_dropped` names the shed entries by path; the shed is accounted per entry, so a path listed there can still be present via another occurrence of the same path in the diff). |
 | `failed` | The call never produced a reviewable response. |
 | `unknown` | No outcome was recorded — a checkpoint written before this field existed. |
 
