@@ -1,3 +1,9 @@
+## [Technical Debt] - 2026-08-14
+
+### Fixed
+- Benchmark outcome classification now treats a payload-truncated reviewer as incomplete rather than clean, matching how a chunked reviewer with unreviewed bins is already classified — a reviewer whose input was cut short by either route no longer reports a false "reviewed everything, found nothing" signal.
+- Pinned regression coverage for `BuildEntriesFromDiff`'s handling of duplicate-path diff entries against its existing dedup logic.
+
 ## [35.16.5.4] - 2026-08-12
 
 ### Fixed
