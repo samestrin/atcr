@@ -652,3 +652,62 @@ func TestServedCoverage_PrimaryFallbackArmLogs(t *testing.T) {
 	assert.Equal(t, []string{"b.go"}, got)
 	assert.Empty(t, buf.String(), "the served-tag arm is the normal path and must not log")
 }
+
+// The re-pack FLAG must be stamped by invokeSlot in its own right, not merely
+// arrived at by the divergence backstop.
+//
+// TestInvokeSlot_StampsServingAgentCoverageTag above cannot tell the two apart:
+// its re-packed fallback carries a SMALLER tag than its primary, so deleting
+// `r.servedRePacked = a.rePacked` still yields servedRePacked true — the
+// divergence promotion (engine.go) sets it, loudly. The suite stayed green with
+// the stamp removed, which means the stamp itself was unprotected and only the
+// fail-open backstop was under test.
+//
+// The discriminating fixture is a re-packed fallback whose tag EQUALS its
+// primary's. Nothing diverges, so the backstop cannot fire and only the stamp can
+// make the flag true. Asserting the warning stays silent is the other half: it
+// proves the flag arrived by the honest route rather than by fail-open, and keeps
+// the two mechanisms separable if either is changed later.
+//
+// The fixture is legal, not contrived: a re-fit that sheds nothing returns
+// ok=false and never sets rePacked, but nothing in the Agent contract couples the
+// flag to a smaller tag, and the divergence promotion exists precisely because
+// the flag is DECLARED rather than derived.
+func TestInvokeSlot_StampsRePackFlagWithoutRelyingOnTagDivergence(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	f := newFake()
+	f.failFor["primary-model"] = errors.New("boom")
+
+	tag := []string{"a.go", "b.go", "c.go"}
+	slot := Slot{
+		Primary: Agent{
+			Name:        "greta",
+			Invocation:  llmclient.Invocation{Model: "primary-model"},
+			PayloadMode: "blocks",
+			chunkFiles:  tag,
+		},
+		Fallbacks: []Agent{{
+			Name:        "kai",
+			Invocation:  llmclient.Invocation{Model: "backup-model"},
+			PayloadMode: "blocks",
+			// Same tag as the primary — so the divergence backstop cannot fire.
+			chunkFiles: []string{"a.go", "b.go", "c.go"},
+			rePacked:   true,
+		}},
+	}
+
+	results := NewEngine(f).Run(ctx, []Slot{slot})
+	require.Len(t, results, 1)
+	r := results[0]
+
+	require.Equal(t, StatusOK, r.Status, "precondition: the fallback must serve the slot successfully")
+	require.Equal(t, tag, r.servedChunkFiles,
+		"precondition: the served tag must MATCH the primary's, or the backstop fires and this asserts nothing")
+	assert.True(t, r.servedRePacked,
+		"the re-pack flag must be stamped from the serving agent, not inferred from a differing tag")
+	assert.NotContains(t, buf.String(), "promoting to re-packed",
+		"the divergence backstop must stay silent here — a warning means the flag arrived fail-open rather than by the stamp")
+}
