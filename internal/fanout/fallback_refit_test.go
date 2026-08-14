@@ -486,8 +486,13 @@ func TestBuildFallbackAgent_PositiveBudgetOverflowArmRecordsThatBudget(t *testin
 
 			assert.Equal(t, degradationOverflow, fb.DegradationAction,
 				"the smallest framing still exceeds this budget, so this is overflow — not a successful truncate")
-			assert.Positive(t, fb.EffectiveBudget,
-				"effective_budget is the budget the payload was sized to and it is REAL here — the overflow arm does not imply a zero budget")
+			// This fixture has no scope constraint and a global budget above the
+			// per-model one, so applied == raw and the recorded value must be that
+			// exact number. Asserting the equality rather than Positive: with no
+			// narrowing in play, `> 0` is already guaranteed by the precondition
+			// above and would assert nothing about what was recorded.
+			assert.Equal(t, raw, fb.EffectiveBudget,
+				"the overflow arm records the budget the payload was sized to — it does not imply a zero budget")
 			assert.Contains(t, out, "may overflow",
 				"the operator must still be told the backup cannot hold this lane at any framing")
 		})
@@ -638,13 +643,11 @@ func TestBuildFallbackAgent_RefitReCapsScopeConstraintToItsOwnBudget(t *testing.
 // re-render.
 //
 // The re-fit builds a fresh prompt, so it chooses which scope constraint to embed:
-// the per-agent one buildSlots already capped, or the run's RAW one. Only the
-// former respects the operator's ceiling — the raw block is capped to
-// max_sprint_plan_bytes' DEFAULT (65536 at ScopeConstraint time), not to the
-// configured value — so threading the wrong one would quietly restore a plan
-// thirty times the size the operator asked for, on the agent least able to hold it.
+// the per-agent one buildSlots already capped, or the run's RAW one. The ceiling
+// has to survive that choice either way, which is what this asserts.
 //
-// Note what this does NOT prove. refitFallbackPayload re-caps with
+// It does NOT assert that any ONE mechanism enforces it — two do, independently,
+// and neither is individually necessary. refitFallbackPayload re-caps with
 // min(fbBudget/8, max_sprint_plan_bytes), and its max_sprint_plan_bytes term can
 // never bind: buildSlots applies the identical clamp before threading the
 // constraint here (review.go, agentScopeConstraint), so the plan already arrives
