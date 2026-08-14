@@ -47,12 +47,18 @@ const (
 	// incomplete by construction.
 	OutcomeTruncated = "truncated"
 
-	// OutcomeIncomplete marks a chunked reviewer that saw only a FRACTION of the
-	// diff: fanout.AgentStatus.UnreviewedChunks counts the bins that failed while
-	// the persona still reported StatusOK. Publishing such a case as "clean" would
-	// assert "reviewed the whole diff and correctly found nothing" about a reviewer
-	// that never saw most of it — a positive false claim, the exact class this
-	// vocabulary exists to prevent. Data-integrity, same class as truncated.
+	// OutcomeIncomplete marks a reviewer that saw only a FRACTION of the diff,
+	// by either route its INPUT can be cut short:
+	//   - chunking: fanout.AgentStatus.UnreviewedChunks counts the bins that failed
+	//     while the persona still reported StatusOK;
+	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed
+	//     (a per-agent shed to fit the model's window, or a re-fit fallback under
+	//     on_overflow=truncate), with FilesDropped naming what never arrived.
+	// Publishing either case as "clean" would assert "reviewed the whole diff and
+	// correctly found nothing" about a reviewer that never saw most of it — a
+	// positive false claim, the exact class this vocabulary exists to prevent.
+	// Data-integrity, same class as truncated. Note OutcomeTruncated is the
+	// OUTPUT-side signal (finish_reason "length") and is a distinct value.
 	OutcomeIncomplete = "incomplete"
 
 	// OutcomeFailed marks a slot whose call did not succeed at all — the reviewer

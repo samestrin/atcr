@@ -413,9 +413,15 @@ type reviewerAcc struct {
 // Data-integrity signals outrank volume signals throughout. A truncated response that
 // raised five findings reports "truncated", not "findings", because the
 // incompleteness is the load-bearing fact about that row — the five categories it did
-// raise are still recorded in the score, so nothing is lost by saying so. A chunked
-// reviewer that saw only some of its bins reports "incomplete" for the same reason:
-// it may have raised nothing, but only about the fraction it read.
+// raise are still recorded in the score, so nothing is lost by saying so. A reviewer
+// whose INPUT was cut short reports "incomplete" for the same reason: it may have
+// raised nothing, but only about the fraction it read. Both routes to a partial input
+// map to that one value — a chunked persona whose bins failed (UnreviewedChunks) and a
+// byte-budget shed of the payload itself (Truncated, with FilesDropped naming what
+// never arrived). Reusing OutcomeIncomplete rather than minting a new value is
+// deliberate: the vocabulary is fail-closed at the checkpoint and coverage trust
+// boundaries, so an older binary reading a newer run's outcome must find a value it
+// already knows.
 func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 	switch {
 	case a.Status != fanout.StatusOK || a.Error != "":
@@ -424,7 +430,7 @@ func reviewerOutcome(a fanout.AgentStatus, raised []string) string {
 		return benchmark.OutcomeUnparseable
 	case a.ResponseTruncated:
 		return benchmark.OutcomeTruncated
-	case a.UnreviewedChunks > 0:
+	case a.UnreviewedChunks > 0 || a.Truncated:
 		return benchmark.OutcomeIncomplete
 	case len(raised) > 0:
 		return benchmark.OutcomeFindings
