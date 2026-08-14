@@ -494,6 +494,48 @@ func TestBuildFallbackAgent_RefitReservationFollowsRecordedBudget(t *testing.T) 
 	}
 }
 
+// AC6: effective_budget must report the budget the payload was actually SIZED
+// to — the raw per-model figure narrowed by the global payload_byte_budget and
+// by the uncounted SCOPE CONSTRAINT block — not the raw per-model figure the
+// non-re-fit path records.
+//
+// The sibling test above asserts only the budget↔reservation biconditional,
+// which holds whichever of the two is recorded, so recording the RAW budget
+// passed it unnoticed. This pins the value itself, and ties it to something
+// observable rather than to a recomputed constant: the payload the agent ships
+// must fit inside the number its record claims. A record naming a budget the
+// dispatched bytes exceed is not a description of this payload.
+//
+// The scope-constraint route is the only one that can produce applied != raw
+// here, and that is a property of the gate rather than an accident of the
+// fixture: the overflow branch compares the fallback's RAW budget against the
+// primary's APPLIED one, so a global cap low enough to narrow the fallback also
+// narrows the primary and closes the gate.
+func TestBuildFallbackAgent_RefitRecordsTheAppliedBudgetNotTheRawOne(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	rawBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Positive(t, rawBudget, "precondition: the backup funds a real budget, so narrowing is observable")
+
+	assert.Positive(t, fb.EffectiveBudget,
+		"a scope constraint narrows this budget, it does not exhaust it")
+	assert.Less(t, fb.EffectiveBudget, rawBudget,
+		"effective_budget must be the APPLIED budget — the raw per-model figure less the uncounted SCOPE CONSTRAINT block — not the raw one")
+	assert.LessOrEqual(t, int64(codeContextBytes(fb)), fb.EffectiveBudget,
+		"the record must describe the payload actually shipped: the dispatched bytes must fit the budget it claims")
+}
+
 // scopePlanBody extracts the plan body between the SCOPE CONSTRAINT markers, so
 // tests can measure the plan a prompt actually embeds rather than its total
 // length. Returns "" when the block is absent.
