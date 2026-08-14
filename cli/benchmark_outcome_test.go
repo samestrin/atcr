@@ -337,6 +337,22 @@ func TestReviewerOutcome_Precedence(t *testing.T) {
 			want:   benchmark.OutcomeIncomplete,
 		},
 		{
+			name:   "payload truncation with nothing raised is NOT clean",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true, FilesDropped: []string{"a.go"}},
+			want:   benchmark.OutcomeIncomplete,
+		},
+		{
+			name:   "payload truncation outranks findings",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, Truncated: true, FilesDropped: []string{"a.go"}},
+			raised: []string{"correctness"},
+			want:   benchmark.OutcomeIncomplete,
+		},
+		{
+			name:   "response truncation outranks payload truncation",
+			status: fanout.AgentStatus{Status: fanout.StatusOK, ResponseTruncated: true, Truncated: true},
+			want:   benchmark.OutcomeTruncated,
+		},
+		{
 			name:   "findings",
 			status: fanout.AgentStatus{Status: fanout.StatusOK},
 			raised: []string{"correctness"},

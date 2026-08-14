@@ -393,6 +393,52 @@ func BenchmarkBuildEntriesFromDiff_LargeMultiFile(b *testing.B) {
 	}
 }
 
+// Trip-wire: BuildEntriesFromDiff emits one entry per `diff --git` section and
+// must NOT key on path — a concatenated diff carrying the same path twice yields
+// TWO entries with equal Path. Downstream consumers depend on that: the byte
+// budget accounts for dropped files per INDEX (budget.go), as does fanout's
+// droppedPathsExcept, and both are only correct because duplicate paths actually
+// reach them. A dedup-by-path here would look like a tidy-up and would silently
+// make that index-keyed accounting unreachable, so this test fails loudly at the
+// parser instead. The budget assertion below ties the parser guarantee to the
+// consumer that relies on it: exactly ONE of the two same-path occurrences is
+// shed, and Truncation names that occurrence once — not twice, not zero times.
+func TestBuildEntriesFromDiff_DuplicatePathsAreNotDeduped(t *testing.T) {
+	small := "diff --git a/dup.go b/dup.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/dup.go\n" +
+		"+++ b/dup.go\n" +
+		"@@ -1,1 +1,1 @@\n" +
+		"-a\n" +
+		"+b\n"
+	large := "diff --git a/dup.go b/dup.go\n" +
+		"index 3333333..4444444 100644\n" +
+		"--- a/dup.go\n" +
+		"+++ b/dup.go\n" +
+		"@@ -10,3 +10,3 @@\n" +
+		" context line that makes this section strictly larger\n" +
+		"-c\n" +
+		"+d\n"
+	diff := small + large
+
+	entries, err := BuildEntriesFromDiff(diff)
+	require.Len(t, entries, 2, "one entry per diff --git header, NOT one per unique path")
+	require.NoError(t, err)
+	assert.Equal(t, "dup.go", entries[0].Path)
+	assert.Equal(t, "dup.go", entries[1].Path, "the second occurrence must survive with the same Path")
+	assert.Equal(t, diff, joinBodies(entries), "duplicate-path diff must still round-trip verbatim")
+
+	// Consumer tie-in: budget the payload so exactly the larger occurrence is
+	// shed. Per-index accounting must report one dropped path; a path-keyed
+	// implementation would report "dup.go" twice or drop both occurrences.
+	kept, trunc := ApplyByteBudget(entries, entries[0].Size)
+	assert.True(t, trunc.Truncated)
+	assert.False(t, trunc.AllDropped, "the smaller occurrence still fits")
+	assert.Equal(t, []string{"dup.go"}, trunc.FilesDropped, "one dropped occurrence, named once")
+	require.Len(t, kept, 1)
+	assert.Equal(t, entries[0].Body, kept[0].Body, "the larger occurrence is the one shed")
+}
+
 // Parity anchor (AC4): the suite fixture case-01.diff, fed through the ingestion
 // path, must round-trip verbatim and parse the head path — the same []FileEntry
 // shape a git-sourced ModeDiff payload would carry for the same file.
