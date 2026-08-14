@@ -11,47 +11,50 @@ import (
 // must stay strictly under. It is EXCLUSIVE: a run sitting exactly on it trips the
 // guard.
 //
-// # What 0.20 is, and what it is not
+// # Where 0.05 comes from
 //
-// It is NOT derived from the 35.16.2 dry-run's 72.3% (reconcile/category.go:9-12).
-// That figure counted findings "the scorer did not recognise", whose denominator
-// was the four values internal/benchmarkimport maps ground truth to — not
-// membership of this 32-word vocabulary. Worse, the vocabulary was deliberately
-// derived as a union that INCLUDES the words that dry-run emitted, so replaying
-// the same findings under this metric would score far below 72.3% by
-// construction. Treat 72.3% as no baseline at all.
+// It is DERIVED FROM MEASUREMENT: the V1 post-merge validation run (epic 35.16.5.3,
+// completed 2026-08-11) measured an out-of-vocabulary rate of **0.0100** — 2 drifted
+// findings of 201 — on Run A, the run's one valid lane. 0.05 keeps five times that
+// headroom.
 //
-// What 0.20 actually buys is headroom for the words reconcile's categoryMerges
-// (category.go:143-190) records as meaning a member without being one — `bug`,
-// `input`, `clarity`, `cleanliness`, `consistency`, `structure`, `failure`,
-// `stability`, `resource`, `resources`. Nothing folds them until epic 35.16.6
-// lands parse-boundary canonicalization, so under a bare membership test they all
-// read as drift.
+// This replaces the pre-V1 guard of 0.20, which was never an empirical bound. That
+// number bought headroom for the words reconcile's categoryMerges (category.go:143-190)
+// records as MEANING a member without BEING one — `bug`, `input`, `clarity`,
+// `consistency`, `structure`, `failure`, … — on the reasoning that nothing folds them
+// under a bare membership test, and on a ~25% floor estimated from the 35.16.2 dry-run's
+// per-word tail. V1 retired both premises at once: it emitted **zero** merge-table words
+// and **zero** separator/hyphenation variants. The justification for 0.20-rather-than-0.05
+// is therefore empirically dead, and the dry-run figure it rested on described a
+// different metric with a different denominator (it is no baseline for this one — see
+// reconcile/category.go:9-12).
 //
-// # How much headroom that actually needs — and why 0.20 may already be too tight
+// # Why 0.05 and not lower
 //
-// The 35.16.2 dry-run's per-word tail is the one usable measurement (its review at
-// .planning/epics/code-reviews/35.16.2_*/claude/2026-08-07_code-review.md §8). Of
-// its 213 findings, the merge-table words listed above account for at least:
+// n = 1. Run A is the ONLY valid measurement in existence: Run B is invalid as a
+// measurement (a lane silently failed over mid-suite, and `llm-large` emitted bare
+// integers), so the variance of this metric across runs and rosters is unmeasured. A
+// ceiling hugging 0.0100 would encode a tightness one observation cannot support and
+// would fail runs that behaved. Five times the measured value is the deliberately
+// conservative choice pending a second valid run.
 //
-//	input 15 · failure 13 · resource 9 · clarity 5 · consistency 4 ·
-//	structure 4 · resources 4   =  54 / 213  ≈  25%
+// # This number moves ONE WAY
 //
-// That is a FLOOR, not an estimate: the review enumerated only 12 of the 34 distinct
-// categories emitted, and `bug`, `cleanliness`, and `stability` are not among the
-// twelve. Replayed under THIS metric those 54 findings are drift, while the tail's
-// other big entries (`contract` 28, `state` 21, `coupling` 9, `concurrency` 8,
-// `duplication` 7, `naming` 4) are taxonomy members and are not.
+// Tighten it when a further valid run supports tightening. NEVER raise it because a run
+// failed — a ceiling that yields to the run it is judging measures nothing. That rule
+// predates this value and survives it; pinned by
+// TestMaxOutOfVocabularyRate_IsDerivedFromTheV1Measurement.
 //
-// So on the only transcript in existence, merge-table words alone would have put the
-// rate around 25% — ABOVE this ceiling. Read 0.20 as a deliberately tight fixture
-// guard that the first real run may well trip, not as a bound live behaviour has
-// been shown to satisfy. If V1 fails here, the finding is that 35.16.6's
-// canonicalization is a prerequisite for a meaningful rate — NOT a licence to raise
-// the number. Recomputing this share from V1's own output is how the ceiling should
-// eventually be set.
+// # Read a breach as a PARSER question first, not a persona one
 //
-// On the taxonomy's own design merits 0.20 is loose: category.go:73 ships `other`
+// Both of V1's two residual drift findings were findings-PARSER artifacts — body text
+// and bare integers landing in the category field — not reviewers choosing words outside
+// the taxonomy. On the only evidence available, this metric is at least as much a
+// parser-health proxy as a vocabulary-health one. So inspect the emitted words before
+// concluding a model ignored its prompt: a rising rate has so far meant malformed rows,
+// and rewriting a persona would not have fixed it.
+//
+// On the taxonomy's own design merits even 0.05 is loose: category.go:73 ships `other`
 // precisely so a reviewer that read its prompt always has a legal landing spot, so
 // every out-of-vocabulary emission is a reviewer ignoring a 32-word enumeration.
 //
@@ -67,13 +70,17 @@ import (
 // simultaneously — that pairing is the signature to look for.
 //
 // This is recorded, pinned by TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot, and
-// deliberately NOT fixed here: excluding the routing values would change what this
-// metric means, and the choice belongs with the 35.16.6 canonicalization work rather
-// than being made silently. Do not read a 0.0 as clean without checking recall.
-// The right move is to TIGHTEN this in 35.16.6 once the post-merge validation run
-// supplies the first real number under this metric — never to loosen it when a run
-// fails.
-const MaxOutOfVocabularyRate = 0.20
+// deliberately NOT fixed by redefining the rate: excluding the routing values would
+// change what this metric means and would strand the V1 baseline the ceiling above is
+// derived from. `other` is the escape hatch that makes the set closed rather than
+// lossy, so a reviewer reaching for it is obeying its prompt, not drifting — counting
+// that as drift would conflate two unrelated failures.
+//
+// It is instead SURFACED, not silenced: ReviewerVocabulary.RoutingValues counts the
+// routing labels per reviewer, so RoutingValues == Findings alongside a rate of 0.0 is
+// the signature, readable against the recall on the aligned Reviewers row. Do not read
+// a 0.0 as clean without checking that pairing.
+const MaxOutOfVocabularyRate = 0.05
 
 // ExceedsVocabularyCeiling reports whether a measured rate breaches
 // MaxOutOfVocabularyRate.

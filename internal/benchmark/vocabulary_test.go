@@ -381,18 +381,24 @@ func TestExceedsVocabularyCeiling(t *testing.T) {
 func ptr(f float64) *float64 { return &f }
 
 // The defect this epic exists to close: micro-averaging is not merely silent about
-// WHICH reviewer drifted, it is actively concealing. This fixture is the one written
-// into the plan's Pain Points — 80 clean findings from one reviewer, 12 drifted from
-// another — where the pooled rate lands under the ceiling and the run reports clean
-// while one of two models ignored the enumeration entirely.
+// WHICH reviewer drifted, it is actively concealing. One reviewer raises 12 findings
+// and drifts on every one; its prolific clean peer dilutes them to a pooled rate that
+// clears the ceiling, and the run reports clean while one of two models ignored the
+// enumeration entirely.
+//
+// The 300:12 ratio is what the tightened ceiling costs an attacker of this metric — the
+// plan's original 80:12 illustration pooled to 0.130 and cleared the OLD 0.20 guard, but
+// not 0.05. Tightening narrows the concealment window; it does not close it, which is
+// exactly why the breakdown is needed alongside the tighter number rather than instead
+// of it.
 //
 // The run-level scalar and the breakdown are asserted TOGETHER here on purpose: the
 // point is not that the breakdown reports 1.0 somewhere, it is that it reports 1.0 for
 // a run whose published scalar says everything is fine.
 func TestPerReviewerVocabulary_NamesTheReviewerTheRunLevelRateConceals(t *testing.T) {
-	eightyClean := make([]string, 80)
-	for i := range eightyClean {
-		eightyClean[i] = reconcile.CategoryCorrectness
+	threeHundredClean := make([]string, 300)
+	for i := range threeHundredClean {
+		threeHundredClean[i] = reconcile.CategoryCorrectness
 	}
 	twelveDrifted := make([]string, 12)
 	for i := range twelveDrifted {
@@ -401,7 +407,7 @@ func TestPerReviewerVocabulary_NamesTheReviewerTheRunLevelRateConceals(t *testin
 
 	reviewers := []ReviewerScore{
 		{Model: "clean-model", Persona: "a", Cases: []CaseScore{{
-			Expected: []string{reconcile.CategoryCorrectness}, Raised: eightyClean,
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: threeHundredClean,
 		}}},
 		{Model: "drifted-model", Persona: "b", Cases: []CaseScore{{
 			Expected: []string{reconcile.CategoryCorrectness}, Raised: twelveDrifted,
@@ -409,7 +415,7 @@ func TestPerReviewerVocabulary_NamesTheReviewerTheRunLevelRateConceals(t *testin
 	}
 
 	run := mustRate(t, OutOfVocabularyRate(reviewers))
-	require.InDelta(t, 12.0/92.0, run, 1e-9, "12 drifted of 92 pooled findings")
+	require.InDelta(t, 12.0/312.0, run, 1e-9, "12 drifted of 312 pooled findings")
 	require.False(t, ExceedsVocabularyCeiling(&run),
 		"precondition: this run passes the guard — that is what makes the breakdown necessary")
 
@@ -417,7 +423,7 @@ func TestPerReviewerVocabulary_NamesTheReviewerTheRunLevelRateConceals(t *testin
 	require.Len(t, got, 2)
 
 	assert.Equal(t, "clean-model", got[0].Model)
-	assert.Equal(t, 80, got[0].Findings)
+	assert.Equal(t, 300, got[0].Findings)
 	assert.Equal(t, 0, got[0].Drifted)
 	require.NotNil(t, got[0].Rate)
 	assert.InDelta(t, 0.0, *got[0].Rate, 1e-9)

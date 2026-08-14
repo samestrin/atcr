@@ -368,7 +368,7 @@ func TestBenchmarkRun_WarnsWhenVocabularyCeilingExceeded(t *testing.T) {
 	warnIfVocabularyCeilingExceeded(&buf, rr.OutOfVocabularyRate)
 	got := buf.String()
 	assert.Contains(t, got, "out_of_vocabulary_rate", "the warning must name the metric")
-	assert.Contains(t, got, "0.20", "the warning must name the ceiling")
+	assert.Contains(t, got, "0.05", "the warning must name the ceiling")
 	assert.Contains(t, got, "1.00", "the warning must name the measured value")
 }
 
@@ -392,14 +392,14 @@ func TestBenchmarkRun_NoVocabularyWarningWhenCleanOrUnmeasured(t *testing.T) {
 }
 
 // AC2, the defect this epic exists to close at the operator surface. The run-level
-// warning is silent here — correctly, since 12 drifted findings pooled against 80
-// clean ones is 0.130, under the ceiling — and one of the two models nevertheless
+// warning is silent here — correctly, since 12 drifted findings pooled against 300
+// clean ones is 0.038, under the ceiling — and one of the two models nevertheless
 // ignored the enumeration on every single finding it raised. The operator must be
 // told WHICH.
 func TestWarnDriftingReviewers_NamesTheReviewerTheRunLevelWarningMisses(t *testing.T) {
-	eightyClean := make([]string, 80)
-	for i := range eightyClean {
-		eightyClean[i] = "correctness"
+	threeHundredClean := make([]string, 300)
+	for i := range threeHundredClean {
+		threeHundredClean[i] = "correctness"
 	}
 	twelveDrifted := make([]string, 12)
 	for i := range twelveDrifted {
@@ -407,7 +407,7 @@ func TestWarnDriftingReviewers_NamesTheReviewerTheRunLevelWarningMisses(t *testi
 	}
 	reviewers := []benchmark.ReviewerScore{
 		{Model: "clean-model", Persona: "alice", Cases: []benchmark.CaseScore{{
-			Expected: []string{"correctness"}, Raised: eightyClean,
+			Expected: []string{"correctness"}, Raised: threeHundredClean,
 		}}},
 		{Model: "drifted-model", Persona: "bob", Cases: []benchmark.CaseScore{{
 			Expected: []string{"correctness"}, Raised: twelveDrifted,
@@ -503,16 +503,16 @@ func TestWarnDriftingReviewers_FiresAlongsideTheRunLevelWarning(t *testing.T) {
 // reviewer is drifting anyway. A test that invokes each helper directly cannot observe
 // that BOTH are reached from the command — delete either call and this fails.
 func TestWarnVocabularyDiagnostics_SilentCeilingStillNamesTheDriftingReviewer(t *testing.T) {
-	eightyClean := make([]string, 80)
-	for i := range eightyClean {
-		eightyClean[i] = "correctness"
+	threeHundredClean := make([]string, 300)
+	for i := range threeHundredClean {
+		threeHundredClean[i] = "correctness"
 	}
 	twelveDrifted := make([]string, 12)
 	for i := range twelveDrifted {
 		twelveDrifted[i] = "bug"
 	}
 	reviewers := []benchmark.ReviewerScore{
-		{Model: "clean-model", Persona: "alice", Cases: []benchmark.CaseScore{{Raised: eightyClean}}},
+		{Model: "clean-model", Persona: "alice", Cases: []benchmark.CaseScore{{Raised: threeHundredClean}}},
 		{Model: "drifted-model", Persona: "bob", Cases: []benchmark.CaseScore{{Raised: twelveDrifted}}},
 	}
 	rr := &benchmark.RunResult{
