@@ -447,6 +447,53 @@ func TestBuildFallbackAgent_RefitThatStillOverflowsRecordsOverflow(t *testing.T)
 	assert.Less(t, len(fb.Prompt), len(slots[0].Primary.Prompt), "the payload still shrank")
 }
 
+// The overflow arm is reachable with a POSITIVE budget, and it records that
+// budget rather than 0.
+//
+// The sibling overflow test drives a 1-token window, where the effective budget
+// is 0 and status.json omits effective_budget entirely. That is one sub-case, not
+// the arm: any backup whose budget is positive but smaller than the smallest
+// single file lands here too — it re-packs to one file, still does not fit, and
+// records overflow WITH a real effective_budget. docs/registry.md described the
+// whole arm as if the zero sub-case were the only one, so this pins the
+// distinction the prose has to respect.
+func TestBuildFallbackAgent_PositiveBudgetOverflowArmRecordsThatBudget(t *testing.T) {
+	// Between the reservation floor (below ~12k tokens the budget rounds to 0)
+	// and the 50 KB single-file size in markedOversizedPayload: a real budget
+	// that still cannot hold one file.
+	for _, window := range []int{15000, 20000, 25000} {
+		t.Run(fmt.Sprintf("window-%d", window), func(t *testing.T) {
+			cfg := refitRoster(t, 512000, OverflowTruncate)
+			kai := cfg.Registry.Agents["kai"]
+			w := window
+			kai.ContextWindowTokens = &w
+			cfg.Registry.Agents["kai"] = kai
+
+			raw := payload.EffectiveByteBudget("unlisted-backup-model", &w, defaultMaxTokens)
+			require.Positive(t, raw,
+				"precondition: this window must fund a REAL budget — the zero case is the sibling test's")
+
+			var slots []Slot
+			var err error
+			out := captureStderr(t, func() {
+				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+			})
+			require.NoError(t, err)
+			fb := slots[0].Fallbacks[0]
+
+			require.True(t, fb.rePacked, "precondition: the payload must actually be re-packed")
+			require.Len(t, fb.chunkFiles, 1, "precondition: the re-pack keeps exactly one file and it still does not fit")
+
+			assert.Equal(t, degradationOverflow, fb.DegradationAction,
+				"the smallest framing still exceeds this budget, so this is overflow — not a successful truncate")
+			assert.Positive(t, fb.EffectiveBudget,
+				"effective_budget is the budget the payload was sized to and it is REAL here — the overflow arm does not imply a zero budget")
+			assert.Contains(t, out, "may overflow",
+				"the operator must still be told the backup cannot hold this lane at any framing")
+		})
+	}
+}
+
 // The reservation must follow the budget actually recorded. Recording
 // effective_budget 0 (absent under omitempty) beside reserved_output_tokens 8192
 // is the self-contradictory status record 35.16.5.1 removed.
