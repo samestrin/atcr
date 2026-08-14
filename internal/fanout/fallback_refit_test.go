@@ -587,6 +587,44 @@ func TestBuildFallbackAgent_RefitReCapsScopeConstraintToItsOwnBudget(t *testing.
 		"the embedded plan must respect the backup's own budget/8 cap")
 }
 
+// The re-fit's plan cap is min(fbBudget/8, max_sprint_plan_bytes), and the
+// operator's ceiling is the half that had no coverage: with the default 65536
+// setting the budget/8 term always wins, so the whole re-cap could be measured
+// without the clamp ever running.
+//
+// Configuring max_sprint_plan_bytes BELOW the backup's budget/8 makes the two
+// terms disagree, which is the only arrangement that can tell them apart — a
+// re-fit that honored only budget/8 would embed a plan several times larger than
+// the operator asked for, on the exact agent least able to afford it.
+func TestBuildFallbackAgent_RefitPlanCapHonorsMaxSprintPlanBytes(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	const planCeiling = 2000
+	cfg.Settings.MaxSprintPlanBytes = planCeiling
+
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Greater(t, fbBudget/8, int64(planCeiling),
+		"precondition: the operator ceiling must be the TIGHTER of the two, or this cannot tell which one applied")
+
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	fbPlan := scopePlanBody(t, fb.Prompt)
+	require.NotEmpty(t, fbPlan, "the ceiling narrows the plan, it does not blank it")
+	assert.LessOrEqual(t, len(fbPlan), planCeiling,
+		"the re-fit must honor max_sprint_plan_bytes, not just its own budget/8")
+	assert.Less(t, int64(len(fbPlan)), fbBudget/8,
+		"and the result must be strictly tighter than budget/8, or the clamp never ran")
+}
+
 // A tiny-but-positive backup budget rounds the plan cap to ZERO (fbBudget/8 =
 // 0). Capping there would blank the plan body while the wrapper text still
 // instructs the model to obey the constraint — a blanked plan presented as a
