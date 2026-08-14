@@ -246,6 +246,27 @@ func TestKeepSmallestEntry_DuplicatePathsStillNameTheDroppedOccurrence(t *testin
 		"Truncated and FilesDropped must never disagree — that pair is the whole shed record")
 }
 
+// The shed record must never name the file it KEPT. Excluding by index only
+// helps if the index is the kept entry's own, so this pins the tracking rather
+// than the exclusion: the surviving entry is deliberately not the first one, so
+// a stale or defaulted index names the wrong file — reporting the reviewed file
+// as dropped and the dropped file as reviewed, in the same record.
+func TestKeepSmallestEntry_ShedRecordNamesTheDroppedFileNotTheKeptOne(t *testing.T) {
+	t.Parallel()
+	entries := []payload.FileEntry{
+		{Path: "big.go", Size: 4, Body: "aaaa"},
+		{Path: "small.go", Size: 2, Body: "bb"},
+	}
+
+	kept, trunc, ok := keepSmallestEntry(entries)
+	require.True(t, ok)
+	require.Equal(t, "small.go", kept[0].Path,
+		"precondition: the kept entry must NOT be the first, or a defaulted index would still be right")
+
+	assert.Equal(t, []string{"big.go"}, trunc.FilesDropped,
+		"the record must name the entry that was shed, never the one still being reviewed")
+}
+
 // The complement, so the fix cannot be "always report something dropped": a
 // single entry sheds nothing, and its record must say so in both fields.
 func TestKeepSmallestEntry_SingleEntryShedsNothing(t *testing.T) {
