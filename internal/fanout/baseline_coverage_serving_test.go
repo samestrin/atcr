@@ -267,25 +267,28 @@ func TestMergeChunkResults_PromotedZeroBudgetKeepsFieldsConsistent(t *testing.T)
 		"reserved_output_tokens must not survive a promoted zero budget — the two fields must agree")
 }
 
-// The promoted sizing record must be COHERENT. effective_budget and
-// resolved_window are a pair — payload.EffectiveByteBudget derives one from the
-// other — so promoting the budget from a re-packed chunk while leaving the
-// window at g[0]'s writes a combination no single agent could produce: a
-// 200000-token window beside the 32k backup's budget. It is also order-
-// dependent, which is the tell: had chunk 0 been the one to re-fit, `out := g[0]`
-// would have carried the backup's window and the record would read correctly.
-// Same physical event, two different records, decided by which chunk failed first.
+// model, resolved_window and reserved_output_tokens must stay ONE agent's
+// record, and effective_budget must not drag them off it.
 //
-// The coherent answer is already available for free: invokeAgent stamps the
-// SERVING agent's window, budget and reservation onto its Result in one block
-// (engine.go), so they are a matched set on whichever result wins the budget min.
-// Take all three from that one result rather than cherry-picking the budget out
-// of it.
-func TestMergeChunkResults_PromotedBudgetCarriesItsOwnWindowAndReservation(t *testing.T) {
+// invokeAgent stamps Model, ResolvedWindow and ReservedOutputTokens from the
+// agent that served that chunk, in one block (engine.go) — so the three arrive
+// as a matched set and `out := g[0]` inherits a matched set. resolved_window is
+// a pure function of model (payload.ContextWindowTokens), which makes that pair
+// checkable by anyone reading status.json.
+//
+// effective_budget is deliberately NOT part of that set on a merged record: the
+// promotion documents it as the tightest budget any re-packed payload was sized
+// to — an AGGREGATE across chunks, flagged by degradation_action and the
+// truncation union beside it. Making the window follow the aggregate instead
+// would trade a documented aggregate for an undocumented lie, pairing chunk 0's
+// model with a different agent's window: a combination payload.ContextWindowTokens
+// says is impossible, on the record a user actually reads.
+func TestMergeChunkResults_PromotedBudgetDoesNotDragTheWindowOffItsModel(t *testing.T) {
 	t.Parallel()
 	g := []Result{
 		{
 			Agent: "greta", Status: StatusOK, Content: "c0",
+			Model:                "primary-model",
 			DegradationAction:    degradationChunk,
 			EffectiveBudget:      400000,
 			ResolvedWindow:       200000,
@@ -293,23 +296,15 @@ func TestMergeChunkResults_PromotedBudgetCarriesItsOwnWindowAndReservation(t *te
 		},
 		{
 			Agent: "greta", Status: StatusOK, Content: "c1",
-			DegradationAction: degradationTruncate,
-			EffectiveBudget:   71680,
-			// The backup's own window and reservation, stamped by invokeAgent.
-			// Deliberately different from g[0]'s in BOTH fields so neither
-			// assertion can pass by inheriting the primary's value.
+			// A DIFFERENT serving agent: its own model, window and reservation.
+			Model:                "backup-model",
+			DegradationAction:    degradationTruncate,
+			EffectiveBudget:      71680,
 			ResolvedWindow:       32768,
 			ReservedOutputTokens: 4096,
 			Truncation:           payload.Truncation{Truncated: true, FilesDropped: []string{"a.go"}},
 			servedRePacked:       true,
 		},
-		{
-			Agent: "greta", Status: StatusOK, Content: "c2",
-			DegradationAction:    degradationChunk,
-			EffectiveBudget:      400000,
-			ResolvedWindow:       200000,
-			ReservedOutputTokens: 8192,
-		},
 	}
 
 	merged := mergeChunkResults(g, nil)
@@ -317,49 +312,13 @@ func TestMergeChunkResults_PromotedBudgetCarriesItsOwnWindowAndReservation(t *te
 	out := merged[0]
 
 	require.Equal(t, int64(71680), out.EffectiveBudget,
-		"precondition: the re-packed chunk's budget is the one promoted")
-	assert.Equal(t, 32768, out.ResolvedWindow,
-		"resolved_window must describe the same agent as the promoted effective_budget, not the primary it substituted for")
-	assert.Equal(t, 4096, out.ReservedOutputTokens,
-		"the reservation must come from the same record as the budget it funds")
-}
-
-// The promotion is presence-gated, not unconditional. A Result built outside
-// invokeAgent carries no sizing stamp at all (the engine's synthesized results,
-// and direct construction in tests), and promoting its zero over a KNOWN g[0]
-// value would blank real information in the name of coherence — strictly worse
-// than the inherited value. So an unstamped winner leaves the inherited window
-// and reservation alone; only a recorded one replaces them.
-func TestMergeChunkResults_UnstampedRePackedChunkDoesNotBlankTheWindow(t *testing.T) {
-	t.Parallel()
-	g := []Result{
-		{
-			Agent: "greta", Status: StatusOK, Content: "c0",
-			DegradationAction:    degradationChunk,
-			EffectiveBudget:      400000,
-			ResolvedWindow:       200000,
-			ReservedOutputTokens: 8192,
-		},
-		{
-			Agent: "greta", Status: StatusOK, Content: "c1",
-			DegradationAction: degradationTruncate,
-			EffectiveBudget:   71680,
-			// No ResolvedWindow, no ReservedOutputTokens — never stamped.
-			Truncation:     payload.Truncation{Truncated: true, FilesDropped: []string{"a.go"}},
-			servedRePacked: true,
-		},
-	}
-
-	merged := mergeChunkResults(g, nil)
-	require.Len(t, merged, 1)
-	out := merged[0]
-
-	require.Equal(t, int64(71680), out.EffectiveBudget,
-		"precondition: the budget still promotes — it was recorded")
+		"precondition: the aggregate budget still promotes — that is the epic's signal")
+	require.Equal(t, "primary-model", out.Model,
+		"precondition: the merged record keeps the persona identity it inherited")
 	assert.Equal(t, 200000, out.ResolvedWindow,
-		"an unrecorded window must not blank the inherited one")
+		"resolved_window must still describe the model named on the SAME record — it is derivable from it")
 	assert.Equal(t, 8192, out.ReservedOutputTokens,
-		"an unrecorded reservation must not blank the inherited one")
+		"the reservation belongs to that same record, not to whichever chunk won the budget min")
 }
 
 // Chunk-level serving identity must not survive the collapse into one persona
