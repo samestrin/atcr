@@ -326,8 +326,9 @@ type RunResult struct {
 	// It exists because the run-level scalar is micro-averaged — correctly, since the
 	// rate is a property of the run's findings — and micro-averaging cannot name the
 	// drifting model. Worse, it hides it: a 12-finding reviewer at 100% drift pooled
-	// against an 80-finding clean one reports 0.130, passes the ceiling, and the run
-	// reads clean.
+	// against a 300-finding clean one reports 0.038, passes the ceiling, and the run
+	// reads clean. Tightening the ceiling raises the dilution such a row needs without
+	// bounding it, since the ratio is set by the rest of the roster.
 	//
 	// Rows are positionally aligned with Reviewers (both sorted by the same
 	// (model, persona) key with the same stable sort), so a consumer reads the

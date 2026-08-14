@@ -157,8 +157,8 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 // per-reviewer detail OutOfVocabularyRate's single scalar structurally cannot carry.
 //
 // Micro-averaging is the right choice for the run-level number and is deliberately
-// unchanged, but it makes the scalar CONCEALING rather than merely coarse: 80 clean
-// findings from one reviewer and 12 drifted from another pool to 0.130, under the
+// unchanged, but it makes the scalar CONCEALING rather than merely coarse: 300 clean
+// findings from one reviewer and 12 drifted from another pool to 0.038, under the
 // ceiling, and the run reports clean while one of two models ignored the enumeration
 // entirely. This type is what names it.
 //

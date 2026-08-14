@@ -232,19 +232,6 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	return writeExportFile(output, out)
 }
 
-// warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
-// measured out-of-vocabulary rate breaches benchmark.MaxOutOfVocabularyRate.
-//
-// It writes to STDERR deliberately: `benchmark run --output <path>` prints nothing
-// to stdout, so the documented resumable invocation would otherwise give the
-// operator no signal at all that the reviewers ignored the offered vocabulary.
-//
-// It is deliberately NOT an exit-code change. A V1 validation run is 2-5 hours of
-// paid LLM work, and failing it at the very end over a diagnostic would discard
-// that work for a number the run was executed to discover.
-//
-// A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
-// a warning nobody reads.
 // warnVocabularyDiagnostics emits every vocabulary signal a finished run owes its
 // operator: the run-level ceiling breach, then the per-reviewer rows that drifted.
 //
@@ -293,10 +280,15 @@ const maxReviewerDriftRate = 0.50
 //
 // The run-level rate is micro-averaged — correctly, since drift is a property of the
 // run's findings — but that makes it concealing rather than merely coarse. A reviewer
-// raising 12 findings that all drifted, pooled against a peer raising 80 clean ones,
-// reports 12/92 = 0.130: under the ceiling, no warning, run reads clean, and one of two
-// models never used the enumeration at all. This walks the per-reviewer breakdown so
-// that reviewer is named.
+// raising 12 findings that all drifted, pooled against a peer raising 300 clean ones,
+// reports 12/312 = 0.038: under the ceiling, no warning, run reads clean, and one of
+// two models never used the enumeration at all. This walks the per-reviewer breakdown
+// so that reviewer is named.
+//
+// Tightening the ceiling does not remove the need for this. It raises the dilution a
+// concealed drifter needs (at 0.20 the same 12 findings hid behind 80 clean ones;
+// at 0.05 they need ~300) — it does not bound it, because the ratio is set by the
+// roster's other reviewers, not by the guard.
 //
 // Both signals fire independently and neither suppresses the other: a run can breach
 // the ceiling AND have the breach concentrated in one row, and those are two different
@@ -345,6 +337,20 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 			"zeroes recall independently of what the reviewer actually found.\n")
 }
 
+// warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
+// measured out-of-vocabulary rate breaches benchmark.MaxOutOfVocabularyRate.
+//
+// It writes to STDERR deliberately: `benchmark run --output <path>` prints nothing
+// to stdout, so the documented resumable invocation would otherwise give the
+// operator no signal at all that the reviewers ignored the offered vocabulary.
+//
+// It is deliberately NOT an exit-code change. A V1 validation run is 2-5 hours of
+// paid LLM work, and failing it at the very end over a diagnostic would discard
+// that work for a number the run was executed to discover.
+//
+// A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
+// a warning nobody reads. It is also RUN-level and therefore cannot name a drifting
+// reviewer; warnDriftingReviewers is the sibling that can.
 func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
 	if !benchmark.ExceedsVocabularyCeiling(rate) {
 		return
