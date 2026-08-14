@@ -390,10 +390,24 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 //   - truncation: the UNION of the shed files, deduplicated and sorted, since each
 //     re-packed chunk shed its own set and the persona's record has to name all of
 //     them.
-//   - effective_budget: the SMALLEST across re-packed chunks — the tightest budget
-//     any of this persona's payloads was actually sized to. A recorded 0 is a
-//     real budget (a zero-window re-fit), not "unknown": it wins the min, and
+//   - effective_budget: the SMALLEST across RE-PACKED chunks — the tightest budget
+//     any RE-PACKED payload of this persona was actually sized to. Deliberately
+//     not a min across the whole group: a chunk served by its primary, or by a
+//     fallback that did NOT re-fit, records a budget this promotion has no claim
+//     over, and widening the min would change a published status.json value on
+//     runs the promotion is otherwise inert for. A recorded 0 is a real budget
+//     (a zero-window re-fit), not "unknown": it wins the min, and
 //     reserved_output_tokens is zeroed alongside it so the two fields agree.
+//   - resolved_window and reserved_output_tokens: taken from the SAME re-packed
+//     member whose budget won the min, never from g[0]. The three fields describe
+//     one agent's sizing — invokeAgent stamps all three from the same agent in
+//     the same block — so promoting the budget alone writes a pair no single
+//     agent could produce (a 200k-token window beside a 32k backup's budget), and
+//     writes it order-dependently: a re-fit on chunk 0 would have been coherent
+//     via `out := g[0]` while the same re-fit on chunk 1 is not. Both are
+//     presence-gated: a Result built outside invokeAgent carries no stamp, and
+//     promoting its zero over a known inherited value would blank real
+//     information rather than make the record coherent.
 //
 // chunk_count is restored to the group size when a re-pack promoted anything:
 // it describes the persona's split, which is still exactly what happened — but a
@@ -404,6 +418,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 func promoteRePackedDegradation(out *Result, g []Result) {
 	dropped := map[string]struct{}{}
 	var budget int64
+	var sizedWindow, sizedReserved int
 	haveBudget := false
 	action := ""
 	rePacked := false
@@ -421,8 +436,14 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// Presence is tracked separately from value: 0 is both the zero value of
 		// an unset field AND a genuine recorded budget, so min-by-value alone
 		// would either ignore a real 0 or let it overwrite everything.
+		//
+		// The window and the reservation are captured HERE, with the budget that
+		// won, rather than min'd independently: they are one agent's sizing
+		// record and only stay coherent if they travel together.
 		if !haveBudget || r.EffectiveBudget < budget {
 			budget = r.EffectiveBudget
+			sizedWindow = r.ResolvedWindow
+			sizedReserved = r.ReservedOutputTokens
 			haveBudget = true
 		}
 	}
@@ -434,9 +455,21 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		out.DegradationAction = action
 	}
 	out.EffectiveBudget = budget
+	// The window and reservation that belong WITH that budget. Presence-gated:
+	// an unstamped winner leaves the inherited values alone rather than blanking
+	// them — see the doc comment.
+	if sizedWindow != 0 {
+		out.ResolvedWindow = sizedWindow
+	}
+	if sizedReserved != 0 {
+		out.ReservedOutputTokens = sizedReserved
+	}
 	if budget == 0 {
 		// A promoted zero budget must not sit beside an inherited non-zero
 		// reservation: status.json omits both at 0, keeping the record consistent.
+		// Last, so it also overrides a promoted reservation — a re-fit at budget 0
+		// records no reservation by construction, but the invariant does not
+		// depend on that holding.
 		out.ReservedOutputTokens = 0
 	}
 	if len(dropped) > 0 {
