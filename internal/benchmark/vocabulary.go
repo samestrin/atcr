@@ -139,6 +139,27 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 	return &rate
 }
 
+// ReviewerVocabulary is one reviewer row's out-of-vocabulary breakdown: the
+// per-reviewer detail the run-level scalar cannot express.
+//
+// STUB — not yet implemented.
+type ReviewerVocabulary struct {
+	Model         string   `json:"model"`
+	Persona       string   `json:"persona"`
+	Findings      int      `json:"findings"`
+	Drifted       int      `json:"drifted"`
+	Rate          *float64 `json:"rate,omitempty"`
+	RoutingValues int      `json:"routing_values"`
+}
+
+// PerReviewerVocabulary breaks the run-level rate down per reviewer.
+//
+// STUB — deliberately returns the wrong answer so the RED tests fail for the
+// reason they are written to catch, while `go vet` still compiles the package.
+func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
+	return nil
+}
+
 // vocabularySet is the closed vocabulary as a lookup set, normalized the same way
 // the scorer normalizes a raised category so case and padding never register as
 // drift.

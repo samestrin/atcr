@@ -317,6 +317,10 @@ type RunResult struct {
 	// rows by realized model makes uneven coverage the normal case rather than an
 	// exceptional one.
 	Coverage []ReviewerCoverage `json:"reviewer_coverage,omitempty"`
+
+	// Vocabulary breaks OutOfVocabularyRate down per reviewer row. STUB — see
+	// PerReviewerVocabulary in vocabulary.go.
+	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,
