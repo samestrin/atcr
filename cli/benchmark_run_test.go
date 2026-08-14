@@ -498,6 +498,72 @@ func TestWarnDriftingReviewers_FiresAlongsideTheRunLevelWarning(t *testing.T) {
 	assert.Contains(t, got, "totally-drifted", "and the per-reviewer one names who")
 }
 
+// AC2 end-to-end from a RunResult, and the reason the two signals share one call site:
+// the scenario that matters is the one where the ceiling warning is SILENT and a
+// reviewer is drifting anyway. A test that invokes each helper directly cannot observe
+// that BOTH are reached from the command — delete either call and this fails.
+func TestWarnVocabularyDiagnostics_SilentCeilingStillNamesTheDriftingReviewer(t *testing.T) {
+	eightyClean := make([]string, 80)
+	for i := range eightyClean {
+		eightyClean[i] = "correctness"
+	}
+	twelveDrifted := make([]string, 12)
+	for i := range twelveDrifted {
+		twelveDrifted[i] = "bug"
+	}
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "clean-model", Persona: "alice", Cases: []benchmark.CaseScore{{Raised: eightyClean}}},
+		{Model: "drifted-model", Persona: "bob", Cases: []benchmark.CaseScore{{Raised: twelveDrifted}}},
+	}
+	rr := &benchmark.RunResult{
+		Suite:               "s",
+		SuiteVersion:        "1.0.0",
+		Reviewers:           benchmark.Score(reviewers),
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
+		Vocabulary:          benchmark.PerReviewerVocabulary(reviewers),
+	}
+	require.False(t, benchmark.ExceedsVocabularyCeiling(rr.OutOfVocabularyRate),
+		"precondition: the pooled rate passes, so only the per-reviewer signal can speak")
+
+	var buf bytes.Buffer
+	warnVocabularyDiagnostics(&buf, rr)
+	got := buf.String()
+
+	assert.NotContains(t, got, "is at or above", "the run-level ceiling was not breached")
+	assert.Contains(t, got, "drifted-model/bob", "the drifting reviewer is named anyway")
+	assert.Contains(t, got, "12/12")
+}
+
+// A breaching run emits BOTH signals from that same call site.
+func TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply(t *testing.T) {
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "totally-drifted", Persona: "p", Cases: []benchmark.CaseScore{{
+			Raised: []string{"bug", "clarity", "input"},
+		}}},
+	}
+	rr := &benchmark.RunResult{
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
+		Vocabulary:          benchmark.PerReviewerVocabulary(reviewers),
+	}
+
+	var buf bytes.Buffer
+	warnVocabularyDiagnostics(&buf, rr)
+	got := buf.String()
+
+	// "is at or above" is unique to the ceiling warning. Asserting on
+	// "out_of_vocabulary_rate" would NOT distinguish the two signals — the
+	// per-reviewer warning names that metric in its own body, so the weaker
+	// assertion passes even with the run-level call deleted.
+	assert.Contains(t, got, "is at or above", "run-level breach still reported")
+	assert.Contains(t, got, "totally-drifted/p", "and the row responsible is named")
+
+	// A clean run says nothing at all, and a nil result is not a crash.
+	buf.Reset()
+	warnVocabularyDiagnostics(&buf, &benchmark.RunResult{})
+	warnVocabularyDiagnostics(&buf, nil)
+	assert.Empty(t, buf.String(), "an unmeasured run has nothing to report")
+}
+
 // The warning reaches the operator on the documented resumable invocation. `benchmark
 // run --output <path>` prints nothing to stdout, so a per-reviewer signal written
 // anywhere but stderr would be invisible in exactly the run that most needs it.

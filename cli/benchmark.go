@@ -129,11 +129,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	warnIfVocabularyCeilingExceeded(cmd.ErrOrStderr(), rr.OutOfVocabularyRate)
-	// Independent of the run-level guard above, and deliberately not gated on it: the
-	// case this exists for is a run whose pooled rate PASSED while one reviewer
-	// drifted on everything it raised.
-	warnDriftingReviewers(cmd.ErrOrStderr(), rr.Vocabulary)
+	warnVocabularyDiagnostics(cmd.ErrOrStderr(), rr)
 
 	data, err := json.MarshalIndent(rr, "", "  ")
 	if err != nil {
@@ -249,6 +245,23 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 //
 // A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
 // a warning nobody reads.
+// warnVocabularyDiagnostics emits every vocabulary signal a finished run owes its
+// operator: the run-level ceiling breach, then the per-reviewer rows that drifted.
+//
+// The two are joined at ONE call site rather than invoked separately from the command
+// so the pairing is testable from a RunResult — the scenario that matters is precisely
+// the one where the first signal is SILENT and the second is not, and a test that calls
+// each helper directly cannot observe that they are both reached. Neither gates the
+// other: a run can breach the ceiling and also have the breach concentrated in one row,
+// and those are two different facts.
+func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
+	if rr == nil {
+		return
+	}
+	warnIfVocabularyCeilingExceeded(w, rr.OutOfVocabularyRate)
+	warnDriftingReviewers(w, rr.Vocabulary)
+}
+
 // maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
 // warnDriftingReviewers names a reviewer. INCLUSIVE, matching the run-level ceiling's
 // semantics: a reviewer sitting exactly on it is named.
