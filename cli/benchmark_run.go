@@ -311,8 +311,12 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		// fold in through applyReviewerOutcome before this point. nil when the run
 		// raised no findings at all, which must not read as perfect agreement.
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
-		SuiteCaseIDs:        suiteCaseIDs,
-		Coverage:            coverage,
+		// The same drift, attributed. Built from the SAME slice as the two values
+		// above — which is what keeps the breakdown's totals equal to the scalar's,
+		// and its rows positionally aligned with the Reviewers rows Score emits.
+		Vocabulary:   benchmark.PerReviewerVocabulary(reviewers),
+		SuiteCaseIDs: suiteCaseIDs,
+		Coverage:     coverage,
 	}, nil
 }
 

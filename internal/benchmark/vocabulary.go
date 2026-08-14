@@ -1,6 +1,11 @@
 package benchmark
 
-import "github.com/samestrin/atcr/reconcile"
+import (
+	"sort"
+
+	"github.com/samestrin/atcr/internal/scorecard"
+	"github.com/samestrin/atcr/reconcile"
+)
 
 // MaxOutOfVocabularyRate is the ceiling a benchmark run's out-of-vocabulary rate
 // must stay strictly under. It is EXCLUSIVE: a run sitting exactly on it trips the
@@ -139,25 +144,141 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 	return &rate
 }
 
-// ReviewerVocabulary is one reviewer row's out-of-vocabulary breakdown: the
-// per-reviewer detail the run-level scalar cannot express.
+// ReviewerVocabulary is one reviewer row's out-of-vocabulary breakdown — the
+// per-reviewer detail OutOfVocabularyRate's single scalar structurally cannot carry.
 //
-// STUB — not yet implemented.
+// Micro-averaging is the right choice for the run-level number and is deliberately
+// unchanged, but it makes the scalar CONCEALING rather than merely coarse: 80 clean
+// findings from one reviewer and 12 drifted from another pool to 0.130, under the
+// ceiling, and the run reports clean while one of two models ignored the enumeration
+// entirely. This type is what names it.
+//
+// It is a DIAGNOSTIC array on the run result, not a reviewer metric, for the same
+// reason OutOfVocabularyRate sits there: scorecard.PublicRecord is the frozen public
+// schema shared byte-for-byte with production `leaderboard --export`, and a
+// benchmark-only column does not belong in a public submission. BuildSubmission
+// accordingly does not carry it forward.
 type ReviewerVocabulary struct {
-	Model         string   `json:"model"`
-	Persona       string   `json:"persona"`
-	Findings      int      `json:"findings"`
-	Drifted       int      `json:"drifted"`
-	Rate          *float64 `json:"rate,omitempty"`
-	RoutingValues int      `json:"routing_values"`
+	// Model and Persona are the REALIZED identity, matching the row PublicRecord
+	// publishes and Score sorts on — the same identity ReviewerCoverage joins by.
+	// The lane (configured agent name) is deliberately NOT carried: since the fold
+	// re-keyed on the realized identity, two lanes that realize the same
+	// (model, persona) merge into one row, so a single agent name is not
+	// well-defined per row.
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+
+	// Findings is this reviewer's own denominator and Drifted its numerator, both
+	// published alongside Rate rather than left implicit. A rate without its counts
+	// cannot be read: 1.0 from one finding and 1.0 from eighty are the same number
+	// and very different facts, and the operator warning quotes both for exactly
+	// that reason.
+	Findings int `json:"findings"`
+	Drifted  int `json:"drifted"`
+
+	// Rate is Drifted/Findings — this reviewer's findings pooled the same way the
+	// run-level rate pools the run's, NOT a macro-average of its per-case rates.
+	//
+	// A POINTER for the same nil-vs-zero reason the run-level field is one, applied
+	// per row: a reviewer that raised nothing is UNMEASURED, and a failed reviewer
+	// reporting 0.0 would publish the most drifted possible row as flawless
+	// vocabulary agreement. omitempty drops the key only when the pointer is nil.
+	Rate *float64 `json:"rate,omitempty"`
+
+	// RoutingValues counts this reviewer's findings labelled with one of the two
+	// ROUTING values — `other` and `out-of-scope` — as opposed to a descriptive
+	// category.
+	//
+	// It exists to close the all-`other` blind spot recorded on
+	// MaxOutOfVocabularyRate: both routing values are taxonomy members, so a reviewer
+	// that labels EVERY finding `other` reports drift 0.0 — identical to a reviewer
+	// that categorized every finding precisely — while conveying no categorical
+	// information at all. RoutingValues == Findings alongside Rate 0.0 is that
+	// signature; pair it with the recall on the positionally-aligned Reviewers row to
+	// confirm (drift 0.0 WITH recall 0.0 means "categorized nothing").
+	//
+	// This is deliberately a COUNT rather than a redefinition of the rate. Excluding
+	// the routing values from the vocabulary would conflate two unrelated failures —
+	// category.go:73 ships `other` precisely as the escape hatch that makes the set
+	// closed rather than lossy, and reaching for it is a reviewer obeying its prompt,
+	// not drifting — and would strand the V1 baseline measured under the current
+	// definition. NOT omitempty: a real zero is a measurement (this reviewer routed
+	// nothing), and dropping it would make a clean reviewer indistinguishable from
+	// one whose row predates the field.
+	RoutingValues int `json:"routing_values"`
 }
 
-// PerReviewerVocabulary breaks the run-level rate down per reviewer.
+// PerReviewerVocabulary breaks the run's out-of-vocabulary drift down per reviewer.
 //
-// STUB — deliberately returns the wrong answer so the RED tests fail for the
-// reason they are written to catch, while `go vet` still compiles the package.
+// Membership, normalization, and what counts as drift are IDENTICAL to
+// OutOfVocabularyRate — same vocabularySet, same normalize, empty categories still
+// count as drift — so an entry's rate is never a differently-defined number wearing
+// the same name. Summing the entries' Drifted and Findings reproduces the run-level
+// numerator and denominator exactly; the scalar is those two totals divided, and these
+// are the same division taken per row.
+//
+// The returned slice is POSITIONALLY ALIGNED with Score's output for the same input:
+// it sorts by the same (model, persona) key with the same stable sort, so entry i
+// describes Reviewers[i]. That alignment is what lets a consumer read the all-`other`
+// signature — RoutingValues == Findings here, CorroborationRate 0.0 there — without
+// this array duplicating a frozen-schema field. Recall is deliberately NOT copied in.
+//
+// Alignment is by SORT, not by a key join, and that is load-bearing: Score's sort is
+// stable precisely because two reviewers can share a (model, persona) pair, and a key
+// join cannot disambiguate a collision — which is the case this diagnostic most needs
+// to report correctly. Both sides preserve the caller's order within a tie, so the two
+// slices stay in lockstep even then.
+//
+// Every reviewer gets an entry, including one that raised nothing: an absent row would
+// silently read as a reviewer that did not exist rather than one that produced nothing.
+// A nil/empty input returns nil so the run-result key is omitted entirely.
 func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
-	return nil
+	if len(reviewers) == 0 {
+		return nil
+	}
+
+	vocabulary := vocabularySet()
+	routing := map[string]bool{
+		normalize(reconcile.CategoryOther):      true,
+		normalize(reconcile.CategoryOutOfScope): true,
+	}
+
+	out := make([]ReviewerVocabulary, 0, len(reviewers))
+	for _, r := range reviewers {
+		// Scrubbed here for the same reason buildRunResult scrubs before sorting: Score
+		// re-scrubs the rows it emits, so an unscrubbed identity would sort into a
+		// different position than its counterpart and break the positional alignment
+		// this function documents.
+		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: r.Model, Persona: r.Persona})
+		e := ReviewerVocabulary{Model: id.Model, Persona: id.Persona}
+		for _, c := range r.Cases {
+			for _, raw := range c.Raised {
+				n := normalize(raw)
+				e.Findings++
+				if !vocabulary[n] {
+					e.Drifted++
+				}
+				if routing[n] {
+					e.RoutingValues++
+				}
+			}
+		}
+		if e.Findings > 0 {
+			rate := float64(e.Drifted) / float64(e.Findings)
+			e.Rate = &rate
+		}
+		out = append(out, e)
+	}
+
+	// Mirrors Score's sort exactly — same key, same stability — so entry i and
+	// Reviewers[i] describe the same row.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Persona < out[j].Persona
+	})
+	return out
 }
 
 // vocabularySet is the closed vocabulary as a lookup set, normalized the same way
