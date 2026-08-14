@@ -5,6 +5,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // reviewStrategyChunked is the review_strategy value (Epic 14.3) that enables
@@ -22,9 +24,12 @@ const reviewStrategyChunked = "chunked"
 // raw HEAD content), a deleted-file marker, and a binary-file marker — none of
 // which carry a `diff --git` header; without them an escalated entry would be
 // glued onto the preceding diff segment and countDiffFiles would under-report the
-// file total (Epic 35.1). These literals mirror internal/payload's rendered-entry
-// markers, kept local so the chunker splits on them directly rather than importing
-// internal/payload (a package-private split), avoiding cross-package coupling.
+// file total (Epic 35.1). These literals mirror a package-private split of
+// internal/payload's rendered-entry markers and are kept local so the chunker's
+// split decisions do not depend on payload's rendering internals. (The file does
+// import internal/payload elsewhere — for payload.Truncation in
+// promoteRePackedDegradation — so the locality is about the split logic, not
+// about avoiding the import altogether.)
 // (The "chunked strategy is a no-op for a pure files-mode payload" signal is keyed
 // off the declared payload MODE at the call site, not off this predicate.)
 func isDiffFileMarker(ln string) bool {
@@ -238,6 +243,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	// produced. Reset so ParsedFindingCount recomputes from the merged content.
 	out.parsedFindingCount = 0
 	out.parsedFindingCountSet = false
+	// Chunk-level serving identity does not survive the collapse: the merged
+	// Result is a persona record, so inheriting chunk 0's served tag would name
+	// only its files as if they were the persona's reviewed set — beside a
+	// degradation record promoteRePackedDegradation may lift from a DIFFERENT
+	// chunk. Coverage attribution reads RAW results pre-merge (the
+	// uncoveredBaselineFiles PRECONDITION), so the merged record vouches for
+	// nothing.
+	out.servedChunkFiles = nil
+	out.servedRePacked = false
 
 	isSerial := serialSet[out.Agent]
 
@@ -308,6 +322,7 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	}
 	out.Content = strings.Join(contents, "\n")
 	out.CacheHit = allCacheHit
+	promoteRePackedDegradation(&out, g)
 	if len(fallbackFromSet) > 0 {
 		fallbacks := make([]string, 0, len(fallbackFromSet))
 		for fb := range fallbackFromSet {
@@ -353,4 +368,104 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Err = firstErr
 	}
 	return out
+}
+
+// promoteRePackedDegradation lifts a re-packed chunk's degradation record into the
+// merged persona result (Epic 35.16.5.4 AC6).
+//
+// The merge otherwise inherits Truncation / DegradationAction / EffectiveBudget
+// wholesale from g[0], so a fallback that re-fit its payload on any chunk but the
+// FIRST is invisible in status.json — degradation_action would still read "chunk"
+// with an empty truncation, on exactly the multi-chunk baseline path this epic
+// targets. The persona would present as a clean full-coverage review while a
+// substitute reviewed strictly less than it was sent.
+//
+// Deliberately inert unless some chunk actually re-packed, so a run with no re-fit
+// keeps a byte-identical merged record (AC4) and the pre-existing g[0] semantics
+// stand everywhere else. What it promotes:
+//
+//   - degradation_action: overflow over truncate. Same precedence status.go
+//     documents — overflow is the only value that says the review may not have
+//     been read in full, so it must survive a merge with a milder sibling.
+//   - truncation: the UNION of the shed files, deduplicated and sorted, since each
+//     re-packed chunk shed its own set and the persona's record has to name all of
+//     them.
+//   - effective_budget: the SMALLEST across RE-PACKED chunks — the tightest budget
+//     any RE-PACKED payload of this persona was actually sized to. Deliberately
+//     not a min across the whole group: a chunk served by its primary, or by a
+//     fallback that did NOT re-fit, was not re-packed and this record has no
+//     claim over its budget. A recorded 0 is a real budget (a zero-window
+//     re-fit), not "unknown": it wins the min, and reserved_output_tokens is
+//     zeroed alongside it so the two fields agree.
+//
+// This field is therefore an AGGREGATE, and the one place the merged record
+// stops describing a single agent. That is deliberate and must stay contained:
+// resolved_window and reserved_output_tokens are NOT promoted with it. invokeAgent
+// stamps Model, ResolvedWindow and ReservedOutputTokens from the serving agent in
+// one block (engine.go), so `out := g[0]` inherits a matched set, and
+// resolved_window is a pure function of the model beside it
+// (payload.ContextWindowTokens). Promoting the window to "match" the aggregate
+// budget would pair chunk 0's model with a different agent's window — a
+// combination that function says cannot exist, traded for a mismatch that is
+// documented right here. An earlier revision did exactly that; the invariant is
+// pinned by TestMergeChunkResults_PromotedBudgetDoesNotDragTheWindowOffItsModel.
+//
+// chunk_count is restored to the group size when a re-pack promoted anything:
+// it describes the persona's split, which is still exactly what happened — but a
+// re-packed chunk 0 carries ChunkCount 1 (its own re-fit record), so inheriting
+// g[0] wholesale would under-report the split on the only record a user reads
+// (status.json is written from this merged Result). With no re-pack the field
+// keeps the pre-epic g[0] semantics (AC4).
+func promoteRePackedDegradation(out *Result, g []Result) {
+	dropped := map[string]struct{}{}
+	var budget int64
+	haveBudget := false
+	action := ""
+	rePacked := false
+	for _, r := range g {
+		if !r.servedRePacked {
+			continue
+		}
+		rePacked = true
+		for _, p := range r.Truncation.FilesDropped {
+			dropped[p] = struct{}{}
+		}
+		if action != degradationOverflow {
+			action = r.DegradationAction
+		}
+		// Presence is tracked separately from value: 0 is both the zero value of
+		// an unset field AND a genuine recorded budget, so min-by-value alone
+		// would either ignore a real 0 or let it overwrite everything.
+		//
+		if !haveBudget || r.EffectiveBudget < budget {
+			budget = r.EffectiveBudget
+			haveBudget = true
+		}
+	}
+	if !rePacked {
+		return
+	}
+	out.ChunkCount = len(g)
+	if action != "" {
+		out.DegradationAction = action
+	}
+	out.EffectiveBudget = budget
+	// ResolvedWindow and ReservedOutputTokens are deliberately NOT promoted with
+	// it — see the doc comment. They belong to the model named on this record.
+	if budget == 0 {
+		// A promoted zero budget must not sit beside an inherited non-zero
+		// reservation: status.json omits both at 0, keeping the record consistent.
+		// Last, so it also overrides a promoted reservation — a re-fit at budget 0
+		// records no reservation by construction, but the invariant does not
+		// depend on that holding.
+		out.ReservedOutputTokens = 0
+	}
+	if len(dropped) > 0 {
+		paths := make([]string, 0, len(dropped))
+		for p := range dropped {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		out.Truncation = payload.Truncation{Truncated: true, FilesDropped: paths}
+	}
 }

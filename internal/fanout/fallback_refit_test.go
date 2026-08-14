@@ -1,0 +1,914 @@
+package fanout
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Epic 35.16.5.4 T2: under on_overflow=truncate, a fallback whose OWN budget
+// cannot hold the payload its primary was sized for re-packs that payload against
+// its own budget instead of shipping a prompt it provably cannot hold.
+//
+// The pre-epic behavior — warn and ship — stays exactly as it was on every other
+// arm: fail/fallback still hard-fail pre-dispatch, chunk and unset still
+// warn-and-ship, and so does truncate itself whenever no re-pack source exists
+// (the chunked-diff path). Those are pinned by fallback_overflow_policy_test.go,
+// which passes unmodified.
+
+// refitRoster wires greta (declaring `window` tokens, model absent from the static
+// table) to fall back to kai on an unlisted model, so kai resolves the 32768
+// default and its budget is genuinely too small for the payload greta was sized
+// for. Only greta is rostered, so buildSlots yields exactly one slot.
+func refitRoster(t *testing.T, window int, onOverflow string) *ReviewConfig {
+	t.Helper()
+	cfg := declaredWindowRoster(t, window)
+	g := cfg.Registry.Agents["greta"]
+	g.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model" // undeclared → 32768 default
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Settings.OnOverflow = onOverflow
+	cfg.Project.Agents = []string{"greta"}
+	return cfg
+}
+
+// markedOversizedPayload is oversizedBlocksPayload with column-0 `=== FILE: `
+// markers, so EntriesFromRenderedPayload recovers the per-file breakdown and both
+// agents carry a populated CodeContext. That matters: CodeContext is the only
+// measurement of what an agent was actually SENT, so without markers these tests
+// could assert the re-fit's record but never that the bytes really shrank.
+func markedOversizedPayload() map[string]modePayload {
+	const fileBytes = 50000
+	const nFiles = 10
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < nFiles; i++ {
+		body := fmt.Sprintf("=== FILE: f%d.go ===\n", i) + strings.Repeat("x", fileBytes) + "\n"
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("f%d.go", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	return map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: nFiles},
+	}
+}
+
+// wideDiffOfNFiles builds a diff whose lines are wide enough that a line-capped
+// chunk still exceeds the backup's byte budget — diffOfNFiles' 6-byte lines would
+// need ~12000 lines per chunk to get there.
+func wideDiffOfNFiles(fileCount, bodyLines int) string {
+	var b strings.Builder
+	wide := "+" + strings.Repeat("w", 98) + "\n"
+	for i := 0; i < fileCount; i++ {
+		path := fmt.Sprintf("f%d.go", i)
+		b.WriteString("diff --git a/" + path + " b/" + path + "\n")
+		b.WriteString("--- a/" + path + "\n+++ b/" + path + "\n")
+		fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", bodyLines, bodyLines)
+		for j := 0; j < bodyLines; j++ {
+			b.WriteString(wide)
+		}
+	}
+	return b.String()
+}
+
+// buildRefitSlot builds the single greta slot (with its kai fallback) over the
+// oversized payload, through buildSlots — the only production path that supplies
+// the re-pack context.
+func buildRefitSlot(t *testing.T, cfg *ReviewConfig) Slot {
+	t.Helper()
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 1)
+	require.Len(t, slots[0].Fallbacks, 1, "precondition: greta must resolve exactly one fallback (kai)")
+	return slots[0]
+}
+
+// codeContextBytes totals the per-file bodies an agent was actually sent — the
+// quantity the effective byte budget governs.
+func codeContextBytes(a Agent) int64 {
+	var total int64
+	for _, ref := range a.CodeContext {
+		total += int64(len(ref.Body))
+	}
+	return total
+}
+
+func TestBuildFallbackAgent_TruncateRefitsPayloadToItsOwnBudget(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	slot := buildRefitSlot(t, cfg)
+	primary, fb := slot.Primary, slot.Fallbacks[0]
+
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Greater(t, primary.EffectiveBudget, fbBudget,
+		"precondition: the backup's budget must be smaller than the primary's, or nothing overflows")
+	require.Greater(t, codeContextBytes(primary), fbBudget,
+		"precondition: the payload the primary shipped must not fit the backup's budget")
+
+	// AC1: the payload the fallback receives fits ITS budget, not its primary's.
+	assert.LessOrEqual(t, codeContextBytes(fb), fbBudget,
+		"the re-packed fallback's payload must fit its OWN effective byte budget")
+	assert.Less(t, len(fb.Prompt), len(primary.Prompt),
+		"a re-fit may only ever send FEWER bytes than the inherited prompt (Conservatism NFR)")
+
+	// AC6: the record describes what was actually sent.
+	assert.Equal(t, degradationTruncate, fb.DegradationAction,
+		"a fallback that re-fit its payload records truncate, not the overflow it would have shipped")
+	assert.True(t, fb.Truncation.Truncated, "the shed must be recorded, never silent")
+	assert.NotEmpty(t, fb.Truncation.FilesDropped, "the fallback's own Truncation must name the files IT shed")
+	assert.Equal(t, fbBudget, fb.EffectiveBudget,
+		"effective_budget must be the budget the re-fit payload was actually sized to")
+
+	// The shed set is the fallback's own, not the primary's inherited record.
+	assert.NotEqual(t, primary.Truncation.FilesDropped, fb.Truncation.FilesDropped,
+		"the fallback must not report its primary's shed list as its own")
+	for _, dropped := range fb.Truncation.FilesDropped {
+		for _, ref := range fb.CodeContext {
+			assert.NotEqual(t, dropped, ref.Path, "a file recorded as dropped must not be in the payload sent")
+		}
+	}
+
+	// But it must COMPOSE with the primary's record, not replace it: a file the
+	// primary shed before the slot was built is absent from this agent's payload
+	// too, so the serving agent's files_dropped must name it (AC6) — otherwise
+	// the agent that reviewed the LEAST reports the SHORTEST omission list.
+	require.NotEmpty(t, primary.Truncation.FilesDropped,
+		"precondition: this fixture's primary must itself shed, or there is nothing to compose")
+	for _, p := range primary.Truncation.FilesDropped {
+		assert.Contains(t, fb.Truncation.FilesDropped, p,
+			"the serving agent's files_dropped must name what the primary already shed")
+	}
+	assert.True(t, sort.StringsAreSorted(fb.Truncation.FilesDropped),
+		"files_dropped stays sorted by path, per payload.ApplyByteBudget's contract")
+}
+
+func TestBuildFallbackAgent_RefitNeverShipsAnEmptyPayload(t *testing.T) {
+	// AC5: when not even one file fits the fallback's budget, keep the single
+	// smallest entry — an empty payload returns a false-clean "no findings" review.
+	// A 1-token declaration on the backup drives its effective budget to 0, the
+	// strongest possible overflow signal.
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one
+	cfg.Registry.Agents["kai"] = kai
+
+	slot := buildRefitSlot(t, cfg)
+	fb := slot.Fallbacks[0]
+
+	require.Equal(t, int64(0), payload.EffectiveByteBudget("unlisted-backup-model", &one, defaultMaxTokens),
+		"precondition: a 1-token window must fund no input budget at all")
+	assert.Len(t, fb.CodeContext, 1, "no file fits, so exactly the single smallest entry is kept — never zero")
+	assert.NotEmpty(t, fb.CodeContext[0].Body, "the kept entry must carry real content")
+	assert.True(t, fb.Truncation.Truncated)
+	assert.Len(t, fb.Truncation.FilesDropped, len(markedOversizedPayload()["blocks"].Entries)-1,
+		"every entry except the kept one must be recorded as dropped")
+}
+
+// AC5, the case a "fewest bytes" rule gets wrong: empty tracked files are
+// ordinary (py.typed, __init__.py, .gitkeep). Picking one as "smallest" ships a
+// payload of exactly 0 bytes — a false-clean "no findings" review that also tags
+// the empty file as covered.
+func TestBuildFallbackAgent_RefitNeverKeepsAZeroByteFile(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0 → the keep-smallest arm
+	cfg.Registry.Agents["kai"] = kai
+
+	payloads := markedOversizedPayload()
+	mp := payloads["blocks"]
+	mp.Entries = append([]payload.FileEntry{{Path: "py.typed", Size: 0, Body: ""}}, mp.Entries...)
+	payloads["blocks"] = mp
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	require.Equal(t, int64(0), payload.EffectiveByteBudget("unlisted-backup-model", &one, defaultMaxTokens),
+		"precondition: the backup must fund no input budget, so the keep-smallest arm runs")
+	assert.NotEmpty(t, codeContextBytes(fb),
+		"the re-fit must never ship a 0-byte payload — that is a false-clean review, not a small one")
+	for _, ref := range fb.CodeContext {
+		assert.NotEqual(t, "py.typed", ref.Path, "an empty file must not be chosen as the kept entry")
+	}
+	for _, p := range fb.chunkFiles {
+		assert.NotEqual(t, "py.typed", p, "an empty file must not be tagged as covered by the re-fit")
+	}
+}
+
+// The shed record must never say "files were dropped" and name none.
+//
+// droppedPathsExcept filtered by PATH while keepSmallestEntry set Truncated from
+// the entry COUNT, so a payload carrying two entries that share a path recorded
+// Truncated: true with an empty files_dropped — the one shape status.go promises
+// cannot occur ("the truncation record still lists the dropped files, so a reader
+// reconstructs both facts"). Duplicate paths are a supported payload shape
+// (internal/payload/budget_test.go TestBudget_DuplicatePaths pins that the budget
+// pass accounts for each occurrence independently) and reach fanout through
+// PrepareReviewFromDiff on a concatenated diff.
+//
+// It is not only cosmetic: promoteRePackedDegradation gates its Truncation
+// promotion on len(dropped) > 0, so an empty shed record leaves the merged
+// persona record carrying a NON-re-packed chunk's truncation beside a promoted
+// truncate action and the re-fit's tiny effective_budget.
+func TestKeepSmallestEntry_DuplicatePathsStillNameTheDroppedOccurrence(t *testing.T) {
+	t.Parallel()
+	entries := []payload.FileEntry{
+		{Path: "dup.go", Size: 4, Body: "aaaa"},
+		{Path: "dup.go", Size: 2, Body: "bb"},
+	}
+
+	kept, trunc, ok := keepSmallestEntry(entries)
+	require.True(t, ok, "precondition: both entries have content, so one survives")
+	require.Len(t, kept, 1)
+	require.Equal(t, "bb", kept[0].Body, "precondition: the smaller occurrence is the one kept")
+
+	assert.True(t, trunc.Truncated, "one of two entries was genuinely dropped")
+	assert.Equal(t, []string{"dup.go"}, trunc.FilesDropped,
+		"the dropped occurrence must be named, even though the surviving entry shares its path")
+	assert.Equal(t, trunc.Truncated, len(trunc.FilesDropped) > 0,
+		"Truncated and FilesDropped must never disagree — that pair is the whole shed record")
+}
+
+// The shed record must never name the file it KEPT. Excluding by index only
+// helps if the index is the kept entry's own, so this pins the tracking rather
+// than the exclusion: the surviving entry is deliberately not the first one, so
+// a stale or defaulted index names the wrong file — reporting the reviewed file
+// as dropped and the dropped file as reviewed, in the same record.
+func TestKeepSmallestEntry_ShedRecordNamesTheDroppedFileNotTheKeptOne(t *testing.T) {
+	t.Parallel()
+	entries := []payload.FileEntry{
+		{Path: "big.go", Size: 4, Body: "aaaa"},
+		{Path: "small.go", Size: 2, Body: "bb"},
+	}
+
+	kept, trunc, ok := keepSmallestEntry(entries)
+	require.True(t, ok)
+	require.Equal(t, "small.go", kept[0].Path,
+		"precondition: the kept entry must NOT be the first, or a defaulted index would still be right")
+
+	assert.Equal(t, []string{"big.go"}, trunc.FilesDropped,
+		"the record must name the entry that was shed, never the one still being reviewed")
+}
+
+// The complement, so the fix cannot be "always report something dropped": a
+// single entry sheds nothing, and its record must say so in both fields.
+func TestKeepSmallestEntry_SingleEntryShedsNothing(t *testing.T) {
+	t.Parallel()
+	kept, trunc, ok := keepSmallestEntry([]payload.FileEntry{{Path: "only.go", Size: 3, Body: "abc"}})
+
+	require.True(t, ok)
+	require.Len(t, kept, 1)
+	assert.False(t, trunc.Truncated,
+		"nothing was dropped, and Truncated false is what tells the re-fit caller there is no smaller payload to send")
+	assert.Empty(t, trunc.FilesDropped)
+}
+
+// emptyBodiedPayload builds entries whose Size claims content their Body does
+// not carry — every body empty. keepSmallestEntry declines (ok=false) on this
+// shape on EITHER re-fit arm, so the fallback must keep the inherited prompt
+// and the pre-epic warn-and-ship rather than re-pack its way to a 0-byte
+// dispatch. The bodies carry no `=== FILE:` markers, so the primary's
+// CodeContext is unmeasurable and the overflow gate opens by design.
+func emptyBodiedPayload() map[string]modePayload {
+	entries := []payload.FileEntry{
+		{Path: "a.py", Size: 400000, Body: ""},
+		{Path: "py.typed", Size: 0, Body: ""},
+	}
+	return map[string]modePayload{
+		"blocks": {Entries: entries, Text: "", FileCount: 2},
+	}
+}
+
+// keepSmallestEntry's ok=false arm, reached through the zero-budget arm: every
+// entry is empty, so there is no non-empty payload to send and the re-fit must
+// be DECLINED — the fallback ships the inherited prompt unchanged.
+func TestBuildFallbackAgent_RefitDeclinedWhenEveryEntryIsEmptyZeroBudget(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0 → the budget<=0 arm
+	cfg.Registry.Agents["kai"] = kai
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "no non-empty payload exists to send, so no re-fit may be recorded")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"a declined re-fit ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the honest overflow record stands — the backup cannot hold this lane")
+}
+
+// keepSmallestEntry's ok=false arm on the POSITIVE-budget arm: ApplyByteBudget's
+// largest-first shed drops the big (empty-bodied) file and keeps the 0-byte
+// py.typed, so the kept BODIES total zero — the same "nothing to send" state
+// AllDropped names, and the same decline must follow.
+func TestBuildFallbackAgent_RefitDeclinedWhenKeptBodiesAreEmpty(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default, a positive budget
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "a kept set whose bodies total 0 bytes is not a payload — the re-fit must be declined")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"a declined re-fit ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction)
+}
+
+// The no-shed early return: the entries measurably fit the backup's budget, but
+// the payload shape is one EntriesFromRenderedPayload does not recognize, so
+// the primary's CodeContext is empty and the overflow gate opened on "may not
+// fit". The re-pack must then shed nothing and report no re-fit — warn-and-ship
+// with a byte-identical prompt, which is what makes the Conservatism NFR hold
+// by construction.
+func TestBuildFallbackAgent_NoShedEarlyReturnKeepsWarnAndShip(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default
+
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < 3; i++ {
+		body := fmt.Sprintf("small file %d contents, no markers anywhere\n", i)
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("s%d.txt", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: 3},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.False(t, fb.rePacked, "nothing was shed, so no re-fit happened")
+	assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+		"the no-shed arm ships the inherited prompt byte-identically")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the unmeasurable payload keeps the honest overflow record, not a fabricated truncate")
+}
+
+// AC5 on the POSITIVE-budget arm (the arm the zero-budget tests never reach):
+// one oversized entry plus a 0-byte py.typed. ApplyByteBudget drops largest-
+// first and zero-size entries sort LAST — never dropped — so the budget pass
+// keeps py.typed with AllDropped=false, and the re-fit would concatenate the
+// kept bodies into a 0-byte payload: a false-clean "no findings" review that
+// also tags py.typed as reviewed. The kept-body measurement must route this
+// into keepSmallestEntry exactly as the AllDropped arm does.
+func TestBuildFallbackAgent_ZeroByteKeptEntryRoutesToKeepSmallest(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate) // kai undeclared → 32768 default, a positive budget
+
+	big := "=== FILE: big.go ===\n" + strings.Repeat("y", 400000) + "\n"
+	entries := []payload.FileEntry{
+		{Path: "big.go", Size: int64(len(big)), Body: big},
+		{Path: "py.typed", Size: 0, Body: ""},
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: big, FileCount: 2},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.NotZero(t, codeContextBytes(fb),
+		"the re-fit must never dispatch a 0-byte payload — that is a false-clean review, not a small one")
+	assert.NotEqual(t, []string{"py.typed"}, fb.chunkFiles,
+		"an empty file must not be the re-fit's whole coverage tag")
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the smallest available framing (big.go alone) still exceeds this budget — that is overflow, not truncate")
+}
+
+// A re-fit that shrank the payload but still cannot reach its budget has NOT
+// truncated its way to safety. Recording "truncate" there would drop the only
+// signal saying the review may not have been read in full — precisely when the
+// agent is worst off — and the bulk zero-budget arm records overflow in the
+// identical situation.
+func TestBuildFallbackAgent_RefitThatStillOverflowsRecordsOverflow(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	one := 1
+	kai.ContextWindowTokens = &one // effective budget 0; no file can ever fit
+	cfg.Registry.Agents["kai"] = kai
+
+	var out string
+	var slots []Slot
+	var err error
+	out = captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	fb := slots[0].Fallbacks[0]
+
+	assert.Equal(t, degradationOverflow, fb.DegradationAction,
+		"the kept entry still exceeds a 0-byte budget, so this is overflow — not a successful truncate")
+	assert.Contains(t, out, "may overflow",
+		"the operator must still be told the backup cannot hold this lane's review")
+	// The payload was still re-packed, so coverage must follow the smaller set.
+	assert.True(t, fb.rePacked, "coverage attribution must follow the re-packed set whether or not it fits")
+	assert.Len(t, fb.chunkFiles, 1, "the tag names only the single entry it kept")
+	assert.Less(t, len(fb.Prompt), len(slots[0].Primary.Prompt), "the payload still shrank")
+}
+
+// The overflow arm is reachable with a POSITIVE budget, and it records that
+// budget rather than 0.
+//
+// The sibling overflow test drives a 1-token window, where the effective budget
+// is 0 and status.json omits effective_budget entirely. That is one sub-case, not
+// the arm: any backup whose budget is positive but smaller than the smallest
+// single file lands here too — it re-packs to one file, still does not fit, and
+// records overflow WITH a real effective_budget. docs/registry.md described the
+// whole arm as if the zero sub-case were the only one, so this pins the
+// distinction the prose has to respect.
+func TestBuildFallbackAgent_PositiveBudgetOverflowArmRecordsThatBudget(t *testing.T) {
+	// Between the reservation floor (below ~12k tokens the budget rounds to 0)
+	// and the 50 KB single-file size in markedOversizedPayload: a real budget
+	// that still cannot hold one file.
+	for _, window := range []int{15000, 20000, 25000} {
+		t.Run(fmt.Sprintf("window-%d", window), func(t *testing.T) {
+			cfg := refitRoster(t, 512000, OverflowTruncate)
+			kai := cfg.Registry.Agents["kai"]
+			w := window
+			kai.ContextWindowTokens = &w
+			cfg.Registry.Agents["kai"] = kai
+
+			raw := payload.EffectiveByteBudget("unlisted-backup-model", &w, defaultMaxTokens)
+			require.Positive(t, raw,
+				"precondition: this window must fund a REAL budget — the zero case is the sibling test's")
+
+			var slots []Slot
+			var err error
+			out := captureStderr(t, func() {
+				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+			})
+			require.NoError(t, err)
+			fb := slots[0].Fallbacks[0]
+
+			require.True(t, fb.rePacked, "precondition: the payload must actually be re-packed")
+			require.Len(t, fb.chunkFiles, 1, "precondition: the re-pack keeps exactly one file and it still does not fit")
+
+			assert.Equal(t, degradationOverflow, fb.DegradationAction,
+				"the smallest framing still exceeds this budget, so this is overflow — not a successful truncate")
+			// This fixture has no scope constraint and a global budget above the
+			// per-model one, so applied == raw and the recorded value must be that
+			// exact number. Asserting the equality rather than Positive: with no
+			// narrowing in play, `> 0` is already guaranteed by the precondition
+			// above and would assert nothing about what was recorded.
+			assert.Equal(t, raw, fb.EffectiveBudget,
+				"the overflow arm records the budget the payload was sized to — it does not imply a zero budget")
+			assert.Contains(t, out, "may overflow",
+				"the operator must still be told the backup cannot hold this lane at any framing")
+		})
+	}
+}
+
+// The reservation must follow the budget actually recorded. Recording
+// effective_budget 0 (absent under omitempty) beside reserved_output_tokens 8192
+// is the self-contradictory status record 35.16.5.1 removed.
+func TestBuildFallbackAgent_RefitReservationFollowsRecordedBudget(t *testing.T) {
+	// The reservation is gated on the RAW per-model budget while a re-fit records
+	// the APPLIED one, so the two can disagree. Exercised across a zero-window
+	// backup and a --sprint-plan scope reservation (the path that narrows an
+	// otherwise-positive budget), asserting the biconditional rather than one
+	// scenario's constant: whatever budget is recorded, the reservation must agree
+	// with it.
+	for _, tc := range []struct {
+		name   string
+		window *int
+		scope  string
+	}{
+		{name: "zero-window backup", window: func() *int { n := 1; return &n }()},
+		{name: "scope constraint narrows the budget", scope: strings.Repeat("plan line\n", 8000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := refitRoster(t, 512000, OverflowTruncate)
+			if tc.window != nil {
+				kai := cfg.Registry.Agents["kai"]
+				kai.ContextWindowTokens = tc.window
+				cfg.Registry.Agents["kai"] = kai
+			}
+
+			var slots []Slot
+			var err error
+			captureStderr(t, func() {
+				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", tc.scope, true)
+			})
+			require.NoError(t, err)
+			require.Len(t, slots[0].Fallbacks, 1)
+			fb := slots[0].Fallbacks[0]
+			require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+			if fb.EffectiveBudget > 0 {
+				assert.Equal(t, defaultMaxTokens, fb.ReservedOutputTokens,
+					"a recorded budget that funds the output cap must report reserving it")
+			} else {
+				assert.Equal(t, 0, fb.ReservedOutputTokens,
+					"an agent whose recorded budget funds nothing must not also claim to reserve an output cap")
+			}
+		})
+	}
+}
+
+// AC6: effective_budget must report the budget the payload was actually SIZED
+// to — the raw per-model figure narrowed by the global payload_byte_budget and
+// by the uncounted SCOPE CONSTRAINT block — not the raw per-model figure the
+// non-re-fit path records.
+//
+// The sibling test above asserts only the budget↔reservation biconditional,
+// which holds whichever of the two is recorded, so recording the RAW budget
+// passed it unnoticed. This pins the value itself, and ties it to something
+// observable rather than to a recomputed constant: the payload the agent ships
+// must fit inside the number its record claims. A record naming a budget the
+// dispatched bytes exceed is not a description of this payload.
+//
+// The scope-constraint route is the only one that can produce applied != raw
+// here, and that is a property of the gate rather than an accident of the
+// fixture: the overflow branch compares the fallback's RAW budget against the
+// primary's APPLIED one, so a global cap low enough to narrow the fallback also
+// narrows the primary and closes the gate.
+func TestBuildFallbackAgent_RefitRecordsTheAppliedBudgetNotTheRawOne(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	rawBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Positive(t, rawBudget, "precondition: the backup funds a real budget, so narrowing is observable")
+
+	assert.Positive(t, fb.EffectiveBudget,
+		"a scope constraint narrows this budget, it does not exhaust it")
+	assert.Less(t, fb.EffectiveBudget, rawBudget,
+		"effective_budget must be the APPLIED budget — the raw per-model figure less the uncounted SCOPE CONSTRAINT block — not the raw one")
+	assert.LessOrEqual(t, int64(codeContextBytes(fb)), fb.EffectiveBudget,
+		"the record must describe the payload actually shipped: the dispatched bytes must fit the budget it claims")
+}
+
+// scopePlanBody extracts the plan body between the SCOPE CONSTRAINT markers, so
+// tests can measure the plan a prompt actually embeds rather than its total
+// length. Returns "" when the block is absent.
+func scopePlanBody(t *testing.T, prompt string) string {
+	t.Helper()
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	bs := strings.Index(prompt, beginMark)
+	if bs < 0 {
+		return ""
+	}
+	rest := prompt[bs+len(beginMark):]
+	es := strings.Index(rest, endMark)
+	if es < 0 {
+		return ""
+	}
+	return rest[:es]
+}
+
+// The re-cap against the FALLBACK's window (review.go: the fbBudget/8 arithmetic
+// in refitFallbackPayload) must actually execute: the re-fit prompt's embedded
+// plan is capped to the backup's own numbers, not the primary's. The fixture
+// builds the block with payload.ScopeConstraint so the BEGIN/END markers exist
+// and capScopeConstraintPlan does not return early — a raw string without
+// markers never reaches the cap, which is what left this arithmetic untested.
+func TestBuildFallbackAgent_RefitReCapsScopeConstraintToItsOwnBudget(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	primaryPlan := scopePlanBody(t, slots[0].Primary.Prompt)
+	fbPlan := scopePlanBody(t, fb.Prompt)
+	require.NotEmpty(t, primaryPlan, "precondition: the primary must embed the scoped plan")
+	require.NotEmpty(t, fbPlan, "the re-fit must not silently blank the plan it still claims to enforce")
+	assert.Less(t, len(fbPlan), len(primaryPlan),
+		"the re-fit prompt's plan must be re-capped to the BACKUP's smaller window, not ride in at the primary's cap")
+
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	assert.LessOrEqual(t, int64(len(fbPlan)), fbBudget/8+1,
+		"the embedded plan must respect the backup's own budget/8 cap")
+}
+
+// The operator's max_sprint_plan_bytes ceiling must survive the re-fit's
+// re-render.
+//
+// The re-fit builds a fresh prompt, so it chooses which scope constraint to embed:
+// the per-agent one buildSlots already capped, or the run's RAW one. The ceiling
+// has to survive that choice either way, which is what this asserts.
+//
+// It does NOT assert that any ONE mechanism enforces it — two do, independently,
+// and neither is individually necessary. refitFallbackPayload re-caps with
+// min(fbBudget/8, max_sprint_plan_bytes), and its max_sprint_plan_bytes term can
+// never bind: buildSlots applies the identical clamp before threading the
+// constraint here (review.go, agentScopeConstraint), so the plan already arrives
+// at or below that ceiling. That term is defense in depth against a future caller
+// passing an uncapped constraint, and deleting it is behavior-neutral — no test
+// can prove otherwise, which is why this one asserts the composed outcome rather
+// than claiming the clamp fired.
+func TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	const planCeiling = 2000
+	cfg.Settings.MaxSprintPlanBytes = planCeiling
+
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens)
+	require.Greater(t, fbBudget/8, int64(planCeiling),
+		"precondition: the operator ceiling must be the tighter term, so a plan honoring only budget/8 is distinguishable")
+
+	rawPlan := strings.Repeat("plan line\n", 8000)
+	scope, _ := payload.ScopeConstraint(rawPlan, registry.DefaultMaxSprintPlanBytes)
+	require.Greater(t, len(scope), planCeiling*10,
+		"precondition: the raw block must dwarf the ceiling, or embedding it would look the same")
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	fbPlan := scopePlanBody(t, fb.Prompt)
+	require.NotEmpty(t, fbPlan, "the ceiling narrows the plan, it does not blank it")
+	assert.LessOrEqual(t, len(fbPlan), planCeiling,
+		"the re-fit prompt must carry the agent-capped plan — the operator's max_sprint_plan_bytes ceiling does not stop applying because the payload was re-rendered")
+}
+
+// A tiny-but-positive backup budget rounds the plan cap to ZERO (fbBudget/8 =
+// 0). Capping there would blank the plan body while the wrapper text still
+// instructs the model to obey the constraint — a blanked plan presented as a
+// scoped review. The block must be dropped entirely instead.
+func TestBuildFallbackAgent_RefitDropsScopeConstraintWhenBudgetFundsNoPlanByte(t *testing.T) {
+	cfg := refitRoster(t, 512000, OverflowTruncate)
+	kai := cfg.Registry.Agents["kai"]
+	w := 12289 // yields a tiny-but-positive effective budget (fbBudget/8 == 0)
+	kai.ContextWindowTokens = &w
+	cfg.Registry.Agents["kai"] = kai
+	fbBudget := payload.EffectiveByteBudget("unlisted-backup-model", &w, defaultMaxTokens)
+	require.Greater(t, fbBudget, int64(0), "precondition: the budget must be positive, or the zero-budget arm runs instead")
+	require.Less(t, fbBudget, int64(8), "precondition: fbBudget/8 must round to 0 — the cap-blanking shape under test")
+
+	scope, _ := payload.ScopeConstraint(strings.Repeat("plan line\n", 8000), registry.DefaultMaxSprintPlanBytes)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+	require.True(t, fb.rePacked, "precondition: this case must actually re-fit")
+
+	assert.NotContains(t, fb.Prompt, "BEGIN SPRINT PLAN",
+		"a budget that funds no plan byte must not present a blanked plan as a scoped review — drop the block")
+}
+
+func TestBuildFallbackAgent_RefitKeepsCacheKeyDistinct(t *testing.T) {
+	// T4: a re-fit fallback reviews a payload that is neither its primary's nor its
+	// own un-refit form, so it must not replay either one's cached review.
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	refit := buildRefitSlot(t, cfg)
+
+	noRefit := refitRoster(t, 128000, OverflowChunk) // chunk still warns and ships
+	plain := buildRefitSlot(t, noRefit)
+
+	assert.NotEqual(t, refit.Primary.CacheKey, refit.Fallbacks[0].CacheKey,
+		"a re-fit fallback must not share its primary's cache entry")
+	assert.NotEqual(t, plain.Fallbacks[0].CacheKey, refit.Fallbacks[0].CacheKey,
+		"a re-fit fallback must not share the cache entry of its own un-refit form")
+}
+
+func TestBuildFallbackAgent_RefitRecordsOneChunkAndBulkSizing(t *testing.T) {
+	// T4: the sizing record must describe the payload actually sent. A re-fit ships
+	// ONE payload, so inheriting the primary's ChunkTotal would scale the per-call
+	// deadline (timeout.go) and the diff-cache sizing token by a split it does not
+	// follow. Driven from the baseline multi-chunk branch (review.go:1600-1656):
+	// greta's 404992-byte budget partitions the 500 KB payload into two chunks, so
+	// each primary REALLY carries ChunkTotal 2 — the only configuration where the
+	// T4 override matters. (The previous fixture never passed baseline=true, so the
+	// slot fell through to the bulk path with ChunkTotal 0 and the assertions below
+	// were self-guaranteeing.)
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 2, "precondition: greta's budget must partition the payload into two chunk slots")
+
+	for i, s := range slots {
+		require.Greater(t, s.Primary.ChunkTotal, 1,
+			"slot %d: precondition, the primary must be genuinely multi-chunk", i)
+		require.Len(t, s.Fallbacks, 1, "slot %d: precondition, the fallback chain is attached", i)
+		require.True(t, s.Fallbacks[0].rePacked, "slot %d: precondition, the chunk must overflow kai's budget so the re-fit fires", i)
+		fb := s.Fallbacks[0]
+		assert.Equal(t, 1, fb.ChunkTotal, "slot %d: a re-fit fallback ships exactly one payload", i)
+		assert.Equal(t, 0, fb.chunkMaxLines, "slot %d: a re-fit fallback is bulk-sized; the bulk sentinel is 0", i)
+		assert.Equal(t, scaledTimeoutSecs(fb.TimeoutSecs, fb.ChunkTotal), fb.TimeoutSecs,
+			"slot %d: ChunkTotal 1 must leave the per-call deadline unscaled", i)
+	}
+}
+
+func TestBuildFallbackAgent_NonTruncatePoliciesDoNotRefit(t *testing.T) {
+	// AC3, at the buildSlots level (fallback_overflow_policy_test.go pins the direct
+	// call): chunk and unset still warn and ship the inherited prompt untouched.
+	for _, policy := range []string{OverflowChunk, ""} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			cfg := refitRoster(t, 128000, policy)
+			slot := buildRefitSlot(t, cfg)
+			fb := slot.Fallbacks[0]
+
+			assert.Equal(t, slot.Primary.Prompt, fb.Prompt, "a non-truncate policy must ship the inherited prompt")
+			assert.Equal(t, degradationOverflow, fb.DegradationAction)
+			assert.Equal(t, slot.Primary.Truncation, fb.Truncation, "no re-pack, so the inherited shed record stands")
+		})
+	}
+}
+
+func TestBuildFallbackAgent_TruncateWithoutEntriesStillWarnsAndShips(t *testing.T) {
+	// The chunked-diff path (review.go chunkDiff) carries no FileEntry list, so
+	// there is nothing to re-pack. It must keep the pre-epic warn-and-ship rather
+	// than re-pack against an empty list — which would shed every file and produce
+	// the empty, false-clean payload AC5 forbids.
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	cfg.Settings.ReviewStrategy = reviewStrategyChunked
+	// An explicit max_context_lines wins over the model-derived budget, so the
+	// split is deterministic: each file's 1000 wide lines exceed the 600-line cap,
+	// giving one chunk per file, each ~100 KB — comfortably past the backup's
+	// 71680-byte budget, so the overflow branch really is entered with no entries
+	// to re-pack.
+	g := cfg.Registry.Agents["greta"]
+	lines := 600
+	g.MaxContextLines = &lines
+	cfg.Registry.Agents["greta"] = g
+
+	const nFiles = 6
+	diff := wideDiffOfNFiles(nFiles, 1000)
+	payloads := map[string]modePayload{
+		"blocks": {Text: diff, FileCount: nFiles},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the diff must bin-pack into multiple chunk slots")
+
+	for i, s := range slots {
+		require.Len(t, s.Fallbacks, 1, "slot %d: precondition, the fallback chain is attached", i)
+		assert.Empty(t, s.entries, "slot %d: precondition, a chunked-diff slot carries no entries", i)
+		assert.Equal(t, s.Primary.Prompt, s.Fallbacks[0].Prompt,
+			"slot %d: with no re-pack source the fallback must ship the inherited prompt unchanged", i)
+	}
+}
+
+// Benchmark for the review.go:2912 TD row: in the multi-chunk baseline
+// configuration every chunk's primary render — and every fallback re-fit —
+// resolved the persona from disk again. 48 files x 100 KB partitions into 24
+// chunks for greta's declared window, and each chunk overflows kai's undeclared
+// 32768 budget, so a re-fit fires per chunk.
+func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
+	cfg := sizingRosterConfig()
+	g := cfg.Registry.Agents["greta"]
+	w := 69431 // ~200 KB effective budget → 2 files per chunk
+	g.ContextWindowTokens = &w
+	g.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = g
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model" // undeclared → 71680 B, smaller than any chunk
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Settings.OnOverflow = OverflowTruncate
+	cfg.Project.Agents = []string{"greta"}
+
+	const nFiles = 48
+	const fileBytes = 100000
+	var entries []payload.FileEntry
+	var full strings.Builder
+	for i := 0; i < nFiles; i++ {
+		body := fmt.Sprintf("=== FILE: f%02d.go ===\n", i) + strings.Repeat("x", fileBytes) + "\n"
+		entries = append(entries, payload.FileEntry{Path: fmt.Sprintf("f%02d.go", i), Size: int64(len(body)), Body: body})
+		full.WriteString(body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: nFiles},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(slots) < 2 {
+			b.Fatalf("precondition: expected a multi-chunk fan-out, got %d slot(s)", len(slots))
+		}
+	}
+}
+
+// TD (review.go:2795): the re-fit's budget pass sums FileEntry.Size (the
+// pre-render source size) while the bytes dispatched are len(Body). Entries
+// whose sizes fit kai's budget but whose BODIES do not must still be re-fit —
+// sizing the shed on the source bytes means the keep-decision is made against a
+// number the wire never carries.
+func TestBuildFallbackAgent_RefitBudgetsOnDispatchedBodyBytes(t *testing.T) {
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+
+	mk := func(path string, size int64, bodyBytes int) payload.FileEntry {
+		body := fmt.Sprintf("=== FILE: %s ===\n", path) + strings.Repeat("x", bodyBytes) + "\n"
+		return payload.FileEntry{Path: path, Size: size, Body: body}
+	}
+	// Sizes total 65050 (fits kai's 71680); bodies total ~75000 (does not).
+	entries := []payload.FileEntry{
+		mk("a.go", 50, 60000),
+		mk("b.go", 60000, 8000),
+		mk("c.go", 5000, 7000),
+	}
+	var full strings.Builder
+	for _, e := range entries {
+		full.WriteString(e.Body)
+	}
+	payloads := map[string]modePayload{
+		"blocks": {Entries: entries, Text: full.String(), FileCount: 3},
+	}
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	})
+	require.NoError(t, err)
+	require.Len(t, slots, 1)
+	require.Len(t, slots[0].Fallbacks, 1)
+	fb := slots[0].Fallbacks[0]
+
+	assert.True(t, fb.rePacked,
+		"the dispatched bodies exceed the fallback's budget even though the source sizes fit it — the re-fit must fire")
+	if fb.rePacked {
+		// The shed drops largest-first, so the body-sized pass sheds a.go (the
+		// 60 KB body) — the entry whose BODY actually overflows the budget. A
+		// size-sized pass would either shed b.go (the largest source) or, as
+		// pre-fix, shed nothing at all because the sizes total under budget.
+		assert.Equal(t, []string{"a.go"}, fb.Truncation.FilesDropped,
+			"the body-sized shed drops the entry whose dispatched bytes dominate the budget")
+		assert.NotContains(t, fb.Prompt, entries[0].Body)
+		assert.Contains(t, fb.Prompt, entries[1].Body)
+		assert.Contains(t, fb.Prompt, entries[2].Body)
+	}
+}

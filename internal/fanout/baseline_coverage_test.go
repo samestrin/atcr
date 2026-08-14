@@ -528,7 +528,7 @@ func TestUncoveredBaselineFiles_FallbackServedSlotCountsAsCovered(t *testing.T) 
 	f.failFor["m-greta"] = errors.New("boom")
 	slots := []Slot{{
 		Primary:   Agent{Name: "greta", Invocation: llmclient.Invocation{Model: "m-greta"}, chunkFiles: []string{"a.go"}},
-		Fallbacks: []Agent{{Name: "kai", Invocation: llmclient.Invocation{Model: "m-kai"}}},
+		Fallbacks: []Agent{{Name: "kai", Invocation: llmclient.Invocation{Model: "m-kai"}, chunkFiles: []string{"a.go"}}},
 	}}
 
 	results := NewEngine(f).Run(context.Background(), slots)
