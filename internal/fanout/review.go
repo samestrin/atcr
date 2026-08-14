@@ -2956,6 +2956,15 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	scopeConstraint := refit.scopeConstraint
 	if len(scopeConstraint) > 0 && fbBudget > 0 {
 		planCap := fbBudget / 8
+		// The max_sprint_plan_bytes term cannot bind here, and that is not an
+		// oversight: buildSlots applies this identical min() before threading the
+		// constraint in (agentScopeConstraint), so the plan already arrives at or
+		// below the operator's ceiling and only the budget/8 term can narrow it
+		// further. Kept as defense in depth for a caller that ever passes an
+		// UNcapped constraint — mirroring the sibling clamp keeps the two paths
+		// readable as the same rule rather than two different ones. Deleting it is
+		// behavior-neutral, so no test can pin it; a mutant here survives by
+		// construction.
 		if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 			planCap = mspb
 		}
