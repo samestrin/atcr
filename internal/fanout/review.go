@@ -2377,6 +2377,12 @@ func derefInt64(p *int64) int64 {
 // promotion (it gates on len(dropped) > 0). By index, the count and the list
 // cannot disagree.
 //
+// Indexing also matches payload.ApplyByteBudget, which tracks its own shed with a
+// per-INDEX dropped[] and appends one path per dropped occurrence (budget.go). So
+// a repeated path in FilesDropped is the existing contract's shape, not a new one
+// this function invents: the main budget pass has always produced it, and the
+// dedup that matters happens where it matters (promoteRePackedDegradation's union).
+//
 // Sorted by path, matching payload.ApplyByteBudget's own contract for
 // Truncation.FilesDropped ("the dropped list is returned sorted by path so the
 // same input always produces the same Truncation"). Entry order would already be
