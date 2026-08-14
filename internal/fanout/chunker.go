@@ -393,21 +393,22 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 //   - effective_budget: the SMALLEST across RE-PACKED chunks — the tightest budget
 //     any RE-PACKED payload of this persona was actually sized to. Deliberately
 //     not a min across the whole group: a chunk served by its primary, or by a
-//     fallback that did NOT re-fit, records a budget this promotion has no claim
-//     over, and widening the min would change a published status.json value on
-//     runs the promotion is otherwise inert for. A recorded 0 is a real budget
-//     (a zero-window re-fit), not "unknown": it wins the min, and
-//     reserved_output_tokens is zeroed alongside it so the two fields agree.
-//   - resolved_window and reserved_output_tokens: taken from the SAME re-packed
-//     member whose budget won the min, never from g[0]. The three fields describe
-//     one agent's sizing — invokeAgent stamps all three from the same agent in
-//     the same block — so promoting the budget alone writes a pair no single
-//     agent could produce (a 200k-token window beside a 32k backup's budget), and
-//     writes it order-dependently: a re-fit on chunk 0 would have been coherent
-//     via `out := g[0]` while the same re-fit on chunk 1 is not. Both are
-//     presence-gated: a Result built outside invokeAgent carries no stamp, and
-//     promoting its zero over a known inherited value would blank real
-//     information rather than make the record coherent.
+//     fallback that did NOT re-fit, was not re-packed and this record has no
+//     claim over its budget. A recorded 0 is a real budget (a zero-window
+//     re-fit), not "unknown": it wins the min, and reserved_output_tokens is
+//     zeroed alongside it so the two fields agree.
+//
+// This field is therefore an AGGREGATE, and the one place the merged record
+// stops describing a single agent. That is deliberate and must stay contained:
+// resolved_window and reserved_output_tokens are NOT promoted with it. invokeAgent
+// stamps Model, ResolvedWindow and ReservedOutputTokens from the serving agent in
+// one block (engine.go), so `out := g[0]` inherits a matched set, and
+// resolved_window is a pure function of the model beside it
+// (payload.ContextWindowTokens). Promoting the window to "match" the aggregate
+// budget would pair chunk 0's model with a different agent's window — a
+// combination that function says cannot exist, traded for a mismatch that is
+// documented right here. An earlier revision did exactly that; the invariant is
+// pinned by TestMergeChunkResults_PromotedBudgetDoesNotDragTheWindowOffItsModel.
 //
 // chunk_count is restored to the group size when a re-pack promoted anything:
 // it describes the persona's split, which is still exactly what happened — but a
@@ -418,7 +419,6 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 func promoteRePackedDegradation(out *Result, g []Result) {
 	dropped := map[string]struct{}{}
 	var budget int64
-	var sizedWindow, sizedReserved int
 	haveBudget := false
 	action := ""
 	rePacked := false
@@ -437,13 +437,8 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// an unset field AND a genuine recorded budget, so min-by-value alone
 		// would either ignore a real 0 or let it overwrite everything.
 		//
-		// The window and the reservation are captured HERE, with the budget that
-		// won, rather than min'd independently: they are one agent's sizing
-		// record and only stay coherent if they travel together.
 		if !haveBudget || r.EffectiveBudget < budget {
 			budget = r.EffectiveBudget
-			sizedWindow = r.ResolvedWindow
-			sizedReserved = r.ReservedOutputTokens
 			haveBudget = true
 		}
 	}
@@ -455,15 +450,8 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		out.DegradationAction = action
 	}
 	out.EffectiveBudget = budget
-	// The window and reservation that belong WITH that budget. Presence-gated:
-	// an unstamped winner leaves the inherited values alone rather than blanking
-	// them — see the doc comment.
-	if sizedWindow != 0 {
-		out.ResolvedWindow = sizedWindow
-	}
-	if sizedReserved != 0 {
-		out.ReservedOutputTokens = sizedReserved
-	}
+	// ResolvedWindow and ReservedOutputTokens are deliberately NOT promoted with
+	// it — see the doc comment. They belong to the model named on this record.
 	if budget == 0 {
 		// A promoted zero budget must not sit beside an inherited non-zero
 		// reservation: status.json omits both at 0, keeping the record consistent.
