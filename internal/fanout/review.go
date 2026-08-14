@@ -2475,12 +2475,11 @@ func entriesFromPrimary(primary Agent) []payload.FileEntry {
 // timeout are the fallback's own — so the re-render must resolve the PRIMARY's
 // persona, not the backup's.
 //
-// It is passed as a variadic option rather than a required parameter so every
-// caller that has no re-pack source keeps working, and keeps its pre-epic
-// behavior, without a signature change: a bare buildFallbackAgent call cannot
-// construct slot-level entries, and "no refit context → warn and ship" is the
-// correct answer for such a caller, not a degraded one. Same idiom buildSlots
-// itself uses for baselineOpt.
+// It is a REQUIRED parameter of buildFallbackAgent, not an option: a zero
+// fallbackRefit declines the re-fit by construction (canRefit reads its empty
+// entries), so "no re-pack source → warn and ship" is still expressed, but every
+// construction site has to say so explicitly. A future production caller cannot
+// fall back to pre-epic behavior by forgetting an argument — it will not compile.
 type fallbackRefit struct {
 	primaryName     string
 	primaryConfig   registry.AgentConfig
@@ -2568,26 +2567,23 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// roster that previously resolved ONE uniform default for every agent, and the
 	// epic's own operator step pairs declared primaries with undeclared backups.
 	//
-	// Re-shedding the payload here is deliberately out of scope: buildFallbackAgent
-	// receives the already-rendered prompt, not the FileEntry list it would have to
-	// re-pack, and a fallback reviewing a different file set than its primary is a
-	// separate design question — chunkFiles and ChunkTotal are SLOT-level and
-	// inherited below (the truncate re-fit is the one exception, carrying the
-	// smaller set it actually kept — the narrowing the next paragraph describes),
-	// so a re-packed fallback would falsify the
-	// baseline coverage attribution and require the Slot/Agent model to grow a
-	// fallback-owned chunk chain. What AC4 forbids is doing this SILENTLY, so
-	// surface it — warn pre-dispatch and record the honest overflow degradation
-	// instead of copying the primary's action.
+	// Re-shedding the payload here was out of scope until Epic 35.16.5.4, on two
+	// grounds: the FileEntry list to re-pack was not available at this seam (only
+	// the already-rendered prompt), and a fallback reviewing a different file set
+	// than its primary would falsify the baseline coverage attribution, because
+	// chunkFiles and ChunkTotal are SLOT-level and inherited below.
 	//
-	// EPIC 35.16.5.4 NARROWS THAT, for `truncate` only. The slot now carries the
+	// 35.16.5.4 answered both, for `truncate` only. The slot now carries the
 	// FileEntry list its primary shipped (Slot.entries, threaded here as
-	// fallbackRefit), so the truncate arm CAN re-pack — and the coverage-falsifying
-	// objection above is answered by T3, which makes baseline attribution read the
-	// files the SERVING agent reviewed rather than the primary's tag. The rest of
-	// the paragraph still stands verbatim for `chunk` (which needs a
-	// fallback-owned chunk chain, still out of scope) and for any slot with no
-	// entries to re-pack.
+	// fallbackRefit), and T3 makes baseline attribution follow the agent that
+	// SERVED the slot rather than its Primary — so a re-fit carries the smaller
+	// set it actually kept and vouches for exactly that, which is why the truncate
+	// arm below overrides chunkFiles/ChunkTotal instead of inheriting them.
+	//
+	// `chunk` still needs a fallback-owned chunk chain and stays out of scope, as
+	// does any slot with no entries to re-pack. Both keep the pre-epic answer, and
+	// what AC4 forbids is degrading SILENTLY — so they warn pre-dispatch and record
+	// the honest overflow degradation instead of copying the primary's action.
 	//
 	// The operator's on_overflow policy decides first, mirroring the primary path's
 	// own pre-dispatch gate: fail and fallback return their typed errors, which
