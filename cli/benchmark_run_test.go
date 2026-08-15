@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -613,6 +614,40 @@ func TestWarnDriftingReviewers_RowQuotesRoutingValues(t *testing.T) {
 	assert.Contains(t, got, "half-routing/p")
 	assert.Contains(t, got, "2/4", "the drift counts are still quoted")
 	assert.Contains(t, got, "routing", "the row must surface the routing-value count")
+}
+
+// A findings-parser regression drifts EVERY reviewer at once — on a 27-model roster an
+// uncapped, alphabetized listing prints 27 rows with the worst drifter at an arbitrary
+// position: the "warning nobody reads" outcome the threshold doc argues against. The
+// listing must be sorted by descending rate and capped, with the remainder summarized.
+func TestWarnDriftingReviewers_SortsByRateAndCapsTheListing(t *testing.T) {
+	rows := make([]benchmark.ReviewerVocabulary, 0, 30)
+	for i := 0; i < 30; i++ {
+		rate := 0.50 + float64(i)*0.01 // 0.50 … 0.79
+		rows = append(rows, benchmark.ReviewerVocabulary{
+			Model: fmt.Sprintf("model-%02d", i), Persona: "p",
+			Findings: 100, Drifted: int(rate * 100), Rate: &rate,
+		})
+	}
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, rows)
+	got := buf.String()
+
+	worst := strings.Index(got, "model-29")
+	middle := strings.Index(got, "model-14")
+	require.NotEqual(t, -1, worst, "the worst drifter must appear")
+	require.NotEqual(t, -1, middle)
+	assert.Less(t, worst, middle, "rows must sort by descending rate, not alphabetically")
+	assert.Contains(t, got, "more", "the tail must summarize the capped remainder")
+
+	rowLines := 0
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "  model-") {
+			rowLines++
+		}
+	}
+	assert.Less(t, rowLines, 30, "the listing must be capped, not one line per drifting row")
 }
 
 // The breakdown a REAL run produces is what the warning reads — not a hand-built
