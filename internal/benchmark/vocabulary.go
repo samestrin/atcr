@@ -232,11 +232,13 @@ type ReviewerVocabulary struct {
 // signature — RoutingValues == Findings here, CorroborationRate 0.0 there — without
 // this array duplicating a frozen-schema field. Recall is deliberately NOT copied in.
 //
-// Alignment is by SORT, not by a key join, and that is load-bearing: Score's sort is
-// stable precisely because two reviewers can share a (model, persona) pair, and a key
-// join cannot disambiguate a collision — which is the case this diagnostic most needs
-// to report correctly. Both sides preserve the caller's order within a tie, so the two
-// slices stay in lockstep even then.
+// Alignment is by SORT, not by a key join, and that is load-bearing: a key join
+// cannot disambiguate two entries sharing a (model, persona) pair. Production never
+// presents one — the fold in cli/benchmark_run.go accumulates per realized identity,
+// so two lanes realizing the same pair merge into one row upstream of this function —
+// but the package API stays correct if a caller passes one: Score's sort is stable,
+// both sides preserve the caller's order within a tie, and the two slices stay in
+// lockstep even then.
 //
 // Every reviewer gets an entry, including one that raised nothing: an absent row would
 // silently read as a reviewer that did not exist rather than one that produced nothing.
