@@ -27,7 +27,7 @@ const MaxOutOfVocabularyRate = 0.05
 // MaxOutOfVocabularyRate.
 //
 // The comparison lives HERE rather than in each caller so the ceiling's exclusive
-// semantics — a run sitting exactly on it trips the guard — are a property of the
+// semantics — a run sitting exactly on it is reported — are a property of the
 // package instead of whichever operator a given test happened to type. Before this
 // existed the constant had no non-test consumer at all: a real run measuring 0.72
 // wrote the number to JSON and exited 0 with no warning, while the doc above and
@@ -251,7 +251,7 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 // parse-boundary canonicalization epic and is deliberately out of scope here (folding
 // reconcile.CategoryMerges() likewise — see OutOfVocabularyRate's doc).
 //
-// The feared consequence — that the first real run would fail the ceiling on a
+// The feared consequence — that the first real run would trip the warning on a
 // normalization artifact rather than on genuine drift — did NOT materialize: V1 emitted
 // zero separator/hyphenation variants and zero merge-table words, which is what allowed
 // the ceiling to be tightened to 0.05 rather than held loose against an artifact that

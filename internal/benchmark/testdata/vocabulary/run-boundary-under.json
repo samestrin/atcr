@@ -1,5 +1,5 @@
 {
-  "_note": "1 out-of-vocabulary of 21 findings = 0.047619 - just under the ceiling, passes. Re-derived from 4/21=0.190476 when epic 35.16.6.1 tightened the ceiling to 0.05 from V1's measured 0.0100; the pair's structure is unchanged - this file is run-boundary-at plus a single in-vocabulary finding.",
+  "_note": "1 out-of-vocabulary of 21 findings = 0.047619 - just under the ceiling, no warning is reported. Re-derived from 4/21=0.190476 when epic 35.16.6.1 tightened the ceiling to 0.05 from V1's measured 0.0100; the pair's structure is unchanged - this file is run-boundary-at plus a single in-vocabulary finding.",
   "suite": "fixture-vocabulary",
   "suite_version": "1.0.0",
   "cases": [
