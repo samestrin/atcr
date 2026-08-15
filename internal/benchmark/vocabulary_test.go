@@ -104,6 +104,25 @@ func mustRate(t *testing.T, rate *float64) float64 {
 	return *rate
 }
 
+// countRunFindings tallies (total, drifted) findings straight off a folded run's
+// structure, so a test can assert a relationship between two fixtures WITHOUT
+// routing through the rates already asserted elsewhere — a check derived from the
+// rates it neighbours cannot fail independently of them.
+func countRunFindings(reviewers []ReviewerScore) (total, drifted int) {
+	vocabulary := vocabularySet()
+	for _, r := range reviewers {
+		for _, c := range r.Cases {
+			for _, raw := range c.Raised {
+				total++
+				if !vocabulary[normalize(raw)] {
+					drifted++
+				}
+			}
+		}
+	}
+	return total, drifted
+}
+
 // A recorded run whose reviewers stayed inside the closed vocabulary passes.
 func TestOutOfVocabularyRate_CleanRunIsUnderTheCeiling(t *testing.T) {
 	rate := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-clean.json")))
@@ -133,8 +152,10 @@ func TestOutOfVocabularyRate_DriftedRunExceedsTheCeiling(t *testing.T) {
 // are asserted as LITERALS rather than against the constant, so a future change to the
 // ceiling cannot quietly redefine what these fixtures measure.
 func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
-	under := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-under.json")))
-	at := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-at.json")))
+	underRun := loadRecordedRun(t, "run-boundary-under.json")
+	atRun := loadRecordedRun(t, "run-boundary-at.json")
+	under := mustRate(t, OutOfVocabularyRate(underRun))
+	at := mustRate(t, OutOfVocabularyRate(atRun))
 
 	assert.InDelta(t, 1.0/21.0, under, 1e-9)
 	assert.Less(t, under, MaxOutOfVocabularyRate, "just under the ceiling passes")
@@ -145,10 +166,16 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 
 	// The pair is a NEIGHBOUR pair, and that is the property that makes it a boundary
 	// test rather than two arbitrary points: the two fixtures differ by exactly one
-	// in-vocabulary finding. Pinned so a future re-derivation cannot widen the gap and
-	// leave a test that any sloppy comparison would satisfy.
-	assert.InDelta(t, 1.0/20.0-1.0/21.0, at-under, 1e-9,
+	// in-vocabulary finding. Pinned against the fixtures' STRUCTURE — counted
+	// findings, not the difference of the two rates asserted above, which those
+	// assertions already imply — so a future re-derivation that widens the gap fails
+	// here rather than passing on literals it edited in the same commit.
+	underFindings, underDrifted := countRunFindings(underRun)
+	atFindings, atDrifted := countRunFindings(atRun)
+	assert.Equal(t, atFindings+1, underFindings,
 		"one in-vocabulary finding apart — the whole point of a boundary pair")
+	assert.Equal(t, atDrifted, underDrifted,
+		"the drifted count is identical; only the denominator moves")
 }
 
 // AC5. The ceiling is derived from V1's measured output, not from a fixture guess, and
