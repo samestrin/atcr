@@ -222,13 +222,10 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 		out = append(out, e)
 	}
 
-	// Mirrors Score's sort exactly — same key, same stability — so entry i and
-	// Reviewers[i] describe the same row.
+	// Mirrors Score's sort exactly — same comparator (modelPersonaLess), same
+	// stability — so entry i and Reviewers[i] describe the same row.
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Model != out[j].Model {
-			return out[i].Model < out[j].Model
-		}
-		return out[i].Persona < out[j].Persona
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
 	})
 	return out
 }
