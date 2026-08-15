@@ -235,7 +235,11 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 }
 
 // warnVocabularyDiagnostics emits every vocabulary signal a finished run owes its
-// operator: the run-level ceiling breach, then the per-reviewer rows that drifted.
+// operator: the run-level ceiling breach, then the per-reviewer rows that drifted,
+// then any all-routing reviewers, and finally the shared advisory — ONCE, here, rather
+// than carried as a trailing literal inside each helper. The common case is more than
+// one signal firing, and two independent string literals drift into two subtly
+// different instructions on the same stderr stream.
 //
 // The two are joined at ONE call site rather than invoked separately from the command
 // so the pairing is testable from a RunResult — the scenario that matters is precisely
@@ -247,10 +251,21 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 	if rr == nil {
 		return
 	}
-	warnIfVocabularyCeilingExceeded(w, rr.OutOfVocabularyRate)
-	warnDriftingReviewers(w, rr.Vocabulary)
-	warnRoutingOnlyReviewers(w, rr.Vocabulary)
+	fired := warnIfVocabularyCeilingExceeded(w, rr.OutOfVocabularyRate)
+	fired = warnDriftingReviewers(w, rr.Vocabulary) || fired
+	fired = warnRoutingOnlyReviewers(w, rr.Vocabulary) || fired
+	if fired {
+		_, _ = io.WriteString(w, vocabularyAgreementAdvisory)
+	}
 }
+
+// vocabularyAgreementAdvisory is the shared trailing advisory of the vocabulary
+// warnings: how to READ corroboration_rate on a run any of the signals fired on. One
+// constant, one emission site (warnVocabularyDiagnostics), so a reword cannot produce
+// two subtly different instructions on the same stream.
+const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vocabulary " +
+	"agreement rather than detection: a category outside the enumeration matches no expected " +
+	"category, so it zeroes recall independently of what the reviewer actually found.\n"
 
 // maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
 // warnDriftingReviewers names a reviewer. The comparison is `*r.Rate >= maxReviewerDriftRate`
@@ -315,7 +330,7 @@ const maxDriftWarningRows = 10
 // exit-code change: `benchmark run --output <path>` prints nothing to stdout, and
 // failing a multi-hour validation run at the end over a diagnostic would discard the
 // work the run existed to produce.
-func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
+func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) bool {
 	// A nil rate is UNMEASURED, not drifted — the same nil-vs-zero distinction the
 	// pointer carries. Naming the reviewers of a total-failure run as the vocabulary
 	// problem would misdiagnose a run that raised nothing to measure.
@@ -326,7 +341,7 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 		}
 	}
 	if len(drifting) == 0 {
-		return
+		return false
 	}
 
 	// The realistic breach cause is a findings-parser regression, which drifts EVERY
@@ -366,11 +381,8 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 	if rest := len(drifting) - len(shown); rest > 0 {
 		fmt.Fprintf(&msg, "  ...and %d more\n", rest)
 	}
-	fmt.Fprintf(&msg,
-		"Treat these rows' corroboration_rate as a measure of vocabulary agreement rather than "+
-			"detection: a category outside the enumeration matches no expected category, so it "+
-			"zeroes recall independently of what the reviewer actually found.\n")
 	_, _ = io.WriteString(w, msg.String())
+	return true
 }
 
 // stripTerminalControlRunes drops non-printable control runes (ESC, BEL, BACKSPACE, …)
@@ -402,7 +414,7 @@ func stripTerminalControlRunes(s string) string {
 //
 // Like the sibling warnings this writes to STDERR and is deliberately NOT an exit-code
 // change.
-func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
+func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) bool {
 	var routing []benchmark.ReviewerVocabulary
 	for _, r := range rows {
 		if r.Findings > 0 && r.RoutingValues == r.Findings {
@@ -410,7 +422,7 @@ func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) 
 		}
 	}
 	if len(routing) == 0 {
-		return
+		return false
 	}
 
 	noun := "reviewer"
@@ -432,6 +444,7 @@ func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) 
 			r.RoutingValues, r.Findings)
 	}
 	_, _ = io.WriteString(w, msg.String())
+	return true
 }
 
 // warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
@@ -448,14 +461,18 @@ func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) 
 // A nil (unmeasured) or in-range rate is silent — a warning printed on every run is
 // a warning nobody reads. It is also RUN-level and therefore cannot name a drifting
 // reviewer; warnDriftingReviewers is the sibling that can.
-func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) {
+//
+// The corroboration_rate advisory is deliberately NOT appended here: it is shared with
+// the per-reviewer warnings and emitted once by warnVocabularyDiagnostics
+// (vocabularyAgreementAdvisory) when any signal fired.
+func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 	if !benchmark.ExceedsVocabularyCeiling(rate) {
-		return
+		return false
 	}
 	_, _ = fmt.Fprintf(w,
 		"warning: out_of_vocabulary_rate %.2f is at or above the %.2f ceiling — "+
 			"reviewers are labelling findings with words outside the offered vocabulary, "+
-			"which zeroes their recall independently of what they actually detected. "+
-			"Treat this run's corroboration_rate as a measure of vocabulary agreement, not detection.\n",
+			"which zeroes their recall independently of what they actually detected.\n",
 		*rate, benchmark.MaxOutOfVocabularyRate)
+	return true
 }
