@@ -250,8 +250,10 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 }
 
 // maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
-// warnDriftingReviewers names a reviewer. INCLUSIVE, matching the run-level ceiling's
-// semantics: a reviewer sitting exactly on it is named.
+// warnDriftingReviewers names a reviewer. The comparison is `*r.Rate >= maxReviewerDriftRate`
+// — the same `>=` operator ExceedsVocabularyCeiling applies to the run-level ceiling, so
+// a reviewer sitting exactly on this rate is named just as a run sitting exactly on the
+// ceiling trips the guard.
 //
 // # Why this is NOT benchmark.MaxOutOfVocabularyRate
 //
