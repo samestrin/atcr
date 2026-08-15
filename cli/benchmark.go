@@ -346,23 +346,29 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 	if len(drifting) > 1 {
 		noun = "reviewers"
 	}
-	_, _ = fmt.Fprintf(w,
+	// Assemble the whole message and write it ONCE: this is a multi-part warning
+	// (header, rows, trailer), and a stderr failure mid-sequence — closed pipe, full
+	// disk — would otherwise land the header while the rows it promises silently
+	// vanish. All-or-nothing, and still deliberately non-fatal on write error.
+	var msg strings.Builder
+	fmt.Fprintf(&msg,
 		"warning: %d %s labelled at least %.0f%% of their own findings with words outside the "+
 			"offered vocabulary. The run-level out_of_vocabulary_rate pools every reviewer's "+
 			"findings together, so a drifted reviewer measured against prolific clean peers can "+
 			"leave it under the ceiling — read these rows, not just that number:\n",
 		len(drifting), noun, maxReviewerDriftRate*100)
 	for _, r := range shown {
-		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
+		fmt.Fprintf(&msg, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
 			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate, r.RoutingValues)
 	}
 	if rest := len(drifting) - len(shown); rest > 0 {
-		_, _ = fmt.Fprintf(w, "  ...and %d more\n", rest)
+		fmt.Fprintf(&msg, "  ...and %d more\n", rest)
 	}
-	_, _ = fmt.Fprintf(w,
+	fmt.Fprintf(&msg,
 		"Treat these rows' corroboration_rate as a measure of vocabulary agreement rather than "+
 			"detection: a category outside the enumeration matches no expected category, so it "+
 			"zeroes recall independently of what the reviewer actually found.\n")
+	_, _ = io.WriteString(w, msg.String())
 }
 
 // warnRoutingOnlyReviewers names reviewers who labelled EVERY finding with a routing
@@ -394,16 +400,20 @@ func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) 
 	if len(routing) > 1 {
 		noun = "reviewers"
 	}
-	_, _ = fmt.Fprintf(w,
+	// Assembled and written ONCE, like warnDriftingReviewers: a multi-part warning that
+	// lands its header and loses its rows to a stderr failure is worse than no warning.
+	var msg strings.Builder
+	fmt.Fprintf(&msg,
 		"warning: %d %s labelled every finding with a routing value (`other` or `out-of-scope`). "+
 			"Routing values are taxonomy members, so their drift rate is 0.0 and no warning above "+
 			"can see them — yet they conveyed no categorical information. Read these rows' recall "+
 			"on the aligned reviewers breakdown, not their drift rate:\n",
 		len(routing), noun)
 	for _, r := range routing {
-		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings labelled with routing values\n",
+		fmt.Fprintf(&msg, "  %s/%s: %d/%d findings labelled with routing values\n",
 			r.Model, r.Persona, r.RoutingValues, r.Findings)
 	}
+	_, _ = io.WriteString(w, msg.String())
 }
 
 // warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
