@@ -247,6 +247,7 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 	}
 	warnIfVocabularyCeilingExceeded(w, rr.OutOfVocabularyRate)
 	warnDriftingReviewers(w, rr.Vocabulary)
+	warnRoutingOnlyReviewers(w, rr.Vocabulary)
 }
 
 // maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
@@ -330,13 +331,54 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 			"leave it under the ceiling — read these rows, not just that number:\n",
 		len(drifting), noun, maxReviewerDriftRate*100)
 	for _, r := range drifting {
-		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings out of vocabulary (%.2f)\n",
-			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate)
+		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
+			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate, r.RoutingValues)
 	}
 	_, _ = fmt.Fprintf(w,
 		"Treat these rows' corroboration_rate as a measure of vocabulary agreement rather than "+
 			"detection: a category outside the enumeration matches no expected category, so it "+
 			"zeroes recall independently of what the reviewer actually found.\n")
+}
+
+// warnRoutingOnlyReviewers names reviewers who labelled EVERY finding with a routing
+// value (`other` or `out-of-scope`) — the blind spot warnDriftingReviewers structurally
+// cannot see. Both routing values are taxonomy members, so such a reviewer reports
+// drift 0.0: identical, on the drift axis, to a reviewer that categorized every finding
+// precisely, while conveying no categorical information at all.
+//
+// This is the operator-surface half of the discriminator ReviewerVocabulary.RoutingValues
+// was added to provide: the run result computes it, and this warning is what keeps it
+// from being discoverable only by hand-correlating two JSON arrays by index. The pairing
+// to read is routing-only AND recall 0.0 — "categorized nothing" — against the
+// positionally-aligned Reviewers row.
+//
+// Like the sibling warnings this writes to STDERR and is deliberately NOT an exit-code
+// change.
+func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
+	var routing []benchmark.ReviewerVocabulary
+	for _, r := range rows {
+		if r.Findings > 0 && r.RoutingValues == r.Findings {
+			routing = append(routing, r)
+		}
+	}
+	if len(routing) == 0 {
+		return
+	}
+
+	noun := "reviewer"
+	if len(routing) > 1 {
+		noun = "reviewers"
+	}
+	_, _ = fmt.Fprintf(w,
+		"warning: %d %s labelled every finding with a routing value (`other` or `out-of-scope`). "+
+			"Routing values are taxonomy members, so their drift rate is 0.0 and no warning above "+
+			"can see them — yet they conveyed no categorical information. Read these rows' recall "+
+			"on the aligned reviewers breakdown, not their drift rate:\n",
+		len(routing), noun)
+	for _, r := range routing {
+		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings labelled with routing values\n",
+			r.Model, r.Persona, r.RoutingValues, r.Findings)
+	}
 }
 
 // warnIfVocabularyCeilingExceeded emits an operator-visible warning when a run's
