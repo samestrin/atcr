@@ -113,8 +113,8 @@ func ExceedsVocabularyCeiling(rate *float64) bool {
 //     drifted findings, and inversely make one stray word read as a large share of
 //     a small set.
 //   - Membership is decided by BARE non-membership after normalize, with
-//     reconcile.CategoryMerges() deliberately NOT applied. That table is epic
-//     the parse-boundary canonicalization epic's contract; folding it in here would
+//     reconcile.CategoryMerges() deliberately NOT applied. That table is the
+//     parse-boundary canonicalization epic's contract; folding it in here would
 //     reach into that epic's scope and silently change what this metric means between
 //     releases. This choice USED to be what made 0.20 rather than 0.05 the defensible
 //     ceiling — V1 then emitted zero merge-table words, retiring that argument without
