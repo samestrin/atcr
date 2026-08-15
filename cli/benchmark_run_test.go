@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -649,6 +650,61 @@ func TestWarnDriftingReviewers_SortsByRateAndCapsTheListing(t *testing.T) {
 		}
 	}
 	assert.Less(t, rowLines, 30, "the listing must be capped, not one line per drifting row")
+}
+
+// failAfterWriter simulates stderr dying mid-warning: it accepts failAfter writes, then
+// errors on every subsequent one (a closed pipe under `2>&1 | head`, a full disk on
+// `2> log`).
+type failAfterWriter struct {
+	calls     int
+	failAfter int
+	buf       bytes.Buffer
+}
+
+func (f *failAfterWriter) Write(p []byte) (int, error) {
+	f.calls++
+	if f.calls > f.failAfter {
+		return 0, fmt.Errorf("broken pipe")
+	}
+	return f.buf.Write(p)
+}
+
+// A multi-part warning must be all-or-nothing. The drift warning is a header, N rows,
+// and a trailer: if stderr dies after the header, the operator is left holding a count
+// with none of the identities it promises — worse than no warning. Both multi-part
+// vocabulary warnings must therefore assemble the whole message and issue ONE write, so
+// a failing writer gets either everything or nothing.
+func TestWarnVocabularyWarnings_NeverEmitAPartialMessage(t *testing.T) {
+	rate := 0.75
+	driftRows := []benchmark.ReviewerVocabulary{
+		{Model: "drifted", Persona: "p", Findings: 4, Drifted: 3, Rate: &rate},
+	}
+	routingRows := []benchmark.ReviewerVocabulary{
+		{Model: "routing", Persona: "p", Findings: 3, RoutingValues: 3},
+	}
+
+	for _, tc := range []struct {
+		name string
+		warn func(w io.Writer)
+	}{
+		{"drift", func(w io.Writer) { warnDriftingReviewers(w, driftRows) }},
+		{"routing", func(w io.Writer) { warnRoutingOnlyReviewers(w, routingRows) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fw := &failAfterWriter{failAfter: 0}
+			tc.warn(fw)
+			assert.LessOrEqual(t, fw.calls, 1,
+				"a multi-part warning must be assembled and written in ONE call")
+			assert.Empty(t, fw.buf.String(), "a dead writer must receive nothing")
+
+			fw = &failAfterWriter{failAfter: 1}
+			tc.warn(fw)
+			got := fw.buf.String()
+			assert.Contains(t, got, "warning:", "header")
+			assert.Contains(t, got, "\n  ", "at least one row")
+			assert.True(t, strings.HasSuffix(got, "\n"), "the message must end complete")
+		})
+	}
 }
 
 // The breakdown a REAL run produces is what the warning reads — not a hand-built
