@@ -558,6 +558,9 @@ func TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply(t *testing.T) {
 	// assertion passes even with the run-level call deleted.
 	assert.Contains(t, got, "is at or above", "run-level breach still reported")
 	assert.Contains(t, got, "totally-drifted/p", "and the row responsible is named")
+	assert.Equal(t, 1, strings.Count(got, "vocabulary agreement"),
+		"both helpers carry the same advisory — when both fire the operator must read it ONCE, "+
+			"not twice from two independent string literals")
 
 	// A clean run says nothing at all, and a nil result is not a crash.
 	buf.Reset()
