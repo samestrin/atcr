@@ -319,7 +319,8 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 // malformed parser output, not a reviewer ignoring its prompt.
 //
 // Built per call rather than cached in a package var: reconcile.Categories()
-// returns a fresh copy by design, and this runs once per run result, not per
+// returns a fresh copy by design, and this runs once per rate computation — twice
+// per run result since PerReviewerVocabulary joined OutOfVocabularyRate — not per
 // finding. A cached set would trade a real (if small) staleness hazard for an
 // allocation nobody is counting.
 func vocabularySet() map[string]bool {

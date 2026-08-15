@@ -564,6 +564,57 @@ func TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply(t *testing.T) {
 	assert.Empty(t, buf.String(), "an unmeasured run has nothing to report")
 }
 
+// The all-`other` blind spot, closed at the operator surface. Both routing values are
+// taxonomy members, so a reviewer that labels EVERY finding `other` reports drift 0.0 —
+// invisible to warnDriftingReviewers and no ceiling breach — while conveying no
+// categorical information at all. warnVocabularyDiagnostics must still name that row,
+// through its routing arm.
+func TestWarnVocabularyDiagnostics_NamesTheAllRoutingReviewer(t *testing.T) {
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "routing-only", Persona: "p", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"}, Raised: []string{"other", "other", "other"},
+		}}},
+	}
+	rr := &benchmark.RunResult{
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
+		Vocabulary:          benchmark.PerReviewerVocabulary(reviewers),
+	}
+	require.Len(t, rr.Vocabulary, 1)
+	require.Equal(t, rr.Vocabulary[0].Findings, rr.Vocabulary[0].RoutingValues,
+		"precondition: every finding is a routing value")
+
+	var buf bytes.Buffer
+	warnVocabularyDiagnostics(&buf, rr)
+	got := buf.String()
+
+	assert.Contains(t, got, "routing-only/p", "an all-`other` reviewer must be named")
+	assert.NotContains(t, got, "is at or above", "routing values are taxonomy members — no ceiling breach")
+	assert.NotContains(t, got, "out of vocabulary", "drift is 0.0 — the drift warning must stay silent")
+}
+
+// A PARTIALLY-routing reviewer is visible too: the drift warning's per-row line quotes
+// RoutingValues alongside the drift counts, so a reviewer hiding half its findings
+// behind `other` is readable from the same line that names its drift.
+func TestWarnDriftingReviewers_RowQuotesRoutingValues(t *testing.T) {
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "half-routing", Persona: "p", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"},
+			Raised:   []string{"bug", "clarity", "other", "out-of-scope"},
+		}}},
+	}
+	rows := benchmark.PerReviewerVocabulary(reviewers)
+	require.Len(t, rows, 1)
+	require.Equal(t, 2, rows[0].RoutingValues, "precondition: two of four findings are routing values")
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, rows)
+	got := buf.String()
+
+	assert.Contains(t, got, "half-routing/p")
+	assert.Contains(t, got, "2/4", "the drift counts are still quoted")
+	assert.Contains(t, got, "routing", "the row must surface the routing-value count")
+}
+
 // The breakdown a REAL run produces is what the warning reads — not a hand-built
 // slice. This drives executeBenchmarkRun end to end and feeds its own rr.Vocabulary
 // to the warning, so a defect anywhere in the producer chain (fold, sort, scrub,
