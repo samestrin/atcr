@@ -302,7 +302,8 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 // folded, and 5 of the 32 members are hyphenated — so every separator variant a real
 // model emits counts as full drift against this list:
 //
-//	error_handling · "error handling" · input_validation · "resource leak" · "api contract"
+//	error_handling · "error handling" · input_validation · "resource leak" ·
+//	"api contract" · "out of scope" · out_of_scope
 //
 // Those are SPELLINGS of a member, not vocabulary drift, and each one would inflate the
 // rate against MaxOutOfVocabularyRate. Separator and hyphenation folding belongs to the
