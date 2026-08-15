@@ -5,7 +5,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -804,23 +806,22 @@ func TestBuildSubmission_DoesNotPublishPerReviewerVocabulary(t *testing.T) {
 // per-reviewer diagnostic and must not have reached for that type to carry it. The key
 // set is enumerated literally so ANY addition — not just this epic's — fails here and
 // has to be a deliberate edit.
+//
+// The enumeration is derived from the TYPE's json tags, not from a marshalled
+// instance: a new field tagged omitempty and left at its zero value by a hand-built
+// fixture never appears in the marshalled map, so an instance-derived key set would
+// keep matching the literal list while the frozen schema quietly gained a column.
+// (Two existing fields — survived_skeptic_rate, cost_per_corroborated_finding_usd —
+// are exactly that shape and only show up in a marshal when the fixture sets them.)
 func TestPublicRecord_JSONKeySetIsUnchangedByThisEpic(t *testing.T) {
-	survived, cost := 0.9, 1.25
-	data, err := json.Marshal(scorecard.PublicRecord{
-		Model: "m", Persona: "p", Runs: 3,
-		FindingsRaisedAvg: 2, CorroborationRate: 0.5,
-		SurvivedSkepticRate:           &survived,
-		CostPerCorroboratedFindingUSD: &cost,
-		LatencyP50MS:                  120,
-	})
-	require.NoError(t, err)
-
-	var back map[string]any
-	require.NoError(t, json.Unmarshal(data, &back))
-
-	keys := make([]string, 0, len(back))
-	for k := range back {
-		keys = append(keys, k)
+	typ := reflect.TypeOf(scorecard.PublicRecord{})
+	keys := make([]string, 0, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		keys = append(keys, name)
 	}
 	sort.Strings(keys)
 	assert.Equal(t, []string{

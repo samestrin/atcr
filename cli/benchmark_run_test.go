@@ -652,6 +652,40 @@ func TestWarnDriftingReviewers_SortsByRateAndCapsTheListing(t *testing.T) {
 	assert.Less(t, rowLines, 30, "the listing must be capped, not one line per drifting row")
 }
 
+// Model and Persona are REALIZED identities — provider/proxy-reported strings, not repo
+// constants — and the only sanitizer on the path (scorecard.scrubField) collapses
+// unicode.IsSpace only, so ESC (0x1b), BEL and BACKSPACE survive it byte-for-byte. A
+// hostile upstream returning such a model id must not be able to erase or rewrite the
+// operator's terminal line — including forging a reassuring line over the drift warning
+// itself.
+func TestWarnVocabularyWarnings_StripTerminalControlRunes(t *testing.T) {
+	rate := 0.75
+	driftRows := []benchmark.ReviewerVocabulary{
+		{Model: "evil\x1b[2K", Persona: "p\a", Findings: 4, Drifted: 3, Rate: &rate},
+	}
+	routingRows := []benchmark.ReviewerVocabulary{
+		{Model: "evil\x1b[2K", Persona: "p\b", Findings: 3, RoutingValues: 3},
+	}
+
+	for _, tc := range []struct {
+		name string
+		warn func(w io.Writer)
+	}{
+		{"drift", func(w io.Writer) { warnDriftingReviewers(w, driftRows) }},
+		{"routing", func(w io.Writer) { warnRoutingOnlyReviewers(w, routingRows) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tc.warn(&buf)
+			got := buf.String()
+			assert.NotContains(t, got, "\x1b", "ESC must not reach the terminal")
+			assert.NotContains(t, got, "\a", "BEL must not reach the terminal")
+			assert.NotContains(t, got, "\b", "BACKSPACE must not reach the terminal")
+			assert.Contains(t, got, "evil[2K", "the printable identity remains legible")
+		})
+	}
+}
+
 // failAfterWriter simulates stderr dying mid-warning: it accepts failAfter writes, then
 // errors on every subsequent one (a closed pipe under `2>&1 | head`, a full disk on
 // `2> log`).
