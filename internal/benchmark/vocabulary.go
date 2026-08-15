@@ -7,79 +7,20 @@ import (
 	"github.com/samestrin/atcr/reconcile"
 )
 
-// MaxOutOfVocabularyRate is the ceiling a benchmark run's out-of-vocabulary rate
-// must stay strictly under. It is EXCLUSIVE: a run sitting exactly on it trips the
-// guard.
+// MaxOutOfVocabularyRate is the ceiling a benchmark run's out-of-vocabulary rate is
+// WARNED against: its only consumer is warnIfVocabularyCeilingExceeded, which writes
+// to stderr and deliberately does not change the exit code. The bound is EXCLUSIVE —
+// a run sitting exactly on it is reported.
 //
-// # Where 0.05 comes from
-//
-// It is DERIVED FROM MEASUREMENT: the V1 post-merge validation run (epic 35.16.5.3,
-// completed 2026-08-11) measured an out-of-vocabulary rate of **0.0100** — 2 drifted
-// findings of 201 — on Run A, the run's one valid lane. 0.05 keeps five times that
-// headroom.
-//
-// This replaces the pre-V1 guard of 0.20, which was never an empirical bound. That
-// number bought headroom for the words reconcile's categoryMerges (category.go:143-190)
-// records as MEANING a member without BEING one — `bug`, `input`, `clarity`,
-// `consistency`, `structure`, `failure`, … — on the reasoning that nothing folds them
-// under a bare membership test, and on a ~25% floor estimated from the 35.16.2 dry-run's
-// per-word tail. V1 retired both premises at once: it emitted **zero** merge-table words
-// and **zero** separator/hyphenation variants. The justification for 0.20-rather-than-0.05
-// is therefore empirically dead, and the dry-run figure it rested on described a
-// different metric with a different denominator (it is no baseline for this one — see
-// reconcile/category.go:9-12).
-//
-// # Why 0.05 and not lower
-//
-// n = 1. Run A is the ONLY valid measurement in existence: Run B is invalid as a
-// measurement (a lane silently failed over mid-suite, and `llm-large` emitted bare
-// integers), so the variance of this metric across runs and rosters is unmeasured. A
-// ceiling hugging 0.0100 would encode a tightness one observation cannot support and
-// would fail runs that behaved. Five times the measured value is the deliberately
-// conservative choice pending a second valid run.
-//
-// # This number moves ONE WAY
-//
-// Tighten it when a further valid run supports tightening. NEVER raise it because a run
-// failed — a ceiling that yields to the run it is judging measures nothing. That rule
-// predates this value and survives it; pinned by
+// The number moves ONE WAY: tighten it when a further valid run supports tightening,
+// NEVER raise it because a run was flagged — a ceiling that yields to the run it is
+// judging measures nothing. That rule predates this value and survives it; pinned by
 // TestMaxOutOfVocabularyRate_IsDerivedFromTheV1Measurement.
 //
-// # Read a breach as a PARSER question first, not a persona one
-//
-// Both of V1's two residual drift findings were findings-PARSER artifacts — body text
-// and bare integers landing in the category field — not reviewers choosing words outside
-// the taxonomy. On the only evidence available, this metric is at least as much a
-// parser-health proxy as a vocabulary-health one. So inspect the emitted words before
-// concluding a model ignored its prompt: a rising rate has so far meant malformed rows,
-// and rewriting a persona would not have fixed it.
-//
-// On the taxonomy's own design merits even 0.05 is loose: category.go:73 ships `other`
-// precisely so a reviewer that read its prompt always has a legal landing spot, so
-// every out-of-vocabulary emission is a reviewer ignoring a 32-word enumeration.
-//
-// # Known hole: leaning on `other` entirely reads as flawless agreement
-//
-// `other` and `out-of-scope` are members of reconcile.Categories(), so they are IN
-// vocabulary here. A reviewer or persona that labels EVERY finding `other` therefore
-// reports a rate of 0.0 — identical to a reviewer that categorized every finding
-// precisely — while conveying no categorical information at all. This is the same
-// collapse the nil-vs-0 pointer prevents one level up, and it is currently NOT
-// prevented. It interacts with the equivalence relation: `other` is hard-excluded
-// from every family, so an all-`other` reviewer scores recall 0.0 AND drift 0.0
-// simultaneously — that pairing is the signature to look for.
-//
-// This is recorded, pinned by TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot, and
-// deliberately NOT fixed by redefining the rate: excluding the routing values would
-// change what this metric means and would strand the V1 baseline the ceiling above is
-// derived from. `other` is the escape hatch that makes the set closed rather than
-// lossy, so a reviewer reaching for it is obeying its prompt, not drifting — counting
-// that as drift would conflate two unrelated failures.
-//
-// It is instead SURFACED, not silenced: ReviewerVocabulary.RoutingValues counts the
-// routing labels per reviewer, so RoutingValues == Findings alongside a rate of 0.0 is
-// the signature, readable against the recall on the aligned Reviewers row. Do not read
-// a 0.0 as clean without checking that pairing.
+// The provenance of 0.05 (derived from the V1 validation run's measured 0.0100, the
+// retired 0.20 argument, the n=1 headroom), the read-a-breach-as-a-parser-question
+// guidance, and the all-`other` blind spot this number does not see are
+// operator-facing narrative: docs/benchmark.md, "The run-result contract".
 const MaxOutOfVocabularyRate = 0.05
 
 // ExceedsVocabularyCeiling reports whether a measured rate breaches
@@ -308,7 +249,7 @@ func PerReviewerVocabulary(reviewers []ReviewerScore) []ReviewerVocabulary {
 // Those are SPELLINGS of a member, not vocabulary drift, and each one would inflate the
 // rate against MaxOutOfVocabularyRate. Separator and hyphenation folding belongs to the
 // parse-boundary canonicalization epic and is deliberately out of scope here (folding
-// reconcile.CategoryMerges() likewise — see the const doc above).
+// reconcile.CategoryMerges() likewise — see OutOfVocabularyRate's doc).
 //
 // The feared consequence — that the first real run would fail the ceiling on a
 // normalization artifact rather than on genuine drift — did NOT materialize: V1 emitted
