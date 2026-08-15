@@ -528,7 +528,14 @@ func TestWarnDriftingReviewers_FiresAlongsideTheRunLevelWarning(t *testing.T) {
 // AC2 end-to-end from a RunResult, and the reason the two signals share one call site:
 // the scenario that matters is the one where the ceiling warning is SILENT and a
 // reviewer is drifting anyway. A test that invokes each helper directly cannot observe
-// that BOTH are reached from the command — delete either call and this fails.
+// that the shared call site reaches the per-reviewer arm.
+//
+// Scope note, kept honest: this test pins the warnDriftingReviewers call ONLY. Its
+// precondition is that the ceiling is NOT breached and its ceiling assertion is a
+// NotContains, so deleting warnIfVocabularyCeilingExceeded from warnVocabularyDiagnostics
+// leaves this test passing — that call is pinned by the sibling
+// TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply. Do not delete the
+// sibling as redundant: it is the only coverage of the ceiling arm at the call site.
 func TestWarnVocabularyDiagnostics_SilentCeilingStillNamesTheDriftingReviewer(t *testing.T) {
 	threeHundredClean := make([]string, 300)
 	for i := range threeHundredClean {
