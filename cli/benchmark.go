@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
@@ -359,7 +360,8 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 		len(drifting), noun, maxReviewerDriftRate*100)
 	for _, r := range shown {
 		fmt.Fprintf(&msg, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
-			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate, r.RoutingValues)
+			stripTerminalControlRunes(r.Model), stripTerminalControlRunes(r.Persona),
+			r.Drifted, r.Findings, *r.Rate, r.RoutingValues)
 	}
 	if rest := len(drifting) - len(shown); rest > 0 {
 		fmt.Fprintf(&msg, "  ...and %d more\n", rest)
@@ -369,6 +371,21 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 			"detection: a category outside the enumeration matches no expected category, so it "+
 			"zeroes recall independently of what the reviewer actually found.\n")
 	_, _ = io.WriteString(w, msg.String())
+}
+
+// stripTerminalControlRunes drops non-printable control runes (ESC, BEL, BACKSPACE, …)
+// from a realized reviewer identity before it is written to a terminal. Model/Persona
+// are provider/proxy-reported strings, and the only sanitizer upstream on this path
+// (scorecard.scrubField) collapses unicode.IsSpace only — ESC survives it byte-for-byte,
+// so a compromised or hostile upstream could otherwise erase and rewrite the operator's
+// terminal line, including forging a reassuring line over the warning itself.
+func stripTerminalControlRunes(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // warnRoutingOnlyReviewers names reviewers who labelled EVERY finding with a routing
@@ -411,7 +428,8 @@ func warnRoutingOnlyReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) 
 		len(routing), noun)
 	for _, r := range routing {
 		fmt.Fprintf(&msg, "  %s/%s: %d/%d findings labelled with routing values\n",
-			r.Model, r.Persona, r.RoutingValues, r.Findings)
+			stripTerminalControlRunes(r.Model), stripTerminalControlRunes(r.Persona),
+			r.RoutingValues, r.Findings)
 	}
 	_, _ = io.WriteString(w, msg.String())
 }
