@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -277,6 +278,13 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 // costs the signal's credibility on every run.
 const maxReviewerDriftRate = 0.50
 
+// maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
+// is a findings-parser regression, which drifts every reviewer at once — on a 27-model
+// roster an uncapped listing is a wall of rows nobody reads, the outcome the threshold
+// doc argues against. The header still quotes the true drifting count; the tail
+// summarizes the capped remainder.
+const maxDriftWarningRows = 10
+
 // warnDriftingReviewers names individual reviewers whose own drift is severe enough to
 // matter, and is the answer to the question the run-level warning structurally cannot
 // answer: WHICH model ignored the vocabulary.
@@ -310,7 +318,7 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 	// A nil rate is UNMEASURED, not drifted — the same nil-vs-zero distinction the
 	// pointer carries. Naming the reviewers of a total-failure run as the vocabulary
 	// problem would misdiagnose a run that raised nothing to measure.
-	var drifting []benchmark.ReviewerVocabulary
+	drifting := make([]benchmark.ReviewerVocabulary, 0, len(rows))
 	for _, r := range rows {
 		if r.Rate != nil && *r.Rate >= maxReviewerDriftRate {
 			drifting = append(drifting, r)
@@ -318,6 +326,20 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 	}
 	if len(drifting) == 0 {
 		return
+	}
+
+	// The realistic breach cause is a findings-parser regression, which drifts EVERY
+	// reviewer at once — so the listing is severity-ordered and capped: the worst
+	// drifters first, the remainder summarized, rather than an alphabetized wall.
+	sort.Slice(drifting, func(i, j int) bool {
+		if *drifting[i].Rate != *drifting[j].Rate {
+			return *drifting[i].Rate > *drifting[j].Rate
+		}
+		return drifting[i].Findings > drifting[j].Findings
+	})
+	shown := drifting
+	if len(shown) > maxDriftWarningRows {
+		shown = shown[:maxDriftWarningRows]
 	}
 
 	noun := "reviewer"
@@ -330,9 +352,12 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) {
 			"findings together, so a drifted reviewer measured against prolific clean peers can "+
 			"leave it under the ceiling — read these rows, not just that number:\n",
 		len(drifting), noun, maxReviewerDriftRate*100)
-	for _, r := range drifting {
+	for _, r := range shown {
 		_, _ = fmt.Fprintf(w, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
 			r.Model, r.Persona, r.Drifted, r.Findings, *r.Rate, r.RoutingValues)
+	}
+	if rest := len(drifting) - len(shown); rest > 0 {
+		_, _ = fmt.Fprintf(w, "  ...and %d more\n", rest)
 	}
 	_, _ = fmt.Fprintf(w,
 		"Treat these rows' corroboration_rate as a measure of vocabulary agreement rather than "+

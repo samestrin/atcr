@@ -635,10 +635,11 @@ func TestWarnDriftingReviewers_SortsByRateAndCapsTheListing(t *testing.T) {
 	got := buf.String()
 
 	worst := strings.Index(got, "model-29")
-	middle := strings.Index(got, "model-14")
+	tenth := strings.Index(got, "model-20")
 	require.NotEqual(t, -1, worst, "the worst drifter must appear")
-	require.NotEqual(t, -1, middle)
-	assert.Less(t, worst, middle, "rows must sort by descending rate, not alphabetically")
+	require.NotEqual(t, -1, tenth, "the tenth-worst drifter is inside the cap")
+	assert.Less(t, worst, tenth, "rows must sort by descending rate, not alphabetically")
+	assert.NotContains(t, got, "model-05", "rows beyond the cap are summarized, not listed")
 	assert.Contains(t, got, "more", "the tail must summarize the capped remainder")
 
 	rowLines := 0
