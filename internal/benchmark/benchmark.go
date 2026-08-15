@@ -337,8 +337,10 @@ type RunResult struct {
 	//
 	// Run-result-only, exactly as Coverage is: it gates nothing and belongs to no
 	// public schema, so BuildSubmission does not carry it into a Submission. omitempty
-	// so a run-result written before this field existed unmarshals to nil and reads as
-	// "no breakdown recorded" rather than as a run with no reviewers.
+	// drops the key when a new run has no reviewers, so such a run serializes
+	// identically to a run-result written before this field existed — and both
+	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown
+	// recorded" rather than as a run with no reviewers.
 	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
 }
 
