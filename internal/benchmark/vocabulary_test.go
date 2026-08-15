@@ -517,6 +517,29 @@ func TestPerReviewerVocabulary_RoutingValueCountDistinguishesAllOtherFromClean(t
 		"AC3 is closed by the routing count, never by excluding routing values from the vocabulary")
 }
 
+// A separator variant of a hyphenated routing value — `out of scope` rather than
+// `out-of-scope` — is double-counted against the reviewer: normalize folds only case
+// and whitespace, so the variant is neither a vocabulary member (it counts as drift)
+// nor a routing value (it escapes RoutingValues). This pins the interaction as a
+// recorded decision rather than an accident: separator folding belongs to the
+// parse-boundary canonicalization epic, not to this package (see vocabularySet's doc).
+func TestPerReviewerVocabulary_SeparatorVariantOfRoutingValueIsDriftNotRouting(t *testing.T) {
+	reviewers := []ReviewerScore{
+		{Model: "variant", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{"out of scope"},
+		}}},
+	}
+
+	got := PerReviewerVocabulary(reviewers)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].Findings)
+	assert.Equal(t, 1, got[0].Drifted,
+		"normalize folds case and whitespace only: `out of scope` is not the member `out-of-scope`")
+	assert.Equal(t, 0, got[0].RoutingValues,
+		"the same variant escapes the routing discriminator, which keys on the exact normalized spelling")
+}
+
 // The paired half of the signature. Recall is NOT duplicated into the breakdown — it
 // already sits on Reviewers[i].CorroborationRate, produced from the same []ReviewerScore
 // at the same call site — so a consumer reads the pairing by correlating the two arrays
