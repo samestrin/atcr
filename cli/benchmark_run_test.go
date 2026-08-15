@@ -593,9 +593,14 @@ func TestWarnVocabularyDiagnostics_EmitsBothSignalsWhenBothApply(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(got, "vocabulary agreement"),
 		"both helpers carry the same advisory — when both fire the operator must read it ONCE, "+
 			"not twice from two independent string literals")
+}
 
-	// A clean run says nothing at all, and a nil result is not a crash.
-	buf.Reset()
+// The nil-guard is the ONLY coverage warnVocabularyDiagnostics' `rr == nil` early
+// return gets, so it lives in its own test: buried under another test's name, a
+// nil-panic regression would report as that test's failure, and pruning that test for
+// its named concern would silently delete this coverage.
+func TestWarnVocabularyDiagnostics_SilentOnNilAndEmptyRunResult(t *testing.T) {
+	var buf bytes.Buffer
 	warnVocabularyDiagnostics(&buf, &benchmark.RunResult{})
 	warnVocabularyDiagnostics(&buf, nil)
 	assert.Empty(t, buf.String(), "an unmeasured run has nothing to report")
