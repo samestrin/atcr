@@ -461,6 +461,31 @@ func TestWarnDriftingReviewers_FiresOnlyAtTheMajorityThreshold(t *testing.T) {
 		"the per-reviewer threshold is deliberately looser than the run-level ceiling")
 }
 
+// The 0.50 boundary must ALSO be pinned through the PRODUCTION rate computation.
+// TestWarnDriftingReviewers_FiresOnlyAtTheMajorityThreshold builds its rows with a
+// local helper that computes Rate itself, so a change to PerReviewerVocabulary's rate
+// expression (macro-averaging per case, excluding routing values from the numerator, …)
+// would leave every boundary assertion passing. This case drives 1-drifted-of-2 —
+// exactly 0.50 — from a ReviewerScore through PerReviewerVocabulary into the warning.
+func TestWarnDriftingReviewers_BoundaryDrivenThroughProductionComputation(t *testing.T) {
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "boundary-model", Persona: "p", Cases: []benchmark.CaseScore{{
+			Expected: []string{"correctness"},
+			Raised:   []string{"bug", "correctness"}, // 1 drifted of 2 → exactly 0.50
+		}}},
+	}
+	rows := benchmark.PerReviewerVocabulary(reviewers)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Rate)
+	require.InDelta(t, 0.50, *rows[0].Rate, 1e-9,
+		"precondition: the production path yields exactly the threshold for 1-of-2")
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, rows)
+	assert.Contains(t, buf.String(), "boundary-model/p",
+		"a production-computed 0.50 must name the reviewer — the comparison is `>=`")
+}
+
 // An unmeasured row is not a drifted one. A reviewer that raised nothing carries a nil
 // rate, and treating that as drift would name the failed reviewers of a total-failure
 // run as the vocabulary problem — the same nil-vs-zero collapse the pointer prevents.
