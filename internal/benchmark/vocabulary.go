@@ -51,8 +51,8 @@ func ExceedsVocabularyCeiling(rate *float64) bool {
 // the epic that tightened it recorded the caveat explicitly: n=1, so variance under this
 // metric is unmeasured. Applying an n=1-derived bound to individual rows assumes a
 // tightness one observation cannot support — and a per-reviewer signal that fires on
-// ordinary between-model variation reproduces exactly the defect
-// warnIfVocabularyCeilingExceeded's own doc names: a warning printed on every run is a
+// ordinary between-model variation reproduces exactly the defect cli's own
+// warnIfVocabularyCeilingExceeded doc names: a warning printed on every run is a
 // warning nobody reads.
 //
 // 0.50 is a qualitatively different claim — a MAJORITY of this reviewer's own findings
