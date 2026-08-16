@@ -268,6 +268,22 @@ type Result struct {
 	PayloadMode   string
 	Truncation    payload.Truncation
 
+	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
+	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
+	// the per-slot Truncation above.
+	//
+	// It exists because the chunked strategy renders every chunk-slot with a neutral
+	// Truncation on purpose: the shed is a property of the whole payload, so a
+	// per-chunk copy would have each chunk claim dropped files that never appeared in
+	// it. Left only there, the fact reached no artifact at all — every chunked agent's
+	// status.json reported truncated=false while 40 of 73 files had been shed
+	// (observed 2026-08-15), contradicting AgentStatus' "never silent (AC 06-03)".
+	//
+	// mergeResultGroup promotes it into the merged persona's Truncation, so the
+	// diff-wide fact is recorded exactly ONCE per agent rather than once per chunk.
+	// The bulk path never sets it — it already carries the real value in Truncation.
+	DiffTruncation payload.Truncation
+
 	// servedChunkFiles is the baseline coverage tag of the chain member that
 	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It
 	// equals the primary's tag in every case except a re-packed fallback, which
