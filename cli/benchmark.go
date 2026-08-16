@@ -219,6 +219,9 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("run-result %s has out_of_vocabulary_rate %v outside [0,1]", in, v)
 		}
 	}
+	if err := validateReviewerVocabulary(cmd.ErrOrStderr(), rr, in); err != nil {
+		return err
+	}
 
 	// Anchor before the gate, not after: checkCoverage's every diagnostic is phrased
 	// against rr.SuiteCaseIDs, so a truncated denominator would otherwise produce a
@@ -455,4 +458,63 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 			"which zeroes their recall independently of what they actually detected.\n",
 		*rate, benchmark.MaxOutOfVocabularyRate)
 	return true
+}
+
+// validateReviewerVocabulary checks the reviewer_vocabulary diagnostic array on an
+// untrusted (possibly hand-supplied) run-result at the export boundary.
+//
+// The two failure classes get deliberately different severities:
+//
+//   - A malformed ROW VALUE — a rate outside [0,1] or NaN, or drifted exceeding its
+//     own denominator — is a HARD ERROR, matching the out_of_vocabulary_rate guard
+//     immediately above. Those are not pessimistic readings; they are arithmetic that
+//     cannot describe any run, and "no consumer reads it yet" did not exempt the
+//     scalar either.
+//
+//   - A LENGTH or ORDER mismatch against Reviewers is a non-blocking WARNING. The
+//     positional join (entry i describes Reviewers[i]) is what the field doc tells
+//     consumers to rely on, but nothing on this path reads it today, and the array is
+//     legitimately absent on any pre-field run-result. Rejecting there would add a new
+//     bounce at a publication gate for a defect that currently misleads no one.
+//
+// An absent or empty array is silent: omission is the normal shape, not a defect.
+func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
+	if len(rr.Vocabulary) == 0 {
+		return nil
+	}
+	for i, v := range rr.Vocabulary {
+		if v.Findings < 0 || v.Drifted < 0 {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with negative findings/drifted (%d/%d)",
+				path, i, v.Drifted, v.Findings)
+		}
+		if v.Drifted > v.Findings {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with drifted %d exceeding findings %d — "+
+				"a numerator larger than its own denominator describes no run", path, i, v.Drifted, v.Findings)
+		}
+		if v.Rate == nil {
+			// nil is UNMEASURED (this reviewer raised nothing), never a defect — the
+			// same nil-vs-zero distinction the pointer carries everywhere else.
+			continue
+		}
+		if r := *v.Rate; math.IsNaN(r) || r < 0 || r > 1 {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] rate %v outside [0,1]", path, i, r)
+		}
+	}
+
+	if len(rr.Vocabulary) != len(rr.Reviewers) {
+		_, _ = fmt.Fprintf(w, "warning: run-result %s has %d reviewer_vocabulary row(s) against %d reviewer(s); "+
+			"the array documents a positional join (entry i describes reviewers[i]) that this file cannot satisfy. "+
+			"Publishing anyway — no consumer reads it on this path.\n", path, len(rr.Vocabulary), len(rr.Reviewers))
+		return nil
+	}
+	for i, v := range rr.Vocabulary {
+		if v.Model != rr.Reviewers[i].Model || v.Persona != rr.Reviewers[i].Persona {
+			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_vocabulary[%d] (%s/%s) misaligned with "+
+				"reviewers[%d] (%s/%s); the documented positional join does not hold. Publishing anyway — "+
+				"no consumer reads it on this path.\n",
+				path, i, v.Model, v.Persona, i, rr.Reviewers[i].Model, rr.Reviewers[i].Persona)
+			return nil
+		}
+	}
+	return nil
 }

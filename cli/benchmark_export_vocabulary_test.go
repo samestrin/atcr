@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,6 +40,20 @@ func writeRunResultWithVocabulary(t *testing.T, rows []benchmark.ReviewerVocabul
 
 func ptrFloat(v float64) *float64 { return &v }
 
+// execExportErr drives the export command and returns the ERROR it produced along
+// with the captured streams. execCmdSplit reports only an exit code: the root
+// command silences error printing (cmd/atcr's main renders it), so a hard-rejection
+// message never reaches errBuf and asserting on its text needs the error itself.
+func execExportErr(t *testing.T, path string) (err error, stdout, stderr string) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"benchmark", "export", "--in", path})
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	return root.ExecuteContext(context.Background()), outBuf.String(), errBuf.String()
+}
+
 // A run-result may be hand-supplied, so every diagnostic it carries is untrusted at
 // this boundary. out_of_vocabulary_rate has been range-checked since it existed; its
 // sibling per-row rates were not, so a hand-written file could publish rates outside
@@ -66,32 +84,29 @@ func TestBenchmarkExport_RejectsMalformedReviewerVocabularyRows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			isolate(t)
 			path := writeRunResultWithVocabulary(t, tc.rows)
-			code, _, stderr := execCmdSplit(t, "benchmark", "export", "--in", path)
-			assert.NotEqual(t, 0, code, "a corrupt per-row measurement must not reach a public submission")
-			assert.Contains(t, stderr, tc.want)
-			assert.Contains(t, stderr, "reviewer_vocabulary", "the error must name the field so the operator can find it")
+			err, stdout, _ := execExportErr(t, path)
+			require.Error(t, err, "a corrupt per-row measurement must not reach a public submission")
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "reviewer_vocabulary", "the error must name the field so the operator can find it")
+			assert.Empty(t, stdout, "a rejected file must emit no submission at all")
 		})
 	}
 }
 
-// A NaN rate is corrupt for the same reason the scalar's NaN check exists: it
-// survives JSON round-trips through some encoders and compares false against every
-// bound, so a range check alone would pass it through.
-func TestBenchmarkExport_RejectsNaNReviewerVocabularyRate(t *testing.T) {
-	isolate(t)
-	// NaN cannot be marshalled by encoding/json, so the file is hand-written.
-	path := filepath.Join(t.TempDir(), "run-result.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{
-	  "suite": "suite-valid",
-	  "suite_version": "1",
-	  "generated_at": "2026-08-15T00:00:00Z",
-	  "reviewers": [{"model":"m-a","persona":"p-a"}],
-	  "reviewer_vocabulary": [{"model":"m-a","persona":"p-a","findings":4,"drifted":1,"rate":1e999}]
-	}`), 0o644))
-
-	code, _, stderr := execCmdSplit(t, "benchmark", "export", "--in", path)
-	assert.NotEqual(t, 0, code)
-	assert.Contains(t, stderr, "reviewer_vocabulary")
+// A NaN rate cannot arrive through the file path — encoding/json rejects the JSON
+// spellings that would produce one — so the guard is exercised directly. It is kept
+// because NaN compares false against every bound: a range check alone lets it
+// through, and the sibling out_of_vocabulary_rate check carries the same guard for
+// the same reason. (An earlier version of this test fed `1e999` through the command
+// and passed with the guard removed, proving only that the JSON decoder works.)
+func TestValidateReviewerVocabulary_RejectsNaNRate(t *testing.T) {
+	nan := math.NaN()
+	err := validateReviewerVocabulary(io.Discard, benchmark.RunResult{
+		Reviewers:  []scorecard.PublicRecord{{Model: "m-a", Persona: "p-a"}},
+		Vocabulary: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: 4, Drifted: 1, Rate: &nan}},
+	}, "rr.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reviewer_vocabulary")
 }
 
 // The positional join (entry i describes reviewers[i]) is what the field doc
