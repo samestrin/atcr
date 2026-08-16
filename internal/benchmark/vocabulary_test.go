@@ -867,3 +867,30 @@ func TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot(t *testing.T) {
 		"`other` is hard-excluded from every family, so the same run detects nothing — "+
 			"drift 0.0 with recall 0.0 is the all-`other` signature, not a clean run")
 }
+
+// The per-reviewer boundary is pinned HERE, at the predicate, rather than only through
+// the CLI warning's message text: the bound and its inclusive semantics are the
+// package's to define, and a caller outside package cli must be able to reuse them
+// without restating `>= 0.50`. The row above the run-level ceiling but under this one is
+// the case that keeps the two thresholds from being quietly collapsed into one.
+func TestExceedsReviewerDriftRate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rate *float64
+		want bool
+	}{
+		{name: "unmeasured is not a breach", rate: nil, want: false},
+		{name: "clean reviewer", rate: ptr(0.0), want: false},
+		{name: "just under the majority", rate: ptr(0.49), want: false},
+		{name: "over the RUN ceiling but under this one", rate: ptr(MaxOutOfVocabularyRate + 0.01), want: false},
+		{name: "exactly at the majority trips it", rate: ptr(MaxReviewerDriftRate), want: true},
+		{name: "well over", rate: ptr(0.90), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ExceedsReviewerDriftRate(tc.rate))
+		})
+	}
+	assert.Equal(t, 0.50, MaxReviewerDriftRate, "the majority claim is what the doc argues; a change needs that argument revisited")
+	assert.Greater(t, MaxReviewerDriftRate, MaxOutOfVocabularyRate,
+		"the per-reviewer bound is deliberately looser than the n=1-derived run ceiling")
+}

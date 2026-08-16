@@ -39,6 +39,48 @@ func ExceedsVocabularyCeiling(rate *float64) bool {
 	return rate != nil && *rate >= MaxOutOfVocabularyRate
 }
 
+// MaxReviewerDriftRate is the PER-REVIEWER out-of-vocabulary rate at or above which
+// a single reviewer is named. Like MaxOutOfVocabularyRate the bound is EXCLUSIVE — a
+// reviewer sitting exactly on it is reported — and like it the only consumer writes to
+// stderr without changing the exit code.
+//
+// # Why this is NOT MaxOutOfVocabularyRate
+//
+// Reusing the run-level ceiling here is the obvious move and the wrong one. That number
+// is a RUN guard, tightened to 0.05 from a single valid observation (V1's 0.0100), and
+// the epic that tightened it recorded the caveat explicitly: n=1, so variance under this
+// metric is unmeasured. Applying an n=1-derived bound to individual rows assumes a
+// tightness one observation cannot support — and a per-reviewer signal that fires on
+// ordinary between-model variation reproduces exactly the defect
+// warnIfVocabularyCeilingExceeded's own doc names: a warning printed on every run is a
+// warning nobody reads.
+//
+// 0.50 is a qualitatively different claim — a MAJORITY of this reviewer's own findings
+// missed a 32-word enumeration it was handed — rather than a quantitative reading of a
+// distribution nobody has measured yet. The case this warning exists for (one reviewer
+// at 100% drift hidden under a passing run rate) clears it by a factor of two.
+//
+// Tighten this once a second valid run makes the spread between models measurable.
+// Until then a looser threshold costs a missed moderate drifter, while a tighter one
+// costs the signal's credibility on every run.
+const MaxReviewerDriftRate = 0.50
+
+// ExceedsReviewerDriftRate reports whether one reviewer's measured rate breaches
+// MaxReviewerDriftRate.
+//
+// The comparison lives HERE, next to the metric PerReviewerVocabulary computes, for the
+// same reason ExceedsVocabularyCeiling does: the bound's inclusive semantics are a
+// property of the package rather than of whichever operator a given caller happened to
+// type. Before this existed the threshold was an unexported cli constant with `>= 0.50`
+// inlined at its one call site, so nothing outside package cli could reuse the boundary
+// without restating it.
+//
+// A nil rate is UNMEASURED, not clean, and is never a breach — the same nil-vs-zero
+// distinction ReviewerVocabulary.Rate's pointer carries.
+func ExceedsReviewerDriftRate(rate *float64) bool {
+	return false // RED stub — replaced in GREEN
+}
+
 // OutOfVocabularyRate is the share of a run's findings whose category is not a
 // member of the closed reviewer vocabulary (reconcile.Categories()).
 //
