@@ -111,6 +111,13 @@ type Agent struct {
 	PayloadMode string
 	Truncation  payload.Truncation
 
+	// DiffTruncation is the diff-wide byte-budget shed this agent's payload was
+	// built under, stamped only on chunk-slots (the bulk path records the real
+	// value in Truncation above). invokeAgent copies it to Result, where
+	// mergeResultGroup promotes it onto the merged persona record. See
+	// Result.DiffTruncation for why it cannot live in Truncation per chunk.
+	DiffTruncation payload.Truncation
+
 	// CodeContext is the per-file breakdown of the payload THIS agent was sent,
 	// recovered by renderAgent from the same payload text it renders into the
 	// prompt (Epic 35.0). The chunked strategy gives each chunk-slot a different
@@ -564,6 +571,10 @@ func resultFromPanic(s Slot, start time.Time, r any) Result {
 		DurationMS:  time.Since(start).Milliseconds(),
 		PayloadMode: s.Primary.PayloadMode,
 		Truncation:  s.Primary.Truncation,
+		// Carried on every Result-construction path, not just the happy one: a
+		// persona whose chunks panicked or failed is exactly as truncated as one
+		// whose chunks returned, and mergeResultGroup must be able to say so.
+		DiffTruncation: s.Primary.DiffTruncation,
 	}
 }
 
@@ -669,14 +680,15 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 					// started, not 0 — real time passed before the cancellation.
 					if err := ctx.Err(); err != nil {
 						results[i] = Result{
-							Agent:       s.Primary.Name,
-							Status:      classifyStatus(err),
-							Err:         err,
-							DurationMS:  time.Since(start).Milliseconds(),
-							PayloadMode: s.Primary.PayloadMode,
-							Truncation:  s.Primary.Truncation,
-							MinSeverity: s.Primary.MinSeverity,
-							MaxFindings: s.Primary.MaxFindings,
+							Agent:          s.Primary.Name,
+							Status:         classifyStatus(err),
+							Err:            err,
+							DurationMS:     time.Since(start).Milliseconds(),
+							PayloadMode:    s.Primary.PayloadMode,
+							Truncation:     s.Primary.Truncation,
+							DiffTruncation: s.Primary.DiffTruncation,
+							MinSeverity:    s.Primary.MinSeverity,
+							MaxFindings:    s.Primary.MaxFindings,
 						}
 						return
 					}
@@ -829,6 +841,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
+	last.DiffTruncation = s.Primary.DiffTruncation
 	last.MinSeverity = s.Primary.MinSeverity
 	last.MaxFindings = s.Primary.MaxFindings
 	last.EffectiveBudget = s.Primary.EffectiveBudget

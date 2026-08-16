@@ -1218,6 +1218,17 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		if trunc.AllDropped {
 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}
+		// Surface the PARTIAL shed, exactly as the two sibling builders do
+		// (PrepareReviewFromRepo :811, PrepareReviewFromDiff :870). AllDropped
+		// returned above, so this is the some-but-not-all case — the only one that
+		// can be silent, and the expensive one: whole files are gone before any
+		// per-agent sizing or on_overflow policy is consulted, so no reviewer ever
+		// sees them and no chunking recovers them. Unlike the full-repo path there
+		// is no "still reviewed across chunks" consolation to offer here.
+		if trunc.Truncated {
+			log.FromContext(ctx).Warn("git-range payload: byte budget truncated the payload; the dropped files reach NO reviewer",
+				"mode", mode, "kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
+		}
 		var b strings.Builder
 		for _, e := range kept {
 			b.WriteString(e.Body)
@@ -1842,6 +1853,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					if err != nil {
 						return err
 					}
+					// The neutral Truncation above stays neutral. The diff-wide shed rides
+					// alongside it so mergeResultGroup can record it ONCE for this persona;
+					// nothing per-chunk reads it, so no chunk's prompt or status claims
+					// files it never saw. See Agent.DiffTruncation.
+					primary.DiffTruncation = mp.Truncation
 					// No entries carried (Epic 35.16.5.4 T1): chunkDiff splits TEXT on
 					// column-0 diff markers, so there is no FileEntry list for this chunk
 					// and no honest way to build one — a list recovered from the chunk text

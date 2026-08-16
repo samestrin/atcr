@@ -201,12 +201,35 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 	for _, name := range order {
 		g := groups[name]
 		if len(g) == 1 {
-			merged = append(merged, g[0])
+			// Promoted on the fast path too: whether a persona's chunk set collapsed
+			// to one result is a shape accident, and truncation reporting must not
+			// depend on it.
+			merged = append(merged, promoteDiffTruncation(g[0]))
 			continue
 		}
 		merged = append(merged, mergeResultGroup(g, serialSet))
 	}
 	return merged
+}
+
+// promoteDiffTruncation lifts the diff-wide byte-budget shed onto the record
+// statusFor reads, for a result whose own Truncation is neutral.
+//
+// The chunked path renders each chunk-slot with an empty Truncation deliberately —
+// the shed is a whole-payload event, so a per-chunk copy would have every chunk
+// claim files that never appeared in it (see review.go's chunk loop). That left the
+// fact in no artifact at all: AgentStatus.Truncated/FilesDropped stayed zero for
+// every chunked agent while whole files had been dropped, contradicting the "never
+// silent (AC 06-03)" contract AgentStatus states.
+//
+// A slot that recorded its OWN shed keeps it: the bulk path already carries the real
+// value there, and overwriting it would replace a per-agent measurement with a
+// run-wide one. So this is a fallback, never an override.
+func promoteDiffTruncation(r Result) Result {
+	if !r.Truncation.Truncated && len(r.Truncation.FilesDropped) == 0 {
+		r.Truncation = r.DiffTruncation
+	}
+	return r
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
@@ -367,7 +390,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Status = StatusFailed
 		out.Err = firstErr
 	}
-	return out
+	// The merged record is the persona's ONE status.json row, so this is the honest
+	// place for a diff-wide fact that no single chunk may claim.
+	return promoteDiffTruncation(out)
 }
 
 // promoteRePackedDegradation lifts a re-packed chunk's degradation record into the
