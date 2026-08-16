@@ -2125,17 +2125,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	return slots, perAgentMode, nil
 }
 
-// defaultMaxTokens is the output-token cap applied to every reviewer call.
+// defaultMaxTokens is the output-token cap applied to a reviewer call that
+// resolves no other value: it is the LAST tier of resolveMaxTokens
+// (--max-tokens > the agent's max_tokens declaration > this), not the only cap.
+// It used to be the only one, which is the defect that made it configurable — a
+// thinking model that needs more had no lever, and `atcr doctor` printed
+// "raise --max-tokens" for a flag `atcr review` did not have.
 // Generous on purpose: reasoning/thinking models spend output budget on
 // chain-of-thought before emitting visible content, so a tight cap makes them
 // finish mid-reasoning and return an empty review (the doctor self-test warns of
 // exactly this). The empty-content case is still caught by the reasoning_content
 // fallback in llmclient; this headroom lets the clean Content path win first.
 const defaultMaxTokens = 8192
-
-// maxTokensPtr returns a fresh pointer to defaultMaxTokens for an Invocation
-// (MaxTokens is a pointer so an explicit value always serializes).
-func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 
 // agentSizing carries the per-agent payload-sizing values buildSlots computed for
 // a reviewer from its OWN model window (Epic 19.10). renderAgent folds them into
