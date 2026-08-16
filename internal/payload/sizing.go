@@ -103,8 +103,11 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 // it made no declaration.
 //
 // NOTE ChunkMaxLines itself derives the LINE budget from the window alone; the
-// global payload_byte_budget is applied on top of it by ClampLinesToByteBudget
-// at the fan-out call site (settings are not this function's to know). Before
+// operator's chunk_byte_budget is applied on top of it by ClampLinesToByteBudget
+// at the fan-out call site (settings are not this function's to know). That key
+// is distinct from payload_byte_budget precisely so this clamp and the global
+// file-shedding pass can be tuned independently; unset, it inherits the payload
+// budget, which is the coupling that used to be unavoidable. Before
 // that clamp existed, a legal 10,000,000-token declaration derived ~728,000
 // lines (~34.9 MB) per chunk — the chunk BYTES were bounded only indirectly, by
 // the entries having passed through ApplyByteBudgetPreferEscalated in review.go.
@@ -123,7 +126,7 @@ func EffectiveByteBudget(model string, declared *int, outputTokens int) int64 {
 //
 // It exists because ContextWindowTokensCap admits a 10,000,000-token
 // declaration, which derives ~728,000 lines (~34.9 MB) per chunk — past any
-// real proxy request-body limit. payload_byte_budget is the operator's own
+// real proxy request-body limit. chunk_byte_budget is the operator's own
 // statement of how many bytes may ride one call, so honoring it here keeps a
 // large declaration meaning "fewer, larger chunks" rather than "one chunk no
 // endpoint will accept".

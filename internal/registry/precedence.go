@@ -148,8 +148,19 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
 
+	// chunk_byte_budget is resolved with an explicit "was it set" flag rather than a
+	// sentinel value, because 0 is a MEANINGFUL setting here (unlimited chunk sizing,
+	// matching every sibling budget). Without the flag an explicit 0 would be
+	// indistinguishable from unset and would silently inherit the payload cap —
+	// turning the one escape hatch an operator reaches for into a no-op.
+	chunkBudgetSet := false
+
 	if reg != nil {
 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+		if reg.ChunkByteBudget != nil {
+			s.ChunkByteBudget = *reg.ChunkByteBudget
+			chunkBudgetSet = true
+		}
 		// CacheMaxBytes lives at the registry (global) and project tiers only,
 		// like the retry tunables — overlaid here, not through applyTier's fixed
 		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
@@ -184,6 +195,10 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+		if proj.ChunkByteBudget != nil {
+			s.ChunkByteBudget = *proj.ChunkByteBudget
+			chunkBudgetSet = true
+		}
 		if proj.CacheMaxBytes != nil {
 			s.CacheMaxBytes = *proj.CacheMaxBytes
 		}
@@ -205,6 +220,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			return Settings{}, fmt.Errorf("byte budget must be >= 0, got %d", *cli.PayloadByteBudget)
 		}
 		s.PayloadByteBudget = *cli.PayloadByteBudget
+	}
+	// AFTER the CLI tier, so inheritance tracks the FINAL payload budget: resolving
+	// it earlier would let `--byte-budget` change the payload cap while chunk sizing
+	// silently kept the file-tier value.
+	if !chunkBudgetSet {
+		s.ChunkByteBudget = s.PayloadByteBudget
 	}
 	if cli.TimeoutSecs != nil {
 		if *cli.TimeoutSecs <= 0 || *cli.TimeoutSecs > MaxTimeoutSecs {
@@ -246,6 +267,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
 	if s.PayloadByteBudget < 0 {
 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+	}
+	// ChunkByteBudget: 0 = unlimited (valid); negative is always invalid. Catches a
+	// directly-constructed proj/reg that bypassed the file loader.
+	if s.ChunkByteBudget < 0 {
+		return Settings{}, fmt.Errorf("chunk_byte_budget must be >= 0 (0 = unlimited), got %d", s.ChunkByteBudget)
 	}
 	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
 	// directly-constructed proj/reg (bypassing the file loader) could carry one.

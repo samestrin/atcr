@@ -768,6 +768,9 @@ func (r *Registry) validate() error {
 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
 		errs = append(errs, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget))
 	}
+	if r.ChunkByteBudget != nil && *r.ChunkByteBudget < 0 {
+		errs = append(errs, fmt.Errorf("chunk_byte_budget must be >= 0 (0 = unlimited), got %d", *r.ChunkByteBudget))
+	}
 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
 	}

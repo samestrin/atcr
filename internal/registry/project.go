@@ -167,6 +167,14 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   Models with context limits below 128k will fail on the default. For rosters\n")
 	b.WriteString("#   that include smaller-context models (e.g. 49k-limit), reduce to 163840 (160 KiB).\n")
 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
+	b.WriteString("# chunk_byte_budget: byte budget used ONLY to size a per-chunk payload under\n")
+	b.WriteString("#   the chunked strategy. Unset (the default) inherits payload_byte_budget, so\n")
+	b.WriteString("#   leaving it commented reproduces the behavior from before this key existed.\n")
+	b.WriteString("#   Set it when the two budgets want opposite values: lowering payload_byte_budget\n")
+	b.WriteString("#   to protect a small-window model also sheds whole FILES from the payload,\n")
+	b.WriteString("#   while raising it to keep those files also grows every agent's chunks. Split\n")
+	b.WriteString("#   them to hold a large payload and still chunk small. 0 = unlimited.\n")
+	b.WriteString("# chunk_byte_budget: 65536\n")
 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")
 	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
@@ -258,6 +266,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.PayloadByteBudget != nil && *cfg.PayloadByteBudget < 0 {
 		return nil, fmt.Errorf("%s: payload_byte_budget must be >= 0 (0 = unlimited)", base)
+	}
+	if cfg.ChunkByteBudget != nil && *cfg.ChunkByteBudget < 0 {
+		return nil, fmt.Errorf("%s: chunk_byte_budget must be >= 0 (0 = unlimited)", base)
 	}
 	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
 		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
