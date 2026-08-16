@@ -33,8 +33,12 @@ const (
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
 	DefaultReviewStrategy = "bulk"
 	// DefaultOnOverflow is the embedded F4 degradation policy (plan 19.10) used
-	// when a per-agent payload exceeds its effective budget: "chunk" delivers the
-	// whole diff across window-sized chunks with no content dropped. The full
+	// when a per-agent payload exceeds its effective budget: "chunk" delivers
+	// that agent's payload across window-sized chunks, dropping nothing at that
+	// step. The guarantee is scoped to that step and no further: the global
+	// payload_byte_budget shed (ApplyByteBudgetPreferEscalated, called from
+	// buildPayloads in internal/fanout) runs BEFORE any overflow handling and
+	// does drop whole files, and on_overflow is never consulted in it. The full
 	// ladder is chunk/truncate/fallback/fail; "fallback"/"fail" are recognized as
 	// config values but recognized-but-gated per AC4 (dispatch enforcement lives
 	// in internal/fanout / Task 04, not here).
@@ -170,10 +174,15 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
 	fmt.Fprintf(&b, "max_sprint_plan_bytes: %d\n", DefaultMaxSprintPlanBytes)
 	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
-	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver the whole\n")
-	b.WriteString("#   diff across window-sized chunks, no content dropped), truncate (drop the\n")
-	b.WriteString("#   lowest-priority tail, flagged), fallback, or fail. fallback/fail are\n")
-	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
+	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver that\n")
+	b.WriteString("#   agent's payload across window-sized chunks, dropping nothing at THIS\n")
+	b.WriteString("#   step), truncate (drop the lowest-priority tail, flagged), fallback, or\n")
+	b.WriteString("#   fail. fallback/fail are recognized but their dispatch prerequisites may\n")
+	b.WriteString("#   not yet be shipped.\n")
+	b.WriteString("#   SCOPE: this governs the per-agent step only. The global\n")
+	b.WriteString("#   payload_byte_budget shed runs FIRST and DOES drop whole files; whatever\n")
+	b.WriteString("#   it sheds is gone before on_overflow is ever consulted, so no setting\n")
+	b.WriteString("#   here can recover it.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	b.WriteString("# consensus: corroboration bar for the reconcile consensus filter, applied\n")

@@ -6,8 +6,10 @@ import "strings"
 // per-agent payload still exceeds its effective budget after per-model sizing,
 // on_overflow selects how to degrade:
 //
-//   - "chunk"    (default) deliver the whole diff across window-sized chunks via
-//     the Epic 14.3 chunker made window-aware — no content dropped;
+//   - "chunk"    (default) deliver that agent's payload across window-sized
+//     chunks via the Epic 14.3 chunker made window-aware — nothing dropped at
+//     this step (the earlier global payload_byte_budget shed is a separate
+//     stage and does drop whole files; see DefaultOnOverflow);
 //   - "truncate" shed the lowest-priority tail and flag it — lossy, last-resort;
 //   - "fallback" route the slot to a fallback model (provenance recorded);
 //   - "fail"     hard-fail loudly.
