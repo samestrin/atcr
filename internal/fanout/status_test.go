@@ -178,6 +178,22 @@ func TestEnsureReviewComplete_RejectsStale(t *testing.T) {
 	assert.Contains(t, err.Error(), "re-run")
 }
 
+// A stale review is not unrecoverable: its surviving per-agent artifacts are
+// exactly what RebuildPool reconstructs the pool aggregate from, and
+// EnsureReviewComplete does not gate `--resume` (its only callers are
+// cli/reconcile.go and internal/mcp/handlers.go). The rejection must therefore
+// name the cheap recovery path, not send the operator to discard a fan-out that
+// is mostly on disk already.
+func TestEnsureReviewComplete_StaleNamesResumeRecovery(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+	err := EnsureReviewComplete(dir, "run-42")
+	require.ErrorIs(t, err, ErrReviewStale)
+	assert.Contains(t, err.Error(), "--resume", "stale guidance must name the resume path")
+	assert.Contains(t, err.Error(), "run-42", "the resume hint must carry the review id the operator has to pass")
+	assert.Contains(t, err.Error(), "re-run", "starting over stays available as the explicit fallback")
+}
+
 // TestReadReviewStatus_NonErrNotExistPastDeadlineIsStale verifies that a
 // non-ErrNotExist read error on summary.json (e.g. permission denied, "is a
 // directory") combined with an elapsed deadline reports stale rather than
