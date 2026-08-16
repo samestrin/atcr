@@ -647,7 +647,11 @@ type Registry struct {
 	PayloadMode       string `yaml:"payload_mode,omitempty"`
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
-	FailOn            string `yaml:"fail_on,omitempty"`
+	// ChunkByteBudget caps the PER-CHUNK payload independently of the global
+	// payload cap above. Unset (nil) inherits the resolved PayloadByteBudget, so a
+	// config that never mentions it is sized exactly as before this key existed.
+	ChunkByteBudget *int64 `yaml:"chunk_byte_budget,omitempty"`
+	FailOn          string `yaml:"fail_on,omitempty"`
 	// Consensus is the user-level (global) tier of the consensus-filter level
 	// (epic 35.9.1): strict (default), lenient, or off. The project tier
 	// (ProjectConfig.Consensus) overrides it, and an explicit --consensus /

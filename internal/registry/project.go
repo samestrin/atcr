@@ -85,7 +85,12 @@ type ProjectConfig struct {
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
-	FailOn            string `yaml:"fail_on,omitempty"`
+	// ChunkByteBudget caps the PER-CHUNK payload independently of
+	// PayloadByteBudget. A pointer for the same reason: an explicit 0 (unlimited)
+	// must survive, and nil must stay distinguishable from it so "unset" can mean
+	// "inherit the payload budget" rather than "unlimited".
+	ChunkByteBudget *int64 `yaml:"chunk_byte_budget,omitempty"`
+	FailOn          string `yaml:"fail_on,omitempty"`
 	// Consensus selects the epic-14.2 consensus filter's corroboration bar
 	// (epic 35.9.1): strict (default — today's behavior), lenient (keep
 	// MEDIUM-confidence singletons), or off (filter inert). Empty inherits the

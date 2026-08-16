@@ -99,6 +99,11 @@ type Settings struct {
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
 	PayloadByteBudget int64
+	// ChunkByteBudget is the resolved per-chunk byte budget fed to
+	// payload.ClampLinesToByteBudget. 0 is the unlimited escape hatch, matching
+	// PayloadByteBudget. When no tier sets chunk_byte_budget this equals the
+	// resolved PayloadByteBudget.
+	ChunkByteBudget int64
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
