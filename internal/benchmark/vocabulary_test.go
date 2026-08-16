@@ -375,8 +375,8 @@ func TestRunResult_ZeroRateIsEmittedButAnUnmeasuredRunIsNot(t *testing.T) {
 }
 
 // ...but it must NOT reach the public submission envelope. Submission is the
-// frozen public contract; adding a diagnostic column there is 35.16.6's decision
-// to make, not a side effect of this one.
+// frozen public contract; adding a diagnostic column there is epic 51.0's
+// decision to make, not a side effect of this one.
 func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
 	drifted := 0.42
 	data, err := json.Marshal(BuildSubmission(RunResult{

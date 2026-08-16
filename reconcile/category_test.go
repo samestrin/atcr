@@ -268,7 +268,7 @@ func TestCategories_MergeTargetsAreNotThemselvesMerged(t *testing.T) {
 }
 
 // TestCategoryMerges_IsReachableByItsDeclaredConsumer covers the structural half
-// of the merge map's purpose. The map documents epic 35.16.6's parse-boundary
+// of the merge map's purpose. The map documents epic 51.0's parse-boundary
 // canonicalizer as its intended consumer, but that canonicalizer lives in module
 // github.com/samestrin/atcr, which cannot reach an unexported identifier in the
 // separately-versioned github.com/samestrin/atcr/reconcile. Unexported, the
