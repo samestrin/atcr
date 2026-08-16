@@ -1532,7 +1532,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentScopeConstraint := scopeConstraint
-		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+		agentMaxTokens := maxTokensFor(cfg, ac)
+		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
 		// and referenced everywhere below: this pair was previously recomputed inline
 		// at five further call sites, so a signature change had to find nine sites
@@ -1747,7 +1748,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
-			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
 			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
 			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
@@ -1789,7 +1790,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				chunkAction = degradationOverflow
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n",
-						name, agentWindow, defaultMaxTokens, ml)
+						name, agentWindow, agentMaxTokens, ml)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -1986,7 +1987,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// "effective budget 0" alone does not say which number to change or
 				// what it has to clear.
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — raise or drop its context_window_tokens declaration\n",
-					name, agentWindow, defaultMaxTokens, smallest.Path)
+					name, agentWindow, agentMaxTokens, smallest.Path)
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
@@ -2307,9 +2308,10 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// that yielded a zero input budget is a record that contradicts itself.
 	// resolvedWindow is the "was this agent sized" signal (status.go); the
 	// reservation follows the budget, the quantity that pays for it.
+	agentMaxTokens := maxTokensFor(cfg, ac)
 	reservedOut := 0
 	if sz.effectiveBudget > 0 {
-		reservedOut = defaultMaxTokens
+		reservedOut = agentMaxTokens
 	}
 	return Agent{
 		Name:     name,
@@ -2357,7 +2359,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
-			MaxTokens:   maxTokensPtr(),
+			MaxTokens:   &agentMaxTokens,
 			Prompt:      prompt,
 		},
 	}, nil
@@ -2574,7 +2576,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// is model-specific. The truncate re-fit below is the exception: it overrides
 	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
 	// the re-fit's own truncate/overflow action).
-	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+	fbMaxTokens := maxTokensFor(cfg, ac)
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, fbMaxTokens)
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
 	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
@@ -2585,7 +2588,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// window cannot fund it now honestly reports reserving nothing.
 	fbReserved := 0
 	if fbBudget > 0 {
-		fbReserved = defaultMaxTokens
+		fbReserved = fbMaxTokens
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
 	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
@@ -2766,7 +2769,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// beside reserved_output_tokens 8192.
 				fbReserved = 0
 				if fbSizingBudget > 0 {
-					fbReserved = defaultMaxTokens
+					fbReserved = fbMaxTokens
 				}
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was
@@ -2882,7 +2885,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
-			MaxTokens:   maxTokensPtr(),
+			MaxTokens:   &fbMaxTokens,
 			Prompt:      fbPrompt,
 		},
 	}, warned, nil
@@ -3288,5 +3291,23 @@ func rosterNames(p *registry.ProjectConfig) []string {
 // the not-set sentinel (the same convention CLIOverrides pointers encode
 // structurally elsewhere).
 func resolveMaxTokens(ac registry.AgentConfig, override int) int {
-	return defaultMaxTokens // RED stub — replaced in GREEN
+	if override > 0 {
+		return override
+	}
+	if ac.MaxTokens != nil && *ac.MaxTokens > 0 {
+		return *ac.MaxTokens
+	}
+	return defaultMaxTokens
+}
+
+// maxTokensFor is resolveMaxTokens bound to this run's settings — the form every
+// call site in the review path uses, so the CLI tier can never be applied at some
+// sites and forgotten at others. The cap it returns feeds BOTH the Invocation and
+// the sizing reservation; those must be the same number, or an agent is sized for
+// one output budget and then asked for another.
+func maxTokensFor(cfg *ReviewConfig, ac registry.AgentConfig) int {
+	if cfg == nil {
+		return resolveMaxTokens(ac, 0)
+	}
+	return resolveMaxTokens(ac, cfg.Settings.MaxTokens)
 }

@@ -104,6 +104,11 @@ type Settings struct {
 	// PayloadByteBudget. When no tier sets chunk_byte_budget this equals the
 	// resolved PayloadByteBudget.
 	ChunkByteBudget int64
+	// MaxTokens is the run-wide output-token cap override (--max-tokens). 0 means
+	// UNSET: each agent then resolves its own max_tokens declaration, falling back
+	// to the fan-out's embedded default. A zero cap has no meaningful reading (every
+	// call would return nothing), which is what makes 0 safe as the sentinel.
+	MaxTokens int
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
@@ -129,6 +134,8 @@ type CLIOverrides struct {
 	TimeoutSecs       *int
 	PayloadByteBudget *int64
 	MaxParallel       *int
+	// MaxTokens is the --max-tokens override; nil = flag not set.
+	MaxTokens *int
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -232,6 +239,15 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			return Settings{}, fmt.Errorf("timeout must be within 1..%d seconds", MaxTimeoutSecs)
 		}
 		s.TimeoutSecs = *cli.TimeoutSecs
+	}
+	if cli.MaxTokens != nil {
+		// Rejected rather than treated as unset: an operator who typed --max-tokens 0
+		// asked for something that cannot work, and silently substituting the default
+		// would hide the mistake behind a run that looks normal.
+		if *cli.MaxTokens <= 0 || *cli.MaxTokens > MaxTokensCap {
+			return Settings{}, fmt.Errorf("max_tokens must be within 1..%d, got %d", MaxTokensCap, *cli.MaxTokens)
+		}
+		s.MaxTokens = *cli.MaxTokens
 	}
 	if cli.MaxParallel != nil {
 		// The CLI tier bypasses the file-load checks; validate here. 0 is the
