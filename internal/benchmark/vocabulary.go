@@ -78,7 +78,7 @@ const MaxReviewerDriftRate = 0.50
 // A nil rate is UNMEASURED, not clean, and is never a breach — the same nil-vs-zero
 // distinction ReviewerVocabulary.Rate's pointer carries.
 func ExceedsReviewerDriftRate(rate *float64) bool {
-	return false // RED stub — replaced in GREEN
+	return rate != nil && *rate >= MaxReviewerDriftRate
 }
 
 // OutOfVocabularyRate is the share of a run's findings whose category is not a

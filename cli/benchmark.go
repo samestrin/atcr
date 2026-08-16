@@ -267,33 +267,6 @@ const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vo
 	"agreement rather than detection: a category outside the enumeration matches no expected " +
 	"category, so it zeroes recall independently of what the reviewer actually found.\n"
 
-// maxReviewerDriftRate is the per-reviewer out-of-vocabulary rate at or above which
-// warnDriftingReviewers names a reviewer. The comparison is `*r.Rate >= maxReviewerDriftRate`
-// — the same `>=` operator ExceedsVocabularyCeiling applies to the run-level ceiling, so
-// a reviewer sitting exactly on this rate is named just as a run sitting exactly on the
-// ceiling trips the guard.
-//
-// # Why this is NOT benchmark.MaxOutOfVocabularyRate
-//
-// Reusing the run-level ceiling here is the obvious move and the wrong one. That
-// number is a RUN guard, tightened to 0.05 from a single valid observation (V1's
-// 0.0100), and the epic that tightened it recorded the caveat explicitly: n=1, so
-// variance under this metric is unmeasured. Applying an n=1-derived bound to
-// individual rows assumes a tightness one observation cannot support — and a
-// per-reviewer signal that fires on ordinary between-model variation reproduces
-// exactly the defect warnIfVocabularyCeilingExceeded's own doc names: a warning
-// printed on every run is a warning nobody reads.
-//
-// 0.50 is a qualitatively different claim — a MAJORITY of this reviewer's own findings
-// missed a 32-word enumeration it was handed — rather than a quantitative reading of a
-// distribution nobody has measured yet. The case this warning exists for (one reviewer
-// at 100% drift hidden under a passing run rate) clears it by a factor of two.
-//
-// Tighten this once a second valid run makes the spread between models measurable.
-// Until then a looser threshold costs a missed moderate drifter, while a tighter one
-// costs the signal's credibility on every run.
-const maxReviewerDriftRate = 0.50
-
 // maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
 // is a findings-parser regression, which drifts every reviewer at once — on a 27-model
 // roster an uncapped listing is a wall of rows nobody reads, the outcome the threshold
@@ -336,7 +309,7 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) boo
 	// problem would misdiagnose a run that raised nothing to measure.
 	drifting := make([]benchmark.ReviewerVocabulary, 0, len(rows))
 	for _, r := range rows {
-		if r.Rate != nil && *r.Rate >= maxReviewerDriftRate {
+		if benchmark.ExceedsReviewerDriftRate(r.Rate) {
 			drifting = append(drifting, r)
 		}
 	}
@@ -372,7 +345,7 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) boo
 			"offered vocabulary. The run-level out_of_vocabulary_rate pools every reviewer's "+
 			"findings together, so a drifted reviewer measured against prolific clean peers can "+
 			"leave it under the ceiling — read these rows, not just that number:\n",
-		len(drifting), noun, maxReviewerDriftRate*100)
+		len(drifting), noun, benchmark.MaxReviewerDriftRate*100)
 	for _, r := range shown {
 		fmt.Fprintf(&msg, "  %s/%s: %d/%d findings out of vocabulary (%.2f), %d routing values\n",
 			stripTerminalControlRunes(r.Model), stripTerminalControlRunes(r.Persona),
