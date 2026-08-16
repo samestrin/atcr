@@ -323,12 +323,9 @@ type RunResult struct {
 	// PerReviewerVocabulary function in vocabulary.go, which documents the
 	// alignment and the routing-value discriminator; this field only carries it.
 	//
-	// It exists because the run-level scalar is micro-averaged — correctly, since the
-	// rate is a property of the run's findings — and micro-averaging cannot name the
-	// drifting model. Worse, it hides it: a 12-finding reviewer at 100% drift pooled
-	// against a 300-finding clean one reports 0.038, passes the ceiling, and the run
-	// reads clean. Tightening the ceiling raises the dilution such a row needs without
-	// bounding it, since the ratio is set by the rest of the roster.
+	// It exists because the micro-averaged run-level scalar cannot name the drifting
+	// model and actively hides it; PerReviewerVocabulary states that argument once and
+	// is the place to change it.
 	//
 	// Rows are positionally aligned with Reviewers (both sorted by the same
 	// (model, persona) key with the same stable sort), so a consumer reads the

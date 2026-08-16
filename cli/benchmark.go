@@ -278,17 +278,9 @@ const maxDriftWarningRows = 10
 // matter, and is the answer to the question the run-level warning structurally cannot
 // answer: WHICH model ignored the vocabulary.
 //
-// The run-level rate is micro-averaged — correctly, since drift is a property of the
-// run's findings — but that makes it concealing rather than merely coarse. A reviewer
-// raising 12 findings that all drifted, pooled against a peer raising 300 clean ones,
-// reports 12/312 = 0.038: under the ceiling, no warning, run reads clean, and one of
-// two models never used the enumeration at all. This walks the per-reviewer breakdown
-// so that reviewer is named.
-//
-// Tightening the ceiling does not remove the need for this. It raises the dilution a
-// concealed drifter needs (at 0.20 the same 12 findings hid behind 80 clean ones;
-// at 0.05 they need ~300) — it does not bound it, because the ratio is set by the
-// roster's other reviewers, not by the guard.
+// Why the micro-averaged run-level rate conceals such a reviewer, and why tightening
+// the ceiling does not remove the need for this: see benchmark.PerReviewerVocabulary,
+// which states that argument once and is the place to change it.
 //
 // Both signals fire independently and neither suppresses the other: a run can breach
 // the ceiling AND have the breach concentrated in one row, and those are two different

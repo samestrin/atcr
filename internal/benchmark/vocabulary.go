@@ -138,12 +138,8 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 
 // ReviewerVocabulary is one reviewer row's out-of-vocabulary breakdown — the
 // per-reviewer detail OutOfVocabularyRate's single scalar structurally cannot carry.
-//
-// Micro-averaging is the right choice for the run-level number and is deliberately
-// unchanged, but it makes the scalar CONCEALING rather than merely coarse: 300 clean
-// findings from one reviewer and 12 drifted from another pool to 0.038, under the
-// ceiling, and the run reports clean while one of two models ignored the enumeration
-// entirely. This type is what names it.
+// Why that scalar conceals a drifting reviewer rather than merely coarsening it:
+// see PerReviewerVocabulary, which states the argument once.
 //
 // It is a DIAGNOSTIC array on the run result, not a reviewer metric, for the same
 // reason OutOfVocabularyRate sits there: scorecard.PublicRecord is the frozen public
@@ -201,6 +197,23 @@ type ReviewerVocabulary struct {
 }
 
 // PerReviewerVocabulary breaks the run's out-of-vocabulary drift down per reviewer.
+//
+// # Why the run-level scalar is not enough
+//
+// This is the ONE place that argument is written out. ReviewerVocabulary,
+// RunResult.Vocabulary, and cli's warnDriftingReviewers each point here instead of
+// restating it, so a change to the argument has a single place to land.
+//
+// OutOfVocabularyRate is micro-averaged — correctly, since drift is a property of the
+// run's findings — but that makes it CONCEALING rather than merely coarse. A reviewer
+// raising 12 findings that all drifted, pooled against a peer raising 300 clean ones,
+// reports 12/312 = 0.038: under the ceiling, no warning, the run reads clean, and one
+// of two models never used the enumeration at all. This function names that reviewer.
+//
+// Tightening the ceiling does not remove the need for it. Tightening raises the
+// dilution a concealed drifter needs (at 0.20 the same 12 findings hid behind 80 clean
+// ones; at 0.05 they need ~300) — it does not bound it, because the ratio is set by the
+// roster's other reviewers, not by the guard.
 //
 // Membership, normalization, and what counts as drift are IDENTICAL to
 // OutOfVocabularyRate — same vocabularySet, same normalize, empty categories still
