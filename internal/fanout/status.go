@@ -251,8 +251,11 @@ var ErrReviewInProgress = errors.New("still in_progress")
 // dead (Epic 1.5): its fan-out exceeded the effective timeout without writing a
 // completion signal. Like in_progress it has no summary.json, so reconciling it
 // would emit a complete-looking verdict from an incomplete (or empty) agent set
-// — but unlike in_progress it will never complete, so the guidance is to re-run
-// rather than poll.
+// — but unlike in_progress it will never complete on its own, so polling is not
+// the guidance. Resuming is: the per-agent artifacts a dead fan-out left behind
+// are what RebuildPool reconstructs the pool from, and this guard does not gate
+// `atcr review --resume` (its only callers are reconcile and the MCP handlers),
+// so the message names resume first and re-running from scratch as the fallback.
 var ErrReviewStale = errors.New("stale (fan-out exceeded its timeout without a completion signal)")
 
 // EnsureReviewComplete rejects a fan-out-managed review that is still running,
@@ -273,7 +276,7 @@ func EnsureReviewComplete(reviewDir, id string) error {
 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
 	}
 	if st.Status == RunStale {
-		return fmt.Errorf("review %s is %w; re-run the review", id, ErrReviewStale)
+		return fmt.Errorf("review %s is %w; run `atcr review --resume %s` to finish the remaining agents, or re-run the review to start over", id, ErrReviewStale, id)
 	}
 	return nil
 }
