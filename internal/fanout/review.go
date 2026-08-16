@@ -3278,3 +3278,15 @@ func rosterNames(p *registry.ProjectConfig) []string {
 	names = append(names, p.SerialAgents...)
 	return names
 }
+
+// resolveMaxTokens resolves the output-token cap for one agent:
+// run-wide override (--max-tokens) -> agent declaration (max_tokens) -> the
+// embedded defaultMaxTokens.
+//
+// override 0 means UNSET, not "zero tokens": a zero cap would make every call
+// return nothing, so it can never be a meaningful configured value and is safe as
+// the not-set sentinel (the same convention CLIOverrides pointers encode
+// structurally elsewhere).
+func resolveMaxTokens(ac registry.AgentConfig, override int) int {
+	return defaultMaxTokens // RED stub — replaced in GREEN
+}
