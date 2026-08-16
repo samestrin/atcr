@@ -103,6 +103,21 @@ func newBenchmarkRunCmd() *cobra.Command {
 	return cmd
 }
 
+// Injection seams for runBenchmarkRun's two process-level dependencies: config
+// discovery rooted at the cwd, and a live LLM completer. Hard-called, they made the
+// command's own body unreachable from a test — so its one wiring of the vocabulary
+// diagnostics could be deleted with the suite staying green, which is the gap
+// TestBenchmarkRunCmd_VocabularyDiagnosticsReachStderr closes.
+//
+// Package-level vars rather than parameters because the RunE signature is cobra's;
+// tests swap them and restore via t.Cleanup. Production never reassigns them.
+var (
+	benchmarkLoadConfig = func(root string) (*fanout.ReviewConfig, error) {
+		return fanout.LoadReviewConfig(root, registry.CLIOverrides{})
+	}
+	benchmarkNewCompleter = newCompleter
+)
+
 func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// Cobra GetString errors are unreachable: all flags are registered above
 	// ("suite-path" is MarkFlagRequired). Project-wide convention.
@@ -117,7 +132,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 
 	// Discover config the same way `atcr review` does (registry + project config
 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
-	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	cfg, err := benchmarkLoadConfig(".")
 	if err != nil {
 		return err
 	}
@@ -126,7 +141,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// cases, so without a stage those records are unattributable in a stream
 	// shared with real review work.
 	benchCtx := hookobs.WithCall(cmd.Context(), hookobs.Call{Stage: "benchmark"})
-	rr, err := executeBenchmarkRun(benchCtx, cfg, newCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
+	rr, err := executeBenchmarkRun(benchCtx, cfg, benchmarkNewCompleter(benchCtx), suitePath, time.Now().UTC(), checkpoint)
 	if err != nil {
 		return err
 	}
