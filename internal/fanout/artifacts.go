@@ -147,7 +147,7 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 	sum := summarize(results)
 	groundingEnabled := len(changed) > 0
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
-	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents)
+	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents, false)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -206,8 +206,23 @@ func tallyTruncatedZeroFindings(statuses []AgentStatus) (int, []string) {
 //
 // Emitted from BOTH writePool and RebuildPool: reviewers that contributed nothing do not
 // become harmless because the review was resumed.
-func warnTruncatedZeroFindings(count int, agents []string) {
+//
+// cumulative distinguishes the two callers. writePool reports a run just performed, where
+// every counted agent truncated in that run. RebuildPool tallies the union of all on-disk
+// statuses, which includes agents completed by an EARLIER attempt and not re-run by this
+// one — and since a counted agent can stay StatusOK (a truncated response whose findings
+// were all dropped by the grounding gate), its status.json is never rewritten and every
+// later resume re-prints it. Scoping the warning to re-run agents would suppress exactly
+// what a resuming operator needs to know, so the wording marks it as a restatement
+// instead of narrowing it.
+func warnTruncatedZeroFindings(count int, agents []string, cumulative bool) {
 	if count == 0 {
+		return
+	}
+	if cumulative {
+		fmt.Fprintf(os.Stderr,
+			"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool across this review, including agents this resume did not re-run: %s. This restates the review's cumulative tally rather than reporting a new failure. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all. If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap.\n",
+			count, strings.Join(agents, ", "))
 		return
 	}
 	fmt.Fprintf(os.Stderr,

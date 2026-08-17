@@ -706,7 +706,7 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 	// that dropped the tally reported a clean summary for a run in which reviewers
 	// contributed nothing — and dropped the console signal the tally exists to reach.
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
-	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents)
+	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents, true)
 	ps := PoolSummary{
 		Agents:                statuses,
 		Total:                 sum.Total,
