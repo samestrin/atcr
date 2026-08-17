@@ -1820,8 +1820,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// the stale-review message points the operator back at
 						// `--resume`, which fails the same way. Errors.Is still matches
 						// the sentinel through %w.
-						return fmt.Errorf("agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0), and on_overflow is %q: %s: %w",
-							name, agentWindow, agentMaxTokens, p, zeroBudgetRemedy, err)
+						return refuseOverflow(name, agentWindow, agentMaxTokens, p, 0, err)
 					}
 				}
 				if warnOversized {
@@ -1991,8 +1990,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// suppresses the warning below) and cli/resume.go prints it as-is.
 					// Fixing only the arm a reviewer pointed at is how the two paths
 					// drift.
-					return fmt.Errorf("agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0), and on_overflow is %q: %s: %w",
-						name, agentWindow, agentMaxTokens, p, zeroBudgetRemedy, err)
+					return refuseOverflow(name, agentWindow, agentMaxTokens, p, 0, err)
 				}
 			}
 			// keepSmallestEntry, not a local smallest-by-bytes pick: it skips
@@ -2055,7 +2053,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				switch cfg.Settings.OnOverflow {
 				case OverflowFail, OverflowFallback:
 					if _, err := applyOverflowPolicy(cfg.Settings.OnOverflow, "", 0, mp.Entries, appliedBudget); err != nil {
-						return err
+						return refuseOverflow(name, agentWindow, agentMaxTokens, cfg.Settings.OnOverflow, appliedBudget, err)
 					}
 				}
 			}
@@ -2179,6 +2177,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // exactly this). The empty-content case is still caught by the reasoning_content
 // fallback in llmclient; this headroom lets the clean Content path win first.
 const defaultMaxTokens = 8192
+
+// refuseOverflow wraps a hard-fail on_overflow refusal with the state that produced it.
+//
+// All FOUR pre-dispatch refusal sites route through here — the chunked and bulk
+// zero-budget arms, the shed-driven overflow, and the fallback that cannot hold its
+// primary's payload — because the wrap is the ONLY operator-visible signal on the resume
+// path: buildSlots runs there with warnOversized=false, so every companion stderr warning
+// is suppressed, and cli/resume.go surfaces this error verbatim as an exit-2 config
+// error. Unwrapped, the bare sentinel ("on_overflow=fail: payload exceeded budget and
+// policy is fail") names no agent, no budget and no remedy, and the operator reads a
+// one-agent window problem as a run-wide config failure.
+//
+// One helper rather than four call-site literals: fixing only the arm a reviewer pointed
+// at is how these paths drifted apart in the first place. errors.Is still matches the
+// sentinel through %w.
+func refuseOverflow(agent string, window, maxTokens int, policy string, budget int64, err error) error {
+	return fmt.Errorf("agent %q: resolved window %d tokens, output cap %d, effective input budget %d bytes — payload does not fit and on_overflow is %q: %s: %w",
+		agent, window, maxTokens, budget, policy, zeroBudgetRemedy, err)
+}
 
 // zeroBudgetRemedy is the operator action shared by both zero-budget warnings (the
 // bulk arm and its chunked twin), which must not drift apart: the state does not
@@ -2764,7 +2781,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// the one that cannot hold the payload.
 		if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
 			if _, err := applyOverflowPolicy(p, "", 0, entriesFromPrimary(primary), fbBudget); err != nil {
-				return Agent{}, false, err
+				return Agent{}, false, refuseOverflow(name, fbWindow, fbMaxTokens, p, fbBudget, err)
 			}
 		}
 		// The truncate re-fit (Epic 35.16.5.4 T2). Reached only with a real re-pack

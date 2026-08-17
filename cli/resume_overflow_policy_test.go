@@ -71,7 +71,15 @@ func TestResume_ZeroInputBudgetNamesTheDeclarationToChange(t *testing.T) {
 			// The dispatch sentinel may remain in the chain (errors.Is still has to
 			// match it), but it must not be the FIRST thing the operator reads —
 			// leading with it is what made this exit unreadable.
-			require.Less(t, indexOfDiagnosis(out), indexOfSentinel(out),
+			//
+			// Both indices are asserted PRESENT first. Comparing them straight would
+			// pass vacuously if the diagnosis wording changed (a missing marker yields
+			// -1, which is less than any real index) — the assertion would then hold
+			// precisely when the diagnosis had disappeared.
+			diag, sentinel := indexOfDiagnosis(out), indexOfSentinel(out)
+			require.NotEqual(t, -1, diag, "the actionable diagnosis must be present at all")
+			require.NotEqual(t, -1, sentinel, "precondition: the wrapped sentinel is still in the chain")
+			require.Less(t, diag, sentinel,
 				"the actionable diagnosis must precede the internal policy sentinel")
 		})
 	}
@@ -106,14 +114,14 @@ func TestResume_MaxTokensOverrideAppliesToPendingAgents(t *testing.T) {
 }
 
 // indexOfDiagnosis / indexOfSentinel locate the operator-actionable text and the
-// internal on_overflow sentinel in combined output, so the ordering assertion above
-// does not depend on either one's exact wording.
-func indexOfDiagnosis(out string) int { return strings.Index(out, "no input budget") }
+// internal on_overflow sentinel in combined output. Both return -1 when absent, and the
+// caller asserts presence before comparing — a "not found" sentinel that sorts before
+// every real index would make the ordering assertion pass exactly when the text it
+// checks for had gone missing.
+//
+// Keyed on the agent-naming prefix every refusal site shares (refuseOverflow), not on a
+// particular phrasing of the budget clause, so rewording the diagnosis does not silently
+// disarm the test.
+func indexOfDiagnosis(out string) int { return strings.Index(out, `agent "`) }
 
-func indexOfSentinel(out string) int {
-	i := strings.Index(out, "on_overflow=")
-	if i < 0 {
-		return len(out) + 1
-	}
-	return i
-}
+func indexOfSentinel(out string) int { return strings.Index(out, "on_overflow=") }
