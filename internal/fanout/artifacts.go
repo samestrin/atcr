@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
@@ -149,10 +150,25 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 	// finish_reason=length with zero parseable findings. Derived from the per-agent
 	// statuses so the count and the markers cannot drift.
 	truncatedZeroFindings := 0
+	truncatedZeroAgents := make([]string, 0, len(statuses))
 	for _, st := range statuses {
 		if st.ResponseTruncated && st.FindingsCount == 0 {
 			truncatedZeroFindings++
+			truncatedZeroAgents = append(truncatedZeroAgents, st.Agent)
 		}
+	}
+	// The tally has existed since Epic 19.5 but reached only summary.json, so the
+	// sole console surface was a per-agent WARN line an operator had to go looking
+	// for — and a whole roster can truncate to nothing while the run reports success
+	// (observed 2026-08-14 across four models on one baseline scan). Named agents,
+	// because "3 reviewers contributed nothing" is not actionable without knowing
+	// which. Deliberately NOT an exit-code change: failing a multi-hour run over a
+	// diagnostic discards the work it existed to produce, the rule
+	// warnDriftingReviewers already follows. Silent at 0 for the same reason.
+	if truncatedZeroFindings > 0 {
+		fmt.Fprintf(os.Stderr,
+			"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool: %s. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding.\n",
+			truncatedZeroFindings, strings.Join(truncatedZeroAgents, ", "))
 	}
 	ps := PoolSummary{
 		Agents:                  statuses,

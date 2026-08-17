@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -374,4 +375,38 @@ func TestCollectReviewNarratives_SkipsOversizedFiles(t *testing.T) {
 	jf := []JSONFinding{{File: "a.go", Line: 1}}
 	stampJustifications(jf, reviewDir)
 	require.Empty(t, jf[0].Justification, "oversized review.md must be skipped")
+}
+
+// Reviewer review.md narratives carry raw pipe-delimited finding records
+// (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE) with no blank line between
+// adjacent records. extractSection's block walk recognized only markdown headings and
+// list-item bullets as boundaries, so it absorbed several consecutive records into one
+// block — and two findings anchored at different lines then received byte-identical
+// justification text, stamping one finding's reasoning onto its unrelated neighbour.
+//
+// Reproduced identically across two independent atcr review runs
+// (fanout-scope-test-20260814, fanout-scope-retest-20260814).
+func TestExtractSection_StopsAtTheNextPipeDelimitedFindingRecord(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+		"MEDIUM|b.go:20|second problem|second fix|security|30|second evidence",
+		"LOW|c.go:30|third problem|third fix|style|5|third evidence",
+	}
+
+	first, _ := extractSection(lines, 1)
+	second, _ := extractSection(lines, 2)
+
+	assert.Contains(t, first, "first problem")
+	assert.NotContains(t, first, "second problem",
+		"a finding record is a block boundary — absorbing the next record is what stamped one "+
+			"finding's narrative onto its neighbour")
+	assert.NotContains(t, first, "third problem")
+
+	assert.Contains(t, second, "second problem")
+	assert.NotContains(t, second, "first problem", "the walk-up must stop at the preceding record too")
+	assert.NotContains(t, second, "third problem")
+
+	assert.NotEqual(t, first, second,
+		"two findings at different anchors must not receive byte-identical justification text")
 }

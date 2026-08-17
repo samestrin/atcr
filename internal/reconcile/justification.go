@@ -414,9 +414,16 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// a continuation line, absorb the list-item marker line above it so the finding
 	// headline is included in the excerpt.
 	start := idx
-	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) {
+	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) && !isFindingRecordStart(lines[start]) {
 		prev := lines[start-1]
 		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) {
+			break
+		}
+		// A finding record begins its OWN block and is never absorbed — unlike a list
+		// marker, it is not a headline for the line below it. Without this the walk
+		// swallowed the preceding record(s) and two findings anchored at different
+		// lines received byte-identical justification text.
+		if isFindingRecordStart(prev) {
 			break
 		}
 		if isItemStart(prev) {
@@ -425,11 +432,11 @@ func extractSection(lines []string, idx int) (text, section string) {
 		}
 		start--
 	}
-	// Walk down until the next line starts a new item/section or is blank.
+	// Walk down until the next line starts a new item/section/record or is blank.
 	end := idx
 	for end < len(lines)-1 {
 		next := lines[end+1]
-		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) {
+		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) || isFindingRecordStart(next) {
 			break
 		}
 		end++
@@ -454,6 +461,27 @@ func extractSection(lines []string, idx int) (text, section string) {
 // ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
 // space), after optional leading spaces. Used as a block boundary so one finding's
 // list item does not absorb its siblings when items are not blank-separated.
+// isFindingRecordStart reports whether s begins a raw pipe-delimited finding record —
+// SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE, the shape reviewer review.md
+// narratives carry alongside prose. Such records sit on consecutive lines with no
+// blank separator, so without treating them as block boundaries extractSection folds
+// several into one excerpt and stamps one finding's reasoning onto its neighbour.
+//
+// Keyed on the SEVERITY vocabulary rather than "contains a pipe": a prose line that
+// happens to contain a pipe (a table row, a shell snippet) is not a record, and
+// treating it as one would fragment legitimate narrative. Uses the package's own
+// SeverityRank/NormalizeSeverity so the detector cannot drift from the parser's
+// accepted spellings.
+func isFindingRecordStart(s string) bool {
+	s = strings.TrimLeft(s, " \t")
+	i := strings.IndexByte(s, '|')
+	if i <= 0 {
+		return false
+	}
+	_, ok := SeverityRank[NormalizeSeverity(strings.TrimSpace(s[:i]))]
+	return ok
+}
+
 func isItemStart(s string) bool {
 	s = strings.TrimLeft(s, " ")
 	if s == "" {
