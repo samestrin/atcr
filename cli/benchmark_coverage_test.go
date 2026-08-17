@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -235,4 +236,50 @@ func TestCheckCoverage_SanitizesIdentityInEveryRejection(t *testing.T) {
 		require.Error(t, err, name)
 		assert.NotContains(t, err.Error(), "\x1b", "%s: the identity reaches the terminal unstripped", name)
 	}
+}
+
+// CASE IDS are untrusted for exactly the same reason the identity is: they come from
+// the run-result being validated, and `atcr benchmark export` is where a hand-supplied
+// file first enters the tool. Every id that reaches the terminal does so through
+// summarizeMissing under %s.
+//
+// The id sites inside validateCoveredSet are already safe and stay untouched — they use
+// %q, which renders ESC as a literal \x1b escape. That asymmetry is why these five
+// survived the identity sweep: the same field is safe under one verb and not the other.
+func TestCoverageDiagnostics_SanitizeUntrustedCaseIDs(t *testing.T) {
+	const esc = "\x1b[2K\x1b[1Gfull coverage"
+	hostileID := "case-02" + esc
+
+	shortRun := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", hostileID},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{{
+			Model: "m", Persona: "p", CaseIDs: []string{"case-01"},
+		}},
+	}
+
+	// The rejection path: the shortfall names the ids the row still owes.
+	err := checkCoverage(io.Discard, shortRun, "rr.json", false)
+	require.Error(t, err, "precondition: this row is short of the suite")
+	assert.NotContains(t, err.Error(), "\x1b",
+		"a missing case id reaches the terminal through the same fmt.Errorf as the identity")
+
+	// The --allow-partial-coverage path writes the same list to a warning instead.
+	var warn bytes.Buffer
+	require.NoError(t, checkCoverage(&warn, shortRun, "rr.json", true))
+	require.Contains(t, warn.String(), "partial coverage", "precondition: the warning must have fired")
+	assert.NotContains(t, warn.String(), "\x1b",
+		"the opt-out path prints the same ids and owes the same stripping")
+
+	// anchorSuiteDenominator's three diagnostics read the DECLARED list, which is
+	// untrusted in the same way — an id the manifest does not contain is echoed back.
+	anchored := benchmark.RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01-nil-deref", "case-02-sql-injection", hostileID},
+	}
+	aerr := anchorSuiteDenominator(anchored, suiteValidPath, "rr.json")
+	require.Error(t, aerr, "precondition: the declared list carries a case the manifest lacks")
+	assert.NotContains(t, aerr.Error(), "\x1b",
+		"an id the suite does not contain is still echoed to the operator's terminal")
 }
