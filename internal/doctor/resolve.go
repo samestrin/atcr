@@ -6,27 +6,36 @@ package doctor
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// Target is a distinct (provider, model, base_url) invocation target. The
-// doctor invokes each target at most once; several roster agents may share one.
+// Target is a distinct (provider, model, base_url, max_tokens) invocation target.
+// The doctor invokes each target at most once; several roster agents may share one.
 type Target struct {
 	Provider  string
 	Model     string
 	BaseURL   string
 	APIKeyEnv string
-	// MaxTokens is the LARGEST max_tokens declared by any agent sharing this
-	// target, or 0 when none declared one. Per-agent like ContextWindowTokens, but
-	// carried here because probes run per-target: the probe budget has to be a
-	// property of the thing being probed.
+	// MaxTokens is the max_tokens declared by the agents sharing this target, or 0
+	// when they declared none. Per-agent like ContextWindowTokens, but carried here
+	// because probes run per-target: the probe budget has to be a property of the
+	// thing being probed.
 	//
-	// Largest rather than smallest so the probe cannot reproduce the defect this
-	// field exists to fix — an agent that raised its cap being probed at the
-	// default, classified ok_warning, and told to "raise --max-tokens". Extra
-	// headroom cannot make a smaller declarer's marker emission fail.
+	// It is part of the target's IDENTITY rather than a value merged across sharers.
+	// An earlier revision took the LARGEST declaration among them, reasoning that
+	// extra headroom cannot make a smaller declarer's marker emission fail — true of
+	// false POSITIVES, and it does stop the "raise --max-tokens" hint being shown to
+	// an agent that already raised it. But `atcr review` resolves the cap PER AGENT
+	// (resolveMaxTokens), so a smaller declarer probed at a co-tenant's 32000 was
+	// never probed at the invocation it will actually make: the marker-absent
+	// ok_warning was suppressed and doctor exited 0 on an agent that truncates to
+	// zero findings on the real run.
+	//
+	// A probe is only evidence about the invocation it reproduces, so distinct caps
+	// are distinct probes. Sharers that agree still dedupe, which is the common case.
 	MaxTokens int
 }
 
@@ -60,8 +69,8 @@ type Resolution struct {
 
 // Resolve walks the effective roster (project Agents + SerialAgents, plus every
 // fallback-reachable agent) and returns the deduplicated invocation plan. Each
-// distinct (provider, model, base_url) tuple becomes a single Target; results
-// map back to every agent that uses it. The fallback graph is validated acyclic
+// distinct (provider, model, base_url, max_tokens) tuple becomes a single Target;
+// results map back to every agent that uses it. The fallback graph is validated acyclic
 // at registry load; a defensive seen-set guards against malformed input.
 func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution, error) {
 	res := &Resolution{Paths: map[string][]string{}}
@@ -73,17 +82,16 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		if !ok {
 			return 0, fmt.Errorf("references unknown provider %q", ac.Provider)
 		}
-		// NUL separates fields so no model/base_url value can forge a collision.
-		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL
 		declared := 0
 		if ac.MaxTokens != nil {
 			declared = *ac.MaxTokens
 		}
+		// NUL separates fields so no model/base_url value can forge a collision. The
+		// declared cap joins the key because it changes the invocation being probed —
+		// see Target.MaxTokens for why merging sharers onto one cap made the probe
+		// evidence about a call no agent makes.
+		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL + "\x00" + strconv.Itoa(declared)
 		if idx, ok := targetIdx[key]; ok {
-			// A later sharer with a larger declaration raises the shared probe budget.
-			if declared > res.Targets[idx].MaxTokens {
-				res.Targets[idx].MaxTokens = declared
-			}
 			return idx, nil
 		}
 		idx := len(res.Targets)
