@@ -1796,8 +1796,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			if agentBudget == 0 {
 				chunkAction = degradationOverflow
 				if warnOversized {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n",
-						name, agentWindow, agentMaxTokens, ml)
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
+						name, agentWindow, agentMaxTokens, ml, zeroBudgetRemedy)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -1990,11 +1990,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			bulkDegradation = degradationOverflow
 			if warnOversized {
 				// Name the resolved window and the reservation that consumed it: the
-				// operator's next action is to raise or drop the declaration, and
+				// operator's next action is to change one of the two declarations, and
 				// "effective budget 0" alone does not say which number to change or
 				// what it has to clear.
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — raise or drop its context_window_tokens declaration\n",
-					name, agentWindow, agentMaxTokens, smallest.Path)
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
+					name, agentWindow, agentMaxTokens, smallest.Path, zeroBudgetRemedy)
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
@@ -2144,6 +2144,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // exactly this). The empty-content case is still caught by the reasoning_content
 // fallback in llmclient; this headroom lets the clean Content path win first.
 const defaultMaxTokens = 8192
+
+// zeroBudgetRemedy is the operator action shared by both zero-budget warnings (the
+// bulk arm and its chunked twin), which must not drift apart: the state does not
+// depend on review_strategy, so neither does the fix.
+//
+// It names BOTH declarations because either one can close the budget, and only one of
+// them is necessarily set. Naming only the window sent an operator who reached this
+// state by declaring max_tokens to a knob they may never have touched — and the
+// documented normal case is exactly that: contextwindow defaults any model absent from
+// the static table to 32768 (what a proxy alias resolves), so a max_tokens at or above
+// ~28k closes the budget on its own with no window declaration in sight.
+const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_window_tokens declaration"
 
 // agentSizing carries the per-agent payload-sizing values buildSlots computed for
 // a reviewer from its OWN model window (Epic 19.10). renderAgent folds them into
