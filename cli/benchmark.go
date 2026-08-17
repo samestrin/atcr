@@ -548,12 +548,19 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 	}
 	for i, v := range rr.Vocabulary {
 		if v.Model != rr.Reviewers[i].Model || v.Persona != rr.Reviewers[i].Persona {
-			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_vocabulary[%d] (%s/%s) misaligned with "+
-				"reviewers[%d] (%s/%s); the documented positional join does not hold. Publishing anyway — "+
+			// %q, NOT stripTerminalControlRunes — this warning reports a COMPARISON, and
+			// stripping sanitizes by deletion. The gate above is a raw != with no
+			// trimming and unicode.IsControl covers \r/\n as well as ESC, so two
+			// identities differing only by a control rune would print as the same text:
+			// a warning that says the join is broken between two rows it renders
+			// identically. %q is terminal-safe AND keeps the difference legible, the
+			// same reason the suite-identity mismatch in benchmark_coverage.go uses it.
+			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_vocabulary[%d] (%q/%q) misaligned with "+
+				"reviewers[%d] (%q/%q); the documented positional join does not hold. Publishing anyway — "+
 				"no consumer reads it on this path.\n",
 				path, i,
-				stripTerminalControlRunes(v.Model), stripTerminalControlRunes(v.Persona), i,
-				stripTerminalControlRunes(rr.Reviewers[i].Model), stripTerminalControlRunes(rr.Reviewers[i].Persona))
+				v.Model, v.Persona, i,
+				rr.Reviewers[i].Model, rr.Reviewers[i].Persona)
 			return nil
 		}
 	}

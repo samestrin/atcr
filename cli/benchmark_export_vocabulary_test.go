@@ -211,6 +211,32 @@ func TestValidateReviewerVocabulary_StripsTerminalControlRunesFromMisalignmentWa
 	assert.Contains(t, got, "p-reviewer")
 }
 
+// The misalignment warning is a COMPARISON, and sanitizing by deletion destroys the
+// thing it exists to show. The gate at :550 is a raw != with no trimming, and
+// unicode.IsControl covers \r and \n as well as ESC — so two identities differing only
+// by a trailing CR trip the mismatch and then print as the same text, telling the
+// operator the positional join is broken between two rows that look identical.
+//
+// Same defect, same remedy as the suite-identity mismatch in benchmark_coverage.go:
+// %q keeps the control rune visible as an escape instead of removing it.
+func TestValidateReviewerVocabulary_MisalignmentStaysVisibleWhenTheDifferenceIsAControlRune(t *testing.T) {
+	var buf bytes.Buffer
+	err := validateReviewerVocabulary(&buf, benchmark.RunResult{
+		Reviewers: []scorecard.PublicRecord{{Model: "m-a", Persona: "p-a"}},
+		Vocabulary: []benchmark.ReviewerVocabulary{
+			// Differs from reviewers[0] by a trailing CR only.
+			{Model: "m-a\r", Persona: "p-a", Findings: 4, Drifted: 1, Rate: ptrFloat(0.25)},
+		},
+	}, "rr.json")
+	require.NoError(t, err, "a positional mismatch warns, it does not reject")
+	got := buf.String()
+
+	require.Contains(t, got, "positional join", "precondition: the misalignment warning fired")
+	assert.NotContains(t, got, "\r", "the raw control rune must not reach the terminal")
+	assert.Contains(t, got, `\r`,
+		"the difference must stay VISIBLE as an escape — deleting it makes the warning contradict itself")
+}
+
 // checkCoverage's shortfall rows land in a stderr warning under
 // --allow-partial-coverage, built from the same untrusted run-result identities the
 // vocabulary warnings sanitize. Left raw they are the same terminal-injection hazard
