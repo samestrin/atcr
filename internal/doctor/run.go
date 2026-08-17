@@ -112,6 +112,10 @@ type probeResult struct {
 	latencyMS int64
 	hint      string
 	detail    string
+	// maxTokens is the resolved output cap the probe ran at (0 when none was
+	// applied). Carried on the result rather than re-derived in Run so the reported
+	// value cannot drift from the one actually sent.
+	maxTokens int
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -154,6 +158,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			Source:              at.Source,
 			ContextWindowTokens: at.ContextWindowTokens,
 			WindowSource:        at.WindowSource,
+			MaxTokens:           pr.maxTokens,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -233,7 +238,9 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 	})
 	latency := time.Since(start).Milliseconds()
-	return classify(content, err, opts.Nonce, latency, tgt)
+	pr := classify(content, err, opts.Nonce, latency, tgt)
+	pr.maxTokens = budget
+	return pr
 }
 
 // maxDetailBytes bounds a network-error detail string so a hostile or verbose
@@ -250,10 +257,16 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
+		// The remedy must name what changes the REAL run. probe() already applies the
+		// agent's declared max_tokens whenever --max-tokens was not typed, and
+		// `atcr review` resolves that same declaration (resolveMaxTokens) — so raising
+		// doctor's own flag moves only the probe budget and buys a green doctor on an
+		// agent that still truncates to zero findings under review. Name the agent's
+		// declaration first, and the review-side flag second.
 		return probeResult{
 			status:    StatusOKWarning,
 			latencyMS: latencyMS,
-			hint:      "HTTP 200 but marker absent/empty — raise --max-tokens (thinking models spend the budget on reasoning)",
+			hint:      "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`; raising doctor's own --max-tokens changes only this probe, not the review",
 		}
 	}
 
