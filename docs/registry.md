@@ -556,7 +556,8 @@ A stable top-level object with an `agents` array; one entry per effective-roster
       "source": "user",
       "context_window_tokens": 200000,
       "window_source": "table",
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      "max_tokens_source": "default"
     }
   ]
 }
@@ -567,6 +568,8 @@ A stable top-level object with an `agents` array; one entry per effective-roster
 `context_window_tokens` is the window the fan-out will actually size this agent's payload against, and `window_source` names the tier it came from — `declaration` (the agent's own `context_window_tokens`), `table` (atcr's static model table), or `default` (the conservative 32,768 fallback). The table renders both as one `WINDOW` cell, e.g. `262144 (declaration)`.
 
 `max_tokens` is the output cap the probe actually ran at, after the same `--max-tokens` → agent declaration → unset resolution the probe applies. It is reported for the same reason the window is: the cap is applied silently, so an `ok_warning` row is otherwise unreadable — an operator cannot tell whether the probe ran at the agent's own declaration or at doctor's default, and that is exactly what decides whether raising the declaration would change anything. Note that raising doctor's `--max-tokens` moves only this probe: `atcr review` resolves the agent's declaration independently, so the `ok_warning` hint names the declaration (and `atcr review --max-tokens`) rather than doctor's own flag.
+
+`max_tokens_source` names the tier that cap resolved from — `flag` (an explicit `--max-tokens`), `declaration` (the agent's own `max_tokens`), or `default` (doctor's built-in probe budget) — and is read together with `max_tokens` for the same reason `window_source` is read with `context_window_tokens`: the number alone cannot show whether a declaration took effect, since an agent declaring exactly doctor's default is indistinguishable from one declaring nothing. It also decides the `ok_warning` remedy: when the source is `flag`, the hint points at `--max-tokens` (which capped that probe) instead of telling you to raise a declaration your own flag overrode. Omitted when no call was placed.
 
 `max_tokens` is **always present**, unlike `hint`, `detail` and `source`. A `0` means the probe never placed a call — it short-circuited on `invalid_config` or `missing_key` before resolving a budget — and never "uncapped": `--max-tokens` at or below `0` is rejected, and an agent declaration is validated into `1..1000000`. The field is not omitted when zero precisely so that state stays distinguishable from a report produced by an atcr predating the field, the same rule `truncated_zero_findings` and `fallback_count` follow in `summary.json`.
 

@@ -138,6 +138,8 @@ type probeResult struct {
 	// applied). Carried on the result rather than re-derived in Run so the reported
 	// value cannot drift from the one actually sent.
 	maxTokens int
+	// maxTokensSource is the tier maxTokens came from, carried for the same reason.
+	maxTokensSource string
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -181,6 +183,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			ContextWindowTokens: at.ContextWindowTokens,
 			WindowSource:        at.WindowSource,
 			MaxTokens:           pr.maxTokens,
+			MaxTokensSource:     pr.maxTokensSource,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -241,9 +244,18 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 	// the target's own declared cap applies, so an agent that declares 32000 is
 	// probed at 32000 rather than at the default and then told to raise a cap it
 	// already raised — the hint config.go cites as this field's motivation.
+	//
+	// The tier is recorded alongside the number because the number cannot carry it:
+	// an agent declaring exactly doctor's default probes identically to one declaring
+	// nothing, and the remedy differs between those cases.
 	budget := opts.MaxTokens
+	budgetSrc := MaxTokensSourceDefault
+	if opts.MaxTokensSet {
+		budgetSrc = MaxTokensSourceFlag
+	}
 	if !opts.MaxTokensSet && tgt.MaxTokens > 0 {
 		budget = tgt.MaxTokens
+		budgetSrc = MaxTokensSourceDeclaration
 	}
 	var maxTokens *int
 	if budget > 0 {
@@ -260,8 +272,9 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 	})
 	latency := time.Since(start).Milliseconds()
-	pr := classify(content, err, opts.Nonce, latency, tgt)
+	pr := classify(content, err, opts.Nonce, latency, tgt, budgetSrc)
 	pr.maxTokens = budget
+	pr.maxTokensSource = budgetSrc
 	return pr
 }
 
@@ -269,8 +282,10 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 // transport error cannot bloat the report.
 const maxDetailBytes = 512
 
-// classify turns a completion result into a probe outcome.
-func classify(content string, err error, nonce string, latencyMS int64, tgt Target) probeResult {
+// classify turns a completion result into a probe outcome. budgetSrc names the tier the
+// probe's output cap resolved from, so the marker-absent remedy can point at the knob
+// that actually governed THIS probe.
+func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string) probeResult {
 	if err == nil {
 		// Strip the prompt text before checking for the marker so an endpoint
 		// that echoes the request verbatim (a common misconfiguration) does not
@@ -279,16 +294,25 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
-		// The remedy must name what changes the REAL run. probe() already applies the
-		// agent's declared max_tokens whenever --max-tokens was not typed, and
-		// `atcr review` resolves that same declaration (resolveMaxTokens) — so raising
-		// doctor's own flag moves only the probe budget and buys a green doctor on an
-		// agent that still truncates to zero findings under review. Name the agent's
-		// declaration first, and the review-side flag second.
+		// The remedy must name what changes the REAL run, AND what governed THIS probe.
+		// probe() applies the agent's declared max_tokens whenever --max-tokens was not
+		// typed, and `atcr review` resolves that same declaration (resolveMaxTokens) —
+		// so raising doctor's own flag normally moves only the probe budget and buys a
+		// green doctor on an agent that still truncates under review.
+		//
+		// When the operator DID type --max-tokens, that advice inverts: the flag is what
+		// capped this probe, the declaration is untouched (and may already be higher),
+		// and "raise the declaration" is a no-op for the run just observed. Telling them
+		// to raise a number their own flag overrode is the misdirection this hint exists
+		// to end, so it is conditional on the resolved tier.
+		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`; raising doctor's own --max-tokens changes only this probe, not the review"
+		if budgetSrc == MaxTokensSourceFlag {
+			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens, so raise that to re-probe; note `atcr review` ignores it and resolves the agent's own max_tokens declaration, which is what governs the real run"
+		}
 		return probeResult{
 			status:    StatusOKWarning,
 			latencyMS: latencyMS,
-			hint:      "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`; raising doctor's own --max-tokens changes only this probe, not the review",
+			hint:      hint,
 		}
 	}
 
