@@ -2208,10 +2208,23 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 // text) — without the sizing token in the key the second would replay a review
 // produced under a DIFFERENT sizing regime. A cache-regime change SHOULD
 // invalidate: an agent whose effective budget previously produced a non-"0:0"
-// token gets a new key, which is the intended F7 behavior, not a bug. MaxTokens is
-// constant across review agents (defaultMaxTokens), so it is intentionally
-// omitted. min_severity/max_findings are deterministic post-LLM filters and are
-// correctly NOT in the key.
+// token gets a new key, which is the intended F7 behavior, not a bug.
+//
+// The RESOLVED OUTPUT CAP is folded in for a third instance of the same reason. It
+// was once constant across review agents (defaultMaxTokens) and omitted on that
+// premise; the premise no longer holds — the cap is now per-agent (max_tokens) and
+// per-run (--max-tokens), and it changes the response, since a cap too small to hold
+// the findings block returns an empty or half-written review. The sizing token is not
+// a usable proxy: appliedByteBudget clamps to payload_byte_budget, so whenever the
+// global budget binds two different caps derive the SAME token. An operator who adds
+// max_tokens to fix an empty review would otherwise replay the cached empty review
+// and read the setting as inert — defeating the field's own documented motivation.
+//
+// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token, so every
+// on-disk entry written by an agent that never declared a cap stays valid.
+//
+// min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
+// in the key.
 func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int) string {
 	temp := "default"
 	if temperature != nil {
@@ -2231,6 +2244,12 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// assertion for bare/unsized agents.
 	if sizing != "" && sizing != "0:0" {
 		tuning = tuning + "\x00" + sizing
+	}
+	// Same NUL-separated append, same backward-compat rule: the embedded default
+	// collapses to the token above (and so does a 0, which resolveMaxTokens treats as
+	// "unset"), so no key written before the cap became per-agent is invalidated.
+	if maxTokens > 0 && maxTokens != defaultMaxTokens {
+		tuning = tuning + "\x00mt=" + strconv.Itoa(maxTokens)
 	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
