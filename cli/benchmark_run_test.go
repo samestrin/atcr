@@ -874,6 +874,32 @@ func TestWarnRoutingOnlyReviewers_DoesNotNameAReviewerThatRaisedNothing(t *testi
 		"a reviewer with no findings is UNMEASURED, not routing-only — 0 == 0 is not evidence")
 }
 
+// The plural arm of the routing-only warning was an uncovered added line: every
+// fixture reaching it carried exactly ONE routing-only row, so pinning the noun to the
+// singular left the suite green and the warning read "2 reviewer labelled every
+// finding" on the multi-reviewer runs that are the norm. The sibling drift warning has
+// its plural arm covered; this one did not.
+//
+// Both arms are asserted together so neither direction of the mutation survives.
+func TestWarnRoutingOnlyReviewers_NounAgreesWithTheRowCount(t *testing.T) {
+	row := func(model string, findings int) benchmark.ReviewerVocabulary {
+		return benchmark.ReviewerVocabulary{Model: model, Persona: "p", Findings: findings, RoutingValues: findings}
+	}
+
+	var one bytes.Buffer
+	warnRoutingOnlyReviewers(&one, []benchmark.ReviewerVocabulary{row("solo", 3)})
+	assert.Contains(t, one.String(), "1 reviewer labelled every finding",
+		"a single routing-only row takes the singular")
+
+	var many bytes.Buffer
+	warnRoutingOnlyReviewers(&many, []benchmark.ReviewerVocabulary{row("first", 3), row("second", 2)})
+	got := many.String()
+	assert.Contains(t, got, "2 reviewers labelled every finding",
+		"two routing-only rows take the plural")
+	require.Contains(t, got, "first/p", "precondition: both rows must be listed")
+	require.Contains(t, got, "second/p")
+}
+
 // The drift listing's tie-breaker — equal rates order by descending Findings — was an
 // uncovered added line: no test presented two drifting reviewers at the SAME rate, so
 // deleting the second comparator arm left the suite green while the listing lost the
