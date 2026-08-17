@@ -164,3 +164,33 @@ func TestBenchmarkExport_SilentOnWellFormedAlignedVocabulary(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.NotContains(t, stderr, "reviewer_vocabulary")
 }
+
+// The misalignment warning prints FOUR identity strings straight to the operator's
+// terminal, and this boundary's own doc calls its input "an untrusted (possibly
+// hand-supplied) run-result" — strictly more attacker-controlled than the
+// provider-reported strings the sibling warnings in this file already sanitize with
+// stripTerminalControlRunes. An unsanitized ESC here can erase the line and forge a
+// reassuring one over the very warning that says the positional join is broken.
+func TestValidateReviewerVocabulary_StripsTerminalControlRunesFromMisalignmentWarning(t *testing.T) {
+	var buf bytes.Buffer
+	err := validateReviewerVocabulary(&buf, benchmark.RunResult{
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "m-reviewer\x1b[2K", Persona: "p-reviewer\x07"},
+		},
+		Vocabulary: []benchmark.ReviewerVocabulary{
+			{Model: "m-vocab\x1b[1G", Persona: "p-vocab\x08", Findings: 4, Drifted: 1, Rate: ptrFloat(0.25)},
+		},
+	}, "rr.json")
+	require.NoError(t, err, "a positional mismatch warns, it does not reject")
+	got := buf.String()
+
+	require.Contains(t, got, "positional join", "precondition: the misalignment warning fired")
+	assert.NotContains(t, got, "\x1b", "an ESC from an untrusted run-result must never reach the terminal")
+	assert.NotContains(t, got, "\x07", "nor a BEL")
+	assert.NotContains(t, got, "\x08", "nor a BACKSPACE, which can rewrite the line in place")
+	// The identities must still be readable — sanitizing must not blank the row.
+	assert.Contains(t, got, "m-vocab")
+	assert.Contains(t, got, "p-vocab")
+	assert.Contains(t, got, "m-reviewer")
+	assert.Contains(t, got, "p-reviewer")
+}

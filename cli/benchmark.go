@@ -512,7 +512,9 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 			_, _ = fmt.Fprintf(w, "warning: run-result %s has reviewer_vocabulary[%d] (%s/%s) misaligned with "+
 				"reviewers[%d] (%s/%s); the documented positional join does not hold. Publishing anyway — "+
 				"no consumer reads it on this path.\n",
-				path, i, v.Model, v.Persona, i, rr.Reviewers[i].Model, rr.Reviewers[i].Persona)
+				path, i,
+				stripTerminalControlRunes(v.Model), stripTerminalControlRunes(v.Persona), i,
+				stripTerminalControlRunes(rr.Reviewers[i].Model), stripTerminalControlRunes(rr.Reviewers[i].Persona))
 			return nil
 		}
 	}
