@@ -1809,7 +1809,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// what it does once it fires.
 				if p := cfg.Settings.OnOverflow; len(mp.Entries) > 0 && (p == OverflowFail || p == OverflowFallback) {
 					if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)); err != nil {
-						return err
+						// Wrap with the state that produced the refusal, not just the
+						// policy sentinel. This error is the ONLY operator-visible
+						// signal on the resume path — buildSlots runs there with
+						// warnOversized=false, so the zero-budget warning below is
+						// suppressed — and cli/resume.go surfaces it verbatim as an
+						// exit-2 config error. Unwrapped, "on_overflow=fallback:
+						// model-swap fallback requires fallback-provenance recording"
+						// names neither the agent nor the declaration to change, while
+						// the stale-review message points the operator back at
+						// `--resume`, which fails the same way. Errors.Is still matches
+						// the sentinel through %w.
+						return fmt.Errorf("agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0), and on_overflow is %q: %s: %w",
+							name, agentWindow, agentMaxTokens, p, zeroBudgetRemedy, err)
 					}
 				}
 				if warnOversized {
