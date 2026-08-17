@@ -39,6 +39,33 @@ func TestWritePool_WarnsWhenAnAgentTruncatedWithZeroFindings(t *testing.T) {
 	assert.NotContains(t, out, "bruce", "an agent that landed findings is not a runaway")
 }
 
+// The warning's remedy ("raise their output cap") is only half the story: the output
+// cap is subtracted from the SAME context window the diff is packed into, so raising
+// it narrows that agent's input budget — and a cap within promptOverheadTokens (4096)
+// of the resolved window collapses it to zero (payload.EffectiveByteBudget returns 0),
+// which the bulk path degrades to a one-file review that still exits 0. An operator
+// reading only this line follows it straight into a false-clean run, because the
+// tradeoff is documented only in the flag help and docs/registry.md — neither of which
+// is on screen when this fires.
+func TestWritePool_TruncationWarning_NamesTheInputBudgetTradeoff(t *testing.T) {
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
+	}
+	pool := filepath.Join(t.TempDir(), "pool")
+
+	out := captureStderr(t, func() {
+		_, err := WritePool(pool, results, nil)
+		require.NoError(t, err)
+	})
+
+	assert.Contains(t, out, "input budget",
+		"the remedy must name what raising the cap costs, not only what it buys")
+	assert.Contains(t, out, "context window",
+		"the tradeoff is only intelligible as a split of one window")
+	assert.Contains(t, out, "4096",
+		"the operator needs the boundary at which the input budget reaches zero")
+}
+
 // A clean run stays silent — a warning printed on every review is one nobody reads,
 // the rule the vocabulary diagnostics already follow.
 func TestWritePool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
