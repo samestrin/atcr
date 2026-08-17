@@ -368,10 +368,31 @@ func validateCoveredSet(suite map[string]bool, covered []string, path, model, pe
 }
 
 // summarizeMissing renders up to maxNamedMissingCases ids, then an overflow count.
+//
+// It strips terminal control runes from every id it names, because this is the ONLY
+// route by which a case id reaches the operator's terminal under %s: both of
+// checkCoverage's shortfall messages (the rejection and the --allow-partial-coverage
+// warning) and all three of anchorSuiteDenominator's diagnostics funnel through here.
+// Case ids are untrusted for the same reason the reviewer identity is — they come from
+// the run-result being validated, and export is where a hand-supplied file first enters
+// the tool.
+//
+// Sanitizing HERE rather than at the five call sites is what makes that claim checkable:
+// a future diagnostic that names ids has to come through this function to get the cap,
+// so it inherits the stripping with it. The id sites inside validateCoveredSet are
+// deliberately left alone — they use %q, which already renders a control rune as a
+// literal escape sequence.
 func summarizeMissing(missing []string) string {
-	if len(missing) <= maxNamedMissingCases {
-		return strings.Join(missing, ", ")
+	named := missing
+	if len(named) > maxNamedMissingCases {
+		named = named[:maxNamedMissingCases]
 	}
-	return fmt.Sprintf("%s and %d more",
-		strings.Join(missing[:maxNamedMissingCases], ", "), len(missing)-maxNamedMissingCases)
+	safe := make([]string, len(named))
+	for i, id := range named {
+		safe[i] = stripTerminalControlRunes(id)
+	}
+	if len(missing) <= maxNamedMissingCases {
+		return strings.Join(safe, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
