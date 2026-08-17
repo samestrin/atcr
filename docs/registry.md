@@ -555,7 +555,8 @@ A stable top-level object with an `agents` array; one entry per effective-roster
       "detail": "",
       "source": "user",
       "context_window_tokens": 200000,
-      "window_source": "table"
+      "window_source": "table",
+      "max_tokens": 8192
     }
   ]
 }
@@ -564,5 +565,7 @@ A stable top-level object with an `agents` array; one entry per effective-roster
 `hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. `source` is the agent's definition tier — `user` or `project` — surfaced so overlay shadowing is visible rather than silent; the human-readable table shows it as a `SOURCE` column. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
 
 `context_window_tokens` is the window the fan-out will actually size this agent's payload against, and `window_source` names the tier it came from — `declaration` (the agent's own `context_window_tokens`), `table` (atcr's static model table), or `default` (the conservative 32,768 fallback). The table renders both as one `WINDOW` cell, e.g. `262144 (declaration)`.
+
+`max_tokens` is the output cap the probe actually ran at, after the same `--max-tokens` → agent declaration → unset resolution the probe applies. It is reported for the same reason the window is: the cap is applied silently, so an `ok_warning` row is otherwise unreadable — an operator cannot tell whether the probe ran at the agent's own declaration or at doctor's default, and that is exactly what decides whether raising the declaration would change anything. Note that raising doctor's `--max-tokens` moves only this probe: `atcr review` resolves the agent's declaration independently, so the `ok_warning` hint names the declaration (and `atcr review --max-tokens`) rather than doctor's own flag.
 
 Read the pair together. The number alone cannot show whether a declaration took effect: a declaration that was ignored and a static-table hit that happens to agree look identical. The tier alone cannot show whether the value is plausible for the model. Seeing `512000 (declaration)` beside a model the table pins at `128000` is how an over-declaration becomes visible here rather than mid-run as an opaque provider HTTP 400. Note the window is **per agent**, not per target: two agents sharing one `(provider, model, base_url)` probe can report different windows when only one of them declares.
