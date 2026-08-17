@@ -281,12 +281,23 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 		// rr.Suite and rr.SuiteVersion are untrusted for the same reason the case ids
 		// and the reviewer identities are — they are read straight from the
 		// operator-supplied run-result, and export is where a hand-supplied file first
-		// enters the tool. Under %s an ESC here erases the mismatch report and writes a
-		// reassuring line over it. The manifest values need no stripping: they come from
-		// the suite tree the operator pointed at, not from the file under validation.
-		return fmt.Errorf("run-result %s is for suite %s/%s but the manifest at %s is %s/%s; "+
+		// enters the tool.
+		//
+		// %q, NOT stripTerminalControlRunes: this message's entire job is to show a
+		// DIFFERENCE, and stripping sanitizes by deletion. The gate above is a raw !=
+		// with no trimming, and unicode.IsControl covers \r and \n as well as ESC, so a
+		// CRLF-mangled run-result whose suite genuinely differs would render both sides
+		// as the same text — a self-contradicting message that reads as a spurious
+		// failure. %q gives the same terminal safety (a control rune becomes a visible
+		// escape) while keeping the difference legible, which is exactly why the id
+		// sites in validateCoveredSet already use it.
+		//
+		// BOTH halves take %q. Rendering the untrusted side under one rule and the
+		// manifest side under another is what let the difference disappear; quoting the
+		// manifest value also disambiguates a suite name with leading/trailing spaces.
+		return fmt.Errorf("run-result %s is for suite %q/%q but the manifest at %s is %q/%q; "+
 			"anchoring a run-result to a different suite compares two unrelated case lists",
-			path, stripTerminalControlRunes(rr.Suite), stripTerminalControlRunes(rr.SuiteVersion),
+			path, rr.Suite, rr.SuiteVersion,
 			suitePath, m.Suite, m.SuiteVersion)
 	}
 	if len(rr.SuiteCaseIDs) == 0 {
