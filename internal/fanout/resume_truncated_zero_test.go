@@ -96,6 +96,45 @@ func TestWritePool_WarningIsNotMarkedAsARestatement(t *testing.T) {
 		"a fresh run has no earlier attempt to restate")
 }
 
+// Both variants state the SAME remedy, so both must carry all of it. The cumulative
+// text had quietly lost the on_overflow consequence the fresh text still carried — and
+// the resume path is where that clause matters most, since a run interrupted before
+// writePool prints the cumulative variant and nothing else. Two literals saying the same
+// thing drift; this pins the shared half against both.
+func TestTruncatedZeroWarning_BothVariantsCarryTheFullRemedy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		emit func()
+	}{
+		{"fresh", func() {
+			pool := filepath.Join(t.TempDir(), "pool")
+			_, err := WritePool(pool, []Result{
+				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
+			}, nil)
+			require.NoError(t, err)
+		}},
+		{"cumulative", func() {
+			poolDir := filepath.Join(t.TempDir(), "sources", "pool")
+			require.NoError(t, writeResumedAgents(poolDir, []Result{
+				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
+			}, nil))
+			_, _, err := RebuildPool(poolDir, []string{"greta"})
+			require.NoError(t, err)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStderr(t, tc.emit)
+
+			require.Contains(t, out, "greta", "precondition: the warning fired")
+			assert.Contains(t, out, "input budget", "the tradeoff must be named")
+			assert.Contains(t, out, "4096", "and its boundary")
+			assert.Contains(t, out, "on_overflow",
+				"the consequence of a zero budget is part of the remedy, not an optional extra")
+			assert.Contains(t, out, "context_window_tokens", "and so is the alternative knob")
+		})
+	}
+}
+
 // The silent-at-zero rule holds on the resume path for the same reason it holds on the
 // fresh path: a warning printed on every resume is one nobody reads.
 func TestRebuildPool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
