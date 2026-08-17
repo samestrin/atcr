@@ -68,6 +68,33 @@ func TestBuildSlots_ChunkedZeroBudgetHonorsOnOverflowFallback(t *testing.T) {
 		"on_overflow=fallback must surface its typed error pre-dispatch on a zero budget under review_strategy=chunked, got: %v", err)
 }
 
+// The `len(mp.Entries) > 0` half of the policy gate, pinned. The comment above it
+// claims the chunked and bulk arms "must agree on WHEN the policy fires, not only on
+// what it does once it fires" — the bulk arm gates its whole zero-budget block on a
+// non-empty entry list (review.go:1959), so a chunked payload carrying no entries must
+// likewise pass through untouched. Without this the guard survives replacement with a
+// literal `true` against the whole package, and an entry-less chunked payload
+// hard-fails the run under on_overflow fail/fallback — the exact divergence from the
+// bulk twin the guard exists to prevent.
+func TestBuildSlots_ChunkedZeroBudgetWithNoEntriesSkipsThePolicy(t *testing.T) {
+	for _, policy := range []string{OverflowFail, OverflowFallback} {
+		t.Run(policy, func(t *testing.T) {
+			cfg := chunkedZeroBudgetCfg(t, policy)
+			// Text but no Entries: the payload shape the bulk arm's own entries guard
+			// admits without consulting the policy.
+			payloads := map[string]modePayload{
+				"blocks": {Text: fileSeg("f0.go", 100), FileCount: 1},
+			}
+			require.Empty(t, payloads["blocks"].Entries, "precondition: the gate's subject is an empty entry list")
+
+			_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
+
+			require.NoError(t, err,
+				"an entry-less payload must not trip the overflow policy — the bulk twin does not")
+		})
+	}
+}
+
 func TestBuildSlots_ChunkedUsableWindowNotFailedByOnOverflowFail(t *testing.T) {
 	// The gate fires on a ZERO budget only: a funded agent whose diff merely splits
 	// into chunks is a no-loss degradation and must not be hard-failed.
