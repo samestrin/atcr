@@ -330,7 +330,12 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) boo
 	// The realistic breach cause is a findings-parser regression, which drifts EVERY
 	// reviewer at once — so the listing is severity-ordered and capped: the worst
 	// drifters first, the remainder summarized, rather than an alphabetized wall.
-	sort.Slice(drifting, func(i, j int) bool {
+	// SliceStable, not Slice: the comparator can still tie (equal rate AND equal
+	// findings), and an unstable sort is free to order those two rows differently
+	// between runs on byte-identical input. Score and PerReviewerVocabulary both use
+	// the stable form for exactly that reason; this listing is diffed by operators the
+	// same way, so it gets the same guarantee.
+	sort.SliceStable(drifting, func(i, j int) bool {
 		if *drifting[i].Rate != *drifting[j].Rate {
 			return *drifting[i].Rate > *drifting[j].Rate
 		}

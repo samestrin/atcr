@@ -873,3 +873,69 @@ func TestWarnRoutingOnlyReviewers_DoesNotNameAReviewerThatRaisedNothing(t *testi
 	assert.NotContains(t, got, "raised-nothing",
 		"a reviewer with no findings is UNMEASURED, not routing-only — 0 == 0 is not evidence")
 }
+
+// The drift listing's tie-breaker — equal rates order by descending Findings — was an
+// uncovered added line: no test presented two drifting reviewers at the SAME rate, so
+// deleting the second comparator arm left the suite green while the listing lost the
+// ordering the cap depends on (the rows that survive maxDriftWarningRows should be the
+// ones measured over the most findings, not whichever arrived first).
+//
+// The input is seeded in the WRONG order on purpose: with the tie-break removed the
+// comparator is false in both directions and the sort leaves the input order alone, so
+// a correctly-seeded input would pass either way.
+func TestWarnDriftingReviewers_EqualRatesOrderByDescendingFindings(t *testing.T) {
+	rate := 0.9
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, []benchmark.ReviewerVocabulary{
+		{Model: "small-n", Persona: "p", Findings: 10, Drifted: 9, Rate: &rate},
+		{Model: "large-n", Persona: "p", Findings: 100, Drifted: 90, Rate: &rate},
+	})
+	got := buf.String()
+
+	small := strings.Index(got, "small-n/p")
+	large := strings.Index(got, "large-n/p")
+	require.NotEqual(t, -1, small, "precondition: both rows drifted and are listed")
+	require.NotEqual(t, -1, large)
+	assert.Less(t, large, small,
+		"at an equal rate the row measured over more findings is the more informative one and sorts first")
+}
+
+// The comparator can still tie on IDENTITY (equal rate AND equal findings), and an
+// unstable sort may order those rows differently between runs on byte-identical input
+// — which also makes WHICH rows survive maxDriftWarningRows nondeterministic. The rows
+// arrive already ordered by (model, persona) from PerReviewerVocabulary, so a stable
+// sort must preserve that. Score and PerReviewerVocabulary make the same choice.
+// The roster size matters: Go's pdqsort leaves a small all-equal slice alone, so a
+// handful of tied rows cannot tell the two sorts apart. Twenty rows over two distinct
+// rates does — and twenty is the realistic shape, since the breach cause this listing
+// exists for is a parser regression that drifts a whole 27-model roster at once.
+func TestWarnDriftingReviewers_IdentityTiePreservesInputOrder(t *testing.T) {
+	const rows = 20
+	high, low := 0.90, 0.89
+	in := make([]benchmark.ReviewerVocabulary, 0, rows)
+	for i := 0; i < rows; i++ {
+		rate := &high
+		if i%2 == 1 {
+			rate = &low
+		}
+		in = append(in, benchmark.ReviewerVocabulary{
+			Model: fmt.Sprintf("m%03d", i), Persona: "p", Findings: 10, Drifted: 9, Rate: rate,
+		})
+	}
+
+	var buf bytes.Buffer
+	warnDriftingReviewers(&buf, in)
+	got := buf.String()
+
+	// The ten even-indexed rows share the higher rate and an identical findings count,
+	// so they tie on every comparator arm and must appear in input order.
+	prev := -1
+	for i := 0; i < rows; i += 2 {
+		at := strings.Index(got, fmt.Sprintf("m%03d/p", i))
+		require.NotEqual(t, -1, at,
+			"the ten rows at the higher rate are the ones the cap keeps, in input order")
+		assert.Greater(t, at, prev, "an identity tie must not reorder rows relative to the input")
+		prev = at
+	}
+	assert.NotContains(t, got, "m001/p", "a lower-rate row must not displace a tied higher-rate one")
+}
