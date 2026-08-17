@@ -89,8 +89,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 	rep := doctor.Run(cmd.Context(), llmclient.New(), res, doctor.Options{
 		MaxTokens: maxTokens,
-		Timeout:   time.Duration(timeoutSecs) * time.Second,
-		Nonce:     nonce,
+		// Changed(), not a value comparison: the flag's default is a real number, so
+		// only cobra can distinguish "operator typed 2048" from "operator typed
+		// nothing" — and that distinction is what lets a declared max_tokens apply.
+		MaxTokensSet: cmd.Flags().Changed("max-tokens"),
+		Timeout:      time.Duration(timeoutSecs) * time.Second,
+		Nonce:        nonce,
 	})
 
 	if asJSON {

@@ -496,3 +496,45 @@ func TestRandomNonce_NonEmptyAndUnique(t *testing.T) {
 	assert.NotEmpty(t, n1)
 	assert.NotEqual(t, n1, n2)
 }
+
+// The resolution carrying a declared cap is only half the fix — the probe has to
+// actually send it. This pins the Invocation, so a target that knows its budget but a
+// probe that keeps sending the default would fail here rather than silently reproduce
+// the "raise a cap you already raised" hint.
+func TestProbe_UsesTheTargetsDeclaredMaxTokensUnlessTheFlagWasPassed(t *testing.T) {
+	var got []int
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		if inv.MaxTokens != nil {
+			got = append(got, *inv.MaxTokens)
+		} else {
+			got = append(got, 0)
+		}
+		return Marker("n"), nil
+	})
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://api.example/v1", APIKeyEnv: "DOCTOR_TEST_KEY", MaxTokens: 32000}
+	t.Setenv("DOCTOR_TEST_KEY", "x")
+
+	t.Run("declared cap applies when --max-tokens was not passed", func(t *testing.T) {
+		got = nil
+		probe(context.Background(), fake, tgt, Options{MaxTokens: 2048, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 32000, got[0],
+			"the agent declared 32000; probing at the 2048 default is what produced the contradictory hint")
+	})
+
+	t.Run("an explicit --max-tokens still wins", func(t *testing.T) {
+		got = nil
+		probe(context.Background(), fake, tgt, Options{MaxTokens: 512, MaxTokensSet: true, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 512, got[0], "the operator's per-run choice must beat the declaration")
+	})
+
+	t.Run("an undeclared target keeps the caller's default", func(t *testing.T) {
+		got = nil
+		bare := tgt
+		bare.MaxTokens = 0
+		probe(context.Background(), fake, bare, Options{MaxTokens: 2048, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 2048, got[0])
+	})
+}

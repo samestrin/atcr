@@ -51,9 +51,12 @@ const (
 	// by either route its INPUT can be cut short:
 	//   - chunking: fanout.AgentStatus.UnreviewedChunks counts the bins that failed
 	//     while the persona still reported StatusOK;
-	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed
-	//     (a per-agent shed to fit the model's window, or a re-fit fallback under
-	//     on_overflow=truncate), with FilesDropped naming the shed ENTRIES by path.
+	//   - payload truncation: fanout.AgentStatus.Truncated marks a byte-budget shed,
+	//     by any of THREE routes — a per-agent shed to fit the model's window, a
+	//     re-fit fallback under on_overflow=truncate, or the DIFF-WIDE shed
+	//     (buildPayloads' global pass) promoted onto a chunked persona's merged
+	//     record, which is the only one decided before the persona was sized at all —
+	//     with FilesDropped naming the shed ENTRIES by path.
 	//     Not "the paths that never arrived": the shed is accounted per entry and a
 	//     diff can carry two sections for one path, so a listed path may still be
 	//     present via its other occurrence (fanout.droppedPathsExcept documents the

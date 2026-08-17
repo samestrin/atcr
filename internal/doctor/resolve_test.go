@@ -140,3 +140,36 @@ func TestResolve_UnknownAgentErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ghost")
 }
+
+// atcr doctor probed every target at opts.MaxTokens (default 2048) and never consulted
+// the agent's declared max_tokens, so an agent that declares 32000 was probed at 2048,
+// classified ok_warning, and told to "raise --max-tokens" — the very cap it had already
+// raised. config.go cites that hint as the field's motivation, so the doctor
+// contradicting it is the worst possible surface for the miss.
+//
+// Like ContextWindowTokens the declaration is per-AGENT while probes run per-TARGET, and
+// targets are deduplicated. The target carries the LARGEST declared cap among its
+// sharers: probing with more headroom cannot make a smaller declarer's marker emission
+// fail, and it is the choice that stops the false hint.
+func TestResolve_TargetCarriesTheLargestDeclaredMaxTokens(t *testing.T) {
+	big, small := 32000, 4000
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{
+			"a": {Provider: "p", Model: "m", MaxTokens: &small},
+			"b": {Provider: "p", Model: "m", MaxTokens: &big}, // same target as "a"
+			"c": {Provider: "p", Model: "other"},              // undeclared
+		},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a", "b", "c"}})
+	require.NoError(t, err)
+
+	shared := targetForAgent(t, res, "a")
+	require.Equal(t, shared, targetForAgent(t, res, "b"), "precondition: a and b share one probe target")
+	assert.Equal(t, big, shared.MaxTokens,
+		"a deduplicated target probes at the largest cap its sharers declared, so the agent that "+
+			"already raised max_tokens is not told to raise it")
+
+	assert.Equal(t, 0, targetForAgent(t, res, "c").MaxTokens,
+		"an undeclared agent leaves the target at 0 so the caller's own default still applies")
+}

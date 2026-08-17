@@ -46,10 +46,15 @@ type Completer interface {
 
 // Options tune the self-test.
 type Options struct {
-	MaxTokens   int           // completion budget (generous so thinking models emit the marker)
-	Timeout     time.Duration // per-call deadline (0 = inherit ctx only)
-	Nonce       string        // marker token embedded in the prompt
-	Concurrency int           // max concurrent probes (0 = defaultConcurrency)
+	MaxTokens int // completion budget (generous so thinking models emit the marker)
+	// MaxTokensSet reports that MaxTokens came from an explicit --max-tokens rather
+	// than the flag's default. Without it the two are indistinguishable (the default
+	// is a real number), and a target's declared max_tokens could never take
+	// precedence — which is the whole point of consulting the declaration.
+	MaxTokensSet bool
+	Timeout      time.Duration // per-call deadline (0 = inherit ctx only)
+	Nonce        string        // marker token embedded in the prompt
+	Concurrency  int           // max concurrent probes (0 = defaultConcurrency)
 }
 
 // Marker is the exact token a healthy endpoint must echo back.
@@ -198,9 +203,17 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		callCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 	}
+	// An explicit --max-tokens is the operator's per-run choice and wins. Otherwise
+	// the target's own declared cap applies, so an agent that declares 32000 is
+	// probed at 32000 rather than at the default and then told to raise a cap it
+	// already raised — the hint config.go cites as this field's motivation.
+	budget := opts.MaxTokens
+	if !opts.MaxTokensSet && tgt.MaxTokens > 0 {
+		budget = tgt.MaxTokens
+	}
 	var maxTokens *int
-	if opts.MaxTokens > 0 {
-		v := opts.MaxTokens
+	if budget > 0 {
+		v := budget
 		maxTokens = &v
 	}
 

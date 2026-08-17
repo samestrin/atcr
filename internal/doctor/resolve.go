@@ -18,6 +18,16 @@ type Target struct {
 	Model     string
 	BaseURL   string
 	APIKeyEnv string
+	// MaxTokens is the LARGEST max_tokens declared by any agent sharing this
+	// target, or 0 when none declared one. Per-agent like ContextWindowTokens, but
+	// carried here because probes run per-target: the probe budget has to be a
+	// property of the thing being probed.
+	//
+	// Largest rather than smallest so the probe cannot reproduce the defect this
+	// field exists to fix — an agent that raised its cap being probed at the
+	// default, classified ok_warning, and told to "raise --max-tokens". Extra
+	// headroom cannot make a smaller declarer's marker emission fail.
+	MaxTokens int
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it
@@ -65,7 +75,15 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		}
 		// NUL separates fields so no model/base_url value can forge a collision.
 		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL
+		declared := 0
+		if ac.MaxTokens != nil {
+			declared = *ac.MaxTokens
+		}
 		if idx, ok := targetIdx[key]; ok {
+			// A later sharer with a larger declaration raises the shared probe budget.
+			if declared > res.Targets[idx].MaxTokens {
+				res.Targets[idx].MaxTokens = declared
+			}
 			return idx, nil
 		}
 		idx := len(res.Targets)
@@ -74,6 +92,7 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 			Model:     ac.Model,
 			BaseURL:   prov.BaseURL,
 			APIKeyEnv: prov.APIKeyEnv,
+			MaxTokens: declared,
 		})
 		targetIdx[key] = idx
 		return idx, nil
