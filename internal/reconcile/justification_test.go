@@ -439,3 +439,30 @@ func TestExtractSection_ContinuationDoesNotAbsorbThePrecedingFindingRecord(t *te
 		"a finding record begins its OWN block and is never absorbed upward — unlike a list "+
 			"marker it is not a headline for the line below it")
 }
+
+// The third guard in the same walk-up, and the one the two tests above cannot reach:
+// the `!isFindingRecordStart(lines[start])` term in the loop CONDITION, which tests the
+// ANCHOR line rather than the line above it. Its twin inside the body (the `prev` break)
+// was pinned after an earlier review; this half was left short, so it survived deletion
+// against the whole package.
+//
+// The shapes are not redundant. With the condition's term gone, an anchor that IS a
+// record no longer stops the loop on entry — the walk steps up into the prose above and
+// folds it into the excerpt, which is the cross-contamination the record boundary exists
+// to stop. A reviewer narrative introducing its records with an unseparated prose line
+// is the ordinary shape.
+func TestExtractSection_RecordAnchorDoesNotAbsorbThePreambleAboveIt(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"These came out of the scope-constraint pass and are ordered by blast radius",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+	}
+
+	got, section := extractSection(lines, 2)
+
+	assert.Equal(t, "Findings", section)
+	assert.Contains(t, got, "first problem")
+	assert.NotContains(t, got, "blast radius",
+		"the excerpt must START at the record: an anchor that is itself a record ends the "+
+			"walk-up on entry and never absorbs the prose above it")
+}
