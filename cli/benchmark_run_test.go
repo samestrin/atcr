@@ -804,3 +804,52 @@ func TestBenchmarkRun_RealRunBreakdownFeedsTheWarning(t *testing.T) {
 	assert.Contains(t, buf.String(), "m-greta",
 		"a reviewer that drifted on every finding must be named from a real run's breakdown")
 }
+
+// The ceiling-only path: the run breaches the run-level ceiling while NO reviewer
+// reaches the per-reviewer drift threshold and none is routing-only. It is the most
+// common single-signal shape — a parser regression that nudges every model slightly —
+// and it was the one arm of warnVocabularyDiagnostics' `fired` disjunction that no
+// test pinned. The advisory now lives outside the ceiling warning's own string and is
+// gated on that flag, so flipping warnIfVocabularyCeilingExceeded's `return true` to
+// `return false` leaves the ceiling line intact and silently drops the advisory for
+// its original consumer. Assert BOTH reach the writer.
+func TestWarnVocabularyDiagnostics_CeilingOnlyRunStillEmitsTheAdvisory(t *testing.T) {
+	raised := make([]string, 100)
+	for i := range raised {
+		raised[i] = "correctness"
+	}
+	for i := 0; i < 6; i++ {
+		raised[i] = "bug" // 6/100 = 0.06: over the 0.05 ceiling, well under the 0.50 drift threshold
+	}
+	reviewers := []benchmark.ReviewerScore{
+		{Model: "slightly-drifted", Persona: "p", Cases: []benchmark.CaseScore{{Raised: raised}}},
+	}
+	rr := &benchmark.RunResult{
+		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
+		Vocabulary:          benchmark.PerReviewerVocabulary(reviewers),
+	}
+	require.True(t, benchmark.ExceedsVocabularyCeiling(rr.OutOfVocabularyRate),
+		"precondition: the run-level ceiling is breached")
+	require.Len(t, rr.Vocabulary, 1)
+	require.NotNil(t, rr.Vocabulary[0].Rate)
+	require.False(t, benchmark.ExceedsReviewerDriftRate(rr.Vocabulary[0].Rate),
+		"precondition: no reviewer reaches the per-reviewer threshold, so the ceiling is the ONLY signal")
+	require.NotEqual(t, rr.Vocabulary[0].Findings, rr.Vocabulary[0].RoutingValues,
+		"precondition: the routing arm stays silent too")
+
+	var buf bytes.Buffer
+	warnVocabularyDiagnostics(&buf, rr)
+	got := buf.String()
+
+	assert.Contains(t, got, "is at or above", "the ceiling warning must fire")
+	assert.Contains(t, got, vocabularyAgreementAdvisory,
+		"the ceiling arm alone must still set `fired` — the advisory is how the operator is told to read "+
+			"corroboration_rate, and this is the only signal that can reach it on this run")
+	// "labelled at least" is unique to warnDriftingReviewers' header — the ceiling
+	// warning's own body also says "outside the offered vocabulary", so the looser
+	// assertion would fail against a correctly-silent drift arm.
+	assert.NotContains(t, got, "labelled at least",
+		"no reviewer drifted past the per-reviewer threshold")
+	assert.NotContains(t, got, "routing value",
+		"no reviewer is routing-only")
+}
