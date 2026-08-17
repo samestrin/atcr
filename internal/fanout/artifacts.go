@@ -165,9 +165,16 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 	// which. Deliberately NOT an exit-code change: failing a multi-hour run over a
 	// diagnostic discards the work it existed to produce, the rule
 	// warnDriftingReviewers already follows. Silent at 0 for the same reason.
+	// The remedy names its own cost. The output cap is subtracted from the SAME
+	// context window the diff is packed into (payload.EffectiveByteBudget), so
+	// raising it buys reasoning room by taking review material away — and a cap
+	// within the 4096-token prompt reserve of the resolved window leaves an input
+	// budget of zero, which the bulk path degrades to a single-file review that
+	// still exits 0. Stating the tradeoff only in the flag help and docs/registry.md
+	// puts it nowhere the operator is looking when this line fires.
 	if truncatedZeroFindings > 0 {
 		fmt.Fprintf(os.Stderr,
-			"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool: %s. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding.\n",
+			"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool: %s. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all (the review then degrades to a single file, or fails outright under on_overflow fail/fallback). If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap.\n",
 			truncatedZeroFindings, strings.Join(truncatedZeroAgents, ", "))
 	}
 	ps := PoolSummary{
