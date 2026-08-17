@@ -701,13 +701,20 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		return Summary{}, nil, err
 	}
 	sum := summarizeStatuses(statuses)
+	// Same derivation and same warning writePool performs, through the same helpers:
+	// the rebuild reconstructs the pool from these very statuses, so a resumed review
+	// that dropped the tally reported a clean summary for a run in which reviewers
+	// contributed nothing — and dropped the console signal the tally exists to reach.
+	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
+	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents)
 	ps := PoolSummary{
-		Agents:        statuses,
-		Total:         sum.Total,
-		Succeeded:     sum.Succeeded,
-		Failed:        sum.Failed,
-		Partial:       sum.Partial,
-		TotalFindings: len(merged),
+		Agents:                statuses,
+		Total:                 sum.Total,
+		Succeeded:             sum.Succeeded,
+		Failed:                sum.Failed,
+		Partial:               sum.Partial,
+		TotalFindings:         len(merged),
+		TruncatedZeroFindings: truncatedZeroFindings,
 	}
 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
 		return Summary{}, nil, err
