@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -320,6 +321,65 @@ func TestMergeResultGroup_TakesTheDiffWideShedFromAnyChunkNotOnlyTheFirst(t *tes
 	assert.True(t, merged.Truncation.Truncated,
 		"the persona's shed is a diff-wide fact — which chunk happens to carry it is an accident of ordering")
 	assert.Equal(t, shed.FilesDropped, merged.Truncation.FilesDropped)
+}
+
+// The re-packed-chunk-ZERO arrangement, driven through the real chain.
+//
+// promoteRePackedDegradation seeds its dropped-file union from out.DiffTruncation,
+// and out is g[0] — so the union is only complete when chunk 0 carries the carrier.
+// A re-packed chunk is by construction fallback-served (servedRePacked is stamped
+// only from a buildFallbackAgent product), which is exactly the agent that used to
+// arrive without it. In this arrangement the seed loop iterated an empty slice and
+// out.Truncation was then overwritten with the re-pack's files alone: the persona
+// named the files ONE reviewer did not see and silently omitted the ones NO reviewer
+// ever saw — the more serious half.
+//
+// It is asserted end-to-end rather than on hand-built Results because the defect
+// lives in the Agent -> Result hop: any merge-level fixture would have to hand chunk
+// 0 the carrier the production path was failing to give it.
+func TestBaselineChunkedRun_RePackedChunkZeroStillNamesTheDiffWideShed(t *testing.T) {
+	diffWide := payload.Truncation{Truncated: true, FilesDropped: []string{"never_seen_a.go", "never_seen_b.go"}}
+
+	cfg := refitRoster(t, 128000, OverflowTruncate)
+	var entries []payload.FileEntry
+	for i := 0; i < 20; i++ {
+		entries = append(entries, baselineEntry(fmt.Sprintf("kept_%02d.go", i), 50000))
+	}
+	payloads := baselinePayloads(entries)
+	mp := payloads[string(payload.ModeFiles)]
+	mp.Truncation = diffWide
+	payloads[string(payload.ModeFiles)] = mp
+
+	var slots []Slot
+	var err error
+	captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
+	require.Len(t, slots[0].Fallbacks, 1)
+	require.True(t, slots[0].Fallbacks[0].rePacked,
+		"precondition: chunk 0's backup must re-fit, or this asserts nothing about the re-packed arrangement")
+
+	f := newFake()
+	f.failFor["unlisted-small-model"] = errors.New("boom") // every primary fails; the re-fitting backup serves
+	var raw []Result
+	captureStderr(t, func() { raw = NewEngine(f).Run(context.Background(), slots) })
+	require.Len(t, raw, len(slots))
+	require.Equal(t, StatusOK, raw[0].Status, "precondition: chunk 0 must be SERVED by its re-fitting fallback")
+	require.True(t, raw[0].servedRePacked, "precondition: chunk 0 must be the re-packed one")
+
+	var merged []Result
+	captureStderr(t, func() { merged = mergeChunkResults(raw) })
+	require.Len(t, merged, 1)
+
+	st := statusFor(merged[0], findingsResult{})
+	require.True(t, st.Truncated)
+	assert.Subset(t, st.FilesDropped, diffWide.FilesDropped,
+		"files_dropped must still name the files the global byte budget shed — a re-pack on chunk 0 "+
+			"must not overwrite the diff-wide half of the union")
+	assert.Greater(t, len(st.FilesDropped), len(diffWide.FilesDropped),
+		"and it must remain a UNION: the re-pack's own shed files belong there too")
 }
 
 // The same production chain over the GIT-RANGE chunked branch, whose producer line
