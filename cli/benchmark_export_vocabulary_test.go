@@ -231,3 +231,22 @@ func TestCheckCoverage_StripsTerminalControlRunesFromShortfallWarning(t *testing
 	assert.Contains(t, got, "m-a", "the identity must still be readable")
 	assert.Contains(t, got, "p-a")
 }
+
+// The `v.Rate == nil` continue branch carries the nil-vs-zero distinction at the
+// export boundary: a reviewer that raised nothing is UNMEASURED, and an unmeasured row
+// is not a defect. It was uncovered and survived deletion — with the branch gone the
+// dereference below reads a nil pointer, so a legitimate run-result with an unmeasured
+// reviewer panics the export instead of publishing.
+func TestBenchmarkExport_PublishesUnmeasuredVocabularyRow(t *testing.T) {
+	isolate(t)
+	path := writeRunResultWithVocabulary(t, []benchmark.ReviewerVocabulary{
+		{Model: "m-a", Persona: "p-a", Findings: 0, Drifted: 0, Rate: nil}, // raised nothing
+		{Model: "m-b", Persona: "p-b", Findings: 8, Drifted: 0, Rate: ptrFloat(0)},
+	})
+	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", path)
+
+	assert.Equal(t, 0, code, "an unmeasured reviewer is the normal shape of a run that raised nothing")
+	assert.NotEmpty(t, stdout, "the submission must still be emitted")
+	assert.NotContains(t, stderr, "reviewer_vocabulary",
+		"a nil rate is absence of a measurement, never a malformed one")
+}
