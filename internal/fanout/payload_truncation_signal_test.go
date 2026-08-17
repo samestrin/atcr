@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
@@ -417,6 +418,102 @@ func TestStatusFor_CleanAgentPublishesEmptyFilesDroppedNotNull(t *testing.T) {
 	assert.Contains(t, string(raw), `"files_dropped":[]`)
 	assert.NotContains(t, string(raw), `"files_dropped":null`,
 		"summary.json must not report a clean agent's shed list as unmeasured while status.json reports it as empty")
+}
+
+// The three FAILURE-path carriers, each driven through the real engine.
+//
+// engine.go asserts the field is "carried on every Result-construction path, not just
+// the happy one" — a claim no test enforced: all three carriers (resultFromPanic, the
+// serial lane's ctx.Err() Result, and invokeSlot's tail stamp) survived deletion with
+// the suite green, because every existing DiffTruncation test either hand-builds
+// Results or exercises a SUCCEEDING run.
+//
+// The reasoning behind the claim is what makes these worth pinning: a persona whose
+// chunks panicked, were cancelled, or failed outright is exactly as truncated as one
+// whose chunks returned — the files the global byte budget shed were never sent to
+// anyone either way, so the merged record still owes the operator that fact.
+//
+// Every chunk in each group takes the SAME path, so no sibling can supply the value
+// the carrier under test dropped.
+func TestMergedPersona_ReportsTheDiffWideShedOnEveryFailurePath(t *testing.T) {
+	shed := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_a.go", "shed_b.go"}}
+	chunkSlot := func(serial bool) Slot {
+		return Slot{
+			Primary: Agent{
+				Name:           "greta",
+				Invocation:     llmclient.Invocation{Model: "primary-model"},
+				PayloadMode:    "blocks",
+				DiffTruncation: shed,
+			},
+			Serial: serial,
+		}
+	}
+
+	t.Run("panicked", func(t *testing.T) {
+		pc := &panicCompleter{f: newFake(), panicFor: map[string]bool{"primary-model": true}}
+		raw := NewEngine(pc).Run(context.Background(), []Slot{chunkSlot(false), chunkSlot(false)})
+		require.Len(t, raw, 2)
+		for i, r := range raw {
+			require.Equal(t, StatusFailed, r.Status, "precondition: chunk %d must have panicked", i)
+			require.ErrorContains(t, r.Err, "panic", "precondition: chunk %d must take the panic path", i)
+		}
+
+		st := statusFor(mergeChunkResults(raw)[0], findingsResult{})
+		assert.True(t, st.Truncated, "a panicked persona is exactly as truncated as one that returned")
+		assert.Equal(t, shed.FilesDropped, st.FilesDropped)
+	})
+
+	t.Run("context cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// The SERIAL lane: its pre-invocation ctx.Err() check builds its own Result
+		// literal rather than routing through invokeSlot's tail stamp.
+		raw := NewEngine(newFake()).Run(ctx, []Slot{chunkSlot(true), chunkSlot(true)})
+		require.Len(t, raw, 2)
+		for i, r := range raw {
+			require.NotEqual(t, StatusOK, r.Status, "precondition: chunk %d must be short-circuited by cancellation", i)
+		}
+
+		st := statusFor(mergeChunkResults(raw)[0], findingsResult{})
+		assert.True(t, st.Truncated, "a cancelled persona still owes the shed the operator never saw")
+		assert.Equal(t, shed.FilesDropped, st.FilesDropped)
+	})
+
+	t.Run("chain fully failed", func(t *testing.T) {
+		// invokeAgent stamps the result from the SERVING agent, so a chain whose last
+		// member carries the shed needs no tail stamp — which is why a primary-only
+		// fixture cannot tell the tail carrier apart from that one. The discriminating
+		// shape is a LAST attempt that lacks the field, and the tail's job is to restore
+		// the slot's own record over it.
+		//
+		// buildFallbackAgent now copies DiffTruncation onto every fallback, so this
+		// divergence is hand-constructed rather than reachable — the same reason the
+		// served-tag tests hand-build theirs. The tail stamp is the backstop for exactly
+		// this shape, and the slot is reported under the PRIMARY's name, so the primary's
+		// record is the honest one whatever the substitute carried.
+		f := newFake()
+		f.failFor["primary-model"] = errors.New("boom")
+		f.failFor["backup-model"] = errors.New("boom")
+		withBackup := func() Slot {
+			s := chunkSlot(false)
+			s.Fallbacks = []Agent{{
+				Name:        "kai",
+				Invocation:  llmclient.Invocation{Model: "backup-model"},
+				PayloadMode: "blocks",
+				// Deliberately absent.
+			}}
+			return s
+		}
+		raw := NewEngine(f).Run(context.Background(), []Slot{withBackup(), withBackup()})
+		require.Len(t, raw, 2)
+		for i, r := range raw {
+			require.Equal(t, StatusFailed, r.Status, "precondition: chunk %d's chain must be exhausted", i)
+		}
+
+		st := statusFor(mergeChunkResults(raw)[0], findingsResult{})
+		assert.True(t, st.Truncated, "a wholly-failed persona still owes the shed")
+		assert.Equal(t, shed.FilesDropped, st.FilesDropped)
+	})
 }
 
 // The same production chain over the GIT-RANGE chunked branch, whose producer line
