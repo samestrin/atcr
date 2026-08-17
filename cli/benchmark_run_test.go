@@ -939,3 +939,28 @@ func TestWarnDriftingReviewers_IdentityTiePreservesInputOrder(t *testing.T) {
 	}
 	assert.NotContains(t, got, "m001/p", "a lower-rate row must not displace a tied higher-rate one")
 }
+
+// The %.2f formatting was sized for the retired 0.20 ceiling. At 0.05 every rate in
+// [0.05, 0.055) rendered as "out_of_vocabulary_rate 0.05 is at or above the 0.05
+// ceiling", so the at-or-above boundary the constant's doc makes load-bearing — the
+// difference between a run sitting exactly ON the ceiling and one comfortably past it —
+// could no longer be read off the message the operator sees.
+func TestWarnIfVocabularyCeilingExceeded_DistinguishesRatesWithinTheCeilingsFirstTwoPlaces(t *testing.T) {
+	render := func(rate float64) string {
+		var buf bytes.Buffer
+		require.True(t, benchmark.ExceedsVocabularyCeiling(&rate), "precondition: this rate breaches")
+		warnIfVocabularyCeilingExceeded(&buf, &rate)
+		return buf.String()
+	}
+
+	onTheCeiling := render(benchmark.MaxOutOfVocabularyRate)
+	justPast := render(0.0549)
+
+	require.Contains(t, onTheCeiling, "is at or above")
+	assert.NotEqual(t, onTheCeiling, justPast,
+		"two rates that differ by a tenth of the ceiling must not render as the same message")
+	assert.Contains(t, justPast, "0.0549",
+		"the measured value must be readable to enough places to place it against the ceiling")
+	// The ceiling itself stays exact rather than gaining trailing zeroes.
+	assert.Contains(t, onTheCeiling, "0.05 ceiling")
+}

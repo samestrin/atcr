@@ -457,8 +457,14 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 	if !benchmark.ExceedsVocabularyCeiling(rate) {
 		return false
 	}
+	// The MEASURED value is printed to four places and the ceiling with %g. Two places
+	// were sized for the retired 0.20 ceiling; at 0.05 they collapse every rate in
+	// [0.05, 0.055) onto the ceiling's own rendering, so the at-or-above boundary the
+	// constant's doc makes load-bearing became unreadable from the message. %g keeps the
+	// ceiling exact instead of padding it with trailing zeroes, and follows the constant
+	// if it is tightened again to a value two places cannot express.
 	_, _ = fmt.Fprintf(w,
-		"warning: out_of_vocabulary_rate %.2f is at or above the %.2f ceiling — "+
+		"warning: out_of_vocabulary_rate %.4f is at or above the %g ceiling — "+
 			"reviewers are labelling findings with words outside the offered vocabulary, "+
 			"which zeroes their recall independently of what they actually detected.\n",
 		*rate, benchmark.MaxOutOfVocabularyRate)
