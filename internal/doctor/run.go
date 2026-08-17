@@ -96,7 +96,16 @@ type AgentResult struct {
 	// otherwise unreadable — the operator cannot tell whether the probe ran at the
 	// agent's declaration or at doctor's default, which is exactly what decides
 	// whether raising the declaration would change anything.
-	MaxTokens int `json:"max_tokens,omitempty"`
+	//
+	// ALWAYS present (deliberately NOT omitempty), matching the discipline
+	// PoolSummary.TruncatedZeroFindings and FallbackCount state for themselves: a 0
+	// must be distinguishable from a report written before this field existed. 0 here
+	// means the probe never placed a call — it short-circuited on invalid_config or
+	// missing_key above the budget resolution — and never "uncapped", since
+	// cli/doctor.go rejects a --max-tokens at or below 0 and an agent declaration is
+	// validated into 1..MaxTokensCap. Under omitempty those three states collapse into
+	// one absent key.
+	MaxTokens int `json:"max_tokens"`
 }
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
