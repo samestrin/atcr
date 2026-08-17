@@ -294,20 +294,18 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
-		// The remedy must name what changes the REAL run, AND what governed THIS probe.
-		// probe() applies the agent's declared max_tokens whenever --max-tokens was not
-		// typed, and `atcr review` resolves that same declaration (resolveMaxTokens) —
-		// so raising doctor's own flag normally moves only the probe budget and buys a
-		// green doctor on an agent that still truncates under review.
+		// The remedy names the knob that capped THIS probe. Which one that is depends on
+		// the resolved tier: without --max-tokens the probe used the agent's declaration,
+		// which `atcr review` also resolves; with it, the flag did, and telling the
+		// operator to raise a declaration their own flag overrode is a no-op.
 		//
-		// When the operator DID type --max-tokens, that advice inverts: the flag is what
-		// capped this probe, the declaration is untouched (and may already be higher),
-		// and "raise the declaration" is a no-op for the run just observed. Telling them
-		// to raise a number their own flag overrode is the misdirection this hint exists
-		// to end, so it is conditional on the resolved tier.
-		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`; raising doctor's own --max-tokens changes only this probe, not the review"
+		// Deliberately short. Neither branch asserts which knob "governs the real run" —
+		// review has its own --max-tokens that overrides the declaration (resolveMaxTokens),
+		// so any such claim is conditional on how review is later invoked and cannot be
+		// made truthfully from here.
+		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`"
 		if budgetSrc == MaxTokensSourceFlag {
-			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens, so raise that to re-probe; note `atcr review` ignores it and resolves the agent's own max_tokens declaration, which is what governs the real run"
+			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens; raise it to re-probe. `atcr review` resolves its own cap separately"
 		}
 		return probeResult{
 			status:    StatusOKWarning,

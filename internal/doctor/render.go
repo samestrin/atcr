@@ -68,9 +68,9 @@ func window(a AgentResult) string {
 	if a.MaxTokens <= 0 {
 		return w
 	}
-	if a.MaxTokensSource == "" {
-		return fmt.Sprintf("%s / cap %d", w, a.MaxTokens)
-	}
+	// No tier-less form: probe() sets the cap and its source together, so a cap
+	// without a source cannot occur. A fallback for it would render exactly the
+	// declaration-vs-default ambiguity MaxTokensSource exists to remove.
 	return fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
 }
 
