@@ -3313,9 +3313,11 @@ func resolveMaxTokens(ac registry.AgentConfig, override int) int {
 // sites and forgotten at others. The cap it returns feeds BOTH the Invocation and
 // the sizing reservation; those must be the same number, or an agent is sized for
 // one output budget and then asked for another.
+// cfg is dereferenced unconditionally: all three callers (buildSlots, renderAgent,
+// buildFallbackAgent) read cfg.Registry or cfg.Settings before reaching here, so a nil
+// would already have panicked upstream. The nil guard that used to sit here was an
+// uncovered, unreachable branch — it could be deleted with the suite green, which is
+// the definition of code that documents a contract it cannot enforce.
 func maxTokensFor(cfg *ReviewConfig, ac registry.AgentConfig) int {
-	if cfg == nil {
-		return resolveMaxTokens(ac, 0)
-	}
 	return resolveMaxTokens(ac, cfg.Settings.MaxTokens)
 }
