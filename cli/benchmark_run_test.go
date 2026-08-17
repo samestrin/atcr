@@ -926,6 +926,32 @@ func TestWarnDriftingReviewers_EqualRatesOrderByDescendingFindings(t *testing.T)
 		"at an equal rate the row measured over more findings is the more informative one and sorts first")
 }
 
+// The drift warning's plural arm, the twin of
+// TestWarnRoutingOnlyReviewers_NounAgreesWithTheRowCount. Every existing drift test
+// either drives a single row or asserts only on the listed rows, so `noun = "reviewers"`
+// survives being pinned to the singular against the whole ./cli suite — the same
+// fixed-only-where-pointed gap its routing-only sibling was closed for.
+func TestWarnDriftingReviewers_NounAgreesWithTheRowCount(t *testing.T) {
+	rate := 0.9
+	row := func(model string) benchmark.ReviewerVocabulary {
+		return benchmark.ReviewerVocabulary{Model: model, Persona: "p", Findings: 10, Drifted: 9, Rate: &rate}
+	}
+
+	var one bytes.Buffer
+	require.True(t, warnDriftingReviewers(&one, []benchmark.ReviewerVocabulary{row("solo")}),
+		"precondition: the row drifts and the warning fires")
+	assert.Contains(t, one.String(), "1 reviewer labelled at least",
+		"a single drifting row takes the singular")
+
+	var many bytes.Buffer
+	require.True(t, warnDriftingReviewers(&many, []benchmark.ReviewerVocabulary{row("first"), row("second")}))
+	got := many.String()
+	assert.Contains(t, got, "2 reviewers labelled at least",
+		"two drifting rows take the plural")
+	require.Contains(t, got, "first/p", "precondition: both rows must be listed")
+	require.Contains(t, got, "second/p")
+}
+
 // The comparator can still tie on IDENTITY (equal rate AND equal findings), and an
 // unstable sort may order those rows differently between runs on byte-identical input
 // — which also makes WHICH rows survive maxDriftWarningRows nondeterministic. The rows
