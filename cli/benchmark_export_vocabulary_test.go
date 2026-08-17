@@ -183,11 +183,13 @@ func TestBenchmarkExport_SilentOnWellFormedAlignedVocabulary(t *testing.T) {
 
 // The misalignment warning prints FOUR identity strings straight to the operator's
 // terminal, and this boundary's own doc calls its input "an untrusted (possibly
-// hand-supplied) run-result" — strictly more attacker-controlled than the
-// provider-reported strings the sibling warnings in this file already sanitize with
-// stripTerminalControlRunes. An unsanitized ESC here can erase the line and forge a
+// hand-supplied) run-result". An unescaped ESC here can erase the line and forge a
 // reassuring one over the very warning that says the positional join is broken.
-func TestValidateReviewerVocabulary_StripsTerminalControlRunesFromMisalignmentWarning(t *testing.T) {
+//
+// The mechanism is %q, not stripTerminalControlRunes: this warning reports a comparison,
+// so it needs escaping rather than deletion (see the sibling test below). %q renders a
+// control rune as a visible literal, which is why the raw-byte assertions here hold.
+func TestValidateReviewerVocabulary_EscapesTerminalControlRunesInMisalignmentWarning(t *testing.T) {
 	var buf bytes.Buffer
 	err := validateReviewerVocabulary(&buf, benchmark.RunResult{
 		Reviewers: []scorecard.PublicRecord{
