@@ -278,9 +278,16 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 		return fmt.Errorf("loading suite %s to anchor %s: %w", suitePath, path, err)
 	}
 	if m.Suite != rr.Suite || m.SuiteVersion != rr.SuiteVersion {
+		// rr.Suite and rr.SuiteVersion are untrusted for the same reason the case ids
+		// and the reviewer identities are — they are read straight from the
+		// operator-supplied run-result, and export is where a hand-supplied file first
+		// enters the tool. Under %s an ESC here erases the mismatch report and writes a
+		// reassuring line over it. The manifest values need no stripping: they come from
+		// the suite tree the operator pointed at, not from the file under validation.
 		return fmt.Errorf("run-result %s is for suite %s/%s but the manifest at %s is %s/%s; "+
 			"anchoring a run-result to a different suite compares two unrelated case lists",
-			path, rr.Suite, rr.SuiteVersion, suitePath, m.Suite, m.SuiteVersion)
+			path, stripTerminalControlRunes(rr.Suite), stripTerminalControlRunes(rr.SuiteVersion),
+			suitePath, m.Suite, m.SuiteVersion)
 	}
 	if len(rr.SuiteCaseIDs) == 0 {
 		return fmt.Errorf("run-result %s records no suite_case_ids, so there is nothing to anchor "+
