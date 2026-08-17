@@ -48,14 +48,30 @@ func RenderTableError(w io.Writer, rep *Report) error {
 // value is plausible for the model. Seeing "512000 (declaration)" next to a
 // model the table pins at 128000 is what makes an over-declaration diagnosable
 // here instead of as an opaque provider HTTP 400 mid-run.
+// The probed output cap rides in this same cell rather than in a column of its own.
+// The two numbers are one story — the cap is reserved out of the window when the payload
+// is sized — and the ok_warning hint tells the operator to change the cap, so a table
+// that shows the window but not the cap names a knob it refuses to display. Rendered with
+// its tier for the same reason the window is: an agent declaring exactly doctor's default
+// is otherwise indistinguishable from one declaring nothing.
+//
+// Omitted when no call was placed (cap 0), so a short-circuited probe does not report a
+// cap it never applied.
 func window(a AgentResult) string {
 	if a.ContextWindowTokens <= 0 {
 		return "-"
 	}
-	if a.WindowSource == "" {
-		return fmt.Sprintf("%d", a.ContextWindowTokens)
+	w := fmt.Sprintf("%d", a.ContextWindowTokens)
+	if a.WindowSource != "" {
+		w = fmt.Sprintf("%d (%s)", a.ContextWindowTokens, a.WindowSource)
 	}
-	return fmt.Sprintf("%d (%s)", a.ContextWindowTokens, a.WindowSource)
+	if a.MaxTokens <= 0 {
+		return w
+	}
+	if a.MaxTokensSource == "" {
+		return fmt.Sprintf("%s / cap %d", w, a.MaxTokens)
+	}
+	return fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
 }
 
 // maxTableDetailBytes bounds the upstream detail rendered in the table. The
