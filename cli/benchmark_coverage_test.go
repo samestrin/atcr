@@ -283,3 +283,26 @@ func TestCoverageDiagnostics_SanitizeUntrustedCaseIDs(t *testing.T) {
 	assert.NotContains(t, aerr.Error(), "\x1b",
 		"an id the suite does not contain is still echoed to the operator's terminal")
 }
+
+// rr.Suite and rr.SuiteVersion have the same provenance as the case ids and the reviewer
+// identities — read straight from the operator-supplied run-result — and reach the same
+// terminal through the same cobra error path. The suite-identity mismatch is the FIRST
+// of anchorSuiteDenominator's three checks, so it is the one an attacker-supplied file
+// trips most easily, and it is the only one that does not funnel through
+// summarizeMissing's stripping.
+func TestAnchorSuiteDenominator_SanitizesTheUntrustedSuiteIdentity(t *testing.T) {
+	const esc = "\x1b[2K\x1b[1Gall checks passed"
+
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		Suite:        "atcr-bench" + esc,
+		SuiteVersion: "9.9.9\x07",
+		SuiteCaseIDs: []string{"case-01-nil-deref"},
+	}, suiteValidPath, "rr.json")
+
+	require.Error(t, err, "precondition: the run-result names a different suite than the manifest")
+	assert.NotContains(t, err.Error(), "\x1b",
+		"an ESC in the declared suite name can erase the mismatch report and forge a clean one")
+	assert.NotContains(t, err.Error(), "\x07", "nor a BEL")
+	assert.Contains(t, err.Error(), "atcr-bench", "the suite must still be identifiable")
+	assert.Contains(t, err.Error(), "9.9.9", "and so must its version")
+}
