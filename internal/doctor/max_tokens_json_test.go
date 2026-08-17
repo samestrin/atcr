@@ -2,10 +2,12 @@ package doctor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +47,25 @@ func TestRenderJSON_MaxTokensSerializesZeroForAProbeThatNeverRan(t *testing.T) {
 	v, present := parsed.Agents[0]["max_tokens"]
 	require.True(t, present, "the key must be present")
 	assert.Equal(t, float64(0), v)
+}
+
+// MaxTokensSource's doc promises it is empty when no call was placed (MaxTokens 0), but
+// the tier was resolved before the budget was known to be positive — so a caller passing
+// MaxTokensSet with a non-positive cap got MaxTokens 0 alongside a non-empty source, a
+// pair the field's own contract says cannot exist. The CLI rejects that input, but Run is
+// exported and the invariant should hold for any caller rather than resting on a
+// precondition enforced one layer up.
+func TestRun_MaxTokensSourceIsEmptyWhenNoCapWasApplied(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+
+	rep := Run(context.Background(), fake, twoAgentSharedTarget(t),
+		Options{Nonce: testNonce, MaxTokens: 0, MaxTokensSet: true})
+
+	require.NotEmpty(t, rep.Agents)
+	assert.Equal(t, 0, rep.Agents[0].MaxTokens, "precondition: no cap was applied")
+	assert.Empty(t, rep.Agents[0].MaxTokensSource,
+		"a source without a cap is the state the field's doc says cannot occur")
 }
 
 // The healthy case keeps reporting the resolved cap — dropping omitempty must not
