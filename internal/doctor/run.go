@@ -257,6 +257,12 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		budget = tgt.MaxTokens
 		budgetSrc = MaxTokensSourceDeclaration
 	}
+	// A non-positive budget applies no cap at all, so it carries no tier either — the
+	// field pair stays self-consistent for any caller rather than relying on the CLI's
+	// rejection of a --max-tokens at or below 0 one layer up.
+	if budget <= 0 {
+		budgetSrc = ""
+	}
 	var maxTokens *int
 	if budget > 0 {
 		v := budget
