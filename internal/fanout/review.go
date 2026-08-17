@@ -1795,6 +1795,23 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			chunkAction := degradationChunk
 			if agentBudget == 0 {
 				chunkAction = degradationOverflow
+				// The operator's on_overflow policy decides FIRST, exactly as the
+				// bulk twin does below: fail/fallback return their typed errors,
+				// which propagate out of add()/buildSlots() and hard-fail the run
+				// pre-dispatch rather than shipping chunks sized at the
+				// minChunkLines floor that the window provably cannot hold.
+				// Marking the degradation and warning about it is not the same as
+				// honoring the policy — recording "overflow" while dispatching
+				// anyway is what made on_overflow: fail a no-op here.
+				//
+				// Gated on len(mp.Entries) > 0 for the same reason the bulk arm is:
+				// the two paths must agree on WHEN the policy fires, not only on
+				// what it does once it fires.
+				if p := cfg.Settings.OnOverflow; len(mp.Entries) > 0 && (p == OverflowFail || p == OverflowFallback) {
+					if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)); err != nil {
+						return err
+					}
+				}
 				if warnOversized {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
 						name, agentWindow, agentMaxTokens, ml, zeroBudgetRemedy)
