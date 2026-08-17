@@ -80,6 +80,20 @@ func TestBenchmarkExport_RejectsMalformedReviewerVocabularyRows(t *testing.T) {
 			rows: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: 3, Drifted: 4, Rate: ptrFloat(1.0)}},
 			want: "drifted",
 		},
+		// Both negative cases keep drifted <= findings on purpose. The sibling
+		// drifted-exceeds-findings guard catches any negative pair that does NOT —
+		// {-10, 0} trips it — so a case like that would pass with the negative guard
+		// deleted and prove nothing about it. These two fail only the negative check.
+		{
+			name: "negative findings with a more-negative drifted",
+			rows: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: -10, Drifted: -20}},
+			want: "negative findings/drifted",
+		},
+		{
+			name: "equal negative findings and drifted",
+			rows: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: -1, Drifted: -1}},
+			want: "negative findings/drifted",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolate(t)
