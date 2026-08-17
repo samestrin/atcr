@@ -1986,7 +1986,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			//      the true usable window is wider than this arithmetic admits.
 			if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
 				if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedBudget); err != nil {
-					return err
+					// Same wrap as the chunked twin, for the same reason: this error
+					// is the only signal on the resume path (warnOversized=false there
+					// suppresses the warning below) and cli/resume.go prints it as-is.
+					// Fixing only the arm a reviewer pointed at is how the two paths
+					// drift.
+					return fmt.Errorf("agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0), and on_overflow is %q: %s: %w",
+						name, agentWindow, agentMaxTokens, p, zeroBudgetRemedy, err)
 				}
 			}
 			// keepSmallestEntry, not a local smallest-by-bytes pick: it skips
