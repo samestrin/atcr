@@ -3,6 +3,7 @@ package fanout
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -380,6 +381,42 @@ func TestBaselineChunkedRun_RePackedChunkZeroStillNamesTheDiffWideShed(t *testin
 			"must not overwrite the diff-wide half of the union")
 	assert.Greater(t, len(st.FilesDropped), len(diffWide.FilesDropped),
 		"and it must remain a UNION: the re-pack's own shed files belong there too")
+}
+
+// status.json and summary.json are two published views of the SAME AgentStatus, and
+// they must not disagree about whether a field is measured. WriteStatus normalizes a
+// nil FilesDropped to [] on its own copy, but writePool builds PoolSummary.Agents
+// from a separate, un-normalized statusFor call — so any path that hands statusFor a
+// nil slice publishes "files_dropped": null in one artifact and [] in the other.
+//
+// The unconditional promotion is exactly such a path: a clean agent's Truncation
+// carries the non-nil empty slice ApplyByteBudget guarantees, and overwriting it with
+// a zero-valued DiffTruncation (nil FilesDropped) demotes an explicit "nothing was
+// dropped" to "unmeasured" — the opposite direction from the never-silent contract
+// AC 06-03 states.
+func TestStatusFor_CleanAgentPublishesEmptyFilesDroppedNotNull(t *testing.T) {
+	t.Parallel()
+	// The shape ApplyByteBudget returns when nothing was shed (budget.go:61).
+	clean := Result{
+		Agent: "greta", Status: StatusOK, Content: "c0",
+		Truncation: payload.Truncation{Truncated: false, FilesDropped: []string{}},
+	}
+
+	merged := mergeChunkResults([]Result{clean})
+	require.Len(t, merged, 1)
+
+	st := statusFor(merged[0], findingsResult{})
+	require.False(t, st.Truncated, "precondition: this agent dropped nothing")
+	assert.NotNil(t, st.FilesDropped,
+		"a clean agent's shed list is MEASURED and empty, never unmeasured — statusFor is the seam both artifacts read")
+
+	// The artifact-level consequence: summary.json is marshalled straight from these
+	// records, with no second normalization pass.
+	raw, err := json.Marshal(PoolSummary{Agents: []AgentStatus{st}})
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"files_dropped":[]`)
+	assert.NotContains(t, string(raw), `"files_dropped":null`,
+		"summary.json must not report a clean agent's shed list as unmeasured while status.json reports it as empty")
 }
 
 // The same production chain over the GIT-RANGE chunked branch, whose producer line
