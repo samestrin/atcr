@@ -194,3 +194,26 @@ func TestValidateReviewerVocabulary_StripsTerminalControlRunesFromMisalignmentWa
 	assert.Contains(t, got, "m-reviewer")
 	assert.Contains(t, got, "p-reviewer")
 }
+
+// checkCoverage's shortfall rows land in a stderr warning under
+// --allow-partial-coverage, built from the same untrusted run-result identities the
+// vocabulary warnings sanitize. Left raw they are the same terminal-injection hazard
+// one file over.
+func TestCheckCoverage_StripsTerminalControlRunesFromShortfallWarning(t *testing.T) {
+	var buf bytes.Buffer
+	err := checkCoverage(&buf, benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m-a\x1b[2K", Persona: "p-a\x07", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{
+			{Model: "m-a\x1b[2K", Persona: "p-a\x07", CaseIDs: []string{"case-01"}}, // 1 of 2: short
+		},
+	}, "rr.json", true)
+	require.NoError(t, err, "--allow-partial-coverage warns rather than rejecting")
+	got := buf.String()
+
+	require.Contains(t, got, "partial coverage", "precondition: the shortfall warning fired")
+	assert.NotContains(t, got, "\x1b", "an ESC from an untrusted run-result must never reach the terminal")
+	assert.NotContains(t, got, "\x07", "nor a BEL")
+	assert.Contains(t, got, "m-a", "the identity must still be readable")
+	assert.Contains(t, got, "p-a")
+}

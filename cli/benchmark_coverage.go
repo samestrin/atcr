@@ -171,7 +171,11 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		consumed[key] = true
 		cov, ok := byIdentity[key]
 		if !ok {
-			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", rev.Model, rev.Persona))
+			// Sanitized for the same reason as the vocabulary warnings in benchmark.go:
+			// `short` is joined into a stderr warning below, and these identities come
+			// from the same untrusted, possibly hand-supplied run-result.
+			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)",
+				stripTerminalControlRunes(rev.Model), stripTerminalControlRunes(rev.Persona)))
 			continue
 		}
 		// `runs` and the covered set are appended together by the producer, so they
@@ -214,7 +218,8 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// distinct suite member. A defensive recount would describe a state the
 		// checks above have already made unreachable.
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			rev.Model, rev.Persona, len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
+			stripTerminalControlRunes(rev.Model), stripTerminalControlRunes(rev.Persona),
+			len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
