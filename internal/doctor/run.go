@@ -90,6 +90,13 @@ type AgentResult struct {
 	// declaration, which is otherwise observable only as a failed provider call.
 	ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
 	WindowSource        string `json:"window_source,omitempty"`
+	// MaxTokens is the output cap this agent's probe actually ran at, after the
+	// flag → declaration → unset resolution in probe(). Reported for the same reason
+	// ContextWindowTokens is: the cap is applied silently, so an ok_warning row is
+	// otherwise unreadable — the operator cannot tell whether the probe ran at the
+	// agent's declaration or at doctor's default, which is exactly what decides
+	// whether raising the declaration would change anything.
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
