@@ -410,3 +410,32 @@ func TestExtractSection_StopsAtTheNextPipeDelimitedFindingRecord(t *testing.T) {
 	assert.NotEqual(t, first, second,
 		"two findings at different anchors must not receive byte-identical justification text")
 }
+
+// The walk-up's OTHER record guard — the one the test above cannot reach.
+//
+// When the anchor is itself a record line the loop condition rejects it on entry, so
+// the loop body never runs and the `prev is a record` break inside it is dead for that
+// fixture. It survived deletion with the suite green, yet its behaviour is distinct
+// from the condition on the line above: reached with the anchor on a CONTINUATION
+// line, the walk decrements past it and absorbs the preceding record as the first line
+// of the excerpt — the same cross-contamination, one line further up.
+//
+// A continuation directly beneath a record is the real shape: reviewer narratives wrap
+// their evidence onto the following line with no blank separator.
+func TestExtractSection_ContinuationDoesNotAbsorbThePrecedingFindingRecord(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+		"and the reason it matters, wrapped onto its own line",
+	}
+
+	// Anchored on the continuation, which is neither a heading, a list marker, nor a
+	// record — the only entry condition under which the guard is live.
+	got, section := extractSection(lines, 2)
+
+	assert.Equal(t, "Findings", section)
+	assert.Contains(t, got, "wrapped onto its own line")
+	assert.NotContains(t, got, "first problem",
+		"a finding record begins its OWN block and is never absorbed upward — unlike a list "+
+			"marker it is not a headline for the line below it")
+}
