@@ -457,10 +457,6 @@ func extractSection(lines []string, idx int) (text, section string) {
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
 
-// isItemStart reports whether s begins a Markdown list item: an unordered bullet
-// ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
-// space), after optional leading spaces. Used as a block boundary so one finding's
-// list item does not absorb its siblings when items are not blank-separated.
 // isFindingRecordStart reports whether s begins a raw pipe-delimited finding record —
 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE, the shape reviewer review.md
 // narratives carry alongside prose. Such records sit on consecutive lines with no
@@ -482,6 +478,10 @@ func isFindingRecordStart(s string) bool {
 	return ok
 }
 
+// isItemStart reports whether s begins a Markdown list item: an unordered bullet
+// ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
+// space), after optional leading spaces. Used as a block boundary so one finding's
+// list item does not absorb its siblings when items are not blank-separated.
 func isItemStart(s string) bool {
 	s = strings.TrimLeft(s, " ")
 	if s == "" {
