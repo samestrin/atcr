@@ -853,3 +853,23 @@ func TestWarnVocabularyDiagnostics_CeilingOnlyRunStillEmitsTheAdvisory(t *testin
 	assert.NotContains(t, got, "routing value",
 		"no reviewer is routing-only")
 }
+
+// The `r.Findings > 0` half of warnRoutingOnlyReviewers' guard is the nil-vs-zero
+// collapse the whole per-reviewer design exists to prevent. Without it every reviewer
+// that raised NOTHING satisfies RoutingValues == Findings (0 == 0) and gets named as
+// having "labelled every finding with a routing value" — turning a total-failure run
+// into a roster of fabricated vocabulary offenders. A genuine routing-only row runs
+// alongside so this pins the guard rather than the warning being silent overall.
+func TestWarnRoutingOnlyReviewers_DoesNotNameAReviewerThatRaisedNothing(t *testing.T) {
+	var buf bytes.Buffer
+	warnRoutingOnlyReviewers(&buf, []benchmark.ReviewerVocabulary{
+		{Model: "raised-nothing", Persona: "p", Findings: 0, RoutingValues: 0},
+		{Model: "genuinely-routing", Persona: "p", Findings: 3, RoutingValues: 3},
+	})
+	got := buf.String()
+
+	require.Contains(t, got, "genuinely-routing/p",
+		"precondition: the warning fired for the row that really is routing-only")
+	assert.NotContains(t, got, "raised-nothing",
+		"a reviewer with no findings is UNMEASURED, not routing-only — 0 == 0 is not evidence")
+}
