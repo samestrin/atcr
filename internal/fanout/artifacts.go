@@ -219,16 +219,26 @@ func warnTruncatedZeroFindings(count int, agents []string, cumulative bool) {
 	if count == 0 {
 		return
 	}
+	// Only the scope clause varies. The remedy is written ONCE: two literals stating
+	// the same fix drift, and they did — the cumulative copy silently lost the
+	// on_overflow consequence, on the very path where it is the only message printed.
+	scope := "to the pool"
 	if cumulative {
-		fmt.Fprintf(os.Stderr,
-			"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool across this review, including agents this resume did not re-run: %s. This restates the review's cumulative tally rather than reporting a new failure. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all. If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap.\n",
-			count, strings.Join(agents, ", "))
-		return
+		scope = "to the pool across this review, including agents this resume did not re-run"
+	}
+	restatement := ""
+	if cumulative {
+		restatement = " This restates the review's cumulative tally rather than reporting a new failure."
 	}
 	fmt.Fprintf(os.Stderr,
-		"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing to the pool: %s. Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all (the review then degrades to a single file, or fails outright under on_overflow fail/fallback). If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap.\n",
-		count, strings.Join(agents, ", "))
+		"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing %s: %s.%s %s\n",
+		count, scope, strings.Join(agents, ", "), restatement, truncatedZeroRemedy)
 }
+
+// truncatedZeroRemedy is the operator action shared by both variants of the warning
+// above. Kept as one constant so the fresh and resumed paths cannot state different
+// fixes for the same condition.
+const truncatedZeroRemedy = "Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all (the review then degrades to a single file, or fails outright under on_overflow fail/fallback). If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap."
 
 // ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
 // carrying every agent's AgentStatus (model, token usage, latency). The
