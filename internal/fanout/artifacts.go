@@ -331,6 +331,17 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		ChunkCount:           r.ChunkCount,
 		DegradationAction:    r.DegradationAction,
 	}
+	// Normalized HERE, not only in WriteStatus. Both published views of this record
+	// are built from statusFor, but only status.json passes through WriteStatus —
+	// writePool marshals PoolSummary.Agents from its own un-normalized statusFor call,
+	// so a nil slice reaching this function publishes "files_dropped": null in
+	// summary.json beside [] in status.json. Two artifacts disagreeing on whether the
+	// shed list was MEASURED is the never-silent contract (AC 06-03) weakened at the
+	// only seam both of them share. WriteStatus keeps its own guard as a backstop for
+	// hand-built AgentStatus values.
+	if st.FilesDropped == nil {
+		st.FilesDropped = []string{}
+	}
 	if r.Err != nil {
 		st.Error = r.Err.Error()
 	}
