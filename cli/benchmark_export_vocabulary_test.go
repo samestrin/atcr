@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -299,4 +301,46 @@ func TestValidateReviewerVocabulary_AcceptsARoundedButHonestRate(t *testing.T) {
 		},
 	}, "rr.json")
 	assert.NoError(t, err, "1/3 written to six places is rounding, not a contradiction")
+}
+
+// The stricter row validation above rejects shapes no run can produce. That claim is
+// only safe if the PRODUCER is actually held to it — and every test in this file feeds
+// the gate hand-built rows, so a change to PerReviewerVocabulary's rate expression
+// (macro-averaging per case, excluding routing values from the numerator, emitting 0.0
+// for an unmeasured reviewer) would start rejecting real run-results with nothing
+// failing here. Drive a real run's own breakdown through the gate.
+//
+// Both rosters matter: one that raises findings (exercises the rate/counts
+// consistency check) and one that raises none (exercises the zero-denominator check
+// from the producer side, where Rate must be nil rather than 0.0).
+func TestValidateReviewerVocabulary_AcceptsARealRunsOwnBreakdown(t *testing.T) {
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name      string
+		completer fanout.Completer
+		measured  bool
+	}{
+		{"a roster that raised findings", stubCategoryCompleter{category: "bug"}, true},
+		{"a roster that raised nothing", stubNoFindingsCompleter{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+			rr, err := executeBenchmarkRun(context.Background(), cfg, tc.completer, suiteValidPath, gen, "")
+			require.NoError(t, err)
+			require.NotEmpty(t, rr.Vocabulary, "precondition: the run produced the breakdown the gate reads")
+
+			measured := false
+			for _, v := range rr.Vocabulary {
+				if v.Rate != nil {
+					measured = true
+				}
+			}
+			require.Equal(t, tc.measured, measured,
+				"precondition: this roster must produce %v rows", map[bool]string{true: "measured", false: "unmeasured"}[tc.measured])
+
+			assert.NoError(t, validateReviewerVocabulary(io.Discard, *rr, "rr.json"),
+				"the export gate must never reject the shape `atcr benchmark run` actually writes")
+		})
+	}
 }
