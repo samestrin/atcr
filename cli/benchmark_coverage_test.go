@@ -166,3 +166,73 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 	err := checkCoverage(io.Discard, base(map[string]int{"unknown": 1}), "rr.json", false)
 	require.NoError(t, err, "the unknown tally label is a legitimate key")
 }
+
+// Every reviewer identity this gate interpolates into an operator-facing message comes
+// from the same untrusted, possibly hand-supplied run-result the gate is validating, and
+// cobra prints the returned error to the same terminal as the `short` warnings that were
+// already sanitized. Each malformed-file path below returns EARLY — before `short` is
+// ever built — so sanitizing only the warning sites leaves the rejection sites, the ones
+// a hostile file reaches FIRST, able to erase and rewrite the operator's line.
+func TestCheckCoverage_SanitizesIdentityInEveryRejection(t *testing.T) {
+	// Erase-line + cursor-home, the shape that overwrites what was already printed.
+	const esc = "\x1b[2K\x1b[1Gall checks passed"
+	model, persona := "m"+esc, "p"+esc
+
+	cov := func(caseIDs []string, outcomes map[string]int) benchmark.ReviewerCoverage {
+		return benchmark.ReviewerCoverage{Model: model, Persona: persona, CaseIDs: caseIDs, Outcomes: outcomes}
+	}
+	rev := func(runs int) scorecard.PublicRecord {
+		return scorecard.PublicRecord{Model: model, Persona: persona, Runs: runs}
+	}
+
+	for name, rr := range map[string]benchmark.RunResult{
+		"duplicate coverage identity": {
+			SuiteCaseIDs: []string{"case-01"},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil), cov([]string{"case-01"}, nil)},
+		},
+		"negative outcome tally": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"clean": -1, "findings": 2})},
+		},
+		"out-of-vocabulary outcome key": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"fabricated": 1})},
+		},
+		"duplicate reviewer identity": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1), rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"runs disagrees with covered set": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(2)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"outcomes do not sum to the covered set": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"clean": 2})},
+		},
+		"coverage row no reviewer consumed": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "clean-model", Persona: "clean-persona", Runs: 0}},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"case listed twice in one row": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(2)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01", "case-01"}, nil)},
+		},
+		"case outside the suite": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-99"}, nil)},
+		},
+	} {
+		err := checkCoverage(io.Discard, rr, "rr.json", false)
+		require.Error(t, err, name)
+		assert.NotContains(t, err.Error(), "\x1b", "%s: the identity reaches the terminal unstripped", name)
+	}
+}
