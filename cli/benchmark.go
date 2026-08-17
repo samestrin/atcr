@@ -483,6 +483,14 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 //     bounce at a publication gate for a defect that currently misleads no one.
 //
 // An absent or empty array is silent: omission is the normal shape, not a defect.
+//
+// vocabularyRateTolerance is how far a published rate may sit from Drifted/Findings
+// before the row is rejected as self-contradictory. It is deliberately loose enough to
+// admit a hand-written file that rounded the quotient and far tighter than any real
+// contradiction — the gate exists to catch a rate that describes no run, not to demand
+// the producer's full float precision from every submitter.
+const vocabularyRateTolerance = 1e-6
+
 func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
 	if len(rr.Vocabulary) == 0 {
 		return nil
@@ -501,8 +509,28 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 			// same nil-vs-zero distinction the pointer carries everywhere else.
 			continue
 		}
+		// A rate on a ZERO denominator is that same distinction collapsed. The producer
+		// leaves Rate nil when Findings is 0 (benchmark.PerReviewerVocabulary), so a
+		// value here publishes a reviewer that found nothing as measured-and-clean —
+		// the most drifted possible row wearing a flawless number.
+		if v.Findings == 0 {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with a rate of %v but raised no findings; "+
+				"an unmeasured reviewer carries no rate at all, so this row describes no run", path, i, *v.Rate)
+		}
 		if r := *v.Rate; math.IsNaN(r) || r < 0 || r > 1 {
 			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] rate %v outside [0,1]", path, i, r)
+		}
+		// The rate must be the quotient it claims to be. PerReviewerVocabulary writes
+		// exactly Drifted/Findings, so a rate contradicting its own counts cannot have
+		// come from a run — and the rate, not the counts, is what a leaderboard reads.
+		//
+		// The tolerance admits a hand-assembled but honest file that rounded the value
+		// (1/3 as 0.333333); it is far tighter than any contradiction worth catching.
+		// Range-checked first on purpose: NaN compares false against this bound too, so
+		// the check above is what rejects it.
+		if want := float64(v.Drifted) / float64(v.Findings); math.Abs(*v.Rate-want) > vocabularyRateTolerance {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] rate %v that does not match its own "+
+				"counts (%d/%d = %v)", path, i, *v.Rate, v.Drifted, v.Findings, want)
 		}
 	}
 

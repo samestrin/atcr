@@ -250,3 +250,53 @@ func TestBenchmarkExport_PublishesUnmeasuredVocabularyRow(t *testing.T) {
 	assert.NotContains(t, stderr, "reviewer_vocabulary",
 		"a nil rate is absence of a measurement, never a malformed one")
 }
+
+// Two shapes describe no run at all and were accepted at the publication gate.
+//
+//   - A rate that contradicts its own counts. PerReviewerVocabulary writes Rate as
+//     exactly Drifted/Findings (vocabulary.go), so 1/10 published as 0.99 cannot have
+//     come from any run — and the rate is the number a leaderboard reads.
+//   - A non-nil rate on a zero denominator. The producer leaves Rate nil when a
+//     reviewer raised nothing; a 0.0 there is the nil-vs-zero collapse the pointer
+//     exists to prevent, publishing a reviewer that found nothing as measured-and-clean.
+func TestBenchmarkExport_RejectsVocabularyRowsThatDescribeNoRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []benchmark.ReviewerVocabulary
+		want string
+	}{
+		{
+			name: "rate contradicts its own counts",
+			rows: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: 10, Drifted: 1, Rate: ptrFloat(0.99)}},
+			want: "does not match",
+		},
+		{
+			name: "measured rate on a reviewer that raised nothing",
+			rows: []benchmark.ReviewerVocabulary{{Model: "m-a", Persona: "p-a", Findings: 0, Drifted: 0, Rate: ptrFloat(0)}},
+			want: "raised no findings",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			path := writeRunResultWithVocabulary(t, tc.rows)
+			err, stdout, _ := execExportErr(t, path)
+			require.Error(t, err, "a row that describes no run must not reach a public submission")
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "reviewer_vocabulary")
+			assert.Empty(t, stdout)
+		})
+	}
+}
+
+// The consistency check must tolerate a rate written to fewer decimal places than the
+// producer emits — a hand-assembled but HONEST file is not the target. Only a
+// contradiction is.
+func TestValidateReviewerVocabulary_AcceptsARoundedButHonestRate(t *testing.T) {
+	err := validateReviewerVocabulary(io.Discard, benchmark.RunResult{
+		Reviewers: []scorecard.PublicRecord{{Model: "m-a", Persona: "p-a"}},
+		Vocabulary: []benchmark.ReviewerVocabulary{
+			{Model: "m-a", Persona: "p-a", Findings: 3, Drifted: 1, Rate: ptrFloat(0.333333)},
+		},
+	}, "rr.json")
+	assert.NoError(t, err, "1/3 written to six places is rounding, not a contradiction")
+}
