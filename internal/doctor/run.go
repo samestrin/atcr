@@ -106,7 +106,20 @@ type AgentResult struct {
 	// validated into 1..MaxTokensCap. Under omitempty those three states collapse into
 	// one absent key.
 	MaxTokens int `json:"max_tokens"`
+	// MaxTokensSource names the tier MaxTokens resolved from — flag, declaration, or
+	// default — the cap's counterpart to WindowSource, and for the same reason: the
+	// number alone cannot show whether a declaration took effect, since an agent
+	// declaring exactly doctor's default is indistinguishable from one declaring
+	// nothing. Empty when no call was placed (MaxTokens 0).
+	MaxTokensSource string `json:"max_tokens_source,omitempty"`
 }
+
+// The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
+const (
+	MaxTokensSourceFlag        = "flag"        // an explicit --max-tokens
+	MaxTokensSourceDeclaration = "declaration" // the agent's own max_tokens
+	MaxTokensSourceDefault     = "default"     // doctor's built-in probe budget
+)
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
 // roster agent has a working invocation path, 1 otherwise.

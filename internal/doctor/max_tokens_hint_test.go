@@ -49,6 +49,66 @@ func TestRun_OKWarningHintNamesTheActionThatChangesTheRealRun(t *testing.T) {
 			"not as doctor's own flag")
 }
 
+// The cap alone cannot say whether a declaration took effect — the same argument
+// WindowSource exists for, stated in render.go and docs/registry.md: "a declaration that
+// was ignored and a static-table hit that happens to match look identical." Three origins
+// are otherwise indistinguishable in the report: an operator flag, the agent's own
+// declaration, and doctor's built-in default (an agent declaring exactly 2048 reads
+// identically to an undeclared agent at the default).
+func TestRun_ReportsWhereTheProbedCapCameFrom(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	fake := func() *fakeCompleter {
+		return newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+	}
+
+	t.Run("declaration", func(t *testing.T) {
+		rep := Run(context.Background(), fake(), declaredMaxTokensTarget(t, 32000),
+			Options{Nonce: testNonce, MaxTokens: 2048})
+		require.Len(t, rep.Agents, 1)
+		assert.Equal(t, 32000, rep.Agents[0].MaxTokens)
+		assert.Equal(t, MaxTokensSourceDeclaration, rep.Agents[0].MaxTokensSource,
+			"the agent's own max_tokens supplied the cap")
+	})
+
+	t.Run("flag", func(t *testing.T) {
+		rep := Run(context.Background(), fake(), declaredMaxTokensTarget(t, 32000),
+			Options{Nonce: testNonce, MaxTokens: 777, MaxTokensSet: true})
+		require.Len(t, rep.Agents, 1)
+		assert.Equal(t, MaxTokensSourceFlag, rep.Agents[0].MaxTokensSource,
+			"an explicit --max-tokens overrode the declaration, and the report must say which won")
+	})
+
+	t.Run("default", func(t *testing.T) {
+		// twoAgentSharedTarget declares no max_tokens, so doctor's own default applies.
+		rep := Run(context.Background(), fake(), twoAgentSharedTarget(t),
+			Options{Nonce: testNonce, MaxTokens: 2048})
+		require.NotEmpty(t, rep.Agents)
+		assert.Equal(t, MaxTokensSourceDefault, rep.Agents[0].MaxTokensSource,
+			"an undeclared agent at the flag default must not read as a declaration")
+	})
+}
+
+// The ok_warning hint must not tell an operator to raise a declaration their OWN flag is
+// overriding. With --max-tokens 100 against an agent declaring 32000, "raise this agent's
+// max_tokens declaration" is advice that cannot work: probe() used 100 because the flag
+// won, and raising 32000 changes nothing about this probe.
+func TestRun_OKWarningHintDoesNotBlameTheDeclarationWhenTheFlagWon(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	res := declaredMaxTokensTarget(t, 32000)
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return "", nil })
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 100, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: marker absent")
+	hint := rep.Agents[0].Hint
+
+	assert.NotContains(t, hint, "raise this agent's max_tokens declaration",
+		"the flag is what capped this probe; the declaration is already higher and raising it is a no-op")
+	assert.Contains(t, hint, "--max-tokens",
+		"the hint must point at the knob that actually governed this probe")
+}
+
 // The probe applies the declared cap silently, so the report cannot be read to find out
 // which budget produced the result: an operator seeing ok_warning has no way to tell
 // whether the probe ran at the declaration or at doctor's default. Report it on the row,
