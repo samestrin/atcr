@@ -306,3 +306,34 @@ func TestAnchorSuiteDenominator_SanitizesTheUntrustedSuiteIdentity(t *testing.T)
 	assert.Contains(t, err.Error(), "atcr-bench", "the suite must still be identifiable")
 	assert.Contains(t, err.Error(), "9.9.9", "and so must its version")
 }
+
+// Sanitizing by DELETION makes a real mismatch unreadable. stripTerminalControlRunes
+// drops every unicode.IsControl rune — \r and \n included, not just ESC — while the
+// identity gate is a raw != with no trimming. So a CRLF-mangled run-result whose suite
+// genuinely differs from the manifest's renders as two IDENTICAL strings, and the
+// operator concludes the check is spurious rather than fixing the file. The error is the
+// one artifact whose whole job is to show a difference.
+//
+// %q is the verb this file already prescribes for untrusted identity (see the note on
+// summarizeMissing): it renders a control rune as a visible escape AND keeps the two
+// values distinguishable. Both halves of the comparison must use it — rendering the
+// run-result side under one rule and the manifest side under another is what let the
+// difference vanish.
+func TestAnchorSuiteDenominator_MismatchStaysVisibleWhenTheDifferenceIsAControlRune(t *testing.T) {
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		// Differs from the manifest's "fixture-mini"/"1.0.0" by a trailing CR only.
+		Suite:        "fixture-mini\r",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01-nil-deref"},
+	}, suiteValidPath, "rr.json")
+
+	require.Error(t, err, "precondition: a trailing CR is a genuine identity mismatch")
+	got := err.Error()
+
+	assert.NotContains(t, got, "\r", "the raw control rune must not reach the terminal")
+	assert.Contains(t, got, `\r`,
+		"the difference must remain VISIBLE as an escape — deleting it renders both sides identical "+
+			"and reads as a spurious failure")
+	assert.NotContains(t, got, `is for suite "fixture-mini"/"1.0.0" but the manifest at`,
+		"if the two halves render identically the message contradicts itself")
+}
