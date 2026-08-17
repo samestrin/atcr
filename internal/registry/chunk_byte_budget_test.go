@@ -102,6 +102,17 @@ func TestDefaultProjectConfigYAML_DocumentsChunkByteBudget(t *testing.T) {
 	assert.Contains(t, out, "chunk_byte_budget", "the knob must appear in the generated config")
 	assert.Contains(t, out, "# chunk_byte_budget:", "it must carry a help comment like its siblings")
 
+	// The baseline caveat. `atcr review --all/--dir` partitions per agent
+	// unconditionally — a mechanism distinct from review_strategy: chunked, which
+	// buildSlots gates off for baseline scans (`== chunked && !baseline`). Both
+	// mechanisms are called "chunking", and only the review_strategy one reads this
+	// key, so an operator who sets it expecting --all to chunk smaller is silently
+	// wrong. Pinned here because that confusion was filed as a defect once already.
+	assert.Contains(t, out, "baseline scan",
+		"the comment must say the key is not consulted on a baseline scan")
+	assert.Contains(t, out, "--all/--dir",
+		"...and name the invocations it does not govern")
+
 	// Commented out by default: an emitted value would freeze the inheritance the
 	// answer chose, so a later change to payload_byte_budget would stop reaching
 	// chunk sizing for every config generated before that change.
