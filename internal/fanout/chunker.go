@@ -327,6 +327,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
+		// of the PAYLOAD — every chunk of a persona is rendered from the same
+		// modePayload, so the value is identical wherever it appears and the first
+		// chunk carrying it speaks for the group. Reading only g[0] made the record
+		// position-dependent: a chunk 0 whose serving agent arrived without the carrier
+		// silenced the shed for the whole persona while its siblings still held it.
+		if !out.DiffTruncation.Truncated && len(out.DiffTruncation.FilesDropped) == 0 {
+			out.DiffTruncation = r.DiffTruncation
+		}
 		allCacheHit = allCacheHit && r.CacheHit
 		switch r.Status {
 		case StatusOK:

@@ -2822,6 +2822,16 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		Prompt:      fbPrompt,
 		PayloadMode: primary.PayloadMode,
 		Truncation:  fbTrunc,
+		// The DIFF-WIDE shed follows the payload, not the agent, so a substitute
+		// reviewing the primary's payload owes the same record. invokeAgent stamps the
+		// result's DiffTruncation from the SERVING agent, so leaving this zero made a
+		// fallback-served chunk report truncated=false for the whole persona — the
+		// AC 06-03 never-silent violation, reachable on any run with a fallback chain.
+		//
+		// A re-fit does NOT change it: re-packing sheds files from the chunk the agent
+		// ships (recorded in fbTrunc above), while this names files that never entered
+		// any chunk. The two sheds are disjoint by construction and both must be named.
+		DiffTruncation: primary.DiffTruncation,
 		// A fallback reviews the primary's already-sized/chunked payload, so it
 		// saw exactly the same files and inherits the primary's record of them —
 		// unless it re-fit that payload above, in which case every field here
