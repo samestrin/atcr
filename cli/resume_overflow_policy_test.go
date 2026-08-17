@@ -77,6 +77,34 @@ func TestResume_ZeroInputBudgetNamesTheDeclarationToChange(t *testing.T) {
 	}
 }
 
+// --max-tokens threads through --resume LIVE, by the same mechanism as --timeout and
+// --max-parallel: runResume builds the config with the same cliOverrides(cmd) helper
+// runReview uses, so the CLI tier reaches maxTokensFor on the resume path too.
+//
+// This is pinned because a TD row argued the opposite — that the cap is discarded on a
+// resume and must therefore be manifest-recorded or rejected fail-closed. The premise was
+// wrong, but nothing enforced it: the same fixture that hard-fails on the agent's 32000
+// declaration must stop failing when the operator retypes a workable --max-tokens, and if
+// the override were ever dropped from cliOverrides that distinction would vanish silently
+// and the row would become correct.
+func TestResume_MaxTokensOverrideAppliesToPendingAgents(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	// The roster declares max_tokens 32000, which leaves no input budget against the
+	// 32768-token default window and hard-fails under on_overflow=fail.
+	zeroInputBudgetResumeFixture(t, "fail")
+
+	// Retyping a workable cap on the resume must override that declaration, so the
+	// zero-budget refusal never fires. The run still fails at dispatch (the fixture
+	// provider is unreachable by design) — the assertion is on WHICH failure.
+	_, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^", "--max-tokens", "2048")
+
+	require.NotContains(t, out, "no input budget",
+		"a retyped --max-tokens must resize the pending agents on a resume, exactly as --timeout does")
+	require.NotContains(t, out, "on_overflow=fail",
+		"with a funded budget the overflow policy must not be consulted at all")
+}
+
 // indexOfDiagnosis / indexOfSentinel locate the operator-actionable text and the
 // internal on_overflow sentinel in combined output, so the ordering assertion above
 // does not depend on either one's exact wording.
