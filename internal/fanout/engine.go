@@ -286,9 +286,13 @@ type Result struct {
 	// status.json reported truncated=false while 40 of 73 files had been shed
 	// (observed 2026-08-15), contradicting AgentStatus' "never silent (AC 06-03)".
 	//
-	// mergeResultGroup promotes it into the merged persona's Truncation, so the
-	// diff-wide fact is recorded exactly ONCE per agent rather than once per chunk.
-	// The bulk path never sets it — it already carries the real value in Truncation.
+	// Promoted into the merged persona's Truncation at BOTH of mergeChunkResults'
+	// exits — mergeResultGroup for a multi-chunk persona, and promoteDiffTruncation
+	// directly on the single-result fast path (chunker.go) — so the diff-wide fact is
+	// recorded exactly ONCE per agent rather than once per chunk, and whether a
+	// persona's chunk set happened to collapse to one result cannot change what its
+	// status.json reports. The bulk path never sets it — it already carries the real
+	// value in Truncation.
 	DiffTruncation payload.Truncation
 
 	// servedChunkFiles is the baseline coverage tag of the chain member that

@@ -470,6 +470,16 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 	if !rePacked {
 		return
 	}
+	// Fold the DIFF-WIDE shed into the same union. This write to out.Truncation
+	// happens BEFORE promoteDiffTruncation, which is deliberately a fallback and so
+	// declines to fill a record that is already populated — leaving the diff-wide file
+	// list masked on any persona that both re-packed and hit the global byte budget.
+	// truncated=true stayed honest there, but files_dropped named only the re-pack's
+	// files and omitted the ones no reviewer ever saw, which are the more serious half.
+	// Seeding the set rather than overwriting keeps this inert when nothing re-packed.
+	for _, p := range out.DiffTruncation.FilesDropped {
+		dropped[p] = struct{}{}
+	}
 	out.ChunkCount = len(g)
 	if action != "" {
 		out.DegradationAction = action

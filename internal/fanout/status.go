@@ -276,7 +276,12 @@ func EnsureReviewComplete(reviewDir, id string) error {
 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
 	}
 	if st.Status == RunStale {
-		return fmt.Errorf("review %s is %w; run `atcr review --resume %s` to finish the remaining agents, or re-run the review to start over", id, ErrReviewStale, id)
+		// Both callers include MCP handlers, which have no resume capability at all
+		// (see handlers.go's explicit-id collision re-message). Resume stays FIRST —
+		// it is the cheap recovery and the CLI is where it exists — but the start-over
+		// half names atcr_review so an MCP client is not left with a CLI-only
+		// instruction, mirroring how the in_progress message above names atcr_status.
+		return fmt.Errorf("review %s is %w; run `atcr review --resume %s` to finish the remaining agents (CLI only), or re-run the review from scratch with atcr_review (or `atcr review`) to start over", id, ErrReviewStale, id)
 	}
 	return nil
 }
@@ -396,7 +401,13 @@ type AgentStatus struct {
 	// review.go:
 	//
 	//	""         no degradation.
-	//	"chunk"    a window-aware chunk split. No loss.
+	//	"chunk"    a window-aware chunk split. The SPLIT ITSELF loses nothing —
+	//	           every file is delivered, across more calls. It does NOT assert the
+	//	           run dropped nothing: the diff-wide byte-budget shed is decided
+	//	           upstream of chunking (buildPayloads) and is promoted onto the
+	//	           merged persona record, so "chunk" legitimately coexists with
+	//	           truncated=true and a non-empty files_dropped. Read the truncation
+	//	           fields for loss; this field reports the payload REGIME only.
 	//	"truncate" a per-agent byte shed that dropped files. Lossy.
 	//	"overflow" the payload was dispatched knowing it exceeds what the model
 	//	           can hold, because no smaller framing was available.

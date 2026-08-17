@@ -670,3 +670,41 @@ func TestInvokeSlot_StampsRePackFlagWithoutRelyingOnTagDivergence(t *testing.T) 
 	assert.NotContains(t, buf.String(), "promoting to re-packed",
 		"the divergence backstop must stay silent here — a warning means the flag arrived fail-open rather than by the stamp")
 }
+
+// A persona can hit BOTH degradations at once: the diff-wide byte-budget shed
+// (decided upstream in buildPayloads, carried on DiffTruncation) and a fallback that
+// re-fit one of its chunks. promoteRePackedDegradation writes out.Truncation, and it
+// runs BEFORE promoteDiffTruncation — which is deliberately a fallback and so declines
+// to fill an already-populated record. The diff-wide file list was therefore masked:
+// truncated=true stayed honest, but files_dropped named only the re-pack's files and
+// silently omitted the files no reviewer ever saw.
+//
+// The persona's record has to name ALL of them, which is the same argument the
+// existing re-pack union already makes across chunks — extended one level out.
+func TestMergeChunkResults_UnionsTheDiffWideShedWithARePackRecord(t *testing.T) {
+	t.Parallel()
+	diffWide := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_by_budget.go", "a.go"}}
+	g := []Result{
+		{
+			Agent: "greta", Status: StatusOK, Content: "c0",
+			DegradationAction: degradationChunk, EffectiveBudget: 400000,
+			DiffTruncation: diffWide,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			DegradationAction: degradationTruncate, EffectiveBudget: 71680,
+			Truncation:     payload.Truncation{Truncated: true, FilesDropped: []string{"b.go", "a.go"}},
+			DiffTruncation: diffWide,
+			servedRePacked: true,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	assert.True(t, out.Truncation.Truncated)
+	assert.Equal(t, []string{"a.go", "b.go", "shed_by_budget.go"}, out.Truncation.FilesDropped,
+		"files_dropped must be the deduplicated, sorted union of the re-pack's shed AND the diff-wide "+
+			"shed — a file dropped by the global byte budget is exactly the one no reviewer saw")
+}
