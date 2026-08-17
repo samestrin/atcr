@@ -120,6 +120,12 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	byIdentity := make(map[reviewerKey]benchmark.ReviewerCoverage, len(rr.Coverage))
 	for _, c := range rr.Coverage {
 		key := coverageKey(c.Model, c.Persona)
+		// Stripped ONCE per row and used at every interpolation site below. Every
+		// rejection here is operator-facing — cobra prints it to the same terminal as
+		// the `short` warnings further down — and every one of them returns EARLY,
+		// before `short` is ever built. Sanitizing only the warnings would leave the
+		// paths a hostile run-result reaches FIRST able to erase the operator's line.
+		model, persona := stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona)
 		// A DUPLICATE identity is rejected outright rather than resolved. The
 		// producer emits one row per unique identity by construction, so a duplicate
 		// means the file was hand-assembled — and last-write-wins would let a full
@@ -128,7 +134,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if _, dup := byIdentity[key]; dup {
 			return fmt.Errorf("run-result %s records coverage for %s/%s more than once; "+
 				"a reviewer identity has exactly one covered case set, so this file is malformed",
-				path, c.Model, c.Persona)
+				path, model, persona)
 		}
 		// The outcomes tally is untrusted input here, exactly like
 		// out_of_vocabulary_rate at the load boundary: the producer writes one
@@ -142,12 +148,12 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 			if n < 0 {
 				return fmt.Errorf("run-result %s records a negative outcome tally for %s/%s (%q: %d); "+
 					"the producer counts one outcome per case, so this file is malformed",
-					path, c.Model, c.Persona, k, n)
+					path, model, persona, k, n)
 			}
 			if k != benchmark.OutcomeUnknownLabel && !benchmark.ValidOutcome(k) {
 				return fmt.Errorf("run-result %s records outcome tally key %q for %s/%s, outside the outcome vocabulary; "+
 					"the producer writes only benchmark.Outcome* values, so this file is malformed",
-					path, k, c.Model, c.Persona)
+					path, k, model, persona)
 			}
 		}
 		byIdentity[key] = c
@@ -157,6 +163,9 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	consumed := make(map[reviewerKey]bool, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := coverageKey(rev.Model, rev.Persona)
+		// Stripped once per row, for the same reason as the coverage loop above: the
+		// rejections below reach the terminal before any sanitized warning does.
+		model, persona := stripTerminalControlRunes(rev.Model), stripTerminalControlRunes(rev.Persona)
 		// The reviewer array gets the same duplicate-identity rule as the coverage
 		// array above: two identical reviewer rows both join the single coverage row
 		// and both publish, putting two different metric sets on the board under one
@@ -166,16 +175,12 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if consumed[key] {
 			return fmt.Errorf("run-result %s records reviewer %s/%s more than once; "+
 				"a reviewer identity has exactly one covered case set, so this file is malformed",
-				path, rev.Model, rev.Persona)
+				path, model, persona)
 		}
 		consumed[key] = true
 		cov, ok := byIdentity[key]
 		if !ok {
-			// Sanitized for the same reason as the vocabulary warnings in benchmark.go:
-			// `short` is joined into a stderr warning below, and these identities come
-			// from the same untrusted, possibly hand-supplied run-result.
-			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)",
-				stripTerminalControlRunes(rev.Model), stripTerminalControlRunes(rev.Persona)))
+			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", model, persona))
 			continue
 		}
 		// `runs` and the covered set are appended together by the producer, so they
@@ -185,7 +190,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if rev.Runs != len(cov.CaseIDs) {
 			return fmt.Errorf("run-result %s: reviewer %s/%s reports runs=%d but records %d covered case(s); "+
 				"the two are written together by `atcr benchmark run`, so this file is malformed",
-				path, rev.Model, rev.Persona, rev.Runs, len(cov.CaseIDs))
+				path, model, persona, rev.Runs, len(cov.CaseIDs))
 		}
 		// The outcomes tally is written together with the covered set by the same
 		// fold (one outcome per case), so its values must sum to len(cov.CaseIDs) —
@@ -199,14 +204,14 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 			if tally != len(cov.CaseIDs) {
 				return fmt.Errorf("run-result %s: reviewer %s/%s records outcomes summing to %d over %d covered case(s); "+
 					"the two are written together by `atcr benchmark run`, so this file is malformed",
-					path, rev.Model, rev.Persona, tally, len(cov.CaseIDs))
+					path, model, persona, tally, len(cov.CaseIDs))
 			}
 		}
 		// A covered set must be a set OF THE SUITE. Checking only for missing ids
 		// lets ["case-01","case-02","case-03","case-01"] satisfy a 3-case suite while
 		// reporting runs=4 — full marks for a row that scored one case twice and
 		// carries a bigger denominator than the suite has cases.
-		missing, verr := validateCoveredSet(suite, cov.CaseIDs, path, rev.Model, rev.Persona)
+		missing, verr := validateCoveredSet(suite, cov.CaseIDs, path, model, persona)
 		if verr != nil {
 			return verr
 		}
@@ -218,8 +223,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// distinct suite member. A defensive recount would describe a state the
 		// checks above have already made unreachable.
 		short = append(short, fmt.Sprintf("%s/%s (%d/%d cases, missing %s)",
-			stripTerminalControlRunes(rev.Model), stripTerminalControlRunes(rev.Persona),
-			len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
+			model, persona, len(cov.CaseIDs), len(suite), summarizeMissing(missing)))
 	}
 
 	// The join is checked in BOTH directions: a coverage row no reviewer row
@@ -233,7 +237,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		if !consumed[key] {
 			return fmt.Errorf("run-result %s records coverage for %s/%s with no matching reviewer row; "+
 				"the producer writes the two arrays from the same accumulator, so this file is malformed",
-				path, c.Model, c.Persona)
+				path, stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))
 		}
 	}
 
@@ -335,6 +339,11 @@ func anchorSuiteDenominator(rr benchmark.RunResult, suitePath, path string) erro
 // the missing-id lookup, so the gate builds ONE map per row rather than two — a
 // caller-supplied file can carry thousands of rows, and the per-row constant factor
 // is the only cost this function controls.
+//
+// PRECONDITION: model and persona arrive already stripped of terminal control runes.
+// Both errors below are operator-facing, and checkCoverage strips the identity ONCE per
+// row rather than at each of its own nine interpolation sites — re-stripping here would
+// add a per-row scan to buy nothing. A future caller must strip before calling.
 func validateCoveredSet(suite map[string]bool, covered []string, path, model, persona string) ([]string, error) {
 	seen := make(map[string]bool, len(covered))
 	for _, id := range covered {
