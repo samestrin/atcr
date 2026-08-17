@@ -1673,6 +1673,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if rerr != nil {
 							return rerr
 						}
+						// The neutral Truncation above stays neutral; the SCAN-wide shed
+						// rides alongside it so mergeResultGroup records it once for this
+						// persona. Without this the baseline (--all / --dir) chunked path
+						// reported truncated=false while whole files were shed — the same
+						// AC 06-03 never-silent violation the git-range branch below fixes
+						// with the identical line.
+						primary.DiffTruncation = mp.Truncation
 						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
 						// Tagged HERE — at capChunks output, after tail-coalescing — so the
 						// identity matches the slot actually dispatched. runEngine reads it

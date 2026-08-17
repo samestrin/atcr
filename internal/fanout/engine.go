@@ -928,6 +928,14 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.ReservedOutputTokens = a.ReservedOutputTokens
 	r.ChunkCount = a.ChunkTotal
 	r.DegradationAction = a.DegradationAction
+	// The diff-wide shed belongs here, with the other F8 fields, and NOT in each
+	// success-path Result constructor. invokeSlot stamps it at its tail (:844), but
+	// that runs only after the chain FAILS — a StatusOK slot returns earlier, so on a
+	// successful chunked run promoteDiffTruncation copied a zero value over a zero
+	// value and status.json reported truncated=false while whole files were dropped.
+	// Stamping at this seam makes all three dispatch paths (single-shot, cache hit,
+	// tool loop) inherit it uniformly.
+	r.DiffTruncation = a.DiffTruncation
 	recordAgentOutcome(r)
 	return r
 }

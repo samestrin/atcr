@@ -152,3 +152,90 @@ func TestMergeResultGroup_DoesNotOverwriteAnExistingTruncationRecord(t *testing.
 	assert.Equal(t, []string{"this_slots_own.go"}, merged.Truncation.FilesDropped,
 		"a slot that recorded its own shed keeps it; the diff-wide value is a fallback, not an override")
 }
+
+// Every test above hand-builds Result{DiffTruncation: ...} literals and calls the
+// merge helpers directly, so all four wiring sites — the producer at review.go, the
+// carry in invokeSlot, the panic path and the cancellation path — survived deletion
+// with `go test ./internal/fanout/` green. Nothing exercised the Agent -> Result hop,
+// which is where the signal was actually being lost.
+//
+// This drives the real chain on a SUCCEEDING chunked run:
+//
+//	buildSlots -> Engine.Run -> mergeChunkResults -> statusFor
+//
+// Success is the whole point. invokeSlot stamps DiffTruncation at its tail, which only
+// runs after the chain FAILS — a successful chunk returns earlier, so on the case the
+// operator actually hits (a shed payload reviewed successfully) status.json reported
+// truncated=false with files_dropped empty while whole files had been dropped.
+func TestBaselineChunkedRun_ShedFilesReachStatusOnASuccessfulRun(t *testing.T) {
+	shed := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_a.go", "shed_b.go"}}
+
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 100
+
+	entries := []payload.FileEntry{
+		baselineEntry("kept_a.go", 100),
+		baselineEntry("kept_b.go", 100),
+		baselineEntry("kept_c.go", 100),
+	}
+	payloads := baselinePayloads(entries)
+	// The diff-wide shed buildPayloads recorded upstream: these two files never made
+	// it into any chunk, which is exactly why no per-chunk record can carry the fact.
+	mp := payloads[string(payload.ModeFiles)]
+	mp.Truncation = shed
+	payloads[string(payload.ModeFiles)] = mp
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
+
+	raw := NewEngine(baselineChunkFindingCompleter{}).Run(context.Background(), slots)
+	require.Len(t, raw, len(slots))
+	for i, r := range raw {
+		require.Equal(t, StatusOK, r.Status,
+			"precondition: chunk %d must SUCCEED — the failure path stamps DiffTruncation on its own", i)
+	}
+
+	merged := mergeChunkResults(raw)
+	require.Len(t, merged, 1, "the persona's chunks collapse into one record")
+
+	st := statusFor(merged[0], findingsResult{})
+	assert.True(t, st.Truncated,
+		"status.json must report the diff-wide shed on a successful chunked run — the never-silent contract")
+	assert.Equal(t, shed.FilesDropped, st.FilesDropped,
+		"and must name WHICH files were shed, which is the actionable half")
+}
+
+// The same production chain over the GIT-RANGE chunked branch, whose producer line
+// (primary.DiffTruncation = mp.Truncation) is a separate site from the baseline one
+// and survived deletion for the same reason: the merge-helper tests never reach it.
+func TestChunkedRangeRun_ShedFilesReachStatusOnASuccessfulRun(t *testing.T) {
+	shed := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_range.go"}}
+
+	cfg := declaredWindowRoster(t, 128000)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+
+	payloads := map[string]modePayload{"blocks": {
+		Text:       diffOfNFiles(12, 900), // > the declared budget → splits into chunks
+		FileCount:  12,
+		Truncation: shed,
+	}}
+
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: this diff must split into chunk slots")
+
+	raw := NewEngine(&plainStubCompleter{}).Run(context.Background(), slots)
+	for i, r := range raw {
+		require.Equal(t, StatusOK, r.Status, "precondition: chunk %d must succeed", i)
+	}
+
+	merged := mergeChunkResults(raw)
+	require.Len(t, merged, 1)
+
+	st := statusFor(merged[0], findingsResult{})
+	assert.True(t, st.Truncated, "the git-range chunked path owes the same never-silent signal")
+	assert.Equal(t, shed.FilesDropped, st.FilesDropped)
+}
