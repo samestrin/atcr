@@ -171,9 +171,25 @@ func TestMergeResultGroup_DoesNotOverwriteAnExistingTruncationRecord(t *testing.
 // runs after the chain FAILS — a successful chunk returns earlier, so on the case the
 // operator actually hits (a shed payload reviewed successfully) status.json reported
 // truncated=false with files_dropped empty while whole files had been dropped.
-func TestBaselineChunkedRun_ShedFilesReachStatusOnASuccessfulRun(t *testing.T) {
-	shed := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_a.go", "shed_b.go"}}
-
+// On the BASELINE (--all / --dir) multi-chunk path the global byte budget sheds
+// nothing from the review: modePayload.Entries is the PRE-budget set
+// (PrepareReviewFromRepo, review.go:833) and the branch partitions THAT via
+// payload.PartitionByBudget, whose contract is never-split-never-dropped. The shed
+// recorded in mp.Truncation applies only to the concatenated AUDIT TEXT. review.go's
+// own TD-012 comment (:812-818) states it: "every enumerated file is still reviewed
+// across per-model chunks".
+//
+// So reporting truncated=true here is a FALSE data-loss claim — the inverse of the
+// never-silent violation the diff-wide promotion was built to fix — and it is read by
+// AgentStatus' contract (status.go:291) and by cli/benchmark_run.go:437, which maps
+// Truncated to benchmark.OutcomeIncomplete.
+//
+// The fixture is what let this survive: it previously named shed paths ABSENT from
+// mp.Entries, a state PrepareReviewFromRepo cannot produce on this path, so the
+// assertion was guaranteed by the fixture rather than by the code. Here the shed path
+// is a MEMBER of Entries, which is the only shape production emits — and the test then
+// proves the file is genuinely delivered rather than merely assuming it.
+func TestBaselineChunkedRun_DeliveredFilesAreNotReportedAsShed(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
@@ -184,31 +200,36 @@ func TestBaselineChunkedRun_ShedFilesReachStatusOnASuccessfulRun(t *testing.T) {
 		baselineEntry("kept_c.go", 100),
 	}
 	payloads := baselinePayloads(entries)
-	// The diff-wide shed buildPayloads recorded upstream: these two files never made
-	// it into any chunk, which is exactly why no per-chunk record can carry the fact.
+	// The audit-text shed buildPayloads recorded upstream. kept_c.go is dropped from
+	// the concatenated Text, yet REMAINS in Entries — which is precisely why the
+	// baseline fan-out still delivers it.
 	mp := payloads[string(payload.ModeFiles)]
-	mp.Truncation = shed
+	mp.Truncation = payload.Truncation{Truncated: true, FilesDropped: []string{"kept_c.go"}}
 	payloads[string(payload.ModeFiles)] = mp
 
 	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
 
+	// The load-bearing proof: the "shed" file really is in a dispatched chunk.
+	assert.True(t, slotsContainMarker(slots, "kept_c.go"),
+		"precondition and the whole point: PartitionByBudget delivers every entry, so the "+
+			"file the audit-text shed named is still reviewed")
+
 	raw := NewEngine(baselineChunkFindingCompleter{}).Run(context.Background(), slots)
 	require.Len(t, raw, len(slots))
 	for i, r := range raw {
-		require.Equal(t, StatusOK, r.Status,
-			"precondition: chunk %d must SUCCEED — the failure path stamps DiffTruncation on its own", i)
+		require.Equal(t, StatusOK, r.Status, "precondition: chunk %d must SUCCEED", i)
 	}
 
 	merged := mergeChunkResults(raw)
 	require.Len(t, merged, 1, "the persona's chunks collapse into one record")
 
 	st := statusFor(merged[0], findingsResult{})
-	assert.True(t, st.Truncated,
-		"status.json must report the diff-wide shed on a successful chunked run — the never-silent contract")
-	assert.Equal(t, shed.FilesDropped, st.FilesDropped,
-		"and must name WHICH files were shed, which is the actionable half")
+	assert.False(t, st.Truncated,
+		"nothing reached no reviewer on this path, so status.json must NOT claim a shed")
+	assert.Empty(t, st.FilesDropped,
+		"and must name no dropped files — every one of them was delivered")
 }
 
 // chunkedFallbackRoster wires greta (declaring a large window) to fall back to kai,
@@ -339,18 +360,22 @@ func TestMergeResultGroup_TakesTheDiffWideShedFromAnyChunkNotOnlyTheFirst(t *tes
 // It is asserted end-to-end rather than on hand-built Results because the defect
 // lives in the Agent -> Result hop: any merge-level fixture would have to hand chunk
 // 0 the carrier the production path was failing to give it.
-func TestBaselineChunkedRun_RePackedChunkZeroStillNamesTheDiffWideShed(t *testing.T) {
-	diffWide := payload.Truncation{Truncated: true, FilesDropped: []string{"never_seen_a.go", "never_seen_b.go"}}
-
+// A re-packed chunk on the BASELINE path still owns a REAL shed — its own. Re-fitting
+// drops files from the chunk the fallback ships, and those genuinely reach no reviewer.
+// What must NOT appear is a phantom diff-wide entry: on this path PartitionByBudget
+// delivered every entry, so the only honest files_dropped is the re-pack's own set.
+//
+// Previously this test seeded an mp.Truncation naming files absent from mp.Entries —
+// unreachable on the baseline path — and asserted the union contained them. The union
+// itself is still pinned, at the level where it remains reachable, by
+// TestMergeChunkResults_UnionsTheDiffWideShedWithARePackRecord.
+func TestBaselineChunkedRun_RePackedChunkZeroNamesOnlyItsOwnShed(t *testing.T) {
 	cfg := refitRoster(t, 128000, OverflowTruncate)
 	var entries []payload.FileEntry
 	for i := 0; i < 20; i++ {
 		entries = append(entries, baselineEntry(fmt.Sprintf("kept_%02d.go", i), 50000))
 	}
 	payloads := baselinePayloads(entries)
-	mp := payloads[string(payload.ModeFiles)]
-	mp.Truncation = diffWide
-	payloads[string(payload.ModeFiles)] = mp
 
 	var slots []Slot
 	var err error
@@ -376,12 +401,15 @@ func TestBaselineChunkedRun_RePackedChunkZeroStillNamesTheDiffWideShed(t *testin
 	require.Len(t, merged, 1)
 
 	st := statusFor(merged[0], findingsResult{})
-	require.True(t, st.Truncated)
-	assert.Subset(t, st.FilesDropped, diffWide.FilesDropped,
-		"files_dropped must still name the files the global byte budget shed — a re-pack on chunk 0 "+
-			"must not overwrite the diff-wide half of the union")
-	assert.Greater(t, len(st.FilesDropped), len(diffWide.FilesDropped),
-		"and it must remain a UNION: the re-pack's own shed files belong there too")
+	require.True(t, st.Truncated,
+		"the re-pack really did drop files from the chunk it shipped, so the shed is owed")
+	assert.NotEmpty(t, st.FilesDropped,
+		"and files_dropped must name the re-pack's own shed — the actionable half")
+	for _, p := range st.FilesDropped {
+		assert.True(t, strings.HasPrefix(p, "kept_"),
+			"every named file must be one this run actually handled (%q was not); a path from "+
+				"the audit-text shed would be a phantom, since PartitionByBudget delivered them all", p)
+	}
 }
 
 // status.json and summary.json are two published views of the SAME AgentStatus, and
