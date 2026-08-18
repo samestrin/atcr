@@ -318,7 +318,39 @@ func medianInt64(xs []int64) int64 {
 // credential denylist covers common token/key shapes (it is necessarily
 // incomplete — hence the allowlist as the real boundary). Whitespace is then
 // collapsed.
+// It is IDEMPOTENT, and that is load-bearing rather than incidental: this function is
+// applied to the same identity by several layers on purpose — cli/benchmark_run.go
+// scrubs at the fold, then benchmark.Score, benchmark.PerReviewerVocabulary and
+// benchmark.BuildSubmission each re-scrub as defense-in-depth. Those layers are only
+// safe if scrubbing twice equals scrubbing once. It did NOT hold: one pass could
+// EXPOSE a new match for an earlier rule (removing the email-shaped prefix of
+// "bedrock@us-east-1/claude" leaves "/claude", which only a later pass reads as an
+// absolute path), so the same reviewer reached reviewers[] twice-scrubbed and
+// reviewer_coverage[] once-scrubbed, and the positional join those arrays document
+// stopped naming one reviewer.
+//
+// Iterating to a FIXED POINT fixes the class rather than that one ordering: any rule
+// whose output feeds another rule's input converges here, including pairs added later.
+// Termination is guaranteed because every rule only DELETES characters, so each pass
+// strictly shortens the string or leaves it unchanged; scrubPasses is a backstop
+// against a future non-shrinking rule, not a real bound.
 func scrubField(s string) string {
+	for i := 0; i < scrubPasses; i++ {
+		next := scrubOnce(s)
+		if next == s {
+			break
+		}
+		s = next
+	}
+	return s
+}
+
+// scrubPasses bounds the fixed-point loop. Convergence is normally immediate (one
+// extra confirming pass); the cap only guards against a future rule that can grow its
+// input, which would otherwise spin here.
+const scrubPasses = 8
+
+func scrubOnce(s string) string {
 	s = scrubWinPath.ReplaceAllString(s, "")
 	s = scrubUNCPath.ReplaceAllString(s, "")
 	s = scrubHome.ReplaceAllString(s, "")

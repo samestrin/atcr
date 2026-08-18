@@ -253,6 +253,14 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	// at export, turning a legitimate full-coverage run into a hard
 	// "no coverage recorded" rejection. Scrubbing here makes both sides identical by
 	// construction, and Score's own pass is then idempotent.
+	//
+	// That last clause is a real guarantee, not an assumption: scorecard.scrubField
+	// iterates to a fixed point and TestScrubField_IsIdempotent pins it. It did not
+	// always hold — one pass could expose a match for an earlier rule, so
+	// "bedrock@us-east-1/claude" scrubbed once to "/claude" and twice to "" — and the
+	// three arrays below then carried two different identities for one reviewer,
+	// because coverage is written from `id` here while reviewers[] and
+	// reviewer_vocabulary[] pass through a second scrub downstream.
 	rows := make([]scoredRow, 0, len(order))
 	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {

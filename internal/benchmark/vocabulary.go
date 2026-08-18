@@ -149,6 +149,11 @@ func OutOfVocabularyRate(reviewers []ReviewerScore) *float64 {
 type ReviewerVocabulary struct {
 	// Model and Persona are the REALIZED identity, matching the row PublicRecord
 	// publishes and Score sorts on — the same identity ReviewerCoverage joins by.
+	// Those three agree only because scorecard.scrubField is idempotent (it iterates
+	// to a fixed point; TestScrubField_IsIdempotent pins it): coverage is written from
+	// the fold's single scrub in cli/buildRunResult, while this array and Score each
+	// apply a second one. Before that held, an identity the scrub rewrote reached the
+	// two sides as two different strings and the documented join named no one.
 	// The lane (configured agent name) is deliberately NOT carried: since the fold
 	// re-keyed on the realized identity, two lanes that realize the same
 	// (model, persona) merge into one row, so a single agent name is not
