@@ -420,9 +420,11 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 	// shed list was MEASURED is the never-silent contract (AC 06-03) weakened at the
 	// only seam both of them share. WriteStatus keeps its own guard as a backstop for
 	// hand-built AgentStatus values.
-	if st.FilesDropped == nil {
-		st.FilesDropped = []string{}
-	}
+	//
+	// Through the shared helper, not an inline guard: RebuildPool needs the identical
+	// rule on the resume path, and the two writers of this artifact pair drifting is
+	// exactly how summary.json came to publish null beside status.json's [].
+	normalizeFilesDropped(&st)
 	if r.Err != nil {
 		st.Error = r.Err.Error()
 	}
