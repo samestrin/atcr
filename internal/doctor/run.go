@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // Status classes for a single endpoint probe. ok means the nonce marker came
@@ -175,14 +177,18 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 	for _, at := range res.Agents {
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
+		status, hint := pr.status, pr.hint
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, pr.maxTokens, status); ok {
+			status, hint = s, h
+		}
 		rep.Agents = append(rep.Agents, AgentResult{
 			Agent:               at.Agent,
 			Serial:              at.Serial,
 			Provider:            tgt.Provider,
 			Model:               tgt.Model,
-			Status:              pr.status,
+			Status:              status,
 			LatencyMS:           pr.latencyMS,
-			Hint:                pr.hint,
+			Hint:                hint,
 			Detail:              pr.detail,
 			Source:              at.Source,
 			ContextWindowTokens: at.ContextWindowTokens,
@@ -193,6 +199,49 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 	}
 	rep.ExitCode = exitVerdict(res, results)
 	return rep
+}
+
+// zeroBudgetRemedy names the two declarations that can close an agent's input budget.
+// Deliberately worded to match internal/fanout's constant of the same name, which the
+// review fan-out prints when it hits this state at dispatch: doctor is the pre-flight
+// surface for exactly that failure, and an operator who meets it in both places must not
+// be handed two different remedies for one condition.
+const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_window_tokens declaration"
+
+// zeroBudgetVerdict reports the warning doctor owes an agent whose resolved window funds
+// NO input budget once its resolved output cap and the fixed prompt overhead are
+// reserved. It returns ok=false when there is nothing to say.
+//
+// doctor is the only surface holding both operands, and it printed them side by side
+// without comparing them — so an agent `atcr review` cannot size a payload for reported
+// `ok` at exit 0. The probe cannot catch this itself: the nonce prompt is trivial, so it
+// succeeds at any cap, which is precisely why the verdict has to be derived here from the
+// numbers rather than observed from the response.
+//
+// The budget is asked of payload.EffectiveByteBudget rather than recomputed, so doctor
+// and the fan-out cannot disagree about where the threshold sits — the overhead constant
+// stays owned by the package that reserves it.
+//
+// Two guards, both load-bearing:
+//   - maxTokens 0 means NO CAP WAS APPLIED (the probe short-circuited before resolving a
+//     budget), not a cap of zero. Treating it as a cap would compute a full-window budget
+//     and find nothing wrong, which is right by accident; the guard makes it right on
+//     purpose and keeps the arithmetic honest.
+//   - only an otherwise-healthy probe is downgraded. A row that already reports
+//     auth_failed or missing_key has a louder problem, and overwriting it with a budget
+//     warning would hide the failure the operator has to fix first.
+func zeroBudgetVerdict(model string, window, maxTokens int, status string) (string, string, bool) {
+	if status != StatusOK || maxTokens <= 0 || window <= 0 {
+		return "", "", false
+	}
+	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
+		return "", "", false
+	}
+	return StatusOKWarning, fmt.Sprintf(
+		"endpoint is healthy, but the resolved window (%d tokens) leaves no input budget once the %d-token output cap "+
+			"and the fixed prompt overhead are reserved — `atcr review` will ship only the smallest single file, or refuse "+
+			"the run outright under on_overflow fail/fallback. Remedy: %s",
+		window, maxTokens, zeroBudgetRemedy), true
 }
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
