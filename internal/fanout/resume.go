@@ -628,7 +628,7 @@ func readFileLimited(path string, limit int64) ([]byte, error) {
 // review's findings.txt would differ from an equivalent fresh run. An agent in
 // the roster without an on-disk directory is skipped (it never completed); an
 // agent directory not in the roster is also skipped (stale/orphan entry).
-func RebuildPool(_ context.Context, poolDir string, roster []string) (Summary, []AgentStatus, error) {
+func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary, []AgentStatus, error) {
 	rawDir := filepath.Join(poolDir, poolRawAgentDir)
 
 	// Build an index of on-disk agent directories for O(1) lookup.
@@ -643,7 +643,11 @@ func RebuildPool(_ context.Context, poolDir string, roster []string) (Summary, [
 		}
 	}
 
-	var statuses []AgentStatus
+	// make, not a nil slice: a roster that produced no statuses is an EMPTY set, not
+	// an absent one, and the nil form marshals as "agents": null where writePool's
+	// make(..., 0, n) yields []. Same measured-vs-unmeasured distinction the
+	// FilesDropped normalization below preserves, in the same artifact.
+	statuses := make([]AgentStatus, 0, len(roster))
 	var merged []stream.Finding
 	seen := make(map[string]bool, len(roster))
 	// Iterate in roster order so the merged findings.txt rows match a fresh
@@ -669,6 +673,10 @@ func RebuildPool(_ context.Context, poolDir string, roster []string) (Summary, [
 		if json.Unmarshal(sdata, &st) != nil {
 			continue
 		}
+		// These statuses are round-tripped off disk and never pass through statusFor,
+		// so they need its normalization applied here or the rebuilt summary.json
+		// republishes an absent files_dropped as null while status.json says [].
+		normalizeFilesDropped(&st)
 		statuses = append(statuses, st)
 		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
 		if ferr != nil {
@@ -706,7 +714,7 @@ func RebuildPool(_ context.Context, poolDir string, roster []string) (Summary, [
 	// that dropped the tally reported a clean summary for a run in which reviewers
 	// contributed nothing — and dropped the console signal the tally exists to reach.
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
-	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents, true)
+	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, true)
 	ps := PoolSummary{
 		Agents:                statuses,
 		Total:                 sum.Total,

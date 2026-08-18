@@ -32,8 +32,8 @@ func TestRebuildPool_RecoversTruncatedZeroFindings(t *testing.T) {
 	}, nil))
 
 	var err error
-	out := captureStderr(t, func() {
-		_, _, err = RebuildPool(context.Background(), poolDir, []string{"greta", "kai", "bruce"})
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, _, err = RebuildPool(ctx, poolDir, []string{"greta", "kai", "bruce"})
 	})
 	require.NoError(t, err)
 
@@ -68,8 +68,8 @@ func TestRebuildPool_WarningIsMarkedAsARestatementNotAFreshEvent(t *testing.T) {
 		{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
 	}, nil))
 
-	out := captureStderr(t, func() {
-		_, _, err := RebuildPool(context.Background(), poolDir, []string{"greta"})
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, _, err := RebuildPool(ctx, poolDir, []string{"greta"})
 		require.NoError(t, err)
 	})
 
@@ -85,10 +85,10 @@ func TestRebuildPool_WarningIsMarkedAsARestatementNotAFreshEvent(t *testing.T) {
 // truncate in the run just performed.
 func TestWritePool_WarningIsNotMarkedAsARestatement(t *testing.T) {
 	pool := filepath.Join(t.TempDir(), "pool")
-	out := captureStderr(t, func() {
-		_, err := WritePool(pool, []Result{
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, err := writePool(ctx, pool, []Result{
 			{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
-		}, nil)
+		}, nil, "")
 		require.NoError(t, err)
 	})
 
@@ -105,26 +105,26 @@ func TestWritePool_WarningIsNotMarkedAsARestatement(t *testing.T) {
 func TestTruncatedZeroWarning_BothVariantsCarryTheFullRemedy(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		emit func()
+		emit func(ctx context.Context)
 	}{
-		{"fresh", func() {
+		{"fresh", func(ctx context.Context) {
 			pool := filepath.Join(t.TempDir(), "pool")
-			_, err := WritePool(pool, []Result{
+			_, err := writePool(ctx, pool, []Result{
 				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
-			}, nil)
+			}, nil, "")
 			require.NoError(t, err)
 		}},
-		{"cumulative", func() {
+		{"cumulative", func(ctx context.Context) {
 			poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 			require.NoError(t, writeResumedAgents(poolDir, []Result{
 				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
 			}, nil))
-			_, _, err := RebuildPool(context.Background(), poolDir, []string{"greta"})
+			_, _, err := RebuildPool(ctx, poolDir, []string{"greta"})
 			require.NoError(t, err)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := captureStderr(t, tc.emit)
+			out := captureWarnLog(t, tc.emit)
 
 			require.Contains(t, out, "greta", "precondition: the warning fired")
 			assert.Contains(t, out, "input budget", "the tradeoff must be named")
@@ -144,8 +144,8 @@ func TestRebuildPool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
 		{Agent: "bruce", Status: StatusOK, Content: "HIGH|x.go:1|p|f|correctness|5|e"},
 	}, nil))
 
-	out := captureStderr(t, func() {
-		_, _, err := RebuildPool(context.Background(), poolDir, []string{"bruce"})
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, _, err := RebuildPool(ctx, poolDir, []string{"bruce"})
 		require.NoError(t, err)
 	})
 	assert.NotContains(t, out, "truncated")

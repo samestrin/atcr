@@ -100,7 +100,9 @@ func TestRebuildPool_NormalizesFilesDroppedLikeStatusFor(t *testing.T) {
 // make(..., 0, n) yields []. Same measured-vs-unmeasured distinction, same artifact.
 func TestRebuildPool_EmptyRosterPublishesEmptyAgentsNotNull(t *testing.T) {
 	poolDir := filepath.Join(t.TempDir(), "pool")
-	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	// An EXISTING but empty agent dir: RebuildPool requires the dir, so this is the
+	// reachable "roster produced no statuses" shape.
+	require.NoError(t, os.MkdirAll(filepath.Join(poolDir, "raw", "agent"), 0o755))
 
 	ctx, _ := capturingCtx()
 	_, _, err := RebuildPool(ctx, poolDir, nil)
@@ -110,4 +112,15 @@ func TestRebuildPool_EmptyRosterPublishesEmptyAgentsNotNull(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), `"agents":null`,
 		`a roster that produced no statuses is an empty set, not an absent one`)
+}
+
+// captureWarnLog runs fn with a context carrying a capturing logger and returns what
+// the logger received. It replaces captureStderr for the pool warnings, which now go
+// through the redirectable seam rather than the process stderr — the whole point of
+// this change, so the tests that assert their content must read them where they land.
+func captureWarnLog(t *testing.T, fn func(ctx context.Context)) string {
+	t.Helper()
+	ctx, buf := capturingCtx()
+	fn(ctx)
+	return buf.String()
 }

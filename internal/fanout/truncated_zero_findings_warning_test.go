@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -27,8 +28,8 @@ func TestWritePool_WarnsWhenAnAgentTruncatedWithZeroFindings(t *testing.T) {
 
 	var sum Summary
 	var err error
-	out := captureStderr(t, func() {
-		sum, err = WritePool(pool, results, nil)
+	out := captureWarnLog(t, func(ctx context.Context) {
+		sum, err = writePool(ctx, pool, results, nil, "")
 	})
 	require.NoError(t, err)
 	require.Equal(t, 3, sum.Total)
@@ -53,8 +54,8 @@ func TestWritePool_TruncationWarning_NamesTheInputBudgetTradeoff(t *testing.T) {
 	}
 	pool := filepath.Join(t.TempDir(), "pool")
 
-	out := captureStderr(t, func() {
-		_, err := WritePool(pool, results, nil)
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, err := writePool(ctx, pool, results, nil, "")
 		require.NoError(t, err)
 	})
 
@@ -71,8 +72,8 @@ func TestWritePool_TruncationWarning_NamesTheInputBudgetTradeoff(t *testing.T) {
 func TestWritePool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
 	results := []Result{{Agent: "bruce", Status: StatusOK, Content: "HIGH|x.go:1|p|f|correctness|5|e"}}
 	pool := filepath.Join(t.TempDir(), "pool")
-	out := captureStderr(t, func() {
-		_, err := WritePool(pool, results, nil)
+	out := captureWarnLog(t, func(ctx context.Context) {
+		_, err := writePool(ctx, pool, results, nil, "")
 		require.NoError(t, err)
 	})
 	assert.NotContains(t, out, "truncated")

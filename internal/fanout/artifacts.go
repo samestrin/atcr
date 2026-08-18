@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -105,7 +106,7 @@ func WritePool(poolDir string, results []Result, changed payload.ChangedLines) (
 // the gate was enabled or no reason was supplied). ExecuteReview calls it directly
 // so summary.json records why grounding was disabled (a git failure vs. range-less
 // diff ingestion); every other caller uses the WritePool wrapper.
-func writePool(_ context.Context, poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
+func writePool(ctx context.Context, poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}
@@ -148,7 +149,7 @@ func writePool(_ context.Context, poolDir string, results []Result, changed payl
 	sum := summarize(results)
 	groundingEnabled := len(changed) > 0
 	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
-	warnTruncatedZeroFindings(truncatedZeroFindings, truncatedZeroAgents, false)
+	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -216,7 +217,17 @@ func tallyTruncatedZeroFindings(statuses []AgentStatus) (int, []string) {
 // later resume re-prints it. Scoping the warning to re-run agents would suppress exactly
 // what a resuming operator needs to know, so the wording marks it as a restatement
 // instead of narrowing it.
-func warnTruncatedZeroFindings(count int, agents []string, cumulative bool) {
+// It writes through the CONTEXT LOGGER, not os.Stderr. cli.Main binds that logger to
+// the caller-supplied stderr, so an embedded caller using MainWithHooks(ctx, stdout,
+// stderr, hooks) receives this line along with every other diagnostic; writing to the
+// process stderr directly escaped exactly that seam, which cli/main.go states as the
+// convention. buildPayloads' byte-budget warning already takes this route on the same
+// call graph.
+//
+// A ctx carrying no logger discards the line (log.FromContext returns a discard
+// logger). That is the correct trade: every production entry point installs one, and a
+// caller that supplied no logger has asked for no output.
+func warnTruncatedZeroFindings(ctx context.Context, count int, agents []string, cumulative bool) {
 	if count == 0 {
 		return
 	}
@@ -231,15 +242,32 @@ func warnTruncatedZeroFindings(count int, agents []string, cumulative bool) {
 	if cumulative {
 		restatement = " This restates the review's cumulative tally rather than reporting a new failure."
 	}
-	fmt.Fprintf(os.Stderr,
-		"atcr: warning: %d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing %s: %s.%s %s\n",
-		count, scope, strings.Join(agents, ", "), restatement, truncatedZeroRemedy)
+	log.FromContext(ctx).Warn(
+		fmt.Sprintf("%d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing %s.%s",
+			count, scope, restatement),
+		"agents", strings.Join(agents, ", "),
+		"remedy", truncatedZeroRemedy)
 }
 
 // truncatedZeroRemedy is the operator action shared by both variants of the warning
 // above. Kept as one constant so the fresh and resumed paths cannot state different
 // fixes for the same condition.
 const truncatedZeroRemedy = "Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all (the review then degrades to a single file, or fails outright under on_overflow fail/fallback). If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap."
+
+// normalizeFilesDropped turns a nil FilesDropped into an empty slice, so the field
+// always publishes as a MEASUREMENT ("nothing was dropped") rather than as null
+// ("unmeasured"). AgentStatus' never-silent contract (AC 06-03) rests on that
+// distinction.
+//
+// Shared by statusFor and RebuildPool rather than duplicated: they are the two writers
+// of the same artifact pair, and the normalization living in only one of them is what
+// let summary.json publish null beside status.json's []. A future third writer inherits
+// it by calling this instead of restating the guard.
+func normalizeFilesDropped(st *AgentStatus) {
+	if st.FilesDropped == nil {
+		st.FilesDropped = []string{}
+	}
+}
 
 // ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
 // carrying every agent's AgentStatus (model, token usage, latency). The
