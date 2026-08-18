@@ -31,7 +31,12 @@ func declaredMaxTokensTarget(t *testing.T, declared int) *Resolution {
 // are named nowhere in the hint.
 func TestRun_OKWarningHintNamesTheActionThatChangesTheRealRun(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
-	res := declaredMaxTokensTarget(t, 32000)
+	// 16000, not 32000: a 32000 cap against the 32768 default window closes the input
+	// budget entirely, and zeroBudgetVerdict then (correctly) replaces this hint with one
+	// that tells the operator NOT to raise the cap. That is a different state with its own
+	// coverage in zero_budget_test.go. This test is about the marker-absent remedy, so its
+	// fixture has to be an agent whose only problem IS the marker.
+	res := declaredMaxTokensTarget(t, 16000)
 	fake := newFake(func(inv llmclient.Invocation) (string, error) {
 		return "", nil // HTTP 200, marker absent — the ok_warning path
 	})

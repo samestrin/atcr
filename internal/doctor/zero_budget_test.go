@@ -87,6 +87,35 @@ func TestRun_SilentWhenTheCapLeavesInputBudget(t *testing.T) {
 	assert.Empty(t, rep.Agents[0].Hint)
 }
 
+// The case the row was actually filed for: marker absent AND no input budget. The
+// marker-absent hint's remedy is "raise this agent's max_tokens declaration", and at a
+// closed budget that advice makes the run worse — the cap comes out of the same window —
+// while the probe passes at the higher cap because the nonce prompt is trivial. So the
+// operator raises the cap, doctor goes green, and the review ships one file.
+//
+// Skipping already-warning rows would have preserved exactly that trap, so the budget
+// verdict has to REPLACE the hint here, not defer to it.
+func TestRun_ZeroBudgetHintOverridesTheRaiseTheCapAdvice(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	const declaredCap = 32000
+	res := zeroBudgetTarget(t, declaredCap)
+
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		return "", nil // HTTP 200, marker absent — the ok_warning path
+	})
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce})
+
+	require.Len(t, rep.Agents, 1)
+	got := rep.Agents[0]
+	require.Equal(t, StatusOKWarning, got.Status)
+	assert.NotContains(t, got.Hint, "raise this agent's max_tokens declaration",
+		"the marker-absent remedy must not survive here — following it deepens the zero budget")
+	assert.Contains(t, got.Hint, "Do NOT raise the cap",
+		"the hint has to contradict that advice, not merely omit it")
+	assert.Contains(t, got.Hint, zeroBudgetRemedy)
+}
+
 // A probe that never placed a call reports MaxTokens 0, which means "no cap applied" and
 // not "a cap of zero". Reading it as a cap would compute a full-window budget and, worse,
 // would overwrite a real failure status with a budget warning.

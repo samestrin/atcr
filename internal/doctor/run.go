@@ -227,21 +227,35 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 //     budget), not a cap of zero. Treating it as a cap would compute a full-window budget
 //     and find nothing wrong, which is right by accident; the guard makes it right on
 //     purpose and keeps the arithmetic honest.
-//   - only an otherwise-healthy probe is downgraded. A row that already reports
-//     auth_failed or missing_key has a louder problem, and overwriting it with a budget
-//     warning would hide the failure the operator has to fix first.
+//   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
+//     has a louder problem, and overwriting it with a budget warning would hide the
+//     failure the operator has to fix first.
+//
+// An already-warning row (marker absent) is REPHRASED rather than skipped, and that case
+// is the reason this exists at all: the marker-absent hint tells the operator to raise
+// max_tokens, and at a closed budget that advice is actively harmful — the cap is
+// reserved out of the same window, so following it makes the run worse, and the probe
+// then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
+// original hint in place there would have preserved the exact trap this row was filed
+// for.
 func zeroBudgetVerdict(model string, window, maxTokens int, status string) (string, string, bool) {
-	if status != StatusOK || maxTokens <= 0 || window <= 0 {
+	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}
 	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
 		return "", "", false
 	}
+	lead := "endpoint is healthy, but"
+	if status == StatusOKWarning {
+		// Contradict the marker-absent remedy explicitly. An operator who reads only the
+		// first clause and reaches for --max-tokens is the failure being prevented.
+		lead = "the marker was absent AND"
+	}
 	return StatusOKWarning, fmt.Sprintf(
-		"endpoint is healthy, but the resolved window (%d tokens) leaves no input budget once the %d-token output cap "+
-			"and the fixed prompt overhead are reserved — `atcr review` will ship only the smallest single file, or refuse "+
-			"the run outright under on_overflow fail/fallback. Remedy: %s",
-		window, maxTokens, zeroBudgetRemedy), true
+		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap and the fixed prompt "+
+			"overhead are reserved — `atcr review` will ship only the smallest single file, or refuse the run outright "+
+			"under on_overflow fail/fallback. Do NOT raise the cap here: it is reserved out of this same window. Remedy: %s",
+		lead, window, maxTokens, zeroBudgetRemedy), true
 }
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
