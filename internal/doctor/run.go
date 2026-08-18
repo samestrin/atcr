@@ -178,7 +178,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, pr.maxTokens, status); ok {
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, pr.maxTokens, status, pr.maxTokensSource); ok {
 			status, hint = s, h
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
@@ -222,11 +222,22 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // and the fan-out cannot disagree about where the threshold sits — the overhead constant
 // stays owned by the package that reserves it.
 //
-// Two guards, both load-bearing:
-//   - maxTokens 0 means NO CAP WAS APPLIED (the probe short-circuited before resolving a
-//     budget), not a cap of zero. Treating it as a cap would compute a full-window budget
-//     and find nothing wrong, which is right by accident; the guard makes it right on
-//     purpose and keeps the arithmetic honest.
+// Three guards, all load-bearing:
+//   - budgetSrc must not be MaxTokensSourceFlag. The verdict asserts a REVIEW-time
+//     outcome, so it may only be drawn from a cap review will actually resolve. Doctor's
+//     own --max-tokens is not one: it reaches target identity and the probe, but review
+//     resolves independently (resolveMaxTokens: review's own flag -> the agent's
+//     declaration -> defaultMaxTokens). Without this guard `atcr doctor --max-tokens
+//     30000` downgrades EVERY agent on the 32768 default window and predicts a failure
+//     that will not happen. classify() branches on the same tier for the same reason, and
+//     states the rule this obeys: no branch may assert which knob governs the real run,
+//     because that is conditional on how review is later invoked. The declaration and
+//     default tiers ARE review's own resolution order, so the verdict speaks for them.
+//   - maxTokens 0 means NO CAP WAS APPLIED (the probe short-circuited, or resolved a
+//     non-positive budget and sent the request uncapped), not a cap of zero. Without the
+//     guard, a window too small to fund even the prompt overhead reports a closed budget
+//     and the message blames a cap that was never applied — pointing the operator at the
+//     wrong knob when the window is what is at fault.
 //   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
 //     has a louder problem, and overwriting it with a budget warning would hide the
 //     failure the operator has to fix first.
@@ -238,8 +249,8 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
 // original hint in place there would have preserved the exact trap this row was filed
 // for.
-func zeroBudgetVerdict(model string, window, maxTokens int, status string) (string, string, bool) {
-	if !healthy(status) || maxTokens <= 0 || window <= 0 {
+func zeroBudgetVerdict(model string, window, maxTokens int, status, budgetSrc string) (string, string, bool) {
+	if !healthy(status) || maxTokens <= 0 || window <= 0 || budgetSrc == MaxTokensSourceFlag {
 		return "", "", false
 	}
 	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {

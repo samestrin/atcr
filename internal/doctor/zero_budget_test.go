@@ -64,6 +64,9 @@ func TestRun_WarnsWhenTheCapLeavesNoInputBudget(t *testing.T) {
 		"the hint must name the cap — it is one of the two knobs that closed the budget")
 	assert.Contains(t, got.Hint, "context_window_tokens",
 		"and the window, which is the other one")
+	assert.Contains(t, got.Hint, "endpoint is healthy, but",
+		"the lead distinguishes this arm from the marker-absent one; without it pinned, the "+
+			"two messages collapse and the branch that picks between them is untested")
 }
 
 // The warning must not fire on an ordinary agent, or it is noise that trains operators to
@@ -115,6 +118,9 @@ func TestRun_ZeroBudgetHintOverridesTheRaiseTheCapAdvice(t *testing.T) {
 	assert.Contains(t, got.Hint, "Do NOT raise the cap",
 		"the hint has to contradict that advice, not merely omit it")
 	assert.Contains(t, got.Hint, zeroBudgetRemedy)
+	assert.Contains(t, got.Hint, "the marker was absent AND",
+		"this arm must SAY the marker was absent — asserting only the clause both arms share "+
+			"leaves the branch that chooses between them unpinned")
 }
 
 // The verdict asserts a REVIEW-time outcome, so it may only be drawn from a cap review
