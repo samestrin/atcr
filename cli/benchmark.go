@@ -73,8 +73,12 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if len(m.Cases) == 1 {
 		noun = "case"
 	}
+	// SuiteVersion takes %q like the adjacent Suite already does. Both come from a
+	// third-party suite.json and Manifest.Validate only requires them non-blank, so an
+	// escape sequence survives to the terminal under %s. Quoting one side and not the
+	// other is the asymmetry that let it through.
 	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
-		"suite %q version %s: %d %s, valid\nreproducibility hash: %s\n",
+		"suite %q version %q: %d %s, valid\nreproducibility hash: %s\n",
 		m.Suite, m.SuiteVersion, len(m.Cases), noun, hash)
 	return werr
 }

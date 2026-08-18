@@ -516,7 +516,12 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 		}
 		lanes = append(lanes, o.agent)
 		sort.Strings(lanes)
-		return fmt.Errorf("case %q scored twice under realized identity %s/%s (lanes %s); "+
+		// %q on the identity and the lanes, not %s: o.model is the provider/proxy-reported
+		// realized model (reviewerModel), the same untrusted class stripTerminalControlRunes
+		// defends elsewhere, and cobra prints this RunE error straight to the terminal.
+		// %q is the verb this package already chose for comparison and identity messages —
+		// terminal-safe AND legible, unlike stripping, which sanitizes by deletion.
+		return fmt.Errorf("case %q scored twice under realized identity %q/%q (lanes %q); "+
 			"two lanes realizing the same (model, persona) must partition the suite, not both score it",
 			o.caseID, o.model, o.persona, strings.Join(lanes, ", "))
 	}
