@@ -449,6 +449,15 @@ type AgentStatus struct {
 	// a cap here with reserved_output_tokens absent means the window could not fund it,
 	// and this is the number to lower (or the window to raise). Absent on an unsized
 	// agent, like its siblings, so pre-sizing artifacts stay byte-identical.
+	//
+	// That pairing rule holds because a MERGED multi-chunk record drops this field
+	// rather than carrying a mismatched one: the merged budget is an aggregate across
+	// chunks (see mergeResultGroup), so when it promotes a zero the reservation AND
+	// this cap are both cleared. Inheriting the cap from chunk 0 there would name a
+	// fully-funded primary's number beside a zero caused by a later chunk's fallback —
+	// the one case where the rule above would point at a cap that closed nothing. Both
+	// absent on such a record means "this merged record cannot name the cap", which is
+	// the honest answer rather than a confident wrong one.
 	ResolvedMaxTokens int    `json:"resolved_max_tokens,omitempty"`
 	ChunkCount        int    `json:"chunk_count,omitempty"`
 	DegradationAction string `json:"degradation_action,omitempty"`

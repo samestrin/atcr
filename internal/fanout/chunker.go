@@ -503,6 +503,14 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// records no reservation by construction, but the invariant does not
 		// depend on that holding.
 		out.ReservedOutputTokens = 0
+		// The cap goes with it, for a sharper reason than consistency. Its contract
+		// (status.go) tells a reader that a cap sitting beside an ABSENT reservation is
+		// the number that closed the budget and the one to lower. Inherited from g[0]
+		// that names the wrong agent entirely: chunk 0 may have been served by a fully
+		// funded primary while a later chunk's fallback re-fit at zero, so the record
+		// would point the operator at a cap that closed nothing. Zeroed, omitempty says
+		// the honest thing — this merged record cannot name the cap.
+		out.ResolvedMaxTokens = 0
 	}
 	if len(dropped) > 0 {
 		paths := make([]string, 0, len(dropped))
