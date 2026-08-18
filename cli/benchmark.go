@@ -518,9 +518,10 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 //
 // vocabularyRateTolerance is how far a published rate may sit from Drifted/Findings
 // before the row is rejected as self-contradictory. It is deliberately loose enough to
-// admit a hand-written file that rounded the quotient and far tighter than any real
-// contradiction — the gate exists to catch a rate that describes no run, not to demand
-// the producer's full float precision from every submitter.
+// admit a hand-written file that rounded the quotient, and tight enough to catch a rate
+// that describes no run at the denominators this metric actually sees — see the crossover
+// below for where that stops holding. The gate exists to catch a rate that describes no
+// run, not to demand the producer's full float precision from every submitter.
 //
 // 5e-3 admits TWO-decimal rounding, which is the precision a human actually writes:
 // 1/3 as `0.33`, not `0.333333`. At the previous 1e-6 that file was a HARD error that
