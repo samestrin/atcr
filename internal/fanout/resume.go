@@ -723,6 +723,10 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 		Partial:               sum.Partial,
 		TotalFindings:         len(merged),
 		TruncatedZeroFindings: truncatedZeroFindings,
+		// From sum, which summarizeStatuses now tallies — the same source Total/
+		// Succeeded/Failed come from, so the substitution count cannot drift from the
+		// statuses published beside it in this very struct.
+		FallbackCount: sum.FallbackCount,
 	}
 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
 		return Summary{}, nil, err
@@ -745,6 +749,14 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		// write-back gate (record only when every chunk succeeded) reads this on
 		// the resume path too (TD-011).
 		s.UnreviewedChunks += st.UnreviewedChunks
+		// Same rule for the substitution tally, and for the same reason. FallbackCount
+		// is published NOT omitempty precisely so a 0 reads as a measurement, so leaving
+		// it unset here made a resumed run report "fallback_count": 0 beside its own
+		// agents[].fallback_used: true — the ambiguity the tag exists to prevent, stated
+		// twice in one file. Fail-closed like summarize(): only an explicit true counts.
+		if st.FallbackUsed {
+			s.FallbackCount++
+		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s
