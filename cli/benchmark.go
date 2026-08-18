@@ -531,6 +531,13 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 // more than 0.08, sixteen times this bound.
 const vocabularyRateTolerance = 5e-3
 
+// vocabularyRateEpsilon is the float64 slack that makes vocabularyRateTolerance an
+// INCLUSIVE bound. It is not a second tolerance: it is twelve orders of magnitude below
+// the first, far too small to admit any difference the bound itself rejects, and exists
+// only so a difference that is mathematically equal to the tolerance is not rejected for
+// being a few ULP above it after the subtraction.
+const vocabularyRateEpsilon = 1e-9
+
 func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
 	if len(rr.Vocabulary) == 0 {
 		return nil
@@ -586,7 +593,16 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 		// (1/3 as 0.333333); it is far tighter than any contradiction worth catching.
 		// Range-checked first on purpose: NaN compares false against this bound too, so
 		// the check above is what rejects it.
-		if want := float64(v.Drifted) / float64(v.Findings); math.Abs(*v.Rate-want) > vocabularyRateTolerance {
+		//
+		// Compared with an ULP slack rather than a strict `>`: a two-decimal rounding's
+		// WORST case is an error of exactly the tolerance, and in float64 that difference
+		// lands a few ULP above the bound (|0.13-0.125| computes as 0.00500000000000000444).
+		// A strict `>` therefore rejected the very rounding the bound was widened to admit,
+		// and for an eighth denominator it rejected BOTH available two-decimal values —
+		// no legal hand-authored rate existed for `findings: 8`, the doc's own example.
+		// Widening the constant again would not have fixed that; the boundary itself is
+		// what has to be inclusive.
+		if want := float64(v.Drifted) / float64(v.Findings); math.Abs(*v.Rate-want)-vocabularyRateTolerance > vocabularyRateEpsilon {
 			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] rate %v that does not match its own "+
 				"counts (%d/%d = %v)", path, i, *v.Rate, v.Drifted, v.Findings, want)
 		}
