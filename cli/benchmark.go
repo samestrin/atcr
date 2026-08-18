@@ -379,9 +379,16 @@ func warnDriftingReviewers(w io.Writer, rows []benchmark.ReviewerVocabulary) boo
 // (scorecard.scrubField) collapses unicode.IsSpace only — ESC survives it byte-for-byte,
 // so a compromised or hostile upstream could otherwise erase and rewrite the operator's
 // terminal line, including forging a reassuring line over the warning itself.
+// Category Cf is dropped alongside Cc for a different threat with the same root: Cc
+// (ESC, the C1 escapes) lets an upstream ERASE and rewrite the operator's line, while
+// Cf (the bidi overrides U+202D/U+202E, the isolates, the zero-width formatters)
+// lets it REORDER or hide what is rendered — a model name carrying U+202E displays
+// everything after it reversed, so the warning names a reviewer that does not exist.
+// Neither is caught upstream: scorecard.scrubField's only whitespace pass is
+// strings.Fields over unicode.IsSpace, which matches no rune in either category.
 func stripTerminalControlRunes(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -495,7 +502,15 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 // admit a hand-written file that rounded the quotient and far tighter than any real
 // contradiction — the gate exists to catch a rate that describes no run, not to demand
 // the producer's full float precision from every submitter.
-const vocabularyRateTolerance = 1e-6
+//
+// 5e-3 admits TWO-decimal rounding, which is the precision a human actually writes:
+// 1/3 as `0.33`, not `0.333333`. At the previous 1e-6 that file was a HARD error that
+// rejected the whole submission — at a gate docs/benchmark.md explicitly invites
+// hand-authoring for, and on an array that gates nothing and never reaches the
+// submission envelope. It stays far below any real contradiction: the nearest
+// competing quotient for a small denominator (1/3 vs 1/2, or 1/4 vs 1/3) differs by
+// more than 0.08, sixteen times this bound.
+const vocabularyRateTolerance = 5e-3
 
 func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string) error {
 	if len(rr.Vocabulary) == 0 {
@@ -509,6 +524,24 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 		if v.Drifted > v.Findings {
 			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with drifted %d exceeding findings %d — "+
 				"a numerator larger than its own denominator describes no run", path, i, v.Drifted, v.Findings)
+		}
+		// RoutingValues counts against the SAME denominator as Drifted, so it gets the
+		// same arithmetic gate. It is not decoration: warnRoutingOnlyReviewers keys on
+		// RoutingValues == Findings exactly, so a row claiming MORE routed findings than
+		// findings is both impossible and silently suppresses the all-`other` warning it
+		// should have triggered.
+		if v.RoutingValues < 0 || v.RoutingValues > v.Findings {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with routing_values %d outside 0..findings (%d)",
+				path, i, v.RoutingValues, v.Findings)
+		}
+		// Routing values (`other`, `out-of-scope`) are taxonomy MEMBERS, so a routed
+		// finding is in vocabulary by definition and cannot also be drift. Both counts at
+		// the denominator therefore contradict each other, and the two operator warnings
+		// would fire on one row with opposite diagnoses.
+		if v.Findings > 0 && v.Drifted == v.Findings && v.RoutingValues == v.Findings {
+			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with every finding counted as BOTH drifted "+
+				"and routed (%d of %d); routing values are taxonomy members, so a finding cannot both "+
+				"be one and be out of vocabulary", path, i, v.Findings, v.Findings)
 		}
 		if v.Rate == nil {
 			// nil is UNMEASURED (this reviewer raised nothing), never a defect — the
