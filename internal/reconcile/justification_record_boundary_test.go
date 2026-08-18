@@ -40,6 +40,14 @@ func TestIsFindingRecordStart_AgreesWithTheProducingParser(t *testing.T) {
 		{"bare severity, no location", `HIGH|`},
 		{"empty location field", `HIGH||p|f`},
 		{"leading-pipe markdown table row", `| High | x |`},
+		// The COMPACT leading-pipe row is the one that actually discriminates the
+		// column-0 anchor. Its padded sibling above is rejected by the space before
+		// the severity word, so it stays false even if the anchor is loosened to
+		// tolerate a leading pipe — verified by mutation. Only this shape, where the
+		// severity abuts the opening pipe, flips. It is an ordinary unpadded markdown
+		// table row, and the parser calls it prose.
+		{"compact leading-pipe table row", `|HIGH|a.go:10|p|f|c|1|e`},
+		{"compact leading-pipe, minimum fields", `|LOW|a.go:1|p`},
 		{"markdown table header", `Severity | Impact`},
 		{"unknown severity word", `info|x|y`},
 		{"severity mid-sentence", `The HIGH|LOW split is described below`},
