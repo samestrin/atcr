@@ -1673,13 +1673,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if rerr != nil {
 							return rerr
 						}
-						// The neutral Truncation above stays neutral; the SCAN-wide shed
-						// rides alongside it so mergeResultGroup records it once for this
-						// persona. Without this the baseline (--all / --dir) chunked path
-						// reported truncated=false while whole files were shed — the same
-						// AC 06-03 never-silent violation the git-range branch below fixes
-						// with the identical line.
-						primary.DiffTruncation = mp.Truncation
+						// NO DiffTruncation stamp here, deliberately — and this is the one
+						// place the baseline branch differs from its git-range twin below.
+						//
+						// mp.Truncation is the shed applied to the concatenated AUDIT TEXT,
+						// but this branch partitions mp.Entries — the PRE-budget set
+						// (PrepareReviewFromRepo :833) — through PartitionByBudget, whose
+						// contract is never-split-never-dropped. So every file the audit-text
+						// shed named is still delivered, across chunks. TD-012 at :812-818
+						// says exactly this: "every enumerated file is still reviewed across
+						// per-model chunks."
+						//
+						// Stamping it here therefore claimed a data loss that did not happen —
+						// the inverse of the never-silent violation the promotion exists to
+						// fix, and just as wrong, since AgentStatus.Truncated is read as
+						// "this reviewer saw only a fraction" (status.go:291) and mapped to
+						// benchmark.OutcomeIncomplete (cli/benchmark_run.go:437). The
+						// git-range branch below chunks mp.Text (the KEPT subset), so there
+						// the shed is real and the stamp belongs; so does the bulk
+						// fall-through, which reviews the kept subset and records it directly.
 						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
 						// Tagged HERE — at capChunks output, after tail-coalescing — so the
 						// identity matches the slot actually dispatched. runEngine reads it
