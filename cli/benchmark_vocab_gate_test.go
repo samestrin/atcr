@@ -83,6 +83,52 @@ func TestValidateReviewerVocabulary_StillRejectsARateThatDescribesNoRun(t *testi
 	assert.Contains(t, err.Error(), "does not match its own counts")
 }
 
+// The tolerance's stated purpose is to "admit TWO-decimal rounding, which is the
+// precision a human actually writes". A two-decimal rounding's worst case is an error of
+// EXACTLY 0.005, and a strict `>` against 5e-3 rejects it — in float64 the difference
+// lands a few ULP above the bound. Every eighth-denominator quotient hits that worst
+// case, so for `findings: 8` there was NO two-decimal value a hand-author could legally
+// write: 1/8 rejected both 0.12 and 0.13.
+//
+// `findings: 8` is the value in docs/benchmark.md's own canonical example, and that doc
+// explicitly sanctions supplying a run-result by hand — so the boundary is on the path
+// the gate is most likely to meet.
+func TestValidateReviewerVocabulary_AdmitsATwoDecimalRoundingAtTheExactBoundary(t *testing.T) {
+	for _, rate := range []float64{0.12, 0.13} {
+		rr := benchmark.RunResult{Vocabulary: []benchmark.ReviewerVocabulary{
+			{Model: "m", Persona: "p", Findings: 8, Drifted: 1, Rate: vocabRate(rate), RoutingValues: 0},
+		}}
+		require.NoError(t, validateReviewerVocabulary(&bytes.Buffer{}, rr, "run.json"),
+			"1/8 is 0.125; %v is it rounded to two decimals in one of the only two "+
+				"directions available, and both must be admitted", rate)
+	}
+}
+
+// The accept side pinned against the CONSTANT rather than a literal, so a future
+// re-derivation has to move this test with it: a difference of exactly one tolerance is
+// the two-decimal worst case, and is the largest error the gate promises to admit.
+func TestValidateReviewerVocabulary_AdmitsADifferenceOfExactlyOneTolerance(t *testing.T) {
+	rr := benchmark.RunResult{Vocabulary: []benchmark.ReviewerVocabulary{
+		{Model: "m", Persona: "p", Findings: 4, Drifted: 1, Rate: vocabRate(0.25 + vocabularyRateTolerance), RoutingValues: 0},
+	}}
+	require.NoError(t, validateReviewerVocabulary(&bytes.Buffer{}, rr, "run.json"),
+		"a difference of exactly vocabularyRateTolerance is inside the bound, not outside it")
+}
+
+// The reject side, and the case that pins the bound's MAGNITUDE. The pre-existing
+// rejection test used 1/3 against 0.9 — a difference of 0.567, which survives even a
+// hundredfold loosening of the constant, so nothing failed when the tolerance was
+// mutated from 5e-3 to 5e-1. This one is off by exactly one whole finding (1/4 published
+// as 2/4), a difference of 0.25: outside 5e-3 and inside 5e-1, so it dies with the bound.
+func TestValidateReviewerVocabulary_RejectsARateNamingADifferentFindingCount(t *testing.T) {
+	rr := benchmark.RunResult{Vocabulary: []benchmark.ReviewerVocabulary{
+		{Model: "m", Persona: "p", Findings: 4, Drifted: 1, Rate: vocabRate(0.50), RoutingValues: 0},
+	}}
+	err := validateReviewerVocabulary(&bytes.Buffer{}, rr, "run.json")
+	require.Error(t, err, "0.50 on 1-of-4 names two drifted findings, not one — a contradiction, not a rounding")
+	assert.Contains(t, err.Error(), "does not match its own counts")
+}
+
 // unicode.IsControl covers ESC and the C1 escapes, which is the line-erasure threat the
 // sanitizer was written for. It does NOT cover category Cf — the bidi overrides and
 // zero-width formatters — and those survive scorecard.scrubField too, whose only
