@@ -393,9 +393,14 @@ type AgentStatus struct {
 	// signal — a legitimately single-chunk, non-degraded reviewer has chunk_count 0
 	// and degradation_action "", indistinguishable from "not chunked", which is the
 	// correct observable state. DegradationAction reports the degradation MECHANISM
-	// that actually fired — NOT the configured on_overflow policy, since on_overflow
-	// dispatch (applyOverflowPolicy) is not yet wired into the live review path
-	// (chunking is driven by review_strategy). See tech-debt-captured.md TD-004.
+	// that actually fired — NOT the configured on_overflow policy. The two are still
+	// distinct even though on_overflow IS now wired into the live review path: buildSlots
+	// consults it at four pre-dispatch refusal sites (the chunked and bulk zero-budget
+	// arms, the shed-driven overflow, and a fallback that cannot hold its primary's
+	// payload), where fail/fallback abort the run rather than producing a slot. A policy
+	// that fires therefore yields no AgentStatus at all, while the value here names the
+	// mechanism that degraded a slot which WAS dispatched — chunking, for instance, is
+	// still driven by review_strategy, not by on_overflow.
 	//
 	// The value is one of FOUR, written from the degradation* constants in
 	// review.go:

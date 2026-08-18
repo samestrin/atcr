@@ -19,7 +19,9 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Self-test every configured model endpoint",
 		Long: "Resolve the effective roster (agents + serial_agents, including fallback\n" +
-			"chains), deduplicate to distinct (provider, model, base_url) targets, and\n" +
+			"chains), deduplicate to distinct (provider, model, base_url, max_tokens)\n" +
+			"targets — a differing declared max_tokens is a different invocation, so it\n" +
+			"probes separately — and\n" +
 			"invoke each one once with a trivial nonce prompt. Reports a per-agent table\n" +
 			"(or --json) and exits 0 when every agent has a working invocation path, 1\n" +
 			"when any agent has none, and 2 for usage/configuration errors.",

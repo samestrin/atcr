@@ -146,7 +146,9 @@ type Agent struct {
 	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
 	// downstream). EffectiveBudget is the input byte budget the payload was
 	// shed/sized to; ResolvedWindow the model's context window (tokens);
-	// ReservedOutputTokens the output cap held back (defaultMaxTokens); and
+	// ReservedOutputTokens the output cap held back — the RESOLVED per-agent value
+	// (resolveMaxTokens: --max-tokens -> the agent's max_tokens -> defaultMaxTokens),
+	// not a constant a consumer may substitute; and
 	// DegradationAction which action fired ("chunk"/"truncate"/"" for none).
 	EffectiveBudget      int64
 	ResolvedWindow       int

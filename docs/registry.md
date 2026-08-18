@@ -519,7 +519,7 @@ Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `
 | Status | Meaning | Typical fix |
 |--------|---------|-------------|
 | `ok` | Marker returned in visible content | — |
-| `ok_warning` | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise `--max-tokens` |
+| `ok_warning` | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise the agent's `max_tokens` declaration, or pass `atcr review --max-tokens N`. (When `max_tokens_source` is `flag`, your own `--max-tokens` capped this probe — raise it to re-probe.) |
 | `auth_failed` | 401/403 | Check the API key in the provider's `api_key_env` |
 | `not_found` | 404 | Check the `model` name and the provider `base_url` |
 | `rate_limited` | 429 | Retry later, or test a smaller `--agents` subset |
@@ -556,7 +556,7 @@ A stable top-level object with an `agents` array; one entry per effective-roster
       "source": "user",
       "context_window_tokens": 200000,
       "window_source": "table",
-      "max_tokens": 8192,
+      "max_tokens": 2048,
       "max_tokens_source": "default"
     }
   ]
@@ -571,6 +571,6 @@ A stable top-level object with an `agents` array; one entry per effective-roster
 
 `max_tokens_source` names the tier that cap resolved from — `flag` (an explicit `--max-tokens`), `declaration` (the agent's own `max_tokens`), or `default` (doctor's built-in probe budget) — and is read together with `max_tokens` for the same reason `window_source` is read with `context_window_tokens`: the number alone cannot show whether a declaration took effect, since an agent declaring exactly doctor's default is indistinguishable from one declaring nothing. It also decides the `ok_warning` remedy: when the source is `flag`, the hint points at `--max-tokens` (which capped that probe) instead of telling you to raise a declaration your own flag overrode. Omitted when no call was placed.
 
-`max_tokens` is **always present**, unlike `hint`, `detail` and `source`. A `0` means the probe never placed a call — it short-circuited on `invalid_config` or `missing_key` before resolving a budget — and never "uncapped": `--max-tokens` at or below `0` is rejected, and an agent declaration is validated into `1..1000000`. The field is not omitted when zero precisely so that state stays distinguishable from a report produced by an atcr predating the field, the same rule `truncated_zero_findings` and `fallback_count` follow in `summary.json`.
+`max_tokens` is **always present**, unlike `hint`, `detail` and `source`. A `0` means **no cap was applied**: either the probe short-circuited on `invalid_config` or `missing_key` before resolving a budget, or the resolved budget was non-positive and the request went out uncapped. The second case cannot be reached through the CLI — `--max-tokens` at or below `0` is rejected, and an agent declaration is validated into `1..1000000`. The field is not omitted when zero precisely so that state stays distinguishable from a report produced by an atcr predating the field, the same rule `truncated_zero_findings` and `fallback_count` follow in `summary.json`.
 
 Read the pair together. The number alone cannot show whether a declaration took effect: a declaration that was ignored and a static-table hit that happens to agree look identical. The tier alone cannot show whether the value is plausible for the model. Seeing `512000 (declaration)` beside a model the table pins at `128000` is how an over-declaration becomes visible here rather than mid-run as an opaque provider HTTP 400. Note the window is **per agent**, not per target: two agents sharing one `(provider, model, base_url)` probe can report different windows when only one of them declares.

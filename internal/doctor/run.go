@@ -100,11 +100,16 @@ type AgentResult struct {
 	// ALWAYS present (deliberately NOT omitempty), matching the discipline
 	// PoolSummary.TruncatedZeroFindings and FallbackCount state for themselves: a 0
 	// must be distinguishable from a report written before this field existed. 0 here
-	// means the probe never placed a call — it short-circuited on invalid_config or
-	// missing_key above the budget resolution — and never "uncapped", since
-	// cli/doctor.go rejects a --max-tokens at or below 0 and an agent declaration is
-	// validated into 1..MaxTokensCap. Under omitempty those three states collapse into
-	// one absent key.
+	// means NO CAP WAS APPLIED, which arises two ways: the probe short-circuited on
+	// invalid_config or missing_key above the budget resolution, or the resolved budget
+	// was non-positive and probe() sent the request uncapped.
+	//
+	// The second case is unreachable through the CLI — cli/doctor.go rejects a
+	// --max-tokens at or below 0, and an agent declaration is validated into
+	// 1..MaxTokensCap — but Run is exported and probe() deliberately keeps the branch
+	// rather than relying on that check one layer up, so the field's contract states it
+	// too. MaxTokensSource is empty in both cases. Under omitempty these states would
+	// collapse into one absent key.
 	MaxTokens int `json:"max_tokens"`
 	// MaxTokensSource names the tier MaxTokens resolved from — flag, declaration, or
 	// default — the cap's counterpart to WindowSource, and for the same reason: the
