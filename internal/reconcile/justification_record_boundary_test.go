@@ -162,3 +162,67 @@ func TestFenceMask_MarksOnlyContentBetweenMarkers(t *testing.T) {
 	assert.False(t, mask[3], "the closing marker is not inside the fence")
 	assert.False(t, mask[4], "prose after the fence is not inside it")
 }
+
+// isFenceMarker trims leading spaces and tabs before looking for the backtick run,
+// mirroring stream/parser.go:194 exactly. An INDENTED fence is the ordinary shape a model
+// emits when it quotes an example inside a numbered list or a nested bullet, so this is
+// the common case rather than an exotic one.
+//
+// Nothing exercised the trim: every fixture in the package opened its fence at column 0,
+// so deleting the TrimLeft left the whole suite green. Without it an indented fence is
+// invisible, the example row inside it reads as a real record, and extractSection ends the
+// narrative on the parser's own counter-example — the exact defect fence-awareness was
+// added to prevent.
+func TestFenceMask_RecognizesAnIndentedFence(t *testing.T) {
+	for _, c := range []struct{ name, indent string }{
+		{"two spaces, a nested list item", "  "},
+		{"three spaces, under an ordered marker", "   "},
+		{"a tab", "\t"},
+		{"four spaces", "    "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			lines := []string{
+				"before",
+				c.indent + "```",
+				c.indent + "HIGH|a.go:10|p|f|c|1|e",
+				c.indent + "```",
+				"after",
+			}
+
+			mask := fenceMask(lines)
+
+			assert.False(t, mask[1], "the opening marker is not itself inside the fence")
+			assert.True(t, mask[2],
+				"an indented fence still opens a fenced block — parser.go:194 trims the same "+
+					"leading space/tab run before testing for the backticks")
+			assert.False(t, mask[3], "the closing marker is not inside the fence")
+			assert.False(t, mask[4], "prose after the fence is not inside it")
+		})
+	}
+}
+
+// The consequence at the level that matters, pinned through extractSection so the trim is
+// protected by what it is FOR and not merely by how it is implemented.
+//
+// The row inside the fence sits at COLUMN 0 deliberately, and that detail is the whole
+// test: an INDENTED row fails recordRe's column-0 anchor on its own, so it survives
+// whether or not the fence was recognized, and a fixture built that way would pass with
+// the TrimLeft deleted — proving nothing. Only a column-0 row inside an indented fence
+// depends on the mask, and it is the natural shape here, since the point of the quote is
+// to show the row exactly as emitted.
+func TestExtractSection_IndentedFenceStillHidesAColumnZeroExampleRow(t *testing.T) {
+	doc := "## Notes\n" +
+		"1. The finding for `internal/auth/token.go:42` is emitted in the standard row shape:\n" +
+		"   ```\n" +
+		"HIGH|internal/auth/token.go:42|forged token accepted|verify the signature|security|20|jwt.Parse\n" +
+		"   ```\n" +
+		"   which is why the EVIDENCE column carries the call site rather than the diff."
+
+	text, _ := extractSection(strings.Split(doc, "\n"), 1)
+
+	assert.Contains(t, text, "standard row shape")
+	assert.Contains(t, text, "EVIDENCE column carries the call site",
+		"an indented fence still hides the example inside it; missing the fence makes that "+
+			"example read as a real record and truncates the reviewer's reasoning at it, with "+
+			"no marker to show it happened")
+}
