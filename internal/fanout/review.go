@@ -2473,6 +2473,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		EffectiveBudget:      sz.effectiveBudget,
 		ResolvedWindow:       sz.resolvedWindow,
 		ReservedOutputTokens: reservedOut,
+		ResolvedMaxTokens:    agentMaxTokens,
 		DegradationAction:    sz.action,
 		chunkMaxLines:        sz.maxLines,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
@@ -2990,6 +2991,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		EffectiveBudget:      fbSizingBudget,
 		ResolvedWindow:       fbWindow,
 		ReservedOutputTokens: fbReserved,
+		ResolvedMaxTokens:    fbMaxTokens,
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
 		rePacked:             refitted,

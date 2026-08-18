@@ -35,20 +35,59 @@ func TestBuildSlots_ZeroBudgetRecordStillNamesTheCap(t *testing.T) {
 		"premise: this window funds no input budget, so this is the arm under test")
 	require.NotZero(t, got.ResolvedWindow,
 		"premise: the agent WAS sized — resolved_window is the signal for that")
+	require.Zero(t, got.ReservedOutputTokens,
+		"premise: nothing was funded, so the RESERVATION is correctly 0 — that field keeps "+
+			"its meaning, and this test is not asking it to lie")
 
-	assert.Equal(t, defaultMaxTokens, got.ReservedOutputTokens,
-		"the cap is what closed this budget; suppressing it leaves the record unable to say "+
-			"whether the window or the cap was at fault")
+	assert.Equal(t, defaultMaxTokens, got.ResolvedMaxTokens,
+		"the cap is what closed this budget, so the record has to name it — otherwise nothing "+
+			"on disk says whether the window or the cap was at fault")
 }
 
-// The compatibility guarantee the old gate was protecting must survive: a bare, unsized
-// agent (doctor, direct construction) records nothing, so its status.json stays
-// byte-identical under omitempty. resolved_window is the "was this agent sized" signal, so
-// keying on it preserves that while still naming the cap on every sized record.
-func TestAgentStatus_UnsizedAgentStillRecordsNoReservation(t *testing.T) {
+// The same on the fallback lane, which has its own re-derived budget and window and so
+// reaches this arm independently.
+func TestBuildFallbackAgent_ZeroBudgetRecordStillNamesTheCap(t *testing.T) {
+	cfg := declaredWindowRoster(t, 512000)
+	kai := cfg.Registry.Agents["kai"]
+	kai.Model = "unlisted-backup-model"
+	tiny := 1
+	kai.ContextWindowTokens = &tiny
+	cfg.Registry.Agents["kai"] = kai
+
+	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+
+	var fb Agent
+	_ = captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+	require.NoError(t, err)
+	require.Zero(t, fb.EffectiveBudget, "premise: a 1-token window funds no input budget")
+	require.Zero(t, fb.ReservedOutputTokens, "premise: nothing was funded")
+
+	assert.Equal(t, defaultMaxTokens, fb.ResolvedMaxTokens,
+		"a fallback that could not fund its cap must still record what that cap was")
+}
+
+// A funded agent records both, and they agree — equal is the readable signal for
+// "the reservation was funded".
+func TestBuildOneAgent_FundedRecordAgreesOnCapAndReservation(t *testing.T) {
+	cfg := declaredWindowRoster(t, 128000)
+
+	got, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
+	require.NoError(t, err)
+	require.NotZero(t, got.EffectiveBudget, "premise: this window funds a budget")
+
+	assert.Equal(t, got.ReservedOutputTokens, got.ResolvedMaxTokens,
+		"when the budget funds the cap the two are the same number; a reader compares them "+
+			"to tell a funded reservation from an unfunded one")
+}
+
+// A bare, unsized agent (doctor, direct construction) records nothing, so its status.json
+// stays byte-identical under omitempty — the same guarantee its sibling sizing fields make.
+func TestAgentStatus_UnsizedAgentRecordsNoCap(t *testing.T) {
 	st := statusFor(Result{Agent: "greta", Status: StatusOK}, findingsResult{})
 
 	assert.Zero(t, st.ResolvedWindow, "premise: a bare Result is unsized")
-	assert.Zero(t, st.ReservedOutputTokens,
-		"an unsized agent reserves nothing; omitempty must keep the key absent as before")
+	assert.Zero(t, st.ReservedOutputTokens)
+	assert.Zero(t, st.ResolvedMaxTokens,
+		"an unsized agent resolved no cap; omitempty must keep the key absent as before")
 }

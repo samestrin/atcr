@@ -409,6 +409,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		EffectiveBudget:      r.EffectiveBudget,
 		ResolvedWindow:       r.ResolvedWindow,
 		ReservedOutputTokens: r.ReservedOutputTokens,
+		ResolvedMaxTokens:    r.ResolvedMaxTokens,
 		ChunkCount:           r.ChunkCount,
 		DegradationAction:    r.DegradationAction,
 	}

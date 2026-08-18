@@ -162,6 +162,21 @@ type Agent struct {
 	ReservedOutputTokens int
 	DegradationAction    string
 
+	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
+	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
+	// which is what the budget could actually FUND and is therefore 0 on the
+	// zero-budget arm.
+	//
+	// The two differ exactly where it matters. On a record with effective_budget 0 and
+	// degradation_action overflow, ReservedOutputTokens is 0 (correctly: nothing was
+	// funded) and the cap that consumed the window appeared nowhere — not here, not in
+	// payload.Manifest, which records max_parallel and timeout_secs but no cap, and not
+	// recoverable from config, since --max-tokens is re-resolved from live config on a
+	// resume. So an operator reading the artifact afterwards could not tell whether the
+	// WINDOW or the CAP closed the budget, which is the one question the zero-budget
+	// remedy asks them to decide.
+	ResolvedMaxTokens int
+
 	// chunkFiles is the set of repo-relative file paths THIS agent's baseline
 	// (--all/--dir) chunk carries; nil means the slot vouches for NOTHING. See
 	// uncoveredBaselineFiles for the attribution contract and the nil polarity.
@@ -399,6 +414,21 @@ type Result struct {
 	ReservedOutputTokens int
 	ChunkCount           int
 	DegradationAction    string
+
+	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
+	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
+	// which is what the budget could actually FUND and is therefore 0 on the
+	// zero-budget arm.
+	//
+	// The two differ exactly where it matters. On a record with effective_budget 0 and
+	// degradation_action overflow, ReservedOutputTokens is 0 (correctly: nothing was
+	// funded) and the cap that consumed the window appeared nowhere — not here, not in
+	// payload.Manifest, which records max_parallel and timeout_secs but no cap, and not
+	// recoverable from config, since --max-tokens is re-resolved from live config on a
+	// resume. So an operator reading the artifact afterwards could not tell whether the
+	// WINDOW or the CAP closed the budget, which is the one question the zero-budget
+	// remedy asks them to decide.
+	ResolvedMaxTokens int
 
 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
 	// model id; TokensIn/TokensOut are the provider-reported token counts,
@@ -860,6 +890,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.EffectiveBudget = s.Primary.EffectiveBudget
 	last.ResolvedWindow = s.Primary.ResolvedWindow
 	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
 	last.DurationMS = time.Since(start).Milliseconds()
@@ -939,6 +970,7 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.EffectiveBudget = a.EffectiveBudget
 	r.ResolvedWindow = a.ResolvedWindow
 	r.ReservedOutputTokens = a.ReservedOutputTokens
+	r.ResolvedMaxTokens = a.ResolvedMaxTokens
 	r.ChunkCount = a.ChunkTotal
 	r.DegradationAction = a.DegradationAction
 	// The diff-wide shed belongs here, with the other F8 fields, and NOT in each

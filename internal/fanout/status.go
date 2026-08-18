@@ -439,11 +439,19 @@ type AgentStatus struct {
 	// promoted anything, so a re-packing chunk 0 cannot under-report it. The
 	// per-chunk re-fit is visible on the merged record through the promoted
 	// truncation, degradation_action, and effective_budget instead.
-	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
-	ResolvedWindow       int    `json:"resolved_window,omitempty"`
-	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`
-	ChunkCount           int    `json:"chunk_count,omitempty"`
-	DegradationAction    string `json:"degradation_action,omitempty"`
+	EffectiveBudget      int64 `json:"effective_budget,omitempty"`
+	ResolvedWindow       int   `json:"resolved_window,omitempty"`
+	ReservedOutputTokens int   `json:"reserved_output_tokens,omitempty"`
+	// ResolvedMaxTokens is the output cap this agent RESOLVED to, present on every
+	// sized record. ReservedOutputTokens above is what the budget could actually fund,
+	// so it is 0 on the zero-budget arm — the one record where the cap is the cause of
+	// the degradation. Read the two together: equal means the reservation was funded;
+	// a cap here with reserved_output_tokens absent means the window could not fund it,
+	// and this is the number to lower (or the window to raise). Absent on an unsized
+	// agent, like its siblings, so pre-sizing artifacts stay byte-identical.
+	ResolvedMaxTokens int    `json:"resolved_max_tokens,omitempty"`
+	ChunkCount        int    `json:"chunk_count,omitempty"`
+	DegradationAction string `json:"degradation_action,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp
