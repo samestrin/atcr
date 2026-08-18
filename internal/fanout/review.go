@@ -1892,10 +1892,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
 					// The globally-capped, scope-reserved budget — the same quantity
-					// the bulk path records below. The per-chunk LINE budget (maxLines)
-					// stays derived from the UNCAPPED window: that asymmetry is
-					// deliberate and documented in payload.ChunkMaxLines, and unifying
-					// the recorded byte budget does not disturb it.
+					// the bulk path records below, and a PAYLOAD-TIER figure: it is what
+					// the whole payload was shed to, not what any one chunk was sized to.
+					//
+					// TWO things diverge from it on this path, not one:
+					//   - the per-chunk LINE budget (maxLines) stays derived from the
+					//     UNCAPPED window, deliberately, per payload.ChunkMaxLines; and
+					//   - since chunk_byte_budget, maxLines is additionally clamped by
+					//     cfg.Settings.ChunkByteBudget (see the clamp above), which is an
+					//     OPERATOR-SETTABLE ceiling that can sit far below
+					//     payload_byte_budget — that is the split the key was added to
+					//     enable.
+					//
+					// So effective_budget reports the payload tier while the chunk regime
+					// is governed by chunk_byte_budget, and the two are only equal when
+					// the latter is unset (it then inherits the former). A reader must not
+					// read this number as the size any chunk was cut to. Recording the
+					// chunk ceiling here instead would misreport the global shed, which is
+					// the quantity that decides which files were DROPPED.
 					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,

@@ -144,8 +144,15 @@ type Agent struct {
 	// invokeAgent so status.json/summary.json can report why the payload was sized
 	// as it was. A fallback carries its OWN re-derived budget/window. All zero on a
 	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
-	// downstream). EffectiveBudget is the input byte budget the payload was
-	// shed/sized to; ResolvedWindow the model's context window (tokens);
+	// downstream). EffectiveBudget is the PAYLOAD-TIER input byte budget the payload
+	// was shed to — on the chunked path it is NOT the size any individual chunk was
+	// cut to, because the per-chunk line budget is separately clamped by
+	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
+	// below payload_byte_budget (the two are equal only when chunk_byte_budget is
+	// unset and inherits it). Read it as "what the whole payload was shed to", which
+	// is the quantity that decides which files were DROPPED, and read
+	// chunk_byte_budget for the chunk regime; ResolvedWindow the model's context
+	// window (tokens);
 	// ReservedOutputTokens the output cap held back — the RESOLVED per-agent value
 	// (resolveMaxTokens: --max-tokens -> the agent's max_tokens -> defaultMaxTokens),
 	// not a constant a consumer may substitute; and
