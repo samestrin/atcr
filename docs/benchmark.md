@@ -318,45 +318,52 @@ this section does.
 `export` reads a **run-result** file rather than your local scorecard — so a
 production run can never be passed off as a suite submission. A run-result is:
 
+The numbers below are internally consistent, and deliberately depict a run that
+**breaches** the ceiling: the per-reviewer rows sum to `8` drifted of `20` findings,
+which is exactly the `0.4` scalar, and one reviewer accounts for all of it. That is
+precisely what `reviewer_vocabulary` is for — the scalar alone cannot say *which*
+model drifted. Rows are in ascending `(model, persona)` order, the order the producer
+emits and the order the documented positional join depends on.
+
 ```json
 {
   "suite": "standard-v1",
   "suite_version": "1.0.0",
   "generated_at": "2026-06-24T12:00:00Z",
-  "out_of_vocabulary_rate": 0.04,
+  "out_of_vocabulary_rate": 0.4,
   "reviewers": [ /* public reviewer rows */ ],
   "suite_case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
   "reviewer_coverage": [
-    {
-      "model": "qwen3.8-max",
-      "persona": "brad",
-      "case_ids": ["case-01-nil-deref"],
-      "outcomes": { "findings": 1 },
-      "fallback_cases": 0
-    },
     {
       "model": "llm-large",
       "persona": "brad",
       "case_ids": ["case-02-sql-injection"],
       "outcomes": { "unknown": 1 },
       "fallback_cases": 1
-    }
-  ],
-  "reviewer_vocabulary": [
+    },
     {
       "model": "qwen3.8-max",
       "persona": "brad",
-      "findings": 12,
-      "drifted": 0,
-      "rate": 0.0,
-      "routing_values": 0
-    },
+      "case_ids": ["case-01-nil-deref"],
+      "outcomes": { "findings": 1 },
+      "fallback_cases": 0
+    }
+  ],
+  "reviewer_vocabulary": [
     {
       "model": "llm-large",
       "persona": "brad",
       "findings": 8,
       "drifted": 8,
       "rate": 1.0,
+      "routing_values": 0
+    },
+    {
+      "model": "qwen3.8-max",
+      "persona": "brad",
+      "findings": 12,
+      "drifted": 0,
+      "rate": 0.0,
       "routing_values": 0
     }
   ]
