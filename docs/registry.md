@@ -512,7 +512,7 @@ atcr doctor --max-tokens 4096    # raise the completion budget for thinking mode
 atcr doctor --timeout 30         # per-call timeout in seconds
 ```
 
-Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>` (restrict to a subset of the directly-listed agents — each selected agent's fallback chain is still probed so its health verdict stays accurate). The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted.
+Flags: `--max-tokens` (default `8192`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>` (restrict to a subset of the directly-listed agents — each selected agent's fallback chain is still probed so its health verdict stays accurate). The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted. It is deliberately the **same** default the review fan-out applies, so an agent that declares no `max_tokens` is probed at the cap `atcr review` will actually use — a probe is only evidence about the invocation it reproduces. Setting `--max-tokens` explicitly also overrides every declaration, so agents sharing an endpoint then collapse to a single probe instead of one per declared cap.
 
 ### Status classes
 
@@ -556,7 +556,7 @@ A stable top-level object with an `agents` array; one entry per effective-roster
       "source": "user",
       "context_window_tokens": 200000,
       "window_source": "table",
-      "max_tokens": 2048,
+      "max_tokens": 8192,
       "max_tokens_source": "default"
     }
   ]

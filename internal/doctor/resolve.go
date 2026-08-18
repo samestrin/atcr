@@ -72,12 +72,23 @@ type Resolution struct {
 // distinct (provider, model, base_url, max_tokens) tuple becomes a single Target;
 // results map back to every agent that uses it. The fallback graph is validated acyclic
 // at registry load; a defensive seen-set guards against malformed input.
-// ResolveWithCap is Resolve with the run's --max-tokens override.
-func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, override int) (*Resolution, error) {
-	return Resolve(reg, proj) // STUB: override not yet honored
+// Resolve is ResolveWithCap with no --max-tokens override.
+func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution, error) {
+	return ResolveWithCap(reg, proj, 0)
 }
 
-func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution, error) {
+// ResolveWithCap is Resolve given the run's --max-tokens override (0 = unset).
+//
+// The override belongs HERE, at identity, and not only at probe time. Target identity
+// includes the cap because a probe is only evidence about the invocation it reproduces
+// — but the cap that will actually be sent is the RESOLVED one, and an explicit
+// --max-tokens overrides every declaration. Keying on the declaration while probing at
+// the override made agents whose calls are byte-identical (same base_url, model,
+// resolved cap, nonce) into separate targets, so doctor paid N times for one piece of
+// evidence. Against a quota-limited upstream the tail of those duplicates returns 429,
+// which classifies as rate_limited rather than healthy and exits 1 — doctor reporting
+// a broken roster it broke itself.
+func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, override int) (*Resolution, error) {
 	res := &Resolution{Paths: map[string][]string{}}
 	targetIdx := map[string]int{}
 	agentSeen := map[string]bool{}
@@ -87,9 +98,14 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		if !ok {
 			return 0, fmt.Errorf("references unknown provider %q", ac.Provider)
 		}
+		// The cap this agent will actually be probed at: the override wins, exactly as
+		// probe() resolves it. Keeping the two in step is what makes the key honest.
 		declared := 0
 		if ac.MaxTokens != nil {
 			declared = *ac.MaxTokens
+		}
+		if override > 0 {
+			declared = override
 		}
 		// NUL separates fields so no model/base_url value can forge a collision. The
 		// declared cap joins the key because it changes the invocation being probed —
