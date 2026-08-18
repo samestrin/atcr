@@ -478,6 +478,11 @@ func isFindingRecordStart(s string) bool {
 	return ok
 }
 
+// fenceMask reports, per line, whether it sits INSIDE a fenced code block.
+func fenceMask(lines []string) []bool {
+	return make([]bool, len(lines)) // STUB: no fence detection yet
+}
+
 // isItemStart reports whether s begins a Markdown list item: an unordered bullet
 // ("- ", "* ", "+ ") or an ordered marker ("N." / "N)" optionally followed by a
 // space), after optional leading spaces. Used as a block boundary so one finding's
