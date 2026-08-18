@@ -53,6 +53,26 @@ func TestValidateReviewerVocabulary_RejectsImpossibleRoutingValues(t *testing.T)
 	}
 }
 
+// The negative-count rejection labels its pair "findings/drifted" and has to render them
+// in that order. The two sibling messages added in the same block get their order right,
+// which is exactly what makes a transposed one read as authoritative: an operator
+// debugging a hand-written file is told the wrong field is negative and looks in the
+// wrong place.
+//
+// Asserted on the rendered NUMBERS, not on the message prefix — a prefix assertion cannot
+// see an argument swap, which is why this survived.
+func TestValidateReviewerVocabulary_NegativeCountMessageMatchesItsOwnLabel(t *testing.T) {
+	rr := benchmark.RunResult{Vocabulary: []benchmark.ReviewerVocabulary{
+		{Model: "m", Persona: "p", Findings: -3, Drifted: 0, RoutingValues: 0},
+	}}
+
+	err := validateReviewerVocabulary(&bytes.Buffer{}, rr, "run.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "(-3/0)",
+		"the label reads findings/drifted, so findings (-3) must render first; "+
+			"printing (0/-3) tells the operator that drifted is the negative one")
+}
+
 // The quotient tolerance's own comment promises it "admits a hand-assembled but honest
 // file that rounded the value (1/3 as 0.333333)" — true only at six decimal places. A
 // two-decimal rounding is the normal shape for a hand-authored file, which the docs

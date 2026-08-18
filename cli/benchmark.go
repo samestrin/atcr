@@ -526,9 +526,19 @@ func warnIfVocabularyCeilingExceeded(w io.Writer, rate *float64) bool {
 // 1/3 as `0.33`, not `0.333333`. At the previous 1e-6 that file was a HARD error that
 // rejected the whole submission — at a gate docs/benchmark.md explicitly invites
 // hand-authoring for, and on an array that gates nothing and never reaches the
-// submission envelope. It stays far below any real contradiction: the nearest
-// competing quotient for a small denominator (1/3 vs 1/2, or 1/4 vs 1/3) differs by
-// more than 0.08, sixteen times this bound.
+// submission envelope.
+//
+// It is far below any real contradiction AT SMALL DENOMINATORS, and only there: adjacent
+// quotients k/N and (k±1)/N differ by 1/N, so the margin shrinks as N grows. At N ≈ 8 the
+// gap is 0.125, twenty-five times this bound; at N = 100 it is 0.01, twice; and past
+// N ≈ 200 it falls INSIDE the bound, so a row off by a whole finding is admitted. That
+// crossover is not hypothetical — the V1 validation run this epic's ceiling was derived
+// from raised 201 findings.
+//
+// Accepted deliberately rather than fixed by making the tolerance relative (a fraction of
+// 1/Findings): this array gates nothing, is never carried into the submission envelope,
+// and its purpose is to reject a rate that describes NO run rather than to audit a large
+// one to the finding. State the limit rather than overstating the guarantee.
 const vocabularyRateTolerance = 5e-3
 
 // vocabularyRateEpsilon is the float64 slack that makes vocabularyRateTolerance an
@@ -544,8 +554,11 @@ func validateReviewerVocabulary(w io.Writer, rr benchmark.RunResult, path string
 	}
 	for i, v := range rr.Vocabulary {
 		if v.Findings < 0 || v.Drifted < 0 {
+			// Rendered in the order the label names them. Transposed, this told the
+			// operator the wrong field was negative — and its two siblings below get
+			// their order right, which is what made the odd one out read as authoritative.
 			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with negative findings/drifted (%d/%d)",
-				path, i, v.Drifted, v.Findings)
+				path, i, v.Findings, v.Drifted)
 		}
 		if v.Drifted > v.Findings {
 			return fmt.Errorf("run-result %s has reviewer_vocabulary[%d] with drifted %d exceeding findings %d — "+

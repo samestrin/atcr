@@ -82,7 +82,7 @@ atcr benchmark verify --suite-path ./my-suite
 ```
 
 ```
-suite "standard-v1" version 1.0.0: 2 cases, valid
+suite "standard-v1" version "1.0.0": 2 cases, valid
 reproducibility hash: 3f9a…<64 hex>
 ```
 
