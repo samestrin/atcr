@@ -72,6 +72,11 @@ type Resolution struct {
 // distinct (provider, model, base_url, max_tokens) tuple becomes a single Target;
 // results map back to every agent that uses it. The fallback graph is validated acyclic
 // at registry load; a defensive seen-set guards against malformed input.
+// ResolveWithCap is Resolve with the run's --max-tokens override.
+func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, override int) (*Resolution, error) {
+	return Resolve(reg, proj) // STUB: override not yet honored
+}
+
 func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution, error) {
 	res := &Resolution{Paths: map[string][]string{}}
 	targetIdx := map[string]int{}
