@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -409,12 +410,19 @@ func extractSection(lines []string, idx int) (text, section string) {
 			break
 		}
 	}
+	// A record inside a fenced block is an EXAMPLE, not a record — the parser skips
+	// fenced content, so treating it as a boundary would split a narrative on the
+	// very counter-example the fence exists to quote. Resolved per line index rather
+	// than per string because fence membership is a property of position, not text.
+	fenced := fenceMask(lines)
+	recordAt := func(j int) bool { return !fenced[j] && isFindingRecordStart(lines[j]) }
+
 	// Walk up until the current line begins the block (heading or list item) or
 	// the line above is a blank / heading / new list item. If the anchor landed on
 	// a continuation line, absorb the list-item marker line above it so the finding
 	// headline is included in the excerpt.
 	start := idx
-	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) && !isFindingRecordStart(lines[start]) {
+	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) && !recordAt(start) {
 		prev := lines[start-1]
 		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) {
 			break
@@ -423,7 +431,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 		// marker, it is not a headline for the line below it. Without this the walk
 		// swallowed the preceding record(s) and two findings anchored at different
 		// lines received byte-identical justification text.
-		if isFindingRecordStart(prev) {
+		if recordAt(start - 1) {
 			break
 		}
 		if isItemStart(prev) {
@@ -436,7 +444,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 	end := idx
 	for end < len(lines)-1 {
 		next := lines[end+1]
-		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) || isFindingRecordStart(next) {
+		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) || recordAt(end+1) {
 			break
 		}
 		end++
@@ -457,30 +465,70 @@ func extractSection(lines []string, idx int) (text, section string) {
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
 
+// recordRe mirrors internal/stream's severityRe (parser.go:53) — the regexp that
+// decides which review.md lines actually become findings. Restated rather than
+// imported because it is unexported there; TestIsFindingRecordStart_AgreesWithThe
+// ProducingParser pins the two together against stream.ParseModelOutput itself, so
+// the restatement cannot drift silently.
+var recordRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
+
 // isFindingRecordStart reports whether s begins a raw pipe-delimited finding record —
 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE, the shape reviewer review.md
 // narratives carry alongside prose. Such records sit on consecutive lines with no
 // blank separator, so without treating them as block boundaries extractSection folds
 // several into one excerpt and stamps one finding's reasoning onto its neighbour.
 //
-// Keyed on the SEVERITY vocabulary rather than "contains a pipe": a prose line that
-// happens to contain a pipe (a table row, a shell snippet) is not a record, and
-// treating it as one would fragment legitimate narrative. Uses the package's own
-// SeverityRank/NormalizeSeverity so the detector cannot drift from the parser's
-// accepted spellings.
+// It matches the PRODUCING PARSER EXACTLY, and the exactness is the whole contract.
+// fanout writes review.md as a byte-identical copy of the content it hands to
+// stream.ParseModelOutput, so a line the parser calls prose IS prose — and ending a
+// block on it truncates a reviewer's narrative with no marker to show it happened.
+// That loss is permanent: localdebt persists Justification into an append-only store
+// whose id excludes it, so the first reconcile is the only one that can be right.
+//
+// Hence all three of the parser's conditions, not just the first:
+//   - column-0 anchored, uppercase, pipe adjacent (recordRe, mirroring parser.go:162);
+//   - at least three fields with a non-empty location (mirroring parser.go:168, which
+//     drops degenerate severity-prefixed noise like a bare "HIGH|").
+//
+// An EARLIER revision keyed on SeverityRank/NormalizeSeverity after trimming, and
+// claimed that made drift impossible. It did the opposite: NormalizeSeverity accepts
+// any case and TrimSpace erased the anchoring, so `  high|`, `   High | ...` (an
+// ordinary markdown table row) and `HIGH |...` were all read as records. Fence state
+// is handled by the caller — see fenceMask.
 func isFindingRecordStart(s string) bool {
-	s = strings.TrimLeft(s, " \t")
-	i := strings.IndexByte(s, '|')
-	if i <= 0 {
+	if !recordRe.MatchString(s) {
 		return false
 	}
-	_, ok := SeverityRank[NormalizeSeverity(strings.TrimSpace(s[:i]))]
-	return ok
+	fields := strings.Split(s, "|")
+	return len(fields) >= 3 && strings.TrimSpace(fields[1]) != ""
 }
 
-// fenceMask reports, per line, whether it sits INSIDE a fenced code block.
+// fenceMask reports, per line, whether it sits INSIDE a fenced code block. The fence
+// markers themselves are OUTSIDE, matching the toggle-then-continue order in
+// stream/parser.go:152-158.
+//
+// It exists because a model quoting an example row while explaining the format is the
+// documented reason the parser tracks fences at all — that row carries a real severity
+// prefix at column 0 and is otherwise indistinguishable from a record. Without the
+// same state here, the boundary detector splits a narrative on the parser's own
+// counter-example.
 func fenceMask(lines []string) []bool {
-	return make([]bool, len(lines)) // STUB: no fence detection yet
+	mask := make([]bool, len(lines))
+	inFence := false
+	for i, l := range lines {
+		if isFenceMarker(l) {
+			inFence = !inFence
+			continue
+		}
+		mask[i] = inFence
+	}
+	return mask
+}
+
+// isFenceMarker reports whether a line opens or closes a fenced block: its first
+// non-space content is a run of >=3 backticks. Mirrors stream/parser.go:194.
+func isFenceMarker(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
 // isItemStart reports whether s begins a Markdown list item: an unordered bullet
