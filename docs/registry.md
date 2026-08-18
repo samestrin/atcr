@@ -519,7 +519,8 @@ Flags: `--max-tokens` (default `8192`), `--timeout` (default `60`s), `--json`, `
 | Status | Meaning | Typical fix |
 |--------|---------|-------------|
 | `ok` | Marker returned in visible content | — |
-| `ok_warning` | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise the agent's `max_tokens` declaration, or pass `atcr review --max-tokens N`. (When `max_tokens_source` is `flag`, your own `--max-tokens` capped this probe — raise it to re-probe.) |
+| `ok_warning` (marker absent) | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise the agent's `max_tokens` declaration, or pass `atcr review --max-tokens N`. (When `max_tokens_source` is `flag`, your own `--max-tokens` capped this probe — raise it to re-probe.) |
+| `ok_warning` (no input budget) | The endpoint is healthy **and the marker came back**, but the resolved window leaves no input budget once the resolved output cap and the fixed prompt overhead are reserved — so `atcr review` would ship only the smallest single file, or refuse the run outright under `on_overflow` `fail`/`fallback`. Read the row's `context_window_tokens` and `max_tokens` together. | **Do not raise the cap** — it is reserved out of this same window, so raising it deepens the problem while the probe still passes (the marker prompt is trivial at any cap). Instead: lower its `max_tokens`, or raise (or drop) its `context_window_tokens` declaration. Not reported when `max_tokens_source` is `flag`: doctor's own `--max-tokens` never reaches `atcr review`, so a budget it closes says nothing about the run. |
 | `auth_failed` | 401/403 | Check the API key in the provider's `api_key_env` |
 | `not_found` | 404 | Check the `model` name and the provider `base_url` |
 | `rate_limited` | 429 | Retry later, or test a smaller `--agents` subset |

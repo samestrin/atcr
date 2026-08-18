@@ -469,6 +469,13 @@ Behavior:
   case count, a repeated case id within a row, or a case id absent from the suite.
   None of these are producible by `atcr benchmark run`, so each means the file was
   assembled by hand.
+- A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
+  for publication** → error. The scrub is what the submission actually carries, so an
+  identity that survives the file but not the scrub would publish as `""`. It removes
+  path-, `~`-, email- and credential-shaped tokens and repeats until nothing more
+  matches, so `anthropic/claude-3` survives while `bedrock@us-east-1/claude`,
+  `proxy@lan/openai/gpt-4o` and `sk-abc/claude` do not. Also hand-assembly only:
+  `atcr benchmark run` scrubs at the fold, and re-scrubbing is a no-op.
 - `--in` is required. `--output` writes the JSON to a file (`0600`, parents
   created) instead of stdout.
 
