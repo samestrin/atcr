@@ -1541,7 +1541,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// exactly the failure this epic was chartered to prevent. Nothing enforced
 		// that the copies agreed; hoisting makes disagreement impossible.
 		agentWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
-		if len(agentScopeConstraint) > 0 && agentBudget > 0 {
+		// NOT gated on agentBudget > 0. The zero-budget arm is exactly where skipping the
+		// cap was worst: that arm ships only the smallest file and warns it is doing so,
+		// while the uncapped SCOPE CONSTRAINT block rode along at up to
+		// min(max_sprint_plan_bytes, payload_byte_budget/8) — 64 KiB at shipped defaults —
+		// so both the warning and the truncation record described a payload that was not
+		// what was sent. At agentBudget 0 the cap resolves to 0 and the plan body is
+		// truncated away, leaving the block's frame: the agent then really does receive
+		// only the smallest file, which is what the warning has always claimed.
+		//
+		// This moved from near-unreachable to ordinary in this epic: reaching the arm used
+		// to need a context_window_tokens declaration at or below 12288, but a max_tokens
+		// declaration alone now closes the budget on the default 32768 window.
+		if len(agentScopeConstraint) > 0 {
 			planCap := agentBudget / 8
 			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 				planCap = mspb
