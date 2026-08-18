@@ -1075,7 +1075,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	sum, err := writePool(poolDir, results, p.Changed, p.GroundingDisabledReason)
+	sum, err := writePool(ctx, poolDir, results, p.Changed, p.GroundingDisabledReason)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
 		// marker so the status reader reports `failed` rather than leaving the

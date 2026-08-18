@@ -281,7 +281,7 @@ func TestRebuildPool_RejectsDuplicateBasename(t *testing.T) {
 	// Both "foo/alpha" and "bar/alpha" resolve to dirname "alpha".
 	// Without the guard, the same on-disk dir is counted twice.
 	roster := []string{"foo/alpha", "bar/alpha"}
-	sum, _, err := RebuildPool(poolDir, roster)
+	sum, _, err := RebuildPool(context.Background(), poolDir, roster)
 	if err != nil {
 		// If the guard returns an error on collision, that is also acceptable.
 		return
@@ -306,7 +306,7 @@ func TestRebuildPool_RejectsOversizeFindings(t *testing.T) {
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
 	}, nil))
 
-	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
 	require.Error(t, err, "an oversize findings.txt must fail the rebuild, not be read unbounded")
 }
 
@@ -320,7 +320,7 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 		{Agent: "charlie", Status: StatusFailed, Err: errors.New("boom")},
 	}, nil))
 
-	sum, statuses, err := RebuildPool(poolDir, []string{"alpha", "bravo", "charlie"})
+	sum, statuses, err := RebuildPool(context.Background(), poolDir, []string{"alpha", "bravo", "charlie"})
 	require.NoError(t, err)
 	require.Equal(t, 3, sum.Total)
 	require.Equal(t, 2, sum.Succeeded)
@@ -356,7 +356,7 @@ func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
 		filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsFile),
 		[]byte("garbage without a version header\n"), 0o644))
 
-	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
 	require.Error(t, err,
 		"a completed agent's unparseable findings.txt must fail the rebuild, not be silently dropped")
 }
@@ -375,7 +375,7 @@ func TestRebuildPool_ToleratesMissingFindingsForCompletedAgent(t *testing.T) {
 	require.NoError(t, WriteStatus(filepath.Join(ad, statusFile),
 		&AgentStatus{Agent: "alpha", Status: StatusOK}))
 
-	sum, statuses, err := RebuildPool(poolDir, []string{"alpha"})
+	sum, statuses, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
 	require.NoError(t, err, "a completed agent missing findings.txt must be tolerated, not hard-failed")
 	require.Equal(t, 1, sum.Total)
 	require.Equal(t, 1, sum.Succeeded)
@@ -401,7 +401,7 @@ func TestRebuildPool_FindingsMergedInRosterOrder(t *testing.T) {
 		{Agent: "mira", Status: StatusOK, Content: "CRITICAL|m.go:1|m finding|fix m|security|15|m()"},
 	}, nil))
 
-	_, _, err := RebuildPool(poolDir, roster)
+	_, _, err := RebuildPool(context.Background(), poolDir, roster)
 	require.NoError(t, err)
 
 	fdata, err := os.ReadFile(filepath.Join(poolDir, findingsFile))

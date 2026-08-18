@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -97,14 +98,14 @@ type PoolSummary struct {
 // discovery treats the raw files as the inputs and never double-counts the
 // merged aggregate.
 func WritePool(poolDir string, results []Result, changed payload.ChangedLines) (Summary, error) {
-	return writePool(poolDir, results, changed, "")
+	return writePool(context.Background(), poolDir, results, changed, "")
 }
 
 // writePool is WritePool with the grounding audit reason threaded in (empty when
 // the gate was enabled or no reason was supplied). ExecuteReview calls it directly
 // so summary.json records why grounding was disabled (a git failure vs. range-less
 // diff ingestion); every other caller uses the WritePool wrapper.
-func writePool(poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
+func writePool(_ context.Context, poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}

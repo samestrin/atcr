@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func TestRebuildPool_RecoversTruncatedZeroFindings(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, _, err = RebuildPool(poolDir, []string{"greta", "kai", "bruce"})
+		_, _, err = RebuildPool(context.Background(), poolDir, []string{"greta", "kai", "bruce"})
 	})
 	require.NoError(t, err)
 
@@ -68,7 +69,7 @@ func TestRebuildPool_WarningIsMarkedAsARestatementNotAFreshEvent(t *testing.T) {
 	}, nil))
 
 	out := captureStderr(t, func() {
-		_, _, err := RebuildPool(poolDir, []string{"greta"})
+		_, _, err := RebuildPool(context.Background(), poolDir, []string{"greta"})
 		require.NoError(t, err)
 	})
 
@@ -118,7 +119,7 @@ func TestTruncatedZeroWarning_BothVariantsCarryTheFullRemedy(t *testing.T) {
 			require.NoError(t, writeResumedAgents(poolDir, []Result{
 				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
 			}, nil))
-			_, _, err := RebuildPool(poolDir, []string{"greta"})
+			_, _, err := RebuildPool(context.Background(), poolDir, []string{"greta"})
 			require.NoError(t, err)
 		}},
 	} {
@@ -144,7 +145,7 @@ func TestRebuildPool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
 	}, nil))
 
 	out := captureStderr(t, func() {
-		_, _, err := RebuildPool(poolDir, []string{"bruce"})
+		_, _, err := RebuildPool(context.Background(), poolDir, []string{"bruce"})
 		require.NoError(t, err)
 	})
 	assert.NotContains(t, out, "truncated")

@@ -509,7 +509,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(poolDir, p.manifest.Roster)
+	sum, statuses, err := RebuildPool(ctx, poolDir, p.manifest.Roster)
 	if err != nil {
 		return nil, err
 	}
@@ -628,7 +628,7 @@ func readFileLimited(path string, limit int64) ([]byte, error) {
 // review's findings.txt would differ from an equivalent fresh run. An agent in
 // the roster without an on-disk directory is skipped (it never completed); an
 // agent directory not in the roster is also skipped (stale/orphan entry).
-func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error) {
+func RebuildPool(_ context.Context, poolDir string, roster []string) (Summary, []AgentStatus, error) {
 	rawDir := filepath.Join(poolDir, poolRawAgentDir)
 
 	// Build an index of on-disk agent directories for O(1) lookup.
