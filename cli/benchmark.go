@@ -15,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
 )
 
@@ -209,9 +210,23 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	}
 	// An unidentifiable reviewer row on a public leaderboard is worse than a
 	// rejected file: same TrimSpace rule as the suite identity above.
+	//
+	// Checked on the SCRUBBED identity, because that is the value BuildSubmission
+	// actually serializes (benchmark.go's defense-in-depth re-scrub). Checking the raw
+	// one let a non-empty id that scrubs away pass the gate and publish as "": scrubField
+	// iterates to a fixed point, so one pass can EXPOSE a match for an earlier rule —
+	// "bedrock@us-east-1/claude" loses its email-shaped prefix to leave "/claude", which
+	// the next pass reads as an absolute path. Nothing downstream catches it either, since
+	// checkCoverage joins on the scrubbed identity and ("", persona) matches on both sides.
+	//
+	// The message names the PRE-scrub string deliberately: the scrubbed value is empty by
+	// construction here, so reporting it would tell the operator only that something in
+	// their file is empty, and never which row.
 	for i, rev := range rr.Reviewers {
-		if strings.TrimSpace(rev.Model) == "" || strings.TrimSpace(rev.Persona) == "" {
-			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona", in, i)
+		pub := scorecard.ScrubPublicRecord(rev)
+		if strings.TrimSpace(pub.Model) == "" || strings.TrimSpace(pub.Persona) == "" {
+			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona once scrubbed for publication (%q/%q); "+
+				"an identity that scrubs away publishes as \"\" on the leaderboard", in, i, rev.Model, rev.Persona)
 		}
 	}
 	// A run-result may be hand-supplied, so the diagnostic is untrusted input here.
