@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -30,8 +31,20 @@ func (f fakeCompleter) Complete(_ context.Context, _ llmclient.Invocation) (stri
 // (AC 04-01 Scenario 3: InMemoryTransport enables in-process testing).
 func connectTest(t *testing.T, root string, completer fakeCompleter) *mcpsdk.ClientSession {
 	t.Helper()
-	srv, err := NewServer(root, completer, nil)
+	srv, eng, err := buildServer(root, completer, nil)
 	require.NoError(t, err)
+
+	// Drain the fan-out before the test returns. atcr_review dispatches in the
+	// BACKGROUND and pollStatus only waits for the run-completed signal, so the last
+	// artifact writes can still be in flight when the test body ends — and t.TempDir's
+	// cleanup then races them, failing with "directory not empty" on the review dir
+	// (observed 2026-08-17 under full-suite load, not reproducible in isolation).
+	//
+	// Registered HERE rather than per-test so every connectTest caller inherits it;
+	// the sibling that calls buildServer directly already does this by hand. Cleanups
+	// run LIFO and the caller's t.TempDir was registered earlier, so this drain runs
+	// BEFORE the directory is removed, which is the whole point.
+	t.Cleanup(func() { eng.drain(2 * time.Second) })
 
 	clientT, serverT := mcpsdk.NewInMemoryTransports()
 	ctx := context.Background()

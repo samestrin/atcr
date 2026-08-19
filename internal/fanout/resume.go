@@ -509,7 +509,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(poolDir, p.manifest.Roster)
+	sum, statuses, err := RebuildPool(ctx, poolDir, p.manifest.Roster)
 	if err != nil {
 		return nil, err
 	}
@@ -628,7 +628,7 @@ func readFileLimited(path string, limit int64) ([]byte, error) {
 // review's findings.txt would differ from an equivalent fresh run. An agent in
 // the roster without an on-disk directory is skipped (it never completed); an
 // agent directory not in the roster is also skipped (stale/orphan entry).
-func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error) {
+func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary, []AgentStatus, error) {
 	rawDir := filepath.Join(poolDir, poolRawAgentDir)
 
 	// Build an index of on-disk agent directories for O(1) lookup.
@@ -643,7 +643,11 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		}
 	}
 
-	var statuses []AgentStatus
+	// make, not a nil slice: a roster that produced no statuses is an EMPTY set, not
+	// an absent one, and the nil form marshals as "agents": null where writePool's
+	// make(..., 0, n) yields []. Same measured-vs-unmeasured distinction the
+	// FilesDropped normalization below preserves, in the same artifact.
+	statuses := make([]AgentStatus, 0, len(roster))
 	var merged []stream.Finding
 	seen := make(map[string]bool, len(roster))
 	// Iterate in roster order so the merged findings.txt rows match a fresh
@@ -669,6 +673,10 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		if json.Unmarshal(sdata, &st) != nil {
 			continue
 		}
+		// These statuses are round-tripped off disk and never pass through statusFor,
+		// so they need its normalization applied here or the rebuilt summary.json
+		// republishes an absent files_dropped as null while status.json says [].
+		normalizeFilesDropped(&st)
 		statuses = append(statuses, st)
 		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
 		if ferr != nil {
@@ -701,13 +709,24 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		return Summary{}, nil, err
 	}
 	sum := summarizeStatuses(statuses)
+	// Same derivation and same warning writePool performs, through the same helpers:
+	// the rebuild reconstructs the pool from these very statuses, so a resumed review
+	// that dropped the tally reported a clean summary for a run in which reviewers
+	// contributed nothing — and dropped the console signal the tally exists to reach.
+	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
+	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, true)
 	ps := PoolSummary{
-		Agents:        statuses,
-		Total:         sum.Total,
-		Succeeded:     sum.Succeeded,
-		Failed:        sum.Failed,
-		Partial:       sum.Partial,
-		TotalFindings: len(merged),
+		Agents:                statuses,
+		Total:                 sum.Total,
+		Succeeded:             sum.Succeeded,
+		Failed:                sum.Failed,
+		Partial:               sum.Partial,
+		TotalFindings:         len(merged),
+		TruncatedZeroFindings: truncatedZeroFindings,
+		// From sum, which summarizeStatuses now tallies — the same source Total/
+		// Succeeded/Failed come from, so the substitution count cannot drift from the
+		// statuses published beside it in this very struct.
+		FallbackCount: sum.FallbackCount,
 	}
 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
 		return Summary{}, nil, err
@@ -730,6 +749,14 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		// write-back gate (record only when every chunk succeeded) reads this on
 		// the resume path too (TD-011).
 		s.UnreviewedChunks += st.UnreviewedChunks
+		// Same rule for the substitution tally, and for the same reason. FallbackCount
+		// is published NOT omitempty precisely so a 0 reads as a measurement, so leaving
+		// it unset here made a resumed run report "fallback_count": 0 beside its own
+		// agents[].fallback_used: true — the ambiguity the tag exists to prevent, stated
+		// twice in one file. Fail-closed like summarize(): only an explicit true counts.
+		if st.FallbackUsed {
+			s.FallbackCount++
+		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
 	return s

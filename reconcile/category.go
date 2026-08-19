@@ -25,7 +25,7 @@ package reconcile
 // normalize anything at ingestion: no consumer of Finding.Category reads this
 // list yet, and Category never enters FindingID, so adding it changes no
 // existing finding identity. Canonicalization at the parse boundary is epic
-// 35.16.6.
+// 51.0 (category canonicalization at the parse boundary).
 const (
 	// Defect classes — what is wrong with the code's behaviour.
 	CategoryCorrectness   = "correctness"    // the code produces a wrong result: off-by-one, inverted condition, unreachable branch
@@ -138,8 +138,8 @@ var categories = []string{
 // states why the two are the same thing, not merely similar.
 //
 // This is derivation provenance, not a runtime normalizer: nothing in this epic
-// rewrites an emitted category. Epic 35.16.6 owns parse-boundary
-// canonicalization and is the intended consumer.
+// rewrites an emitted category. Epic 51.0 (category canonicalization at the
+// parse boundary) owns that normalizer and is the intended consumer.
 var categoryMerges = map[string]string{
 	// Trivially identical variants — the only collapse the epic pre-approved.
 	"resource":  CategoryResourceLeak, // singular/plural of the same emitted word; both meant an unreleased resource
@@ -191,8 +191,8 @@ var categoryMerges = map[string]string{
 
 // CategoryMerges returns the recorded folds from an emitted word to the
 // vocabulary member it means: derivation provenance for the closed vocabulary,
-// and the canonicalization table epic 35.16.6's parse-boundary normalizer is
-// meant to apply.
+// and the canonicalization table epic 51.0's parse-boundary normalizer (category
+// canonicalization at the parse boundary) is meant to apply.
 //
 // It is exported because that consumer lives in module
 // github.com/samestrin/atcr, which cannot reach an unexported identifier in this

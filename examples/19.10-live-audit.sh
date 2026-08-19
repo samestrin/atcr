@@ -64,7 +64,18 @@ fi
 # (do not gate-fail) when none of those five are reachable, but allow the audit
 # to proceed if any one of them is live — a partial failure is the signal this
 # gate is designed to inspect.
-reachable_names="$(printf '%s' "$doctor_json" | jq -r '.agents[] | select(.status == "ok" or .status == "ok_warning") | .name' 2>/dev/null || true)"
+# `.agent`, not `.name`: AgentResult has no `name` field and never has (see
+# internal/doctor/run.go). The wrong selector yielded a list of "null", so the loop
+# below never matched and this gate skipped unconditionally — reporting an unreachable
+# roster regardless of its actual health.
+reachable_names="$(printf '%s' "$doctor_json" | jq -r '.agents[] | select(.status == "ok" or .status == "ok_warning") | .agent' 2>/dev/null || true)"
+# A selector that stops matching must fail loudly rather than decay into a permanent
+# skip. Keyed on the literal "null" jq emits for a missing key — an agent name can never
+# be that — and NOT on emptiness: doctor exit 1 (every agent unhealthy) legitimately
+# yields no reachable names, and that case must still reach the SKIP below.
+if printf '%s\n' "$reachable_names" | grep -qx "null"; then
+  die "could not read agent names from 'atcr doctor --json' — the output shape changed (expected .agents[].agent). See examples/19.10-live-audit.sh"
+fi
 reachable_failed=0
 for agent in "${PREV_FAILED_AGENTS[@]}"; do
   if printf '%s\n' "$reachable_names" | grep -qx "$agent"; then

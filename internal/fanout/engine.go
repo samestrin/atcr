@@ -111,6 +111,13 @@ type Agent struct {
 	PayloadMode string
 	Truncation  payload.Truncation
 
+	// DiffTruncation is the diff-wide byte-budget shed this agent's payload was
+	// built under, stamped only on chunk-slots (the bulk path records the real
+	// value in Truncation above). invokeAgent copies it to Result, where
+	// mergeResultGroup promotes it onto the merged persona record. See
+	// Result.DiffTruncation for why it cannot live in Truncation per chunk.
+	DiffTruncation payload.Truncation
+
 	// CodeContext is the per-file breakdown of the payload THIS agent was sent,
 	// recovered by renderAgent from the same payload text it renders into the
 	// prompt (Epic 35.0). The chunked strategy gives each chunk-slot a different
@@ -137,14 +144,38 @@ type Agent struct {
 	// invokeAgent so status.json/summary.json can report why the payload was sized
 	// as it was. A fallback carries its OWN re-derived budget/window. All zero on a
 	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
-	// downstream). EffectiveBudget is the input byte budget the payload was
-	// shed/sized to; ResolvedWindow the model's context window (tokens);
-	// ReservedOutputTokens the output cap held back (defaultMaxTokens); and
+	// downstream). EffectiveBudget is the PAYLOAD-TIER input byte budget the payload
+	// was shed to — on the chunked path it is NOT the size any individual chunk was
+	// cut to, because the per-chunk line budget is separately clamped by
+	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
+	// below payload_byte_budget (the two are equal only when chunk_byte_budget is
+	// unset and inherits it). Read it as "what the whole payload was shed to", which
+	// is the quantity that decides which files were DROPPED, and read
+	// chunk_byte_budget for the chunk regime; ResolvedWindow the model's context
+	// window (tokens);
+	// ReservedOutputTokens the output cap held back — the RESOLVED per-agent value
+	// (resolveMaxTokens: --max-tokens -> the agent's max_tokens -> defaultMaxTokens),
+	// not a constant a consumer may substitute; and
 	// DegradationAction which action fired ("chunk"/"truncate"/"" for none).
 	EffectiveBudget      int64
 	ResolvedWindow       int
 	ReservedOutputTokens int
 	DegradationAction    string
+
+	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
+	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
+	// which is what the budget could actually FUND and is therefore 0 on the
+	// zero-budget arm.
+	//
+	// The two differ exactly where it matters. On a record with effective_budget 0 and
+	// degradation_action overflow, ReservedOutputTokens is 0 (correctly: nothing was
+	// funded) and the cap that consumed the window appeared nowhere — not here, not in
+	// payload.Manifest, which records max_parallel and timeout_secs but no cap, and not
+	// recoverable from config, since --max-tokens is re-resolved from live config on a
+	// resume. So an operator reading the artifact afterwards could not tell whether the
+	// WINDOW or the CAP closed the budget, which is the one question the zero-budget
+	// remedy asks them to decide.
+	ResolvedMaxTokens int
 
 	// chunkFiles is the set of repo-relative file paths THIS agent's baseline
 	// (--all/--dir) chunk carries; nil means the slot vouches for NOTHING. See
@@ -268,6 +299,26 @@ type Result struct {
 	PayloadMode   string
 	Truncation    payload.Truncation
 
+	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
+	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
+	// the per-slot Truncation above.
+	//
+	// It exists because the chunked strategy renders every chunk-slot with a neutral
+	// Truncation on purpose: the shed is a property of the whole payload, so a
+	// per-chunk copy would have each chunk claim dropped files that never appeared in
+	// it. Left only there, the fact reached no artifact at all — every chunked agent's
+	// status.json reported truncated=false while 40 of 73 files had been shed
+	// (observed 2026-08-15), contradicting AgentStatus' "never silent (AC 06-03)".
+	//
+	// Promoted into the merged persona's Truncation at BOTH of mergeChunkResults'
+	// exits — mergeResultGroup for a multi-chunk persona, and promoteDiffTruncation
+	// directly on the single-result fast path (chunker.go) — so the diff-wide fact is
+	// recorded exactly ONCE per agent rather than once per chunk, and whether a
+	// persona's chunk set happened to collapse to one result cannot change what its
+	// status.json reports. The bulk path never sets it — it already carries the real
+	// value in Truncation.
+	DiffTruncation payload.Truncation
+
 	// servedChunkFiles is the baseline coverage tag of the chain member that
 	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It
 	// equals the primary's tag in every case except a re-packed fallback, which
@@ -363,6 +414,21 @@ type Result struct {
 	ReservedOutputTokens int
 	ChunkCount           int
 	DegradationAction    string
+
+	// ResolvedMaxTokens is the output cap resolved for this agent, recorded
+	// UNCONDITIONALLY whenever the agent was sized — unlike ReservedOutputTokens,
+	// which is what the budget could actually FUND and is therefore 0 on the
+	// zero-budget arm.
+	//
+	// The two differ exactly where it matters. On a record with effective_budget 0 and
+	// degradation_action overflow, ReservedOutputTokens is 0 (correctly: nothing was
+	// funded) and the cap that consumed the window appeared nowhere — not here, not in
+	// payload.Manifest, which records max_parallel and timeout_secs but no cap, and not
+	// recoverable from config, since --max-tokens is re-resolved from live config on a
+	// resume. So an operator reading the artifact afterwards could not tell whether the
+	// WINDOW or the CAP closed the budget, which is the one question the zero-budget
+	// remedy asks them to decide.
+	ResolvedMaxTokens int
 
 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
 	// model id; TokensIn/TokensOut are the provider-reported token counts,
@@ -548,6 +614,10 @@ func resultFromPanic(s Slot, start time.Time, r any) Result {
 		DurationMS:  time.Since(start).Milliseconds(),
 		PayloadMode: s.Primary.PayloadMode,
 		Truncation:  s.Primary.Truncation,
+		// Carried on every Result-construction path, not just the happy one: a
+		// persona whose chunks panicked or failed is exactly as truncated as one
+		// whose chunks returned, and mergeResultGroup must be able to say so.
+		DiffTruncation: s.Primary.DiffTruncation,
 	}
 }
 
@@ -653,14 +723,15 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 					// started, not 0 — real time passed before the cancellation.
 					if err := ctx.Err(); err != nil {
 						results[i] = Result{
-							Agent:       s.Primary.Name,
-							Status:      classifyStatus(err),
-							Err:         err,
-							DurationMS:  time.Since(start).Milliseconds(),
-							PayloadMode: s.Primary.PayloadMode,
-							Truncation:  s.Primary.Truncation,
-							MinSeverity: s.Primary.MinSeverity,
-							MaxFindings: s.Primary.MaxFindings,
+							Agent:          s.Primary.Name,
+							Status:         classifyStatus(err),
+							Err:            err,
+							DurationMS:     time.Since(start).Milliseconds(),
+							PayloadMode:    s.Primary.PayloadMode,
+							Truncation:     s.Primary.Truncation,
+							DiffTruncation: s.Primary.DiffTruncation,
+							MinSeverity:    s.Primary.MinSeverity,
+							MaxFindings:    s.Primary.MaxFindings,
 						}
 						return
 					}
@@ -813,11 +884,13 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
+	last.DiffTruncation = s.Primary.DiffTruncation
 	last.MinSeverity = s.Primary.MinSeverity
 	last.MaxFindings = s.Primary.MaxFindings
 	last.EffectiveBudget = s.Primary.EffectiveBudget
 	last.ResolvedWindow = s.Primary.ResolvedWindow
 	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
+	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
 	last.DurationMS = time.Since(start).Milliseconds()
@@ -897,8 +970,17 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.EffectiveBudget = a.EffectiveBudget
 	r.ResolvedWindow = a.ResolvedWindow
 	r.ReservedOutputTokens = a.ReservedOutputTokens
+	r.ResolvedMaxTokens = a.ResolvedMaxTokens
 	r.ChunkCount = a.ChunkTotal
 	r.DegradationAction = a.DegradationAction
+	// The diff-wide shed belongs here, with the other F8 fields, and NOT in each
+	// success-path Result constructor. invokeSlot stamps it at its tail (:844), but
+	// that runs only after the chain FAILS — a StatusOK slot returns earlier, so on a
+	// successful chunked run promoteDiffTruncation copied a zero value over a zero
+	// value and status.json reported truncated=false while whole files were dropped.
+	// Stamping at this seam makes all three dispatch paths (single-shot, cache hit,
+	// tool loop) inherit it uniformly.
+	r.DiffTruncation = a.DiffTruncation
 	recordAgentOutcome(r)
 	return r
 }

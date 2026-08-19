@@ -99,6 +99,16 @@ type Settings struct {
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
 	PayloadByteBudget int64
+	// ChunkByteBudget is the resolved per-chunk byte budget fed to
+	// payload.ClampLinesToByteBudget. 0 is the unlimited escape hatch, matching
+	// PayloadByteBudget. When no tier sets chunk_byte_budget this equals the
+	// resolved PayloadByteBudget.
+	ChunkByteBudget int64
+	// MaxTokens is the run-wide output-token cap override (--max-tokens). 0 means
+	// UNSET: each agent then resolves its own max_tokens declaration, falling back
+	// to the fan-out's embedded default. A zero cap has no meaningful reading (every
+	// call would return nothing), which is what makes 0 safe as the sentinel.
+	MaxTokens int
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
@@ -124,6 +134,8 @@ type CLIOverrides struct {
 	TimeoutSecs       *int
 	PayloadByteBudget *int64
 	MaxParallel       *int
+	// MaxTokens is the --max-tokens override; nil = flag not set.
+	MaxTokens *int
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -143,8 +155,19 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		InitialBackoffMs:   DefaultInitialBackoffMs,
 	}
 
+	// chunk_byte_budget is resolved with an explicit "was it set" flag rather than a
+	// sentinel value, because 0 is a MEANINGFUL setting here (unlimited chunk sizing,
+	// matching every sibling budget). Without the flag an explicit 0 would be
+	// indistinguishable from unset and would silently inherit the payload cap —
+	// turning the one escape hatch an operator reaches for into a no-op.
+	chunkBudgetSet := false
+
 	if reg != nil {
 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+		if reg.ChunkByteBudget != nil {
+			s.ChunkByteBudget = *reg.ChunkByteBudget
+			chunkBudgetSet = true
+		}
 		// CacheMaxBytes lives at the registry (global) and project tiers only,
 		// like the retry tunables — overlaid here, not through applyTier's fixed
 		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
@@ -179,6 +202,10 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+		if proj.ChunkByteBudget != nil {
+			s.ChunkByteBudget = *proj.ChunkByteBudget
+			chunkBudgetSet = true
+		}
 		if proj.CacheMaxBytes != nil {
 			s.CacheMaxBytes = *proj.CacheMaxBytes
 		}
@@ -201,11 +228,26 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		s.PayloadByteBudget = *cli.PayloadByteBudget
 	}
+	// AFTER the CLI tier, so inheritance tracks the FINAL payload budget: resolving
+	// it earlier would let `--byte-budget` change the payload cap while chunk sizing
+	// silently kept the file-tier value.
+	if !chunkBudgetSet {
+		s.ChunkByteBudget = s.PayloadByteBudget
+	}
 	if cli.TimeoutSecs != nil {
 		if *cli.TimeoutSecs <= 0 || *cli.TimeoutSecs > MaxTimeoutSecs {
 			return Settings{}, fmt.Errorf("timeout must be within 1..%d seconds", MaxTimeoutSecs)
 		}
 		s.TimeoutSecs = *cli.TimeoutSecs
+	}
+	if cli.MaxTokens != nil {
+		// Rejected rather than treated as unset: an operator who typed --max-tokens 0
+		// asked for something that cannot work, and silently substituting the default
+		// would hide the mistake behind a run that looks normal.
+		if *cli.MaxTokens <= 0 || *cli.MaxTokens > MaxTokensCap {
+			return Settings{}, fmt.Errorf("max_tokens must be within 1..%d, got %d", MaxTokensCap, *cli.MaxTokens)
+		}
+		s.MaxTokens = *cli.MaxTokens
 	}
 	if cli.MaxParallel != nil {
 		// The CLI tier bypasses the file-load checks; validate here. 0 is the
@@ -241,6 +283,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
 	if s.PayloadByteBudget < 0 {
 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+	}
+	// ChunkByteBudget: 0 = unlimited (valid); negative is always invalid. Catches a
+	// directly-constructed proj/reg that bypassed the file loader.
+	if s.ChunkByteBudget < 0 {
+		return Settings{}, fmt.Errorf("chunk_byte_budget must be >= 0 (0 = unlimited), got %d", s.ChunkByteBudget)
 	}
 	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
 	// directly-constructed proj/reg (bypassing the file loader) could carry one.

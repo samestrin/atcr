@@ -1075,7 +1075,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	sum, err := writePool(poolDir, results, p.Changed, p.GroundingDisabledReason)
+	sum, err := writePool(ctx, poolDir, results, p.Changed, p.GroundingDisabledReason)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
 		// marker so the status reader reports `failed` rather than leaving the
@@ -1217,6 +1217,17 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		kept, trunc := payload.ApplyByteBudgetPreferEscalated(entries, cfg.Settings.PayloadByteBudget, payload.PayloadMode(mode))
 		if trunc.AllDropped {
 			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+		}
+		// Surface the PARTIAL shed, exactly as the two sibling builders do
+		// (PrepareReviewFromRepo :811, PrepareReviewFromDiff :870). AllDropped
+		// returned above, so this is the some-but-not-all case — the only one that
+		// can be silent, and the expensive one: whole files are gone before any
+		// per-agent sizing or on_overflow policy is consulted, so no reviewer ever
+		// sees them and no chunking recovers them. Unlike the full-repo path there
+		// is no "still reviewed across chunks" consolation to offer here.
+		if trunc.Truncated {
+			log.FromContext(ctx).Warn("git-range payload: byte budget truncated the payload; the dropped files reach NO reviewer",
+				"mode", mode, "kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
 		}
 		var b strings.Builder
 		for _, e := range kept {
@@ -1521,7 +1532,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
 		agentScopeConstraint := scopeConstraint
-		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+		agentMaxTokens := maxTokensFor(cfg, ac)
+		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
 		// and referenced everywhere below: this pair was previously recomputed inline
 		// at five further call sites, so a signature change had to find nine sites
@@ -1529,7 +1541,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// exactly the failure this epic was chartered to prevent. Nothing enforced
 		// that the copies agreed; hoisting makes disagreement impossible.
 		agentWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
-		if len(agentScopeConstraint) > 0 && agentBudget > 0 {
+		// NOT gated on agentBudget > 0. The zero-budget arm is exactly where skipping the
+		// cap was worst: that arm ships only the smallest file and warns it is doing so,
+		// while the uncapped SCOPE CONSTRAINT block rode along at up to
+		// min(max_sprint_plan_bytes, payload_byte_budget/8) — 64 KiB at shipped defaults —
+		// so both the warning and the truncation record described a payload that was not
+		// what was sent. At agentBudget 0 the cap resolves to 0 and the plan body is
+		// truncated away, leaving the block's frame: the agent then really does receive
+		// only the smallest file, which is what the warning has always claimed.
+		//
+		// This moved from near-unreachable to ordinary in this epic: reaching the arm used
+		// to need a context_window_tokens declaration at or below 12288, but a max_tokens
+		// declaration alone now closes the budget on the default 32768 window.
+		if len(agentScopeConstraint) > 0 {
 			planCap := agentBudget / 8
 			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
 				planCap = mspb
@@ -1661,6 +1685,25 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if rerr != nil {
 							return rerr
 						}
+						// NO DiffTruncation stamp here, deliberately — and this is the one
+						// place the baseline branch differs from its git-range twin below.
+						//
+						// mp.Truncation is the shed applied to the concatenated AUDIT TEXT,
+						// but this branch partitions mp.Entries — the PRE-budget set
+						// (PrepareReviewFromRepo :833) — through PartitionByBudget, whose
+						// contract is never-split-never-dropped. So every file the audit-text
+						// shed named is still delivered, across chunks. TD-012 at :812-818
+						// says exactly this: "every enumerated file is still reviewed across
+						// per-model chunks."
+						//
+						// Stamping it here therefore claimed a data loss that did not happen —
+						// the inverse of the never-silent violation the promotion exists to
+						// fix, and just as wrong, since AgentStatus.Truncated is read as
+						// "this reviewer saw only a fraction" (status.go:291) and mapped to
+						// benchmark.OutcomeIncomplete (cli/benchmark_run.go:437). The
+						// git-range branch below chunks mp.Text (the KEPT subset), so there
+						// the shed is real and the stamp belongs; so does the bulk
+						// fall-through, which reviews the kept subset and records it directly.
 						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
 						// Tagged HERE — at capChunks output, after tail-coalescing — so the
 						// identity matches the slot actually dispatched. runEngine reads it
@@ -1736,15 +1779,21 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// window (Epic 19.10 F3), so a 32k model gets more, smaller chunks and a
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
-			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
-			// Clamp the model-derived budget to the operator's global byte ceiling.
+			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
+			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
 			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
 			// request-body limit. Applied BEFORE the branch below so an explicit
 			// max_context_lines still replaces it verbatim (least surprise), and the
 			// scope-constraint reservation is taken out of the clamped value rather
 			// than the raw one.
-			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.PayloadByteBudget)
+			//
+			// ChunkByteBudget, not PayloadByteBudget: one key served both jobs and they
+			// want opposite values — lowering it to protect a small window silently shed
+			// whole files from the payload, raising it to keep those files grew every
+			// chunk. Unset, ChunkByteBudget resolves to PayloadByteBudget, so this is
+			// byte-identical for a config that does not set the new key.
+			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.ChunkByteBudget)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
 			} else if len(agentScopeConstraint) > 0 {
@@ -1770,9 +1819,37 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			chunkAction := degradationChunk
 			if agentBudget == 0 {
 				chunkAction = degradationOverflow
+				// The operator's on_overflow policy decides FIRST, exactly as the
+				// bulk twin does below: fail/fallback return their typed errors,
+				// which propagate out of add()/buildSlots() and hard-fail the run
+				// pre-dispatch rather than shipping chunks sized at the
+				// minChunkLines floor that the window provably cannot hold.
+				// Marking the degradation and warning about it is not the same as
+				// honoring the policy — recording "overflow" while dispatching
+				// anyway is what made on_overflow: fail a no-op here.
+				//
+				// Gated on len(mp.Entries) > 0 for the same reason the bulk arm is:
+				// the two paths must agree on WHEN the policy fires, not only on
+				// what it does once it fires.
+				if p := cfg.Settings.OnOverflow; len(mp.Entries) > 0 && (p == OverflowFail || p == OverflowFallback) {
+					if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint)); err != nil {
+						// Wrap with the state that produced the refusal, not just the
+						// policy sentinel. This error is the ONLY operator-visible
+						// signal on the resume path — buildSlots runs there with
+						// warnOversized=false, so the zero-budget warning below is
+						// suppressed — and cli/resume.go surfaces it verbatim as an
+						// exit-2 config error. Unwrapped, "on_overflow=fallback:
+						// model-swap fallback requires fallback-provenance recording"
+						// names neither the agent nor the declaration to change, while
+						// the stale-review message points the operator back at
+						// `--resume`, which fails the same way. Errors.Is still matches
+						// the sentinel through %w.
+						return refuseOverflow(name, agentWindow, agentMaxTokens, p, 0, err)
+					}
+				}
 				if warnOversized {
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window\n",
-						name, agentWindow, defaultMaxTokens, ml)
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
+						name, agentWindow, agentMaxTokens, ml, zeroBudgetRemedy)
 				}
 			}
 			chunks := chunkDiff(mp.Text, ml)
@@ -1815,10 +1892,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// no-loss degradation path.
 				chunkSizing := agentSizing{
 					// The globally-capped, scope-reserved budget — the same quantity
-					// the bulk path records below. The per-chunk LINE budget (maxLines)
-					// stays derived from the UNCAPPED window: that asymmetry is
-					// deliberate and documented in payload.ChunkMaxLines, and unifying
-					// the recorded byte budget does not disturb it.
+					// the bulk path records below, and a PAYLOAD-TIER figure: it is what
+					// the whole payload was shed to, not what any one chunk was sized to.
+					//
+					// TWO things diverge from it on this path, not one:
+					//   - the per-chunk LINE budget (maxLines) stays derived from the
+					//     UNCAPPED window, deliberately, per payload.ChunkMaxLines; and
+					//   - since chunk_byte_budget, maxLines is additionally clamped by
+					//     cfg.Settings.ChunkByteBudget (see the clamp above), which is an
+					//     OPERATOR-SETTABLE ceiling that can sit far below
+					//     payload_byte_budget — that is the split the key was added to
+					//     enable.
+					//
+					// So effective_budget reports the payload tier while the chunk regime
+					// is governed by chunk_byte_budget, and the two are only equal when
+					// the latter is unset (it then inherits the former). A reader must not
+					// read this number as the size any chunk was cut to. Recording the
+					// chunk ceiling here instead would misreport the global shed, which is
+					// the quantity that decides which files were DROPPED.
 					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,
@@ -1842,6 +1933,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					if err != nil {
 						return err
 					}
+					// The neutral Truncation above stays neutral. The diff-wide shed rides
+					// alongside it so mergeResultGroup can record it ONCE for this persona;
+					// nothing per-chunk reads it, so no chunk's prompt or status claims
+					// files it never saw. See Agent.DiffTruncation.
+					primary.DiffTruncation = mp.Truncation
 					// No entries carried (Epic 35.16.5.4 T1): chunkDiff splits TEXT on
 					// column-0 diff markers, so there is no FileEntry list for this chunk
 					// and no honest way to build one — a list recovered from the chunk text
@@ -1927,7 +2023,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			//      the true usable window is wider than this arithmetic admits.
 			if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
 				if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, appliedBudget); err != nil {
-					return err
+					// Same wrap as the chunked twin, for the same reason: this error
+					// is the only signal on the resume path (warnOversized=false there
+					// suppresses the warning below) and cli/resume.go prints it as-is.
+					// Fixing only the arm a reviewer pointed at is how the two paths
+					// drift.
+					return refuseOverflow(name, agentWindow, agentMaxTokens, p, 0, err)
 				}
 			}
 			// keepSmallestEntry, not a local smallest-by-bytes pick: it skips
@@ -1960,11 +2061,11 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			bulkDegradation = degradationOverflow
 			if warnOversized {
 				// Name the resolved window and the reservation that consumed it: the
-				// operator's next action is to raise or drop the declaration, and
+				// operator's next action is to change one of the two declarations, and
 				// "effective budget 0" alone does not say which number to change or
 				// what it has to clear.
-				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — raise or drop its context_window_tokens declaration\n",
-					name, agentWindow, defaultMaxTokens, smallest.Path)
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap and the fixed prompt overhead are reserved (effective budget 0); sending only the smallest file (%s) instead of the whole payload — %s\n",
+					name, agentWindow, agentMaxTokens, smallest.Path, zeroBudgetRemedy)
 			}
 		}
 		if appliedBudget > 0 && len(mp.Entries) > 0 {
@@ -1990,7 +2091,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				switch cfg.Settings.OnOverflow {
 				case OverflowFail, OverflowFallback:
 					if _, err := applyOverflowPolicy(cfg.Settings.OnOverflow, "", 0, mp.Entries, appliedBudget); err != nil {
-						return err
+						return refuseOverflow(name, agentWindow, agentMaxTokens, cfg.Settings.OnOverflow, appliedBudget, err)
 					}
 				}
 			}
@@ -2102,7 +2203,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	return slots, perAgentMode, nil
 }
 
-// defaultMaxTokens is the output-token cap applied to every reviewer call.
+// defaultMaxTokens is the output-token cap applied to a reviewer call that
+// resolves no other value: it is the LAST tier of resolveMaxTokens
+// (--max-tokens > the agent's max_tokens declaration > this), not the only cap.
+// It used to be the only one, which is the defect that made it configurable — a
+// thinking model that needs more had no lever, and `atcr doctor` printed
+// "raise --max-tokens" for a flag `atcr review` did not have.
 // Generous on purpose: reasoning/thinking models spend output budget on
 // chain-of-thought before emitting visible content, so a tight cap makes them
 // finish mid-reasoning and return an empty review (the doctor self-test warns of
@@ -2110,9 +2216,36 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // fallback in llmclient; this headroom lets the clean Content path win first.
 const defaultMaxTokens = 8192
 
-// maxTokensPtr returns a fresh pointer to defaultMaxTokens for an Invocation
-// (MaxTokens is a pointer so an explicit value always serializes).
-func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
+// refuseOverflow wraps a hard-fail on_overflow refusal with the state that produced it.
+//
+// All FOUR pre-dispatch refusal sites route through here — the chunked and bulk
+// zero-budget arms, the shed-driven overflow, and the fallback that cannot hold its
+// primary's payload — because the wrap is the ONLY operator-visible signal on the resume
+// path: buildSlots runs there with warnOversized=false, so every companion stderr warning
+// is suppressed, and cli/resume.go surfaces this error verbatim as an exit-2 config
+// error. Unwrapped, the bare sentinel ("on_overflow=fail: payload exceeded budget and
+// policy is fail") names no agent, no budget and no remedy, and the operator reads a
+// one-agent window problem as a run-wide config failure.
+//
+// One helper rather than four call-site literals: fixing only the arm a reviewer pointed
+// at is how these paths drifted apart in the first place. errors.Is still matches the
+// sentinel through %w.
+func refuseOverflow(agent string, window, maxTokens int, policy string, budget int64, err error) error {
+	return fmt.Errorf("agent %q: resolved window %d tokens, output cap %d, effective input budget %d bytes — payload does not fit and on_overflow is %q: %s: %w",
+		agent, window, maxTokens, budget, policy, zeroBudgetRemedy, err)
+}
+
+// zeroBudgetRemedy is the operator action shared by both zero-budget warnings (the
+// bulk arm and its chunked twin), which must not drift apart: the state does not
+// depend on review_strategy, so neither does the fix.
+//
+// It names BOTH declarations because either one can close the budget, and only one of
+// them is necessarily set. Naming only the window sent an operator who reached this
+// state by declaring max_tokens to a knob they may never have touched — and the
+// documented normal case is exactly that: contextwindow defaults any model absent from
+// the static table to 32768 (what a proxy alias resolves), so a max_tokens at or above
+// ~28k closes the budget on its own with no window declaration in sight.
+const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_window_tokens declaration"
 
 // agentSizing carries the per-agent payload-sizing values buildSlots computed for
 // a reviewer from its OWN model window (Epic 19.10). renderAgent folds them into
@@ -2177,11 +2310,24 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 // text) — without the sizing token in the key the second would replay a review
 // produced under a DIFFERENT sizing regime. A cache-regime change SHOULD
 // invalidate: an agent whose effective budget previously produced a non-"0:0"
-// token gets a new key, which is the intended F7 behavior, not a bug. MaxTokens is
-// constant across review agents (defaultMaxTokens), so it is intentionally
-// omitted. min_severity/max_findings are deterministic post-LLM filters and are
-// correctly NOT in the key.
-func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string) string {
+// token gets a new key, which is the intended F7 behavior, not a bug.
+//
+// The RESOLVED OUTPUT CAP is folded in for a third instance of the same reason. It
+// was once constant across review agents (defaultMaxTokens) and omitted on that
+// premise; the premise no longer holds — the cap is now per-agent (max_tokens) and
+// per-run (--max-tokens), and it changes the response, since a cap too small to hold
+// the findings block returns an empty or half-written review. The sizing token is not
+// a usable proxy: appliedByteBudget clamps to payload_byte_budget, so whenever the
+// global budget binds two different caps derive the SAME token. An operator who adds
+// max_tokens to fix an empty review would otherwise replay the cached empty review
+// and read the setting as inert — defeating the field's own documented motivation.
+//
+// A cap EQUAL to defaultMaxTokens collapses to the pre-existing token, so every
+// on-disk entry written by an agent that never declared a cap stays valid.
+//
+// min_severity/max_findings are deterministic post-LLM filters and are correctly NOT
+// in the key.
+func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing string, maxTokens int) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -2200,6 +2346,12 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64, sizing st
 	// assertion for bare/unsized agents.
 	if sizing != "" && sizing != "0:0" {
 		tuning = tuning + "\x00" + sizing
+	}
+	// Same NUL-separated append, same backward-compat rule: the embedded default
+	// collapses to the token above (and so does a 0, which resolveMaxTokens treats as
+	// "unset"), so no key written before the cap became per-agent is invalidated.
+	if maxTokens > 0 && maxTokens != defaultMaxTokens {
+		tuning = tuning + "\x00mt=" + strconv.Itoa(maxTokens)
 	}
 	return cache.Key(cache.HashText(prompt), model, tuning)
 }
@@ -2285,9 +2437,10 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// that yielded a zero input budget is a record that contradicts itself.
 	// resolvedWindow is the "was this agent sized" signal (status.go); the
 	// reservation follows the budget, the quantity that pays for it.
+	agentMaxTokens := maxTokensFor(cfg, ac)
 	reservedOut := 0
 	if sz.effectiveBudget > 0 {
-		reservedOut = defaultMaxTokens
+		reservedOut = agentMaxTokens
 	}
 	return Agent{
 		Name:     name,
@@ -2320,6 +2473,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		EffectiveBudget:      sz.effectiveBudget,
 		ResolvedWindow:       sz.resolvedWindow,
 		ReservedOutputTokens: reservedOut,
+		ResolvedMaxTokens:    agentMaxTokens,
 		DegradationAction:    sz.action,
 		chunkMaxLines:        sz.maxLines,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
@@ -2329,13 +2483,13 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		// keys each chunk independently because its prompt (and thus this hash)
 		// differs per chunk; the sizing token additionally distinguishes two sizing
 		// regimes that render identical prompt text.
-		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines)),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(sz.effectiveBudget, sz.maxLines), agentMaxTokens),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
-			MaxTokens:   maxTokensPtr(),
+			MaxTokens:   &agentMaxTokens,
 			Prompt:      prompt,
 		},
 	}, nil
@@ -2552,7 +2706,8 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// is model-specific. The truncate re-fit below is the exception: it overrides
 	// all three with its own bulk-sized record (ChunkTotal 1, chunkMaxLines 0, and
 	// the re-fit's own truncate/overflow action).
-	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, defaultMaxTokens)
+	fbMaxTokens := maxTokensFor(cfg, ac)
+	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, fbMaxTokens)
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
 	// Gate the reservation on the BUDGET, not the window. ContextWindowTokens never
 	// returns 0 by contract (contextwindow.go), so a window test is a dead branch —
@@ -2563,7 +2718,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// window cannot fund it now honestly reports reserving nothing.
 	fbReserved := 0
 	if fbBudget > 0 {
-		fbReserved = defaultMaxTokens
+		fbReserved = fbMaxTokens
 	}
 	// Epic 35.16.5.1 AC4: resolving the fallback's OWN window above is only half the
 	// guarantee. The prompt it inherits was sized to the PRIMARY's window, so a
@@ -2665,7 +2820,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// the one that cannot hold the payload.
 		if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
 			if _, err := applyOverflowPolicy(p, "", 0, entriesFromPrimary(primary), fbBudget); err != nil {
-				return Agent{}, false, err
+				return Agent{}, false, refuseOverflow(name, fbWindow, fbMaxTokens, p, fbBudget, err)
 			}
 		}
 		// The truncate re-fit (Epic 35.16.5.4 T2). Reached only with a real re-pack
@@ -2744,7 +2899,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// beside reserved_output_tokens 8192.
 				fbReserved = 0
 				if fbSizingBudget > 0 {
-					fbReserved = defaultMaxTokens
+					fbReserved = fbMaxTokens
 				}
 				// It also marks the agent as re-packed, which is what stops baseline
 				// coverage from inferring "every slot succeeded → the whole payload was
@@ -2789,6 +2944,16 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		Prompt:      fbPrompt,
 		PayloadMode: primary.PayloadMode,
 		Truncation:  fbTrunc,
+		// The DIFF-WIDE shed follows the payload, not the agent, so a substitute
+		// reviewing the primary's payload owes the same record. invokeAgent stamps the
+		// result's DiffTruncation from the SERVING agent, so leaving this zero made a
+		// fallback-served chunk report truncated=false for the whole persona — the
+		// AC 06-03 never-silent violation, reachable on any run with a fallback chain.
+		//
+		// A re-fit does NOT change it: re-packing sheds files from the chunk the agent
+		// ships (recorded in fbTrunc above), while this names files that never entered
+		// any chunk. The two sheds are disjoint by construction and both must be named.
+		DiffTruncation: primary.DiffTruncation,
 		// A fallback reviews the primary's already-sized/chunked payload, so it
 		// saw exactly the same files and inherits the primary's record of them —
 		// unless it re-fit that payload above, in which case every field here
@@ -2826,6 +2991,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		EffectiveBudget:      fbSizingBudget,
 		ResolvedWindow:       fbWindow,
 		ReservedOutputTokens: fbReserved,
+		ResolvedMaxTokens:    fbMaxTokens,
 		DegradationAction:    fbDegradation,
 		chunkMaxLines:        fbMaxLines,
 		rePacked:             refitted,
@@ -2854,13 +3020,13 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// keeps it off both its primary's cache entry and its own un-refit form's:
 		// the prompt is hashed, so a re-sized payload is a different key by
 		// construction, and the sizing token additionally separates the two budgets.
-		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines)),
+		CacheKey: diffCacheKey(fbPrompt, ac.Model, prov.BaseURL, ac.Temperature, sizingToken(fbSizingBudget, fbMaxLines), fbMaxTokens),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
-			MaxTokens:   maxTokensPtr(),
+			MaxTokens:   &fbMaxTokens,
 			Prompt:      fbPrompt,
 		},
 	}, warned, nil
@@ -3255,4 +3421,36 @@ func rosterNames(p *registry.ProjectConfig) []string {
 	names = append(names, p.Agents...)
 	names = append(names, p.SerialAgents...)
 	return names
+}
+
+// resolveMaxTokens resolves the output-token cap for one agent:
+// run-wide override (--max-tokens) -> agent declaration (max_tokens) -> the
+// embedded defaultMaxTokens.
+//
+// override 0 means UNSET, not "zero tokens": a zero cap would make every call
+// return nothing, so it can never be a meaningful configured value and is safe as
+// the not-set sentinel (the same convention CLIOverrides pointers encode
+// structurally elsewhere).
+func resolveMaxTokens(ac registry.AgentConfig, override int) int {
+	if override > 0 {
+		return override
+	}
+	if ac.MaxTokens != nil && *ac.MaxTokens > 0 {
+		return *ac.MaxTokens
+	}
+	return defaultMaxTokens
+}
+
+// maxTokensFor is resolveMaxTokens bound to this run's settings — the form every
+// call site in the review path uses, so the CLI tier can never be applied at some
+// sites and forgotten at others. The cap it returns feeds BOTH the Invocation and
+// the sizing reservation; those must be the same number, or an agent is sized for
+// one output budget and then asked for another.
+// cfg is dereferenced unconditionally: all three callers (buildSlots, renderAgent,
+// buildFallbackAgent) read cfg.Registry or cfg.Settings before reaching here, so a nil
+// would already have panicked upstream. The nil guard that used to sit here was an
+// uncovered, unreachable branch — it could be deleted with the suite green, which is
+// the definition of code that documents a contract it cannot enforce.
+func maxTokensFor(cfg *ReviewConfig, ac registry.AgentConfig) int {
+	return resolveMaxTokens(ac, cfg.Settings.MaxTokens)
 }

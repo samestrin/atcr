@@ -317,6 +317,28 @@ type RunResult struct {
 	// rows by realized model makes uneven coverage the normal case rather than an
 	// exceptional one.
 	Coverage []ReviewerCoverage `json:"reviewer_coverage,omitempty"`
+
+	// Vocabulary breaks OutOfVocabularyRate down per reviewer row: the same drift,
+	// measured the same way, attributed. The value is produced by the package-level
+	// PerReviewerVocabulary function in vocabulary.go, which documents the
+	// alignment and the routing-value discriminator; this field only carries it.
+	//
+	// It exists because the micro-averaged run-level scalar cannot name the drifting
+	// model and actively hides it; PerReviewerVocabulary states that argument once and
+	// is the place to change it.
+	//
+	// Rows are positionally aligned with Reviewers (both sorted by the same
+	// (model, persona) key with the same stable sort), so a consumer reads the
+	// all-`other` signature by correlating entry i's RoutingValues with
+	// Reviewers[i].CorroborationRate — which is why recall is not duplicated here.
+	//
+	// Run-result-only, exactly as Coverage is: it gates nothing and belongs to no
+	// public schema, so BuildSubmission does not carry it into a Submission. omitempty
+	// drops the key when a new run has no reviewers, so such a run serializes
+	// identically to a run-result written before this field existed — and both
+	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown
+	// recorded" rather than as a run with no reviewers.
+	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
 }
 
 // ReviewerCoverage names the cases behind one reviewer row of the same run-result,

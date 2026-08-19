@@ -130,3 +130,36 @@ func TestRenderJSON_CarriesWindowFields(t *testing.T) {
 	assert.Equal(t, 262144, got.Agents[0].ContextWindowTokens)
 	assert.Equal(t, payload.WindowSourceDeclaration, got.Agents[0].WindowSource)
 }
+
+// The ok_warning hint tells the operator to raise a cap, and the default (non---json)
+// table is where they read it — but the table had no column or cell carrying the cap, so
+// the hint named a number the surface refused to show. window() is the in-file precedent:
+// a resolved value plus its tier, rendered in one cell.
+func TestRenderTable_ShowsTheProbedCapAlongsideTheWindow(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOKWarning,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens: 32000, MaxTokensSource: MaxTokensSourceDeclaration,
+	}}}))
+	got := buf.String()
+
+	assert.Contains(t, got, "32768", "the window is still rendered")
+	assert.Contains(t, got, "32000",
+		"the hint tells the operator to change this cap; the table must show what it currently is")
+	assert.Contains(t, got, "declaration",
+		"and where it came from, so 'raise the declaration' is actionable")
+}
+
+// A row with no probed cap (the probe short-circuited) must not render a bare 0.
+func TestRenderTable_OmitsTheCapWhenNoCallWasPlaced(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusMissingKey,
+		ContextWindowTokens: 32768, WindowSource: "default",
+	}}}))
+	line := buf.String()
+
+	assert.NotContains(t, line, "cap 0", "a probe that never ran has no cap to report")
+	assert.Contains(t, line, "32768", "the window is still rendered")
+}

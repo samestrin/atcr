@@ -30,6 +30,11 @@ func clampRoster(t *testing.T, declared int, globalBudget int64) *ReviewConfig {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.ReviewStrategy = "chunked"
 	cfg.Settings.PayloadByteBudget = globalBudget
+	// Set explicitly because this fixture builds Settings directly instead of going
+	// through ResolveSettings, which is where chunk_byte_budget's inherit-from-
+	// payload_byte_budget default is applied. Production always resolves; a
+	// hand-built Settings must state both.
+	cfg.Settings.ChunkByteBudget = globalBudget
 	return cfg
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -374,4 +375,94 @@ func TestCollectReviewNarratives_SkipsOversizedFiles(t *testing.T) {
 	jf := []JSONFinding{{File: "a.go", Line: 1}}
 	stampJustifications(jf, reviewDir)
 	require.Empty(t, jf[0].Justification, "oversized review.md must be skipped")
+}
+
+// Reviewer review.md narratives carry raw pipe-delimited finding records
+// (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE) with no blank line between
+// adjacent records. extractSection's block walk recognized only markdown headings and
+// list-item bullets as boundaries, so it absorbed several consecutive records into one
+// block — and two findings anchored at different lines then received byte-identical
+// justification text, stamping one finding's reasoning onto its unrelated neighbour.
+//
+// Reproduced identically across two independent atcr review runs
+// (fanout-scope-test-20260814, fanout-scope-retest-20260814).
+func TestExtractSection_StopsAtTheNextPipeDelimitedFindingRecord(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+		"MEDIUM|b.go:20|second problem|second fix|security|30|second evidence",
+		"LOW|c.go:30|third problem|third fix|style|5|third evidence",
+	}
+
+	first, _ := extractSection(lines, 1)
+	second, _ := extractSection(lines, 2)
+
+	assert.Contains(t, first, "first problem")
+	assert.NotContains(t, first, "second problem",
+		"a finding record is a block boundary — absorbing the next record is what stamped one "+
+			"finding's narrative onto its neighbour")
+	assert.NotContains(t, first, "third problem")
+
+	assert.Contains(t, second, "second problem")
+	assert.NotContains(t, second, "first problem", "the walk-up must stop at the preceding record too")
+	assert.NotContains(t, second, "third problem")
+
+	assert.NotEqual(t, first, second,
+		"two findings at different anchors must not receive byte-identical justification text")
+}
+
+// The walk-up's OTHER record guard — the one the test above cannot reach.
+//
+// When the anchor is itself a record line the loop condition rejects it on entry, so
+// the loop body never runs and the `prev is a record` break inside it is dead for that
+// fixture. It survived deletion with the suite green, yet its behaviour is distinct
+// from the condition on the line above: reached with the anchor on a CONTINUATION
+// line, the walk decrements past it and absorbs the preceding record as the first line
+// of the excerpt — the same cross-contamination, one line further up.
+//
+// A continuation directly beneath a record is the real shape: reviewer narratives wrap
+// their evidence onto the following line with no blank separator.
+func TestExtractSection_ContinuationDoesNotAbsorbThePrecedingFindingRecord(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+		"and the reason it matters, wrapped onto its own line",
+	}
+
+	// Anchored on the continuation, which is neither a heading, a list marker, nor a
+	// record — the only entry condition under which the guard is live.
+	got, section := extractSection(lines, 2)
+
+	assert.Equal(t, "Findings", section)
+	assert.Contains(t, got, "wrapped onto its own line")
+	assert.NotContains(t, got, "first problem",
+		"a finding record begins its OWN block and is never absorbed upward — unlike a list "+
+			"marker it is not a headline for the line below it")
+}
+
+// The third guard in the same walk-up, and the one the two tests above cannot reach:
+// the `!isFindingRecordStart(lines[start])` term in the loop CONDITION, which tests the
+// ANCHOR line rather than the line above it. Its twin inside the body (the `prev` break)
+// was pinned after an earlier review; this half was left short, so it survived deletion
+// against the whole package.
+//
+// The shapes are not redundant. With the condition's term gone, an anchor that IS a
+// record no longer stops the loop on entry — the walk steps up into the prose above and
+// folds it into the excerpt, which is the cross-contamination the record boundary exists
+// to stop. A reviewer narrative introducing its records with an unseparated prose line
+// is the ordinary shape.
+func TestExtractSection_RecordAnchorDoesNotAbsorbThePreambleAboveIt(t *testing.T) {
+	lines := []string{
+		"## Findings",
+		"These came out of the scope-constraint pass and are ordered by blast radius",
+		"HIGH|a.go:10|first problem|first fix|correctness|15|first evidence",
+	}
+
+	got, section := extractSection(lines, 2)
+
+	assert.Equal(t, "Findings", section)
+	assert.Contains(t, got, "first problem")
+	assert.NotContains(t, got, "blast radius",
+		"the excerpt must START at the record: an anchor that is itself a record ends the "+
+			"walk-up on entry and never absorbs the prose above it")
 }

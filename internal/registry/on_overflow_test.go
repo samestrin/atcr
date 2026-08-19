@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,4 +105,42 @@ func TestResolveSettings_OnOverflow_DirectlyConstructedInvalidRejected(t *testin
 	_, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{OnOverflow: "turbo"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "on_overflow")
+}
+
+// onOverflowHelpBlock returns the contiguous `#` comment lines that immediately
+// precede the `on_overflow:` key in a generated config, i.e. the help an
+// operator reads when deciding the value. Scoping the assertions to this block
+// (rather than the whole document) keeps them from passing on an unrelated
+// mention of payload_byte_budget elsewhere in the template.
+func onOverflowHelpBlock(t *testing.T, cfg string) string {
+	t.Helper()
+	lines := strings.Split(cfg, "\n")
+	key := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "on_overflow:") {
+			key = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, key, 0, "generated config must contain an on_overflow key")
+	start := key
+	for start > 0 && strings.HasPrefix(lines[start-1], "#") {
+		start--
+	}
+	require.Less(t, start, key, "on_overflow must carry a help comment")
+	return strings.Join(lines[start:key], "\n")
+}
+
+// The generated on_overflow help promised "no content dropped" without
+// qualification, but on_overflow only governs the PER-AGENT overflow re-shed;
+// the global payload_byte_budget shed runs first (internal/fanout/review.go
+// buildPayloads) and does drop whole files. An operator reading the unscoped
+// promise reasonably concludes content is safe when it is not — which is what
+// happened on the 2026-08-15 external-repo run that lost 40 of 73 files.
+func TestDefaultProjectConfigYAML_OnOverflowHelpScopesNoContentDropped(t *testing.T) {
+	block := onOverflowHelpBlock(t, DefaultProjectConfigYAML([]string{"bruce"}))
+	assert.Contains(t, block, "payload_byte_budget",
+		"the on_overflow help must name the earlier global shed, which DOES drop files")
+	assert.NotContains(t, block, "no content dropped",
+		"an unqualified no-content-dropped promise is false whenever payload_byte_budget binds")
 }

@@ -201,12 +201,35 @@ func mergeChunkResults(results []Result, serialAgents ...map[string]bool) []Resu
 	for _, name := range order {
 		g := groups[name]
 		if len(g) == 1 {
-			merged = append(merged, g[0])
+			// Promoted on the fast path too: whether a persona's chunk set collapsed
+			// to one result is a shape accident, and truncation reporting must not
+			// depend on it.
+			merged = append(merged, promoteDiffTruncation(g[0]))
 			continue
 		}
 		merged = append(merged, mergeResultGroup(g, serialSet))
 	}
 	return merged
+}
+
+// promoteDiffTruncation lifts the diff-wide byte-budget shed onto the record
+// statusFor reads, for a result whose own Truncation is neutral.
+//
+// The chunked path renders each chunk-slot with an empty Truncation deliberately —
+// the shed is a whole-payload event, so a per-chunk copy would have every chunk
+// claim files that never appeared in it (see review.go's chunk loop). That left the
+// fact in no artifact at all: AgentStatus.Truncated/FilesDropped stayed zero for
+// every chunked agent while whole files had been dropped, contradicting the "never
+// silent (AC 06-03)" contract AgentStatus states.
+//
+// A slot that recorded its OWN shed keeps it: the bulk path already carries the real
+// value there, and overwriting it would replace a per-agent measurement with a
+// run-wide one. So this is a fallback, never an override.
+func promoteDiffTruncation(r Result) Result {
+	if !r.Truncation.Truncated && len(r.Truncation.FilesDropped) == 0 {
+		r.Truncation = r.DiffTruncation
+	}
+	return r
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
@@ -304,6 +327,15 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 			out.ToolsDegradedReason = r.ToolsDegradedReason
 		}
 		out.ResponseTruncated = out.ResponseTruncated || r.ResponseTruncated
+		// FIRST NON-ZERO across the group, not g[0]'s. The diff-wide shed is a property
+		// of the PAYLOAD — every chunk of a persona is rendered from the same
+		// modePayload, so the value is identical wherever it appears and the first
+		// chunk carrying it speaks for the group. Reading only g[0] made the record
+		// position-dependent: a chunk 0 whose serving agent arrived without the carrier
+		// silenced the shed for the whole persona while its siblings still held it.
+		if !out.DiffTruncation.Truncated && len(out.DiffTruncation.FilesDropped) == 0 {
+			out.DiffTruncation = r.DiffTruncation
+		}
 		allCacheHit = allCacheHit && r.CacheHit
 		switch r.Status {
 		case StatusOK:
@@ -367,7 +399,9 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.Status = StatusFailed
 		out.Err = firstErr
 	}
-	return out
+	// The merged record is the persona's ONE status.json row, so this is the honest
+	// place for a diff-wide fact that no single chunk may claim.
+	return promoteDiffTruncation(out)
 }
 
 // promoteRePackedDegradation lifts a re-packed chunk's degradation record into the
@@ -445,6 +479,16 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 	if !rePacked {
 		return
 	}
+	// Fold the DIFF-WIDE shed into the same union. This write to out.Truncation
+	// happens BEFORE promoteDiffTruncation, which is deliberately a fallback and so
+	// declines to fill a record that is already populated — leaving the diff-wide file
+	// list masked on any persona that both re-packed and hit the global byte budget.
+	// truncated=true stayed honest there, but files_dropped named only the re-pack's
+	// files and omitted the ones no reviewer ever saw, which are the more serious half.
+	// Seeding the set rather than overwriting keeps this inert when nothing re-packed.
+	for _, p := range out.DiffTruncation.FilesDropped {
+		dropped[p] = struct{}{}
+	}
 	out.ChunkCount = len(g)
 	if action != "" {
 		out.DegradationAction = action
@@ -459,6 +503,14 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// records no reservation by construction, but the invariant does not
 		// depend on that holding.
 		out.ReservedOutputTokens = 0
+		// The cap goes with it, for a sharper reason than consistency. Its contract
+		// (status.go) tells a reader that a cap sitting beside an ABSENT reservation is
+		// the number that closed the budget and the one to lower. Inherited from g[0]
+		// that names the wrong agent entirely: chunk 0 may have been served by a fully
+		// funded primary while a later chunk's fallback re-fit at zero, so the record
+		// would point the operator at a cap that closed nothing. Zeroed, omitempty says
+		// the honest thing — this merged record cannot name the cap.
+		out.ResolvedMaxTokens = 0
 	}
 	if len(dropped) > 0 {
 		paths := make([]string, 0, len(dropped))

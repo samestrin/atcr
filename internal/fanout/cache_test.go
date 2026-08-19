@@ -23,7 +23,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, "", nil, ""),
+		CacheKey:    diffCacheKey(prompt, model, "", nil, "", defaultMaxTokens),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -110,7 +110,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", temp, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp, "", defaultMaxTokens),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
@@ -132,7 +132,7 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, ""),
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil, "", defaultMaxTokens),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
 		}}
 	}
@@ -154,14 +154,14 @@ func TestEngine_DifferentProviderMissesCache(t *testing.T) {
 func TestDiffCacheKey_SizingTokenDistinguishesRegimes(t *testing.T) {
 	// Backward-compat: empty and the "0:0" no-sizing sentinel both reduce to the
 	// exact pre-F7 (baseURL+temperature-only) key.
-	base := diffCacheKey("p", "m", "", nil, "")
-	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0"),
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens)
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens),
 		`"0:0" (no per-agent sizing) must collapse to the pre-F7 key`)
 
 	// A real sizing token changes the key, and two distinct regimes never collide —
 	// even though prompt/model/backend/temperature are identical across all three.
-	sizedA := diffCacheKey("p", "m", "", nil, "100000:0")  // bulk, 100KB budget
-	sizedB := diffCacheKey("p", "m", "", nil, "50000:200") // chunked, 50KB budget, 200-line chunks
+	sizedA := diffCacheKey("p", "m", "", nil, "100000:0", defaultMaxTokens)  // bulk, 100KB budget
+	sizedB := diffCacheKey("p", "m", "", nil, "50000:200", defaultMaxTokens) // chunked, 50KB budget, 200-line chunks
 	assert.NotEqual(t, base, sizedA, "a real sizing regime must change the key")
 	assert.NotEqual(t, sizedA, sizedB, "different sizing regimes must produce different keys")
 }
@@ -180,7 +180,7 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing),
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, sizing, defaultMaxTokens),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt"},
 		}}
 	}
@@ -190,6 +190,52 @@ func TestEngine_DifferentSizingMissesCache(t *testing.T) {
 	// Same prompt/model/backend/temp, DIFFERENT sizing regime -> distinct key -> live.
 	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk("50000:200")})
 	assert.False(t, r[0].CacheHit, "a per-agent-sized payload must not be served a stale full-payload cache hit")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
+// The output cap is a per-agent, per-run input to the review (max_tokens on the
+// agent, --max-tokens on the run) and it changes what comes back: a cap too small to
+// hold the findings block returns an empty or half-written review. It must therefore
+// be part of the key.
+//
+// The sizing token is NOT a proxy for it. appliedByteBudget clamps to
+// payload_byte_budget, so whenever the global cap binds — the ordinary case on a
+// large window — two very different output caps derive the SAME sizing token. An
+// operator who adds max_tokens to fix an empty review then replays the cached empty
+// review and concludes the setting does nothing.
+func TestDiffCacheKey_ResolvedOutputCapChangesTheKey(t *testing.T) {
+	base := diffCacheKey("p", "m", "", nil, "", defaultMaxTokens)
+	assert.Equal(t, base, diffCacheKey("p", "m", "", nil, "0:0", defaultMaxTokens),
+		"an agent at the embedded default cap must keep its pre-existing on-disk key")
+	assert.NotEqual(t, base, diffCacheKey("p", "m", "", nil, "", 32000),
+		"a declared max_tokens must invalidate the entry the default-capped run wrote")
+
+	// The clamped case the sizing token cannot see: identical token, different cap.
+	const clamped = "524288:0" // both caps derive a budget above payload_byte_budget
+	assert.NotEqual(t,
+		diffCacheKey("p", "m", "", nil, clamped, 8192),
+		diffCacheKey("p", "m", "", nil, clamped, 32000),
+		"two output caps that clamp to one sizing token must still key apart")
+}
+
+// The integration half, mirroring TestEngine_DifferentSizingMissesCache: raising the
+// cap must reach the provider, not the cache.
+func TestEngine_DifferentMaxTokensMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	mk := func(maxTokens int) Slot {
+		return Slot{Primary: Agent{
+			Name:        "a",
+			PayloadMode: "blocks",
+			CacheKey:    diffCacheKey("same prompt", "m", "", nil, "524288:0", maxTokens),
+			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", MaxTokens: &maxTokens},
+		}}
+	}
+	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(8192)})
+
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(32000)})
+	assert.False(t, r[0].CacheHit,
+		"raising max_tokens to fix a truncated review must re-run it, not replay the truncated one")
 	assert.Equal(t, 2, f.callCount("m"))
 }
 

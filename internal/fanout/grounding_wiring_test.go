@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ func TestWritePool_RecordsGroundingAudit(t *testing.T) {
 
 	// Disabled with a reason: grounding_enabled=false and the reason is recorded.
 	off := filepath.Join(t.TempDir(), "pool")
-	_, err := writePool(off, []Result{okResult("greta", body)}, nil, "changed-lines computation failed: boom")
+	_, err := writePool(context.Background(), off, []Result{okResult("greta", body)}, nil, "changed-lines computation failed: boom")
 	require.NoError(t, err)
 	psOff := readSummary(t, off)
 	require.NotNil(t, psOff.GroundingEnabled, "grounding_enabled must be recorded, not omitted")
@@ -108,7 +109,7 @@ func TestWritePool_RecordsGroundingAudit(t *testing.T) {
 	// Enabled: grounding_enabled=true and no reason is recorded.
 	on := filepath.Join(t.TempDir(), "pool")
 	changed := payload.ChangedLines{"auth.go": {Ranges: []payload.LineRange{{Start: 40, End: 45}}}}
-	_, err = writePool(on, []Result{okResult("greta", body)}, changed, "")
+	_, err = writePool(context.Background(), on, []Result{okResult("greta", body)}, changed, "")
 	require.NoError(t, err)
 	psOn := readSummary(t, on)
 	require.NotNil(t, psOn.GroundingEnabled)

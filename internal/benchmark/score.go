@@ -64,14 +64,26 @@ func Score(reviewers []ReviewerScore) []scorecard.PublicRecord {
 	}
 	// Stable so that two reviewers sharing the same (model, persona) keep the
 	// orchestrator's deterministic input order — preserving the byte-identical
-	// output the reproducibility AC requires even on an identity tie.
+	// output the reproducibility AC requires even on an identity tie. The comparator
+	// is modelPersonaLess, the ONE (model, persona) ordering in this package:
+	// PerReviewerVocabulary sorts by it too, so reviewers[i] and
+	// reviewer_vocabulary[i] are the same row by construction, not by two parallel
+	// comparator copies staying in sync.
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Model != out[j].Model {
-			return out[i].Model < out[j].Model
-		}
-		return out[i].Persona < out[j].Persona
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
 	})
 	return out
+}
+
+// modelPersonaLess is the single (model, persona) ordering behind both Score's
+// reviewers[] and PerReviewerVocabulary's reviewer_vocabulary[]: the positional
+// alignment between the two rests on this ONE definition, not on duplicated
+// comparators drifting apart.
+func modelPersonaLess(aModel, aPersona, bModel, bPersona string) bool {
+	if aModel != bModel {
+		return aModel < bModel
+	}
+	return aPersona < bPersona
 }
 
 // scoreOne computes the public metrics for a single reviewer before scrubbing.

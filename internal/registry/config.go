@@ -128,6 +128,12 @@ const (
 	// nil = unset (fall through to the static table); any explicit value must be
 	// within 1..ContextWindowTokensCap.
 	ContextWindowTokensCap = 10000000
+	// MaxTokensCap is the sanity ceiling on a per-agent max_tokens declaration.
+	// Generous rather than tight — provider output limits move constantly, and a
+	// cap that lags them turns a legal deployment into a load error — but bounded,
+	// so a typo cannot reserve the entire context window as output budget and
+	// starve the payload to nothing.
+	MaxTokensCap = 1000000
 	// MaxEscalationHunkGapLines, MaxEscalationFiles, and
 	// MaxEscalationSkeletonLines are sanity ceilings on the payload_escalation
 	// thresholds (Epic 35.1). Values above them reinstate precisely the payload
@@ -597,6 +603,26 @@ type AgentConfig struct {
 	// field introduces, but an operator will otherwise see no effect and get no
 	// warning.
 	ContextWindowTokens *int `yaml:"context_window_tokens,omitempty"`
+
+	// MaxTokens declares THIS agent's output-token cap, resolved by the review
+	// fan-out as: --max-tokens flag -> this declaration -> the embedded default.
+	// Mirrors ContextWindowTokens' declaration-then-default shape, with a CLI tier
+	// on top that the window deliberately does not have: a context window is
+	// machine truth about a deployment, while an output cap is a per-run operator
+	// choice.
+	//
+	// It exists because a single hardcoded cap cannot serve both model classes. A
+	// reasoning/thinking model spends output budget on chain-of-thought before
+	// emitting visible content, so a cap sized for ordinary reviewers makes it
+	// finish mid-reasoning and return an empty review — the response hits
+	// finish_reason=length with zero parsed findings and the truncation gate demotes
+	// the slot, so the lens contributes nothing while the run still reports success.
+	// `atcr doctor` has long printed "raise --max-tokens" for that exact symptom.
+	//
+	// The value is ALSO what payload sizing reserves out of the context window, so
+	// raising it narrows the input budget for that agent — which is correct: those
+	// tokens are genuinely spoken for. Must be within 1..MaxTokensCap.
+	MaxTokens *int `yaml:"max_tokens,omitempty"`
 }
 
 // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
@@ -647,7 +673,11 @@ type Registry struct {
 	PayloadMode       string `yaml:"payload_mode,omitempty"`
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
-	FailOn            string `yaml:"fail_on,omitempty"`
+	// ChunkByteBudget caps the PER-CHUNK payload independently of the global
+	// payload cap above. Unset (nil) inherits the resolved PayloadByteBudget, so a
+	// config that never mentions it is sized exactly as before this key existed.
+	ChunkByteBudget *int64 `yaml:"chunk_byte_budget,omitempty"`
+	FailOn          string `yaml:"fail_on,omitempty"`
 	// Consensus is the user-level (global) tier of the consensus-filter level
 	// (epic 35.9.1): strict (default), lenient, or off. The project tier
 	// (ProjectConfig.Consensus) overrides it, and an explicit --consensus /
@@ -763,6 +793,9 @@ func (r *Registry) validate() error {
 	}
 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
 		errs = append(errs, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget))
+	}
+	if r.ChunkByteBudget != nil && *r.ChunkByteBudget < 0 {
+		errs = append(errs, fmt.Errorf("chunk_byte_budget must be >= 0 (0 = unlimited), got %d", *r.ChunkByteBudget))
 	}
 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
@@ -1114,6 +1147,9 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// offending agent.
 	if a.ContextWindowTokens != nil && (*a.ContextWindowTokens <= 0 || *a.ContextWindowTokens > ContextWindowTokensCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': context_window_tokens must be within 1..%d", name, ContextWindowTokensCap))
+	}
+	if a.MaxTokens != nil && (*a.MaxTokens <= 0 || *a.MaxTokens > MaxTokensCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': max_tokens must be within 1..%d", name, MaxTokensCap))
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive. Same range as the registry tier.
