@@ -56,7 +56,7 @@ func TestBenchmarkExport_RejectsIdentityThatScrubsToNothing(t *testing.T) {
 				"premise broken: %q no longer scrubs to empty, so this case cannot reach the defect", tc.model)
 
 			path := writeRunResultWithReviewers(t, []scorecard.PublicRecord{{Model: tc.model, Persona: "p-a"}})
-			err, stdout, _ := execExportErr(t, path)
+			stdout, _, err := execExportErr(t, path)
 
 			require.Error(t, err, "an identity that publishes as \"\" must be rejected, not published")
 			// The operator has to be able to find the offending row in their file, so the
@@ -75,7 +75,7 @@ func TestBenchmarkExport_RejectsPersonaThatScrubsToNothing(t *testing.T) {
 		"premise broken: %q no longer scrubs to empty", persona)
 
 	path := writeRunResultWithReviewers(t, []scorecard.PublicRecord{{Model: "m-a", Persona: persona}})
-	err, stdout, _ := execExportErr(t, path)
+	stdout, _, err := execExportErr(t, path)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), persona)
@@ -89,7 +89,7 @@ func TestBenchmarkExport_AcceptsIdentityThatSurvivesTheScrub(t *testing.T) {
 		{Model: "anthropic/claude-3", Persona: "sonny"},
 		{Model: "qwen3.8-max", Persona: "brad"},
 	})
-	err, stdout, _ := execExportErr(t, path)
+	stdout, _, err := execExportErr(t, path)
 
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "anthropic/claude-3")

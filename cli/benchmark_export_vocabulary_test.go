@@ -46,14 +46,15 @@ func ptrFloat(v float64) *float64 { return &v }
 // with the captured streams. execCmdSplit reports only an exit code: the root
 // command silences error printing (cmd/atcr's main renders it), so a hard-rejection
 // message never reaches errBuf and asserting on its text needs the error itself.
-func execExportErr(t *testing.T, path string) (err error, stdout, stderr string) {
+func execExportErr(t *testing.T, path string) (stdout, stderr string, err error) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRootCmd()
 	root.SetArgs([]string{"benchmark", "export", "--in", path})
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)
-	return root.ExecuteContext(context.Background()), outBuf.String(), errBuf.String()
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
 }
 
 // A run-result may be hand-supplied, so every diagnostic it carries is untrusted at
@@ -100,7 +101,7 @@ func TestBenchmarkExport_RejectsMalformedReviewerVocabularyRows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			isolate(t)
 			path := writeRunResultWithVocabulary(t, tc.rows)
-			err, stdout, _ := execExportErr(t, path)
+			stdout, _, err := execExportErr(t, path)
 			require.Error(t, err, "a corrupt per-row measurement must not reach a public submission")
 			assert.Contains(t, err.Error(), tc.want)
 			assert.Contains(t, err.Error(), "reviewer_vocabulary", "the error must name the field so the operator can find it")
@@ -309,7 +310,7 @@ func TestBenchmarkExport_RejectsVocabularyRowsThatDescribeNoRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			isolate(t)
 			path := writeRunResultWithVocabulary(t, tc.rows)
-			err, stdout, _ := execExportErr(t, path)
+			stdout, _, err := execExportErr(t, path)
 			require.Error(t, err, "a row that describes no run must not reach a public submission")
 			assert.Contains(t, err.Error(), tc.want)
 			assert.Contains(t, err.Error(), "reviewer_vocabulary")
