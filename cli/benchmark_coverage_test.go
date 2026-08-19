@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -165,4 +166,174 @@ func TestCheckCoverage_RejectsMalformedOutcomeTallies(t *testing.T) {
 	// The legitimate vocabulary — including the "unknown" tally label — stays legal.
 	err := checkCoverage(io.Discard, base(map[string]int{"unknown": 1}), "rr.json", false)
 	require.NoError(t, err, "the unknown tally label is a legitimate key")
+}
+
+// Every reviewer identity this gate interpolates into an operator-facing message comes
+// from the same untrusted, possibly hand-supplied run-result the gate is validating, and
+// cobra prints the returned error to the same terminal as the `short` warnings that were
+// already sanitized. Each malformed-file path below returns EARLY — before `short` is
+// ever built — so sanitizing only the warning sites leaves the rejection sites, the ones
+// a hostile file reaches FIRST, able to erase and rewrite the operator's line.
+func TestCheckCoverage_SanitizesIdentityInEveryRejection(t *testing.T) {
+	// Erase-line + cursor-home, the shape that overwrites what was already printed.
+	const esc = "\x1b[2K\x1b[1Gall checks passed"
+	model, persona := "m"+esc, "p"+esc
+
+	cov := func(caseIDs []string, outcomes map[string]int) benchmark.ReviewerCoverage {
+		return benchmark.ReviewerCoverage{Model: model, Persona: persona, CaseIDs: caseIDs, Outcomes: outcomes}
+	}
+	rev := func(runs int) scorecard.PublicRecord {
+		return scorecard.PublicRecord{Model: model, Persona: persona, Runs: runs}
+	}
+
+	for name, rr := range map[string]benchmark.RunResult{
+		"duplicate coverage identity": {
+			SuiteCaseIDs: []string{"case-01"},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil), cov([]string{"case-01"}, nil)},
+		},
+		"negative outcome tally": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"clean": -1, "findings": 2})},
+		},
+		"out-of-vocabulary outcome key": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"fabricated": 1})},
+		},
+		"duplicate reviewer identity": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1), rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"runs disagrees with covered set": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(2)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"outcomes do not sum to the covered set": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, map[string]int{"clean": 2})},
+		},
+		"coverage row no reviewer consumed": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "clean-model", Persona: "clean-persona", Runs: 0}},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01"}, nil)},
+		},
+		"case listed twice in one row": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(2)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-01", "case-01"}, nil)},
+		},
+		"case outside the suite": {
+			SuiteCaseIDs: []string{"case-01"},
+			Reviewers:    []scorecard.PublicRecord{rev(1)},
+			Coverage:     []benchmark.ReviewerCoverage{cov([]string{"case-99"}, nil)},
+		},
+	} {
+		err := checkCoverage(io.Discard, rr, "rr.json", false)
+		require.Error(t, err, name)
+		assert.NotContains(t, err.Error(), "\x1b", "%s: the identity reaches the terminal unstripped", name)
+	}
+}
+
+// CASE IDS are untrusted for exactly the same reason the identity is: they come from
+// the run-result being validated, and `atcr benchmark export` is where a hand-supplied
+// file first enters the tool. Every id that reaches the terminal does so through
+// summarizeMissing under %s.
+//
+// The id sites inside validateCoveredSet are already safe and stay untouched — they use
+// %q, which renders ESC as a literal \x1b escape. That asymmetry is why these five
+// survived the identity sweep: the same field is safe under one verb and not the other.
+func TestCoverageDiagnostics_SanitizeUntrustedCaseIDs(t *testing.T) {
+	const esc = "\x1b[2K\x1b[1Gfull coverage"
+	hostileID := "case-02" + esc
+
+	shortRun := benchmark.RunResult{
+		SuiteCaseIDs: []string{"case-01", hostileID},
+		Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p", Runs: 1}},
+		Coverage: []benchmark.ReviewerCoverage{{
+			Model: "m", Persona: "p", CaseIDs: []string{"case-01"},
+		}},
+	}
+
+	// The rejection path: the shortfall names the ids the row still owes.
+	err := checkCoverage(io.Discard, shortRun, "rr.json", false)
+	require.Error(t, err, "precondition: this row is short of the suite")
+	assert.NotContains(t, err.Error(), "\x1b",
+		"a missing case id reaches the terminal through the same fmt.Errorf as the identity")
+
+	// The --allow-partial-coverage path writes the same list to a warning instead.
+	var warn bytes.Buffer
+	require.NoError(t, checkCoverage(&warn, shortRun, "rr.json", true))
+	require.Contains(t, warn.String(), "partial coverage", "precondition: the warning must have fired")
+	assert.NotContains(t, warn.String(), "\x1b",
+		"the opt-out path prints the same ids and owes the same stripping")
+
+	// anchorSuiteDenominator's three diagnostics read the DECLARED list, which is
+	// untrusted in the same way — an id the manifest does not contain is echoed back.
+	anchored := benchmark.RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01-nil-deref", "case-02-sql-injection", hostileID},
+	}
+	aerr := anchorSuiteDenominator(anchored, suiteValidPath, "rr.json")
+	require.Error(t, aerr, "precondition: the declared list carries a case the manifest lacks")
+	assert.NotContains(t, aerr.Error(), "\x1b",
+		"an id the suite does not contain is still echoed to the operator's terminal")
+}
+
+// rr.Suite and rr.SuiteVersion have the same provenance as the case ids and the reviewer
+// identities — read straight from the operator-supplied run-result — and reach the same
+// terminal through the same cobra error path. The suite-identity mismatch is the FIRST
+// of anchorSuiteDenominator's three checks, so it is the one an attacker-supplied file
+// trips most easily, and it is the only one that does not funnel through
+// summarizeMissing's stripping.
+func TestAnchorSuiteDenominator_SanitizesTheUntrustedSuiteIdentity(t *testing.T) {
+	const esc = "\x1b[2K\x1b[1Gall checks passed"
+
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		Suite:        "atcr-bench" + esc,
+		SuiteVersion: "9.9.9\x07",
+		SuiteCaseIDs: []string{"case-01-nil-deref"},
+	}, suiteValidPath, "rr.json")
+
+	require.Error(t, err, "precondition: the run-result names a different suite than the manifest")
+	assert.NotContains(t, err.Error(), "\x1b",
+		"an ESC in the declared suite name can erase the mismatch report and forge a clean one")
+	assert.NotContains(t, err.Error(), "\x07", "nor a BEL")
+	assert.Contains(t, err.Error(), "atcr-bench", "the suite must still be identifiable")
+	assert.Contains(t, err.Error(), "9.9.9", "and so must its version")
+}
+
+// Sanitizing by DELETION makes a real mismatch unreadable. stripTerminalControlRunes
+// drops every unicode.IsControl rune — \r and \n included, not just ESC — while the
+// identity gate is a raw != with no trimming. So a CRLF-mangled run-result whose suite
+// genuinely differs from the manifest's renders as two IDENTICAL strings, and the
+// operator concludes the check is spurious rather than fixing the file. The error is the
+// one artifact whose whole job is to show a difference.
+//
+// %q is the verb this file already prescribes for untrusted identity (see the note on
+// summarizeMissing): it renders a control rune as a visible escape AND keeps the two
+// values distinguishable. Both halves of the comparison must use it — rendering the
+// run-result side under one rule and the manifest side under another is what let the
+// difference vanish.
+func TestAnchorSuiteDenominator_MismatchStaysVisibleWhenTheDifferenceIsAControlRune(t *testing.T) {
+	err := anchorSuiteDenominator(benchmark.RunResult{
+		// Differs from the manifest's "fixture-mini"/"1.0.0" by a trailing CR only.
+		Suite:        "fixture-mini\r",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01-nil-deref"},
+	}, suiteValidPath, "rr.json")
+
+	require.Error(t, err, "precondition: a trailing CR is a genuine identity mismatch")
+	got := err.Error()
+
+	assert.NotContains(t, got, "\r", "the raw control rune must not reach the terminal")
+	assert.Contains(t, got, `\r`,
+		"the difference must remain VISIBLE as an escape — deleting it renders both sides identical "+
+			"and reads as a spurious failure")
+	assert.NotContains(t, got, `is for suite "fixture-mini"/"1.0.0" but the manifest at`,
+		"if the two halves render identically the message contradicts itself")
 }

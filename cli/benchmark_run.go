@@ -253,6 +253,14 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	// at export, turning a legitimate full-coverage run into a hard
 	// "no coverage recorded" rejection. Scrubbing here makes both sides identical by
 	// construction, and Score's own pass is then idempotent.
+	//
+	// That last clause is a real guarantee, not an assumption: scorecard.scrubField
+	// iterates to a fixed point and TestScrubField_IsIdempotent pins it. It did not
+	// always hold — one pass could expose a match for an earlier rule, so
+	// "bedrock@us-east-1/claude" scrubbed once to "/claude" and twice to "" — and the
+	// three arrays below then carried two different identities for one reviewer,
+	// because coverage is written from `id` here while reviewers[] and
+	// reviewer_vocabulary[] pass through a second scrub downstream.
 	rows := make([]scoredRow, 0, len(order))
 	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {
@@ -311,8 +319,12 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		// fold in through applyReviewerOutcome before this point. nil when the run
 		// raised no findings at all, which must not read as perfect agreement.
 		OutOfVocabularyRate: benchmark.OutOfVocabularyRate(reviewers),
-		SuiteCaseIDs:        suiteCaseIDs,
-		Coverage:            coverage,
+		// The same drift, attributed. Built from the SAME slice as the two values
+		// above — which is what keeps the breakdown's totals equal to the scalar's,
+		// and its rows positionally aligned with the Reviewers rows Score emits.
+		Vocabulary:   benchmark.PerReviewerVocabulary(reviewers),
+		SuiteCaseIDs: suiteCaseIDs,
+		Coverage:     coverage,
 	}, nil
 }
 
@@ -504,7 +516,12 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 		}
 		lanes = append(lanes, o.agent)
 		sort.Strings(lanes)
-		return fmt.Errorf("case %q scored twice under realized identity %s/%s (lanes %s); "+
+		// %q on the identity and the lanes, not %s: o.model is the provider/proxy-reported
+		// realized model (reviewerModel), the same untrusted class stripTerminalControlRunes
+		// defends elsewhere, and cobra prints this RunE error straight to the terminal.
+		// %q is the verb this package already chose for comparison and identity messages —
+		// terminal-safe AND legible, unlike stripping, which sanitizes by deletion.
+		return fmt.Errorf("case %q scored twice under realized identity %q/%q (lanes %q); "+
 			"two lanes realizing the same (model, persona) must partition the suite, not both score it",
 			o.caseID, o.model, o.persona, strings.Join(lanes, ", "))
 	}

@@ -77,7 +77,7 @@ import (
 // consumer of Finding.Category sees it, and reconcile's own taxonomy is
 // unchanged. It is deliberately NOT reconcile.CategoryMerges(), which answers a
 // different question ("do these two words mean the identical thing?") and is epic
-// 35.16.6's parse-boundary canonicalization table — it records only
+// 51.0's parse-boundary canonicalization table — it records only
 // logic->correctness and omits every security and maintainability steer above.
 //
 // Keys and members are validated against reconcile.Categories() by

@@ -5,13 +5,16 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/reconcile"
 )
 
@@ -103,6 +106,25 @@ func mustRate(t *testing.T, rate *float64) float64 {
 	return *rate
 }
 
+// countRunFindings tallies (total, drifted) findings straight off a folded run's
+// structure, so a test can assert a relationship between two fixtures WITHOUT
+// routing through the rates already asserted elsewhere — a check derived from the
+// rates it neighbours cannot fail independently of them.
+func countRunFindings(reviewers []ReviewerScore) (total, drifted int) {
+	vocabulary := vocabularySet()
+	for _, r := range reviewers {
+		for _, c := range r.Cases {
+			for _, raw := range c.Raised {
+				total++
+				if !vocabulary[normalize(raw)] {
+					drifted++
+				}
+			}
+		}
+	}
+	return total, drifted
+}
+
 // A recorded run whose reviewers stayed inside the closed vocabulary passes.
 func TestOutOfVocabularyRate_CleanRunIsUnderTheCeiling(t *testing.T) {
 	rate := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-clean.json")))
@@ -122,18 +144,65 @@ func TestOutOfVocabularyRate_DriftedRunExceedsTheCeiling(t *testing.T) {
 }
 
 // The boundary pair. These two fixtures differ by a single in-vocabulary finding
-// (4/21 vs 4/20), so an inverted or misread comparison cannot satisfy both — which
+// (1/21 vs 1/20), so an inverted or misread comparison cannot satisfy both — which
 // two far-apart extremes would.
+//
+// Both were re-derived when epic 35.16.6.1 tightened the ceiling from 0.20 to 0.05:
+// they straddled the OLD number by construction (4/21 vs 4/20), so leaving them alone
+// was not an option — the "under" fixture measures 0.190476 and would sit above the new
+// ceiling. The pair's structure is deliberately unchanged; only the ratio moved. Rates
+// are asserted as LITERALS rather than against the constant, so a future change to the
+// ceiling cannot quietly redefine what these fixtures measure.
 func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
-	under := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-under.json")))
-	at := mustRate(t, OutOfVocabularyRate(loadRecordedRun(t, "run-boundary-at.json")))
+	underRun := loadRecordedRun(t, "run-boundary-under.json")
+	atRun := loadRecordedRun(t, "run-boundary-at.json")
+	under := mustRate(t, OutOfVocabularyRate(underRun))
+	at := mustRate(t, OutOfVocabularyRate(atRun))
 
-	assert.InDelta(t, 4.0/21.0, under, 1e-9)
+	assert.InDelta(t, 1.0/21.0, under, 1e-9)
 	assert.Less(t, under, MaxOutOfVocabularyRate, "just under the ceiling passes")
 
-	assert.InDelta(t, 0.20, at, 1e-9)
+	assert.InDelta(t, 0.05, at, 1e-9)
 	assert.GreaterOrEqual(t, at, MaxOutOfVocabularyRate,
 		"the ceiling is exclusive: a run AT the threshold must trip the guard")
+
+	// The pair is a NEIGHBOUR pair, and that is the property that makes it a boundary
+	// test rather than two arbitrary points: the two fixtures differ by exactly one
+	// in-vocabulary finding. Pinned against the fixtures' STRUCTURE — counted
+	// findings, not the difference of the two rates asserted above, which those
+	// assertions already imply — so a future re-derivation that widens the gap fails
+	// here rather than passing on literals it edited in the same commit.
+	underFindings, underDrifted := countRunFindings(underRun)
+	atFindings, atDrifted := countRunFindings(atRun)
+	assert.Equal(t, atFindings+1, underFindings,
+		"one in-vocabulary finding apart — the whole point of a boundary pair")
+	assert.Equal(t, atDrifted, underDrifted,
+		"the drifted count is identical; only the denominator moves")
+}
+
+// AC5. The ceiling is derived from V1's measured output, not from a fixture guess, and
+// the relationship it encodes is asserted rather than left to the doc comment: V1
+// measured 0.0100 (2 drifted of 201 findings) on the only valid run in existence, and
+// the ceiling sits a full order of magnitude above it.
+//
+// The direction of travel is also pinned, as BOUNDS rather than as the literal value:
+// vocabulary.go is explicit that this number moves ONE WAY — tightened once a real
+// measurement exists, never loosened when a run fails — so the test asserts the two
+// invariants that rule implies (real headroom over the single observation, and never
+// climbing back to the pre-V1 0.20) and no more. A literal equality assertion would
+// make those bounds unfalsifiable — they could never fail while it passed — and would
+// turn every legitimate re-derivation into a test edit. As bounded assertions, a
+// re-derivation that stays inside the bounds is a constant edit, and one that violates
+// them fails here.
+func TestMaxOutOfVocabularyRate_IsDerivedFromTheV1Measurement(t *testing.T) {
+	const v1Measured = 2.0 / 201.0 // 0.00995..., the V1 validation run's Run A
+
+	assert.Less(t, MaxOutOfVocabularyRate, 0.20,
+		"0.20 was the pre-V1 fixture guard, justified by merge-table words V1 never emitted; "+
+			"this number may be tightened further but must never climb back")
+	assert.Greater(t, MaxOutOfVocabularyRate, v1Measured*4,
+		"n=1: variance under this metric is unmeasured, so the ceiling keeps real headroom "+
+			"over the single observation rather than hugging it")
 }
 
 // The rate is MICRO-averaged across the whole run — one pooled numerator over one
@@ -142,11 +211,15 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 // apart rather than one that happens to agree with both.
 //
 // The four recorded fixtures cannot: computed both ways they give 0.0/0.0
-// (run-clean), 0.6/0.6 (run-drifted) and 0.20/0.20 (run-boundary-at) — identical.
-// Only run-boundary-under separates them at all, at micro 4/21 = 0.190476 vs macro
-// 0.190909, a 4.3e-4 gap that survives solely because TestOutOfVocabularyRate_BoundaryPair
-// happens to use assert.InDelta(..., 1e-9). A documented decision resting on a
-// four-decimal-place accident is not pinned.
+// (run-clean), 0.6/0.6 (run-drifted) and 0.05/0.05 (run-boundary-at) — identical.
+// Only run-boundary-under separates them at all, at micro 1/21 = 0.047619 vs macro
+// 0.045455 — and both land on the SAME side of the ceiling, so no assertion in this
+// package changes its verdict between the two averagings. A documented decision that
+// no fixture can falsify is not pinned.
+//
+// (Those figures are for the fixtures as re-derived when epic 35.16.6.1 tightened the
+// ceiling to 0.05. Before that they read 0.20/0.20 and micro 4/21 = 0.190476 vs macro
+// 0.190909 — different numbers, same conclusion, which is why this case exists.)
 //
 // So this case is deliberately lopsided: one reviewer raising 2 findings that both
 // drifted, one raising 80 that are all clean. Micro pools them to 2/82 ≈ 0.024 —
@@ -302,8 +375,8 @@ func TestRunResult_ZeroRateIsEmittedButAnUnmeasuredRunIsNot(t *testing.T) {
 }
 
 // ...but it must NOT reach the public submission envelope. Submission is the
-// frozen public contract; adding a diagnostic column there is 35.16.6's decision
-// to make, not a side effect of this one.
+// frozen public contract; adding a diagnostic column there is epic 51.0's
+// decision to make, not a side effect of this one.
 func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
 	drifted := 0.42
 	data, err := json.Marshal(BuildSubmission(RunResult{
@@ -341,6 +414,428 @@ func TestExceedsVocabularyCeiling(t *testing.T) {
 
 func ptr(f float64) *float64 { return &f }
 
+// The defect this epic exists to close: micro-averaging is not merely silent about
+// WHICH reviewer drifted, it is actively concealing. One reviewer raises 12 findings
+// and drifts on every one; its prolific clean peer dilutes them to a pooled rate that
+// clears the ceiling, and the run reports clean while one of two models ignored the
+// enumeration entirely.
+//
+// The 300:12 ratio is what the tightened ceiling costs an attacker of this metric — the
+// plan's original 80:12 illustration pooled to 0.130 and cleared the OLD 0.20 guard, but
+// not 0.05. Tightening narrows the concealment window; it does not close it, which is
+// exactly why the breakdown is needed alongside the tighter number rather than instead
+// of it.
+//
+// The run-level scalar and the breakdown are asserted TOGETHER here on purpose: the
+// point is not that the breakdown reports 1.0 somewhere, it is that it reports 1.0 for
+// a run whose published scalar says everything is fine.
+func TestPerReviewerVocabulary_NamesTheReviewerTheRunLevelRateConceals(t *testing.T) {
+	threeHundredClean := make([]string, 300)
+	for i := range threeHundredClean {
+		threeHundredClean[i] = reconcile.CategoryCorrectness
+	}
+	twelveDrifted := make([]string, 12)
+	for i := range twelveDrifted {
+		twelveDrifted[i] = "bug" // a merge-table word, not a taxonomy member
+	}
+
+	reviewers := []ReviewerScore{
+		{Model: "clean-model", Persona: "a", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: threeHundredClean,
+		}}},
+		{Model: "drifted-model", Persona: "b", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: twelveDrifted,
+		}}},
+	}
+
+	run := mustRate(t, OutOfVocabularyRate(reviewers))
+	require.InDelta(t, 12.0/312.0, run, 1e-9, "12 drifted of 312 pooled findings")
+	require.False(t, ExceedsVocabularyCeiling(&run),
+		"precondition: this run passes the guard — that is what makes the breakdown necessary")
+
+	got := PerReviewerVocabulary(reviewers)
+	require.Len(t, got, 2)
+
+	assert.Equal(t, "clean-model", got[0].Model)
+	assert.Equal(t, 300, got[0].Findings)
+	assert.Equal(t, 0, got[0].Drifted)
+	require.NotNil(t, got[0].Rate)
+	assert.InDelta(t, 0.0, *got[0].Rate, 1e-9)
+
+	assert.Equal(t, "drifted-model", got[1].Model)
+	assert.Equal(t, "b", got[1].Persona)
+	assert.Equal(t, 12, got[1].Findings)
+	assert.Equal(t, 12, got[1].Drifted)
+	require.NotNil(t, got[1].Rate)
+	assert.InDelta(t, 1.0, *got[1].Rate, 1e-9,
+		"the reviewer the run-level rate hides is reported at its own true rate")
+}
+
+// Each entry's rate is that reviewer's OWN pooled share — computed exactly as the
+// run-level function computes the run's, over that reviewer's findings alone. It is
+// NOT a per-case macro-average: a reviewer's 2-finding case must not weigh as much as
+// its 80-finding one, for the same reason the run-level rate pools across reviewers.
+func TestPerReviewerVocabulary_EntryRateIsMicroAveragedAcrossThatReviewersCases(t *testing.T) {
+	eightyClean := make([]string, 80)
+	for i := range eightyClean {
+		eightyClean[i] = reconcile.CategoryCorrectness
+	}
+
+	got := PerReviewerVocabulary([]ReviewerScore{{
+		Model: "m", Persona: "p",
+		Cases: []CaseScore{
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{"bug", "clarity"}},
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: eightyClean},
+		},
+	}})
+
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Rate)
+	assert.InDelta(t, 2.0/82.0, *got[0].Rate, 1e-9,
+		"the entry pools this reviewer's findings; a per-case average would report 0.5")
+	assert.Greater(t, math.Abs(*got[0].Rate-0.5), 1e-6,
+		"0.5 is the per-case macro-average this test exists to reject")
+}
+
+// AC3. The all-`other` signature is drift 0.0 paired with recall 0.0 — indistinguishable
+// from a genuinely clean reviewer on the rate alone, which is exactly the recorded blind
+// spot. routing_values is the discriminator: it separates the two WITHOUT redefining
+// OutOfVocabularyRate, whose contract (every taxonomy member, `other` included, is in
+// vocabulary) is asserted here to be untouched.
+func TestPerReviewerVocabulary_RoutingValueCountDistinguishesAllOtherFromClean(t *testing.T) {
+	reviewers := []ReviewerScore{
+		{Model: "all-other", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised: []string{
+				reconcile.CategoryOther, reconcile.CategoryOther, reconcile.CategoryOutOfScope,
+			},
+		}}},
+		{Model: "genuinely-clean", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised: []string{
+				reconcile.CategoryCorrectness, reconcile.CategoryCorrectness, reconcile.CategorySecurity,
+			},
+		}}},
+	}
+
+	got := PerReviewerVocabulary(reviewers)
+	require.Len(t, got, 2)
+
+	allOther, clean := got[0], got[1]
+	require.Equal(t, "all-other", allOther.Model)
+	require.Equal(t, "genuinely-clean", clean.Model)
+
+	// The rate CANNOT tell them apart — that is the blind spot, restated at reviewer level.
+	require.NotNil(t, allOther.Rate)
+	require.NotNil(t, clean.Rate)
+	assert.InDelta(t, 0.0, *allOther.Rate, 1e-9,
+		"`other`/`out-of-scope` are taxonomy members: still zero drift, by design")
+	assert.InDelta(t, *clean.Rate, *allOther.Rate, 1e-9,
+		"identical rates is the premise — the discriminator must come from elsewhere")
+
+	// routing_values does.
+	assert.Equal(t, 3, allOther.RoutingValues,
+		"every finding routed rather than categorized")
+	assert.Equal(t, 0, clean.RoutingValues)
+	assert.Equal(t, allOther.Findings, allOther.RoutingValues,
+		"routing_values == findings alongside rate 0.0 IS the all-`other` signature")
+
+	// And the run-level function's own definition is unchanged by this epic: an
+	// all-`other` reviewer must still report 0.0 from OutOfVocabularyRate specifically.
+	only := mustRate(t, OutOfVocabularyRate(reviewers[:1]))
+	assert.InDelta(t, 0.0, only, 1e-9,
+		"AC3 is closed by the routing count, never by excluding routing values from the vocabulary")
+}
+
+// A separator variant of a hyphenated routing value — `out of scope` rather than
+// `out-of-scope` — is double-counted against the reviewer: normalize folds only case
+// and whitespace, so the variant is neither a vocabulary member (it counts as drift)
+// nor a routing value (it escapes RoutingValues). This pins the interaction as a
+// recorded decision rather than an accident: separator folding belongs to the
+// parse-boundary canonicalization epic, not to this package (see vocabularySet's doc).
+func TestPerReviewerVocabulary_SeparatorVariantOfRoutingValueIsDriftNotRouting(t *testing.T) {
+	reviewers := []ReviewerScore{
+		{Model: "variant", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{"out of scope"},
+		}}},
+	}
+
+	got := PerReviewerVocabulary(reviewers)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].Findings)
+	assert.Equal(t, 1, got[0].Drifted,
+		"normalize folds case and whitespace only: `out of scope` is not the member `out-of-scope`")
+	assert.Equal(t, 0, got[0].RoutingValues,
+		"the same variant escapes the routing discriminator, which keys on the exact normalized spelling")
+}
+
+// The paired half of the signature. Recall is NOT duplicated into the breakdown — it
+// already sits on Reviewers[i].CorroborationRate, produced from the same []ReviewerScore
+// at the same call site — so a consumer reads the pairing by correlating the two arrays
+// positionally. This pins that the correlation actually holds.
+func TestPerReviewerVocabulary_IsPositionallyAlignedWithScore(t *testing.T) {
+	reviewers := []ReviewerScore{
+		// Deliberately supplied out of sorted order: Score sorts its output, so an
+		// implementation that walks the INPUT order would misalign here.
+		{Model: "zeta", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{reconcile.CategoryOther, reconcile.CategoryOther},
+		}}},
+		{Model: "alpha", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{reconcile.CategoryCorrectness},
+		}}},
+	}
+
+	scored := Score(reviewers)
+	vocab := PerReviewerVocabulary(reviewers)
+	require.Len(t, vocab, len(scored))
+
+	for i := range scored {
+		assert.Equal(t, scored[i].Model, vocab[i].Model, "row %d model", i)
+		assert.Equal(t, scored[i].Persona, vocab[i].Persona, "row %d persona", i)
+	}
+
+	// The all-`other` reviewer is "zeta", which sorts second. Its paired zeros are
+	// readable only because the two arrays line up.
+	assert.Equal(t, "zeta", vocab[1].Model)
+	assert.Equal(t, 2, vocab[1].RoutingValues)
+	assert.InDelta(t, 0.0, scored[1].CorroborationRate, 1e-9,
+		"drift 0.0 with recall 0.0 — the signature, read across the two aligned arrays")
+}
+
+// The breakdown and the scalar must never be two differently-defined numbers wearing
+// the same name. Summing the entries reproduces the run-level numerator and
+// denominator exactly — so the published scalar is precisely these rows divided,
+// and any future edit that changes membership, normalization, or the empty-category
+// rule in one function without the other fails here.
+func TestPerReviewerVocabulary_TotalsReproduceTheRunLevelRate(t *testing.T) {
+	reviewers := []ReviewerScore{
+		{Model: "a", Persona: "p", Cases: []CaseScore{
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{"bug", reconcile.CategoryCorrectness, ""}},
+			{Expected: []string{reconcile.CategorySecurity}, Raised: []string{"  SECURITY ", "clarity"}},
+		}},
+		{Model: "b", Persona: "p", Cases: []CaseScore{
+			{Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{reconcile.CategoryOther, "input"}},
+		}},
+		{Model: "c", Persona: "p"}, // raised nothing — contributes to neither total
+	}
+
+	var findings, drifted int
+	for _, e := range PerReviewerVocabulary(reviewers) {
+		findings += e.Findings
+		drifted += e.Drifted
+	}
+	require.Equal(t, 7, findings, "every raised finding is counted exactly once, blanks included")
+	require.Equal(t, 4, drifted, "bug, blank, clarity, input")
+
+	assert.InDelta(t, float64(drifted)/float64(findings),
+		mustRate(t, OutOfVocabularyRate(reviewers)), 1e-9,
+		"the scalar is the summed rows divided; the two definitions must not diverge")
+}
+
+// Two reviewers sharing a (model, persona) pair is the case the alignment most needs
+// to survive, and the case a key join CANNOT: the join has no way to tell the rows
+// apart. Score's sort is stable for exactly this reason, and this array mirrors that
+// sort rather than re-deriving the pairing, so the tied rows stay in the caller's
+// order on both sides and entry i still describes Reviewers[i].
+func TestPerReviewerVocabulary_IdentityTieKeepsAlignmentWithScore(t *testing.T) {
+	tied := []ReviewerScore{
+		// Same (model, persona) twice, distinguishable ONLY by position: the first
+		// drifted entirely, the second is clean.
+		{Model: "twin", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{"bug", "clarity"},
+		}}},
+		{Model: "twin", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness},
+			Raised:   []string{reconcile.CategoryCorrectness, reconcile.CategoryCorrectness, reconcile.CategoryCorrectness, reconcile.CategoryCorrectness},
+		}}},
+	}
+
+	scored := Score(tied)
+	vocab := PerReviewerVocabulary(tied)
+	require.Len(t, vocab, 2)
+	require.Len(t, scored, 2)
+
+	// Score's own rows are distinguishable by volume; the breakdown's must line up
+	// with the same row, not merely with the same identity.
+	require.InDelta(t, 2.0, scored[0].FindingsRaisedAvg, 1e-9, "input order preserved on the Score side")
+	require.InDelta(t, 4.0, scored[1].FindingsRaisedAvg, 1e-9)
+
+	require.NotNil(t, vocab[0].Rate)
+	assert.InDelta(t, 1.0, *vocab[0].Rate, 1e-9, "the drifted twin is entry 0, matching Reviewers[0]")
+	assert.Equal(t, 2, vocab[0].Findings)
+
+	require.NotNil(t, vocab[1].Rate)
+	assert.InDelta(t, 0.0, *vocab[1].Rate, 1e-9, "the clean twin is entry 1")
+	assert.Equal(t, 4, vocab[1].Findings)
+}
+
+// Alignment survives the identity scrub. Score re-scrubs every row it emits, so an
+// identity the scrub REWRITES sorts by its post-scrub value there; a breakdown that
+// sorted the raw value would land the rows in a different order and silently
+// mis-attribute the drift. It also must not republish the pre-scrub string.
+func TestPerReviewerVocabulary_ScrubbedIdentityStillAlignsWithScore(t *testing.T) {
+	// The pair is chosen so the scrub INVERTS the order: raw, "~/tmp/zzz alpha" sorts
+	// AFTER "beta" ('~' is 0x7E), but it scrubs to "alpha", which sorts BEFORE it. A
+	// breakdown sorted on the raw identity therefore lands the drifted reviewer at the
+	// opposite index from Score's — a fixture whose raw and scrubbed values happen to
+	// sort alike could not detect that.
+	reviewers := []ReviewerScore{
+		{Model: "~/tmp/zzz alpha", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{"bug"},
+		}}},
+		{Model: "beta", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: []string{reconcile.CategoryCorrectness},
+		}}},
+	}
+
+	scored := Score(reviewers)
+	vocab := PerReviewerVocabulary(reviewers)
+	require.Len(t, vocab, 2)
+
+	for i := range scored {
+		assert.Equal(t, scored[i].Model, vocab[i].Model, "row %d must carry Score's post-scrub identity", i)
+	}
+	assert.Equal(t, "alpha", vocab[0].Model, "the scrubbed identity, in its post-scrub position")
+	require.NotNil(t, vocab[0].Rate)
+	assert.InDelta(t, 1.0, *vocab[0].Rate, 1e-9,
+		"the drifted reviewer's own rate follows it to its post-scrub position")
+
+	for _, e := range vocab {
+		assert.NotContains(t, e.Model, "~/tmp",
+			"the diagnostic array must not republish an identity the public rows scrubbed")
+	}
+}
+
+// A reviewer that raised nothing is UNMEASURED, not clean — the same nil-vs-zero
+// distinction the run-level pointer carries, applied per row. A failed reviewer
+// reporting rate 0.0 would publish the most drifted possible row as flawless.
+func TestPerReviewerVocabulary_ReviewerWithNoFindingsIsUnmeasured(t *testing.T) {
+	got := PerReviewerVocabulary([]ReviewerScore{
+		{Model: "failed", Persona: "p", Cases: []CaseScore{{
+			Expected: []string{reconcile.CategoryCorrectness}, Raised: nil,
+		}}},
+		{Model: "no-cases", Persona: "p"},
+	})
+
+	require.Len(t, got, 2, "a reviewer that raised nothing still gets a row — absence is not a row")
+	for _, e := range got {
+		assert.Nil(t, e.Rate, "%s raised nothing, so its rate is unmeasured", e.Model)
+		assert.Equal(t, 0, e.Findings)
+		assert.Equal(t, 0, e.Drifted)
+	}
+
+	// ...and the marshalled row omits the key rather than emitting 0.0.
+	data, err := json.Marshal(got[0])
+	require.NoError(t, err)
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.NotContains(t, back, "rate", "an unmeasured row must not read as clean")
+	assert.Contains(t, back, "routing_values",
+		"a real zero routing count is a measurement and must stay explicit")
+}
+
+// No reviewers at all means no array, not an empty one: omitempty drops the key so a
+// run-result predating this epic and a run with nothing to report read alike.
+func TestPerReviewerVocabulary_EmptyRunEmitsNoKey(t *testing.T) {
+	assert.Empty(t, PerReviewerVocabulary(nil))
+
+	data, err := json.Marshal(RunResult{Suite: "s", SuiteVersion: "1.0.0"})
+	require.NoError(t, err)
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.NotContains(t, back, "reviewer_vocabulary")
+}
+
+// AC1, publish half: the breakdown reaches `atcr benchmark run` consumers through the
+// run result under its own top-level key.
+func TestRunResult_CarriesPerReviewerVocabulary(t *testing.T) {
+	rate := 1.0
+	data, err := json.Marshal(RunResult{
+		Suite:        "standard-v1",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-08-14T00:00:00Z",
+		Vocabulary: []ReviewerVocabulary{{
+			Model: "drifted-model", Persona: "b",
+			Findings: 12, Drifted: 12, Rate: &rate, RoutingValues: 0,
+		}},
+	})
+	require.NoError(t, err)
+
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(data, &back))
+	rows, ok := back["reviewer_vocabulary"].([]any)
+	require.True(t, ok, "the run result must carry the breakdown under its own key")
+	require.Len(t, rows, 1)
+
+	row, ok := rows[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "drifted-model", row["model"])
+	assert.Equal(t, "b", row["persona"])
+	assert.Equal(t, float64(12), row["findings"])
+	assert.Equal(t, float64(12), row["drifted"])
+	assert.Equal(t, 1.0, row["rate"])
+	assert.Equal(t, float64(0), row["routing_values"])
+}
+
+// AC1, exclusion half. BuildSubmission constructs Submission field-by-field, so the new
+// key is excluded BY CONSTRUCTION — this test pins that it stays excluded rather than
+// making it so. A diagnostic array is not a public leaderboard column.
+func TestBuildSubmission_DoesNotPublishPerReviewerVocabulary(t *testing.T) {
+	rate := 0.42
+	data, err := json.Marshal(BuildSubmission(RunResult{
+		Suite:        "standard-v1",
+		SuiteVersion: "1.0.0",
+		Vocabulary: []ReviewerVocabulary{{
+			Model: "m", Persona: "p", Findings: 10, Drifted: 4, Rate: &rate,
+		}},
+	}, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, err)
+
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.NotContains(t, back, "reviewer_vocabulary",
+		"the public submission schema must not gain a diagnostic array from this epic")
+}
+
+// AC1, frozen-schema half. scorecard.PublicRecord is the schema shared byte-for-byte
+// between `benchmark export` and production `leaderboard --export`; this epic adds a
+// per-reviewer diagnostic and must not have reached for that type to carry it. The key
+// set is enumerated literally so ANY addition — not just this epic's — fails here and
+// has to be a deliberate edit.
+//
+// The enumeration is derived from the TYPE's json tags, not from a marshalled
+// instance: a new field tagged omitempty and left at its zero value by a hand-built
+// fixture never appears in the marshalled map, so an instance-derived key set would
+// keep matching the literal list while the frozen schema quietly gained a column.
+// (Two existing fields — survived_skeptic_rate, cost_per_corroborated_finding_usd —
+// are exactly that shape and only show up in a marshal when the fixture sets them.)
+func TestPublicRecord_JSONKeySetIsUnchangedByThisEpic(t *testing.T) {
+	typ := reflect.TypeOf(scorecard.PublicRecord{})
+	keys := make([]string, 0, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	assert.Equal(t, []string{
+		"corroboration_rate",
+		"cost_per_corroborated_finding_usd",
+		"findings_raised_avg",
+		"latency_p50_ms",
+		"model",
+		"persona",
+		"runs",
+		"survived_skeptic_rate",
+	}, keys, "the frozen public reviewer schema gained or lost a column")
+}
+
 // A reviewer that labels EVERY finding `other` reports perfect vocabulary
 // agreement while conveying no categorical information — `other` is a taxonomy
 // member, so it is in vocabulary by construction.
@@ -371,4 +866,31 @@ func TestOutOfVocabularyRate_AllOtherIsAKnownBlindSpot(t *testing.T) {
 	assert.InDelta(t, 0.0, got[0].CorroborationRate, 1e-9,
 		"`other` is hard-excluded from every family, so the same run detects nothing — "+
 			"drift 0.0 with recall 0.0 is the all-`other` signature, not a clean run")
+}
+
+// The per-reviewer boundary is pinned HERE, at the predicate, rather than only through
+// the CLI warning's message text: the bound and its inclusive semantics are the
+// package's to define, and a caller outside package cli must be able to reuse them
+// without restating `>= 0.50`. The row above the run-level ceiling but under this one is
+// the case that keeps the two thresholds from being quietly collapsed into one.
+func TestExceedsReviewerDriftRate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rate *float64
+		want bool
+	}{
+		{name: "unmeasured is not a breach", rate: nil, want: false},
+		{name: "clean reviewer", rate: ptr(0.0), want: false},
+		{name: "just under the majority", rate: ptr(0.49), want: false},
+		{name: "over the RUN ceiling but under this one", rate: ptr(MaxOutOfVocabularyRate + 0.01), want: false},
+		{name: "exactly at the majority trips it", rate: ptr(MaxReviewerDriftRate), want: true},
+		{name: "well over", rate: ptr(0.90), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ExceedsReviewerDriftRate(tc.rate))
+		})
+	}
+	assert.Equal(t, 0.50, MaxReviewerDriftRate, "the majority claim is what the doc argues; a change needs that argument revisited")
+	assert.Greater(t, MaxReviewerDriftRate, MaxOutOfVocabularyRate,
+		"the per-reviewer bound is deliberately looser than the n=1-derived run ceiling")
 }

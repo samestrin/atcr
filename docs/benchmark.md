@@ -82,7 +82,7 @@ atcr benchmark verify --suite-path ./my-suite
 ```
 
 ```
-suite "standard-v1" version 1.0.0: 2 cases, valid
+suite "standard-v1" version "1.0.0": 2 cases, valid
 reproducibility hash: 3f9a…<64 hex>
 ```
 
@@ -318,37 +318,62 @@ this section does.
 `export` reads a **run-result** file rather than your local scorecard — so a
 production run can never be passed off as a suite submission. A run-result is:
 
+The numbers below are internally consistent, and deliberately depict a run that
+**breaches** the ceiling: the per-reviewer rows sum to `8` drifted of `20` findings,
+which is exactly the `0.4` scalar, and one reviewer accounts for all of it. That is
+precisely what `reviewer_vocabulary` is for — the scalar alone cannot say *which*
+model drifted. Rows are in ascending `(model, persona)` order, the order the producer
+emits and the order the documented positional join depends on.
+
 ```json
 {
   "suite": "standard-v1",
   "suite_version": "1.0.0",
   "generated_at": "2026-06-24T12:00:00Z",
-  "out_of_vocabulary_rate": 0.04,
+  "out_of_vocabulary_rate": 0.4,
   "reviewers": [ /* public reviewer rows */ ],
   "suite_case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
   "reviewer_coverage": [
-    {
-      "model": "qwen3.8-max",
-      "persona": "brad",
-      "case_ids": ["case-01-nil-deref"],
-      "outcomes": { "findings": 1 },
-      "fallback_cases": 0
-    },
     {
       "model": "llm-large",
       "persona": "brad",
       "case_ids": ["case-02-sql-injection"],
       "outcomes": { "unknown": 1 },
       "fallback_cases": 1
+    },
+    {
+      "model": "qwen3.8-max",
+      "persona": "brad",
+      "case_ids": ["case-01-nil-deref"],
+      "outcomes": { "findings": 1 },
+      "fallback_cases": 0
+    }
+  ],
+  "reviewer_vocabulary": [
+    {
+      "model": "llm-large",
+      "persona": "brad",
+      "findings": 8,
+      "drifted": 8,
+      "rate": 1.0,
+      "routing_values": 0
+    },
+    {
+      "model": "qwen3.8-max",
+      "persona": "brad",
+      "findings": 12,
+      "drifted": 0,
+      "rate": 0.0,
+      "routing_values": 0
     }
   ]
 }
 ```
 
-`suite_case_ids` and `reviewer_coverage` are **run-result-only** — they gate
-publication and are not carried into the submission envelope. Both are omitted
-entirely by a producer that did not measure them, which is what lets export tell
-"unmeasured" apart from "short".
+`suite_case_ids`, `reviewer_coverage`, and `reviewer_vocabulary` are
+**run-result-only** — they are not carried into the submission envelope. Each is
+omitted entirely by a producer that did not measure it, which is what lets export
+tell "unmeasured" apart from "short".
 
 `out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
 share of the run's findings whose category is not a member of the closed reviewer
@@ -357,15 +382,24 @@ offered?", which no other field reveals — a reviewer that invents its own word
 quietly zeroes its own recall, and the low score is indistinguishable from one that
 simply found less. Five details matter when reading it:
 
-- A run is guarded against a **ceiling of `0.20`**, and the ceiling is **exclusive** —
-  a run sitting exactly on `0.20` trips the guard. Treat `0.20` as a *provisional
-  fixture guard*, not an empirical bound on model behaviour: it is deliberately loose
-  so that the words `reconcile`'s merge table records as *meaning* a taxonomy member
-  without *being* one (`bug`, `input`, `clarity`, `consistency`, `structure`, …) have
-  headroom until epic 35.16.6 lands parse-boundary canonicalization. It is **not**
-  derived from the 35.16.2 dry-run's 72.3%, which measured a different denominator
-  entirely. The intent is to **tighten** this once a post-merge validation run supplies
-  the first real number under this metric — never to loosen it when a run fails.
+- A run is guarded against a **ceiling of `0.05`**, and the ceiling is **exclusive** —
+  a run sitting exactly on `0.05` trips the guard. Unlike the `0.20` it replaced, this
+  number is **derived from measurement**: the V1 post-merge validation run measured
+  `0.0100` (2 drifted findings of 201), and `0.05` keeps five times that headroom.
+  `0.20` had been a deliberately loose provisional guard, giving room to the words
+  `reconcile`'s merge table records as *meaning* a taxonomy member without *being* one
+  (`bug`, `input`, `clarity`, …) — V1 emitted **zero** such words and **zero**
+  separator/hyphenation variants, retiring that justification. It keeps real headroom
+  rather than hugging `0.0100` because n = 1: only one valid run exists, so the
+  metric's variance across runs and rosters is still unmeasured. The number moves one
+  way — **tighten** it when a further valid run supports tightening, never loosen it
+  because a run failed.
+
+- **Read a breach as a parser question first.** Both of V1's residual drift findings
+  were findings-*parser* artifacts — body text and bare integers landing in the
+  category field — not models choosing words outside the taxonomy. On the only
+  evidence available this metric is at least as much a parser-health proxy as a
+  vocabulary-health one, so inspect the emitted words before rewriting a persona.
 
 - The denominator is **findings, not distinct categories**, so one prolific
   in-vocabulary category cannot mask thirty drifted findings.
@@ -387,6 +421,35 @@ It is deliberately **not** carried into the submission envelope: the public boar
 schema is the same allowlist production uses, and this is a benchmark-run
 diagnostic.
 
+`reviewer_vocabulary` breaks that same drift down **per reviewer**, and it exists
+because a micro-averaged scalar cannot name the model that drifted — worse, it hides
+it. A reviewer raising 12 findings that all drifted, pooled against a peer raising
+300 clean ones, reports `0.038`: under the ceiling, no warning, run reads clean.
+Tightening the ceiling raises the dilution such a row needs; it does not bound it,
+because the ratio is set by the rest of the roster.
+
+- Rows are **positionally aligned** with `reviewers[]` — entry *i* describes
+  `reviewers[i]`, both sorted by the same `(model, persona)` key. Recall is
+  deliberately not duplicated here; read it from the aligned row instead.
+- `findings` and `drifted` are that reviewer's own denominator and numerator, and
+  summing them across rows reproduces `out_of_vocabulary_rate` exactly. They are
+  published alongside `rate` because a rate alone is unreadable at small n — `1/1`
+  and `80/80` are both `1.00` and are not the same finding.
+- `rate` is **absent** for a reviewer that raised nothing, on the same
+  unmeasured-vs-clean rule the run-level key follows.
+- `routing_values` counts findings labelled with a **routing** value (`other`,
+  `out-of-scope`) rather than a descriptive category. It exists to expose the
+  all-`other` blind spot: both routing values are taxonomy members, so a reviewer
+  labelling everything `other` reports drift `0.0` — identical to a reviewer that
+  categorized precisely — while conveying no categorical information. **`routing_values`
+  equal to `findings`, alongside `rate` `0.0` and a `corroboration_rate` of `0.0` on
+  the aligned row, is that signature.** Do not read a `0.0` drift as clean without
+  checking it.
+
+`atcr benchmark run` also warns on stderr, naming any reviewer whose own drift is at
+or above `0.50` — a deliberately looser bar than the run-level ceiling, so the signal
+stays rare enough to be read.
+
 `atcr benchmark run --output <path>` produces a conforming run-result; you can also
 supply one by hand. `export` reuses the run-result's `generated_at` as the
 submission's `submitted_at`, so the same run-result always exports identically.
@@ -406,6 +469,13 @@ Behavior:
   case count, a repeated case id within a row, or a case id absent from the suite.
   None of these are producible by `atcr benchmark run`, so each means the file was
   assembled by hand.
+- A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
+  for publication** → error. The scrub is what the submission actually carries, so an
+  identity that survives the file but not the scrub would publish as `""`. It removes
+  path-, `~`-, email- and credential-shaped tokens and repeats until nothing more
+  matches, so `anthropic/claude-3` survives while `bedrock@us-east-1/claude`,
+  `proxy@lan/openai/gpt-4o` and `sk-abc/claude` do not. Also hand-assembly only:
+  `atcr benchmark run` scrubs at the fold, and re-scrubbing is a no-op.
 - `--in` is required. `--output` writes the JSON to a file (`0600`, parents
   created) instead of stdout.
 

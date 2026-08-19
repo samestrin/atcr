@@ -251,8 +251,11 @@ var ErrReviewInProgress = errors.New("still in_progress")
 // dead (Epic 1.5): its fan-out exceeded the effective timeout without writing a
 // completion signal. Like in_progress it has no summary.json, so reconciling it
 // would emit a complete-looking verdict from an incomplete (or empty) agent set
-// — but unlike in_progress it will never complete, so the guidance is to re-run
-// rather than poll.
+// — but unlike in_progress it will never complete on its own, so polling is not
+// the guidance. Resuming is: the per-agent artifacts a dead fan-out left behind
+// are what RebuildPool reconstructs the pool from, and this guard does not gate
+// `atcr review --resume` (its only callers are reconcile and the MCP handlers),
+// so the message names resume first and re-running from scratch as the fallback.
 var ErrReviewStale = errors.New("stale (fan-out exceeded its timeout without a completion signal)")
 
 // EnsureReviewComplete rejects a fan-out-managed review that is still running,
@@ -273,7 +276,12 @@ func EnsureReviewComplete(reviewDir, id string) error {
 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
 	}
 	if st.Status == RunStale {
-		return fmt.Errorf("review %s is %w; re-run the review", id, ErrReviewStale)
+		// Both callers include MCP handlers, which have no resume capability at all
+		// (see handlers.go's explicit-id collision re-message). Resume stays FIRST —
+		// it is the cheap recovery and the CLI is where it exists — but the start-over
+		// half names atcr_review so an MCP client is not left with a CLI-only
+		// instruction, mirroring how the in_progress message above names atcr_status.
+		return fmt.Errorf("review %s is %w; run `atcr review --resume %s` to finish the remaining agents (CLI only), or re-run the review from scratch with atcr_review (or `atcr review`) to start over", id, ErrReviewStale, id)
 	}
 	return nil
 }
@@ -385,15 +393,26 @@ type AgentStatus struct {
 	// signal — a legitimately single-chunk, non-degraded reviewer has chunk_count 0
 	// and degradation_action "", indistinguishable from "not chunked", which is the
 	// correct observable state. DegradationAction reports the degradation MECHANISM
-	// that actually fired — NOT the configured on_overflow policy, since on_overflow
-	// dispatch (applyOverflowPolicy) is not yet wired into the live review path
-	// (chunking is driven by review_strategy). See tech-debt-captured.md TD-004.
+	// that actually fired — NOT the configured on_overflow policy. The two are still
+	// distinct even though on_overflow IS now wired into the live review path: buildSlots
+	// consults it at four pre-dispatch refusal sites (the chunked and bulk zero-budget
+	// arms, the shed-driven overflow, and a fallback that cannot hold its primary's
+	// payload), where fail/fallback abort the run rather than producing a slot. A policy
+	// that fires therefore yields no AgentStatus at all, while the value here names the
+	// mechanism that degraded a slot which WAS dispatched — chunking, for instance, is
+	// still driven by review_strategy, not by on_overflow.
 	//
 	// The value is one of FOUR, written from the degradation* constants in
 	// review.go:
 	//
 	//	""         no degradation.
-	//	"chunk"    a window-aware chunk split. No loss.
+	//	"chunk"    a window-aware chunk split. The SPLIT ITSELF loses nothing —
+	//	           every file is delivered, across more calls. It does NOT assert the
+	//	           run dropped nothing: the diff-wide byte-budget shed is decided
+	//	           upstream of chunking (buildPayloads) and is promoted onto the
+	//	           merged persona record, so "chunk" legitimately coexists with
+	//	           truncated=true and a non-empty files_dropped. Read the truncation
+	//	           fields for loss; this field reports the payload REGIME only.
 	//	"truncate" a per-agent byte shed that dropped files. Lossy.
 	//	"overflow" the payload was dispatched knowing it exceeds what the model
 	//	           can hold, because no smaller framing was available.
@@ -420,11 +439,28 @@ type AgentStatus struct {
 	// promoted anything, so a re-packing chunk 0 cannot under-report it. The
 	// per-chunk re-fit is visible on the merged record through the promoted
 	// truncation, degradation_action, and effective_budget instead.
-	EffectiveBudget      int64  `json:"effective_budget,omitempty"`
-	ResolvedWindow       int    `json:"resolved_window,omitempty"`
-	ReservedOutputTokens int    `json:"reserved_output_tokens,omitempty"`
-	ChunkCount           int    `json:"chunk_count,omitempty"`
-	DegradationAction    string `json:"degradation_action,omitempty"`
+	EffectiveBudget      int64 `json:"effective_budget,omitempty"`
+	ResolvedWindow       int   `json:"resolved_window,omitempty"`
+	ReservedOutputTokens int   `json:"reserved_output_tokens,omitempty"`
+	// ResolvedMaxTokens is the output cap this agent RESOLVED to, present on every
+	// sized record. ReservedOutputTokens above is what the budget could actually fund,
+	// so it is 0 on the zero-budget arm — the one record where the cap is the cause of
+	// the degradation. Read the two together: equal means the reservation was funded;
+	// a cap here with reserved_output_tokens absent means the window could not fund it,
+	// and this is the number to lower (or the window to raise). Absent on an unsized
+	// agent, like its siblings, so pre-sizing artifacts stay byte-identical.
+	//
+	// That pairing rule holds because a MERGED multi-chunk record drops this field
+	// rather than carrying a mismatched one: the merged budget is an aggregate across
+	// chunks (see mergeResultGroup), so when it promotes a zero the reservation AND
+	// this cap are both cleared. Inheriting the cap from chunk 0 there would name a
+	// fully-funded primary's number beside a zero caused by a later chunk's fallback —
+	// the one case where the rule above would point at a cap that closed nothing. Both
+	// absent on such a record means "this merged record cannot name the cap", which is
+	// the honest answer rather than a confident wrong one.
+	ResolvedMaxTokens int    `json:"resolved_max_tokens,omitempty"`
+	ChunkCount        int    `json:"chunk_count,omitempty"`
+	DegradationAction string `json:"degradation_action,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

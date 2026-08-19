@@ -670,3 +670,120 @@ func TestInvokeSlot_StampsRePackFlagWithoutRelyingOnTagDivergence(t *testing.T) 
 	assert.NotContains(t, buf.String(), "promoting to re-packed",
 		"the divergence backstop must stay silent here — a warning means the flag arrived fail-open rather than by the stamp")
 }
+
+// A persona can hit BOTH degradations at once: the diff-wide byte-budget shed
+// (decided upstream in buildPayloads, carried on DiffTruncation) and a fallback that
+// re-fit one of its chunks. promoteRePackedDegradation writes out.Truncation, and it
+// runs BEFORE promoteDiffTruncation — which is deliberately a fallback and so declines
+// to fill an already-populated record. The diff-wide file list was therefore masked:
+// truncated=true stayed honest, but files_dropped named only the re-pack's files and
+// silently omitted the files no reviewer ever saw.
+//
+// The persona's record has to name ALL of them, which is the same argument the
+// existing re-pack union already makes across chunks — extended one level out.
+func TestMergeChunkResults_UnionsTheDiffWideShedWithARePackRecord(t *testing.T) {
+	t.Parallel()
+	diffWide := payload.Truncation{Truncated: true, FilesDropped: []string{"shed_by_budget.go", "a.go"}}
+	g := []Result{
+		{
+			Agent: "greta", Status: StatusOK, Content: "c0",
+			DegradationAction: degradationChunk, EffectiveBudget: 400000,
+			DiffTruncation: diffWide,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			DegradationAction: degradationTruncate, EffectiveBudget: 71680,
+			Truncation:     payload.Truncation{Truncated: true, FilesDropped: []string{"b.go", "a.go"}},
+			DiffTruncation: diffWide,
+			servedRePacked: true,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	assert.True(t, out.Truncation.Truncated)
+	assert.Equal(t, []string{"a.go", "b.go", "shed_by_budget.go"}, out.Truncation.FilesDropped,
+		"files_dropped must be the deduplicated, sorted union of the re-pack's shed AND the diff-wide "+
+			"shed — a file dropped by the global byte budget is exactly the one no reviewer saw")
+}
+
+// The merged record's promoted budget is an AGGREGATE across chunks, and when it promotes
+// a ZERO the reservation is force-zeroed alongside it so the two cannot contradict each
+// other (promoteRePackedDegradation). ResolvedMaxTokens has to follow the same rule.
+//
+// Left inherited, it publishes CHUNK 0's cap — the funded primary's — beside a zero
+// reservation caused by a DIFFERENT agent's window, and the field's documented reading
+// rule ("a cap here with reserved_output_tokens absent means the window could not fund it,
+// and this is the number to lower") then names a number that closed nothing. That is the
+// exact inconsistency the reservation-zeroing was written to prevent.
+func TestMergeChunkResults_PromotedZeroBudgetDoesNotLeaveAnInheritedCapBehind(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{
+			Agent: "greta", Status: StatusOK, Content: "c0",
+			Model:                "primary-model",
+			DegradationAction:    degradationChunk,
+			EffectiveBudget:      400000,
+			ResolvedWindow:       200000,
+			ReservedOutputTokens: 8192,
+			ResolvedMaxTokens:    8192,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			// A different serving agent whose window funds nothing at all.
+			Model:                "backup-model",
+			DegradationAction:    degradationTruncate,
+			EffectiveBudget:      0,
+			ResolvedWindow:       1,
+			ReservedOutputTokens: 0,
+			ResolvedMaxTokens:    4096,
+			Truncation:           payload.Truncation{Truncated: true, FilesDropped: []string{"a.go"}},
+			servedRePacked:       true,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	require.Zero(t, out.EffectiveBudget, "precondition: the zero budget is what promotes")
+	require.Zero(t, out.ReservedOutputTokens,
+		"precondition: the reservation is force-zeroed beside a promoted zero budget")
+
+	assert.Zero(t, out.ResolvedMaxTokens,
+		"the cap must be zeroed with its reservation: chunk 0's 8192 did not close this "+
+			"budget, and publishing it beside an absent reservation names the wrong number "+
+			"as the one to lower")
+}
+
+// The ordinary case must keep its cap: a non-zero promoted budget leaves the reservation
+// alone, so the cap stays with it and the two still read as a matched pair.
+func TestMergeChunkResults_PromotedNonZeroBudgetKeepsTheInheritedCap(t *testing.T) {
+	t.Parallel()
+	g := []Result{
+		{
+			Agent: "greta", Status: StatusOK, Content: "c0",
+			Model: "primary-model", DegradationAction: degradationChunk,
+			EffectiveBudget: 400000, ResolvedWindow: 200000,
+			ReservedOutputTokens: 8192, ResolvedMaxTokens: 8192,
+		},
+		{
+			Agent: "greta", Status: StatusOK, Content: "c1",
+			Model: "backup-model", DegradationAction: degradationTruncate,
+			EffectiveBudget: 71680, ResolvedWindow: 32768,
+			ReservedOutputTokens: 4096, ResolvedMaxTokens: 4096,
+			Truncation:     payload.Truncation{Truncated: true, FilesDropped: []string{"a.go"}},
+			servedRePacked: true,
+		},
+	}
+
+	merged := mergeChunkResults(g, nil)
+	require.Len(t, merged, 1)
+	out := merged[0]
+
+	require.Equal(t, int64(71680), out.EffectiveBudget, "precondition: a non-zero budget promotes")
+	assert.Equal(t, 8192, out.ResolvedMaxTokens,
+		"the cap belongs to the model named on this record, like resolved_window beside it")
+}

@@ -217,7 +217,7 @@ func TestClassify_StatusMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify("", tc.err, testNonce, 5, tgt)
+			got := classify("", tc.err, testNonce, 5, tgt, MaxTokensSourceDefault)
 			assert.Equal(t, tc.want, got.status)
 		})
 	}
@@ -225,7 +225,7 @@ func TestClassify_StatusMapping(t *testing.T) {
 
 func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
-	got := classify("", context.Canceled, testNonce, 5, tgt)
+	got := classify("", context.Canceled, testNonce, 5, tgt, MaxTokensSourceDefault)
 	assert.Equal(t, StatusTimeout, got.status)
 	// A cancellation (Ctrl-C) must not advise changing --timeout.
 	assert.NotContains(t, got.hint, "raise --timeout")
@@ -241,7 +241,7 @@ func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
 	got := classify("", &llmclient.HTTPStatusError{
 		Status:  403,
 		Snippet: "You have reached your usage limit for this billing cycle",
-	}, testNonce, 5, tgt)
+	}, testNonce, 5, tgt, MaxTokensSourceDefault)
 
 	assert.Equal(t, StatusAuthFailed, got.status, "403 stays in the auth class")
 	assert.NotContains(t, got.hint, "API key", "a 403 hint must not blame the credential")
@@ -258,7 +258,7 @@ func TestClassify_Forbidden403DoesNotBlameTheAPIKey(t *testing.T) {
 func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
 	t.Setenv("ATCR_AUTH_PROBE_KEY", "k")
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "ATCR_AUTH_PROBE_KEY"}
-	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt)
+	got := classify("", &llmclient.HTTPStatusError{Status: 401}, testNonce, 5, tgt, MaxTokensSourceDefault)
 
 	assert.Equal(t, StatusAuthFailed, got.status)
 	assert.Contains(t, got.hint, "API key")
@@ -267,7 +267,7 @@ func TestClassify_Unauthorized401KeepsTheAPIKeyHint(t *testing.T) {
 
 func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
-	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt)
+	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt, MaxTokensSourceDefault)
 	assert.Equal(t, StatusNotFound, got.status)
 	assert.Contains(t, got.detail, "does not exist")
 }
@@ -436,7 +436,7 @@ func TestClassify_NetworkErrorRedactsAPIKey(t *testing.T) {
 	// A transport error that accidentally embeds the API key value (e.g. a
 	// misconfigured proxy that echoes auth headers in its error message).
 	err := fmt.Errorf("request failed: auth key=%s rejected by proxy", secret)
-	got := classify("", err, testNonce, 5, tgt)
+	got := classify("", err, testNonce, 5, tgt, MaxTokensSourceDefault)
 	assert.Equal(t, StatusNetworkError, got.status)
 	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from network-error detail")
 	assert.Contains(t, got.detail, "[redacted]")
@@ -455,7 +455,7 @@ func TestClassify_StatusErrorSnippetScrubsCredentials(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://" + proxyUser + ":" + proxyPass + "@proxy.test/v1", APIKeyEnv: "SECRET_REDACT_KEY2"}
 	// An HTTP error whose snippet echoes the API key and the base_url userinfo.
 	snippet := "rejected key " + secret + " for " + proxyUser + ":" + proxyPass
-	got := classify("", &llmclient.HTTPStatusError{Status: 403, Snippet: snippet}, testNonce, 5, tgt)
+	got := classify("", &llmclient.HTTPStatusError{Status: 403, Snippet: snippet}, testNonce, 5, tgt, MaxTokensSourceDefault)
 	assert.Equal(t, StatusAuthFailed, got.status)
 	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from HTTPStatusError snippet")
 	assert.NotContains(t, got.detail, proxyPass, "base_url password must be scrubbed from HTTPStatusError snippet")
@@ -468,7 +468,7 @@ func TestClassify_PromptEchoIsNotOK(t *testing.T) {
 	// An endpoint that echoes the request prompt verbatim contains the marker
 	// (because the prompt embeds it), but it did not follow the instruction —
 	// a common misconfiguration (wrong route returning the request body).
-	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt)
+	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt, MaxTokensSourceDefault)
 	assert.NotEqual(t, StatusOK, got.status, "a verbatim prompt echo must not classify as ok")
 }
 
@@ -495,4 +495,46 @@ func TestRandomNonce_NonEmptyAndUnique(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, n1)
 	assert.NotEqual(t, n1, n2)
+}
+
+// The resolution carrying a declared cap is only half the fix — the probe has to
+// actually send it. This pins the Invocation, so a target that knows its budget but a
+// probe that keeps sending the default would fail here rather than silently reproduce
+// the "raise a cap you already raised" hint.
+func TestProbe_UsesTheTargetsDeclaredMaxTokensUnlessTheFlagWasPassed(t *testing.T) {
+	var got []int
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		if inv.MaxTokens != nil {
+			got = append(got, *inv.MaxTokens)
+		} else {
+			got = append(got, 0)
+		}
+		return Marker("n"), nil
+	})
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://api.example/v1", APIKeyEnv: "DOCTOR_TEST_KEY", MaxTokens: 32000}
+	t.Setenv("DOCTOR_TEST_KEY", "x")
+
+	t.Run("declared cap applies when --max-tokens was not passed", func(t *testing.T) {
+		got = nil
+		probe(context.Background(), fake, tgt, Options{MaxTokens: 2048, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 32000, got[0],
+			"the agent declared 32000; probing at the 2048 default is what produced the contradictory hint")
+	})
+
+	t.Run("an explicit --max-tokens still wins", func(t *testing.T) {
+		got = nil
+		probe(context.Background(), fake, tgt, Options{MaxTokens: 512, MaxTokensSet: true, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 512, got[0], "the operator's per-run choice must beat the declaration")
+	})
+
+	t.Run("an undeclared target keeps the caller's default", func(t *testing.T) {
+		got = nil
+		bare := tgt
+		bare.MaxTokens = 0
+		probe(context.Background(), fake, bare, Options{MaxTokens: 2048, Nonce: "n"})
+		require.Len(t, got, 1)
+		assert.Equal(t, 2048, got[0])
+	})
 }

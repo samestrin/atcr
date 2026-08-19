@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // Status classes for a single endpoint probe. ok means the nonce marker came
@@ -46,10 +48,15 @@ type Completer interface {
 
 // Options tune the self-test.
 type Options struct {
-	MaxTokens   int           // completion budget (generous so thinking models emit the marker)
-	Timeout     time.Duration // per-call deadline (0 = inherit ctx only)
-	Nonce       string        // marker token embedded in the prompt
-	Concurrency int           // max concurrent probes (0 = defaultConcurrency)
+	MaxTokens int // completion budget (generous so thinking models emit the marker)
+	// MaxTokensSet reports that MaxTokens came from an explicit --max-tokens rather
+	// than the flag's default. Without it the two are indistinguishable (the default
+	// is a real number), and a target's declared max_tokens could never take
+	// precedence — which is the whole point of consulting the declaration.
+	MaxTokensSet bool
+	Timeout      time.Duration // per-call deadline (0 = inherit ctx only)
+	Nonce        string        // marker token embedded in the prompt
+	Concurrency  int           // max concurrent probes (0 = defaultConcurrency)
 }
 
 // Marker is the exact token a healthy endpoint must echo back.
@@ -85,7 +92,41 @@ type AgentResult struct {
 	// declaration, which is otherwise observable only as a failed provider call.
 	ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
 	WindowSource        string `json:"window_source,omitempty"`
+	// MaxTokens is the output cap this agent's probe actually ran at, after the
+	// flag → declaration → unset resolution in probe(). Reported for the same reason
+	// ContextWindowTokens is: the cap is applied silently, so an ok_warning row is
+	// otherwise unreadable — the operator cannot tell whether the probe ran at the
+	// agent's declaration or at doctor's default, which is exactly what decides
+	// whether raising the declaration would change anything.
+	//
+	// ALWAYS present (deliberately NOT omitempty), matching the discipline
+	// PoolSummary.TruncatedZeroFindings and FallbackCount state for themselves: a 0
+	// must be distinguishable from a report written before this field existed. 0 here
+	// means NO CAP WAS APPLIED, which arises two ways: the probe short-circuited on
+	// invalid_config or missing_key above the budget resolution, or the resolved budget
+	// was non-positive and probe() sent the request uncapped.
+	//
+	// The second case is unreachable through the CLI — cli/doctor.go rejects a
+	// --max-tokens at or below 0, and an agent declaration is validated into
+	// 1..MaxTokensCap — but Run is exported and probe() deliberately keeps the branch
+	// rather than relying on that check one layer up, so the field's contract states it
+	// too. MaxTokensSource is empty in both cases. Under omitempty these states would
+	// collapse into one absent key.
+	MaxTokens int `json:"max_tokens"`
+	// MaxTokensSource names the tier MaxTokens resolved from — flag, declaration, or
+	// default — the cap's counterpart to WindowSource, and for the same reason: the
+	// number alone cannot show whether a declaration took effect, since an agent
+	// declaring exactly doctor's default is indistinguishable from one declaring
+	// nothing. Empty when no call was placed (MaxTokens 0).
+	MaxTokensSource string `json:"max_tokens_source,omitempty"`
 }
+
+// The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
+const (
+	MaxTokensSourceFlag        = "flag"        // an explicit --max-tokens
+	MaxTokensSourceDeclaration = "declaration" // the agent's own max_tokens
+	MaxTokensSourceDefault     = "default"     // doctor's built-in probe budget
+)
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
 // roster agent has a working invocation path, 1 otherwise.
@@ -100,6 +141,12 @@ type probeResult struct {
 	latencyMS int64
 	hint      string
 	detail    string
+	// maxTokens is the resolved output cap the probe ran at (0 when none was
+	// applied). Carried on the result rather than re-derived in Run so the reported
+	// value cannot drift from the one actually sent.
+	maxTokens int
+	// maxTokensSource is the tier maxTokens came from, carried for the same reason.
+	maxTokensSource string
 }
 
 // Run probes every distinct target once (bounded concurrency), maps results
@@ -130,22 +177,96 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 	for _, at := range res.Agents {
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
+		status, hint := pr.status, pr.hint
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, pr.maxTokens, status, pr.maxTokensSource); ok {
+			status, hint = s, h
+		}
 		rep.Agents = append(rep.Agents, AgentResult{
 			Agent:               at.Agent,
 			Serial:              at.Serial,
 			Provider:            tgt.Provider,
 			Model:               tgt.Model,
-			Status:              pr.status,
+			Status:              status,
 			LatencyMS:           pr.latencyMS,
-			Hint:                pr.hint,
+			Hint:                hint,
 			Detail:              pr.detail,
 			Source:              at.Source,
 			ContextWindowTokens: at.ContextWindowTokens,
 			WindowSource:        at.WindowSource,
+			MaxTokens:           pr.maxTokens,
+			MaxTokensSource:     pr.maxTokensSource,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
 	return rep
+}
+
+// zeroBudgetRemedy names the two declarations that can close an agent's input budget.
+// Deliberately worded to match internal/fanout's constant of the same name, which the
+// review fan-out prints when it hits this state at dispatch: doctor is the pre-flight
+// surface for exactly that failure, and an operator who meets it in both places must not
+// be handed two different remedies for one condition.
+const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_window_tokens declaration"
+
+// zeroBudgetVerdict reports the warning doctor owes an agent whose resolved window funds
+// NO input budget once its resolved output cap and the fixed prompt overhead are
+// reserved. It returns ok=false when there is nothing to say.
+//
+// doctor is the only surface holding both operands, and it printed them side by side
+// without comparing them — so an agent `atcr review` cannot size a payload for reported
+// `ok` at exit 0. The probe cannot catch this itself: the nonce prompt is trivial, so it
+// succeeds at any cap, which is precisely why the verdict has to be derived here from the
+// numbers rather than observed from the response.
+//
+// The budget is asked of payload.EffectiveByteBudget rather than recomputed, so doctor
+// and the fan-out cannot disagree about where the threshold sits — the overhead constant
+// stays owned by the package that reserves it.
+//
+// Three guards, all load-bearing:
+//   - budgetSrc must not be MaxTokensSourceFlag. The verdict asserts a REVIEW-time
+//     outcome, so it may only be drawn from a cap review will actually resolve. Doctor's
+//     own --max-tokens is not one: it reaches target identity and the probe, but review
+//     resolves independently (resolveMaxTokens: review's own flag -> the agent's
+//     declaration -> defaultMaxTokens). Without this guard `atcr doctor --max-tokens
+//     30000` downgrades EVERY agent on the 32768 default window and predicts a failure
+//     that will not happen. classify() branches on the same tier for the same reason, and
+//     states the rule this obeys: no branch may assert which knob governs the real run,
+//     because that is conditional on how review is later invoked. The declaration and
+//     default tiers ARE review's own resolution order, so the verdict speaks for them.
+//   - maxTokens 0 means NO CAP WAS APPLIED (the probe short-circuited, or resolved a
+//     non-positive budget and sent the request uncapped), not a cap of zero. Without the
+//     guard, a window too small to fund even the prompt overhead reports a closed budget
+//     and the message blames a cap that was never applied — pointing the operator at the
+//     wrong knob when the window is what is at fault.
+//   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
+//     has a louder problem, and overwriting it with a budget warning would hide the
+//     failure the operator has to fix first.
+//
+// An already-warning row (marker absent) is REPHRASED rather than skipped, and that case
+// is the reason this exists at all: the marker-absent hint tells the operator to raise
+// max_tokens, and at a closed budget that advice is actively harmful — the cap is
+// reserved out of the same window, so following it makes the run worse, and the probe
+// then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
+// original hint in place there would have preserved the exact trap this row was filed
+// for.
+func zeroBudgetVerdict(model string, window, maxTokens int, status, budgetSrc string) (string, string, bool) {
+	if !healthy(status) || maxTokens <= 0 || window <= 0 || budgetSrc == MaxTokensSourceFlag {
+		return "", "", false
+	}
+	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
+		return "", "", false
+	}
+	lead := "endpoint is healthy, but"
+	if status == StatusOKWarning {
+		// Contradict the marker-absent remedy explicitly. An operator who reads only the
+		// first clause and reaches for --max-tokens is the failure being prevented.
+		lead = "the marker was absent AND"
+	}
+	return StatusOKWarning, fmt.Sprintf(
+		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap and the fixed prompt "+
+			"overhead are reserved — `atcr review` will ship only the smallest single file, or refuse the run outright "+
+			"under on_overflow fail/fallback. Do NOT raise the cap here: it is reserved out of this same window. Remedy: %s",
+		lead, window, maxTokens, zeroBudgetRemedy), true
 }
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
@@ -198,9 +319,32 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		callCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 	}
+	// An explicit --max-tokens is the operator's per-run choice and wins. Otherwise
+	// the target's own declared cap applies, so an agent that declares 32000 is
+	// probed at 32000 rather than at the default and then told to raise a cap it
+	// already raised — the hint config.go cites as this field's motivation.
+	//
+	// The tier is recorded alongside the number because the number cannot carry it:
+	// an agent declaring exactly doctor's default probes identically to one declaring
+	// nothing, and the remedy differs between those cases.
+	budget := opts.MaxTokens
+	budgetSrc := MaxTokensSourceDefault
+	if opts.MaxTokensSet {
+		budgetSrc = MaxTokensSourceFlag
+	}
+	if !opts.MaxTokensSet && tgt.MaxTokens > 0 {
+		budget = tgt.MaxTokens
+		budgetSrc = MaxTokensSourceDeclaration
+	}
+	// A non-positive budget applies no cap at all, so it carries no tier either — the
+	// field pair stays self-consistent for any caller rather than relying on the CLI's
+	// rejection of a --max-tokens at or below 0 one layer up.
+	if budget <= 0 {
+		budgetSrc = ""
+	}
 	var maxTokens *int
-	if opts.MaxTokens > 0 {
-		v := opts.MaxTokens
+	if budget > 0 {
+		v := budget
 		maxTokens = &v
 	}
 
@@ -213,15 +357,20 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 		Prompt:    Prompt(opts.Nonce),
 	})
 	latency := time.Since(start).Milliseconds()
-	return classify(content, err, opts.Nonce, latency, tgt)
+	pr := classify(content, err, opts.Nonce, latency, tgt, budgetSrc)
+	pr.maxTokens = budget
+	pr.maxTokensSource = budgetSrc
+	return pr
 }
 
 // maxDetailBytes bounds a network-error detail string so a hostile or verbose
 // transport error cannot bloat the report.
 const maxDetailBytes = 512
 
-// classify turns a completion result into a probe outcome.
-func classify(content string, err error, nonce string, latencyMS int64, tgt Target) probeResult {
+// classify turns a completion result into a probe outcome. budgetSrc names the tier the
+// probe's output cap resolved from, so the marker-absent remedy can point at the knob
+// that actually governed THIS probe.
+func classify(content string, err error, nonce string, latencyMS int64, tgt Target, budgetSrc string) probeResult {
 	if err == nil {
 		// Strip the prompt text before checking for the marker so an endpoint
 		// that echoes the request verbatim (a common misconfiguration) does not
@@ -230,10 +379,23 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
+		// The remedy names the knob that capped THIS probe. Which one that is depends on
+		// the resolved tier: without --max-tokens the probe used the agent's declaration,
+		// which `atcr review` also resolves; with it, the flag did, and telling the
+		// operator to raise a declaration their own flag overrode is a no-op.
+		//
+		// Deliberately short. Neither branch asserts which knob "governs the real run" —
+		// review has its own --max-tokens that overrides the declaration (resolveMaxTokens),
+		// so any such claim is conditional on how review is later invoked and cannot be
+		// made truthfully from here.
+		hint := "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — raise this agent's max_tokens declaration, or pass `atcr review --max-tokens N`"
+		if budgetSrc == MaxTokensSourceFlag {
+			hint = "HTTP 200 but marker absent/empty (thinking models spend the budget on reasoning) — this probe was capped by your explicit --max-tokens; raise it to re-probe. `atcr review` resolves its own cap separately"
+		}
 		return probeResult{
 			status:    StatusOKWarning,
 			latencyMS: latencyMS,
-			hint:      "HTTP 200 but marker absent/empty — raise --max-tokens (thinking models spend the budget on reasoning)",
+			hint:      hint,
 		}
 	}
 

@@ -33,8 +33,12 @@ const (
 	// bounded; users opt into "chunked" for higher accuracy on large PRs.
 	DefaultReviewStrategy = "bulk"
 	// DefaultOnOverflow is the embedded F4 degradation policy (plan 19.10) used
-	// when a per-agent payload exceeds its effective budget: "chunk" delivers the
-	// whole diff across window-sized chunks with no content dropped. The full
+	// when a per-agent payload exceeds its effective budget: "chunk" delivers
+	// that agent's payload across window-sized chunks, dropping nothing at that
+	// step. The guarantee is scoped to that step and no further: the global
+	// payload_byte_budget shed (ApplyByteBudgetPreferEscalated, called from
+	// buildPayloads in internal/fanout) runs BEFORE any overflow handling and
+	// does drop whole files, and on_overflow is never consulted in it. The full
 	// ladder is chunk/truncate/fallback/fail; "fallback"/"fail" are recognized as
 	// config values but recognized-but-gated per AC4 (dispatch enforcement lives
 	// in internal/fanout / Task 04, not here).
@@ -81,7 +85,12 @@ type ProjectConfig struct {
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
-	FailOn            string `yaml:"fail_on,omitempty"`
+	// ChunkByteBudget caps the PER-CHUNK payload independently of
+	// PayloadByteBudget. A pointer for the same reason: an explicit 0 (unlimited)
+	// must survive, and nil must stay distinguishable from it so "unset" can mean
+	// "inherit the payload budget" rather than "unlimited".
+	ChunkByteBudget *int64 `yaml:"chunk_byte_budget,omitempty"`
+	FailOn          string `yaml:"fail_on,omitempty"`
 	// Consensus selects the epic-14.2 consensus filter's corroboration bar
 	// (epic 35.9.1): strict (default — today's behavior), lenient (keep
 	// MEDIUM-confidence singletons), or off (filter inert). Empty inherits the
@@ -158,6 +167,17 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   Models with context limits below 128k will fail on the default. For rosters\n")
 	b.WriteString("#   that include smaller-context models (e.g. 49k-limit), reduce to 163840 (160 KiB).\n")
 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
+	b.WriteString("# chunk_byte_budget: byte budget used ONLY to size a per-chunk payload under\n")
+	b.WriteString("#   the chunked strategy. Unset (the default) inherits payload_byte_budget, so\n")
+	b.WriteString("#   leaving it commented reproduces the behavior from before this key existed.\n")
+	b.WriteString("#   Set it when the two budgets want opposite values: lowering payload_byte_budget\n")
+	b.WriteString("#   to protect a small-window model also sheds whole FILES from the payload,\n")
+	b.WriteString("#   while raising it to keep those files also grows every agent's chunks. Split\n")
+	b.WriteString("#   them to hold a large payload and still chunk small. 0 = unlimited.\n")
+	b.WriteString("#   NOT consulted on a baseline scan: `atcr review --all/--dir` always splits each\n")
+	b.WriteString("#   agent's files into per-agent chunks (a separate mechanism from review_strategy,\n")
+	b.WriteString("#   which is off for baseline scans), sized by payload_byte_budget, not by this key.\n")
+	b.WriteString("# chunk_byte_budget: 65536\n")
 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")
 	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
@@ -170,10 +190,15 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
 	fmt.Fprintf(&b, "max_sprint_plan_bytes: %d\n", DefaultMaxSprintPlanBytes)
 	b.WriteString("# on_overflow: degradation policy (plan 19.10 F4) when a per-agent payload\n")
-	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver the whole\n")
-	b.WriteString("#   diff across window-sized chunks, no content dropped), truncate (drop the\n")
-	b.WriteString("#   lowest-priority tail, flagged), fallback, or fail. fallback/fail are\n")
-	b.WriteString("#   recognized but their dispatch prerequisites may not yet be shipped.\n")
+	b.WriteString("#   exceeds its per-model budget. One of: chunk (default — deliver that\n")
+	b.WriteString("#   agent's payload across window-sized chunks, dropping nothing at THIS\n")
+	b.WriteString("#   step), truncate (drop the lowest-priority tail, flagged), fallback, or\n")
+	b.WriteString("#   fail. fallback/fail are recognized but their dispatch prerequisites may\n")
+	b.WriteString("#   not yet be shipped.\n")
+	b.WriteString("#   SCOPE: this governs the per-agent step only. The global\n")
+	b.WriteString("#   payload_byte_budget shed runs FIRST and DOES drop whole files; whatever\n")
+	b.WriteString("#   it sheds is gone before on_overflow is ever consulted, so no setting\n")
+	b.WriteString("#   here can recover it.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	b.WriteString("# consensus: corroboration bar for the reconcile consensus filter, applied\n")
@@ -244,6 +269,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.PayloadByteBudget != nil && *cfg.PayloadByteBudget < 0 {
 		return nil, fmt.Errorf("%s: payload_byte_budget must be >= 0 (0 = unlimited)", base)
+	}
+	if cfg.ChunkByteBudget != nil && *cfg.ChunkByteBudget < 0 {
+		return nil, fmt.Errorf("%s: chunk_byte_budget must be >= 0 (0 = unlimited)", base)
 	}
 	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
 		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)

@@ -2,11 +2,14 @@ package fanout
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -96,14 +99,14 @@ type PoolSummary struct {
 // discovery treats the raw files as the inputs and never double-counts the
 // merged aggregate.
 func WritePool(poolDir string, results []Result, changed payload.ChangedLines) (Summary, error) {
-	return writePool(poolDir, results, changed, "")
+	return writePool(context.Background(), poolDir, results, changed, "")
 }
 
 // writePool is WritePool with the grounding audit reason threaded in (empty when
 // the gate was enabled or no reason was supplied). ExecuteReview calls it directly
 // so summary.json records why grounding was disabled (a git failure vs. range-less
 // diff ingestion); every other caller uses the WritePool wrapper.
-func writePool(poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
+func writePool(ctx context.Context, poolDir string, results []Result, changed payload.ChangedLines, groundingDisabledReason string) (Summary, error) {
 	if err := os.MkdirAll(poolDir, 0o755); err != nil {
 		return Summary{}, fmt.Errorf("creating pool dir: %w", err)
 	}
@@ -145,15 +148,8 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 
 	sum := summarize(results)
 	groundingEnabled := len(changed) > 0
-	// Run-level runaway tally (Epic 19.5): an agent whose response was truncated on
-	// finish_reason=length with zero parseable findings. Derived from the per-agent
-	// statuses so the count and the markers cannot drift.
-	truncatedZeroFindings := 0
-	for _, st := range statuses {
-		if st.ResponseTruncated && st.FindingsCount == 0 {
-			truncatedZeroFindings++
-		}
-	}
+	truncatedZeroFindings, truncatedZeroAgents := tallyTruncatedZeroFindings(statuses)
+	warnTruncatedZeroFindings(ctx, truncatedZeroFindings, truncatedZeroAgents, false)
 	ps := PoolSummary{
 		Agents:                  statuses,
 		Total:                   sum.Total,
@@ -170,6 +166,107 @@ func writePool(poolDir string, results []Result, changed payload.ChangedLines, g
 		return Summary{}, err
 	}
 	return sum, nil
+}
+
+// tallyTruncatedZeroFindings counts the run-level runaways (Epic 19.5): agents whose
+// response was truncated on finish_reason=length with zero parseable findings. Derived
+// from the per-agent statuses so the count and the named markers cannot drift.
+//
+// Shared by writePool and the resume path's RebuildPool rather than duplicated: the
+// rebuild reconstructs the pool from these same records, and having derived the tally in
+// only one of the two is how a resumed review silently lost it.
+func tallyTruncatedZeroFindings(statuses []AgentStatus) (int, []string) {
+	count := 0
+	agents := make([]string, 0, len(statuses))
+	for _, st := range statuses {
+		if st.ResponseTruncated && st.FindingsCount == 0 {
+			count++
+			agents = append(agents, st.Agent)
+		}
+	}
+	return count, agents
+}
+
+// warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
+//
+// The tally has existed since Epic 19.5 but reached only summary.json, so the sole
+// console surface was a per-agent WARN line an operator had to go looking for — and a
+// whole roster can truncate to nothing while the run reports success (observed
+// 2026-08-14 across four models on one baseline scan). Named agents, because "3
+// reviewers contributed nothing" is not actionable without knowing which. Deliberately
+// NOT an exit-code change: failing a multi-hour run over a diagnostic discards the work
+// it existed to produce, the rule warnDriftingReviewers already follows. Silent at 0 for
+// the same reason.
+//
+// The remedy names its own cost. The output cap is subtracted from the SAME context
+// window the diff is packed into (payload.EffectiveByteBudget), so raising it buys
+// reasoning room by taking review material away — and a cap within the 4096-token prompt
+// reserve of the resolved window leaves an input budget of zero, which the bulk path
+// degrades to a single-file review that still exits 0. Stating the tradeoff only in the
+// flag help and docs/registry.md puts it nowhere the operator is looking when this line
+// fires.
+//
+// Emitted from BOTH writePool and RebuildPool: reviewers that contributed nothing do not
+// become harmless because the review was resumed.
+//
+// cumulative distinguishes the two callers. writePool reports a run just performed, where
+// every counted agent truncated in that run. RebuildPool tallies the union of all on-disk
+// statuses, which includes agents completed by an EARLIER attempt and not re-run by this
+// one — and since a counted agent can stay StatusOK (a truncated response whose findings
+// were all dropped by the grounding gate), its status.json is never rewritten and every
+// later resume re-prints it. Scoping the warning to re-run agents would suppress exactly
+// what a resuming operator needs to know, so the wording marks it as a restatement
+// instead of narrowing it.
+// It writes through the CONTEXT LOGGER, not os.Stderr. cli.Main binds that logger to
+// the caller-supplied stderr, so an embedded caller using MainWithHooks(ctx, stdout,
+// stderr, hooks) receives this line along with every other diagnostic; writing to the
+// process stderr directly escaped exactly that seam, which cli/main.go states as the
+// convention. buildPayloads' byte-budget warning already takes this route on the same
+// call graph.
+//
+// A ctx carrying no logger discards the line (log.FromContext returns a discard
+// logger). That is the correct trade: every production entry point installs one, and a
+// caller that supplied no logger has asked for no output.
+func warnTruncatedZeroFindings(ctx context.Context, count int, agents []string, cumulative bool) {
+	if count == 0 {
+		return
+	}
+	// Only the scope clause varies. The remedy is written ONCE: two literals stating
+	// the same fix drift, and they did — the cumulative copy silently lost the
+	// on_overflow consequence, on the very path where it is the only message printed.
+	scope := "to the pool"
+	if cumulative {
+		scope = "to the pool across this review, including agents this resume did not re-run"
+	}
+	restatement := ""
+	if cumulative {
+		restatement = " This restates the review's cumulative tally rather than reporting a new failure."
+	}
+	log.FromContext(ctx).Warn(
+		fmt.Sprintf("%d reviewer(s) truncated (finish_reason=length) with zero surviving findings and contributed nothing %s.%s",
+			count, scope, restatement),
+		"agents", strings.Join(agents, ", "),
+		"remedy", truncatedZeroRemedy)
+}
+
+// truncatedZeroRemedy is the operator action shared by both variants of the warning
+// above. Kept as one constant so the fresh and resumed paths cannot state different
+// fixes for the same condition.
+const truncatedZeroRemedy = "Raise their output cap (--max-tokens, or a per-agent max_tokens declaration) — a thinking model spends that budget on reasoning before emitting any finding. Note the tradeoff: the cap is taken out of the same context window, so raising it shrinks that agent's input budget, and a cap within 4096 tokens of the model's resolved context window leaves no input budget at all (the review then degrades to a single file, or fails outright under on_overflow fail/fallback). If the agent's window is small, declare a larger context_window_tokens instead of only raising the cap."
+
+// normalizeFilesDropped turns a nil FilesDropped into an empty slice, so the field
+// always publishes as a MEASUREMENT ("nothing was dropped") rather than as null
+// ("unmeasured"). AgentStatus' never-silent contract (AC 06-03) rests on that
+// distinction.
+//
+// Shared by statusFor and RebuildPool rather than duplicated: they are the two writers
+// of the same artifact pair, and the normalization living in only one of them is what
+// let summary.json publish null beside status.json's []. A future third writer inherits
+// it by calling this instead of restating the guard.
+func normalizeFilesDropped(st *AgentStatus) {
+	if st.FilesDropped == nil {
+		st.FilesDropped = []string{}
+	}
 }
 
 // ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
@@ -312,9 +409,23 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		EffectiveBudget:      r.EffectiveBudget,
 		ResolvedWindow:       r.ResolvedWindow,
 		ReservedOutputTokens: r.ReservedOutputTokens,
+		ResolvedMaxTokens:    r.ResolvedMaxTokens,
 		ChunkCount:           r.ChunkCount,
 		DegradationAction:    r.DegradationAction,
 	}
+	// Normalized HERE, not only in WriteStatus. Both published views of this record
+	// are built from statusFor, but only status.json passes through WriteStatus —
+	// writePool marshals PoolSummary.Agents from its own un-normalized statusFor call,
+	// so a nil slice reaching this function publishes "files_dropped": null in
+	// summary.json beside [] in status.json. Two artifacts disagreeing on whether the
+	// shed list was MEASURED is the never-silent contract (AC 06-03) weakened at the
+	// only seam both of them share. WriteStatus keeps its own guard as a backstop for
+	// hand-built AgentStatus values.
+	//
+	// Through the shared helper, not an inline guard: RebuildPool needs the identical
+	// rule on the resume path, and the two writers of this artifact pair drifting is
+	// exactly how summary.json came to publish null beside status.json's [].
+	normalizeFilesDropped(&st)
 	if r.Err != nil {
 		st.Error = r.Err.Error()
 	}

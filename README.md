@@ -117,7 +117,7 @@ Key flags:
 - `atcr diff-smell --rev <rev>` (default `HEAD`) / `--staged` / `--diff <path>` (or `--diff -` for stdin) — name exactly one source / `--repo-root <path>` / `--json` (payload-only stdout) / `--fail-on hard|soft|none` (opt-in gate; exits **0** on every verdict without it). Note the values are diff-smell **verdicts**, not the finding **severities** `atcr review` / `atcr reconcile` take
 - `atcr audit-report --pr <n>` (required — render the compliance report for that PR's recorded review runs; a PR with no recorded runs exits non-zero)
 - `atcr report --format md|json|checklist|sarif|axi` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
-- `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+- `atcr doctor` / `--json` / `--max-tokens <n>` (default 8192 — the same default the review fan-out applies, so an undeclared agent is probed at the cap `atcr review` will use) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
 Environment variables:
 

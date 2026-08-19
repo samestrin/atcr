@@ -108,11 +108,16 @@ func TestBuildSlots_ChunkedLineBudgetIsClampedByGlobalBudget(t *testing.T) {
 	capped.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	capped.Settings.ReviewStrategy = "chunked"
 	capped.Settings.PayloadByteBudget = globalCap
+	// Hand-built Settings does not run ResolveSettings' inheritance; state the chunk
+	// budget explicitly. Equal to the payload cap here, i.e. exactly what resolution
+	// would have produced for a config that never sets chunk_byte_budget.
+	capped.Settings.ChunkByteBudget = globalCap
 
 	uncapped := declaredWindowRoster(t, 512000)
 	uncapped.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	uncapped.Settings.ReviewStrategy = "chunked"
 	uncapped.Settings.PayloadByteBudget = 0
+	uncapped.Settings.ChunkByteBudget = 0
 
 	// Enough lines to split even at the declaration's large line budget, so both
 	// runs produce chunk slots carrying a recorded line regime.
@@ -140,4 +145,39 @@ func TestBuildSlots_ChunkedLineBudgetIsClampedByGlobalBudget(t *testing.T) {
 		"with NO global cap configured the derived budget stands: the clamp must not invent a ceiling")
 	assert.Greater(t, len(cappedSlots), len(uncappedSlots),
 		"a smaller line budget must split the same diff into more chunks — proving the clamp reached dispatch, not just the recorded number")
+}
+
+// The point of chunk_byte_budget is a configuration that was previously
+// unreachable: hold a LARGE payload (shed no files) while chunking SMALL (fit a
+// narrow window). One key could not express it — lowering it to protect the window
+// also shed whole files, and raising it to keep the files also grew every chunk. On
+// the 2026-08-15 run that trap cost 40 of 73 files at 65536.
+//
+// Both configs here share one generous payload budget, so neither sheds; only the
+// chunk budget differs. The assertion is on the CHUNK COUNT, not just the recorded
+// line number, so it proves the split reached dispatch.
+func TestBuildSlots_ChunkByteBudgetSizesChunksWithoutSheddingFiles(t *testing.T) {
+	const generousPayload = int64(10 << 20) // far above the fixture diff: nothing is shed
+
+	cfg := func(chunkBudget int64) *ReviewConfig {
+		c := declaredWindowRoster(t, 512000)
+		c.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+		c.Settings.ReviewStrategy = "chunked"
+		c.Settings.PayloadByteBudget = generousPayload
+		c.Settings.ChunkByteBudget = chunkBudget
+		return c
+	}
+
+	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}
+	rng := ReviewRange{Base: "a", Head: "b"}
+
+	wide, _, err := buildSlots(cfg(generousPayload), payloads, rng, "", "", true)
+	require.NoError(t, err)
+	narrow, _, err := buildSlots(cfg(100000), payloads, rng, "", "", true)
+	require.NoError(t, err)
+
+	assert.Greater(t, len(narrow), len(wide),
+		"a tighter chunk_byte_budget must split the same payload into more chunks while the payload cap is untouched")
+	assert.Greater(t, wide[0].Primary.chunkMaxLines, narrow[0].Primary.chunkMaxLines,
+		"the per-chunk line budget must track chunk_byte_budget, not payload_byte_budget")
 }

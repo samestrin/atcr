@@ -19,14 +19,24 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Self-test every configured model endpoint",
 		Long: "Resolve the effective roster (agents + serial_agents, including fallback\n" +
-			"chains), deduplicate to distinct (provider, model, base_url) targets, and\n" +
+			"chains), deduplicate to distinct (provider, model, base_url, max_tokens)\n" +
+			"targets — a differing declared max_tokens is a different invocation, so it\n" +
+			"probes separately — and\n" +
 			"invoke each one once with a trivial nonce prompt. Reports a per-agent table\n" +
 			"(or --json) and exits 0 when every agent has a working invocation path, 1\n" +
 			"when any agent has none, and 2 for usage/configuration errors.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDoctor,
 	}
-	cmd.Flags().Int("max-tokens", 2048, "completion budget per self-test call (high enough that thinking models emit the marker)")
+	// 8192, matching the review fan-out's own defaultMaxTokens. A probe is only
+	// evidence about the invocation it reproduces, and for an agent that declares no
+	// max_tokens the invocation `atcr review` makes is capped at 8192 - so a probe at
+	// the old 2048 reproduced a call review never makes, at a quarter the output
+	// budget, and then reported the tier as "default" as though the two agreed. That
+	// produced ok_warning on agents review runs fine, and the documented remedy (raise
+	// the declaration) could make things worse: the cap is reserved out of the context
+	// window, so raising it on a proxy-alias model can collapse the input budget to 0.
+	cmd.Flags().Int("max-tokens", 8192, "completion budget per self-test call; matches the review fan-out's default so an undeclared agent is probed at the cap review will use")
 	cmd.Flags().Int("timeout", 60, "per-call timeout in seconds")
 	cmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout instead of the table")
 	cmd.Flags().StringSlice("agents", nil, "subset of listed agents to test (comma-separated or repeated; default: all)")
@@ -77,7 +87,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	res, err := doctor.Resolve(reg, proj)
+	// The override reaches target IDENTITY, not just probe time: when it is set every
+	// declaration is overridden, so agents sharing an endpoint make the same call and
+	// must share one probe rather than paying for N identical ones.
+	override := 0
+	if cmd.Flags().Changed("max-tokens") {
+		override = maxTokens
+	}
+	res, err := doctor.ResolveWithCap(reg, proj, override)
 	if err != nil {
 		return usageError(err)
 	}
@@ -89,8 +106,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 	rep := doctor.Run(cmd.Context(), llmclient.New(), res, doctor.Options{
 		MaxTokens: maxTokens,
-		Timeout:   time.Duration(timeoutSecs) * time.Second,
-		Nonce:     nonce,
+		// Changed(), not a value comparison: the flag's default is a real number, so
+		// only cobra can distinguish "operator typed 2048" from "operator typed
+		// nothing" — and that distinction is what lets a declared max_tokens apply.
+		MaxTokensSet: cmd.Flags().Changed("max-tokens"),
+		Timeout:      time.Duration(timeoutSecs) * time.Second,
+		Nonce:        nonce,
 	})
 
 	if asJSON {
