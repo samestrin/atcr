@@ -248,3 +248,61 @@ func TestExtractSection_IndentedFenceStillHidesAColumnZeroExampleRow(t *testing.
 			"example read as a real record and truncates the reviewer's reasoning at it, with "+
 			"no marker to show it happened")
 }
+
+// An UNTERMINATED fence must not poison the rest of the document.
+//
+// fenceMask toggles on every marker, so a dangling opener leaves the mask true to
+// EOF. That is survivable while only recordAt consults it, but all three boundary
+// predicates AND the section walk-up read the same mask: with the tail masked,
+// every boundary shape goes dead, so each finding below the fence gets the WHOLE
+// remaining document as its excerpt (byte-identical to its siblings') and resolves
+// its section to the last heading ABOVE the fence. A model that opens a fence and
+// forgets to close it is an ordinary output defect, not a rare one, and the damage
+// is permanent: localdebt persists Justification append-only and Record.StampID
+// hashes file/line/problem only, so the wrong text never gets a second chance.
+func TestFenceMask_UnterminatedFenceDoesNotMaskTheTail(t *testing.T) {
+	lines := []string{
+		"# Real Section",
+		"```",
+		"quoted example",
+		"# Fake Heading",
+		"- fake bullet",
+	}
+
+	mask := fenceMask(lines)
+
+	for i, l := range lines {
+		assert.False(t, mask[i],
+			"line %d (%q): a fence that is never closed must mask nothing — masking to EOF kills every boundary predicate below it", i, l)
+	}
+}
+
+// The end-to-end shape of the same defect: three findings under a heading BELOW an
+// unclosed fence must keep three distinct excerpts and resolve to the heading that
+// really encloses them. Asserted through extractSection because the mask alone does
+// not show the consequence the row was filed for.
+func TestExtractSection_UnterminatedFenceAboveAFindingsList(t *testing.T) {
+	lines := []string{
+		"# Real Section",
+		"```",
+		"an example the model never closed",
+		"",
+		"## Findings",
+		"- first problem at a.go:10",
+		"- second problem at a.go:20",
+		"- third problem at a.go:30",
+	}
+
+	var texts []string
+	for _, idx := range []int{5, 6, 7} {
+		text, section := extractSection(lines, idx)
+		assert.Equal(t, "Findings", section,
+			"line %d must resolve to the heading that encloses it, not to the one above the unclosed fence", idx)
+		texts = append(texts, text)
+	}
+
+	assert.NotEqual(t, texts[0], texts[1], "each finding must keep its own excerpt, not the swallowed tail")
+	assert.NotEqual(t, texts[1], texts[2], "each finding must keep its own excerpt, not the swallowed tail")
+	assert.Contains(t, texts[0], "first problem")
+	assert.NotContains(t, texts[0], "second problem", "an unclosed fence above must not fold the list into one block")
+}
