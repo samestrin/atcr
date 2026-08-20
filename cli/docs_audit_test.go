@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/verify"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -1513,4 +1514,38 @@ func zeroBudgetDocRow(t *testing.T, md string) string {
 	}
 	t.Fatalf("docs/registry.md has no `ok_warning (no input budget)` status row")
 	return ""
+}
+
+// TestVocabularyCeilingDocMatchesTheGuard pins docs/benchmark.md's description of
+// the out-of-vocabulary ceiling to the comparison the guard actually makes.
+//
+// ExceedsVocabularyCeiling uses `>=`, cli/benchmark.go words its warning "is at or
+// above", and the constant's own doc says INCLUSIVE — but the operator-facing doc
+// called the ceiling "exclusive" while, in the same sentence, stating that a run
+// sitting exactly on it trips the guard. An operator tuning against that paragraph
+// reads the one word, not the clause after it.
+//
+// Anchored to the live behavior rather than to the prose alone: the oracle is a
+// real call at exactly the ceiling, so the guard and the sentence describing it
+// cannot drift apart in either direction.
+func TestVocabularyCeilingDocMatchesTheGuard(t *testing.T) {
+	atCeiling := benchmark.MaxOutOfVocabularyRate
+	require.True(t, benchmark.ExceedsVocabularyCeiling(&atCeiling),
+		"oracle: a run sitting exactly on the ceiling must trip the guard — the bound is inclusive")
+
+	doc := auditedMarkdown(t)["docs/benchmark.md"]
+	i := strings.Index(doc, "ceiling of `0.05`")
+	require.GreaterOrEqual(t, i, 0, "docs/benchmark.md must document the 0.05 out-of-vocabulary ceiling")
+	// The claim lives in the same sentence as the anchor; bound the window so a
+	// legitimate "exclusive" elsewhere in the file cannot satisfy or break this.
+	end := i + 200
+	if end > len(doc) {
+		end = len(doc)
+	}
+	sentence := doc[i:end]
+
+	require.NotContains(t, sentence, "exclusive",
+		"docs/benchmark.md calls the ceiling exclusive, but the guard compares with >= — a run exactly on 0.05 trips it")
+	require.Contains(t, sentence, "inclusive",
+		"docs/benchmark.md must call the ceiling inclusive, matching ExceedsVocabularyCeiling and the CLI's \"at or above\" wording")
 }
