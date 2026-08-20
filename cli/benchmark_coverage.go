@@ -131,7 +131,23 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// means the file was hand-assembled — and last-write-wins would let a full
 		// row mask a short one carrying the same identity, which is the cheapest
 		// possible way to walk a partial run past this gate.
-		if _, dup := byIdentity[key]; dup {
+		if prev, dup := byIdentity[key]; dup {
+			// Two DIFFERENT raw identities colliding here is not tampering, and saying
+			// "malformed" would send the operator hunting for it. scrubField iterates to
+			// a fixed point (scorecard/export.go), so strictly more distinct raw values
+			// collapse to one published identity than when the PRODUCER's own collision
+			// check ran (cli/benchmark_run.go) under single-pass scrubbing — a
+			// run-result written by an earlier atcr can therefore have been well-formed
+			// when written and fail here purely on version skew. The rejection stands
+			// either way: two rows cannot share one published identity on the board.
+			if prev.Model != c.Model || prev.Persona != c.Persona {
+				return fmt.Errorf("run-result %s records coverage for %s/%s and %s/%s, which are distinct raw identities "+
+					"that scrub to the same published identity; the producer's collision check ran under an earlier, "+
+					"single-pass privacy scrub, so this file was most likely written by an older atcr rather than "+
+					"hand-assembled. Re-run `atcr benchmark run` with this version to regenerate it, or rename the "+
+					"model/persona ids so they stay distinct after scrubbing",
+					path, stripTerminalControlRunes(prev.Model), stripTerminalControlRunes(prev.Persona), model, persona)
+			}
 			return fmt.Errorf("run-result %s records coverage for %s/%s more than once; "+
 				"a reviewer identity has exactly one covered case set, so this file is malformed",
 				path, model, persona)

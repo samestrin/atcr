@@ -167,7 +167,9 @@ func TestBenchmarkExport_RejectsScrubCollidingCoverageIdentities(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
 	require.NotEqual(t, 0, code,
 		"two raw identities scrubbing to one public identity must be rejected as a duplicate: %s", out)
-	assert.Contains(t, out, "more than once")
+	assert.Contains(t, out, "scrub to the same published identity",
+		"the rejection must name the collision it found; the wording is pinned in full by "+
+			"TestBenchmarkExport_ScrubCollisionMessageNamesTheScrub")
 }
 
 // A scrub collision is REJECTED (above), but "this file is malformed" names the
