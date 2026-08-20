@@ -49,6 +49,14 @@ func TestBuildSlots_ChunkedScopeConstraintFitsChunkByteBudget(t *testing.T) {
 	require.Greater(t, len(slots), 1, "precondition: the clamped budget must still split this diff into chunks")
 
 	for i, s := range slots {
+		// (B) the plan is capped against the chunk ceiling, not the payload tier.
+		// Asserted separately from the total below because the total alone does not
+		// discriminate: reserving the block's bytes without re-capping the plan also
+		// keeps the pair inside the ceiling — by letting a 50 KB plan starve the diff
+		// down to 13 KB, which is the other half of what the cap exists to prevent.
+		assert.LessOrEqual(t, len(embeddedScopePlan(t, s.Primary.Prompt)), int(chunkBudget/8),
+			"chunk slot %d: the plan cap must be derived from chunk_byte_budget, not from the payload-tier agent budget", i)
+
 		blockBytes := len(embeddedScopeBlock(t, s.Primary.Prompt))
 		// The chunker packs up to chunkMaxLines lines at the same avgBytesPerLine
 		// ratio the clamp derived that budget with, so this is the diff ceiling one
