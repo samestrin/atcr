@@ -1829,13 +1829,39 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// whole files from the payload, raising it to keep those files grew every
 			// chunk. Unset, ChunkByteBudget resolves to PayloadByteBudget, so this is
 			// byte-identical for a config that does not set the new key.
-			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.ChunkByteBudget)
+			// Re-cap the plan against the budget that actually sizes THIS call. ml is
+			// clamped to chunk_byte_budget just below, but agentScopeConstraint was
+			// capped at the PAYLOAD tier (agentBudget/8) which never consults that key —
+			// so with the generated config's own suggested chunk_byte_budget (65536) and
+			// the default payload_byte_budget (524288), a large-window agent shipped
+			// ~57 KB of diff plus up to 64 KB of uncounted plan against a stated 64 KB
+			// ceiling. Narrow only: chunk_byte_budget 0 means "unlimited" and inherits
+			// payload_byte_budget upstream, so the payload-tier cap is already right, and
+			// an agentBudget of 0 must keep its drop (capScopeConstraintForBudget) rather
+			// than being widened back open by a chunk ceiling.
+			chunkPlanBudget := agentBudget
+			if cb := cfg.Settings.ChunkByteBudget; cb > 0 && cb < chunkPlanBudget {
+				chunkPlanBudget = cb
+			}
+			chunkScopeConstraint := capScopeConstraintForBudget(scopeConstraint, chunkPlanBudget, cfg.Settings.MaxSprintPlanBytes)
+			// (A) reserve room for the SCOPE CONSTRAINT block prepended UNCOUNTED to
+			// EVERY chunk in renderAgent. Where the operator set a chunk ceiling, take
+			// the reservation in BYTES out of that ceiling before converting to lines:
+			// the block's own length is known here, so the ml/8 proxy below is not
+			// needed and its floor errors cannot push the pair over the stated ceiling.
+			chunkClampBudget := cfg.Settings.ChunkByteBudget
+			if chunkClampBudget > 0 {
+				if chunkClampBudget -= int64(len(chunkScopeConstraint)); chunkClampBudget < 1 {
+					chunkClampBudget = 1
+				}
+			}
+			ml = payload.ClampLinesToByteBudget(ml, chunkClampBudget)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
-			} else if len(agentScopeConstraint) > 0 {
-				// (A) reserve per-chunk line headroom for the SCOPE CONSTRAINT block
-				// prepended to EVERY chunk in renderAgent. The plan is capped to
-				// EffectiveByteBudget/8 above, i.e. at most ml/8 lines, so reserving ml/8
+			} else if len(chunkScopeConstraint) > 0 && cfg.Settings.ChunkByteBudget <= 0 {
+				// No chunk ceiling configured, so there is no byte figure to reserve
+				// from: fall back to the line proxy. The plan is capped to
+				// EffectiveByteBudget/8, i.e. at most ml/8 lines, so reserving ml/8
 				// covers it without importing the payload byte/line ratio. An explicit
 				// operator max_context_lines wins (least surprise) and is left untouched.
 				ml -= ml / 8
@@ -1965,7 +1991,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					if perr != nil {
 						return perr
 					}
-					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, chunkScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -1980,7 +2006,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// would be the shape-dependent reconstruction Slot.entries exists to
 					// avoid. The slot therefore carries EMPTY, and buildFallbackAgent
 					// declines to re-fit it and keeps the pre-epic warn-and-ship.
-					fbs, err := buildChain(name, primary, ac, mode, agentScopeConstraint, nil)
+					fbs, err := buildChain(name, primary, ac, mode, chunkScopeConstraint, nil)
 					if err != nil {
 						return err
 					}
