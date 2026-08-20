@@ -1816,19 +1816,6 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
 			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
-			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
-			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
-			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
-			// request-body limit. Applied BEFORE the branch below so an explicit
-			// max_context_lines still replaces it verbatim (least surprise), and the
-			// scope-constraint reservation is taken out of the clamped value rather
-			// than the raw one.
-			//
-			// ChunkByteBudget, not PayloadByteBudget: one key served both jobs and they
-			// want opposite values — lowering it to protect a small window silently shed
-			// whole files from the payload, raising it to keep those files grew every
-			// chunk. Unset, ChunkByteBudget resolves to PayloadByteBudget, so this is
-			// byte-identical for a config that does not set the new key.
 			// Re-cap the plan against the budget that actually sizes THIS call. ml is
 			// clamped to chunk_byte_budget just below, but agentScopeConstraint was
 			// capped at the PAYLOAD tier (agentBudget/8) which never consults that key —
@@ -1844,6 +1831,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				chunkPlanBudget = cb
 			}
 			chunkScopeConstraint := capScopeConstraintForBudget(scopeConstraint, chunkPlanBudget, cfg.Settings.MaxSprintPlanBytes)
+			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
+			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
+			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
+			// request-body limit. Applied BEFORE the branch below so an explicit
+			// max_context_lines still replaces it verbatim (least surprise).
+			//
+			// ChunkByteBudget, not PayloadByteBudget: one key served both jobs and they
+			// want opposite values — lowering it to protect a small window silently shed
+			// whole files from the payload, raising it to keep those files grew every
+			// chunk. Unset, ChunkByteBudget resolves to PayloadByteBudget, so this is
+			// byte-identical for a config that does not set the new key.
+			//
 			// (A) reserve room for the SCOPE CONSTRAINT block prepended UNCOUNTED to
 			// EVERY chunk in renderAgent. Where the operator set a chunk ceiling, take
 			// the reservation in BYTES out of that ceiling before converting to lines:
