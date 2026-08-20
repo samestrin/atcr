@@ -170,6 +170,52 @@ func TestBenchmarkExport_RejectsScrubCollidingCoverageIdentities(t *testing.T) {
 	assert.Contains(t, out, "more than once")
 }
 
+// A scrub collision is REJECTED (above), but "this file is malformed" names the
+// wrong cause for it. scrubField now iterates to a fixed point, so strictly more
+// distinct raw identities collapse to one published value than when the producer's
+// own collision check (benchmark_run.go) passed the file — a run-result written by
+// an EARLIER atcr can therefore fail here having been perfectly well-formed when
+// written. That is version skew, and the operator needs to be told to regenerate the
+// file rather than to go hunting for tampering that did not happen.
+func TestBenchmarkExport_ScrubCollisionMessageNamesTheScrub(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m ~x","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.Contains(t, out, "scrub", "the message must name the privacy scrub as the mechanism that collapsed the two identities")
+	assert.Contains(t, out, "m ~x", "both colliding raw identities must be named so the operator can see they differ")
+	assert.NotContains(t, out, "this file is malformed",
+		"two DIFFERENT raw identities colliding under the scrub is version skew, not tampering — asserting malformed sends the operator after the wrong cause")
+}
+
+// A genuine duplicate — the SAME raw identity twice — keeps the malformed wording,
+// so the skew message above cannot become a blanket excuse for a hand-assembled file.
+func TestBenchmarkExport_IdenticalDuplicateIdentityIsStillMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a repeated identity must still be rejected: %s", out)
+	assert.Contains(t, out, "this file is malformed",
+		"one identity listed twice is hand-assembly, and must keep saying so")
+}
+
 // The reverse direction of the reviewer/coverage join is checked too: a coverage
 // row with NO matching reviewer row is silently discarded today, so a row citing
 // cases the suite never saw exports at exit 0 with no warning. A file whose two
