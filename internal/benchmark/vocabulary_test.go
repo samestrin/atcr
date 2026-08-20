@@ -392,7 +392,7 @@ func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
 		"the public submission schema must not gain a column from this epic")
 }
 
-// The ceiling's EXCLUSIVE semantics ("a run sitting exactly on it trips the guard")
+// The ceiling's INCLUSIVE semantics ("a run sitting exactly on it trips the guard")
 // must live in production code, not in whichever operator a test happens to pick.
 func TestExceedsVocabularyCeiling(t *testing.T) {
 	for _, tc := range []struct {

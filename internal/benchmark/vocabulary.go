@@ -9,7 +9,7 @@ import (
 
 // MaxOutOfVocabularyRate is the ceiling a benchmark run's out-of-vocabulary rate is
 // WARNED against: its only consumer is warnIfVocabularyCeilingExceeded, which writes
-// to stderr and deliberately does not change the exit code. The bound is EXCLUSIVE —
+// to stderr and deliberately does not change the exit code. The bound is INCLUSIVE —
 // a run sitting exactly on it is reported.
 //
 // The number moves ONE WAY: tighten it when a further valid run supports tightening,
@@ -26,7 +26,7 @@ const MaxOutOfVocabularyRate = 0.05
 // ExceedsVocabularyCeiling reports whether a measured rate breaches
 // MaxOutOfVocabularyRate.
 //
-// The comparison lives HERE rather than in each caller so the ceiling's exclusive
+// The comparison lives HERE rather than in each caller so the ceiling's inclusive
 // semantics — a run sitting exactly on it is reported — are a property of the
 // package instead of whichever operator a given test happened to type. Before this
 // existed the constant had no non-test consumer at all: a real run measuring 0.72
@@ -40,7 +40,7 @@ func ExceedsVocabularyCeiling(rate *float64) bool {
 }
 
 // MaxReviewerDriftRate is the PER-REVIEWER out-of-vocabulary rate at or above which
-// a single reviewer is named. Like MaxOutOfVocabularyRate the bound is EXCLUSIVE — a
+// a single reviewer is named. Like MaxOutOfVocabularyRate the bound is INCLUSIVE — a
 // reviewer sitting exactly on it is reported — and like it the only consumer writes to
 // stderr without changing the exit code.
 //
