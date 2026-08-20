@@ -1980,7 +1980,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// read this number as the size any chunk was cut to. Recording the
 					// chunk ceiling here instead would misreport the global shed, which is
 					// the quantity that decides which files were DROPPED.
-					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
+					//
+					// The BUDGET operand stays the payload tier for that reason; only the
+					// RESERVATION is chunkScopeConstraint — the block renderAgent actually
+					// prepends below — rather than the payload-tier agentScopeConstraint,
+					// which this path never ships. The two blocks are capped against
+					// different budgets (agentBudget vs min(agentBudget,
+					// chunk_byte_budget)), so they diverge whenever an operator sets a
+					// chunk ceiling under the agent budget, and reserving the larger one
+					// UNDERSTATES the budget this prompt was sized to. Three consumers act
+					// on that: the AC4 gate at the fallback build (fbBudget <
+					// primary.EffectiveBudget) silently skips the overflow check and the
+					// truncate re-fit across the gap, the inherited-size operator warning
+					// under-reports, and status.go publishes it as a payload-tier budget.
+					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, chunkScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,
 					chunkTotal:      len(chunks),

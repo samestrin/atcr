@@ -14,10 +14,15 @@ import (
 // wrapper instruction plus framed plan — not just the plan body. That is the
 // quantity prepended UNCOUNTED to every chunk, so it is the quantity the chunk
 // budget has to cover.
+// The trailing blank line is part of the block: payload.ScopeConstraint closes
+// with "\n----- END SPRINT PLAN -----\n\n", and those two bytes ride every chunk
+// like the rest of it. Stopping at the END marker undercounted the block by 2,
+// which is invisible to a LessOrEqual bound but makes an exact byte assertion
+// against the recorded budget off by exactly that much.
 func embeddedScopeBlock(t *testing.T, prompt string) string {
 	t.Helper()
 	const head = "## SCOPE CONSTRAINT\n"
-	const end = "\n----- END SPRINT PLAN -----"
+	const end = "\n----- END SPRINT PLAN -----\n\n"
 	i := strings.Index(prompt, head)
 	require.GreaterOrEqual(t, i, 0, "prompt missing SCOPE CONSTRAINT header")
 	j := strings.Index(prompt[i:], end)
