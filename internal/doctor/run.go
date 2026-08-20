@@ -222,7 +222,7 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // and the fan-out cannot disagree about where the threshold sits — the overhead constant
 // stays owned by the package that reserves it.
 //
-// Three guards, all load-bearing:
+// Four guards, all load-bearing:
 //   - budgetSrc must not be MaxTokensSourceFlag. The verdict asserts a REVIEW-time
 //     outcome, so it may only be drawn from a cap review will actually resolve. Doctor's
 //     own --max-tokens is not one: it reaches target identity and the probe, but review
@@ -238,6 +238,13 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 //     guard, a window too small to fund even the prompt overhead reports a closed budget
 //     and the message blames a cap that was never applied — pointing the operator at the
 //     wrong knob when the window is what is at fault.
+//   - window 0 means the window did NOT RESOLVE, not a window of zero — the state
+//     render.go prints as "-" rather than as a number. An unresolved window is not a
+//     closed budget: there is no budget to call closed. Without the guard,
+//     ResolveContextWindow ignores the non-positive value and falls back to the 32768
+//     default, so the budget computes to 0 for any cap at or above 28672 and the row is
+//     blamed on its output cap — the same misattribution the maxTokens guard prevents,
+//     from the other operand.
 //   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
 //     has a louder problem, and overwriting it with a budget warning would hide the
 //     failure the operator has to fix first.
