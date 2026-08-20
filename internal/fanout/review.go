@@ -1831,6 +1831,24 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				chunkPlanBudget = cb
 			}
 			chunkScopeConstraint := capScopeConstraintForBudget(scopeConstraint, chunkPlanBudget, cfg.Settings.MaxSprintPlanBytes)
+			// A POSITIVE chunk ceiling too small to fund one plan byte drops the
+			// operator's scoping outright and would otherwise say nothing.
+			//
+			// capScopeConstraintForBudget funds the plan at budget/8, so any ceiling in
+			// 1..7 floors that to 0 and returns "" while the agent's own window is
+			// perfectly healthy — the review then runs UNSCOPED. Registry validation
+			// only rejects a negative chunk_byte_budget (precedence.go:289), so nothing
+			// upstream catches it either. This is the one configuration where the ""
+			// sentinel's two meanings actually separate ("no plan was given" vs "the
+			// budget cannot fund one"), which is why it needs its own signal rather
+			// than being left to the reader of an empty prompt. Gated on warnOversized
+			// like every sibling warning, so the resume rebuild path stays quiet.
+			if warnOversized && len(scopeConstraint) > 0 && len(chunkScopeConstraint) == 0 && agentBudget > 0 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
+					"--sprint-plan SCOPE CONSTRAINT (the plan is capped at chunk_byte_budget/8); the block was DROPPED and this "+
+					"review runs unscoped. Raise chunk_byte_budget to at least 8, or unset it to inherit payload_byte_budget.\n",
+					name, chunkPlanBudget)
+			}
 			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
 			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
