@@ -1844,11 +1844,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// byte-identical for a config that does not set the new key.
 			//
 			// (A) reserve room for the SCOPE CONSTRAINT block prepended UNCOUNTED to
-			// EVERY chunk in renderAgent. Where the operator set a chunk ceiling, take
-			// the reservation in BYTES out of that ceiling before converting to lines:
-			// the block's own length is known here, so the ml/8 proxy below is not
-			// needed and its floor errors cannot push the pair over the stated ceiling.
-			chunkClampBudget := cfg.Settings.ChunkByteBudget
+			// EVERY chunk in renderAgent. Take the reservation in BYTES out of the
+			// budget that actually sizes the call before converting to lines: the
+			// block's own length is known here, so the ml/8 proxy below is not needed
+			// and its floor errors cannot push the pair over the stated ceiling.
+			//
+			// chunkPlanBudget, NOT cfg.Settings.ChunkByteBudget: the two are equal only
+			// when the operator ceiling is the binding one. An unset chunk_byte_budget
+			// inherits payload_byte_budget (precedence.go), so on a resolved default
+			// config it is 524288 — above a small agent's whole budget. Reserving from
+			// that ceiling then subtracts from a number the clamp never reaches, and
+			// the ml/8 fallback below cannot cover for it either (it is gated on
+			// chunk_byte_budget <= 0, which a resolved config never is), leaving the
+			// block uncounted on exactly the configuration every default run has.
+			chunkClampBudget := chunkPlanBudget
 			if chunkClampBudget > 0 {
 				if chunkClampBudget -= int64(len(chunkScopeConstraint)); chunkClampBudget < 1 {
 					chunkClampBudget = 1
@@ -1857,17 +1866,17 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			ml = payload.ClampLinesToByteBudget(ml, chunkClampBudget)
 			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
 				ml = ac.EffectiveMaxContextLines()
-			} else if len(chunkScopeConstraint) > 0 && cfg.Settings.ChunkByteBudget <= 0 {
-				// No chunk ceiling configured, so there is no byte figure to reserve
-				// from: fall back to the line proxy. The plan is capped to
-				// EffectiveByteBudget/8, i.e. at most ml/8 lines, so reserving ml/8
-				// covers it without importing the payload byte/line ratio. An explicit
-				// operator max_context_lines wins (least surprise) and is left untouched.
-				ml -= ml / 8
-				if ml < 1 {
-					ml = 1
-				}
 			}
+			// There is no `ml -= ml/8` line-proxy arm any more. It existed for the one
+			// case the byte reservation above could not serve — "no chunk ceiling
+			// configured, so there is no byte figure to reserve from" — and that case no
+			// longer exists now that the reservation is taken from chunkPlanBudget,
+			// which falls back to the agent's own budget when no ceiling is set. Keeping
+			// both would reserve twice (the proxy's 12.5% on top of the block's actual
+			// bytes) for every unset-ceiling config. The byte figure is also strictly
+			// better than the proxy: it is the block's real length rather than an upper
+			// bound on it, and it cannot be pushed over the ceiling by the proxy's own
+			// floor errors. An explicit operator max_context_lines still wins verbatim.
 			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
 			// reserves no input budget at all is honest degradation on either
 			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
