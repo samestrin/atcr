@@ -1373,6 +1373,44 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 	return block[:cut] + block[planEnd:]
 }
 
+// capScopeConstraintForBudget resolves the SINGLE answer this codebase gives for a
+// SCOPE CONSTRAINT block that must fit inside a per-agent input budget: cap the plan
+// body to budget/8, narrowed further by max_sprint_plan_bytes when the operator set
+// one, and DROP the block entirely when that cap funds not even one byte of plan.
+//
+// The drop is the load-bearing half. Capping to 0 does NOT remove the block:
+// capScopeConstraintPlan rejects only maxPlanBytes < 0, so a 0 cap trims the plan
+// body away and leaves the BEGIN/END frame with the wrapper instruction still
+// telling the model to "constrain your findings to files and changes directly
+// related to these work items" — an empty work-item list. Everything below its one
+// escape hatch ("still report any genuinely critical issue") is instructed away, and
+// the result is a structurally clean StatusOK review with near-zero findings and no
+// finish_reason=length, so no truncation signal catches it either.
+//
+// It exists because this one condition had accumulated three different answers
+// across two call sites (blank the body on the primary path, drop the block on the
+// fallback path, skip the cap altogether at fbBudget == 0). Both sites now route
+// through here, so a fourth cannot appear: change the policy in one place and every
+// caller moves with it. payload.ScopeConstraint's maxBytes <= 0 arm is the same
+// refusal expressed one tier up, where a read ceiling is available to fall back to.
+//
+// A non-positive budget yields a non-positive cap and therefore the drop, which is
+// why the callers must NOT gate on budget > 0: that gate is what let the zero case
+// slip past the drop it most needs.
+func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes int64) string {
+	if len(block) == 0 {
+		return block
+	}
+	planCap := budget / 8
+	if maxSprintPlanBytes > 0 && maxSprintPlanBytes < planCap {
+		planCap = maxSprintPlanBytes
+	}
+	if planCap < 1 {
+		return ""
+	}
+	return capScopeConstraintPlan(block, int(planCap))
+}
+
 // capChunks bounds a baseline chunk set to at most max chunks by coalescing the
 // tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
 // chunkDiff applies to diff chunking (chunker.go:130). It never drops a file: the
@@ -1531,7 +1569,6 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// (A) the diff/chunk budgets below then reserve len(agentScopeConstraint) so plan +
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
-		agentScopeConstraint := scopeConstraint
 		agentMaxTokens := maxTokensFor(cfg, ac)
 		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
@@ -1546,20 +1583,19 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// while the uncapped SCOPE CONSTRAINT block rode along at up to
 		// min(max_sprint_plan_bytes, payload_byte_budget/8) — 64 KiB at shipped defaults —
 		// so both the warning and the truncation record described a payload that was not
-		// what was sent. At agentBudget 0 the cap resolves to 0 and the plan body is
-		// truncated away, leaving the block's frame: the agent then really does receive
-		// only the smallest file, which is what the warning has always claimed.
+		// what was sent. At agentBudget 0 the cap funds no plan byte, so the block is
+		// DROPPED (capScopeConstraintForBudget) rather than capped to 0: capping to 0
+		// would leave the BEGIN/END frame and its "constrain your findings to these work
+		// items" wrapper around an empty list, which instructs the model away from
+		// everything below "genuinely critical" and yields a near-clean StatusOK review
+		// no truncation signal catches. Dropped, the agent really does receive only the
+		// smallest file with no scoping claim over it, which is what the warning has
+		// always claimed.
 		//
 		// This moved from near-unreachable to ordinary in this epic: reaching the arm used
 		// to need a context_window_tokens declaration at or below 12288, but a max_tokens
 		// declaration alone now closes the budget on the default 32768 window.
-		if len(agentScopeConstraint) > 0 {
-			planCap := agentBudget / 8
-			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
-				planCap = mspb
-			}
-			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
-		}
+		agentScopeConstraint := capScopeConstraintForBudget(scopeConstraint, agentBudget, cfg.Settings.MaxSprintPlanBytes)
 
 		// DESIGN NOTE (Sprint 35.0, Phase 1 Decision 2 — pinned so Phase 5 task 5.2
 		// does not re-litigate it). The baseline (--all / --dir) fan-out gains a NEW
