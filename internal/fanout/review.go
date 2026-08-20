@@ -1864,17 +1864,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// (A) reserve room for the SCOPE CONSTRAINT block prepended UNCOUNTED to
 			// EVERY chunk in renderAgent. Take the reservation in BYTES out of the
 			// budget that actually sizes the call before converting to lines: the
-			// block's own length is known here, so the ml/8 proxy below is not needed
-			// and its floor errors cannot push the pair over the stated ceiling.
+			// block's own length is known here, so no line-count proxy is needed and no
+			// proxy's floor errors can push the pair over the stated ceiling.
 			//
 			// chunkPlanBudget, NOT cfg.Settings.ChunkByteBudget: the two are equal only
 			// when the operator ceiling is the binding one. An unset chunk_byte_budget
 			// inherits payload_byte_budget (precedence.go), so on a resolved default
 			// config it is 524288 — above a small agent's whole budget. Reserving from
-			// that ceiling then subtracts from a number the clamp never reaches, and
-			// the ml/8 fallback below cannot cover for it either (it is gated on
-			// chunk_byte_budget <= 0, which a resolved config never is), leaving the
-			// block uncounted on exactly the configuration every default run has.
+			// that ceiling then subtracts from a number the clamp never reaches, and the
+			// `ml -= ml/8` line proxy that used to follow could not cover for it either
+			// (it was gated on chunk_byte_budget <= 0, which a resolved config never
+			// is), leaving the block uncounted on exactly the configuration every
+			// default run has. See the note under the clamp for why that arm is gone.
 			chunkClampBudget := chunkPlanBudget
 			if chunkClampBudget > 0 {
 				if chunkClampBudget -= int64(len(chunkScopeConstraint)); chunkClampBudget < 1 {
