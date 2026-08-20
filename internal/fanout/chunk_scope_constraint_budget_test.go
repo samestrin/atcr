@@ -221,3 +221,48 @@ func TestBuildSlots_ChunkClampFloorKeepsTheCeilingWhenTheBlockEatsTheBudget(t *t
 			"chunk slot %d: a budget the block exhausts must clamp to the minChunkLines floor, not fall back to the unclamped %d-line window", i, unclamped)
 	}
 }
+
+// A chunk_byte_budget below 8 drops the SCOPE CONSTRAINT entirely and says nothing.
+//
+// chunkPlanBudget = min(agentBudget, chunk_byte_budget) = the ceiling, and
+// capScopeConstraintForBudget funds the plan at budget/8 — which is 0 for any
+// ceiling in 1..7, so it returns "" and the review runs UNSCOPED while the agent's
+// own window is perfectly healthy. Registry validation only rejects a negative
+// value (precedence.go), so nothing upstream catches it either. The operator asked
+// for scoping, got none, and has no signal that it happened: "" means both "no plan
+// was given" and "the budget could not fund one byte of it", and this is the one
+// configuration where those two meanings genuinely separate.
+func TestBuildSlots_WarnsWhenChunkByteBudgetCannotFundOnePlanByte(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+	// 4 is in 1..7: positive (so it is not the "unlimited" sentinel) but too small
+	// to fund planCap = budget/8 = 0.
+	const chunkBudget = int64(4)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Greater(t, agentBudget, int64(0),
+		"precondition: the agent's OWN budget must be healthy — the drop must be attributable to the chunk ceiling alone")
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: this budget really does drop the block — otherwise the warning has nothing to report")
+
+	assert.Contains(t, out, "chunk_byte_budget",
+		"dropping the operator's scoping must name the setting that caused it")
+	assert.Contains(t, out, "greta",
+		"the warning must name the agent whose scoping was dropped")
+}
