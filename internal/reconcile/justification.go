@@ -399,32 +399,48 @@ func leadingInt(s string) (val, width int) {
 // item — so a per-finding list item or paragraph is captured without bleeding
 // into a sibling item (a tight, blank-line-free findings list) or the next
 // section. A heading or list-item marker may START the block but is never
-// crossed. The result is trimmed and truncated to justificationMaxRunes.
+// crossed. None of the three boundary shapes counts inside a fenced block, and
+// neither does a heading when resolving the enclosing section — fenced content is
+// quoted example text, not structure. The result is trimmed and truncated to
+// justificationMaxRunes.
 func extractSection(lines []string, idx int) (text, section string) {
 	if idx < 0 || idx >= len(lines) {
 		return "", ""
 	}
+	// Anything inside a fenced block is an EXAMPLE, not structure — the parser skips
+	// fenced content, so treating it as a boundary would split a narrative on the
+	// very counter-example the fence exists to quote. Resolved per line index rather
+	// than per string because fence membership is a property of position, not text.
+	//
+	// All THREE boundary predicates are masked, not just the record one. A model
+	// quoting an example that contains a `# heading` or a `- bullet` — the documented
+	// reason this parser tracks fences at all — otherwise still truncated the
+	// narrative mid-sentence with no marker, and the section walk-up could still
+	// attribute the excerpt to a heading that only exists inside a quote. The loss is
+	// permanent: localdebt persists Justification into an append-only store whose id
+	// excludes it.
+	fenced := fenceMask(lines)
+	headingAt := func(j int) bool { return !fenced[j] && isHeadingLine(lines[j]) }
+	itemAt := func(j int) bool { return !fenced[j] && isItemStart(lines[j]) }
+	recordAt := func(j int) bool { return !fenced[j] && isFindingRecordStart(lines[j]) }
+
 	for j := idx; j >= 0; j-- {
+		if fenced[j] {
+			continue
+		}
 		if h, ok := headingText(lines[j]); ok {
 			section = h
 			break
 		}
 	}
-	// A record inside a fenced block is an EXAMPLE, not a record — the parser skips
-	// fenced content, so treating it as a boundary would split a narrative on the
-	// very counter-example the fence exists to quote. Resolved per line index rather
-	// than per string because fence membership is a property of position, not text.
-	fenced := fenceMask(lines)
-	recordAt := func(j int) bool { return !fenced[j] && isFindingRecordStart(lines[j]) }
 
 	// Walk up until the current line begins the block (heading or list item) or
 	// the line above is a blank / heading / new list item. If the anchor landed on
 	// a continuation line, absorb the list-item marker line above it so the finding
 	// headline is included in the excerpt.
 	start := idx
-	for start > 0 && !isHeadingLine(lines[start]) && !isItemStart(lines[start]) && !recordAt(start) {
-		prev := lines[start-1]
-		if strings.TrimSpace(prev) == "" || isHeadingLine(prev) {
+	for start > 0 && !headingAt(start) && !itemAt(start) && !recordAt(start) {
+		if strings.TrimSpace(lines[start-1]) == "" || headingAt(start-1) {
 			break
 		}
 		// A finding record begins its OWN block and is never absorbed — unlike a list
@@ -434,7 +450,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 		if recordAt(start - 1) {
 			break
 		}
-		if isItemStart(prev) {
+		if itemAt(start - 1) {
 			start-- // absorb the marker line, then stop
 			break
 		}
@@ -443,8 +459,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// Walk down until the next line starts a new item/section/record or is blank.
 	end := idx
 	for end < len(lines)-1 {
-		next := lines[end+1]
-		if strings.TrimSpace(next) == "" || isHeadingLine(next) || isItemStart(next) || recordAt(end+1) {
+		if strings.TrimSpace(lines[end+1]) == "" || headingAt(end+1) || itemAt(end+1) || recordAt(end+1) {
 			break
 		}
 		end++
