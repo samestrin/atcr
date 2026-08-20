@@ -118,3 +118,47 @@ func TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget(t *tes
 			i, blockBytes, chunkBytes, agentBudget)
 	}
 }
+
+// TestBuildSlots_ChunkedEffectiveBudgetReservesTheBlockItShips pins the chunked
+// sizing record against the prompt it describes.
+//
+// effective_budget reserved len(agentScopeConstraint) — the PAYLOAD-tier block —
+// while renderAgent ships chunkScopeConstraint, capped against
+// min(agentBudget, chunk_byte_budget). The two diverge whenever the operator sets
+// a chunk ceiling below the agent budget, and the record then understates the
+// budget the prompt was actually sized to. Three consumers read that number and
+// draw a false conclusion from it; the sharpest is the AC4 fallback gate
+// (`fbBudget < primary.EffectiveBudget`), which SKIPS the overflow check and the
+// truncate re-fit for every fallback budget sitting between the understated
+// figure and the real one.
+func TestBuildSlots_ChunkedEffectiveBudgetReservesTheBlockItShips(t *testing.T) {
+	const declared = 128000
+	const chunkBudget = int64(64 * 1024)
+	const payloadBudget = int64(512 * 1024)
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = payloadBudget
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Less(t, chunkBudget, agentBudget,
+		"precondition: the chunk ceiling must sit BELOW the agent budget, or the two scope blocks do not diverge")
+
+	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
+
+	capped := agentBudget
+	if payloadBudget < capped {
+		capped = payloadBudget
+	}
+	for i, s := range slots {
+		shipped := int64(len(embeddedScopeBlock(t, s.Primary.Prompt)))
+		assert.Equal(t, capped-shipped, s.Primary.EffectiveBudget,
+			"chunk slot %d: effective_budget must reserve the block the prompt CARRIES (%d B), not the payload-tier block it does not", i, shipped)
+	}
+}
