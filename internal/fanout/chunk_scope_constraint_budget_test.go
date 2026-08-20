@@ -14,6 +14,7 @@ import (
 // wrapper instruction plus framed plan — not just the plan body. That is the
 // quantity prepended UNCOUNTED to every chunk, so it is the quantity the chunk
 // budget has to cover.
+//
 // The trailing blank line is part of the block: payload.ScopeConstraint closes
 // with "\n----- END SPRINT PLAN -----\n\n", and those two bytes ride every chunk
 // like the rest of it. Stopping at the END marker undercounted the block by 2,
@@ -165,5 +166,58 @@ func TestBuildSlots_ChunkedEffectiveBudgetReservesTheBlockItShips(t *testing.T) 
 		shipped := int64(len(embeddedScopeBlock(t, s.Primary.Prompt)))
 		assert.Equal(t, capped-shipped, s.Primary.EffectiveBudget,
 			"chunk slot %d: effective_budget must reserve the block the prompt CARRIES (%d B), not the payload-tier block it does not", i, shipped)
+	}
+}
+
+// TestBuildSlots_ChunkClampFloorKeepsTheCeilingWhenTheBlockEatsTheBudget covers
+// the `chunkClampBudget = 1` floor, and covers it as a LOAD-BEARING guard rather
+// than as an executed line.
+//
+// Reserving the block's bytes can drive the remaining chunk budget to zero or
+// below whenever chunk_byte_budget is at or under the block's own length. A
+// non-positive budget is not "a very tight ceiling" to ClampLinesToByteBudget —
+// it is the settings-tier "no cap configured" sentinel, and the function returns
+// maxLines UNTOUCHED for it (payload/sizing.go). So without the floor the tightest
+// possible ceiling does not clamp hardest; it deletes the ceiling outright and the
+// chunks revert to the raw model window, which is the opposite of what the
+// operator asked for and the largest possible overshoot.
+//
+// The floor turns that into the intended degradation: a budget of 1 clamps to the
+// minChunkLines floor. Asserted as the literal 64 rather than read back from the
+// unexported constant, so a change to either the floor or this behavior has to be
+// acknowledged here.
+func TestBuildSlots_ChunkClampFloorKeepsTheCeilingWhenTheBlockEatsTheBudget(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+	// Small enough that the scope block (fixed ~700-byte wrapper + a plan capped to
+	// chunkPlanBudget/8) is LONGER than the whole ceiling, which is what drives the
+	// subtraction non-positive. Still >= 8, so the plan cap funds at least one byte
+	// and the block is capped rather than dropped.
+	const chunkBudget = int64(512)
+	const wantLines = 64 // payload.minChunkLines
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	unclamped := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, 8437, unclamped,
+		"precondition: the raw model window derives 8437 lines — the value the chunks revert to if the floor is removed")
+
+	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
+
+	blockBytes := len(embeddedScopeBlock(t, slots[0].Primary.Prompt))
+	require.Greater(t, int64(blockBytes), chunkBudget,
+		"precondition: the block (%d B) must exceed the ceiling (%d B), or the reservation never goes non-positive and the floor is untested",
+		blockBytes, chunkBudget)
+
+	for i, s := range slots {
+		assert.Equal(t, wantLines, s.Primary.chunkMaxLines,
+			"chunk slot %d: a budget the block exhausts must clamp to the minChunkLines floor, not fall back to the unclamped %d-line window", i, unclamped)
 	}
 }
