@@ -1453,3 +1453,64 @@ func TestExecutionDocsDescribeOSLevelBackend(t *testing.T) {
 		t.Errorf("the OS-level section of docs/execution.md must state that network egress is blocked")
 	}
 }
+
+// TestZeroBudgetRowDocumentsReviewsCap pins the `ok_warning (no input budget)`
+// row in docs/registry.md against the verdict as it is actually computed.
+// zeroBudgetVerdict used to be suppressed outright whenever doctor's own
+// --max-tokens was typed; that guard is gone, and the cap operand is now
+// reviewMaxTokens(DeclaredMaxTokens) — the agent's own declaration, else the
+// built-in default. A row still describing the suppression tells an operator
+// that a flagged doctor run was not budget-checked when it was, which is the
+// opposite of the truth and the reason this guard is asserted rather than left
+// to review. The hint's cap and the row's own max_tokens column genuinely
+// differ under the flag, so the row must say so or the reader treats the two
+// numbers as one.
+func TestZeroBudgetRowDocumentsReviewsCap(t *testing.T) {
+	reg := auditedMarkdown(t)["docs/registry.md"]
+	row := zeroBudgetDocRow(t, reg)
+
+	// The retired suppression, in the two forms the row used to state it.
+	for _, gone := range []string{
+		"Not reported when",
+		"suppression is unconditional",
+	} {
+		if strings.Contains(row, gone) {
+			t.Errorf("the no-input-budget row still documents the removed --max-tokens suppression (%q); the verdict now fires regardless of doctor's flag", gone)
+		}
+	}
+
+	// What the row must say instead: the cap comes from review's resolution
+	// order, the flag does not suppress it, and the hint's cap can differ from
+	// the row's own column.
+	for _, want := range []string{
+		`max_tokens` + "` declaration",
+		"8192",
+		"regardless",
+		"differ",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the no-input-budget row must name %q so the operator can tell which cap the verdict used", want)
+		}
+	}
+}
+
+// zeroBudgetDocRow returns the single `ok_warning (no input budget)` status row
+// from docs/registry.md. Isolating the row is what makes the negative
+// assertions above meaningful: the marker-absent row directly above it
+// legitimately talks about --max-tokens, so a whole-file Contains would pass on
+// its text and never see this row drift.
+//
+// Anchored on the leading status cell, not on the phrase alone — the
+// `on_overflow` config row also says "no input budget", and matching it instead
+// would make every assertion here vacuous.
+func zeroBudgetDocRow(t *testing.T, md string) string {
+	t.Helper()
+	const cell = "| `ok_warning` (no input budget) |"
+	for _, line := range strings.Split(md, "\n") {
+		if strings.HasPrefix(line, cell) {
+			return line
+		}
+	}
+	t.Fatalf("docs/registry.md has no `ok_warning (no input budget)` status row")
+	return ""
+}
