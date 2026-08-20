@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,5 +66,55 @@ func TestBuildSlots_ChunkedScopeConstraintFitsChunkByteBudget(t *testing.T) {
 		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), chunkBudget,
 			"chunk slot %d: plan (%d B) + diff ceiling (%d B) must fit chunk_byte_budget (%d B) — the plan cap must come from the budget that sizes the call, not from the payload tier",
 			i, blockBytes, chunkBytes, chunkBudget)
+	}
+}
+
+// TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget is the
+// same (A) reservation as above, on the config every real run actually has.
+//
+// The test above sets chunk_byte_budget BELOW the agent budget, which is the one
+// regime where clamping to `cfg.Settings.ChunkByteBudget` binds. Production never
+// looks like that by default: ResolveSettings makes an unset chunk_byte_budget
+// inherit payload_byte_budget (precedence.go), so it resolves to 524288 — larger
+// than a 32768-token agent's whole budget. The byte reservation then does not
+// bind (the ceiling is above the budget) and the `ml -= ml/8` line fallback does
+// not run either (it is gated on chunk_byte_budget <= 0, which a resolved config
+// never is), so the block rides every chunk entirely uncounted.
+//
+// The reservation must therefore come from the budget that actually sizes the
+// call — min(agentBudget, chunk_byte_budget) — not from the operator ceiling
+// alone. Asserted against the agent budget because that is the quantity a
+// too-large chunk overruns here.
+func TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget(t *testing.T) {
+	const declared = 32768
+	const planBytes = 64 * 1024
+	// The resolved default: chunk_byte_budget is unset, so it inherits
+	// payload_byte_budget. Both are set here because this fixture builds Settings
+	// directly rather than through ResolveSettings.
+	const defaultBudget = int64(512 * 1024)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = defaultBudget
+	cfg.Settings.ChunkByteBudget = defaultBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Less(t, agentBudget, defaultBudget,
+		"precondition: the inherited chunk ceiling must EXCEED this agent's budget, or the regression regime is not reproduced")
+
+	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
+
+	for i, s := range slots {
+		blockBytes := len(embeddedScopeBlock(t, s.Primary.Prompt))
+		// Same avgBytesPerLine ratio the clamp derives the budget with, so this is
+		// the diff ceiling one chunk can carry.
+		chunkBytes := s.Primary.chunkMaxLines * 48
+		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), agentBudget,
+			"chunk slot %d: plan block (%d B) + diff ceiling (%d B) must fit the agent budget (%d B) — the uncounted block must be reserved against min(agentBudget, chunk_byte_budget), not against the inherited ceiling alone",
+			i, blockBytes, chunkBytes, agentBudget)
 	}
 }
