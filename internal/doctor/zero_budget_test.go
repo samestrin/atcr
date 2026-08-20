@@ -129,11 +129,18 @@ func TestRun_ZeroBudgetHintOverridesTheRaiseTheCapAdvice(t *testing.T) {
 // target, and probe() uses it — while review resolves independently through
 // resolveMaxTokens (its own --max-tokens -> the agent's declaration -> 8192).
 //
-// So `atcr doctor --max-tokens 30000` closes the budget of every agent on the 32768
-// default window (32768-30000-4096 = -1328) and would warn that review is about to ship
-// one file, when review would run at 8192 with budget to spare. run.go states that exact
-// prohibition for classify()'s hint: no branch may assert which knob governs the real run,
-// because that is conditional on how review is later invoked.
+// So `atcr doctor --max-tokens 30000` would, read off the PROBE, close the budget of
+// every agent on the 32768 default window (32768-30000-4096 = -1328) and warn that
+// review is about to ship one file. It is not: this agent DECLARES nothing, so review
+// caps it at 8192 and the 32768 window leaves 20480 input tokens (payload/sizing.go —
+// 32768 - 8192 output - 4096 overhead), a budget with room to spare.
+//
+// The row therefore stays ok because of what review will resolve, not because doctor's
+// flag was typed. That distinction is the whole point: an agent whose OWN declaration
+// closed the budget must still be reported under the same flag, which is what
+// TestRun_ZeroBudgetVerdictFiresForADeclaredCapDespiteDoctorsOwnFlag pins. run.go states
+// the rule this obeys for classify()'s hint: no branch may assert which knob governs the
+// real run, because that is conditional on how review is later invoked.
 func TestRun_NoZeroBudgetVerdictWhenTheCapCameFromDoctorsOwnFlag(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
 	// Undeclared agent: nothing here closes the budget except the flag below.
@@ -197,10 +204,20 @@ func TestRun_ZeroBudgetVerdictDoesNotOverwriteAFailureThatResolvedACap(t *testin
 		"a real failure outranks a budget warning — the operator has to fix the key first")
 }
 
-// The maxTokens clause standing alone. An uncapped probe (budget resolved to 0, so the
-// request went out with no cap) against a window too small to fund even the prompt
-// overhead: the budget is closed, but a 0 cap did not close it — the window did. Blaming
-// a cap that was never applied points the operator at the wrong knob.
+// A 1-token window against the cap `atcr review` will resolve. The PROBE here runs
+// uncapped (MaxTokensSet with a 0 value), but that is evidence about the probe, and the
+// verdict is not: review caps this undeclared agent at its built-in default, and 1 token
+// funds neither that nor the prompt overhead. So the budget review will run at really is
+// closed and the row must say so.
+//
+// This is the case that changed when the operand moved from the probed cap to review's.
+// It used to assert the opposite, on the reasoning that "no cap was applied, so no cap
+// closed this budget" — true of the probe, and the reason the maxTokens guard exists,
+// but the guard now defends the FUNCTION's contract rather than a state Run can reach
+// (see reviewMaxTokens). Under review-time evaluation a cap always notionally applies,
+// so an uncapped probe no longer implies an uncapped run. The hint still does not blame
+// the cap: its remedy names the context_window_tokens declaration, which is what is
+// actually at fault here.
 func TestRun_ZeroBudgetVerdictDoesNotBlameACapThatWasNeverApplied(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
 	tiny := 1
@@ -219,9 +236,11 @@ func TestRun_ZeroBudgetVerdictDoesNotBlameACapThatWasNeverApplied(t *testing.T) 
 	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 0, MaxTokensSet: true})
 
 	require.Len(t, rep.Agents, 1)
-	require.Zero(t, rep.Agents[0].MaxTokens, "precondition: no cap was applied")
-	assert.Equal(t, StatusOK, rep.Agents[0].Status,
-		"no cap was applied, so no cap closed this budget; the verdict must not fire")
+	require.Zero(t, rep.Agents[0].MaxTokens, "precondition: the PROBE applied no cap")
+	assert.Equal(t, StatusOKWarning, rep.Agents[0].Status,
+		"a 1-token window cannot fund the cap review will apply, whatever this probe was capped at")
+	assert.Contains(t, rep.Agents[0].Hint, "context_window_tokens",
+		"the window is what is at fault here, and the remedy must name it rather than a cap")
 }
 
 // A probe that never placed a call reports MaxTokens 0, which means "no cap applied" and
