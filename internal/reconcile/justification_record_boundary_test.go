@@ -98,6 +98,28 @@ func TestExtractSection_ProseIsNotABlockBoundary(t *testing.T) {
 			wants: []string{"standard row shape", "forged token accepted", "EVIDENCE column carries the call site"},
 		},
 		{
+			name: "fenced example containing a heading",
+			doc: "## Notes\n" +
+				"The reviewer quoted the section header it was reading:\n" +
+				"```\n" +
+				"# Findings\n" +
+				"```\n" +
+				"and the header is why the paths in this run are repo-relative.",
+			idx:   1,
+			wants: []string{"quoted the section header", "# Findings", "paths in this run are repo-relative"},
+		},
+		{
+			name: "fenced example containing a bullet",
+			doc: "## Notes\n" +
+				"The reviewer quoted the checklist it was handed:\n" +
+				"```\n" +
+				"- verify the signature before trusting the claims\n" +
+				"```\n" +
+				"and the checklist is why this finding cites jwt.Parse rather than the handler.",
+			idx:   1,
+			wants: []string{"quoted the checklist", "verify the signature", "cites jwt.Parse rather than the handler"},
+		},
+		{
 			name: "degenerate severity-prefixed line the parser drops",
 			doc: "## X\n" +
 				"See `a.go:10` for the leak.\n" +
