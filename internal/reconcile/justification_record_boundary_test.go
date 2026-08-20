@@ -306,3 +306,32 @@ func TestExtractSection_UnterminatedFenceAboveAFindingsList(t *testing.T) {
 	assert.Contains(t, texts[0], "first problem")
 	assert.NotContains(t, texts[0], "second problem", "an unclosed fence above must not fold the list into one block")
 }
+
+// The section walk-up's `if fenced[j] { continue }` needs an anchor BELOW a fenced
+// heading, with the real heading ABOVE the fence — the one arrangement in which
+// skipping fenced lines changes the answer.
+//
+// Every other fence case in this package puts the anchor at index 1 with the
+// heading at index 0, above the fence, so the walk-up stops on the real heading
+// before it ever meets a fenced line and the guard is executed-but-not-exercised:
+// deleting it leaves the suite green. Here the first heading the walk-up meets is
+// quoted example text, so without the guard the excerpt is attributed to "Fake
+// Heading" — a section that does not exist in the document — which is the
+// mis-attribution the fence-aware walk-up was introduced to fix. The wrong section
+// is permanent once written: localdebt persists Justification append-only.
+func TestExtractSection_WalkUpSkipsAHeadingInsideAFence(t *testing.T) {
+	lines := []string{
+		"# Real Section",
+		"",
+		"```",
+		"# Fake Heading",
+		"```",
+		"",
+		"the finding narrative",
+	}
+
+	_, section := extractSection(lines, 6)
+
+	assert.Equal(t, "Real Section", section,
+		"the section walk-up must skip a heading that only exists inside a fenced example and keep climbing to the real one")
+}
