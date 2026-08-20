@@ -3182,35 +3182,27 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// it. It arrives capped to the PRIMARY's budget/8 (see add()), and renderAgent
 	// prepends it UNCOUNTED, so a plan sized for a 128k primary would ride whole
 	// into a 32k backup and the payload would not really be within this agent's
-	// budget. Same arithmetic as the primary path, on this agent's own numbers.
-	scopeConstraint := refit.scopeConstraint
-	if len(scopeConstraint) > 0 && fbBudget > 0 {
-		planCap := fbBudget / 8
-		// The max_sprint_plan_bytes term cannot bind as things stand, and that is
-		// not an oversight: buildSlots applies this identical min() before
-		// threading the constraint in (agentScopeConstraint), so the plan already
-		// arrives at or below the operator's ceiling and only the budget/8 term
-		// can narrow it further. Removing it is therefore behavior-neutral today,
-		// and a mutant here survives by construction — but the redundancy is real
-		// defense, not decoration: thread the RUN's raw constraint here instead of
-		// the per-agent one and this term is what still holds the operator's
-		// ceiling. Only removing BOTH restores the oversized plan, which is the
-		// pair TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint
-		// pins.
-		if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
-			planCap = mspb
-		}
-		if planCap < 1 {
-			// A budget that funds not even one byte of plan cannot present a
-			// scoped review: capping to 0 would blank the plan body while the
-			// wrapper still instructs the model to obey it. Drop the block
-			// entirely instead — the review proceeds unconstrained and the
-			// prompt says so.
-			scopeConstraint = ""
-		} else {
-			scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
-		}
-	}
+	// budget. Same helper as the primary path, on this agent's own numbers — the two
+	// sites share capScopeConstraintForBudget precisely so they cannot answer this
+	// condition differently again.
+	//
+	// NOT gated on fbBudget > 0. That gate skipped the cap on the one budget that
+	// most needs it: at fbBudget == 0 the backup inherited the primary's plan whole,
+	// while fbBudget 1..7 correctly dropped it via the planCap < 1 arm inside
+	// capScopeConstraintForBudget. fbBudget is derived from the fallback's own
+	// resolved max_tokens, so a max_tokens declaration alone reaches that state.
+	//
+	// The max_sprint_plan_bytes term the helper applies cannot bind as things stand,
+	// and that is not an oversight: buildSlots applies the identical min() before
+	// threading the constraint in (agentScopeConstraint), so the plan already arrives
+	// at or below the operator's ceiling and only the budget/8 term can narrow it
+	// further. Removing it is therefore behavior-neutral today, and a mutant there
+	// survives by construction — but the redundancy is real defense, not decoration:
+	// thread the RUN's raw constraint here instead of the per-agent one and that term
+	// is what still holds the operator's ceiling. Only removing BOTH restores the
+	// oversized plan, which is the pair
+	// TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint pins.
+	scopeConstraint := capScopeConstraintForBudget(refit.scopeConstraint, fbBudget, cfg.Settings.MaxSprintPlanBytes)
 	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, scopeConstraint)
 	var kept []payload.FileEntry
 	var trunc payload.Truncation
