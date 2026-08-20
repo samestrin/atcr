@@ -132,20 +132,36 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// row mask a short one carrying the same identity, which is the cheapest
 		// possible way to walk a partial run past this gate.
 		if prev, dup := byIdentity[key]; dup {
-			// Two DIFFERENT raw identities colliding here is not tampering, and saying
-			// "malformed" would send the operator hunting for it. scrubField iterates to
-			// a fixed point (scorecard/export.go), so strictly more distinct raw values
-			// collapse to one published identity than when the PRODUCER's own collision
-			// check ran (cli/benchmark_run.go) under single-pass scrubbing — a
-			// run-result written by an earlier atcr can therefore have been well-formed
-			// when written and fail here purely on version skew. The rejection stands
-			// either way: two rows cannot share one published identity on the board.
+			// Two DIFFERENT raw identities colliding here is not NECESSARILY tampering,
+			// and flatly saying "malformed" would send the operator hunting for it.
+			// scrubField iterates to a fixed point (scorecard/export.go), so strictly
+			// more distinct raw values collapse to one published identity than when the
+			// PRODUCER's own collision check ran (cli/benchmark_run.go) under
+			// single-pass scrubbing — a run-result written by an earlier atcr can
+			// therefore have been well-formed when written and fail here purely on
+			// version skew.
+			//
+			// The message names that possibility WITHOUT ranking it, because this branch
+			// cannot tell it from hand-assembly. The discriminator is only "these are
+			// two different raw strings", which both causes satisfy. The two sharper
+			// tests that suggest themselves do not work: "stable under one pass but not
+			// under the fixed point" is the EMPTY SET (scrubField halts the moment one
+			// pass is stable), and "a single pass still rewrites it" is not evidence of
+			// hand-assembly either, since a pre-fixed-point producer emitted exactly
+			// such values — benchmark_run.go records "bedrock@us-east-1/claude" scrubbing
+			// once to "/claude" and twice to "". Separating the causes needs
+			// image-membership under scrubOnce, which a seven-regex sequential pipeline
+			// does not invert cheaply, and the blast radius here (two path- or
+			// email-shaped ids colliding) does not justify building it.
+			//
+			// The rejection stands either way: two rows cannot share one published
+			// identity on the board, whatever wrote them.
 			if prev.Model != c.Model || prev.Persona != c.Persona {
 				return fmt.Errorf("run-result %s records coverage for %s/%s and %s/%s, which are distinct raw identities "+
-					"that scrub to the same published identity; the producer's collision check ran under an earlier, "+
-					"single-pass privacy scrub, so this file was most likely written by an older atcr rather than "+
-					"hand-assembled. Re-run `atcr benchmark run` with this version to regenerate it, or rename the "+
-					"model/persona ids so they stay distinct after scrubbing",
+					"that scrub to the same published identity; this file was either written by an older atcr under an "+
+					"earlier, single-pass privacy scrub (version skew) or hand-assembled. Re-run `atcr benchmark run` "+
+					"with this version to regenerate it, or rename the model/persona ids so they stay distinct after "+
+					"scrubbing",
 					path, stripTerminalControlRunes(prev.Model), stripTerminalControlRunes(prev.Persona), model, persona)
 			}
 			return fmt.Errorf("run-result %s records coverage for %s/%s more than once; "+
