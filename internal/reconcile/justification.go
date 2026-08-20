@@ -530,12 +530,34 @@ func isFindingRecordStart(s string) bool {
 func fenceMask(lines []string) []bool {
 	mask := make([]bool, len(lines))
 	inFence := false
+	openedAt := -1
 	for i, l := range lines {
 		if isFenceMarker(l) {
-			inFence = !inFence
+			if inFence {
+				inFence = false
+			} else {
+				inFence, openedAt = true, i
+			}
 			continue
 		}
 		mask[i] = inFence
+	}
+	// An UNTERMINATED fence masks nothing. Every earlier balanced pair keeps its
+	// mask; only the run below the dangling opener is released.
+	//
+	// Left masked, a model that opens a fence and forgets to close it takes the
+	// whole rest of the document with it — and the mask is consulted by all three
+	// boundary predicates and by the section walk-up, so every finding below the
+	// fence collapses to one byte-identical excerpt attributed to the last heading
+	// ABOVE it. Reading the tail as ordinary structure can at worst end a block on a
+	// boundary that was meant to be quoted; reading it as one fenced blob loses every
+	// boundary there is. The damage is also permanent — Justification is persisted
+	// append-only and StampID does not cover it — so the failure directions are not
+	// symmetric and this one is chosen deliberately.
+	if inFence {
+		for i := openedAt; i < len(lines); i++ {
+			mask[i] = false
+		}
 	}
 	return mask
 }
