@@ -382,7 +382,7 @@ offered?", which no other field reveals — a reviewer that invents its own word
 quietly zeroes its own recall, and the low score is indistinguishable from one that
 simply found less. Five details matter when reading it:
 
-- A run is guarded against a **ceiling of `0.05`**, and the ceiling is **exclusive** —
+- A run is guarded against a **ceiling of `0.05`**, and the ceiling is **inclusive** —
   a run sitting exactly on `0.05` trips the guard. Unlike the `0.20` it replaced, this
   number is **derived from measurement**: the V1 post-merge validation run measured
   `0.0100` (2 drifted findings of 201), and `0.05` keeps five times that headroom.
