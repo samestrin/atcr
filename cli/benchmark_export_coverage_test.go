@@ -379,3 +379,44 @@ func TestBenchmarkExport_RejectsReviewerRowWithoutCoverage(t *testing.T) {
 	require.NotEqual(t, 0, code, "a reviewer row with no coverage row must not publish: %s", out)
 	assert.Contains(t, out, "m-backup", "the unverifiable row is named")
 }
+
+// The skew message must not OVERCLAIM. It may say version skew is possible; it may
+// not say it is the likely cause, because the branch cannot tell the two causes
+// apart.
+//
+// The discriminator is `prev.Model != c.Model || prev.Persona != c.Persona` —
+// "these are two different raw strings" — and that fact is equally consistent with
+// an older producer and with a hand-assembled file. The obvious sharper test does
+// NOT exist: scrubField (scorecard/export.go) breaks its loop the instant one pass
+// is stable, so "stable under one pass but not under the fixed point" is the empty
+// set; and a value a single pass still rewrites is not evidence of hand-assembly
+// either, because a pre-fixed-point producer really did emit such values
+// (benchmark_run.go records "bedrock@us-east-1/claude" scrubbing once to "/claude"
+// and twice to ""). Telling the two apart needs image-membership under scrubOnce,
+// which a 7-regex sequential pipeline does not give cheaply — so the message names
+// both causes instead of ranking them.
+//
+// The rejection itself is unaffected: two rows cannot share one published identity
+// on the board whatever wrote them.
+func TestBenchmarkExport_ScrubCollisionMessageDoesNotOverclaimSkew(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m ~x","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.NotContains(t, out, "most likely",
+		"the branch cannot rank the two causes, so the message must not claim one is more likely")
+	assert.Contains(t, out, "either",
+		"the message must present version skew and hand-assembly as the two possibilities it cannot distinguish")
+	assert.Contains(t, out, "hand-assembled",
+		"hand-assembly must stay named as a live possibility, not be argued away")
+}
