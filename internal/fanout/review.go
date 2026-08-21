@@ -3241,6 +3241,16 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// capScopeConstraintForBudget. fbBudget is derived from the fallback's own
 	// resolved max_tokens, so a max_tokens declaration alone reaches that state.
 	//
+	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A
+	// single-entry slot is not one of them: keepSmallestEntry reports
+	// Truncated=false for it, the !trunc.Truncated arm below returns ok=false, and
+	// buildFallbackAgent keeps the INHERITED primary prompt — primary-capped plan
+	// block included. That is by design: the slot carries the honest
+	// degradationOverflow record either way (the payload measurably does not fit,
+	// plan or no plan), and stripping the block would mean re-rendering a prompt
+	// whose one file still cannot fit the window — a different wrong answer, not a
+	// right one.
+	//
 	// The max_sprint_plan_bytes term the helper applies cannot bind as things stand,
 	// and that is not an oversight: buildSlots applies the identical min() before
 	// threading the constraint in (agentScopeConstraint), so the plan already arrives
