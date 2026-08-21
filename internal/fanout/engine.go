@@ -144,9 +144,16 @@ type Agent struct {
 	// invokeAgent so status.json/summary.json can report why the payload was sized
 	// as it was. A fallback carries its OWN re-derived budget/window. All zero on a
 	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
-	// downstream). EffectiveBudget is the PAYLOAD-TIER input byte budget the payload
-	// was shed to — on the chunked path it is NOT the size any individual chunk was
-	// cut to, because the per-chunk line budget is separately clamped by
+	// downstream). EffectiveBudget is the input byte budget the payload was shed
+	// to: the PAYLOAD-TIER budget — the agent's own EffectiveByteBudget, capped by
+	// payload_byte_budget — LESS the SCOPE CONSTRAINT block the prompt actually
+	// carries. On the chunked path that block is the CHUNK-TIER one
+	// (chunkScopeConstraint, capped against min(agent budget, chunk_byte_budget)),
+	// so the two operands deliberately sit at different tiers; the budget operand
+	// stays payload-tier because switching it to chunkPlanBudget would misreport
+	// the global shed (review.go's chunked sizing record explains). It is NOT the
+	// size any individual chunk was cut to, because the per-chunk line budget is
+	// separately clamped by
 	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
 	// below payload_byte_budget (the two are equal only when chunk_byte_budget is
 	// unset and inherits it). Read it as "what the whole payload was shed to", which
