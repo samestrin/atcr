@@ -334,6 +334,35 @@ func TestExtractSection_RecordShapedLineBelowADanglingFenceIsNotABoundary(t *tes
 	assert.Contains(t, text, "continues after it")
 }
 
+// A fenced quote the block walk crosses is ELIDED, not absorbed. Masking
+// headingAt/itemAt means a quoted diff — every `- removed` line satisfies
+// isItemStart — no longer ends the block, so without elision the whole quote rides
+// into the excerpt and spends the justificationMaxRunes budget on quoted code,
+// pushing the reviewer's own prose past the truncation ellipsis. The budget must
+// buy prose on both sides of the fence instead. Consumers make this permanent:
+// emit.go hands Justification to localdebt's append-only store, and debt_resolve
+// accepts a non-empty Justification as the wontfix rationale — a truncated diff
+// hunk cannot stand in for human-typed reasoning.
+func TestExtractSection_FencedQuoteInsideABlockIsElided(t *testing.T) {
+	doc := "## Findings\n" +
+		"- The finding is justified by the before/after diff:\n" +
+		"```diff\n" +
+		"- removed line\n" +
+		"+ added line\n" +
+		"```\n" +
+		"which is why the fix narrows the predicate"
+	lines := strings.Split(doc, "\n")
+
+	text, _ := extractSection(lines, 1)
+
+	assert.Contains(t, text, "before/after diff", "the prose above the fence stays")
+	assert.Contains(t, text, "narrows the predicate",
+		"the prose BELOW the fence stays — the walk crosses the fence by design")
+	assert.NotContains(t, text, "removed line",
+		"quoted code is elided, not absorbed into the rune budget")
+	assert.Contains(t, text, "elided", "a placeholder marks where the quote went")
+}
+
 // The section walk-up's `if fenced[j] { continue }` needs an anchor BELOW a fenced
 // heading, with the real heading ABOVE the fence — the one arrangement in which
 // skipping fenced lines changes the answer.
