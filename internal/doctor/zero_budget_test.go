@@ -272,16 +272,18 @@ func TestRun_ZeroBudgetWarningDoesNotOverwriteAFailedProbe(t *testing.T) {
 func TestRun_ZeroBudgetHintDoesNotDisclaimTheProbeCapWhenTheyAreEqual(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
 	tiny := 1
+	declaredCap := 4096
 	reg := regWith(
 		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
-		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny, MaxTokens: &declaredCap}},
 	)
 	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
 	require.NoError(t, err)
 
 	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
 
-	// No --max-tokens: the default path, where probe and review resolve one cap.
+	// No --max-tokens: the default path. probe() resolves the agent's own
+	// declaration and reviewMaxTokens returns the same one, so the two coincide.
 	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce})
 
 	require.Len(t, rep.Agents, 1)

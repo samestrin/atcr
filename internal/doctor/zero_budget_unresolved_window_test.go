@@ -26,7 +26,7 @@ func TestZeroBudgetVerdict_SilentWhenTheWindowDidNotResolve(t *testing.T) {
 	require.Zero(t, payload.EffectiveByteBudget("m", &unresolved, cap),
 		"precondition: an unresolved window falls back to the default and the cap closes it")
 
-	status, hint, fired := zeroBudgetVerdict("m", 0, cap, StatusOK)
+	status, hint, fired := zeroBudgetVerdict("m", 0, cap, cap, StatusOK)
 
 	assert.False(t, fired, "an agent whose window did not resolve has no known budget to call closed")
 	assert.Empty(t, status)
@@ -36,7 +36,7 @@ func TestZeroBudgetVerdict_SilentWhenTheWindowDidNotResolve(t *testing.T) {
 // The complement: the SAME cap on a resolved window must still fire, so the guard
 // above cannot be widened into a blanket suppression of the verdict.
 func TestZeroBudgetVerdict_StillFiresOnAResolvedWindow(t *testing.T) {
-	status, hint, fired := zeroBudgetVerdict("m", 32768, 32000, StatusOK)
+	status, hint, fired := zeroBudgetVerdict("m", 32768, 32000, 32000, StatusOK)
 
 	require.True(t, fired, "a resolved window whose cap closes the input budget must still be reported")
 	assert.Equal(t, StatusOKWarning, status)
@@ -49,7 +49,7 @@ func TestZeroBudgetVerdict_StillFiresOnAResolvedWindow(t *testing.T) {
 // used to cover it through Run (an uncapped probe) now evaluates against review's
 // default instead and asserts the opposite outcome.
 func TestZeroBudgetVerdict_SilentWhenNoCapApplies(t *testing.T) {
-	status, hint, fired := zeroBudgetVerdict("m", 1, 0, StatusOK)
+	status, hint, fired := zeroBudgetVerdict("m", 1, 0, 0, StatusOK)
 
 	assert.False(t, fired, "a cap of zero is NO CAP, and no cap can have closed the budget")
 	assert.Empty(t, status)

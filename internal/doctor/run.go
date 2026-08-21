@@ -187,7 +187,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
 		reviewCap := reviewMaxTokens(at.DeclaredMaxTokens)
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, status); ok {
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
 			status, hint = s, h
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
@@ -272,7 +272,7 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
 // original hint in place there would have preserved the exact trap this row was filed
 // for.
-func zeroBudgetVerdict(model string, window, maxTokens int, status string) (string, string, bool) {
+func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string) (string, string, bool) {
 	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}
@@ -285,16 +285,26 @@ func zeroBudgetVerdict(model string, window, maxTokens int, status string) (stri
 		// first clause and reaches for --max-tokens is the failure being prevented.
 		lead = "the marker was absent AND"
 	}
-	// The cap is named as REVIEW's and disclaimed as the probe's, because under
-	// `atcr doctor --max-tokens N` the two differ and the number here is the one the
-	// operator has to act on. Without that clause the hint reads as a statement about
-	// the probe the row's other columns just reported at a different value.
+	// The cap is always named as REVIEW's, and disclaimed as the probe's ONLY when
+	// the two are genuinely different numbers — under `atcr doctor --max-tokens N`
+	// with an N that is not the cap review would resolve. There the row's max_tokens
+	// column and this operand disagree, and the operator has to act on this one.
+	//
+	// Unflagged, probe() resolves the SAME cap reviewMaxTokens does (the agent's
+	// declaration, else the shared default), render.go suppresses the "/ review cap"
+	// suffix because they are equal, and an unconditional disclaimer then tells the
+	// operator that the only cap on screen is a different cap than it is. The
+	// disclaimer was added for the flag path; it belongs only there.
+	disclaimer := ""
+	if probeMaxTokens != maxTokens {
+		disclaimer = " (not this probe's cap)"
+	}
 	return StatusOKWarning, fmt.Sprintf(
 		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap `atcr review` will "+
-			"resolve for this agent (not this probe's cap) and the fixed prompt overhead are reserved — review will ship "+
+			"resolve for this agent%s and the fixed prompt overhead are reserved — review will ship "+
 			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
 			"cap here: it is reserved out of this same window. Remedy: %s",
-		lead, window, maxTokens, zeroBudgetRemedy), true
+		lead, window, maxTokens, disclaimer, zeroBudgetRemedy), true
 }
 
 // reviewDefaultMaxTokens is the cap `atcr review` applies to an agent that
