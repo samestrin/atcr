@@ -219,3 +219,25 @@ func TestRenderJSON_CarriesReviewMaxTokens(t *testing.T) {
 	require.Len(t, got.Agents, 1)
 	assert.Equal(t, 32000, got.Agents[0].ReviewMaxTokens)
 }
+
+// The `MaxTokens <= 0` early return precedes the review-cap suffix, so a row with no
+// probed cap shows NEITHER cap while its ok_warning hint quotes review's — the exact
+// state the repo's own TestRun_ZeroBudgetVerdictDoesNotBlameACapThatWasNeverApplied
+// exercises, and docs/registry.md states the cell carries the hint's operand. The
+// probed cap is genuinely absent here and must stay absent; review's is the one the
+// hint speaks for and must be shown.
+func TestRenderTable_ShowsTheReviewCapWhenNoProbedCapWasApplied(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOKWarning,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens:       0, // the probe applied no cap at all
+		ReviewMaxTokens: 8192,
+	}}}))
+	got := buf.String()
+
+	assert.Contains(t, got, "review cap 8192",
+		"the hint quotes review's cap, so a cell that shows no cap at all names a knob whose current value it refuses to display")
+	assert.NotContains(t, got, "/ cap ",
+		"the PROBED cap really was absent — inventing one would misreport what ran")
+}
