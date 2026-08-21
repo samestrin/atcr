@@ -67,8 +67,13 @@ func TestIsFindingRecordStart_AgreesWithTheProducingParser(t *testing.T) {
 }
 
 // The three shapes below were MEASURED truncating real justifications. Each asserts
-// the whole block survives, byte for byte — a partial excerpt is indistinguishable
-// from a reviewer who wrote one sentence, because no truncation marker is emitted.
+// the whole block survives — a partial excerpt is indistinguishable from a reviewer
+// who wrote one sentence, because no truncation marker is emitted. FENCED shapes
+// survive as one "[quoted example elided]" placeholder per region: the block still
+// crosses the fence (the prose below it is asserted), but the quoted content itself
+// no longer rides into the excerpt, because a quote of any length absorbed whole
+// spends the justificationMaxRunes budget on code and pushes the reviewer's prose
+// past the truncation ellipsis.
 func TestExtractSection_ProseIsNotABlockBoundary(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -95,7 +100,7 @@ func TestExtractSection_ProseIsNotABlockBoundary(t *testing.T) {
 				"```\n" +
 				"which is why the EVIDENCE column carries the call site rather than the diff.",
 			idx:   1,
-			wants: []string{"standard row shape", "forged token accepted", "EVIDENCE column carries the call site"},
+			wants: []string{"standard row shape", "[quoted example elided]", "EVIDENCE column carries the call site"},
 		},
 		{
 			name: "fenced example containing a heading",
@@ -106,7 +111,7 @@ func TestExtractSection_ProseIsNotABlockBoundary(t *testing.T) {
 				"```\n" +
 				"and the header is why the paths in this run are repo-relative.",
 			idx:   1,
-			wants: []string{"quoted the section header", "# Findings", "paths in this run are repo-relative"},
+			wants: []string{"quoted the section header", "[quoted example elided]", "paths in this run are repo-relative"},
 		},
 		{
 			name: "fenced example containing a bullet",
@@ -117,7 +122,7 @@ func TestExtractSection_ProseIsNotABlockBoundary(t *testing.T) {
 				"```\n" +
 				"and the checklist is why this finding cites jwt.Parse rather than the handler.",
 			idx:   1,
-			wants: []string{"quoted the checklist", "verify the signature", "cites jwt.Parse rather than the handler"},
+			wants: []string{"quoted the checklist", "[quoted example elided]", "cites jwt.Parse rather than the handler"},
 		},
 		{
 			name: "degenerate severity-prefixed line the parser drops",

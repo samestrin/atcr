@@ -470,11 +470,43 @@ func extractSection(lines []string, idx int) (text, section string) {
 		end++
 	}
 	var b strings.Builder
+	wroteAny := false
+	inElidedFence := false
 	for j := start; j <= end; j++ {
-		if j > start {
+		// Fenced content is quoted example text, not the reviewer's prose. The walk
+		// crosses it deliberately (headingAt/itemAt are masked, so a quoted
+		// `- line` or `# heading` no longer ends the block), but absorbing it whole
+		// would spend the justificationMaxRunes budget on quoted code and push the
+		// actual prose past the truncation ellipsis. Elide each fenced region —
+		// markers included — to ONE placeholder line, so the budget buys prose on
+		// both sides of the fence.
+		elidedLine := released[j]
+		if isFenceMarker(lines[j]) {
+			// A marker belongs to the elision when it delimits masked content: an
+			// opener whose body is masked, or a closer following masked content.
+			// A DANGLING opener's marker stays: its tail is released (treated as
+			// prose), so the marker is the only sign a quote was ever opened.
+			if (j+1 < len(lines) && released[j+1]) || (j > 0 && released[j-1]) {
+				elidedLine = true
+			}
+		}
+		if elidedLine {
+			if !inElidedFence {
+				if wroteAny {
+					b.WriteByte('\n')
+				}
+				b.WriteString("[quoted example elided]")
+				wroteAny = true
+				inElidedFence = true
+			}
+			continue
+		}
+		inElidedFence = false
+		if wroteAny {
 			b.WriteByte('\n')
 		}
 		b.WriteString(strings.TrimRight(lines[j], "\r"))
+		wroteAny = true
 		// Bound block growth: we only keep justificationMaxRunes runes, so stop
 		// accumulating once we are clearly over the limit. truncateRunes cleans up
 		// the exact boundary.
