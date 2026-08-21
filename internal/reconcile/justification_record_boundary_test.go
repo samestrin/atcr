@@ -582,3 +582,27 @@ func TestElidedQuotePlaceholder_IsEmittedAndDocumented(t *testing.T) {
 			"%s documents the justification field, so it must spell the placeholder a reader will find in that field", doc)
 	}
 }
+
+// The elided branch `continue`s past the growth check, so the placeholder can
+// straddle the justificationMaxRunes cut. A fragment like "[quot" is recognizable
+// as an elision by no reader, human or machine — it is indistinguishable from
+// ordinary mid-word truncation, and it defeats any exact match on the literal
+// (cli/debt_resolve has to be able to tell a placeholder-only justification from a
+// real one). An excerpt that cannot carry the whole token must end on prose plus
+// the ellipsis instead.
+func TestExtractSection_PlaceholderIsNeverCutInHalfByTheRuneBudget(t *testing.T) {
+	// Long enough that the placeholder cannot fit whole, short enough that the
+	// prose itself does not trip the growth check first.
+	prose := "- " + strings.Repeat("x", justificationMaxRunes-8)
+	lines := []string{prose, "```", "quoted example", "```"}
+
+	text, _ := extractSection(lines, 0)
+
+	require.Contains(t, text, "xxxx", "precondition: the prose is in the excerpt")
+	if strings.Contains(text, "[quo") {
+		assert.Contains(t, text, ElidedQuotePlaceholder,
+			"a placeholder must appear whole or not at all — a fragment reads as ordinary truncation and matches nothing")
+	}
+	assert.True(t, strings.HasSuffix(text, "…"),
+		"the excerpt is over budget, so it must end on the truncation ellipsis")
+}
