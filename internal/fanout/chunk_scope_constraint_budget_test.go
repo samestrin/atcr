@@ -561,3 +561,47 @@ func TestBuildSlots_RunLevelDropWarningIsSilentOnTheResumeRebuild(t *testing.T) 
 	assert.NotContains(t, out, "payload_byte_budget",
 		"the resume rebuild must stay quiet — the operator was already warned during the original preparation")
 }
+
+// The chunk-drop warning has a hole on exactly the state it was added for. Its gate
+// is `chunk_byte_budget > 0 && chunk_byte_budget < agentBudget`, and its comment
+// promises the non-binding case "falls to the zero-budget/overflow reporting
+// instead" — but when agentBudget is ITSELF in the 1..7 band (reachable: a declared
+// window of 12289 yields 3) the block is dropped, this warning is skipped because
+// the comparison is false, AND the zero-budget arm is skipped because agentBudget is
+// not 0. It falls to nothing: the operator asked for scoping, got none, and every
+// reviewer in the run reviews unscoped with no signal at all.
+func TestBuildSlots_WarnsWhenTheAgentsOwnBudgetCannotFundOnePlanByte(t *testing.T) {
+	const declared = 12289 // effectiveTokens 1 → agentBudget 3, in the 1..7 drop band
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = 0 // unset: the agent's own window is the binding one
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, int64(3), agentBudget,
+		"precondition: positive but under 8, so budget/8 floors to 0 and the block is dropped — and NOT 0, so the zero-budget arm does not fire")
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: the block really is dropped here")
+
+	assert.Contains(t, out, "SCOPE CONSTRAINT",
+		"a dropped --sprint-plan block must be reported whichever budget bound it")
+	assert.Contains(t, out, "greta",
+		"the warning must name the agent whose scoping was dropped")
+	assert.Contains(t, out, "DROPPED",
+		"and say the block was dropped, not truncated")
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"chunk_byte_budget is unset here — the warning must still not accuse it")
+}
