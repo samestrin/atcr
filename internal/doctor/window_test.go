@@ -163,3 +163,59 @@ func TestRenderTable_OmitsTheCapWhenNoCallWasPlaced(t *testing.T) {
 	assert.NotContains(t, line, "cap 0", "a probe that never ran has no cap to report")
 	assert.Contains(t, line, "32768", "the window is still rendered")
 }
+
+// Under --max-tokens the probed cap and the cap `atcr review` will resolve DIFFER, and
+// the ok_warning hint quotes review's cap. The WINDOW cell must carry both, or the hint
+// names a number the surface refuses to display — the same defect the probed-cap render
+// fixed, one tier over.
+func TestRenderTable_ShowsTheReviewCapWhenItDiffersFromTheProbedCap(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOKWarning,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens: 4096, MaxTokensSource: MaxTokensSourceFlag,
+		ReviewMaxTokens: 32000,
+	}}}))
+	got := buf.String()
+
+	assert.Contains(t, got, "cap 4096 (flag)", "the probed cap is still rendered, with its tier")
+	assert.Contains(t, got, "32000",
+		"the ok_warning hint quotes review's cap; the table must show what it currently is")
+}
+
+// The two coincide on the declaration tier (and whenever no flag overrides): the cell
+// must not say the same number twice.
+func TestRenderTable_OmitsTheReviewCapWhenItMatchesTheProbedCap(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOK,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens: 32000, MaxTokensSource: MaxTokensSourceDeclaration,
+		ReviewMaxTokens: 32000,
+	}}}))
+	got := buf.String()
+
+	assert.NotContains(t, got, "review cap", "a review cap equal to the probed cap adds nothing")
+}
+
+// --json must carry review's cap too: a script re-deriving the budget from
+// context_window_tokens and max_tokens alone computes a healthy budget and disagrees
+// with the ok_warning atcr shipped.
+func TestRenderJSON_CarriesReviewMaxTokens(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOKWarning,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens: 4096, MaxTokensSource: MaxTokensSourceFlag,
+		ReviewMaxTokens: 32000,
+	}}}))
+
+	var got struct {
+		Agents []struct {
+			ReviewMaxTokens int `json:"review_max_tokens"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Len(t, got.Agents, 1)
+	assert.Equal(t, 32000, got.Agents[0].ReviewMaxTokens)
+}
