@@ -1450,6 +1450,21 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// not a zero-budget state.
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
 		scopeConstraint = capScopeConstraintForBudget(scopeConstraint, budget, cfg.Settings.MaxSprintPlanBytes)
+		// A RUN-WIDE drop is the same condition the chunk-tier warning reports one
+		// tier down, and it must not be the quieter of the two. The chunk-tier
+		// warning cannot cover for it either: that one gates on
+		// len(scopeConstraint) > 0, which this line has just emptied. Left silent,
+		// resolveScopeConstraint's "truncated before injection" is the only output,
+		// so the operator reads a truncation where there was a total drop and
+		// concludes --sprint-plan was honoured while every reviewer in the run
+		// reviews unscoped. Gated on warnOversized like every sibling, so the resume
+		// rebuild stays quiet.
+		if warnOversized && len(scopeConstraint) == 0 {
+			fmt.Fprintf(os.Stderr, "atcr: warning: payload_byte_budget (%d B) is too small to fund even one byte of the "+
+				"--sprint-plan SCOPE CONSTRAINT (the plan is capped at payload_byte_budget/8); the block was DROPPED "+
+				"run-wide and every agent in this review runs unscoped. Raise payload_byte_budget to at least 8, or "+
+				"set it to 0 for unlimited.\n", budget)
+		}
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
