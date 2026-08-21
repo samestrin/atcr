@@ -1958,12 +1958,6 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				}
 			}
 			if len(chunks) > 1 {
-				// Placed INSIDE the multi-chunk commit, not beside the
-				// capScopeConstraintForBudget call that computes the drop: a diff that
-				// yields ONE chunk never ships chunkScopeConstraint at all — it falls
-				// through to the bulk path below, which re-scopes with the fully
-				// populated agentScopeConstraint. Warning there told the operator the
-				// --sprint-plan scoping had been dropped while it was in fact applied.
 				// A POSITIVE chunk ceiling too small to fund one plan byte drops the
 				// operator's scoping outright and would otherwise say nothing.
 				//
@@ -1982,6 +1976,13 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// doing, and blaming chunk_byte_budget would accuse an innocent key whose
 				// prescribed remedy — unset it — is a no-op. That case falls to the
 				// zero-budget/overflow reporting instead.
+				//
+				// Placed INSIDE the multi-chunk commit, not beside the
+				// capScopeConstraintForBudget call that computes the drop: a diff that
+				// yields ONE chunk never ships chunkScopeConstraint at all — it falls
+				// through to the bulk path below, which re-scopes with the fully
+				// populated agentScopeConstraint. Warning there told the operator the
+				// --sprint-plan scoping had been dropped while it was in fact applied.
 				if warnOversized && len(scopeConstraint) > 0 && len(chunkScopeConstraint) == 0 &&
 					cfg.Settings.ChunkByteBudget > 0 && cfg.Settings.ChunkByteBudget < agentBudget {
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
