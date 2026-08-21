@@ -1,6 +1,9 @@
 package payload
 
 import (
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -150,5 +153,22 @@ func TestZeroEffectiveBudgetFloorsChunkLinesAndSurvivesAOneByteClamp(t *testing.
 	}
 	if got := ClampLinesToByteBudget(lines, 0); got != lines {
 		t.Fatalf("a non-positive budget must pass maxLines through unclamped, got %d want %d", got, lines)
+	}
+}
+
+// docs/registry.md promises a --json consumer can re-derive the budget the
+// zero-budget verdict warned about, and that derivation needs promptOverheadTokens
+// as its third operand. The constant is unexported and appeared in no public doc,
+// so the promise was unkeepable. Now that the doc states the number, pin it here:
+// changing the reservation without updating the doc silently breaks every consumer
+// that followed the published formula.
+func TestPromptOverheadTokens_IsPublishedInRegistryDocs(t *testing.T) {
+	b, err := os.ReadFile("../../docs/registry.md")
+	if err != nil {
+		t.Fatalf("read docs/registry.md: %v", err)
+	}
+	want := "context_window_tokens − review_max_tokens − " + strconv.Itoa(promptOverheadTokens)
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("docs/registry.md must publish the budget formula with the current prompt overhead (%d); wanted the substring %q", promptOverheadTokens, want)
 	}
 }
