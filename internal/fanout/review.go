@@ -1389,10 +1389,11 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 //
 // It exists because this one condition had accumulated three different answers
 // across two call sites (blank the body on the primary path, drop the block on the
-// fallback path, skip the cap altogether at fbBudget == 0). Both sites now route
-// through here, so a fourth cannot appear: change the policy in one place and every
-// caller moves with it. payload.ScopeConstraint's maxBytes <= 0 arm is the same
-// refusal expressed one tier up, where a read ceiling is available to fall back to.
+// fallback path, skip the cap altogether at fbBudget == 0). Every site now routes
+// through here — the run-level payload_byte_budget cap in buildSlots included — so
+// no fourth answer can appear: change the policy in one place and every caller
+// moves with it. payload.ScopeConstraint's maxBytes <= 0 arm is the same refusal
+// expressed one tier up, where a read ceiling is available to fall back to.
 //
 // A non-positive budget yields a non-positive cap and therefore the drop, which is
 // why the callers must NOT gate on budget > 0: that gate is what let the zero case
@@ -1441,11 +1442,14 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
-	// Truncate only the plan body (between the BEGIN/END markers) to
-	// min(cfg.Settings.MaxSprintPlanBytes, budget/8), preserving the wrapper
-	// instruction text (F9: the ceiling is the resolved max_sprint_plan_bytes).
+	// Routed through capScopeConstraintForBudget — the same budget/8 cap narrowed by
+	// max_sprint_plan_bytes the per-agent sites use — so a budget too small to fund one
+	// plan byte DROPS the block instead of blanking its body and leaving the BEGIN/END
+	// frame standing (which the per-agent cap would then cap rather than drop).
+	// The budget > 0 gate stays: 0 is the settings-tier "unlimited" sentinel here,
+	// not a zero-budget state.
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
-		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(min(cfg.Settings.MaxSprintPlanBytes, budget/8)))
+		scopeConstraint = capScopeConstraintForBudget(scopeConstraint, budget, cfg.Settings.MaxSprintPlanBytes)
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
