@@ -1700,9 +1700,26 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 					chunkSizing := agentSizing{
 						// The budget the partition ACTUALLY used, not the raw per-agent
-						// one: effective_budget must mean the same quantity on every
-						// payload strategy or a consumer comparing two agents is
-						// comparing unlike numbers.
+						// one. effective_budget means ONE quantity on every payload
+						// strategy — the payload-tier budget (this agent's own
+						// EffectiveByteBudget, capped by payload_byte_budget) less the
+						// scope-constraint block THIS prompt carries — but the block's
+						// TIER follows the prompt, so the reservation operand is not the
+						// same on every path and a consumer must not assume it is:
+						//
+						//   baseline (this branch) and bulk  — agentScopeConstraint, the
+						//     payload-tier block, capped against agentBudget
+						//   chunked diff (:2033)             — chunkScopeConstraint, the
+						//     chunk-tier block, capped against
+						//     min(agentBudget, chunk_byte_budget)
+						//
+						// The two diverge whenever an operator sets chunk_byte_budget
+						// below the agent budget, so an artifact reader normalizing two
+						// agents must read the path off review_strategy/chunk_count first.
+						// The BUDGET operand stays payload-tier on every path: switching
+						// it to the chunk ceiling would misreport the global shed. See
+						// AgentStatus.EffectiveBudget (status.go) for the published
+						// contract this mirrors.
 						effectiveBudget: chunkBudget,
 						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
