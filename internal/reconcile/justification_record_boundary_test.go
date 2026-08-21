@@ -608,3 +608,16 @@ func TestExtractSection_PlaceholderIsNeverCutInHalfByTheRuneBudget(t *testing.T)
 	assert.True(t, strings.HasSuffix(text, "x"),
 		"with no room for the whole placeholder the excerpt ends on the reviewer's prose — SourceReport remains the pointer to the quote")
 }
+
+// The placeholder collision is a DECIDED contract, not an accident: reviewer prose
+// carrying the literal is passed through verbatim. Pinned in both directions so the
+// decision cannot be quietly reversed into an escaping scheme that rewrites a
+// reviewer's own words — and so a consumer reading this value knows a match is
+// evidence, never proof.
+func TestExtractSection_ReviewerProseCarryingThePlaceholderIsPassedThroughVerbatim(t *testing.T) {
+	line := "- atcr writes " + ElidedQuotePlaceholder + " into the field."
+	text, _ := extractSection([]string{"## Findings", "", line}, 2)
+
+	assert.Equal(t, line, text,
+		"the reviewer's sentence is their own words and must survive byte-for-byte, collision or not")
+}

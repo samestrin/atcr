@@ -50,6 +50,20 @@ const (
 // something, and a literal spelled in five places cannot be matched reliably.
 // Documented for readers of the field in docs/findings-format.md and
 // skills/atcr/debt-resolve.md; changing it is a documented-surface change.
+//
+// The collision is ACCEPTED, not prevented: reviewer prose containing this literal
+// is passed through verbatim and is byte-indistinguishable from a real elision, and
+// the inverse holds too — a reviewer quoting the token on its own line is no longer
+// readable as a quote. That is not hypothetical for this repo, which atcr reviews
+// with itself: the CHANGELOG and the findings-format discussion of this very
+// mechanism are exactly what a reviewer would quote. Escaping it was rejected
+// because every remedy rewrites the reviewer's own words, and changing the delimiter
+// only moves the collision to the new token (the docs would then quote THAT one).
+//
+// So a match on this value is EVIDENCE, never proof. A consumer deciding whether a
+// justification is real recorded rationale must treat a placeholder-only value as
+// unusable either way — it carries no reviewer content in the collision case any
+// more than in the elision case — and must follow source_report for the authority.
 const ElidedQuotePlaceholder = "[quoted example elided]"
 
 // reviewNarrative is one collected source review.md: its review-dir-relative path
