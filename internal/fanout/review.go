@@ -1843,11 +1843,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// budget cannot fund one"), which is why it needs its own signal rather
 			// than being left to the reader of an empty prompt. Gated on warnOversized
 			// like every sibling warning, so the resume rebuild path stays quiet.
-			if warnOversized && len(scopeConstraint) > 0 && len(chunkScopeConstraint) == 0 && agentBudget > 0 {
+			//
+			// Gated on the OPERATOR's key being the binding one: when chunk_byte_budget
+			// is unset (or sits above the agent's own budget) the drop is the window's
+			// doing, and blaming chunk_byte_budget would accuse an innocent key whose
+			// prescribed remedy — unset it — is a no-op. That case falls to the
+			// zero-budget/overflow reporting instead.
+			if warnOversized && len(scopeConstraint) > 0 && len(chunkScopeConstraint) == 0 &&
+				cfg.Settings.ChunkByteBudget > 0 && cfg.Settings.ChunkByteBudget < agentBudget {
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
 					"--sprint-plan SCOPE CONSTRAINT (the plan is capped at chunk_byte_budget/8); the block was DROPPED and this "+
 					"review runs unscoped. Raise chunk_byte_budget to at least 8, or unset it to inherit payload_byte_budget.\n",
-					name, chunkPlanBudget)
+					name, cfg.Settings.ChunkByteBudget)
 			}
 			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
