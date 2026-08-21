@@ -613,6 +613,12 @@ func isFindingRecordStart(s string) bool {
 // an empty fence has no masked neighbour in either direction, and keying on that
 // rendered its two bare ``` lines as reviewer prose.
 //
+// ALIASING: in the balanced-fence case — the overwhelmingly common one — released
+// IS strict, the same backing array under two names, and balanced is always its own.
+// Every returned slice is READ-ONLY to callers. Writing through either view would
+// silently corrupt the other, and the corrupted result is a wrong recordAt, whose
+// damage this file's own comments call permanent.
+//
 // Callers pick the view per predicate. recordAt reads strict: its contract is
 // byte-exact parser parity (isFindingRecordStart), and a record-shaped line in that
 // tail is a line the producing parser never emitted, so it must not act as a block
