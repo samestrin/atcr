@@ -444,3 +444,34 @@ func TestBenchmarkExport_ScrubCollisionMessageDoesNotOverclaimSkew(t *testing.T)
 	assert.Contains(t, out, "hand-assembled",
 		"hand-assembly must stay named as a live possibility, not be argued away")
 }
+
+// The scrub-collision message must SHOW the two identities it says are distinct.
+// Both halves used to render through stripTerminalControlRunes, which deletes every
+// unicode.IsControl rune — including \r, \n and \t, exactly the runes the scrub
+// collapses via strings.Fields. So the pair that most naturally reaches this branch
+// rendered IDENTICALLY: the operator was shown two copies of one name, told they
+// differ, and told to rename one — an instruction that cannot be followed from what
+// is displayed. anchorSuiteDenominator already rejects this rendering for the same
+// reason and uses %q instead.
+func TestBenchmarkExport_ScrubCollisionMessageShowsTheDifference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	// "m" vs "m\r": distinct raw, collapse to the same published identity under the
+	// scrub, and differ ONLY in a rune stripTerminalControlRunes erases.
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m\r","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the scrub collision must still be rejected: %s", out)
+	require.Contains(t, out, "distinct raw identities",
+		"precondition: this pair must reach the scrub-collision branch, not the malformed-duplicate one")
+
+	assert.Contains(t, out, `"m\r"`,
+		"the control rune that makes the two identities distinct must be VISIBLE (%q), not deleted — otherwise the message shows two identical names")
+	assert.Contains(t, out, `same published identity "m"/"brad"`,
+		"the message asserts a collided published identity, so it must show which one")
+}
