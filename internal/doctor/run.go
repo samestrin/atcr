@@ -252,13 +252,15 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 //     a window too small to fund even the prompt overhead reports a closed budget and
 //     blames a cap that is not there, pointing the operator at the wrong knob when the
 //     window is what is at fault.
-//   - window 0 means the window did NOT RESOLVE, not a window of zero — the state
-//     render.go prints as "-" rather than as a number. An unresolved window is not a
-//     closed budget: there is no budget to call closed. Without the guard,
-//     ResolveContextWindow ignores the non-positive value and falls back to the 32768
-//     default, so the budget computes to 0 for any cap at or above 28672 and the row is
-//     blamed on its output cap — the same misattribution the maxTokens guard prevents,
-//     from the other operand.
+//   - window 0 means the window did NOT RESOLVE, not a window of zero. Run cannot
+//     produce it — at.ContextWindowTokens comes from payload.ResolveContextWindow,
+//     documented as never returning zero — so like the maxTokens clause this guards
+//     the function's contract for any other caller rather than a state the report
+//     can reach (render.go's "-" cell is defensive for the same reason). For such a
+//     caller, ResolveContextWindow ignores the non-positive value and falls back to
+//     the 32768 default, so the budget computes to 0 for any cap at or above 28672
+//     and the row is blamed on its output cap — the same misattribution the
+//     maxTokens guard prevents, from the other operand.
 //   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
 //     has a louder problem, and overwriting it with a budget warning would hide the
 //     failure the operator has to fix first.
