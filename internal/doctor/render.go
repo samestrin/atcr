@@ -65,13 +65,21 @@ func window(a AgentResult) string {
 	if a.WindowSource != "" {
 		w = fmt.Sprintf("%d (%s)", a.ContextWindowTokens, a.WindowSource)
 	}
-	if a.MaxTokens <= 0 {
-		return w
+	// A non-positive MaxTokens means the probe applied NO cap, so there is no probed
+	// cap to render — but that must not swallow review's cap too. It used to: the
+	// early return here preceded the review-cap suffix below, so a row with an
+	// uncapped probe and a FIRING zero-budget verdict showed neither cap while its
+	// hint quoted review's, and docs/registry.md states this cell carries the hint's
+	// operand. The probed cap stays absent; review's is appended either way.
+	//
+	// No tier-less form for the probed cap: probe() sets the cap and its source
+	// together, so a cap without a source cannot occur. A fallback for it would
+	// render exactly the declaration-vs-default ambiguity MaxTokensSource exists to
+	// remove.
+	cell := w
+	if a.MaxTokens > 0 {
+		cell = fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
 	}
-	// No tier-less form: probe() sets the cap and its source together, so a cap
-	// without a source cannot occur. A fallback for it would render exactly the
-	// declaration-vs-default ambiguity MaxTokensSource exists to remove.
-	cell := fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
 	// Review's cap rides along when it differs from the probed one: the ok_warning
 	// hint quotes REVIEW's cap (doctor's --max-tokens caps the probe only), so a
 	// cell showing just the probe's cap names a knob whose current value it refuses
