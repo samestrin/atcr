@@ -1883,7 +1883,12 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// EVERY chunk in renderAgent. Take the reservation in BYTES out of the
 			// budget that actually sizes the call before converting to lines: the
 			// block's own length is known here, so no line-count proxy is needed and no
-			// proxy's floor errors can push the pair over the stated ceiling.
+			// proxy's floor errors can push the pair over the stated ceiling — WITHIN
+			// ClampLinesToByteBudget's own minChunkLines floor, which this reservation
+			// does not remove. That floor returns 64 lines (~3072 B at the module's
+			// avgBytesPerLine of 48) for any positive byte budget too small to fund
+			// them, so a chunkClampBudget floored to 1 still ships a chunk provably
+			// over the stated ceiling, recorded as an ordinary degradationChunk.
 			//
 			// chunkPlanBudget, NOT cfg.Settings.ChunkByteBudget: the two are equal only
 			// when the operator ceiling is the binding one. An unset chunk_byte_budget
@@ -1927,7 +1932,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// bytes) for every unset-ceiling config. The byte figure is also strictly
 			// better than the proxy: it is the block's real length rather than an upper
 			// bound on it, and it cannot be pushed over the ceiling by the proxy's own
-			// floor errors. An explicit operator max_context_lines still wins verbatim.
+			// floor errors. It is not floor-error-FREE, though: ClampLinesToByteBudget
+			// has a minChunkLines floor of its own (sizing.go), so a tiny positive
+			// budget still yields a ~3072 B chunk. Better than the proxy, not exact.
+			// An explicit operator max_context_lines still wins verbatim.
 			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
 			// reserves no input budget at all is honest degradation on either
 			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
