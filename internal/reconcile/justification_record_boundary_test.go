@@ -450,3 +450,52 @@ func TestMatchNarrative_PlaceholderOnlyExcerptYieldsNoMatch(t *testing.T) {
 	assert.False(t, ok,
 		"an anchor whose whole block is fenced has no reviewer prose to stamp — the field must stay omitted, not carry a placeholder")
 }
+
+// headingAt reads the RELEASED view, and that choice is the half of the fenceMask
+// docstring's argument that nothing pinned: swapping it for strict left the suite
+// green while itemAt's and recordAt's twins were both killed. Under strict, a
+// heading in the tail of an UNTERMINATED fence is not a block boundary, so the walk
+// -down absorbs it and keeps going — "a model that opens a fence and forgets to
+// close it takes the whole rest of the document with it", and every finding below
+// collapses to one byte-identical excerpt. The loss is permanent: localdebt persists
+// Justification into an append-only store whose id excludes the field.
+func TestExtractSection_HeadingBelowADanglingFenceStillBoundsTheBlock(t *testing.T) {
+	lines := []string{
+		"# Real Section",
+		"",
+		"```", // opened and never closed
+		"the finding narrative for internal/x.go:42",
+		"# Later Heading",
+		"prose belonging to the later section",
+	}
+
+	text, _ := extractSection(lines, 3)
+
+	assert.Contains(t, text, "the finding narrative",
+		"precondition: the anchor's own line is in the excerpt")
+	assert.NotContains(t, text, "Later Heading",
+		"a heading in the released tail of a dangling fence must bound the block — reading the strict view here lets one unterminated fence swallow the rest of the document")
+	assert.NotContains(t, text, "prose belonging to the later section",
+		"and everything under that heading with it")
+}
+
+// The section walk-up's own `if released[j] { continue }` is the twin read: under
+// strict it skips every line in a dangling fence's tail, so an excerpt anchored
+// BELOW a heading in that tail is attributed to the last heading ABOVE the opener —
+// a section the finding is not in.
+func TestExtractSection_SectionResolvesToAHeadingInsideADanglingFenceTail(t *testing.T) {
+	lines := []string{
+		"# Section Above The Fence",
+		"",
+		"```", // opened and never closed
+		"quoted example text",
+		"# Section Below The Opener",
+		"",
+		"the finding narrative for internal/x.go:42",
+	}
+
+	_, section := extractSection(lines, 6)
+
+	assert.Equal(t, "Section Below The Opener", section,
+		"a dangling opener releases its tail, so the headings in it are real structure again — attributing the excerpt to the section above the opener names a section the finding is not in")
+}
