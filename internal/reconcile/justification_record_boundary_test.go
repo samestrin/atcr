@@ -499,3 +499,63 @@ func TestExtractSection_SectionResolvesToAHeadingInsideADanglingFenceTail(t *tes
 	assert.Equal(t, "Section Below The Opener", section,
 		"a dangling opener releases its tail, so the headings in it are real structure again — attributing the excerpt to the section above the opener names a section the finding is not in")
 }
+
+// The elision-membership branch decides whether a fence MARKER is absorbed into the
+// placeholder or rendered as reviewer prose, and the whole branch survived mutation:
+// `if false` left the suite green, and so did keeping only either disjunct. Nothing
+// stood between a clean "[quoted example elided]" and an excerpt with stray ```
+// lines in it. These cases cover one per disjunct plus both block boundaries, and
+// the empty fence — the shape neither disjunct reaches, because neither of its
+// markers has a masked neighbour.
+func TestExtractSection_NoFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  []string
+		idx  int
+		want string // a fragment of reviewer prose that must survive
+	}{
+		{
+			// Opener above masked content (disjunct 1) and closer below it
+			// (disjunct 2), both mid-block with prose on either side.
+			name: "fence between prose",
+			doc:  []string{"## Findings", "- the finding narrative", "```", "quoted example", "```", "and the conclusion"},
+			idx:  1,
+			want: "the conclusion",
+		},
+		{
+			// The block STARTS on the opener: the walk-up absorbs it, so j == start
+			// and the `j > 0` half of disjunct 2 is not what saves it.
+			name: "fence at block start",
+			doc:  []string{"## Findings", "```", "quoted example", "```", "prose after the fence"},
+			idx:  2,
+			want: "prose after the fence",
+		},
+		{
+			// The block ENDS on the closer: j+1 is past `end`, so the `j+1 <
+			// len(lines)` half of disjunct 1 is not what saves it.
+			name: "fence at block end",
+			doc:  []string{"- the finding narrative", "```", "quoted example", "```"},
+			idx:  0,
+			want: "the finding narrative",
+		},
+		{
+			// An EMPTY fence: neither marker has a masked neighbour, so neither
+			// disjunct fires and both fall through to the prose branch. This is the
+			// one shape that still violated the rule the elision established.
+			name: "empty fence",
+			doc:  []string{"## Findings", "", "- the finding narrative", "```", "```", "- a sibling finding"},
+			idx:  2,
+			want: "the finding narrative",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			text, _ := extractSection(c.doc, c.idx)
+
+			assert.Contains(t, text, c.want, "precondition: the reviewer's prose must survive")
+			assert.NotContains(t, text, "```",
+				"a fence marker rendered as reviewer prose is indistinguishable from the reviewer typing backticks, and the value is persisted append-only")
+		})
+	}
+}
