@@ -60,12 +60,14 @@ func TestZeroBudgetVerdict_SilentWhenNoCapApplies(t *testing.T) {
 // flag, and its floor is review's own default. A drift between the two would make
 // every undeclared agent's verdict speak for a cap review does not use.
 func TestReviewMaxTokens_MirrorsTheFanOutDefault(t *testing.T) {
-	// Stated as a literal, not read from internal/fanout: doctor deliberately does
-	// not import the review package, so this is the pin that keeps the mirrored
-	// constant honest. internal/fanout/review.go: `const defaultMaxTokens = 8192`.
-	assert.Equal(t, 8192, reviewDefaultMaxTokens,
+	// The floor must BE the shared constant the fan-out caps at
+	// (payload.DefaultOutputTokens, referenced by internal/fanout's
+	// defaultMaxTokens and cli/doctor.go's --max-tokens flag default), not a
+	// literal restatement of it: a literal on both sides cannot detect drift in
+	// what it pins.
+	assert.Equal(t, payload.DefaultOutputTokens, reviewDefaultMaxTokens,
 		"reviewDefaultMaxTokens must equal the review fan-out's defaultMaxTokens")
 
-	assert.Equal(t, 8192, reviewMaxTokens(0), "an undeclared agent is capped at review's default")
+	assert.Equal(t, payload.DefaultOutputTokens, reviewMaxTokens(0), "an undeclared agent is capped at review's default")
 	assert.Equal(t, 32000, reviewMaxTokens(32000), "a declaring agent is capped at its own declaration")
 }
