@@ -412,20 +412,25 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// very counter-example the fence exists to quote. Resolved per line index rather
 	// than per string because fence membership is a property of position, not text.
 	//
-	// All THREE boundary predicates are masked, not just the record one. A model
-	// quoting an example that contains a `# heading` or a `- bullet` — the documented
-	// reason this parser tracks fences at all — otherwise still truncated the
-	// narrative mid-sentence with no marker, and the section walk-up could still
-	// attribute the excerpt to a heading that only exists inside a quote. The loss is
-	// permanent: localdebt persists Justification into an append-only store whose id
-	// excludes it.
-	fenced := fenceMask(lines)
-	headingAt := func(j int) bool { return !fenced[j] && isHeadingLine(lines[j]) }
-	itemAt := func(j int) bool { return !fenced[j] && isItemStart(lines[j]) }
-	recordAt := func(j int) bool { return !fenced[j] && isFindingRecordStart(lines[j]) }
+	// The predicates do NOT all read the same mask. recordAt reads the STRICT view —
+	// its contract is byte-exact parser parity, and a record-shaped line in the tail
+	// of an unterminated fence was never emitted by the parser, so it is a boundary
+	// to nothing here either. headingAt, itemAt and the section walk-up read the
+	// RELEASED view, which un-masks that tail: a model quoting an example that
+	// contains a `# heading` or a `- bullet` — the documented reason this parser
+	// tracks fences at all — otherwise still truncated the narrative mid-sentence
+	// with no marker, the section walk-up could still attribute the excerpt to a
+	// heading that only exists inside a quote, and a dangling opener would take the
+	// whole rest of the document with it. The loss is permanent either way:
+	// localdebt persists Justification into an append-only store whose id excludes
+	// it.
+	strict, released := fenceMask(lines)
+	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
+	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
+	recordAt := func(j int) bool { return !strict[j] && isFindingRecordStart(lines[j]) }
 
 	for j := idx; j >= 0; j-- {
-		if fenced[j] {
+		if released[j] {
 			continue
 		}
 		if h, ok := headingText(lines[j]); ok {
@@ -518,17 +523,33 @@ func isFindingRecordStart(s string) bool {
 	return len(fields) >= 3 && strings.TrimSpace(fields[1]) != ""
 }
 
-// fenceMask reports, per line, whether it sits INSIDE a fenced code block. The fence
-// markers themselves are OUTSIDE, matching the toggle-then-continue order in
-// stream/parser.go:152-158.
+// fenceMask reports, per line, whether it sits INSIDE a fenced code block, in TWO
+// views. strict matches the toggle-then-continue order in stream/parser.go:152-158
+// byte-for-byte: fence markers are OUTSIDE, and an UNTERMINATED fence masks to EOF,
+// exactly as the parser's bare `inFence = !inFence` skips every line below a
+// dangling opener. released is identical except that the run below a dangling
+// opener is un-masked.
+//
+// Callers pick the view per predicate. recordAt reads strict: its contract is
+// byte-exact parser parity (isFindingRecordStart), and a record-shaped line in that
+// tail is a line the producing parser never emitted, so it must not act as a block
+// boundary here either. headingAt, itemAt and the section walk-up read released:
+// left masked, a model that opens a fence and forgets to close it takes the whole
+// rest of the document with it, and every finding below the fence collapses to one
+// byte-identical excerpt attributed to the last heading ABOVE it. Reading the tail
+// as ordinary structure can at worst end a block on a boundary that was meant to be
+// quoted; reading it as one fenced blob loses every boundary there is. The damage
+// is also permanent — Justification is persisted append-only and StampID does not
+// cover it — so the failure directions are not symmetric and this split is chosen
+// deliberately.
 //
 // It exists because a model quoting an example row while explaining the format is the
 // documented reason the parser tracks fences at all — that row carries a real severity
 // prefix at column 0 and is otherwise indistinguishable from a record. Without the
 // same state here, the boundary detector splits a narrative on the parser's own
 // counter-example.
-func fenceMask(lines []string) []bool {
-	mask := make([]bool, len(lines))
+func fenceMask(lines []string) (strict, released []bool) {
+	strict = make([]bool, len(lines))
 	inFence := false
 	openedAt := -1
 	for i, l := range lines {
@@ -540,26 +561,20 @@ func fenceMask(lines []string) []bool {
 			}
 			continue
 		}
-		mask[i] = inFence
+		strict[i] = inFence
 	}
-	// An UNTERMINATED fence masks nothing. Every earlier balanced pair keeps its
-	// mask; only the run below the dangling opener is released.
-	//
-	// Left masked, a model that opens a fence and forgets to close it takes the
-	// whole rest of the document with it — and the mask is consulted by all three
-	// boundary predicates and by the section walk-up, so every finding below the
-	// fence collapses to one byte-identical excerpt attributed to the last heading
-	// ABOVE it. Reading the tail as ordinary structure can at worst end a block on a
-	// boundary that was meant to be quoted; reading it as one fenced blob loses every
-	// boundary there is. The damage is also permanent — Justification is persisted
-	// append-only and StampID does not cover it — so the failure directions are not
-	// symmetric and this one is chosen deliberately.
+	// An UNTERMINATED fence releases the tail in the released view only. Every
+	// earlier balanced pair keeps its mask in both views; the strict view keeps the
+	// tail masked because the parser emits nothing below the dangling opener.
+	released = strict
 	if inFence {
+		released = make([]bool, len(lines))
+		copy(released, strict)
 		for i := openedAt; i < len(lines); i++ {
-			mask[i] = false
+			released[i] = false
 		}
 	}
-	return mask
+	return strict, released
 }
 
 // isFenceMarker reports whether a line opens or closes a fenced block: its first

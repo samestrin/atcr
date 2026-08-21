@@ -176,7 +176,7 @@ func TestFenceMask_MarksOnlyContentBetweenMarkers(t *testing.T) {
 		"after",
 	}
 
-	mask := fenceMask(lines)
+	_, mask := fenceMask(lines)
 
 	assert.False(t, mask[0], "prose before the fence is not inside it")
 	assert.False(t, mask[1], "the opening marker is not itself inside the fence")
@@ -211,7 +211,7 @@ func TestFenceMask_RecognizesAnIndentedFence(t *testing.T) {
 				"after",
 			}
 
-			mask := fenceMask(lines)
+			_, mask := fenceMask(lines)
 
 			assert.False(t, mask[1], "the opening marker is not itself inside the fence")
 			assert.True(t, mask[2],
@@ -249,17 +249,18 @@ func TestExtractSection_IndentedFenceStillHidesAColumnZeroExampleRow(t *testing.
 			"no marker to show it happened")
 }
 
-// An UNTERMINATED fence must not poison the rest of the document.
+// An UNTERMINATED fence must not poison the rest of the document — in the RELEASED
+// view. The strict view keeps the tail masked, byte-parity with the parser.
 //
-// fenceMask toggles on every marker, so a dangling opener leaves the mask true to
-// EOF. That is survivable while only recordAt consults it, but all three boundary
-// predicates AND the section walk-up read the same mask: with the tail masked,
-// every boundary shape goes dead, so each finding below the fence gets the WHOLE
-// remaining document as its excerpt (byte-identical to its siblings') and resolves
-// its section to the last heading ABOVE the fence. A model that opens a fence and
-// forgets to close it is an ordinary output defect, not a rare one, and the damage
-// is permanent: localdebt persists Justification append-only and Record.StampID
-// hashes file/line/problem only, so the wrong text never gets a second chance.
+// fenceMask toggles on every marker, so a dangling opener leaves the strict mask true
+// to EOF. That is survivable while only recordAt consults it, but headingAt, itemAt
+// AND the section walk-up read the released mask: with the tail masked there, every
+// boundary shape goes dead, so each finding below the fence gets the WHOLE remaining
+// document as its excerpt (byte-identical to its siblings') and resolves its section
+// to the last heading ABOVE the fence. A model that opens a fence and forgets to
+// close it is an ordinary output defect, not a rare one, and the damage is permanent:
+// localdebt persists Justification append-only and Record.StampID hashes
+// file/line/problem only, so the wrong text never gets a second chance.
 func TestFenceMask_UnterminatedFenceDoesNotMaskTheTail(t *testing.T) {
 	lines := []string{
 		"# Real Section",
@@ -269,12 +270,14 @@ func TestFenceMask_UnterminatedFenceDoesNotMaskTheTail(t *testing.T) {
 		"- fake bullet",
 	}
 
-	mask := fenceMask(lines)
+	strict, released := fenceMask(lines)
 
 	for i, l := range lines {
-		assert.False(t, mask[i],
-			"line %d (%q): a fence that is never closed must mask nothing — masking to EOF kills every boundary predicate below it", i, l)
+		assert.False(t, released[i],
+			"line %d (%q): a fence that is never closed must mask nothing in the released view — masking to EOF kills every boundary predicate below it", i, l)
 	}
+	assert.True(t, strict[2] && strict[3] && strict[4],
+		"the strict view keeps the tail masked: the parser emits nothing below the dangling opener, so recordAt must not either")
 }
 
 // The end-to-end shape of the same defect: three findings under a heading BELOW an
