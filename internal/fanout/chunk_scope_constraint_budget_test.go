@@ -361,3 +361,99 @@ func TestBuildSlots_ChunkDropWarningStaysSilentOnTheSingleChunkFallThrough(t *te
 	assert.NotContains(t, out, "the block was DROPPED",
 		"the chunk-drop warning must not fire on the single-chunk fall-through: that path ships agentScopeConstraint, so reporting the scoping as dropped is false")
 }
+
+// The `chunk_byte_budget < agentBudget` conjunct is the binding-key discriminator —
+// the whole subject of the commit that replaced `agentBudget > 0` with it — and its
+// own RED test cannot pin it: that test sets ChunkByteBudget = 0, so its silence is
+// already guaranteed by the sibling `> 0` conjunct and survives this one's deletion.
+// Pin it where the two conjuncts separate: a POSITIVE ceiling sitting at or ABOVE
+// the agent's own budget, with both in the 1..7 band so the block really is dropped.
+// The drop is then the window's doing and blaming chunk_byte_budget would accuse an
+// innocent key whose prescribed remedy (unset it) is a no-op.
+func TestBuildSlots_DropWarningDoesNotBlameAChunkBudgetAboveTheAgentBudget(t *testing.T) {
+	const declared = 12289 // effectiveTokens 1 → agentBudget 3, in the 1..7 drop band
+	const planBytes = 64 * 1024
+	// Positive (so the `> 0` conjunct is satisfied and cannot stand in for this one)
+	// and ABOVE agentBudget, so chunkPlanBudget stays the agent's own budget.
+	const chunkBudget = int64(4)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, int64(3), agentBudget,
+		"precondition: the agent's OWN budget must be the binding one")
+	require.Greater(t, chunkBudget, agentBudget,
+		"precondition: the operator ceiling must sit ABOVE the agent budget — that is what makes it non-binding")
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: the block really is dropped here — otherwise the warning has nothing to stay silent about")
+
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"chunk_byte_budget sits above the agent budget and did not bind — the warning must not accuse it or prescribe raising a ceiling that is already too high to matter")
+}
+
+// warnOversized is the resume-path suppressor every sibling warning honours:
+// PrepareResume rebuilds pending slots for a run whose operator was already told
+// this during the original preparation, so re-emitting it makes a resume look like
+// a fresh misconfiguration. Deleting the conjunct leaves the suite green because
+// every other case in this file passes true.
+func TestBuildSlots_ChunkDropWarningIsSilentOnTheResumeRebuild(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+	const chunkBudget = int64(4)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	out := captureStderr(t, func() {
+		// warnOversized=false — the resume rebuild path.
+		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
+		require.NoError(t, err)
+	})
+
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"the resume rebuild must stay quiet — the operator was already warned during the original preparation")
+}
+
+// `len(scopeConstraint) > 0` is what keeps the warning about a DROPPED plan rather
+// than an absent one. With no --sprint-plan there is nothing to drop, so
+// chunkScopeConstraint is "" for the ordinary reason and the remaining conjuncts are
+// all satisfied — deleting this one makes every unscoped chunked review with a tiny
+// chunk_byte_budget report a scoping loss that never happened.
+func TestBuildSlots_ChunkDropWarningIsSilentWithoutASprintPlan(t *testing.T) {
+	const declared = 128000
+	const chunkBudget = int64(4)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = 64 * 1024
+
+	out := captureStderr(t, func() {
+		// Empty scope constraint — no --sprint-plan was passed.
+		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"no --sprint-plan was given, so nothing was dropped — the warning must not report a scoping loss that never happened")
+}
