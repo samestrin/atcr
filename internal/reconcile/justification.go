@@ -41,6 +41,17 @@ const (
 	maxReviewBytes = 1 << 20 // 1 MiB
 )
 
+// ElidedQuotePlaceholder is the exact line extractSection substitutes for each
+// fenced region it drops from a justification excerpt (markers included). It is a
+// named constant rather than an inline literal because the value is written into a
+// PERSISTED, human- and LLM-read field: a consumer that needs to tell "atcr dropped
+// a quote here" from "the reviewer wrote this" — cli/debt_resolve deciding whether a
+// justification is real recorded rationale, a docs example, a test — has to match on
+// something, and a literal spelled in five places cannot be matched reliably.
+// Documented for readers of the field in docs/findings-format.md and
+// skills/atcr/debt-resolve.md; changing it is a documented-surface change.
+const ElidedQuotePlaceholder = "[quoted example elided]"
+
 // reviewNarrative is one collected source review.md: its review-dir-relative path
 // (the SourceReport.Path a consumer resolves against the review dir), the leaf
 // directory name (host, or a pool agent name — used as a soft reviewer-match
@@ -499,7 +510,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 				if wroteAny {
 					b.WriteByte('\n')
 				}
-				b.WriteString("[quoted example elided]")
+				b.WriteString(ElidedQuotePlaceholder)
 				wroteAny = true
 				inElidedFence = true
 			}

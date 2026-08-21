@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -557,5 +558,27 @@ func TestExtractSection_NoFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
 			assert.NotContains(t, text, "```",
 				"a fence marker rendered as reviewer prose is indistinguishable from the reviewer typing backticks, and the value is persisted append-only")
 		})
+	}
+}
+
+// The placeholder is written into a PERSISTED, human- and LLM-read field, and a
+// reader of that field has no way to learn atcr dropped a quote unless the exact
+// literal is documented where they will look. Pin the constant against the value
+// extractSection actually emits AND against both documents that now spell it, so
+// changing it cannot silently strand the docs — this is a documented surface, not
+// an implementation detail.
+func TestElidedQuotePlaceholder_IsEmittedAndDocumented(t *testing.T) {
+	text, _ := extractSection([]string{"- the finding narrative", "```", "quoted example", "```"}, 0)
+	require.Contains(t, text, ElidedQuotePlaceholder,
+		"the constant must be the literal extractSection emits")
+
+	for _, doc := range []string{
+		"../../docs/findings-format.md",
+		"../../skills/atcr/debt-resolve.md",
+	} {
+		b, err := os.ReadFile(doc)
+		require.NoError(t, err)
+		assert.Contains(t, string(b), ElidedQuotePlaceholder,
+			"%s documents the justification field, so it must spell the placeholder a reader will find in that field", doc)
 	}
 }
