@@ -396,3 +396,57 @@ func TestExtractSection_WalkUpSkipsAHeadingInsideAFence(t *testing.T) {
 	assert.Equal(t, "Real Section", section,
 		"the section walk-up must skip a heading that only exists inside a fenced example and keep climbing to the real one")
 }
+
+// A findings TABLE inside a fence is the single most common review.md shape, and
+// an anchor landing on one of its rows makes every line of the resolved block
+// fenced: the walk-up stops at the opener and the walk-down at the closer, so the
+// whole excerpt collapses to the elision placeholder. Before the elision existed,
+// extractSection's text was structurally never content-free — the anchor line
+// itself is always non-blank — so matchNarrative's `if text == ""` guard had
+// nothing to catch. It does now, and a placeholder-only excerpt must reach it as
+// the empty string rather than as 23 bytes of tool-generated text.
+//
+// The damage is permanent if it escapes: localdebt writes Justification into an
+// append-only store whose id EXCLUDES the field (record.go), so no later
+// reconcile can replace a content-free value even after the reviewer reformats
+// the fence away — and cli/debt_resolve accepts any non-empty Justification as
+// the recorded rationale for a terminal wontfix.
+func TestExtractSection_PlaceholderOnlyExcerptIsEmptyNotAPlaceholder(t *testing.T) {
+	lines := []string{
+		"## Review",
+		"",
+		"```",
+		"| internal/x.go:42 | HIGH | something |",
+		"```",
+	}
+
+	text, section := extractSection(lines, 3)
+
+	assert.Equal(t, "", text,
+		"an excerpt made of nothing but elision placeholders carries zero reviewer content and must read as no narrative at all")
+	assert.Equal(t, "Review", section,
+		"the section walk-up is unaffected — only the text is suppressed")
+}
+
+// The guard above only pays off if matchNarrative actually falls through on it:
+// ok=false is what leaves Justification and SourceReport unset, which is the
+// documented \"no narrative\" state. A placeholder-only text reaching ok=true
+// would ALSO stamp a SourceReport pointing at a line INSIDE a quoted example.
+func TestMatchNarrative_PlaceholderOnlyExcerptYieldsNoMatch(t *testing.T) {
+	narratives := []reviewNarrative{{
+		relPath: "review.md",
+		leaf:    "alice",
+		lines: []string{
+			"## Review",
+			"",
+			"```",
+			"| internal/x.go:42 | HIGH | something |",
+			"```",
+		},
+	}}
+
+	_, ok := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
+
+	assert.False(t, ok,
+		"an anchor whose whole block is fenced has no reviewer prose to stamp — the field must stay omitted, not carry a placeholder")
+}
