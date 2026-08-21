@@ -71,7 +71,15 @@ func window(a AgentResult) string {
 	// No tier-less form: probe() sets the cap and its source together, so a cap
 	// without a source cannot occur. A fallback for it would render exactly the
 	// declaration-vs-default ambiguity MaxTokensSource exists to remove.
-	return fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
+	cell := fmt.Sprintf("%s / cap %d (%s)", w, a.MaxTokens, a.MaxTokensSource)
+	// Review's cap rides along when it differs from the probed one: the ok_warning
+	// hint quotes REVIEW's cap (doctor's --max-tokens caps the probe only), so a
+	// cell showing just the probe's cap names a knob whose current value it refuses
+	// to display — the defect the probed-cap render fixed, one tier over.
+	if a.ReviewMaxTokens > 0 && a.ReviewMaxTokens != a.MaxTokens {
+		cell = fmt.Sprintf("%s / review cap %d", cell, a.ReviewMaxTokens)
+	}
+	return cell
 }
 
 // maxTableDetailBytes bounds the upstream detail rendered in the table. The

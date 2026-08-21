@@ -119,6 +119,14 @@ type AgentResult struct {
 	// declaring exactly doctor's default is indistinguishable from one declaring
 	// nothing. Empty when no call was placed (MaxTokens 0).
 	MaxTokensSource string `json:"max_tokens_source,omitempty"`
+	// ReviewMaxTokens is the cap `atcr review` will resolve for this agent absent a
+	// review-side --max-tokens: the agent's own declaration, or the shared default
+	// when undeclared. It can differ from MaxTokens — doctor's --max-tokens caps the
+	// PROBE only, while the zero-budget verdict and its ok_warning hint speak for the
+	// REVIEW run — so publishing both keeps the hint's operand visible in the WINDOW
+	// cell and lets a --json consumer re-derive the budget atcr actually warned about.
+	// Always present, like MaxTokens, for the same distinguishability rule.
+	ReviewMaxTokens int `json:"review_max_tokens"`
 }
 
 // The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
@@ -178,7 +186,8 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewMaxTokens(at.DeclaredMaxTokens), status); ok {
+		reviewCap := reviewMaxTokens(at.DeclaredMaxTokens)
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, status); ok {
 			status, hint = s, h
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
@@ -195,6 +204,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			WindowSource:        at.WindowSource,
 			MaxTokens:           pr.maxTokens,
 			MaxTokensSource:     pr.maxTokensSource,
+			ReviewMaxTokens:     reviewCap,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
