@@ -380,6 +380,30 @@ func TestBenchmarkExport_RejectsReviewerRowWithoutCoverage(t *testing.T) {
 	assert.Contains(t, out, "m-backup", "the unverifiable row is named")
 }
 
+// The reviewer array gets the same distinct-raw-identity discriminator as the
+// coverage array: two DIFFERENT raw reviewer identities that scrub to one published
+// identity are version skew or hand-assembly — not a flat "malformed" — and the
+// message must name the collision so the operator is not sent hunting for tampering.
+func TestBenchmarkExport_ReviewerScrubCollisionNamesTheScrub(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.Contains(t, out, "scrub to the same published identity",
+		"two DIFFERENT raw reviewer identities colliding under the scrub must get the coverage branch's wording, one array over")
+	assert.NotContains(t, out, "this file is malformed",
+		"the flat malformed verdict names the wrong cause for a scrub collision")
+}
+
 // The skew message must not OVERCLAIM. It may say version skew is possible; it may
 // not say it is the likely cause, because the branch cannot tell the two causes
 // apart.
