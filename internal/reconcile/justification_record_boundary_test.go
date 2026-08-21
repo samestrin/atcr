@@ -603,6 +603,8 @@ func TestExtractSection_PlaceholderIsNeverCutInHalfByTheRuneBudget(t *testing.T)
 		assert.Contains(t, text, ElidedQuotePlaceholder,
 			"a placeholder must appear whole or not at all — a fragment reads as ordinary truncation and matches nothing")
 	}
-	assert.True(t, strings.HasSuffix(text, "…"),
-		"the excerpt is over budget, so it must end on the truncation ellipsis")
+	assert.LessOrEqual(t, len([]rune(text)), justificationMaxRunes,
+		"the excerpt must still respect the rune budget")
+	assert.True(t, strings.HasSuffix(text, "x"),
+		"with no room for the whole placeholder the excerpt ends on the reviewer's prose — SourceReport remains the pointer to the quote")
 }

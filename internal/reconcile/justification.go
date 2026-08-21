@@ -507,6 +507,16 @@ func extractSection(lines []string, idx int) (text, section string) {
 		elidedLine := released[j] || balanced[j]
 		if elidedLine {
 			if !inElidedFence {
+				// The growth check below guards the PROSE branch only, and this branch
+				// used to `continue` past it — so the placeholder could straddle the
+				// justificationMaxRunes cut and truncateRunes left a fragment like
+				// "[quot". Half a placeholder is recognizable as an elision by no
+				// reader, human or machine: it is indistinguishable from ordinary
+				// mid-word truncation and matches nothing. Stop before writing one that
+				// cannot fit whole, so the excerpt ends on prose plus the ellipsis.
+				if b.Len()+1+len(ElidedQuotePlaceholder) > justificationMaxRunes {
+					break
+				}
 				if wroteAny {
 					b.WriteByte('\n')
 				}
