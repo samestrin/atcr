@@ -285,12 +285,12 @@ func zeroBudgetVerdict(model string, window, maxTokens int, status string) (stri
 		lead, window, maxTokens, zeroBudgetRemedy), true
 }
 
-// reviewDefaultMaxTokens mirrors the review fan-out's own defaultMaxTokens (and the
-// default cli/doctor.go gives --max-tokens for the same reason): the cap `atcr review`
-// applies to an agent that declares none. Duplicated rather than imported because
-// internal/doctor does not depend on internal/fanout and should not gain that edge to
-// read one constant; TestReviewMaxTokens_MirrorsTheFanOutDefault pins the two together.
-const reviewDefaultMaxTokens = 8192
+// reviewDefaultMaxTokens is the cap `atcr review` applies to an agent that
+// declares none (and the default cli/doctor.go gives --max-tokens for the same
+// reason). It references payload.DefaultOutputTokens — the single source the
+// fan-out's own defaultMaxTokens also references — so the two cannot drift;
+// TestReviewMaxTokens_MirrorsTheFanOutDefault pins them together.
+const reviewDefaultMaxTokens = payload.DefaultOutputTokens
 
 // reviewMaxTokens is the output cap `atcr review` will resolve for an agent, given the
 // agent's own declaration. It reproduces resolveMaxTokens MINUS review's own

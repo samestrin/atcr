@@ -2311,12 +2311,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // It used to be the only one, which is the defect that made it configurable — a
 // thinking model that needs more had no lever, and `atcr doctor` printed
 // "raise --max-tokens" for a flag `atcr review` did not have.
-// Generous on purpose: reasoning/thinking models spend output budget on
-// chain-of-thought before emitting visible content, so a tight cap makes them
-// finish mid-reasoning and return an empty review (the doctor self-test warns of
-// exactly this). The empty-content case is still caught by the reasoning_content
-// fallback in llmclient; this headroom lets the clean Content path win first.
-const defaultMaxTokens = 8192
+// The value itself is payload.DefaultOutputTokens, the single source shared with
+// doctor's reviewDefaultMaxTokens and the cli/doctor.go --max-tokens flag default,
+// so the three copies cannot drift.
+const defaultMaxTokens = payload.DefaultOutputTokens
 
 // refuseOverflow wraps a hard-fail on_overflow refusal with the state that produced it.
 //
