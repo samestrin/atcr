@@ -424,7 +424,7 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// whole rest of the document with it. The loss is permanent either way:
 	// localdebt persists Justification into an append-only store whose id excludes
 	// it.
-	strict, released := fenceMask(lines)
+	strict, released, balanced := fenceMask(lines)
 	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
 	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
 	recordAt := func(j int) bool { return !strict[j] && isFindingRecordStart(lines[j]) }
@@ -486,16 +486,14 @@ func extractSection(lines []string, idx int) (text, section string) {
 		// actual prose past the truncation ellipsis. Elide each fenced region —
 		// markers included — to ONE placeholder line, so the budget buys prose on
 		// both sides of the fence.
-		elidedLine := released[j]
-		if isFenceMarker(lines[j]) {
-			// A marker belongs to the elision when it delimits masked content: an
-			// opener whose body is masked, or a closer following masked content.
-			// A DANGLING opener's marker stays: its tail is released (treated as
-			// prose), so the marker is the only sign a quote was ever opened.
-			if (j+1 < len(lines) && released[j+1]) || (j > 0 && released[j-1]) {
-				elidedLine = true
-			}
-		}
+		// A marker belongs to the elision when it is half of a TERMINATED pair —
+		// keyed on the pairing fenceMask already resolved rather than on whether a
+		// neighbouring line happens to be masked, so an EMPTY fence (whose markers
+		// have no masked neighbour in either direction) is absorbed like any other
+		// quote instead of rendering two bare ``` lines as reviewer prose. A
+		// DANGLING opener's marker stays: it is in no pair, its tail is released
+		// (treated as prose), and the marker is the only sign a quote was opened.
+		elidedLine := released[j] || balanced[j]
 		if elidedLine {
 			if !inElidedFence {
 				if wroteAny {
@@ -572,6 +570,14 @@ func isFindingRecordStart(s string) bool {
 // dangling opener. released is identical except that the run below a dangling
 // opener is un-masked.
 //
+// balanced is a third, disjoint signal: it marks the MARKER lines of every
+// TERMINATED pair (both views leave markers themselves unmasked, so no mask can
+// answer this). A dangling opener is in no pair and is therefore not marked. It
+// exists so the excerpt builder can absorb a fence's markers into the elision by
+// their PAIRING rather than by whether a neighbouring line happens to be masked —
+// an empty fence has no masked neighbour in either direction, and keying on that
+// rendered its two bare ``` lines as reviewer prose.
+//
 // Callers pick the view per predicate. recordAt reads strict: its contract is
 // byte-exact parser parity (isFindingRecordStart), and a record-shaped line in that
 // tail is a line the producing parser never emitted, so it must not act as a block
@@ -590,14 +596,18 @@ func isFindingRecordStart(s string) bool {
 // prefix at column 0 and is otherwise indistinguishable from a record. Without the
 // same state here, the boundary detector splits a narrative on the parser's own
 // counter-example.
-func fenceMask(lines []string) (strict, released []bool) {
+func fenceMask(lines []string) (strict, released, balanced []bool) {
 	strict = make([]bool, len(lines))
+	balanced = make([]bool, len(lines))
 	inFence := false
 	openedAt := -1
 	for i, l := range lines {
 		if isFenceMarker(l) {
 			if inFence {
 				inFence = false
+				// A TERMINATED pair: both markers delimit a quoted example, whether
+				// or not there is anything between them.
+				balanced[openedAt], balanced[i] = true, true
 			} else {
 				inFence, openedAt = true, i
 			}
@@ -616,7 +626,7 @@ func fenceMask(lines []string) (strict, released []bool) {
 			released[i] = false
 		}
 	}
-	return strict, released
+	return strict, released, balanced
 }
 
 // isFenceMarker reports whether a line opens or closes a fenced block: its first

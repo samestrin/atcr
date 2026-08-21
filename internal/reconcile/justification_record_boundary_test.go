@@ -181,7 +181,7 @@ func TestFenceMask_MarksOnlyContentBetweenMarkers(t *testing.T) {
 		"after",
 	}
 
-	_, mask := fenceMask(lines)
+	_, mask, _ := fenceMask(lines)
 
 	assert.False(t, mask[0], "prose before the fence is not inside it")
 	assert.False(t, mask[1], "the opening marker is not itself inside the fence")
@@ -216,7 +216,7 @@ func TestFenceMask_RecognizesAnIndentedFence(t *testing.T) {
 				"after",
 			}
 
-			_, mask := fenceMask(lines)
+			_, mask, _ := fenceMask(lines)
 
 			assert.False(t, mask[1], "the opening marker is not itself inside the fence")
 			assert.True(t, mask[2],
@@ -275,7 +275,7 @@ func TestFenceMask_UnterminatedFenceDoesNotMaskTheTail(t *testing.T) {
 		"- fake bullet",
 	}
 
-	strict, released := fenceMask(lines)
+	strict, released, _ := fenceMask(lines)
 
 	for i, l := range lines {
 		assert.False(t, released[i],
