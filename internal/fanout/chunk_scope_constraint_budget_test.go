@@ -457,3 +457,52 @@ func TestBuildSlots_ChunkDropWarningIsSilentWithoutASprintPlan(t *testing.T) {
 	assert.NotContains(t, out, "chunk_byte_budget",
 		"no --sprint-plan was given, so nothing was dropped — the warning must not report a scoping loss that never happened")
 }
+
+// buildChain's scopeConstraint argument on the chunked-DIFF path is INERT, and no
+// mutation test in this package can pin it: substituting the payload-tier block
+// there changes no output. The argument reaches only fallbackRefit.scopeConstraint,
+// which is read in exactly one place — refitFallbackPayload — and that runs only
+// when refit.canRefit(), i.e. when the slot carries a FileEntry re-pack list. The
+// chunked-diff path splits TEXT on diff markers and has no entry list at all, so it
+// passes nil and the fallback inherits its primary's prompt verbatim.
+//
+// Pin that coupling here rather than asserting the block's bytes: a byte assertion
+// on the fallback prompt is guaranteed by prompt INHERITANCE, so it passes with the
+// argument mutated and pins nothing. If Epic 35.16.5.4's re-fit is ever extended to
+// thread entries into this call, the first assertion below fails — and that is the
+// point at which the argument becomes live and needs a real byte assertion.
+func TestBuildSlots_ChunkedFallbackDeclinesTheRefitSoTheScopeArgumentIsInert(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+	const chunkBudget = int64(64 * 1024)
+
+	cfg := declaredWindowRoster(t, declared)
+	greta := cfg.Registry.Agents["greta"]
+	greta.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = greta
+	// A fallback whose own window is far smaller than the primary's is exactly the
+	// state the truncate re-fit exists for — so if the chunked path could re-fit,
+	// this config is where it would.
+	kai := cfg.Registry.Agents["kai"]
+	kai.ContextWindowTokens = ptrInt(16384)
+	cfg.Registry.Agents["kai"] = kai
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.OnOverflow = OverflowTruncate
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the clamped budget must still split this diff into chunks")
+	require.NotEmpty(t, slots[0].Fallbacks, "precondition: greta must resolve a fallback chain")
+
+	assert.Empty(t, slots[0].entries,
+		"the chunked-diff path has no FileEntry list, so its fallback declines the re-fit — this is what makes buildChain's scopeConstraint argument unreachable on this path")
+
+	for i, fb := range slots[0].Fallbacks {
+		assert.Equal(t, slots[0].Primary.Prompt, fb.Prompt,
+			"fallback %d (%s): with no re-pack source the fallback must inherit the primary's prompt verbatim — a differing prompt means a re-fit ran and refit.scopeConstraint became live", i, fb.Name)
+	}
+}

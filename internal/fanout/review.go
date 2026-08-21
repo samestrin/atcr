@@ -2095,6 +2095,16 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// would be the shape-dependent reconstruction Slot.entries exists to
 					// avoid. The slot therefore carries EMPTY, and buildFallbackAgent
 					// declines to re-fit it and keeps the pre-epic warn-and-ship.
+					//
+					// The scope argument is consequently INERT on this path: it reaches
+					// only fallbackRefit.scopeConstraint, whose one reader
+					// (refitFallbackPayload) runs behind canRefit() — false for the nil
+					// entries above — so no mutation test here can pin it. It is still
+					// the CHUNK-tier block rather than agentScopeConstraint because that
+					// is the block this slot's prompts actually carry, and it must
+					// already be correct on the day entries are threaded in.
+					// TestBuildSlots_ChunkedFallbackDeclinesTheRefitSoTheScopeArgumentIsInert
+					// fails on that day.
 					fbs, err := buildChain(name, primary, ac, mode, chunkScopeConstraint, nil)
 					if err != nil {
 						return err
