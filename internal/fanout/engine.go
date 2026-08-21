@@ -147,11 +147,20 @@ type Agent struct {
 	// downstream). EffectiveBudget is the input byte budget the payload was shed
 	// to: the PAYLOAD-TIER budget — the agent's own EffectiveByteBudget, capped by
 	// payload_byte_budget — LESS the SCOPE CONSTRAINT block the prompt actually
-	// carries. On the chunked path that block is the CHUNK-TIER one
-	// (chunkScopeConstraint, capped against min(agent budget, chunk_byte_budget)),
-	// so the two operands deliberately sit at different tiers; the budget operand
-	// stays payload-tier because switching it to chunkPlanBudget would misreport
-	// the global shed (review.go's chunked sizing record explains). It is NOT the
+	// carries. WHICH block that is depends on the path, so a consumer normalizing
+	// two agents must read the path off the record before applying a formula:
+	//
+	//   review_strategy: chunked, multi-chunk DIFF — the CHUNK-TIER block
+	//     (chunkScopeConstraint, capped against min(agent budget,
+	//     chunk_byte_budget)), so the two operands deliberately sit at different
+	//     tiers. The budget operand stays payload-tier because switching it to
+	//     chunkPlanBudget would misreport the global shed (review.go's chunked
+	//     sizing record explains).
+	//   BASELINE multi-chunk (--all / --dir) and BULK — the PAYLOAD-TIER block
+	//     (agentScopeConstraint, capped against the agent budget). chunk_byte_budget
+	//     is not consulted on a baseline scan at all, so a reader who sees
+	//     ChunkTotal > 1 must NOT assume the chunk-tier formula above: baseline
+	//     records also carry ChunkTotal > 1. It is NOT the
 	// size any individual chunk was cut to, because the per-chunk line budget is
 	// separately clamped by
 	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
