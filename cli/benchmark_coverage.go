@@ -23,11 +23,11 @@ func coverageKey(model, persona string) reviewerKey {
 
 // duplicateIdentityError is the ONE duplicate-identity rejection the coverage and
 // reviewer arrays share, so the two cannot answer the same condition differently.
-// `what` is the object phrase ("coverage for" / "reviewer"); prev* are the
-// previously-seen row's RAW identity (kept by the caller precisely so this branch
-// can name the collision partner), cur* the current row's raw identity, and
-// model/persona the current row's STRIPPED values, computed once per row for the
-// caller's other diagnostics.
+// `what` is the object phrase ("coverage for" / "reviewer"); `key` is the published
+// identity the two rows collided on; prev* are the previously-seen row's RAW identity
+// (kept by the caller precisely so this branch can name the collision partner), cur*
+// the current row's raw identity, and model/persona the current row's STRIPPED values,
+// computed once per row for the caller's other diagnostics.
 //
 // Two IDENTICAL raw rows are malformed outright. Two DIFFERENT raw identities
 // colliding on one published identity are not NECESSARILY tampering, and flatly
@@ -52,14 +52,28 @@ func coverageKey(model, persona string) reviewerKey {
 //
 // The rejection stands either way: two rows cannot share one published identity on
 // the board, whatever wrote them.
-func duplicateIdentityError(path, what, prevModel, prevPersona, curModel, curPersona, model, persona string) error {
+func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevPersona, curModel, curPersona, model, persona string) error {
 	if prevModel != curModel || prevPersona != curPersona {
-		return fmt.Errorf("run-result %s records %s %s/%s and %s/%s, which are distinct raw identities "+
-			"that scrub to the same published identity; this file was either written by an older atcr under an "+
+		// %q on BOTH raw halves, NOT stripTerminalControlRunes — the same rule
+		// anchorSuiteDenominator states at length for the suite-identity gate, and for
+		// the same reason. This message's entire job is to show a DIFFERENCE, and
+		// stripping sanitizes by deletion: unicode.IsControl covers \r, \n and \t,
+		// which are exactly the runes scrubOnce collapses via strings.Fields, so the
+		// pair that most naturally reaches this branch ("m" vs "m\r") rendered as two
+		// copies of one name. The operator was shown identical text, told the two
+		// differ, and told to rename one — an instruction unfollowable from what is
+		// displayed. %q gives the same terminal safety (a control rune becomes a
+		// visible escape) while keeping the difference legible.
+		//
+		// The published identity is named too. The message asserts the two collapsed
+		// onto one value; without showing it, the operator cannot tell which of the two
+		// names survived the scrub, and that is the name they have to rename away from.
+		return fmt.Errorf("run-result %s records %s %q/%q and %q/%q, which are distinct raw identities "+
+			"that scrub to the same published identity %q/%q; this file was either written by an older atcr under an "+
 			"earlier, single-pass privacy scrub (version skew) or hand-assembled. Re-run `atcr benchmark run` "+
 			"with this version to regenerate it, or rename the model/persona ids so they stay distinct after "+
 			"scrubbing",
-			path, what, stripTerminalControlRunes(prevModel), stripTerminalControlRunes(prevPersona), model, persona)
+			path, what, prevModel, prevPersona, curModel, curPersona, key.model, key.persona)
 	}
 	return fmt.Errorf("run-result %s records %s %s/%s more than once; "+
 		"a reviewer identity has exactly one covered case set, so this file is malformed",
@@ -177,7 +191,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// row mask a short one carrying the same identity, which is the cheapest
 		// possible way to walk a partial run past this gate.
 		if prev, dup := byIdentity[key]; dup {
-			return duplicateIdentityError(path, "coverage for", prev.Model, prev.Persona, c.Model, c.Persona, model, persona)
+			return duplicateIdentityError(path, "coverage for", key, prev.Model, prev.Persona, c.Model, c.Persona, model, persona)
 		}
 		// The outcomes tally is untrusted input here, exactly like
 		// out_of_vocabulary_rate at the load boundary: the producer writes one
@@ -218,7 +232,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// branch does. The consumed set doubles as the seen set: every joined
 		// identity is recorded exactly once.
 		if prev, dup := consumed[key]; dup {
-			return duplicateIdentityError(path, "reviewer", prev.Model, prev.Persona, rev.Model, rev.Persona, model, persona)
+			return duplicateIdentityError(path, "reviewer", key, prev.Model, prev.Persona, rev.Model, rev.Persona, model, persona)
 		}
 		consumed[key] = rev
 		cov, ok := byIdentity[key]
