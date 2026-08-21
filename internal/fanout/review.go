@@ -1395,9 +1395,21 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 // moves with it. payload.ScopeConstraint's maxBytes <= 0 arm is the same refusal
 // expressed one tier up, where a read ceiling is available to fall back to.
 //
-// A non-positive budget yields a non-positive cap and therefore the drop, which is
-// why the callers must NOT gate on budget > 0: that gate is what let the zero case
-// slip past the drop it most needs.
+// A non-positive budget yields a non-positive cap and therefore the drop. Whether a
+// caller may gate on budget > 0 turns on what 0 MEANS at that caller's tier, and the
+// two tiers disagree — so the rule is stated per tier rather than as one blanket
+// prohibition:
+//
+//	PER-AGENT budgets (agentBudget, chunkPlanBudget) must NOT gate. There 0 is a
+//	  CLOSED window — an agent whose window funds no input at all — and gating is
+//	  exactly what let the zero case slip past the drop it most needs.
+//	The SETTINGS-tier payload_byte_budget MUST gate (review.go's run-level cap does,
+//	  with its own in-place justification). There 0 is the documented "unlimited"
+//	  sentinel, and dropping the block on it would delete the operator's scoping for
+//	  every default config.
+//
+// Naming both is what keeps this from reading as a violated contract and being
+// "fixed" back into the three-different-answers state this helper was written to end.
 func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes int64) string {
 	if len(block) == 0 {
 		return block
