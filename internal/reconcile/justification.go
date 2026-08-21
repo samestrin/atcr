@@ -471,6 +471,12 @@ func extractSection(lines []string, idx int) (text, section string) {
 	}
 	var b strings.Builder
 	wroteAny := false
+	// wroteProse tracks whether any NON-elided line reached the builder. An excerpt
+	// made of nothing but placeholders carries zero reviewer content, and the
+	// caller's `text == ""` guard is what turns that into the documented "no
+	// narrative" state instead of a Justification (and a SourceReport pointing
+	// inside a quoted example) that no later reconcile can replace.
+	wroteProse := false
 	inElidedFence := false
 	for j := start; j <= end; j++ {
 		// Fenced content is quoted example text, not the reviewer's prose. The walk
@@ -507,12 +513,16 @@ func extractSection(lines []string, idx int) (text, section string) {
 		}
 		b.WriteString(strings.TrimRight(lines[j], "\r"))
 		wroteAny = true
+		wroteProse = true
 		// Bound block growth: we only keep justificationMaxRunes runes, so stop
 		// accumulating once we are clearly over the limit. truncateRunes cleans up
 		// the exact boundary.
 		if b.Len() >= justificationMaxRunes {
 			break
 		}
+	}
+	if !wroteProse {
+		return "", section
 	}
 	return truncateRunes(strings.TrimSpace(b.String()), justificationMaxRunes), section
 }
