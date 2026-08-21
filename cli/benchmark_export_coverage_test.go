@@ -475,3 +475,33 @@ func TestBenchmarkExport_ScrubCollisionMessageShowsTheDifference(t *testing.T) {
 	assert.Contains(t, out, `same published identity "m"/"brad"`,
 		"the message asserts a collided published identity, so it must show which one")
 }
+
+// The distinct-raw-identity discriminator is `prev.Model != c.Model || prev.Persona
+// != c.Persona`, and only the MODEL half was pinned: every existing collision case
+// varies the model, so mutating the condition down to `prev.Model != c.Model` left
+// the whole cli suite green while a persona-only collision silently fell through to
+// the malformed-duplicate wording. The persona arm is live — two rows sharing a raw
+// model and differing only in raw persona do collapse onto one published identity —
+// so it needs its own case or it can be deleted without a failure.
+func TestBenchmarkExport_ScrubCollisionOnPersonaAloneIsVersionSkewNotMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	// Identical raw model, distinct raw personas that scrub to the same value —
+	// the mirror image of the model-only cases above.
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m","persona":"brad ~x","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a persona-only scrub collision must still be rejected: %s", out)
+
+	assert.Contains(t, out, "distinct raw identities",
+		"a persona-only collision reaches the same branch as a model-only one; without this case the persona half of the discriminator can be deleted with the suite still green")
+	assert.Contains(t, out, `"brad ~x"`,
+		"the raw persona that differs must be named, exactly as the differing raw model is")
+	assert.NotContains(t, out, "this file is malformed",
+		"two DIFFERENT raw personas colliding under the scrub is version skew, not tampering")
+}
