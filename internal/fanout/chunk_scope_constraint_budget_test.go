@@ -297,3 +297,27 @@ func TestBuildSlots_DropWarningDoesNotBlameAnUnsetChunkByteBudget(t *testing.T) 
 	assert.NotContains(t, out, "chunk_byte_budget",
 		"chunk_byte_budget is unset here — the binding budget is the agent's own window, so the warning must not accuse it or prescribe unsetting it")
 }
+
+// The RUN-LEVEL payload_byte_budget cap must answer the too-small-to-fund-one-byte
+// condition the same way the per-agent cap does: DROP the block. Routing through
+// capScopeConstraintPlan directly capped the body to 0 and left the BEGIN/END frame
+// standing — and the per-agent cap then received that frame as a NON-empty block and
+// capped it further rather than dropping it, shipping the "constrain your findings to
+// these work items" wrapper over an empty list. payload_byte_budget in 1..7 is valid
+// per registry validation (only < 0 is rejected), so budget/8 floors to 0 here.
+func TestBuildSlots_RunLevelCapDropsTheBlockWhenItCannotFundOnePlanByte(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 4 // positive, so not the "unlimited" sentinel; /8 floors to 0
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+
+	assert.NotContains(t, slots[0].Primary.Prompt, "BEGIN SPRINT PLAN",
+		"a payload_byte_budget too small to fund one plan byte must DROP the block, not blank its body and leave the frame standing")
+}
