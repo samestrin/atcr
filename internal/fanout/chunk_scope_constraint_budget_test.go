@@ -321,3 +321,43 @@ func TestBuildSlots_RunLevelCapDropsTheBlockWhenItCannotFundOnePlanByte(t *testi
 	assert.NotContains(t, slots[0].Primary.Prompt, "BEGIN SPRINT PLAN",
 		"a payload_byte_budget too small to fund one plan byte must DROP the block, not blank its body and leave the frame standing")
 }
+
+// The chunk-drop warning must not fire on the SINGLE-CHUNK fall-through. It is
+// emitted before chunkDiff runs and before the `len(chunks) > 1` commit, so a diff
+// that yields one chunk still triggers it — and that path then renders
+// agentScopeConstraint (the payload-tier block, fully populated), not the dropped
+// chunkScopeConstraint. The operator is told the --sprint-plan scoping did not
+// apply when it did, and will re-run or discard valid findings.
+func TestBuildSlots_ChunkDropWarningStaysSilentOnTheSingleChunkFallThrough(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+	// Same 1..7 band as the warning's own test: positive, but too small to fund
+	// planCap = budget/8, so chunkScopeConstraint really is "".
+	const chunkBudget = int64(4)
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = chunkBudget
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	// One file, 5 added lines — well under the minChunkLines floor (64) that a
+	// chunkBudget of 4 clamps the per-chunk line budget to, so chunkDiff returns
+	// exactly ONE chunk and the persona falls through to the bulk path.
+	payloads := map[string]modePayload{"blocks": {Text: fileSeg("only.go", 5), FileCount: 1}}
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.Len(t, slots, 1, "precondition: a single-chunk diff must produce exactly one bulk slot")
+	require.Contains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: the bulk fall-through renders agentScopeConstraint, so the scoping DID apply on this path")
+
+	assert.NotContains(t, out, "the block was DROPPED",
+		"the chunk-drop warning must not fire on the single-chunk fall-through: that path ships agentScopeConstraint, so reporting the scoping as dropped is false")
+}
