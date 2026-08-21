@@ -307,6 +307,30 @@ func TestExtractSection_UnterminatedFenceAboveAFindingsList(t *testing.T) {
 	assert.NotContains(t, texts[0], "second problem", "an unclosed fence above must not fold the list into one block")
 }
 
+// A record-shaped line in the tail of an UNTERMINATED fence is a boundary to nothing.
+// The producing parser's bare inFence toggle (stream/parser.go:152-157) skips every
+// line below the dangling opener, so the line was never emitted as a record — yet the
+// released mask let recordAt read it as one, and extractSection ended the narrative on
+// a line the parser never saw. That loss is permanent: localdebt persists
+// Justification append-only under an id that excludes it. recordAt must read the
+// UN-released (strict) mask — its contract is byte-exact parser parity — while the
+// release applies only to headingAt, itemAt and the section walk-up.
+func TestExtractSection_RecordShapedLineBelowADanglingFenceIsNotABoundary(t *testing.T) {
+	doc := "## Findings\n" +
+		"- The verdict rests on the quoted exchange:\n" +
+		"```\n" +
+		"the model opened a quote it never closed\n" +
+		"HIGH|a.go:10|quoted row, not a record|fix|correctness|30|evidence\n" +
+		"and the narrative continues after it"
+	lines := strings.Split(doc, "\n")
+
+	text, _ := extractSection(lines, 5)
+
+	assert.Contains(t, text, "never closed",
+		"a record-shaped line the parser never emitted must not split the narrative")
+	assert.Contains(t, text, "continues after it")
+}
+
 // The section walk-up's `if fenced[j] { continue }` needs an anchor BELOW a fenced
 // heading, with the real heading ABOVE the fence — the one arrangement in which
 // skipping fenced lines changes the answer.
