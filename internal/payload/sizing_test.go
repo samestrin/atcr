@@ -6,10 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// defaultMaxTokens mirrors internal/fanout/review.go's output cap (8192). The
-// payload package does not import fanout, so the value is restated here as the
-// output reservation the production caller passes into EffectiveByteBudget.
-const testOutputTokens = 8192
+// testOutputTokens is the output reservation the production caller passes into
+// EffectiveByteBudget — the package's own DefaultOutputTokens, which fanout's
+// defaultMaxTokens references, so the mirror cannot drift.
+const testOutputTokens = DefaultOutputTokens
 
 // unknownModel resolves to defaultContextWindowTokens (32768) — the confirmed
 // dax window and the conservative floor for any model absent from the table.
