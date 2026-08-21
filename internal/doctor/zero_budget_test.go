@@ -261,3 +261,63 @@ func TestRun_ZeroBudgetWarningDoesNotOverwriteAFailedProbe(t *testing.T) {
 		"the real failure must survive; a budget warning must not mask it")
 	assert.Zero(t, rep.Agents[0].MaxTokens, "no cap was applied because no call was made")
 }
+
+// The hint's "(not this probe's cap)" disclaimer is FALSE on every run without
+// --max-tokens, which is the default. Unflagged, probe() resolves the same cap
+// reviewMaxTokens does — the agent's declaration, else the shared default — so the
+// two are equal, render.go SUPPRESSES the "/ review cap N" suffix, and the hint
+// disclaims the only cap on screen while being exactly that cap. The disclaimer was
+// added for the flag path and applied unconditionally; it belongs only where the two
+// caps genuinely differ.
+func TestRun_ZeroBudgetHintDoesNotDisclaimTheProbeCapWhenTheyAreEqual(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+
+	// No --max-tokens: the default path, where probe and review resolve one cap.
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce})
+
+	require.Len(t, rep.Agents, 1)
+	require.Equal(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: unflagged, the probe's cap and review's are the same value")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	assert.NotContains(t, rep.Agents[0].Hint, "not this probe's cap",
+		"the two caps are the same number here, so disclaiming one against the other tells the operator the cap on screen is a different cap than it is")
+	assert.Contains(t, rep.Agents[0].Hint, "output cap",
+		"the cap is still named — only the false contrast is dropped")
+}
+
+// ...and the disclaimer must survive where it is true: under --max-tokens with an N
+// that is not the cap review would resolve, the row's own max_tokens column and the
+// hint's operand are genuinely different numbers, and the operator has to act on the
+// hint's.
+func TestRun_ZeroBudgetHintKeepsTheDisclaimerWhenTheCapsDiffer(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.NotEqual(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: the flag makes the probe's cap differ from review's")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	assert.Contains(t, rep.Agents[0].Hint, "not this probe's cap",
+		"here the hint's number really does disagree with the row's max_tokens column, and the operator must act on the hint's")
+}
