@@ -198,6 +198,30 @@ func TestRenderTable_OmitsTheReviewCapWhenItMatchesTheProbedCap(t *testing.T) {
 	assert.NotContains(t, got, "review cap", "a review cap equal to the probed cap adds nothing")
 }
 
+// The `ReviewMaxTokens > 0` conjunct, which nothing pinned. Every other fixture in
+// this file either sets the two caps EQUAL (asserting omission, which the `!=` half
+// already guarantees) or sets MaxTokens to 0 — so deleting `> 0` left the suite
+// green. Its live consumer is the decode path the field was made non-omitempty for:
+// a report produced by an OLDER atcr carries no review_max_tokens, so ReviewMaxTokens
+// is 0 while MaxTokens is positive, `0 != 8192` is true, and the mutant renders
+// "/ review cap 0" — a cap of zero, the exact misattribution the field exists to
+// prevent. Run itself never emits 0 (reviewMaxTokens floors at the shared default),
+// which is why only a decoded report reaches this state and no other test does.
+func TestRenderTable_OmitsReviewCapWhenNoReviewMaxTokensIsKnown(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
+		Agent: "bruce", Provider: "p", Model: "m", Status: StatusOK,
+		ContextWindowTokens: 32768, WindowSource: "default",
+		MaxTokens: 8192, MaxTokensSource: MaxTokensSourceDeclaration,
+		ReviewMaxTokens: 0, // a report decoded from an atcr predating the field
+	}}}))
+	got := buf.String()
+
+	assert.Contains(t, got, "cap 8192", "the probed cap is real and must still render")
+	assert.NotContains(t, got, "review cap",
+		"an absent review_max_tokens is unknown, not zero — rendering it as a cap of 0 misattributes the budget to a cap that was never applied")
+}
+
 // --json must carry review's cap too: a script re-deriving the budget from
 // context_window_tokens and max_tokens alone computes a healthy budget and disagrees
 // with the ok_warning atcr shipped.
