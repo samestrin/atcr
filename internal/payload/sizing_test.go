@@ -108,3 +108,47 @@ func TestChunkMaxLines_ClampedFloor(t *testing.T) {
 	got := ChunkMaxLines(unknownModel, nil, 32768) // degenerate: EffectiveByteBudget == 0
 	assert.Equal(t, minChunkLines, got, "a degenerate window must clamp to the positive floor")
 }
+
+// internal/fanout's chunked-diff path guards its scope-constraint reservation
+// with `if chunkClampBudget > 0`, and that guard is UNOBSERVABLE today — swapping
+// it for `if true` changes no output. It is not dead defensiveness by accident:
+// it is unobservable because of two couplings in THIS file, and a mutation test
+// over there can never pin it. Pin the couplings here instead, so a change that
+// re-arms the guard fails as a payload-sizing change (where the cause is) rather
+// than surfacing as a silent chunk-size regression in fanout.
+//
+// (1) ChunkMaxLines and EffectiveByteBudget share a zero point: ChunkMaxLines
+//
+//	divides that same budget, so a zero budget can only floor. The fanout guard
+//	therefore only ever runs with maxLines already AT the floor.
+//
+// (2) ClampLinesToByteBudget returns that same floor for the byteBudget 1 the
+//
+//	guard's absence would produce, so the clamped and unclamped answers coincide
+//	at the floor.
+//
+// Break either and the guard becomes load-bearing: it is then the difference
+// between "no clamp" and "clamp to the floor", and fanout needs its own mutation
+// -killing test at that point.
+func TestZeroEffectiveBudgetFloorsChunkLinesAndSurvivesAOneByteClamp(t *testing.T) {
+	// 12288 - 8192 output - 4096 fixed overhead = 0 effective tokens.
+	declared := 12288
+	const outputTokens = 8192
+
+	budget := EffectiveByteBudget("unlisted-small-model", &declared, outputTokens)
+	if budget != 0 {
+		t.Fatalf("precondition: want a zero effective byte budget, got %d", budget)
+	}
+
+	lines := ChunkMaxLines("unlisted-small-model", &declared, outputTokens)
+	if lines != minChunkLines {
+		t.Fatalf("a zero effective byte budget must floor the chunk line budget at minChunkLines (%d), got %d — fanout's `chunkClampBudget > 0` guard is now load-bearing and needs its own mutation-killing test", minChunkLines, lines)
+	}
+
+	if got := ClampLinesToByteBudget(lines, 1); got != minChunkLines {
+		t.Fatalf("a 1-byte budget must still return minChunkLines (%d), got %d — fanout's `chunkClampBudget > 0` guard is now load-bearing and needs its own mutation-killing test", minChunkLines, got)
+	}
+	if got := ClampLinesToByteBudget(lines, 0); got != lines {
+		t.Fatalf("a non-positive budget must pass maxLines through unclamped, got %d want %d", got, lines)
+	}
+}

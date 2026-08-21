@@ -1879,6 +1879,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// (it was gated on chunk_byte_budget <= 0, which a resolved config never
 			// is), leaving the block uncounted on exactly the configuration every
 			// default run has. See the note under the clamp for why that arm is gone.
+			//
+			// This guard is DEFENSIVE, not load-bearing, and deliberately so —
+			// swapping it for `if true` changes no output, so no mutation test in
+			// this package can kill it. The reason is two couplings in
+			// internal/payload, pinned there by
+			// TestZeroEffectiveBudgetFloorsChunkLinesAndSurvivesAOneByteClamp:
+			// chunkPlanBudget is non-positive only when agentBudget is (an unset
+			// chunk_byte_budget inherits it, and a set one only ever lowers it), and
+			// ml is derived from that same zero budget, so ml is already at
+			// ClampLinesToByteBudget's own minChunkLines floor — the value the clamp
+			// returns for the byteBudget 1 this guard's absence would produce. The
+			// guard states the intent regardless (0 means "no ceiling", not "a
+			// one-byte ceiling") and is what keeps the code correct if either
+			// coupling is ever broken; the payload-side test fails first if one is.
 			chunkClampBudget := chunkPlanBudget
 			if chunkClampBudget > 0 {
 				if chunkClampBudget -= int64(len(chunkScopeConstraint)); chunkClampBudget < 1 {
