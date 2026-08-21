@@ -506,3 +506,58 @@ func TestBuildSlots_ChunkedFallbackDeclinesTheRefitSoTheScopeArgumentIsInert(t *
 			"fallback %d (%s): with no re-pack source the fallback must inherit the primary's prompt verbatim — a differing prompt means a re-fit ran and refit.scopeConstraint became live", i, fb.Name)
 	}
 }
+
+// The RUN-LEVEL drop is the exact condition the chunk-tier drop warns about, one
+// tier up — and it was silent. With payload_byte_budget in 1..7 (legal: registry
+// validation rejects only negatives) budget/8 floors to 0, capScopeConstraintForBudget
+// returns "" and the block is dropped RUN-WIDE, for every agent. The chunk-tier
+// warning cannot cover for it either: that one gates on len(scopeConstraint) > 0,
+// which this site has just emptied. Meanwhile resolveScopeConstraint's own warning
+// still says the plan was "truncated before injection" while nothing was injected,
+// so the operator concludes from the absence of output that --sprint-plan was
+// honoured and every reviewer in the run reviews unscoped.
+func TestBuildSlots_WarnsWhenPayloadByteBudgetCannotFundOnePlanByte(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	// Positive, so not the "unlimited" sentinel; /8 floors to 0.
+	cfg.Settings.PayloadByteBudget = 4
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: this budget really does drop the block run-wide")
+
+	assert.Contains(t, out, "payload_byte_budget",
+		"dropping the operator's scoping run-wide must name the setting that caused it, the way the chunk-tier warning names chunk_byte_budget")
+	assert.Contains(t, out, "DROPPED",
+		"and say the block was dropped, not truncated")
+}
+
+// The run-level warning must stay quiet on the resume rebuild, like every sibling.
+func TestBuildSlots_RunLevelDropWarningIsSilentOnTheResumeRebuild(t *testing.T) {
+	const declared = 128000
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 4
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
+		require.NoError(t, err)
+	})
+
+	assert.NotContains(t, out, "payload_byte_budget",
+		"the resume rebuild must stay quiet — the operator was already warned during the original preparation")
+}
