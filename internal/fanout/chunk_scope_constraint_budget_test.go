@@ -266,3 +266,34 @@ func TestBuildSlots_WarnsWhenChunkByteBudgetCannotFundOnePlanByte(t *testing.T) 
 	assert.Contains(t, out, "greta",
 		"the warning must name the agent whose scoping was dropped")
 }
+
+// The same warning must accuse only the key that actually BOUND. When the agent's OWN
+// budget is the binding one — declared window 12289 leaves effectiveTokens 1, so
+// EffectiveByteBudget returns 3 — and chunk_byte_budget is UNSET, chunkPlanBudget still
+// equals agentBudget and the drop still happens, but "chunk_byte_budget (3 B) is too
+// small ... Raise chunk_byte_budget, or unset it" blames an innocent key and prescribes
+// a no-op remedy (unsetting an already-unset key). That case belongs to the existing
+// zero-budget/overflow reporting, not to this warning.
+func TestBuildSlots_DropWarningDoesNotBlameAnUnsetChunkByteBudget(t *testing.T) {
+	const declared = 12289 // effectiveTokens 1 → agentBudget 3, in the 1..7 drop band
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = 0 // unset: inherits payload_byte_budget only upstream
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, int64(3), agentBudget,
+		"precondition: the agent's OWN budget must be the binding one, inside the 1..7 band that drops the block")
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"chunk_byte_budget is unset here — the binding budget is the agent's own window, so the warning must not accuse it or prescribe unsetting it")
+}
