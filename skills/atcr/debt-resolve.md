@@ -41,8 +41,9 @@ file read and never a direct engine call, consistent with the dispatcher contrac
   dismiss a finding as a false positive or accepted pattern (Epic 24.0). A `wontfix`
   record folds the item out of the open backlog exactly like `resolved`, but records
   the dismissal reason for auditability. `--status wontfix` requires `--reason` (or an
-  existing justification on the open record); a reasonless permanent dismissal is
-  rejected as a usage error.
+  existing justification on the open record that carries actual reviewer prose — an
+  excerpt made only of `[quoted example elided]` placeholders does **not** count); a
+  reasonless permanent dismissal is rejected as a usage error.
 
 If the store is empty or missing, the command prints a "no items" line and exits 0 —
 report "no items to resolve" and halt cleanly; do **not** enter any resolution stage.

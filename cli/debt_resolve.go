@@ -14,7 +14,29 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// isRecordedRationale reports whether a justification can stand in for --reason on a
+// wontfix — the terminal, backlog-suppressing status whose record localdebt then
+// preserves through compaction precisely because it holds reasoning that exists
+// nowhere else in the tree.
+//
+// Non-emptiness is not the bar. A reconcile-enriched justification is an EXCERPT of
+// the reviewer's review.md, and every fenced quote inside that excerpt is replaced by
+// reconcile.ElidedQuotePlaceholder — so an excerpt whose whole block was fenced
+// reduces to nothing but placeholders: tool-generated text carrying zero reviewer
+// content, which the old `!= ""` guard accepted as a permanent dismissal's entire
+// audit trail. Reviewer prose anywhere beside a placeholder still qualifies; the
+// placeholder is only ever discounted, never treated as disqualifying.
+func isRecordedRationale(justification string) bool {
+	for _, line := range strings.Split(justification, "\n") {
+		if line = strings.TrimSpace(line); line != "" && line != reconcile.ElidedQuotePlaceholder {
+			return true
+		}
+	}
+	return false
+}
 
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
 // working directory (localdebt's Root: "." convention). Since Plan 35.13 it is the
@@ -537,7 +559,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
 	}
 	orig := *effective
-	if status == "wontfix" && strings.TrimSpace(reason) == "" && orig.Justification == "" {
+	if status == "wontfix" && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
 		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
 	}
 
