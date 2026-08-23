@@ -23,20 +23,29 @@ import (
 // nowhere else in the tree.
 //
 // Non-emptiness is not the bar. A reconcile-enriched justification is an EXCERPT of
-// the reviewer's review.md, and every fenced quote inside that excerpt is replaced by
-// reconcile.ElidedQuotePlaceholder — so an excerpt whose whole block was fenced
-// reduces to nothing but placeholders: tool-generated text carrying zero reviewer
-// content, which the old `!= ""` guard accepted as a permanent dismissal's entire
-// audit trail. Reviewer prose anywhere beside a placeholder still qualifies; the
-// placeholder is only ever discounted, never treated as disqualifying.
+// the reviewer's review.md, and a quoted example inside that excerpt carries zero
+// reviewer content however it is rendered — which the old `!= ""` guard accepted as a
+// permanent dismissal's entire audit trail. Reviewer prose anywhere beside a quote
+// still qualifies; the quote is only ever discounted, never disqualifying.
 //
-// The placeholder is only HALF the quote problem, because extractSection elides only
-// a TERMINATED fence. A DANGLING opener's marker deliberately stays and its whole
-// quoted tail is released as prose (justification.go:519-520), so that excerpt is
-// 100% tool-visible quoted example text carrying no more reviewer reasoning than a
-// placeholder does. Fence markers and fenced content are therefore discounted on the
-// same terms: whether a permanent dismissal is auditable must not depend on whether
-// the reviewing model remembered to close its fence.
+// The two quote shapes are NOT on the same footing, and the difference is worth
+// stating so a future reader does not delete the wrong guard:
+//
+//   - A TERMINATED fence is replaced by reconcile.ElidedQuotePlaceholder, and an
+//     excerpt of nothing but placeholders is UNREACHABLE from reconcile: extractSection
+//     returns "" when its wroteProse flag is false, and matchNarrative then treats the
+//     candidate as no match, so every non-empty reconcile-produced justification holds
+//     at least one non-blank prose line. Discounting the placeholder here is therefore
+//     DEFENCE IN DEPTH — a backstop for a hand-edited or imported store, and for the
+//     documented collision where a reviewer types the literal themselves. It is not
+//     closing a live hole, and the guard that actually closes it is upstream.
+//   - A DANGLING opener is a live hole. extractSection deliberately keeps its marker
+//     and releases the whole quoted tail as prose (see the elidedLine branch), so
+//     wroteProse is true and the excerpt reaches this function as 100% tool-visible
+//     quoted example text. This is the shape the fence scan below actually catches.
+//
+// Both are discounted on the same terms regardless: whether a permanent dismissal is
+// auditable must not depend on whether the reviewing model closed its fence.
 func isRecordedRationale(justification string) bool {
 	inFence := false
 	for _, line := range strings.Split(justification, "\n") {
