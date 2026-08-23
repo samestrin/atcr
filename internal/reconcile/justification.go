@@ -762,11 +762,20 @@ func headingText(s string) (string, bool) {
 }
 
 // truncateRunes returns s unchanged when it is at most max runes, else the first
-// max runes (re-trimmed) with a horizontal ellipsis appended.
+// max runes (re-trimmed) with a horizontal ellipsis appended ON ITS OWN LINE.
+//
+// The ellipsis gets a line to itself because the cut can land anywhere, including
+// exactly on the last rune of an ElidedQuotePlaceholder with content following.
+// Appended inline, that produced the single line "[quoted example elided]…", which
+// is not the literal either exact-match consumer looks for — cli/debt_resolve.go's
+// isRecordedRationale compares a line with ==, and skills/atcr/debt-resolve.md tells
+// a model the marker is a line reading EXACTLY that literal. The fused line then
+// read as reviewer prose and, in the debt_resolve case, could carry a permanent
+// wontfix on its own. A marker atcr emits must stay recognizable to atcr.
 func truncateRunes(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {
 		return s
 	}
-	return strings.TrimSpace(string(r[:max])) + "…"
+	return strings.TrimSpace(string(r[:max])) + "\n…"
 }
