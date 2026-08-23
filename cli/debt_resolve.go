@@ -39,10 +39,23 @@ import (
 //     DEFENCE IN DEPTH — a backstop for a hand-edited or imported store, and for the
 //     documented collision where a reviewer types the literal themselves. It is not
 //     closing a live hole, and the guard that actually closes it is upstream.
-//   - A DANGLING opener is a live hole. extractSection deliberately keeps its marker
-//     and releases the whole quoted tail as prose (see the elidedLine branch), so
-//     wroteProse is true and the excerpt reaches this function as 100% tool-visible
-//     quoted example text. This is the shape the fence scan below actually catches.
+//
+//   - A DANGLING opener is a live hole. extractSection releases the whole quoted tail
+//     as prose (see the elidedLine branch), so wroteProse is true and the excerpt
+//     reaches this function as 100% tool-visible quoted example text. This is the
+//     shape the fence scan below catches.
+//
+//     It catches it only because extractSection is made to GUARANTEE the marker. The
+//     real opener survives on its own just when the block walk-up reaches it, and the
+//     walk-up stops early on exactly the shape reviewers write: itemAt/headingAt read
+//     the released view, so a quoted body starting with a list item or a heading is a
+//     genuine block start and the opener stays one line above the excerpt. That
+//     excerpt used to arrive marker-free and was accepted here as a permanent
+//     dismissal's whole audit trail. extractSection now emits a synthetic ``` at the
+//     head of any block that begins inside a released tail, which is what makes the
+//     scan below unconditional rather than dependent on where the anchor happened to
+//     land. Do not delete that emission on the theory that the document's own opener
+//     covers it — usually it does not.
 //
 // Both are discounted on the same terms regardless: whether a permanent dismissal is
 // auditable must not depend on whether the reviewing model closed its fence.

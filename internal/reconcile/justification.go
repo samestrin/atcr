@@ -554,6 +554,29 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// inside a quoted example) that no later reconcile can replace.
 	wroteProse := false
 	inElidedFence := false
+	// A block that BEGINS inside a dangling fence's released tail (strict but not
+	// released) opens with a synthetic marker, because the real opener is usually
+	// outside [start,end]. itemAt/headingAt read the RELEASED view precisely so the
+	// walk crosses the tail — which means a quoted body starting with a list item or
+	// a heading, the shape reviewers actually write, is a genuine block start and the
+	// walk-up stops there, leaving the opener one line above the excerpt.
+	//
+	// Without this the excerpt is byte-indistinguishable from ordinary prose while
+	// being 100% released quote, and every downstream reader that keys on the marker
+	// silently gets the wrong answer: cli/debt_resolve.go's isRecordedRationale
+	// accepts it as the entire audit trail for a permanent `wontfix`, and
+	// docs/findings-format.md's "its opening ``` marker is kept" is false for the
+	// common case. Emitting the marker makes the promise unconditional.
+	//
+	// Not prepended when the block already opens with the opener itself (the case the
+	// walk-up did reach), which would render two bare ``` lines where the document has
+	// one. It does NOT set wroteProse: it is atcr's own line, not reviewer content, so
+	// it must never rescue an excerpt the placeholder-only gate would suppress.
+	if strict[start] && !released[start] && !isFenceMarker(lines[start]) {
+		b.WriteString("```")
+		runesWritten += 3
+		wroteAny = true
+	}
 	for j := start; j <= end; j++ {
 		// Fenced content is quoted example text, not the reviewer's prose. The walk
 		// crosses it deliberately (headingAt/itemAt are masked, so a quoted
