@@ -506,8 +506,27 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// each reviewer received. resolveScopeConstraint is called again here
 	// (second read) rather than threading the result through the function
 	// signature of finalizePreparedReview.
+	//
+	// That second read is UNCAPPED, so it must be put through the same RUN-LEVEL cap
+	// buildSlots applies before the block is shipped — otherwise the artifact
+	// documents a plan body no reviewer received. capScopeConstraintForBudget is a
+	// pure function of the block and two settings, so re-applying it here is
+	// byte-identical to buildSlots' result rather than a second, drifting policy.
+	// A budget too small to fund one plan byte drops the block entirely; writing no
+	// file is the honest encoding and the one the resume path already reads
+	// correctly (readScopeConstraintArtifact maps a missing file to "", so the
+	// resume proceeds unscoped, matching the original run). The drop itself is
+	// reported on stderr by buildSlots, so it is not silent.
+	//
+	// Only the run-level cap is reproducible here. The per-agent and chunk-tier caps
+	// can shrink the block further for INDIVIDUAL agents, which one run-level
+	// artifact cannot express either way.
 	if req.SprintPlanPath != "" {
-		if sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes); sc != "" {
+		sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+		if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(sc) > 0 {
+			sc = capScopeConstraintForBudget(sc, budget, cfg.Settings.MaxSprintPlanBytes)
+		}
+		if sc != "" {
 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
 			}
