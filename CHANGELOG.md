@@ -1,3 +1,17 @@
+## [Technical Debt] - 2026-08-23
+
+### Fixed
+- Fixed justification/narrative excerpting to handle fenced code blocks correctly: dangling and unterminated fences no longer swallow or split content, crossed fenced quotes collapse to a single placeholder, and elision placeholders are never cut in half or fused with the truncation ellipsis.
+- Fixed excerpt-budget counting to use runes instead of bytes, preventing incorrect truncation on multi-byte content.
+- Fixed narrative matching to fall back to the next-best anchor when the best anchor yields no prose, and to suppress placeholder-only excerpts instead of treating them as real narrative.
+- Fixed section-block extraction to mask all fenced-content boundaries so a heading or bullet inside a fenced example no longer incorrectly bounds the narrative block.
+- Fixed the SCOPE CONSTRAINT block to be dropped with a warning, instead of silently blanked or mis-capped, under a zero agent budget, a run-level cap, a too-small `chunk_byte_budget`, and chunked `effective_budget` conditions; corrected misattribution of `chunk_byte_budget` vs. the agent's own budget in the drop warning.
+- Fixed `atcr doctor`'s zero-budget hint to report the cap `atcr review` actually resolves rather than the probe's cap, disclaiming the probe cap only when it genuinely differs, and to render review's cap even when the probe applied none.
+- Fixed `debt-resolve` justification checks to reject a dangling-fence-only or placeholder-only justification as a stand-in for `--reason`.
+- Fixed the benchmark scrub-collision message to name both raw identities and to distinguish version skew from hand-assembly as separate causes.
+- Fixed the vocabulary-ceiling check to be inclusive, matching its documented `>=` bound.
+- Hoisted the shared `DefaultOutputTokens` constant so the fan-out, doctor, and CLI output-cap defaults stay in sync.
+
 ## [35.16.6.1] - 2026-08-17
 
 ### Added
