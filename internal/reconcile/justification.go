@@ -110,8 +110,8 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	index := buildAnchorIndex(narratives)
 	matched := 0
 	for i := range jf {
-		m, ok := matchNarrative(narratives, index, jf[i].File, jf[i].Line, jf[i].Reviewers)
-		if !ok {
+		m, out := matchNarrative(narratives, index, jf[i].File, jf[i].Line, jf[i].Reviewers)
+		if !out.ok() {
 			continue
 		}
 		jf[i].Justification = m.text
@@ -249,8 +249,7 @@ func containsString(xs []string, s string) bool {
 // highest anchor tier wins (a line/range covering the finding's exact line beats
 // a same-file-other-line reference beats a bare file mention); ties break toward
 // a narrative whose leaf dir is one of the finding's reviewers, then toward the
-// earliest narrative (sorted), then the earliest line. Returns ok=false when no
-// review.md mentions the finding's file at all.
+// earliest narrative (sorted), then the earliest line.
 //
 // Candidates are tried in that order until one yields a non-empty excerpt, rather
 // than the single best being taken or nothing. extractSection returns "" for a
@@ -262,13 +261,17 @@ func containsString(xs []string, s string) bool {
 // usable prose anchor was one candidate away; localdebt seeds seen[id] for every
 // open id, so no later reconcile appends a corrected record and the loss is
 // permanent.
-func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string, line int, reviewers []string) (narrativeMatch, bool) {
+// The second result reports WHY, not merely whether — see matchOutcome. The caller's
+// zero-match diagnostic is the consumer: "no review.md anchors this finding" is format
+// drift worth chasing, "every ranked candidate's section was pure quoted example" is
+// not, and the two are indistinguishable from a bare bool.
+func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string, line int, reviewers []string) (narrativeMatch, matchOutcome) {
 	if file == "" {
-		return narrativeMatch{}, false
+		return narrativeMatch{}, matchNoAnchor
 	}
 	refs := index[file]
 	if len(refs) == 0 {
-		return narrativeMatch{}, false
+		return narrativeMatch{}, matchNoAnchor
 	}
 	revSet := toSet(reviewers)
 	// refs are already in (ni, li) order (buildAnchorIndex scans in that order),
@@ -284,7 +287,10 @@ func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string
 		cands = append(cands, anchorCandidate{tier: tier, revPref: revSet[narratives[r.ni].leaf], ni: r.ni, li: r.li})
 	}
 	if len(cands) == 0 {
-		return narrativeMatch{}, false
+		// Every ref was pruned below minAnchorTier, so nothing ever ranked. This is
+		// the no-anchor case, NOT the elided one — which is exactly why the caller
+		// cannot re-derive the distinction from len(index[file]).
+		return narrativeMatch{}, matchNoAnchor
 	}
 	// beatsMatch is a total order over candidates ((ni,li) is unique per file —
 	// indexLineFiles dedupes per line), so the sort is deterministic and its head is
@@ -303,9 +309,49 @@ func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string
 			relPath: narratives[c.ni].relPath,
 			line:    c.li + 1, // 1-based
 			section: section,
-		}, true
+		}, matchFound
 	}
-	return narrativeMatch{}, false
+	// RED stub: candidates ranked but every section extracted empty. Reported as
+	// matchNoAnchor here so the outcome type compiles under `go vet` while still
+	// giving the wrong answer; the GREEN commit returns matchAllElided.
+	return narrativeMatch{}, matchNoAnchor
+}
+
+// matchOutcome reports why matchNarrative did or did not produce a match. It replaces
+// a plain ok bool because the two no-match reasons need opposite operator responses:
+// matchNoAnchor means no review.md references the finding's FILE:LINE at all — the
+// format-drift signal stampJustifications warns about — while matchAllElided means the
+// anchors matched fine and every ranked candidate's section turned out to be pure
+// quoted example, which extractSection suppresses by design and which implies no drift
+// whatsoever.
+type matchOutcome int
+
+const (
+	// matchNoAnchor: nothing anchored this finding — no reference to its file, or
+	// every reference scored below minAnchorTier and never became a candidate.
+	matchNoAnchor matchOutcome = iota
+	// matchAllElided: candidates ranked, but extractSection returned "" for each,
+	// i.e. every one of them sat inside a fenced quote.
+	matchAllElided
+	// matchFound: an excerpt was extracted.
+	matchFound
+)
+
+// ok reports whether a match was produced, preserving the read of the bool this type
+// replaced at call sites that only care whether there is an excerpt.
+func (o matchOutcome) ok() bool { return o == matchFound }
+
+// String keeps a failed assertion in a test legible ("matchAllElided", not "1").
+func (o matchOutcome) String() string {
+	switch o {
+	case matchNoAnchor:
+		return "matchNoAnchor"
+	case matchAllElided:
+		return "matchAllElided"
+	case matchFound:
+		return "matchFound"
+	}
+	return "matchOutcome(?)"
 }
 
 // anchorCandidate is one ranked anchor line under consideration by matchNarrative:

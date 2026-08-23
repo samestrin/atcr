@@ -447,9 +447,9 @@ func TestMatchNarrative_PlaceholderOnlyExcerptYieldsNoMatch(t *testing.T) {
 		},
 	}}
 
-	_, ok := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
+	_, out := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
 
-	assert.False(t, ok,
+	assert.False(t, out.ok(),
 		"an anchor whose whole block is fenced has no reviewer prose to stamp — the field must stay omitted, not carry a placeholder")
 }
 
@@ -674,9 +674,9 @@ func TestMatchNarrative_FallsBackWhenTheBestAnchorHasNoProse(t *testing.T) {
 		},
 	}}
 
-	m, ok := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
+	m, out := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
 
-	assert.True(t, ok,
+	assert.True(t, out.ok(),
 		"a fully-fenced best anchor must not abandon the finding — a real prose anchor for the same file:line is right there")
 	assert.Contains(t, m.text, "skips verification",
 		"the prose anchor is what carries reviewer content, so it is what must be stamped")
