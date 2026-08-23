@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
@@ -653,4 +654,40 @@ func TestMatchNarrative_FallsBackWhenTheBestAnchorHasNoProse(t *testing.T) {
 		"the prose anchor is what carries reviewer content, so it is what must be stamped")
 	assert.Equal(t, 7, m.line,
 		"source_report must point at the prose line that was stamped, not at the quoted table row that lost")
+}
+
+// The placeholder-fits guard and the block-growth check both compare BYTES against
+// a RUNE budget (b.Len() vs justificationMaxRunes). For non-ASCII reviewer prose —
+// em-dashes and smart quotes, which atcr's own reviewers write constantly — the
+// check trips early, the placeholder is dropped, AND the `break` discards every line
+// after the fence. The excerpt is then silently and substantially shorter than the
+// documented 1000-rune budget, losing the reviewer's post-fence conclusion.
+//
+// The direction is conservative (bytes >= runes, so nothing is over-admitted), which
+// is why this is a shortfall rather than a corruption — but a 330-rune excerpt where
+// 1000 were promised is a third of the narrative.
+func TestExtractSection_RuneBudgetIsNotMeasuredInBytes(t *testing.T) {
+	// 330 em-dashes: 990 BYTES, 330 RUNES. Under the byte-conflated check
+	// 990+1+len(placeholder) already exceeds 1000, so the fence elision is skipped
+	// and the walk breaks — while 330 runes leaves two thirds of the budget unspent.
+	prose := strings.Repeat("—", 330)
+	lines := []string{
+		"## Review",
+		"",
+		prose,
+		"```",
+		"quoted example for internal/x.go:42",
+		"```",
+		"the conclusion the reviewer drew after the quote",
+	}
+
+	text, _ := extractSection(lines, 2)
+
+	require.Equal(t, 330, utf8.RuneCountInString(prose), "fixture precondition: 330 runes, 990 bytes")
+	assert.Contains(t, text, ElidedQuotePlaceholder,
+		"330 runes leaves ample room for a 23-rune placeholder; only the byte/rune conflation makes it look full")
+	assert.Contains(t, text, "the conclusion the reviewer drew after the quote",
+		"and the post-fence prose — the reviewer's actual conclusion — must not be discarded with it")
+	assert.LessOrEqual(t, utf8.RuneCountInString(text), justificationMaxRunes,
+		"the budget is still a ceiling, and it is still counted in runes")
 }
