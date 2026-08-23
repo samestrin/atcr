@@ -15,6 +15,17 @@ package payload
 // exact-boundary class from recurring (AC2).
 
 const (
+	// DefaultOutputTokens is the output-token cap `atcr review` applies to a
+	// reviewer call that resolves no other value (the LAST tier of
+	// resolveMaxTokens: --max-tokens > the agent's max_tokens declaration >
+	// this). It is THE single source for that default: internal/fanout's
+	// defaultMaxTokens, internal/doctor's reviewDefaultMaxTokens and the
+	// cli/doctor.go --max-tokens flag default all reference it, so the three
+	// cannot drift. Generous on purpose: reasoning/thinking models spend output
+	// budget on chain-of-thought before emitting visible content, so a tight cap
+	// makes them finish mid-reasoning and return an empty review.
+	DefaultOutputTokens = 8192
+
 	// conservativeBytesPerTokenNum / conservativeBytesPerTokenDen express the
 	// deliberately conservative ~3.5 bytes/token ratio as an exact rational, so
 	// the byte conversion uses integer math with no float rounding surprises. The

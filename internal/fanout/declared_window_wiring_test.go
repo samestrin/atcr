@@ -177,11 +177,21 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 	})
 
 	t.Run("a scope constraint shaves the declaration-derived budget", func(t *testing.T) {
+		// The reservation is the block's ACTUAL byte length taken out of the budget
+		// that sizes the call, not the old `ml -= ml/8` proxy. This roster sets no
+		// chunk_byte_budget, which used to be the one regime the proxy served; that
+		// budget now falls back to the agent's own, so the exact figure covers it and
+		// the proxy is gone. Pinned as the computed byte figure rather than as a
+		// literal so the two operands that produce it stay visible.
+		agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+		want := int((agentBudget - int64(len(plan))) / 48)
+		require.Less(t, want, derived, "precondition: the reservation must actually shave the derived budget")
+
 		slots, _, err := buildSlots(roster(t, false), payloads, rng, "", plan, true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: the shaved budget must still split this diff")
-		assert.Equal(t, derived-derived/8, slots[0].Primary.chunkMaxLines,
-			"the plan block is prepended to every chunk, so the derived budget reserves ml/8 for it")
+		assert.Equal(t, want, slots[0].Primary.chunkMaxLines,
+			"the plan block is prepended to every chunk, so its bytes are reserved out of the chunk budget")
 	})
 
 	t.Run("a scope constraint does NOT shave an explicit max_context_lines", func(t *testing.T) {

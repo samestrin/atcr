@@ -52,6 +52,17 @@ type AgentTarget struct {
 	// agents can share one probe target while declaring different windows.
 	ContextWindowTokens int
 	WindowSource        string
+	// DeclaredMaxTokens is the agent's OWN max_tokens declaration, or 0 when it
+	// made none. Per-agent for exactly the reason ContextWindowTokens is: two
+	// agents can share one probe target while declaring different caps.
+	//
+	// It is deliberately the RAW declaration and never the --max-tokens override.
+	// Target.MaxTokens carries the override — it has to, because it decides which
+	// invocation is probed — but the override is doctor's, and `atcr review`
+	// resolves its cap independently (its own flag, then this declaration, then the
+	// built-in default). Recovering what review will use therefore requires the
+	// declaration to survive the override somewhere, and this is that somewhere.
+	DeclaredMaxTokens int
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct
@@ -139,6 +150,10 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 		if !agentSeen[name] {
 			agentSeen[name] = true
 			window, windowSrc := payload.ResolveContextWindow(ac.Model, ac.ContextWindowTokens)
+			declaredCap := 0
+			if ac.MaxTokens != nil {
+				declaredCap = *ac.MaxTokens
+			}
 			res.Agents = append(res.Agents, AgentTarget{
 				Agent:               name,
 				Serial:              serial,
@@ -146,6 +161,7 @@ func ResolveWithCap(reg *registry.Registry, proj *registry.ProjectConfig, overri
 				Source:              reg.AgentTier(name),
 				ContextWindowTokens: window,
 				WindowSource:        windowSrc,
+				DeclaredMaxTokens:   declaredCap,
 			})
 		}
 		return nil

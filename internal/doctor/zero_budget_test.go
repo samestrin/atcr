@@ -129,11 +129,18 @@ func TestRun_ZeroBudgetHintOverridesTheRaiseTheCapAdvice(t *testing.T) {
 // target, and probe() uses it — while review resolves independently through
 // resolveMaxTokens (its own --max-tokens -> the agent's declaration -> 8192).
 //
-// So `atcr doctor --max-tokens 30000` closes the budget of every agent on the 32768
-// default window (32768-30000-4096 = -1328) and would warn that review is about to ship
-// one file, when review would run at 8192 with budget to spare. run.go states that exact
-// prohibition for classify()'s hint: no branch may assert which knob governs the real run,
-// because that is conditional on how review is later invoked.
+// So `atcr doctor --max-tokens 30000` would, read off the PROBE, close the budget of
+// every agent on the 32768 default window (32768-30000-4096 = -1328) and warn that
+// review is about to ship one file. It is not: this agent DECLARES nothing, so review
+// caps it at 8192 and the 32768 window leaves 20480 input tokens (payload/sizing.go —
+// 32768 - 8192 output - 4096 overhead), a budget with room to spare.
+//
+// The row therefore stays ok because of what review will resolve, not because doctor's
+// flag was typed. That distinction is the whole point: an agent whose OWN declaration
+// closed the budget must still be reported under the same flag, which is what
+// TestRun_ZeroBudgetVerdictFiresForADeclaredCapDespiteDoctorsOwnFlag pins. run.go states
+// the rule this obeys for classify()'s hint: no branch may assert which knob governs the
+// real run, because that is conditional on how review is later invoked.
 func TestRun_NoZeroBudgetVerdictWhenTheCapCameFromDoctorsOwnFlag(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
 	// Undeclared agent: nothing here closes the budget except the flag below.
@@ -197,10 +204,20 @@ func TestRun_ZeroBudgetVerdictDoesNotOverwriteAFailureThatResolvedACap(t *testin
 		"a real failure outranks a budget warning — the operator has to fix the key first")
 }
 
-// The maxTokens clause standing alone. An uncapped probe (budget resolved to 0, so the
-// request went out with no cap) against a window too small to fund even the prompt
-// overhead: the budget is closed, but a 0 cap did not close it — the window did. Blaming
-// a cap that was never applied points the operator at the wrong knob.
+// A 1-token window against the cap `atcr review` will resolve. The PROBE here runs
+// uncapped (MaxTokensSet with a 0 value), but that is evidence about the probe, and the
+// verdict is not: review caps this undeclared agent at its built-in default, and 1 token
+// funds neither that nor the prompt overhead. So the budget review will run at really is
+// closed and the row must say so.
+//
+// This is the case that changed when the operand moved from the probed cap to review's.
+// It used to assert the opposite, on the reasoning that "no cap was applied, so no cap
+// closed this budget" — true of the probe, and the reason the maxTokens guard exists,
+// but the guard now defends the FUNCTION's contract rather than a state Run can reach
+// (see reviewMaxTokens). Under review-time evaluation a cap always notionally applies,
+// so an uncapped probe no longer implies an uncapped run. The hint still does not blame
+// the cap: its remedy names the context_window_tokens declaration, which is what is
+// actually at fault here.
 func TestRun_ZeroBudgetVerdictDoesNotBlameACapThatWasNeverApplied(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
 	tiny := 1
@@ -219,9 +236,11 @@ func TestRun_ZeroBudgetVerdictDoesNotBlameACapThatWasNeverApplied(t *testing.T) 
 	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 0, MaxTokensSet: true})
 
 	require.Len(t, rep.Agents, 1)
-	require.Zero(t, rep.Agents[0].MaxTokens, "precondition: no cap was applied")
-	assert.Equal(t, StatusOK, rep.Agents[0].Status,
-		"no cap was applied, so no cap closed this budget; the verdict must not fire")
+	require.Zero(t, rep.Agents[0].MaxTokens, "precondition: the PROBE applied no cap")
+	assert.Equal(t, StatusOKWarning, rep.Agents[0].Status,
+		"a 1-token window cannot fund the cap review will apply, whatever this probe was capped at")
+	assert.Contains(t, rep.Agents[0].Hint, "context_window_tokens",
+		"the window is what is at fault here, and the remedy must name it rather than a cap")
 }
 
 // A probe that never placed a call reports MaxTokens 0, which means "no cap applied" and
@@ -241,4 +260,118 @@ func TestRun_ZeroBudgetWarningDoesNotOverwriteAFailedProbe(t *testing.T) {
 	assert.Equal(t, StatusMissingKey, rep.Agents[0].Status,
 		"the real failure must survive; a budget warning must not mask it")
 	assert.Zero(t, rep.Agents[0].MaxTokens, "no cap was applied because no call was made")
+}
+
+// The hint's "(not this probe's cap)" disclaimer is FALSE on every run without
+// --max-tokens, which is the default. Unflagged, probe() resolves the same cap
+// reviewMaxTokens does — the agent's declaration, else the shared default — so the
+// two are equal, render.go SUPPRESSES the "/ review cap N" suffix, and the hint
+// disclaims the only cap on screen while being exactly that cap. The disclaimer was
+// added for the flag path and applied unconditionally; it belongs only where the two
+// caps genuinely differ.
+func TestRun_ZeroBudgetHintDoesNotDisclaimTheProbeCapWhenTheyAreEqual(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	declaredCap := 4096
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny, MaxTokens: &declaredCap}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+
+	// No --max-tokens: the default path. probe() resolves the agent's own
+	// declaration and reviewMaxTokens returns the same one, so the two coincide.
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce})
+
+	require.Len(t, rep.Agents, 1)
+	require.Equal(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: unflagged, the probe's cap and review's are the same value")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	assert.NotContains(t, rep.Agents[0].Hint, "not this probe's cap",
+		"the two caps are the same number here, so disclaiming one against the other tells the operator the cap on screen is a different cap than it is")
+	assert.Contains(t, rep.Agents[0].Hint, "output cap",
+		"the cap is still named — only the false contrast is dropped")
+}
+
+// ...and the disclaimer must survive where it is true: under --max-tokens with an N
+// that is not the cap review would resolve, the row's own max_tokens column and the
+// hint's operand are genuinely different numbers, and the operator has to act on the
+// hint's.
+func TestRun_ZeroBudgetHintKeepsTheDisclaimerWhenTheCapsDiffer(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.NotEqual(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: the flag makes the probe's cap differ from review's")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	assert.Contains(t, rep.Agents[0].Hint, "not this probe's cap",
+		"here the hint's number really does disagree with the row's max_tokens column, and the operator must act on the hint's")
+
+	// The differing caps alone must NOT pull in the probe-specific "raise THAT to
+	// re-probe the marker" remedy. The marker was FOUND on this row (the fake
+	// returns it, so classify() returned StatusOK and wrote no remedy of its own),
+	// and telling an operator to re-probe a marker that is already there sends them
+	// after a problem they do not have. That remedy is gated on the INCOMING status
+	// being StatusOKWarning, and this is the case that pins the gate.
+	assert.NotContains(t, rep.Agents[0].Hint, "re-probe the marker",
+		"the marker was present here, so there is nothing to re-probe — the probe remedy belongs only to the marker-absent row")
+}
+
+// Both remedies apply on this row and only one survives. Under `atcr doctor
+// --max-tokens N` against an agent whose OWN declaration closes review's budget,
+// classify() has already produced the flag-specific remedy — "this probe was capped
+// by your explicit --max-tokens; raise it to re-probe" — and Run then replaces
+// status AND hint wholesale with the zero-budget text, which ends "Do NOT raise the
+// cap here: it is reserved out of this same window".
+//
+// The two sentences are about DIFFERENT knobs. "the cap here" is the declaration
+// reserved out of the window; the max_tokens column on that same row reads "N
+// (flag)", the cap the operator genuinely should raise to re-probe the marker. The
+// "(not this probe's cap)" disclaimer attaches to the operand clause, not to the "Do
+// NOT raise" sentence, so nothing on screen tells the operator the probe cap is
+// still theirs to raise. The probe-specific remedy is simply unreachable under the
+// flag.
+func TestRun_ZeroBudgetHintKeepsTheProbeRemedyWhenTheMarkerWasAlsoAbsent(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	// No marker: classify() returns StatusOKWarning carrying the flag-specific remedy.
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return "no marker here", nil })
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.NotEqual(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: the flag makes the probe's cap differ from review's")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	hint := rep.Agents[0].Hint
+	assert.Contains(t, hint, "marker was absent",
+		"precondition: this is the row where BOTH the marker-absent and the zero-budget conditions hold")
+	assert.Contains(t, hint, "--max-tokens",
+		"the probe cap is the operator's own flag and re-probing the marker means raising it — that remedy must not be dropped just because a second one applies")
+	assert.Contains(t, hint, "111",
+		"and it must name the cap that actually capped this probe, which is the number in the row's max_tokens column")
 }

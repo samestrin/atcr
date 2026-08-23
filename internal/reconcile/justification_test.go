@@ -149,8 +149,9 @@ func TestStampJustifications_Truncates(t *testing.T) {
 	jf := []JSONFinding{{File: "x/y.go", Line: 42}}
 	stampJustifications(jf, reviewDir)
 	require.NotEmpty(t, jf[0].Justification)
-	require.LessOrEqual(t, len([]rune(jf[0].Justification)), justificationMaxRunes+1) // +1 for the ellipsis
-	require.True(t, strings.HasSuffix(jf[0].Justification, "…"))
+	require.LessOrEqual(t, len([]rune(jf[0].Justification)), justificationMaxRunes+2) // +2 for the newline and the ellipsis
+	require.True(t, strings.HasSuffix(jf[0].Justification, "\n…"),
+		"the ellipsis sits on its own line so a cut landing on an elision placeholder cannot fuse with it")
 }
 
 // TestStampJustifications_SetsSourceReport verifies the back-reference (Epic 18.2

@@ -167,7 +167,55 @@ func TestBenchmarkExport_RejectsScrubCollidingCoverageIdentities(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
 	require.NotEqual(t, 0, code,
 		"two raw identities scrubbing to one public identity must be rejected as a duplicate: %s", out)
-	assert.Contains(t, out, "more than once")
+	assert.Contains(t, out, "scrub to the same published identity",
+		"the rejection must name the collision it found; the wording is pinned in full by "+
+			"TestBenchmarkExport_ScrubCollisionMessageNamesTheScrub")
+}
+
+// A scrub collision is REJECTED (above), but "this file is malformed" names the
+// wrong cause for it. scrubField now iterates to a fixed point, so strictly more
+// distinct raw identities collapse to one published value than when the producer's
+// own collision check (benchmark_run.go) passed the file — a run-result written by
+// an EARLIER atcr can therefore fail here having been perfectly well-formed when
+// written. That is version skew, and the operator needs to be told to regenerate the
+// file rather than to go hunting for tampering that did not happen.
+func TestBenchmarkExport_ScrubCollisionMessageNamesTheScrub(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m ~x","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.Contains(t, out, "scrub", "the message must name the privacy scrub as the mechanism that collapsed the two identities")
+	assert.Contains(t, out, "m ~x", "both colliding raw identities must be named so the operator can see they differ")
+	assert.NotContains(t, out, "this file is malformed",
+		"two DIFFERENT raw identities colliding under the scrub is version skew, not tampering — asserting malformed sends the operator after the wrong cause")
+}
+
+// A genuine duplicate — the SAME raw identity twice — keeps the malformed wording,
+// so the skew message above cannot become a blanket excuse for a hand-assembled file.
+func TestBenchmarkExport_IdenticalDuplicateIdentityIsStillMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m","persona":"brad","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a repeated identity must still be rejected: %s", out)
+	assert.Contains(t, out, "this file is malformed",
+		"one identity listed twice is hand-assembly, and must keep saying so")
 }
 
 // The reverse direction of the reviewer/coverage join is checked too: a coverage
@@ -330,4 +378,130 @@ func TestBenchmarkExport_RejectsReviewerRowWithoutCoverage(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.NotEqual(t, 0, code, "a reviewer row with no coverage row must not publish: %s", out)
 	assert.Contains(t, out, "m-backup", "the unverifiable row is named")
+}
+
+// The reviewer array gets the same distinct-raw-identity discriminator as the
+// coverage array: two DIFFERENT raw reviewer identities that scrub to one published
+// identity are version skew or hand-assembly — not a flat "malformed" — and the
+// message must name the collision so the operator is not sent hunting for tampering.
+func TestBenchmarkExport_ReviewerScrubCollisionNamesTheScrub(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.Contains(t, out, "scrub to the same published identity",
+		"two DIFFERENT raw reviewer identities colliding under the scrub must get the coverage branch's wording, one array over")
+	assert.NotContains(t, out, "this file is malformed",
+		"the flat malformed verdict names the wrong cause for a scrub collision")
+}
+
+// The skew message must not OVERCLAIM. It may say version skew is possible; it may
+// not say it is the likely cause, because the branch cannot tell the two causes
+// apart.
+//
+// The discriminator is `prev.Model != c.Model || prev.Persona != c.Persona` —
+// "these are two different raw strings" — and that fact is equally consistent with
+// an older producer and with a hand-assembled file. The obvious sharper test does
+// NOT exist: scrubField (scorecard/export.go) breaks its loop the instant one pass
+// is stable, so "stable under one pass but not under the fixed point" is the empty
+// set; and a value a single pass still rewrites is not evidence of hand-assembly
+// either, because a pre-fixed-point producer really did emit such values
+// (benchmark_run.go records "bedrock@us-east-1/claude" scrubbing once to "/claude"
+// and twice to ""). Telling the two apart needs image-membership under scrubOnce,
+// which a 7-regex sequential pipeline does not give cheaply — so the message names
+// both causes instead of ranking them.
+//
+// The rejection itself is unaffected: two rows cannot share one published identity
+// on the board whatever wrote them.
+func TestBenchmarkExport_ScrubCollisionMessageDoesNotOverclaimSkew(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m ~x","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m ~x","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the rejection itself must stand: %s", out)
+
+	assert.NotContains(t, out, "most likely",
+		"the branch cannot rank the two causes, so the message must not claim one is more likely")
+	assert.Contains(t, out, "either",
+		"the message must present version skew and hand-assembly as the two possibilities it cannot distinguish")
+	assert.Contains(t, out, "hand-assembled",
+		"hand-assembly must stay named as a live possibility, not be argued away")
+}
+
+// The scrub-collision message must SHOW the two identities it says are distinct.
+// Both halves used to render through stripTerminalControlRunes, which deletes every
+// unicode.IsControl rune — including \r, \n and \t, exactly the runes the scrub
+// collapses via strings.Fields. So the pair that most naturally reaches this branch
+// rendered IDENTICALLY: the operator was shown two copies of one name, told they
+// differ, and told to rename one — an instruction that cannot be followed from what
+// is displayed. anchorSuiteDenominator already rejects this rendering for the same
+// reason and uses %q instead.
+func TestBenchmarkExport_ScrubCollisionMessageShowsTheDifference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	// "m" vs "m\r": distinct raw, collapse to the same published identity under the
+	// scrub, and differ ONLY in a rune stripTerminalControlRunes erases.
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m\r","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "the scrub collision must still be rejected: %s", out)
+	require.Contains(t, out, "distinct raw identities",
+		"precondition: this pair must reach the scrub-collision branch, not the malformed-duplicate one")
+
+	assert.Contains(t, out, `"m\r"`,
+		"the control rune that makes the two identities distinct must be VISIBLE (%q), not deleted — otherwise the message shows two identical names")
+	assert.Contains(t, out, `same published identity "m"/"brad"`,
+		"the message asserts a collided published identity, so it must show which one")
+}
+
+// The distinct-raw-identity discriminator is `prev.Model != c.Model || prev.Persona
+// != c.Persona`, and only the MODEL half was pinned: every existing collision case
+// varies the model, so mutating the condition down to `prev.Model != c.Model` left
+// the whole cli suite green while a persona-only collision silently fell through to
+// the malformed-duplicate wording. The persona arm is live — two rows sharing a raw
+// model and differing only in raw persona do collapse onto one published identity —
+// so it needs its own case or it can be deleted without a failure.
+func TestBenchmarkExport_ScrubCollisionOnPersonaAloneIsVersionSkewNotMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	// Identical raw model, distinct raw personas that scrub to the same value —
+	// the mirror image of the model-only cases above.
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m","persona":"brad ~x","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a persona-only scrub collision must still be rejected: %s", out)
+
+	assert.Contains(t, out, "distinct raw identities",
+		"a persona-only collision reaches the same branch as a model-only one; without this case the persona half of the discriminator can be deleted with the suite still green")
+	assert.Contains(t, out, `"brad ~x"`,
+		"the raw persona that differs must be named, exactly as the differing raw model is")
+	assert.NotContains(t, out, "this file is malformed",
+		"two DIFFERENT raw personas colliding under the scrub is version skew, not tampering")
 }
