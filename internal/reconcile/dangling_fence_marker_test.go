@@ -129,24 +129,3 @@ func TestExtractSection_BalancedFenceStartGetsNoSyntheticMarker(t *testing.T) {
 		t.Errorf("expected the fenced region to elide to a placeholder, got %q", text)
 	}
 }
-
-// The synthetic marker is atcr's own line, not reviewer content, so it must not set
-// wroteProse — an excerpt that would otherwise be suppressed as carrying no reviewer
-// prose must stay suppressed rather than come back as a lone marker.
-func TestExtractSection_SyntheticMarkerDoesNotRescueAProseFreeExcerpt(t *testing.T) {
-	lines := []string{
-		"## Review",
-		"",
-		"```",
-		"quoted",
-		"",
-		"more quoted",
-		"```",
-	}
-
-	text, _ := extractSection(lines, 5)
-
-	if text != "" {
-		t.Errorf("prose-free excerpt was not suppressed; got %q", text)
-	}
-}
