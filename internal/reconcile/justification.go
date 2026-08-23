@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -522,6 +523,16 @@ func extractSection(lines []string, idx int) (text, section string) {
 		end++
 	}
 	var b strings.Builder
+	// runesWritten tracks the budget in the unit the budget is DENOMINATED in.
+	// b.Len() is bytes; justificationMaxRunes is runes. Comparing the two made both
+	// the placeholder-fits guard and the growth check below trip early on non-ASCII
+	// reviewer prose — em-dashes and smart quotes, which atcr's own reviewers write
+	// constantly — dropping the placeholder AND breaking out of the walk, so the
+	// excerpt came in at a fraction of the documented budget with the post-fence
+	// conclusion discarded. The direction was conservative (bytes >= runes, so
+	// nothing was ever over-admitted), which is why it read as a shortfall rather
+	// than a corruption.
+	runesWritten := 0
 	wroteAny := false
 	// wroteProse tracks whether any NON-elided line reached the builder. An excerpt
 	// made of nothing but placeholders carries zero reviewer content, and the
@@ -555,13 +566,15 @@ func extractSection(lines []string, idx int) (text, section string) {
 				// reader, human or machine: it is indistinguishable from ordinary
 				// mid-word truncation and matches nothing. Stop before writing one that
 				// cannot fit whole, so the excerpt ends on prose plus the ellipsis.
-				if b.Len()+1+len(ElidedQuotePlaceholder) > justificationMaxRunes {
+				if runesWritten+1+utf8.RuneCountInString(ElidedQuotePlaceholder) > justificationMaxRunes {
 					break
 				}
 				if wroteAny {
 					b.WriteByte('\n')
+					runesWritten++
 				}
 				b.WriteString(ElidedQuotePlaceholder)
+				runesWritten += utf8.RuneCountInString(ElidedQuotePlaceholder)
 				wroteAny = true
 				inElidedFence = true
 			}
@@ -570,14 +583,17 @@ func extractSection(lines []string, idx int) (text, section string) {
 		inElidedFence = false
 		if wroteAny {
 			b.WriteByte('\n')
+			runesWritten++
 		}
-		b.WriteString(strings.TrimRight(lines[j], "\r"))
+		line := strings.TrimRight(lines[j], "\r")
+		b.WriteString(line)
+		runesWritten += utf8.RuneCountInString(line)
 		wroteAny = true
 		wroteProse = true
 		// Bound block growth: we only keep justificationMaxRunes runes, so stop
 		// accumulating once we are clearly over the limit. truncateRunes cleans up
 		// the exact boundary.
-		if b.Len() >= justificationMaxRunes {
+		if runesWritten >= justificationMaxRunes {
 			break
 		}
 	}
