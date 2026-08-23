@@ -299,12 +299,27 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	if probeMaxTokens != maxTokens {
 		disclaimer = " (not this probe's cap)"
 	}
+	// When BOTH conditions hold — the flag made the two caps differ AND the marker
+	// was absent — classify() had already produced the probe-specific remedy ("this
+	// probe was capped by your explicit --max-tokens; raise it to re-probe"), and
+	// returning only the text below replaced it wholesale. The two remedies are not
+	// in conflict; they name DIFFERENT knobs. "Do NOT raise the cap here" is about
+	// the declaration reserved out of the window, while the row's max_tokens column
+	// reads "N (flag)" — the cap the operator genuinely should raise to re-probe the
+	// marker. The disclaimer above attaches to the operand clause, not to the "Do NOT
+	// raise" sentence, so without this the probe remedy was unreachable under the
+	// flag and nothing on screen said the probe cap was still theirs to raise.
+	probeRemedy := ""
+	if probeMaxTokens != maxTokens && status == StatusOKWarning {
+		probeRemedy = fmt.Sprintf(" Separately, the marker check itself ran under your explicit --max-tokens (%d tokens): "+
+			"raise THAT to re-probe the marker — it caps this probe only, not the review budget above.", probeMaxTokens)
+	}
 	return StatusOKWarning, fmt.Sprintf(
 		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap `atcr review` will "+
 			"resolve for this agent%s and the fixed prompt overhead are reserved — review will ship "+
 			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
-			"cap here: it is reserved out of this same window. Remedy: %s",
-		lead, window, maxTokens, disclaimer, zeroBudgetRemedy), true
+			"cap here: it is reserved out of this same window. Remedy: %s%s",
+		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
 }
 
 // reviewDefaultMaxTokens is the cap `atcr review` applies to an agent that

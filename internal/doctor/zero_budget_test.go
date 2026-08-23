@@ -322,6 +322,15 @@ func TestRun_ZeroBudgetHintKeepsTheDisclaimerWhenTheCapsDiffer(t *testing.T) {
 
 	assert.Contains(t, rep.Agents[0].Hint, "not this probe's cap",
 		"here the hint's number really does disagree with the row's max_tokens column, and the operator must act on the hint's")
+
+	// The differing caps alone must NOT pull in the probe-specific "raise THAT to
+	// re-probe the marker" remedy. The marker was FOUND on this row (the fake
+	// returns it, so classify() returned StatusOK and wrote no remedy of its own),
+	// and telling an operator to re-probe a marker that is already there sends them
+	// after a problem they do not have. That remedy is gated on the INCOMING status
+	// being StatusOKWarning, and this is the case that pins the gate.
+	assert.NotContains(t, rep.Agents[0].Hint, "re-probe the marker",
+		"the marker was present here, so there is nothing to re-probe — the probe remedy belongs only to the marker-absent row")
 }
 
 // Both remedies apply on this row and only one survives. Under `atcr doctor
