@@ -641,7 +641,15 @@ func extractSection(lines []string, idx int) (text, section string) {
 	//     contains a blank line — would gain a ``` the document's elision just removed.
 	//
 	// It does NOT set wroteProse: it is atcr's own line, not reviewer content, so it
-	// must never rescue an excerpt the placeholder-only gate would suppress.
+	// must never rescue an excerpt the placeholder-only gate would suppress. That
+	// omission is DEFENCE IN DEPTH and is deliberately UNOBSERVABLE — it survives
+	// mutation, and no test can kill it. A block reaching this branch begins on a
+	// RELEASED line, released lines are not elided, so the loop writes prose on its
+	// very first iteration and wroteProse is true no matter what happens here. Keep
+	// the omission anyway: the coupling that makes it moot is a property of the
+	// released mask, not of this branch, and TestExtractSection_ReleasedTailAlways
+	// CarriesProseBesideTheMarker pins that coupling so a change to the mask surfaces
+	// as a failed test rather than as a lone "```" in a persisted field.
 	if strict[start] && !released[start] {
 		b.WriteString("```")
 		runesWritten += 3
