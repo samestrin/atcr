@@ -651,3 +651,48 @@ func TestBuildSlots_WarnsWhenAZeroAgentBudgetDropsThePlan(t *testing.T) {
 	assert.NotContains(t, out, "chunk_byte_budget",
 		"chunk_byte_budget is unset here — the warning must still not accuse it")
 }
+
+// Both scope-drop warnings live INSIDE the chunked branch's `if len(chunks) > 1`,
+// so the DEFAULT bulk path and the baseline (--all / --dir) path drop the operator's
+// scoping with no signal naming the loss. The per-agent cap that drops it runs once
+// per agent BEFORE the branch split, so the drop is common to all three paths while
+// only one of them reports it.
+//
+// A warning does always fire in this band (the zero-budget or AllDropped one), which
+// is what keeps this LOW rather than silent — but neither mentions the SCOPE
+// CONSTRAINT, so the operator reads an overflow/degradation notice and concludes
+// --sprint-plan was honoured.
+func TestBuildSlots_WarnsWhenTheBulkPathDropsThePlan(t *testing.T) {
+	const declared = 12289 // effectiveTokens 1 → agentBudget 3: positive, under 8
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	// DEFAULT strategy — no chunking, so neither existing warning site is reached.
+	cfg.Settings.ReviewStrategy = ""
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = 0
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, int64(3), agentBudget,
+		"precondition: in the drop band, so the per-agent cap funds no plan byte")
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: the block really is dropped on this path too")
+
+	assert.Contains(t, out, "SCOPE CONSTRAINT",
+		"the scoping loss must be reported on the bulk path, not only inside the chunked branch")
+	assert.Contains(t, out, "DROPPED",
+		"and say the block was dropped, not truncated")
+	assert.Contains(t, out, "greta",
+		"naming the agent whose scoping was dropped")
+}
