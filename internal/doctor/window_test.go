@@ -151,16 +151,27 @@ func TestRenderTable_ShowsTheProbedCapAlongsideTheWindow(t *testing.T) {
 		"and where it came from, so 'raise the declaration' is actionable")
 }
 
-// A row with no probed cap (the probe short-circuited) must not render a bare 0.
+// A row with no probed cap (the probe short-circuited) must not render a bare 0 —
+// and must not advertise review's cap either.
+//
+// The fixture leaves ReviewMaxTokens at its zero value no longer: Run ALWAYS assigns
+// it (run.go:189 floors at reviewDefaultMaxTokens, run.go:207 assigns
+// unconditionally), so a zero there models a state production cannot reach and the
+// NotContains below was guaranteed by the fixture rather than by the code. Pinned at
+// the value Run emits for a short-circuited probe, the assertion is about the cell an
+// operator actually sees for a missing_key row.
 func TestRenderTable_OmitsTheCapWhenNoCallWasPlaced(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, RenderTableError(&buf, &Report{Agents: []AgentResult{{
 		Agent: "bruce", Provider: "p", Model: "m", Status: StatusMissingKey,
 		ContextWindowTokens: 32768, WindowSource: "default",
+		ReviewMaxTokens: reviewDefaultMaxTokens, // what Run emits when the probe short-circuits
 	}}}))
 	line := buf.String()
 
 	assert.NotContains(t, line, "cap 0", "a probe that never ran has no cap to report")
+	assert.NotContains(t, line, "review cap",
+		"no call was placed, so the only cap left in the cell would be one that was never applied — and a reader who knows the documented `<window> / cap N (tier)` shape reads that two-part form as the cap the probe used")
 	assert.Contains(t, line, "32768", "the window is still rendered")
 }
 
