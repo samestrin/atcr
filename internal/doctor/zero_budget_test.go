@@ -323,3 +323,46 @@ func TestRun_ZeroBudgetHintKeepsTheDisclaimerWhenTheCapsDiffer(t *testing.T) {
 	assert.Contains(t, rep.Agents[0].Hint, "not this probe's cap",
 		"here the hint's number really does disagree with the row's max_tokens column, and the operator must act on the hint's")
 }
+
+// Both remedies apply on this row and only one survives. Under `atcr doctor
+// --max-tokens N` against an agent whose OWN declaration closes review's budget,
+// classify() has already produced the flag-specific remedy — "this probe was capped
+// by your explicit --max-tokens; raise it to re-probe" — and Run then replaces
+// status AND hint wholesale with the zero-budget text, which ends "Do NOT raise the
+// cap here: it is reserved out of this same window".
+//
+// The two sentences are about DIFFERENT knobs. "the cap here" is the declaration
+// reserved out of the window; the max_tokens column on that same row reads "N
+// (flag)", the cap the operator genuinely should raise to re-probe the marker. The
+// "(not this probe's cap)" disclaimer attaches to the operand clause, not to the "Do
+// NOT raise" sentence, so nothing on screen tells the operator the probe cap is
+// still theirs to raise. The probe-specific remedy is simply unreachable under the
+// flag.
+func TestRun_ZeroBudgetHintKeepsTheProbeRemedyWhenTheMarkerWasAlsoAbsent(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m", ContextWindowTokens: &tiny}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+
+	// No marker: classify() returns StatusOKWarning carrying the flag-specific remedy.
+	fake := newFake(func(inv llmclient.Invocation) (string, error) { return "no marker here", nil })
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 111, MaxTokensSet: true})
+
+	require.Len(t, rep.Agents, 1)
+	require.NotEqual(t, rep.Agents[0].ReviewMaxTokens, rep.Agents[0].MaxTokens,
+		"precondition: the flag makes the probe's cap differ from review's")
+	require.Equal(t, StatusOKWarning, rep.Agents[0].Status, "precondition: the zero-budget verdict fires")
+
+	hint := rep.Agents[0].Hint
+	assert.Contains(t, hint, "marker was absent",
+		"precondition: this is the row where BOTH the marker-absent and the zero-budget conditions hold")
+	assert.Contains(t, hint, "--max-tokens",
+		"the probe cap is the operator's own flag and re-probing the marker means raising it — that remedy must not be dropped just because a second one applies")
+	assert.Contains(t, hint, "111",
+		"and it must name the cap that actually capped this probe, which is the number in the row's max_tokens column")
+}
