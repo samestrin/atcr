@@ -605,3 +605,49 @@ func TestBuildSlots_WarnsWhenTheAgentsOwnBudgetCannotFundOnePlanByte(t *testing.
 	assert.NotContains(t, out, "chunk_byte_budget",
 		"chunk_byte_budget is unset here — the warning must still not accuse it")
 }
+
+// The same hole, one band lower. The two-arm switch has NO default, so enumerating
+// its guards at agentBudget == 0: arm A (chunk_byte_budget > 0 && < agentBudget) is
+// false because nothing is < 0, and arm B (agentBudget > 0) is false. The block is
+// dropped — chunkPlanBudget/8 floors to 0 — and NOTHING is printed about it. The
+// switch's own comment claims "that state has its own warning on the chunkAction arm
+// above", but that warning speaks only of the input budget and the chunking floor;
+// it never mentions the SCOPE CONSTRAINT. A compensating warning that carries
+// different information is not a compensating warning: the operator asked for
+// scoping, got none, and every reviewer in the run reviews unscoped with no signal
+// naming the loss.
+func TestBuildSlots_WarnsWhenAZeroAgentBudgetDropsThePlan(t *testing.T) {
+	const declared = 12288 // effectiveTokens 0 → agentBudget 0, the arm neither case covers
+	const planBytes = 64 * 1024
+
+	cfg := declaredWindowRoster(t, declared)
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.ReviewStrategy = "chunked"
+	cfg.Settings.PayloadByteBudget = 512 * 1024
+	cfg.Settings.ChunkByteBudget = 0 // unset: nothing can be < 0, so arm A cannot fire
+	cfg.Settings.MaxSprintPlanBytes = planBytes
+
+	agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
+	require.Equal(t, int64(0), agentBudget,
+		"precondition: exactly 0 — below the sibling test's 1..7 band, so neither existing arm's guard holds")
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		require.NoError(t, err)
+	})
+
+	require.NotEmpty(t, slots)
+	require.NotContains(t, slots[0].Primary.Prompt, "SCOPE CONSTRAINT",
+		"precondition: the block really is dropped here")
+
+	assert.Contains(t, out, "SCOPE CONSTRAINT",
+		"the zero-budget warning names the input budget and the chunking floor but never the scoping loss — a drop of the operator's --sprint-plan must be reported in its own words")
+	assert.Contains(t, out, "greta",
+		"the warning must name the agent whose scoping was dropped")
+	assert.Contains(t, out, "DROPPED",
+		"and say the block was dropped, not truncated")
+	assert.NotContains(t, out, "chunk_byte_budget",
+		"chunk_byte_budget is unset here — the warning must still not accuse it")
+}
