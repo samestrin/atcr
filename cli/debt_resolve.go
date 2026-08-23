@@ -29,13 +29,39 @@ import (
 // content, which the old `!= ""` guard accepted as a permanent dismissal's entire
 // audit trail. Reviewer prose anywhere beside a placeholder still qualifies; the
 // placeholder is only ever discounted, never treated as disqualifying.
+//
+// The placeholder is only HALF the quote problem, because extractSection elides only
+// a TERMINATED fence. A DANGLING opener's marker deliberately stays and its whole
+// quoted tail is released as prose (justification.go:519-520), so that excerpt is
+// 100% tool-visible quoted example text carrying no more reviewer reasoning than a
+// placeholder does. Fence markers and fenced content are therefore discounted on the
+// same terms: whether a permanent dismissal is auditable must not depend on whether
+// the reviewing model remembered to close its fence.
 func isRecordedRationale(justification string) bool {
+	inFence := false
 	for _, line := range strings.Split(justification, "\n") {
+		// Mirrors reconcile's isFenceMarker (justification.go:702) — the producer of
+		// the text being read. An unterminated opener leaves inFence set for the rest
+		// of the excerpt, which is exactly the released tail that must not count.
+		if isFenceMarkerLine(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if line = strings.TrimSpace(line); line != "" && line != reconcile.ElidedQuotePlaceholder {
 			return true
 		}
 	}
 	return false
+}
+
+// isFenceMarkerLine reports whether a justification line is a Markdown code-fence
+// marker, matching reconcile.extractSection's own isFenceMarker so the reader of an
+// excerpt agrees with its writer about where the quotes are.
+func isFenceMarkerLine(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
 }
 
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
