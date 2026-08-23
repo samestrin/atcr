@@ -108,20 +108,32 @@ func stampJustifications(jf []JSONFinding, reviewDir string) {
 	// that mention its file, instead of every line of every narrative (the
 	// pre-18.2 hot path was O(findings x narrativeBytes)).
 	index := buildAnchorIndex(narratives)
-	matched := 0
+	matched, elided := 0, 0
 	for i := range jf {
 		m, out := matchNarrative(narratives, index, jf[i].File, jf[i].Line, jf[i].Reviewers)
 		if !out.ok() {
+			if out == matchAllElided {
+				elided++
+			}
 			continue
 		}
 		jf[i].Justification = m.text
 		jf[i].SourceReport = &SourceReport{Path: m.relPath, Line: m.line, Section: m.section}
 		matched++
 	}
-	if matched == 0 {
-		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "note", "review.md narratives exist but matched zero findings; possible format drift")
-	} else {
+	switch {
+	case matched > 0:
 		slog.Debug("justifications stamped", "matched", matched, "total", len(jf))
+	case elided > 0:
+		// Anchors matched; every candidate section was pure quoted example. Naming
+		// this "possible format drift" sent an operator hunting for a parser problem
+		// that is not there — the parser worked, the reviewer fenced its findings.
+		// Report the elided count even when it is not the whole shortfall: it is the
+		// part with an explanation, and the remainder is the drift case below.
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "elided", elided,
+			"note", "findings matched an anchor whose section was entirely quoted; extractSection suppresses those, so this is not format drift")
+	default:
+		slog.Warn("justifications stamped", "matched", matched, "total", len(jf), "note", "review.md narratives exist but matched zero findings; possible format drift")
 	}
 }
 
@@ -311,10 +323,10 @@ func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string
 			section: section,
 		}, matchFound
 	}
-	// RED stub: candidates ranked but every section extracted empty. Reported as
-	// matchNoAnchor here so the outcome type compiles under `go vet` while still
-	// giving the wrong answer; the GREEN commit returns matchAllElided.
-	return narrativeMatch{}, matchNoAnchor
+	// Candidates ranked, but every one of their sections extracted empty — each sat
+	// inside a fenced quote, which extractSection suppresses by design. The anchors
+	// themselves were fine, so this is emphatically NOT the format-drift case.
+	return narrativeMatch{}, matchAllElided
 }
 
 // matchOutcome reports why matchNarrative did or did not produce a match. It replaces
