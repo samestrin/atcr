@@ -509,12 +509,23 @@ func TestExtractSection_SectionResolvesToAHeadingInsideADanglingFenceTail(t *tes
 // lines in it. These cases cover one per disjunct plus both block boundaries, and
 // the empty fence — the shape neither disjunct reaches, because neither of its
 // markers has a masked neighbour.
-func TestExtractSection_NoFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
+//
+// TERMINATED is the operative word, and the old name ("NoFenceMarkerSurvives")
+// claimed a universal the code deliberately does not satisfy: a DANGLING opener is
+// in no pair, so justification.go:519-520 keeps its marker on purpose — it is the
+// only sign a quote was opened at all, and its tail is released as prose. Naming
+// the universal read to a maintainer as a guarantee that the last case below
+// disproves. Pin the real invariant plus its exception, so neither can drift.
+func TestExtractSection_NoTerminatedFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
 	cases := []struct {
 		name string
 		doc  []string
 		idx  int
 		want string // a fragment of reviewer prose that must survive
+		// markerSurvives inverts the marker assertion for the one shape whose marker
+		// is kept by design. Carried in the table rather than split into a second
+		// test so the exception sits beside the rule it qualifies.
+		markerSurvives bool
 	}{
 		{
 			// Opener above masked content (disjunct 1) and closer below it
@@ -549,6 +560,18 @@ func TestExtractSection_NoFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
 			idx:  2,
 			want: "the finding narrative",
 		},
+		{
+			// A DANGLING opener — the exception. It is half of no pair, so balanced
+			// is false for it and its tail is RELEASED rather than masked: the
+			// elision cannot claim it, and the marker is emitted as prose. That is
+			// deliberate (justification.go:519-520) and is why this test asserts the
+			// TERMINATED invariant rather than a universal one.
+			name:           "dangling opener",
+			doc:            []string{"## Findings", "- the finding narrative", "```", "the tail, released as prose"},
+			idx:            1,
+			want:           "the finding narrative",
+			markerSurvives: true,
+		},
 	}
 
 	for _, c := range cases {
@@ -556,6 +579,11 @@ func TestExtractSection_NoFenceMarkerSurvivesIntoTheExcerpt(t *testing.T) {
 			text, _ := extractSection(c.doc, c.idx)
 
 			assert.Contains(t, text, c.want, "precondition: the reviewer's prose must survive")
+			if c.markerSurvives {
+				assert.Contains(t, text, "```",
+					"a dangling opener's marker is kept by design — it is the only sign a quote was opened, and no reader could otherwise tell the tail is quoted")
+				return
+			}
 			assert.NotContains(t, text, "```",
 				"a fence marker rendered as reviewer prose is indistinguishable from the reviewer typing backticks, and the value is persisted append-only")
 		})
