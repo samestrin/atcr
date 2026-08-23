@@ -382,7 +382,7 @@ offered?", which no other field reveals — a reviewer that invents its own word
 quietly zeroes its own recall, and the low score is indistinguishable from one that
 simply found less. Five details matter when reading it:
 
-- A run is guarded against a **ceiling of `0.05`**, and the ceiling is **exclusive** —
+- A run is guarded against a **ceiling of `0.05`**, and the ceiling is **inclusive** —
   a run sitting exactly on `0.05` trips the guard. Unlike the `0.20` it replaced, this
   number is **derived from measurement**: the V1 post-merge validation run measured
   `0.0100` (2 drifted findings of 201), and `0.05` keeps five times that headroom.
@@ -464,11 +464,24 @@ Behavior:
   manifest: a mismatched `suite`/`suite_version`, a missing denominator, or a case
   list that differs from the manifest's in either direction → error. Without it the
   gate can only prove internal consistency.
-- A malformed coverage payload → error: a duplicate `(model, persona)` identity, a
-  reviewer row with no coverage row, a `runs` that disagrees with the row's covered
-  case count, a repeated case id within a row, or a case id absent from the suite.
-  None of these are producible by `atcr benchmark run`, so each means the file was
-  assembled by hand.
+- A malformed coverage payload → error: a reviewer row with no coverage row, a `runs`
+  that disagrees with the row's covered case count, a repeated case id within a row,
+  or a case id absent from the suite. None of these are producible by
+  `atcr benchmark run`, so each means the file was assembled by hand.
+- A duplicate `(model, persona)` identity → error, with two distinguishable causes:
+  - Two rows carrying the **identical raw identity** are malformed outright — a
+    reviewer identity has exactly one covered case set, so this is hand-assembly.
+  - Two rows carrying **distinct raw identities that scrub to the same published
+    identity** are hand-assembly *or* version skew, and the gate cannot tell which.
+    The publication scrub iterates to a fixed point, so it collapses strictly more
+    distinct raw values than the single-pass scrub an **older** `atcr`'s collision
+    check ran under — a run-result that older `atcr` wrote correctly can fail here for
+    that reason alone. This version's producer applies the same fixed point, so it
+    rejects a genuine identity collision itself and can no longer emit such a file.
+    Remedy: rename the ids so they stay distinct after scrubbing; re-running
+    `atcr benchmark run` helps only for a hand-assembled file, since a real collision
+    is refused by the run before any run-result is written. The rejection stands
+    either way: two rows cannot share one published identity on the board.
 - A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
   for publication** → error. The scrub is what the submission actually carries, so an
   identity that survives the file but not the scrub would publish as `""`. It removes

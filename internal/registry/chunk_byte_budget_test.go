@@ -113,6 +113,16 @@ func TestDefaultProjectConfigYAML_DocumentsChunkByteBudget(t *testing.T) {
 	assert.Contains(t, out, "--all/--dir",
 		"...and name the invocations it does not govern")
 
+	// The sprint-plan caveat. The key silently became a second input to the plan
+	// cap: the plan is funded at budget/8, and on a chunked run that budget is
+	// min(agent budget, chunk_byte_budget) — so uncommenting the 65536 this very
+	// block suggests shrinks an injected plan 8x. Only a total DROP is warned about
+	// at run time, so the generated config is where an operator can learn it.
+	assert.Contains(t, out, "--sprint-plan",
+		"the comment must say the key also caps the injected sprint plan")
+	assert.Contains(t, out, "one eighth",
+		"...and name the fraction that makes the 65536 example an 8x shrink")
+
 	// Commented out by default: an emitted value would freeze the inheritance the
 	// answer chose, so a later change to payload_byte_budget would stop reaching
 	// chunk sizing for every config generated before that change.

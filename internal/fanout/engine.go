@@ -144,14 +144,31 @@ type Agent struct {
 	// invokeAgent so status.json/summary.json can report why the payload was sized
 	// as it was. A fallback carries its OWN re-derived budget/window. All zero on a
 	// bare/direct-constructed Agent, so unsized paths stay byte-identical (omitempty
-	// downstream). EffectiveBudget is the PAYLOAD-TIER input byte budget the payload
-	// was shed to — on the chunked path it is NOT the size any individual chunk was
-	// cut to, because the per-chunk line budget is separately clamped by
+	// downstream). EffectiveBudget is the input byte budget the payload was shed
+	// to: the PAYLOAD-TIER budget — the agent's own EffectiveByteBudget, capped by
+	// payload_byte_budget — LESS the SCOPE CONSTRAINT block the prompt actually
+	// carries. WHICH block that is depends on the path, so a consumer normalizing
+	// two agents must read the path off the record before applying a formula:
+	//
+	//   review_strategy: chunked, multi-chunk DIFF — the CHUNK-TIER block
+	//     (chunkScopeConstraint, capped against min(agent budget,
+	//     chunk_byte_budget)), so the two operands deliberately sit at different
+	//     tiers. The budget operand stays payload-tier because switching it to
+	//     chunkPlanBudget would misreport the global shed (review.go's chunked
+	//     sizing record explains).
+	//   BASELINE multi-chunk (--all / --dir) and BULK — the PAYLOAD-TIER block
+	//     (agentScopeConstraint, capped against the agent budget). chunk_byte_budget
+	//     is not consulted on a baseline scan at all, so a reader who sees
+	//     ChunkTotal > 1 must NOT assume the chunk-tier formula above: baseline
+	//     records also carry ChunkTotal > 1.
+	//
+	// On EITHER path EffectiveBudget is NOT the size any individual chunk was cut
+	// to, because the per-chunk line budget is separately clamped by
 	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
 	// below payload_byte_budget (the two are equal only when chunk_byte_budget is
 	// unset and inherits it). Read it as "what the whole payload was shed to", which
 	// is the quantity that decides which files were DROPPED, and read
-	// chunk_byte_budget for the chunk regime; ResolvedWindow the model's context
+	// chunk_byte_budget for the chunk regime. ResolvedWindow is the model's context
 	// window (tokens);
 	// ReservedOutputTokens the output cap held back — the RESOLVED per-agent value
 	// (resolveMaxTokens: --max-tokens -> the agent's max_tokens -> defaultMaxTokens),

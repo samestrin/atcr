@@ -7,6 +7,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/doctor"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -28,7 +29,9 @@ func newDoctorCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDoctor,
 	}
-	// 8192, matching the review fan-out's own defaultMaxTokens. A probe is only
+	// payload.DefaultOutputTokens, matching the review fan-out's own
+	// defaultMaxTokens (both reference the same constant, so they cannot drift).
+	// A probe is only
 	// evidence about the invocation it reproduces, and for an agent that declares no
 	// max_tokens the invocation `atcr review` makes is capped at 8192 - so a probe at
 	// the old 2048 reproduced a call review never makes, at a quarter the output
@@ -36,7 +39,7 @@ func newDoctorCmd() *cobra.Command {
 	// produced ok_warning on agents review runs fine, and the documented remedy (raise
 	// the declaration) could make things worse: the cap is reserved out of the context
 	// window, so raising it on a proxy-alias model can collapse the input budget to 0.
-	cmd.Flags().Int("max-tokens", 8192, "completion budget per self-test call; matches the review fan-out's default so an undeclared agent is probed at the cap review will use")
+	cmd.Flags().Int("max-tokens", payload.DefaultOutputTokens, "completion budget per self-test call; matches the review fan-out's default so an undeclared agent is probed at the cap review will use")
 	cmd.Flags().Int("timeout", 60, "per-call timeout in seconds")
 	cmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout instead of the table")
 	cmd.Flags().StringSlice("agents", nil, "subset of listed agents to test (comma-separated or repeated; default: all)")

@@ -439,6 +439,18 @@ type AgentStatus struct {
 	// promoted anything, so a re-packing chunk 0 cannot under-report it. The
 	// per-chunk re-fit is visible on the merged record through the promoted
 	// truncation, degradation_action, and effective_budget instead.
+	//
+	// EffectiveBudget's formula: the PAYLOAD-TIER budget (the agent's own
+	// EffectiveByteBudget, capped by payload_byte_budget) less the SCOPE CONSTRAINT
+	// block the prompt actually carries. The RESERVATION's tier follows the path,
+	// so this formula is not one formula: on the review_strategy: chunked DIFF path
+	// the block is the CHUNK-tier one, capped against min(agent budget,
+	// chunk_byte_budget), and the operands deliberately mix tiers; on the BASELINE
+	// (--all / --dir) and bulk paths it is the payload-tier block, and they do not.
+	// A baseline record also publishes chunk_count > 1, so chunk_count alone does
+	// NOT identify the chunk-tier form — read review_strategy. The budget operand
+	// must stay payload-tier on every path: switching it to the chunk ceiling would
+	// misreport the global shed.
 	EffectiveBudget      int64 `json:"effective_budget,omitempty"`
 	ResolvedWindow       int   `json:"resolved_window,omitempty"`
 	ReservedOutputTokens int   `json:"reserved_output_tokens,omitempty"`

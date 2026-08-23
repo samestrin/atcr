@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // openRec builds an open (no-status) local-debt record with a stable id, mirroring
@@ -1383,4 +1384,82 @@ func TestCollectDebtIDRecords_RetainsRawRecordsForWantedIDsOnly(t *testing.T) {
 	retained, err = collectDebtIDRecords(dir, nil, localdebt.ReadOpts{})
 	require.NoError(t, err)
 	assert.Empty(t, retained, "no wanted ids is a no-op, not a full scan")
+}
+
+// The wontfix guard accepts ANY non-empty Justification as the recorded rationale
+// for a permanent, backlog-suppressing dismissal. A justification consisting only of
+// atcr's own elision placeholder is 23 bytes of TOOL-generated text carrying zero
+// reviewer content — the reconcile enrichment path could produce exactly that from a
+// finding anchored inside a fenced quote. Accepting it appends a terminal wontfix
+// whose entire audit trail is a marker meaning "a quote was dropped here", and
+// localdebt preserves that record through compaction on the stated grounds that it
+// holds human-typed --reason text which exists nowhere else in the tree.
+func TestDebtResolve_WontfixRejectsAPlaceholderOnlyJustification(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = reconcile.ElidedQuotePlaceholder
+	rec.StampID()
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix")
+	require.Error(t, err, "a justification made only of elision placeholders is not a recorded rationale")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// Repeated placeholders (a multi-fence excerpt) are the same nothing.
+	rec2 := openRec("2026-07-01T10:00:00Z-b", "HIGH", "internal/x/b.go", 12, "boom")
+	rec2.Justification = reconcile.ElidedQuotePlaceholder + "\n" + reconcile.ElidedQuotePlaceholder
+	rec2.StampID()
+	dir2 := writeDebtStore(t, rec2)
+
+	_, err = runDebt(t, "resolve", "--dir", dir2, rec2.ID, "--status", "wontfix")
+	require.Error(t, err, "more placeholders is not more rationale")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// A justification with real prose beside a placeholder still counts.
+	rec3 := openRec("2026-07-01T10:00:00Z-c", "HIGH", "internal/x/c.go", 12, "boom")
+	rec3.Justification = "the reviewer's actual reasoning\n" + reconcile.ElidedQuotePlaceholder
+	rec3.StampID()
+	dir3 := writeDebtStore(t, rec3)
+
+	_, err = runDebt(t, "resolve", "--dir", dir3, rec3.ID, "--status", "wontfix")
+	require.NoError(t, err, "an excerpt carrying real reviewer prose is still a rationale")
+}
+
+// The placeholder guard closes only the ELIDED half of the quote problem. Its
+// sibling was created by the same commit series: extractSection deliberately does
+// NOT elide a DANGLING fence — an unterminated opener's marker "stays", and its
+// whole quoted tail is released as prose (justification.go:519-520) — so a
+// reconcile-produced justification can be 100% tool-visible quoted example text and
+// still contain no reviewer reasoning at all. Whether a permanent, backlog-
+// suppressing dismissal is auditable must not depend on whether the reviewing model
+// remembered to close its fence.
+func TestDebtResolve_WontfixRejectsADanglingFenceOnlyJustification(t *testing.T) {
+	// A bare opener: the entire audit trail is a fence marker.
+	rec := openRec("2026-07-02T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	rec.Justification = "```"
+	rec.StampID()
+	dir := writeDebtStore(t, rec)
+
+	_, err := runDebt(t, "resolve", "--dir", dir, rec.ID, "--status", "wontfix")
+	require.Error(t, err, "a lone fence marker is not a recorded rationale")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// An opener plus its released tail: quoted example text, verbatim.
+	rec2 := openRec("2026-07-02T10:00:00Z-b", "HIGH", "internal/x/b.go", 12, "boom")
+	rec2.Justification = "```\nsee a.go:42 in the quoted example"
+	rec2.StampID()
+	dir2 := writeDebtStore(t, rec2)
+
+	_, err = runDebt(t, "resolve", "--dir", dir2, rec2.ID, "--status", "wontfix")
+	require.Error(t, err, "an unterminated fence's tail is quoted example text, not the reviewer's reasoning")
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// Prose OUTSIDE the fence still qualifies — the fence is discounted, never
+	// disqualifying, exactly as the placeholder is.
+	rec3 := openRec("2026-07-02T10:00:00Z-c", "HIGH", "internal/x/c.go", 12, "boom")
+	rec3.Justification = "the handler never verifies the token\n```\nquoted example"
+	rec3.StampID()
+	dir3 := writeDebtStore(t, rec3)
+
+	_, err = runDebt(t, "resolve", "--dir", dir3, rec3.ID, "--status", "wontfix")
+	require.NoError(t, err, "reviewer prose beside a quote is still a rationale")
 }

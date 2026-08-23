@@ -21,6 +21,75 @@ func coverageKey(model, persona string) reviewerKey {
 	return reviewerKey{model: s.Model, persona: s.Persona}
 }
 
+// duplicateIdentityError is the ONE duplicate-identity rejection the coverage and
+// reviewer arrays share, so the two cannot answer the same condition differently.
+// `what` is the object phrase ("coverage for" / "reviewer"); `key` is the published
+// identity the two rows collided on; prev* are the previously-seen row's RAW identity
+// (kept by the caller precisely so this branch can name the collision partner), cur*
+// the current row's raw identity, and model/persona the current row's STRIPPED values,
+// computed once per row for the caller's other diagnostics.
+//
+// Two IDENTICAL raw rows are malformed outright. Two DIFFERENT raw identities
+// colliding on one published identity are not NECESSARILY tampering, and flatly
+// saying "malformed" would send the operator hunting for it: scrubField iterates to
+// a fixed point (scorecard/export.go), so strictly more distinct raw values collapse
+// to one published identity than when the PRODUCER's own collision check ran
+// (cli/benchmark_run.go) under single-pass scrubbing — a run-result written by an
+// earlier atcr can therefore have been well-formed when written and fail here purely
+// on version skew.
+//
+// The message names that possibility WITHOUT ranking it, because this branch cannot
+// tell it from hand-assembly. The discriminator is only "these are two different raw
+// strings", which both causes satisfy. The two sharper tests that suggest themselves
+// do not work: "stable under one pass but not under the fixed point" is the EMPTY
+// SET (scrubField halts the moment one pass is stable), and "a single pass still
+// rewrites it" is not evidence of hand-assembly either, since a pre-fixed-point
+// producer emitted exactly such values — benchmark_run.go records
+// "bedrock@us-east-1/claude" scrubbing once to "/claude" and twice to "". Separating
+// the causes needs image-membership under scrubOnce, which a seven-regex sequential
+// pipeline does not invert cheaply, and the blast radius here (two path- or
+// email-shaped ids colliding) does not justify building it.
+//
+// The rejection stands either way: two rows cannot share one published identity on
+// the board, whatever wrote them.
+func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevPersona, curModel, curPersona, model, persona string) error {
+	if prevModel != curModel || prevPersona != curPersona {
+		// %q on BOTH raw halves, NOT stripTerminalControlRunes — the same rule
+		// anchorSuiteDenominator states at length for the suite-identity gate, and for
+		// the same reason. This message's entire job is to show a DIFFERENCE, and
+		// stripping sanitizes by deletion: unicode.IsControl covers \r, \n and \t,
+		// which are exactly the runes scrubOnce collapses via strings.Fields, so the
+		// pair that most naturally reaches this branch ("m" vs "m\r") rendered as two
+		// copies of one name. The operator was shown identical text, told the two
+		// differ, and told to rename one — an instruction unfollowable from what is
+		// displayed. %q gives the same terminal safety (a control rune becomes a
+		// visible escape) while keeping the difference legible.
+		//
+		// The published identity is named too. The message asserts the two collapsed
+		// onto one value; without showing it, the operator cannot tell which of the two
+		// names survived the scrub, and that is the name they have to rename away from.
+		// Remedy ORDER is load-bearing. Re-running was listed first, and for the
+		// version-skew cause the same sentence names it provably cannot work: the
+		// producer's own collision check (benchmark_run.go:267-273) uses the same
+		// fixed-point ScrubPublicRecord this key does, and scrubField(scrubOnce(x))
+		// has the same fixed point as scrubField(x) — so a file that collides at
+		// export implies the raw ids collide at fixed point too, which means
+		// buildRunResult refuses and writes no run-result at all. Worse, that check
+		// runs AFTER every case has executed, so the suggested remedy costs a full
+		// panel run and then fails with a second collision error. Renaming is the
+		// remedy that terminates, so it leads.
+		return fmt.Errorf("run-result %s records %s %q/%q and %q/%q, which are distinct raw identities "+
+			"that scrub to the same published identity %q/%q; this file was either written by an older atcr under an "+
+			"earlier, single-pass privacy scrub (version skew) or hand-assembled. Rename the model/persona ids so "+
+			"they stay distinct after scrubbing; re-running `atcr benchmark run` helps only if the file was "+
+			"hand-assembled, since this version's producer rejects a genuine identity collision itself",
+			path, what, prevModel, prevPersona, curModel, curPersona, key.model, key.persona)
+	}
+	return fmt.Errorf("run-result %s records %s %s/%s more than once; "+
+		"a reviewer identity has exactly one covered case set, so this file is malformed",
+		path, what, model, persona)
+}
+
 // maxNamedMissingCases caps how many missing case ids the shortfall message spells
 // out per row. The message exists to make the shortfall ACTIONABLE, and a row short
 // by fifty cases is diagnosed by the first few plus the count; printing all of them
@@ -131,10 +200,8 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// means the file was hand-assembled — and last-write-wins would let a full
 		// row mask a short one carrying the same identity, which is the cheapest
 		// possible way to walk a partial run past this gate.
-		if _, dup := byIdentity[key]; dup {
-			return fmt.Errorf("run-result %s records coverage for %s/%s more than once; "+
-				"a reviewer identity has exactly one covered case set, so this file is malformed",
-				path, model, persona)
+		if prev, dup := byIdentity[key]; dup {
+			return duplicateIdentityError(path, "coverage for", key, prev.Model, prev.Persona, c.Model, c.Persona, model, persona)
 		}
 		// The outcomes tally is untrusted input here, exactly like
 		// out_of_vocabulary_rate at the load boundary: the producer writes one
@@ -160,7 +227,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 
 	var short []string
-	consumed := make(map[reviewerKey]bool, len(rr.Reviewers))
+	consumed := make(map[reviewerKey]scorecard.PublicRecord, len(rr.Reviewers))
 	for _, rev := range rr.Reviewers {
 		key := coverageKey(rev.Model, rev.Persona)
 		// Stripped once per row, for the same reason as the coverage loop above: the
@@ -170,14 +237,14 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		// array above: two identical reviewer rows both join the single coverage row
 		// and both publish, putting two different metric sets on the board under one
 		// identity. The rejection rationale — a reviewer identity has exactly one
-		// covered case set — applies verbatim here. The consumed set doubles as the
-		// seen set: every joined identity is recorded exactly once.
-		if consumed[key] {
-			return fmt.Errorf("run-result %s records reviewer %s/%s more than once; "+
-				"a reviewer identity has exactly one covered case set, so this file is malformed",
-				path, model, persona)
+		// covered case set — applies verbatim here, and the previously-seen row is
+		// kept so a scrub collision can name BOTH raw identities, like the coverage
+		// branch does. The consumed set doubles as the seen set: every joined
+		// identity is recorded exactly once.
+		if prev, dup := consumed[key]; dup {
+			return duplicateIdentityError(path, "reviewer", key, prev.Model, prev.Persona, rev.Model, rev.Persona, model, persona)
 		}
-		consumed[key] = true
+		consumed[key] = rev
 		cov, ok := byIdentity[key]
 		if !ok {
 			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", model, persona))
@@ -234,7 +301,7 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	// diagnostics below means every later message can trust the join.
 	for _, c := range rr.Coverage {
 		key := coverageKey(c.Model, c.Persona)
-		if !consumed[key] {
+		if _, ok := consumed[key]; !ok {
 			return fmt.Errorf("run-result %s records coverage for %s/%s with no matching reviewer row; "+
 				"the producer writes the two arrays from the same accumulator, so this file is malformed",
 				path, stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))

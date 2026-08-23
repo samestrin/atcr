@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -237,4 +238,49 @@ func TestPrepareResume_RecoversScopeFromArtifact(t *testing.T) {
 			"resumed slot must recover the scope constraint from the artifact")
 		require.Contains(t, s.Primary.Prompt, "only auth changes")
 	}
+}
+
+// The artifact is written from a SECOND, uncapped resolveScopeConstraint call,
+// independent of the run-level cap buildSlots applies to the block it actually
+// ships — so "the on-disk artifact reflects what each reviewer received" is false
+// exactly where the run-level cap does any work. With payload_byte_budget set, the
+// plan body every reviewer receives is capped to budget/8 (the sibling test above
+// pins that on the prompt), while the artifact keeps the full untruncated plan.
+//
+// Asserted as a relation to the shipped prompt, not against a literal, so the two
+// cannot drift apart in either direction.
+func TestPrepareReviewFromDiff_ConstraintArtifactMatchesWhatShipped(t *testing.T) {
+	const budget int64 = 4096
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = budget
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath,
+		bytes.Repeat([]byte("x"), int(registry.DefaultMaxSprintPlanBytes)+1000), 0o644))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	data, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "scope-constraint.txt"))
+	require.NoError(t, err, "a scoped review still writes the artifact")
+
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	planBody := func(s string) string {
+		start := strings.Index(s, beginMark)
+		end := strings.Index(s, endMark)
+		require.GreaterOrEqual(t, start, 0)
+		require.GreaterOrEqual(t, end, 0)
+		return s[start+len(beginMark) : end]
+	}
+
+	shipped := planBody(prep.Slots[0].Primary.Prompt)
+	require.LessOrEqual(t, len(shipped), int(budget/8),
+		"precondition: the run-level cap really did truncate what the reviewers received")
+
+	assert.Equal(t, shipped, planBody(string(data)),
+		"the artifact documents what each reviewer received, so it must carry the block that was actually sent — not the uncapped one no reviewer saw")
 }

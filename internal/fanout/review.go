@@ -506,8 +506,27 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// each reviewer received. resolveScopeConstraint is called again here
 	// (second read) rather than threading the result through the function
 	// signature of finalizePreparedReview.
+	//
+	// That second read is UNCAPPED, so it must be put through the same RUN-LEVEL cap
+	// buildSlots applies before the block is shipped — otherwise the artifact
+	// documents a plan body no reviewer received. capScopeConstraintForBudget is a
+	// pure function of the block and two settings, so re-applying it here is
+	// byte-identical to buildSlots' result rather than a second, drifting policy.
+	// A budget too small to fund one plan byte drops the block entirely; writing no
+	// file is the honest encoding and the one the resume path already reads
+	// correctly (readScopeConstraintArtifact maps a missing file to "", so the
+	// resume proceeds unscoped, matching the original run). The drop itself is
+	// reported on stderr by buildSlots, so it is not silent.
+	//
+	// Only the run-level cap is reproducible here. The per-agent and chunk-tier caps
+	// can shrink the block further for INDIVIDUAL agents, which one run-level
+	// artifact cannot express either way.
 	if req.SprintPlanPath != "" {
-		if sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes); sc != "" {
+		sc, _ := resolveScopeConstraint(req, cfg.Settings.MaxSprintPlanBytes)
+		if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(sc) > 0 {
+			sc = capScopeConstraintForBudget(sc, budget, cfg.Settings.MaxSprintPlanBytes)
+		}
+		if sc != "" {
 			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
 				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
 			}
@@ -1373,6 +1392,57 @@ func capScopeConstraintPlan(block string, maxPlanBytes int) string {
 	return block[:cut] + block[planEnd:]
 }
 
+// capScopeConstraintForBudget resolves the SINGLE answer this codebase gives for a
+// SCOPE CONSTRAINT block that must fit inside a per-agent input budget: cap the plan
+// body to budget/8, narrowed further by max_sprint_plan_bytes when the operator set
+// one, and DROP the block entirely when that cap funds not even one byte of plan.
+//
+// The drop is the load-bearing half. Capping to 0 does NOT remove the block:
+// capScopeConstraintPlan rejects only maxPlanBytes < 0, so a 0 cap trims the plan
+// body away and leaves the BEGIN/END frame with the wrapper instruction still
+// telling the model to "constrain your findings to files and changes directly
+// related to these work items" — an empty work-item list. Everything below its one
+// escape hatch ("still report any genuinely critical issue") is instructed away, and
+// the result is a structurally clean StatusOK review with near-zero findings and no
+// finish_reason=length, so no truncation signal catches it either.
+//
+// It exists because this one condition had accumulated three different answers
+// across two call sites (blank the body on the primary path, drop the block on the
+// fallback path, skip the cap altogether at fbBudget == 0). Every site now routes
+// through here — the run-level payload_byte_budget cap in buildSlots included — so
+// no fourth answer can appear: change the policy in one place and every caller
+// moves with it. payload.ScopeConstraint's maxBytes <= 0 arm is the same refusal
+// expressed one tier up, where a read ceiling is available to fall back to.
+//
+// A non-positive budget yields a non-positive cap and therefore the drop. Whether a
+// caller may gate on budget > 0 turns on what 0 MEANS at that caller's tier, and the
+// two tiers disagree — so the rule is stated per tier rather than as one blanket
+// prohibition:
+//
+//	PER-AGENT budgets (agentBudget, chunkPlanBudget) must NOT gate. There 0 is a
+//	  CLOSED window — an agent whose window funds no input at all — and gating is
+//	  exactly what let the zero case slip past the drop it most needs.
+//	The SETTINGS-tier payload_byte_budget MUST gate (review.go's run-level cap does,
+//	  with its own in-place justification). There 0 is the documented "unlimited"
+//	  sentinel, and dropping the block on it would delete the operator's scoping for
+//	  every default config.
+//
+// Naming both is what keeps this from reading as a violated contract and being
+// "fixed" back into the three-different-answers state this helper was written to end.
+func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes int64) string {
+	if len(block) == 0 {
+		return block
+	}
+	planCap := budget / 8
+	if maxSprintPlanBytes > 0 && maxSprintPlanBytes < planCap {
+		planCap = maxSprintPlanBytes
+	}
+	if planCap < 1 {
+		return ""
+	}
+	return capScopeConstraintPlan(block, int(planCap))
+}
+
 // capChunks bounds a baseline chunk set to at most max chunks by coalescing the
 // tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
 // chunkDiff applies to diff chunking (chunker.go:130). It never drops a file: the
@@ -1403,11 +1473,29 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
-	// Truncate only the plan body (between the BEGIN/END markers) to
-	// min(cfg.Settings.MaxSprintPlanBytes, budget/8), preserving the wrapper
-	// instruction text (F9: the ceiling is the resolved max_sprint_plan_bytes).
+	// Routed through capScopeConstraintForBudget — the same budget/8 cap narrowed by
+	// max_sprint_plan_bytes the per-agent sites use — so a budget too small to fund one
+	// plan byte DROPS the block instead of blanking its body and leaving the BEGIN/END
+	// frame standing (which the per-agent cap would then cap rather than drop).
+	// The budget > 0 gate stays: 0 is the settings-tier "unlimited" sentinel here,
+	// not a zero-budget state.
 	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
-		scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(min(cfg.Settings.MaxSprintPlanBytes, budget/8)))
+		scopeConstraint = capScopeConstraintForBudget(scopeConstraint, budget, cfg.Settings.MaxSprintPlanBytes)
+		// A RUN-WIDE drop is the same condition the chunk-tier warning reports one
+		// tier down, and it must not be the quieter of the two. The chunk-tier
+		// warning cannot cover for it either: that one gates on
+		// len(scopeConstraint) > 0, which this line has just emptied. Left silent,
+		// resolveScopeConstraint's "truncated before injection" is the only output,
+		// so the operator reads a truncation where there was a total drop and
+		// concludes --sprint-plan was honoured while every reviewer in the run
+		// reviews unscoped. Gated on warnOversized like every sibling, so the resume
+		// rebuild stays quiet.
+		if warnOversized && len(scopeConstraint) == 0 {
+			fmt.Fprintf(os.Stderr, "atcr: warning: payload_byte_budget (%d B) is too small to fund even one byte of the "+
+				"--sprint-plan SCOPE CONSTRAINT (the plan is capped at payload_byte_budget/8); the block was DROPPED "+
+				"run-wide and every agent in this review runs unscoped. Raise payload_byte_budget to at least 8, or "+
+				"set it to 0 for unlimited.\n", budget)
+		}
 	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
@@ -1531,7 +1619,6 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// (A) the diff/chunk budgets below then reserve len(agentScopeConstraint) so plan +
 		// diff together fit the window. Base the cap on eff/8 (not min with a possibly-0
 		// max_sprint_plan_bytes, which would blank the plan).
-		agentScopeConstraint := scopeConstraint
 		agentMaxTokens := maxTokensFor(cfg, ac)
 		agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
 		// agentWindow is the same resolution, in tokens. Both are resolved ONCE here
@@ -1546,19 +1633,46 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// while the uncapped SCOPE CONSTRAINT block rode along at up to
 		// min(max_sprint_plan_bytes, payload_byte_budget/8) — 64 KiB at shipped defaults —
 		// so both the warning and the truncation record described a payload that was not
-		// what was sent. At agentBudget 0 the cap resolves to 0 and the plan body is
-		// truncated away, leaving the block's frame: the agent then really does receive
-		// only the smallest file, which is what the warning has always claimed.
+		// what was sent. At agentBudget 0 the cap funds no plan byte, so the block is
+		// DROPPED (capScopeConstraintForBudget) rather than capped to 0: capping to 0
+		// would leave the BEGIN/END frame and its "constrain your findings to these work
+		// items" wrapper around an empty list, which instructs the model away from
+		// everything below "genuinely critical" and yields a near-clean StatusOK review
+		// no truncation signal catches. Dropped, the agent really does receive only the
+		// smallest file with no scoping claim over it, which is what the warning has
+		// always claimed.
 		//
 		// This moved from near-unreachable to ordinary in this epic: reaching the arm used
 		// to need a context_window_tokens declaration at or below 12288, but a max_tokens
 		// declaration alone now closes the budget on the default 32768 window.
-		if len(agentScopeConstraint) > 0 {
-			planCap := agentBudget / 8
-			if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
-				planCap = mspb
+		agentScopeConstraint := capScopeConstraintForBudget(scopeConstraint, agentBudget, cfg.Settings.MaxSprintPlanBytes)
+
+		// The AGENT-TIER drop is reported HERE, above the strategy split, because the
+		// cap above runs once per agent and is common to all three paths — chunked,
+		// baseline (--all / --dir) and the default bulk one. Both drop warnings used
+		// to live inside the chunked branch's `if len(chunks) > 1`, so a bulk or
+		// baseline run dropped the operator's scoping in silence. A warning of some
+		// kind usually still fired in this band (the zero-budget or AllDropped one),
+		// but neither mentions the SCOPE CONSTRAINT, so the operator reads a
+		// degradation notice and concludes --sprint-plan was honoured.
+		//
+		// The chunked branch keeps ONE arm below, for the case this check cannot
+		// speak to: chunk_byte_budget binding UNDER an agent budget that was itself
+		// sufficient. There the agent-tier block survives, this check stays quiet, and
+		// the remedy names the operator key. The two are disjoint by construction, so
+		// no drop is reported twice.
+		if warnOversized && len(scopeConstraint) > 0 && len(agentScopeConstraint) == 0 {
+			if agentBudget > 0 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its own effective budget (%d B, from a resolved window of %d tokens) is too small "+
+					"to fund even one byte of the --sprint-plan SCOPE CONSTRAINT (the plan is capped at budget/8); the block was "+
+					"DROPPED and this review runs unscoped — %s\n",
+					name, agentBudget, agentWindow, zeroBudgetRemedy)
+			} else {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its resolved window of %d tokens leaves no input budget at all "+
+					"(effective budget 0), so not even one byte of the --sprint-plan SCOPE CONSTRAINT can be funded; the block was "+
+					"DROPPED and this review runs unscoped — %s\n",
+					name, agentWindow, zeroBudgetRemedy)
 			}
-			agentScopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
 		}
 
 		// DESIGN NOTE (Sprint 35.0, Phase 1 Decision 2 — pinned so Phase 5 task 5.2
@@ -1660,9 +1774,32 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 					chunkSizing := agentSizing{
 						// The budget the partition ACTUALLY used, not the raw per-agent
-						// one: effective_budget must mean the same quantity on every
-						// payload strategy or a consumer comparing two agents is
-						// comparing unlike numbers.
+						// one. effective_budget means ONE quantity on every payload
+						// strategy — the payload-tier budget (this agent's own
+						// EffectiveByteBudget, capped by payload_byte_budget) less the
+						// scope-constraint block THIS prompt carries — but the block's
+						// TIER follows the prompt, so the reservation operand is not the
+						// same on every path and a consumer must not assume it is:
+						//
+						//   baseline (this branch) and bulk  — agentScopeConstraint, the
+						//     payload-tier block, capped against agentBudget
+						//   chunked diff (the chunkSizing record)
+						//                                    — chunkScopeConstraint, the
+						//     chunk-tier block, capped against
+						//     min(agentBudget, chunk_byte_budget)
+						//
+						// Named by identifier rather than by line: the previous ":2033"
+						// pointed at a prose line inside a comment block, and any edit
+						// above the target silently re-aims a line number at whatever
+						// moved into it.
+						//
+						// The two diverge whenever an operator sets chunk_byte_budget
+						// below the agent budget, so an artifact reader normalizing two
+						// agents must read the path off review_strategy/chunk_count first.
+						// The BUDGET operand stays payload-tier on every path: switching
+						// it to the chunk ceiling would misreport the global shed. See
+						// AgentStatus.EffectiveBudget (status.go) for the published
+						// contract this mirrors.
 						effectiveBudget: chunkBudget,
 						resolvedWindow:  agentWindow,
 						chunkTotal:      len(chunks),
@@ -1780,33 +1917,90 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// 144k model gets fewer — both from the same diff, zero files dropped.
 			// chunkDiff itself is unchanged; only the source of ml changes.
 			ml := payload.ChunkMaxLines(ac.Model, ac.ContextWindowTokens, agentMaxTokens)
+			// Re-cap the plan against the budget that actually sizes THIS call. ml is
+			// clamped to chunk_byte_budget just below, but agentScopeConstraint was
+			// capped at the PAYLOAD tier (agentBudget/8) which never consults that key —
+			// so with the generated config's own suggested chunk_byte_budget (65536) and
+			// the default payload_byte_budget (524288), a large-window agent shipped
+			// ~57 KB of diff plus up to 64 KB of uncounted plan against a stated 64 KB
+			// ceiling. Narrow only: chunk_byte_budget 0 means "unlimited" and inherits
+			// payload_byte_budget upstream, so the payload-tier cap is already right, and
+			// an agentBudget of 0 must keep its drop (capScopeConstraintForBudget) rather
+			// than being widened back open by a chunk ceiling.
+			chunkPlanBudget := agentBudget
+			if cb := cfg.Settings.ChunkByteBudget; cb > 0 && cb < chunkPlanBudget {
+				chunkPlanBudget = cb
+			}
+			chunkScopeConstraint := capScopeConstraintForBudget(scopeConstraint, chunkPlanBudget, cfg.Settings.MaxSprintPlanBytes)
 			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
 			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
 			// request-body limit. Applied BEFORE the branch below so an explicit
-			// max_context_lines still replaces it verbatim (least surprise), and the
-			// scope-constraint reservation is taken out of the clamped value rather
-			// than the raw one.
+			// max_context_lines still replaces it verbatim (least surprise).
 			//
 			// ChunkByteBudget, not PayloadByteBudget: one key served both jobs and they
 			// want opposite values — lowering it to protect a small window silently shed
 			// whole files from the payload, raising it to keep those files grew every
 			// chunk. Unset, ChunkByteBudget resolves to PayloadByteBudget, so this is
 			// byte-identical for a config that does not set the new key.
-			ml = payload.ClampLinesToByteBudget(ml, cfg.Settings.ChunkByteBudget)
-			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
-				ml = ac.EffectiveMaxContextLines()
-			} else if len(agentScopeConstraint) > 0 {
-				// (A) reserve per-chunk line headroom for the SCOPE CONSTRAINT block
-				// prepended to EVERY chunk in renderAgent. The plan is capped to
-				// EffectiveByteBudget/8 above, i.e. at most ml/8 lines, so reserving ml/8
-				// covers it without importing the payload byte/line ratio. An explicit
-				// operator max_context_lines wins (least surprise) and is left untouched.
-				ml -= ml / 8
-				if ml < 1 {
-					ml = 1
+			//
+			// (A) reserve room for the SCOPE CONSTRAINT block prepended UNCOUNTED to
+			// EVERY chunk in renderAgent. Take the reservation in BYTES out of the
+			// budget that actually sizes the call before converting to lines: the
+			// block's own length is known here, so no line-count proxy is needed and no
+			// proxy's floor errors can push the pair over the stated ceiling — WITHIN
+			// ClampLinesToByteBudget's own minChunkLines floor, which this reservation
+			// does not remove. That floor returns 64 lines (~3072 B at the module's
+			// avgBytesPerLine of 48) for any positive byte budget too small to fund
+			// them, so a chunkClampBudget floored to 1 still ships a chunk provably
+			// over the stated ceiling, recorded as an ordinary degradationChunk.
+			//
+			// chunkPlanBudget, NOT cfg.Settings.ChunkByteBudget: the two are equal only
+			// when the operator ceiling is the binding one. An unset chunk_byte_budget
+			// inherits payload_byte_budget (precedence.go), so on a resolved default
+			// config it is 524288 — above a small agent's whole budget. Reserving from
+			// that ceiling then subtracts from a number the clamp never reaches, and the
+			// `ml -= ml/8` line proxy that used to follow could not cover for it either
+			// (it was gated on chunk_byte_budget <= 0, which a resolved config never
+			// is), leaving the block uncounted on exactly the configuration every
+			// default run has. See the note under the clamp for why that arm is gone.
+			//
+			// This guard is DEFENSIVE, not load-bearing, and deliberately so —
+			// swapping it for `if true` changes no output, so no mutation test in
+			// this package can kill it. The reason is two couplings in
+			// internal/payload, pinned there by
+			// TestZeroEffectiveBudgetFloorsChunkLinesAndSurvivesAOneByteClamp:
+			// chunkPlanBudget is non-positive only when agentBudget is (an unset
+			// chunk_byte_budget inherits it, and a set one only ever lowers it), and
+			// ml is derived from that same zero budget, so ml is already at
+			// ClampLinesToByteBudget's own minChunkLines floor — the value the clamp
+			// returns for the byteBudget 1 this guard's absence would produce. The
+			// guard states the intent regardless (0 means "no ceiling", not "a
+			// one-byte ceiling") and is what keeps the code correct if either
+			// coupling is ever broken; the payload-side test fails first if one is.
+			chunkClampBudget := chunkPlanBudget
+			if chunkClampBudget > 0 {
+				if chunkClampBudget -= int64(len(chunkScopeConstraint)); chunkClampBudget < 1 {
+					chunkClampBudget = 1
 				}
 			}
+			ml = payload.ClampLinesToByteBudget(ml, chunkClampBudget)
+			if ac.MaxContextLines != nil && *ac.MaxContextLines > 0 {
+				ml = ac.EffectiveMaxContextLines()
+			}
+			// There is no `ml -= ml/8` line-proxy arm any more. It existed for the one
+			// case the byte reservation above could not serve — "no chunk ceiling
+			// configured, so there is no byte figure to reserve from" — and that case no
+			// longer exists now that the reservation is taken from chunkPlanBudget,
+			// which falls back to the agent's own budget when no ceiling is set. Keeping
+			// both would reserve twice (the proxy's 12.5% on top of the block's actual
+			// bytes) for every unset-ceiling config. The byte figure is also strictly
+			// better than the proxy: it is the block's real length rather than an upper
+			// bound on it, and it cannot be pushed over the ceiling by the proxy's own
+			// floor errors. It is not floor-error-FREE, though: ClampLinesToByteBudget
+			// has a minChunkLines floor of its own (sizing.go), so a tiny positive
+			// budget still yields a ~3072 B chunk. Better than the proxy, not exact.
+			// An explicit operator max_context_lines still wins verbatim.
 			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
 			// reserves no input budget at all is honest degradation on either
 			// strategy, but ChunkMaxLines' minChunkLines floor hides it here: the
@@ -1883,6 +2077,58 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				}
 			}
 			if len(chunks) > 1 {
+				// A POSITIVE chunk ceiling too small to fund one plan byte drops the
+				// operator's scoping outright and would otherwise say nothing.
+				//
+				// capScopeConstraintForBudget funds the plan at budget/8, so any ceiling in
+				// 1..7 floors that to 0 and returns "" while the agent's own window is
+				// perfectly healthy — the review then runs UNSCOPED. Registry validation
+				// only rejects a negative chunk_byte_budget (precedence.go:289), so nothing
+				// upstream catches it either. This is the one configuration where the ""
+				// sentinel's two meanings actually separate ("no plan was given" vs "the
+				// budget cannot fund one"), which is why it needs its own signal rather
+				// than being left to the reader of an empty prompt. Gated on warnOversized
+				// like every sibling warning, so the resume rebuild path stays quiet.
+				//
+				// Gated on the OPERATOR's key being the binding one: when chunk_byte_budget
+				// is unset (or sits above the agent's own budget) the drop is the window's
+				// doing, and blaming chunk_byte_budget would accuse an innocent key whose
+				// prescribed remedy — unset it — is a no-op. That case is reported by the
+				// hoisted agent-tier check ABOVE the strategy split, not here.
+				//
+				// It cannot be left to the zero-budget/overflow reporting, which was the
+				// original intent: that arm keys on agentBudget == 0, and the drop band
+				// is agentBudget in 1..7 — positive, so the zero-budget arm never fires,
+				// and below 8, so budget/8 floors to 0 and the block is dropped. Between
+				// the two the case fell to NOTHING, which is the one outcome a drop of
+				// the operator's scoping must never have.
+				//
+				// Placed INSIDE the multi-chunk commit, not beside the CHUNK-tier
+				// capScopeConstraintForBudget call that computes this drop: a diff that
+				// yields ONE chunk never ships chunkScopeConstraint at all — it falls
+				// through to the bulk path below, which re-scopes with the fully
+				// populated agentScopeConstraint. Warning there told the operator the
+				// --sprint-plan scoping had been dropped while it was in fact applied.
+				// (The hoisted check does sit beside a cap call, but it reads the
+				// AGENT-tier result, which no later path re-populates — so it has no
+				// such false positive.)
+				//
+				// ONE arm, not a switch over every cause. The agent-tier causes are
+				// reported by the hoisted check above the strategy split — which fires
+				// on the bulk and baseline paths too, where this branch never runs. What
+				// remains here is the case that check cannot speak to: chunk_byte_budget
+				// binding UNDER an agent budget that was itself sufficient. There
+				// agentScopeConstraint survives (so the hoisted check is silent) while
+				// chunkScopeConstraint does not, and the remedy has to name the operator
+				// key rather than the agent's window. The two conditions are disjoint by
+				// construction, so no drop is ever reported twice.
+				if warnOversized && len(scopeConstraint) > 0 && len(agentScopeConstraint) > 0 && len(chunkScopeConstraint) == 0 &&
+					cfg.Settings.ChunkByteBudget > 0 && cfg.Settings.ChunkByteBudget < agentBudget {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
+						"--sprint-plan SCOPE CONSTRAINT (the plan is capped at chunk_byte_budget/8); the block was DROPPED and this "+
+						"review runs unscoped. Raise chunk_byte_budget to at least 8, or unset it to inherit payload_byte_budget.\n",
+						name, cfg.Settings.ChunkByteBudget)
+				}
 				// Per-agent sizing record for the chunked path (Epic 19.10 F6/F8):
 				// every chunk-Slot of this persona carries the SAME window/budget and
 				// the persona's full chunk count (len(chunks), not 1), so timeout
@@ -1910,7 +2156,31 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// read this number as the size any chunk was cut to. Recording the
 					// chunk ceiling here instead would misreport the global shed, which is
 					// the quantity that decides which files were DROPPED.
-					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, agentScopeConstraint),
+					//
+					// The BUDGET operand stays the payload tier for that reason; only the
+					// RESERVATION is chunkScopeConstraint — the block renderAgent actually
+					// prepends below — rather than the payload-tier agentScopeConstraint,
+					// which this path never ships. The two blocks are capped against
+					// different budgets (agentBudget vs min(agentBudget,
+					// chunk_byte_budget)), so they diverge whenever an operator sets a
+					// chunk ceiling under the agent budget, and reserving the larger one
+					// UNDERSTATES the budget this prompt was sized to. Three consumers act
+					// on that: the AC4 gate at the fallback build (fbBudget <
+					// primary.EffectiveBudget) can silently skip the OVERFLOW CHECK across
+					// the gap, the inherited-size operator warning under-reports, and
+					// status.go publishes it as a payload-tier budget.
+					//
+					// The overflow half is reachable only under an explicit
+					// max_context_lines override: with a DERIVED ml the bytes a chunk
+					// ships always sit below the old effective budget, so the third
+					// conjunct !inheritedPayloadFits(primary, fbBudget) decides
+					// identically on either side of the gap. And the truncate re-fit is
+					// NOT among them — it is structurally unreachable here, because this
+					// path's buildChain passes nil entries and canRefit() requires
+					// len(r.entries) > 0 (see the note at the fallback build below).
+					// Listing it sent maintainers looking for a live consumer that is not
+					// there.
+					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, chunkScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,
 					chunkTotal:      len(chunks),
@@ -1929,7 +2199,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					if perr != nil {
 						return perr
 					}
-					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, chunkScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -1944,7 +2214,17 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// would be the shape-dependent reconstruction Slot.entries exists to
 					// avoid. The slot therefore carries EMPTY, and buildFallbackAgent
 					// declines to re-fit it and keeps the pre-epic warn-and-ship.
-					fbs, err := buildChain(name, primary, ac, mode, agentScopeConstraint, nil)
+					//
+					// The scope argument is consequently INERT on this path: it reaches
+					// only fallbackRefit.scopeConstraint, whose one reader
+					// (refitFallbackPayload) runs behind canRefit() — false for the nil
+					// entries above — so no mutation test here can pin it. It is still
+					// the CHUNK-tier block rather than agentScopeConstraint because that
+					// is the block this slot's prompts actually carry, and it must
+					// already be correct on the day entries are threaded in.
+					// TestBuildSlots_ChunkedFallbackDeclinesTheRefitSoTheScopeArgumentIsInert
+					// fails on that day.
+					fbs, err := buildChain(name, primary, ac, mode, chunkScopeConstraint, nil)
 					if err != nil {
 						return err
 					}
@@ -2209,12 +2489,10 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // It used to be the only one, which is the defect that made it configurable — a
 // thinking model that needs more had no lever, and `atcr doctor` printed
 // "raise --max-tokens" for a flag `atcr review` did not have.
-// Generous on purpose: reasoning/thinking models spend output budget on
-// chain-of-thought before emitting visible content, so a tight cap makes them
-// finish mid-reasoning and return an empty review (the doctor self-test warns of
-// exactly this). The empty-content case is still caught by the reasoning_content
-// fallback in llmclient; this headroom lets the clean Content path win first.
-const defaultMaxTokens = 8192
+// The value itself is payload.DefaultOutputTokens, the single source shared with
+// doctor's reviewDefaultMaxTokens and the cli/doctor.go --max-tokens flag default,
+// so the three copies cannot drift.
+const defaultMaxTokens = payload.DefaultOutputTokens
 
 // refuseOverflow wraps a hard-fail on_overflow refusal with the state that produced it.
 //
@@ -3120,35 +3398,37 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 	// it. It arrives capped to the PRIMARY's budget/8 (see add()), and renderAgent
 	// prepends it UNCOUNTED, so a plan sized for a 128k primary would ride whole
 	// into a 32k backup and the payload would not really be within this agent's
-	// budget. Same arithmetic as the primary path, on this agent's own numbers.
-	scopeConstraint := refit.scopeConstraint
-	if len(scopeConstraint) > 0 && fbBudget > 0 {
-		planCap := fbBudget / 8
-		// The max_sprint_plan_bytes term cannot bind as things stand, and that is
-		// not an oversight: buildSlots applies this identical min() before
-		// threading the constraint in (agentScopeConstraint), so the plan already
-		// arrives at or below the operator's ceiling and only the budget/8 term
-		// can narrow it further. Removing it is therefore behavior-neutral today,
-		// and a mutant here survives by construction — but the redundancy is real
-		// defense, not decoration: thread the RUN's raw constraint here instead of
-		// the per-agent one and this term is what still holds the operator's
-		// ceiling. Only removing BOTH restores the oversized plan, which is the
-		// pair TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint
-		// pins.
-		if mspb := cfg.Settings.MaxSprintPlanBytes; mspb > 0 && mspb < planCap {
-			planCap = mspb
-		}
-		if planCap < 1 {
-			// A budget that funds not even one byte of plan cannot present a
-			// scoped review: capping to 0 would blank the plan body while the
-			// wrapper still instructs the model to obey it. Drop the block
-			// entirely instead — the review proceeds unconstrained and the
-			// prompt says so.
-			scopeConstraint = ""
-		} else {
-			scopeConstraint = capScopeConstraintPlan(scopeConstraint, int(planCap))
-		}
-	}
+	// budget. Same helper as the primary path, on this agent's own numbers — the two
+	// sites share capScopeConstraintForBudget precisely so they cannot answer this
+	// condition differently again.
+	//
+	// NOT gated on fbBudget > 0. That gate skipped the cap on the one budget that
+	// most needs it: at fbBudget == 0 the backup inherited the primary's plan whole,
+	// while fbBudget 1..7 correctly dropped it via the planCap < 1 arm inside
+	// capScopeConstraintForBudget. fbBudget is derived from the fallback's own
+	// resolved max_tokens, so a max_tokens declaration alone reaches that state.
+	//
+	// The fbBudget == 0 drop covers slots this function actually RE-FITS. A
+	// single-entry slot is not one of them: keepSmallestEntry reports
+	// Truncated=false for it, the !trunc.Truncated arm below returns ok=false, and
+	// buildFallbackAgent keeps the INHERITED primary prompt — primary-capped plan
+	// block included. That is by design: the slot carries the honest
+	// degradationOverflow record either way (the payload measurably does not fit,
+	// plan or no plan), and stripping the block would mean re-rendering a prompt
+	// whose one file still cannot fit the window — a different wrong answer, not a
+	// right one.
+	//
+	// The max_sprint_plan_bytes term the helper applies cannot bind as things stand,
+	// and that is not an oversight: buildSlots applies the identical min() before
+	// threading the constraint in (agentScopeConstraint), so the plan already arrives
+	// at or below the operator's ceiling and only the budget/8 term can narrow it
+	// further. Removing it is therefore behavior-neutral today, and a mutant there
+	// survives by construction — but the redundancy is real defense, not decoration:
+	// thread the RUN's raw constraint here instead of the per-agent one and that term
+	// is what still holds the operator's ceiling. Only removing BOTH restores the
+	// oversized plan, which is the pair
+	// TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint pins.
+	scopeConstraint := capScopeConstraintForBudget(refit.scopeConstraint, fbBudget, cfg.Settings.MaxSprintPlanBytes)
 	budget := appliedByteBudget(fbBudget, cfg.Settings.PayloadByteBudget, scopeConstraint)
 	var kept []payload.FileEntry
 	var trunc payload.Truncation

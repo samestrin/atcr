@@ -99,7 +99,13 @@ func TestRun_ReportsWhereTheProbedCapCameFrom(t *testing.T) {
 // won, and raising 32000 changes nothing about this probe.
 func TestRun_OKWarningHintDoesNotBlameTheDeclarationWhenTheFlagWon(t *testing.T) {
 	t.Setenv("ATCR_DOCTOR_KEY", "k")
-	res := declaredMaxTokensTarget(t, 32000)
+	// 2000, not 32000, for the same reason the sibling test above picks 16000: a
+	// declaration at or above 28672 closes the input budget on the 32768 default
+	// window, and zeroBudgetVerdict then (correctly) replaces this hint with one that
+	// tells the operator NOT to raise any cap. This test is about which knob the
+	// MARKER-ABSENT hint names, so its fixture must not also be a closed budget. The
+	// flag below is still lower than the declaration, which is what the assertions need.
+	res := declaredMaxTokensTarget(t, 2000)
 	fake := newFake(func(inv llmclient.Invocation) (string, error) { return "", nil })
 
 	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 100, MaxTokensSet: true})

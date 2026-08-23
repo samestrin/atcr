@@ -164,7 +164,7 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 
 	assert.InDelta(t, 0.05, at, 1e-9)
 	assert.GreaterOrEqual(t, at, MaxOutOfVocabularyRate,
-		"the ceiling is exclusive: a run AT the threshold must trip the guard")
+		"the ceiling is inclusive: a run AT the threshold must trip the guard")
 
 	// The pair is a NEIGHBOUR pair, and that is the property that makes it a boundary
 	// test rather than two arbitrary points: the two fixtures differ by exactly one
@@ -392,7 +392,7 @@ func TestBuildSubmission_DoesNotPublishOutOfVocabularyRate(t *testing.T) {
 		"the public submission schema must not gain a column from this epic")
 }
 
-// The ceiling's EXCLUSIVE semantics ("a run sitting exactly on it trips the guard")
+// The ceiling's INCLUSIVE semantics ("a run sitting exactly on it trips the guard")
 // must live in production code, not in whichever operator a test happens to pick.
 func TestExceedsVocabularyCeiling(t *testing.T) {
 	for _, tc := range []struct {

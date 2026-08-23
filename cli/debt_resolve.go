@@ -14,7 +14,77 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// isRecordedRationale reports whether a justification can stand in for --reason on a
+// wontfix — the terminal, backlog-suppressing status whose record localdebt then
+// preserves through compaction precisely because it holds reasoning that exists
+// nowhere else in the tree.
+//
+// Non-emptiness is not the bar. A reconcile-enriched justification is an EXCERPT of
+// the reviewer's review.md, and a quoted example inside that excerpt carries zero
+// reviewer content however it is rendered — which the old `!= ""` guard accepted as a
+// permanent dismissal's entire audit trail. Reviewer prose anywhere beside a quote
+// still qualifies; the quote is only ever discounted, never disqualifying.
+//
+// The two quote shapes are NOT on the same footing, and the difference is worth
+// stating so a future reader does not delete the wrong guard:
+//
+//   - A TERMINATED fence is replaced by reconcile.ElidedQuotePlaceholder, and an
+//     excerpt of nothing but placeholders is UNREACHABLE from reconcile: extractSection
+//     returns "" when its wroteProse flag is false, and matchNarrative then treats the
+//     candidate as no match, so every non-empty reconcile-produced justification holds
+//     at least one non-blank prose line. Discounting the placeholder here is therefore
+//     DEFENCE IN DEPTH — a backstop for a hand-edited or imported store, and for the
+//     documented collision where a reviewer types the literal themselves. It is not
+//     closing a live hole, and the guard that actually closes it is upstream.
+//
+//   - A DANGLING opener is a live hole. extractSection releases the whole quoted tail
+//     as prose (see the elidedLine branch), so wroteProse is true and the excerpt
+//     reaches this function as 100% tool-visible quoted example text. This is the
+//     shape the fence scan below catches.
+//
+//     It catches it only because extractSection is made to GUARANTEE the marker. The
+//     real opener survives on its own just when the block walk-up reaches it, and the
+//     walk-up stops early on exactly the shape reviewers write: itemAt/headingAt read
+//     the released view, so a quoted body starting with a list item or a heading is a
+//     genuine block start and the opener stays one line above the excerpt. That
+//     excerpt used to arrive marker-free and was accepted here as a permanent
+//     dismissal's whole audit trail. extractSection now emits a synthetic ``` at the
+//     head of any block that begins inside a released tail, which is what makes the
+//     scan below unconditional rather than dependent on where the anchor happened to
+//     land. Do not delete that emission on the theory that the document's own opener
+//     covers it — usually it does not.
+//
+// Both are discounted on the same terms regardless: whether a permanent dismissal is
+// auditable must not depend on whether the reviewing model closed its fence.
+func isRecordedRationale(justification string) bool {
+	inFence := false
+	for _, line := range strings.Split(justification, "\n") {
+		// Mirrors reconcile's isFenceMarker (justification.go:702) — the producer of
+		// the text being read. An unterminated opener leaves inFence set for the rest
+		// of the excerpt, which is exactly the released tail that must not count.
+		if isFenceMarkerLine(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if line = strings.TrimSpace(line); line != "" && line != reconcile.ElidedQuotePlaceholder {
+			return true
+		}
+	}
+	return false
+}
+
+// isFenceMarkerLine reports whether a justification line is a Markdown code-fence
+// marker, matching reconcile.extractSection's own isFenceMarker so the reader of an
+// excerpt agrees with its writer about where the quotes are.
+func isFenceMarkerLine(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "```")
+}
 
 // defaultDebtResolveDir is the .atcr/-scoped local TD store, rooted at the current
 // working directory (localdebt's Root: "." convention). Since Plan 35.13 it is the
@@ -537,7 +607,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
 	}
 	orig := *effective
-	if status == "wontfix" && strings.TrimSpace(reason) == "" && orig.Justification == "" {
+	if status == "wontfix" && strings.TrimSpace(reason) == "" && !isRecordedRationale(orig.Justification) {
 		return usageError(fmt.Errorf("--status wontfix requires --reason <justification>"))
 	}
 

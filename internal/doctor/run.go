@@ -119,6 +119,14 @@ type AgentResult struct {
 	// declaring exactly doctor's default is indistinguishable from one declaring
 	// nothing. Empty when no call was placed (MaxTokens 0).
 	MaxTokensSource string `json:"max_tokens_source,omitempty"`
+	// ReviewMaxTokens is the cap `atcr review` will resolve for this agent absent a
+	// review-side --max-tokens: the agent's own declaration, or the shared default
+	// when undeclared. It can differ from MaxTokens — doctor's --max-tokens caps the
+	// PROBE only, while the zero-budget verdict and its ok_warning hint speak for the
+	// REVIEW run — so publishing both keeps the hint's operand visible in the WINDOW
+	// cell and lets a --json consumer re-derive the budget atcr actually warned about.
+	// Always present, like MaxTokens, for the same distinguishability rule.
+	ReviewMaxTokens int `json:"review_max_tokens"`
 }
 
 // The tiers MaxTokensSource can name, mirroring payload.WindowSource* for the window.
@@ -178,7 +186,8 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		tgt := res.Targets[at.TargetIdx]
 		pr := results[at.TargetIdx]
 		status, hint := pr.status, pr.hint
-		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, pr.maxTokens, status, pr.maxTokensSource); ok {
+		reviewCap := reviewMaxTokens(at.DeclaredMaxTokens)
+		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, status); ok {
 			status, hint = s, h
 		}
 		rep.Agents = append(rep.Agents, AgentResult{
@@ -195,6 +204,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			WindowSource:        at.WindowSource,
 			MaxTokens:           pr.maxTokens,
 			MaxTokensSource:     pr.maxTokensSource,
+			ReviewMaxTokens:     reviewCap,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)
@@ -222,22 +232,35 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // and the fan-out cannot disagree about where the threshold sits — the overhead constant
 // stays owned by the package that reserves it.
 //
+// The cap operand is REVIEW's, never the probe's — see reviewMaxTokens. That choice is
+// what removed the guard this function used to carry against MaxTokensSourceFlag. The
+// old guard suppressed the verdict outright whenever doctor's own --max-tokens was
+// typed, which fixed a real false positive (`atcr doctor --max-tokens 30000` downgrading
+// every agent on the 32768 default window) by discarding a real true positive with it:
+// an agent whose OWN declaration closes the budget could no longer be reported at all
+// under that flag. Drawing the operand from review's resolution order instead settles
+// both cases without a tier special case — the false positive disappears because
+// doctor's flag is not in that order, and the true positive survives because the
+// declaration is. classify()'s rule still holds: no branch may assert which knob governs
+// the real run. This one does not; it reports what review resolves ABSENT a review-side
+// flag, which is the only claim available here and the one the hint is worded to make.
+//
 // Three guards, all load-bearing:
-//   - budgetSrc must not be MaxTokensSourceFlag. The verdict asserts a REVIEW-time
-//     outcome, so it may only be drawn from a cap review will actually resolve. Doctor's
-//     own --max-tokens is not one: it reaches target identity and the probe, but review
-//     resolves independently (resolveMaxTokens: review's own flag -> the agent's
-//     declaration -> defaultMaxTokens). Without this guard `atcr doctor --max-tokens
-//     30000` downgrades EVERY agent on the 32768 default window and predicts a failure
-//     that will not happen. classify() branches on the same tier for the same reason, and
-//     states the rule this obeys: no branch may assert which knob governs the real run,
-//     because that is conditional on how review is later invoked. The declaration and
-//     default tiers ARE review's own resolution order, so the verdict speaks for them.
-//   - maxTokens 0 means NO CAP WAS APPLIED (the probe short-circuited, or resolved a
-//     non-positive budget and sent the request uncapped), not a cap of zero. Without the
-//     guard, a window too small to fund even the prompt overhead reports a closed budget
-//     and the message blames a cap that was never applied — pointing the operator at the
-//     wrong knob when the window is what is at fault.
+//   - maxTokens 0 means NO CAP APPLIES, not a cap of zero. Run cannot produce it —
+//     reviewMaxTokens floors at the built-in default — so this guards the function's
+//     contract for any other caller rather than a state the report can reach. Without it
+//     a window too small to fund even the prompt overhead reports a closed budget and
+//     blames a cap that is not there, pointing the operator at the wrong knob when the
+//     window is what is at fault.
+//   - window 0 means the window did NOT RESOLVE, not a window of zero. Run cannot
+//     produce it — at.ContextWindowTokens comes from payload.ResolveContextWindow,
+//     documented as never returning zero — so like the maxTokens clause this guards
+//     the function's contract for any other caller rather than a state the report
+//     can reach (render.go's "-" cell is defensive for the same reason). For such a
+//     caller, ResolveContextWindow ignores the non-positive value and falls back to
+//     the 32768 default, so the budget computes to 0 for any cap at or above 28672
+//     and the row is blamed on its output cap — the same misattribution the
+//     maxTokens guard prevents, from the other operand.
 //   - only a HEALTHY probe is touched. A row already reporting auth_failed or missing_key
 //     has a louder problem, and overwriting it with a budget warning would hide the
 //     failure the operator has to fix first.
@@ -249,8 +272,8 @@ const zeroBudgetRemedy = "lower its max_tokens, or raise (or drop) its context_w
 // then passes at the higher cap because the nonce prompt is trivial. Leaving the row's
 // original hint in place there would have preserved the exact trap this row was filed
 // for.
-func zeroBudgetVerdict(model string, window, maxTokens int, status, budgetSrc string) (string, string, bool) {
-	if !healthy(status) || maxTokens <= 0 || window <= 0 || budgetSrc == MaxTokensSourceFlag {
+func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, status string) (string, string, bool) {
+	if !healthy(status) || maxTokens <= 0 || window <= 0 {
 		return "", "", false
 	}
 	if payload.EffectiveByteBudget(model, &window, maxTokens) > 0 {
@@ -262,11 +285,63 @@ func zeroBudgetVerdict(model string, window, maxTokens int, status, budgetSrc st
 		// first clause and reaches for --max-tokens is the failure being prevented.
 		lead = "the marker was absent AND"
 	}
+	// The cap is always named as REVIEW's, and disclaimed as the probe's ONLY when
+	// the two are genuinely different numbers — under `atcr doctor --max-tokens N`
+	// with an N that is not the cap review would resolve. There the row's max_tokens
+	// column and this operand disagree, and the operator has to act on this one.
+	//
+	// Unflagged, probe() resolves the SAME cap reviewMaxTokens does (the agent's
+	// declaration, else the shared default), render.go suppresses the "/ review cap"
+	// suffix because they are equal, and an unconditional disclaimer then tells the
+	// operator that the only cap on screen is a different cap than it is. The
+	// disclaimer was added for the flag path; it belongs only there.
+	disclaimer := ""
+	if probeMaxTokens != maxTokens {
+		disclaimer = " (not this probe's cap)"
+	}
+	// When BOTH conditions hold — the flag made the two caps differ AND the marker
+	// was absent — classify() had already produced the probe-specific remedy ("this
+	// probe was capped by your explicit --max-tokens; raise it to re-probe"), and
+	// returning only the text below replaced it wholesale. The two remedies are not
+	// in conflict; they name DIFFERENT knobs. "Do NOT raise the cap here" is about
+	// the declaration reserved out of the window, while the row's max_tokens column
+	// reads "N (flag)" — the cap the operator genuinely should raise to re-probe the
+	// marker. The disclaimer above attaches to the operand clause, not to the "Do NOT
+	// raise" sentence, so without this the probe remedy was unreachable under the
+	// flag and nothing on screen said the probe cap was still theirs to raise.
+	probeRemedy := ""
+	if probeMaxTokens != maxTokens && status == StatusOKWarning {
+		probeRemedy = fmt.Sprintf(" Separately, the marker check itself ran under your explicit --max-tokens (%d tokens): "+
+			"raise THAT to re-probe the marker — it caps this probe only, not the review budget above.", probeMaxTokens)
+	}
 	return StatusOKWarning, fmt.Sprintf(
-		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap and the fixed prompt "+
-			"overhead are reserved — `atcr review` will ship only the smallest single file, or refuse the run outright "+
-			"under on_overflow fail/fallback. Do NOT raise the cap here: it is reserved out of this same window. Remedy: %s",
-		lead, window, maxTokens, zeroBudgetRemedy), true
+		"%s the resolved window (%d tokens) leaves no input budget once the %d-token output cap `atcr review` will "+
+			"resolve for this agent%s and the fixed prompt overhead are reserved — review will ship "+
+			"only the smallest single file, or refuse the run outright under on_overflow fail/fallback. Do NOT raise the "+
+			"cap here: it is reserved out of this same window. Remedy: %s%s",
+		lead, window, maxTokens, disclaimer, zeroBudgetRemedy, probeRemedy), true
+}
+
+// reviewDefaultMaxTokens is the cap `atcr review` applies to an agent that
+// declares none (and the default cli/doctor.go gives --max-tokens for the same
+// reason). It references payload.DefaultOutputTokens — the single source the
+// fan-out's own defaultMaxTokens also references — so the two cannot drift;
+// TestReviewMaxTokens_MirrorsTheFanOutDefault pins them together.
+const reviewDefaultMaxTokens = payload.DefaultOutputTokens
+
+// reviewMaxTokens is the output cap `atcr review` will resolve for an agent, given the
+// agent's own declaration. It reproduces resolveMaxTokens MINUS review's own
+// --max-tokens tier, which is unknowable from here: doctor cannot see how review will
+// later be invoked, so it reports the cap review uses absent a review-side flag.
+//
+// Doctor's --max-tokens deliberately has no influence. It decides which invocation is
+// PROBED, and probe evidence is about that invocation; the budget verdict is about the
+// review run instead, and those two operands genuinely differ under the flag.
+func reviewMaxTokens(declared int) int {
+	if declared > 0 {
+		return declared
+	}
+	return reviewDefaultMaxTokens
 }
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
