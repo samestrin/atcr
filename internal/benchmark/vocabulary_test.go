@@ -164,7 +164,7 @@ func TestOutOfVocabularyRate_BoundaryPair(t *testing.T) {
 
 	assert.InDelta(t, 0.05, at, 1e-9)
 	assert.GreaterOrEqual(t, at, MaxOutOfVocabularyRate,
-		"the ceiling is exclusive: a run AT the threshold must trip the guard")
+		"the ceiling is inclusive: a run AT the threshold must trip the guard")
 
 	// The pair is a NEIGHBOUR pair, and that is the property that makes it a boundary
 	// test rather than two arbitrary points: the two fixtures differ by exactly one
