@@ -474,11 +474,14 @@ Behavior:
   - Two rows carrying **distinct raw identities that scrub to the same published
     identity** are hand-assembly *or* version skew, and the gate cannot tell which.
     The publication scrub iterates to a fixed point, so it collapses strictly more
-    distinct raw values than the single-pass scrub the producer's own collision check
-    ran under — a run-result an older `atcr` wrote correctly can fail here for that
-    reason alone. Remedy: re-run `atcr benchmark run` with this version to regenerate
-    the file, or rename the ids so they stay distinct after scrubbing. The rejection
-    stands either way: two rows cannot share one published identity on the board.
+    distinct raw values than the single-pass scrub an **older** `atcr`'s collision
+    check ran under — a run-result that older `atcr` wrote correctly can fail here for
+    that reason alone. This version's producer applies the same fixed point, so it
+    rejects a genuine identity collision itself and can no longer emit such a file.
+    Remedy: rename the ids so they stay distinct after scrubbing; re-running
+    `atcr benchmark run` helps only for a hand-assembled file, since a real collision
+    is refused by the run before any run-result is written. The rejection stands
+    either way: two rows cannot share one published identity on the board.
 - A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
   for publication** → error. The scrub is what the submission actually carries, so an
   identity that survives the file but not the scrub would publish as `""`. It removes

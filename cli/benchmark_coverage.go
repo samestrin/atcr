@@ -68,11 +68,21 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 		// The published identity is named too. The message asserts the two collapsed
 		// onto one value; without showing it, the operator cannot tell which of the two
 		// names survived the scrub, and that is the name they have to rename away from.
+		// Remedy ORDER is load-bearing. Re-running was listed first, and for the
+		// version-skew cause the same sentence names it provably cannot work: the
+		// producer's own collision check (benchmark_run.go:267-273) uses the same
+		// fixed-point ScrubPublicRecord this key does, and scrubField(scrubOnce(x))
+		// has the same fixed point as scrubField(x) — so a file that collides at
+		// export implies the raw ids collide at fixed point too, which means
+		// buildRunResult refuses and writes no run-result at all. Worse, that check
+		// runs AFTER every case has executed, so the suggested remedy costs a full
+		// panel run and then fails with a second collision error. Renaming is the
+		// remedy that terminates, so it leads.
 		return fmt.Errorf("run-result %s records %s %q/%q and %q/%q, which are distinct raw identities "+
 			"that scrub to the same published identity %q/%q; this file was either written by an older atcr under an "+
-			"earlier, single-pass privacy scrub (version skew) or hand-assembled. Re-run `atcr benchmark run` "+
-			"with this version to regenerate it, or rename the model/persona ids so they stay distinct after "+
-			"scrubbing",
+			"earlier, single-pass privacy scrub (version skew) or hand-assembled. Rename the model/persona ids so "+
+			"they stay distinct after scrubbing; re-running `atcr benchmark run` helps only if the file was "+
+			"hand-assembled, since this version's producer rejects a genuine identity collision itself",
 			path, what, prevModel, prevPersona, curModel, curPersona, key.model, key.persona)
 	}
 	return fmt.Errorf("run-result %s records %s %s/%s more than once; "+
