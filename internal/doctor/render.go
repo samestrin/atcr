@@ -70,7 +70,8 @@ func window(a AgentResult) string {
 	// early return here preceded the review-cap suffix below, so a row with an
 	// uncapped probe and a FIRING zero-budget verdict showed neither cap while its
 	// hint quoted review's, and docs/registry.md states this cell carries the hint's
-	// operand. The probed cap stays absent; review's is appended either way.
+	// operand. The probed cap stays absent; review's is appended whenever the row is
+	// healthy enough for a hint to speak for it (see the suffix gate below).
 	//
 	// No tier-less form for the probed cap: probe() sets the cap and its source
 	// together, so a cap without a source cannot occur. A fallback for it would
@@ -84,7 +85,16 @@ func window(a AgentResult) string {
 	// hint quotes REVIEW's cap (doctor's --max-tokens caps the probe only), so a
 	// cell showing just the probe's cap names a knob whose current value it refuses
 	// to display — the defect the probed-cap render fixed, one tier over.
-	if a.ReviewMaxTokens > 0 && a.ReviewMaxTokens != a.MaxTokens {
+	//
+	// But only where SOME cap was in play. On a row that placed no call at all
+	// (missing_key/invalid_config short-circuits before the budget resolves, leaving
+	// MaxTokens 0 while run.go assigns ReviewMaxTokens unconditionally) the suffix
+	// would be the cell's ONLY cap, and a reader who knows the documented
+	// `<window> / cap N (tier)` shape reads that two-part form as the cap the probe
+	// used. healthy() keeps the case the early return used to swallow: a FIRING
+	// zero-budget verdict is ok_warning, its hint quotes review's cap, and that cap
+	// must still be shown.
+	if (a.MaxTokens > 0 || healthy(a.Status)) && a.ReviewMaxTokens > 0 && a.ReviewMaxTokens != a.MaxTokens {
 		cell = fmt.Sprintf("%s / review cap %d", cell, a.ReviewMaxTokens)
 	}
 	return cell
