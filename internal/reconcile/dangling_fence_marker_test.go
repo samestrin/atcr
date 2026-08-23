@@ -101,3 +101,52 @@ func TestExtractSection_UnfencedProseGetsNoFenceMarker(t *testing.T) {
 		t.Errorf("unfenced prose gained a fence marker it has no business carrying: %q", text)
 	}
 }
+
+// The synthetic marker is for a DANGLING opener only. Inside a TERMINATED fence the
+// region elides to a placeholder with its markers included, and prepending a ``` there
+// would put back the very marker the elision just removed.
+//
+// Reachable because a blank line INSIDE a fence stops the walk-up: the block then
+// begins on fenced content rather than above the opener.
+func TestExtractSection_BalancedFenceStartGetsNoSyntheticMarker(t *testing.T) {
+	lines := []string{
+		"## Review",
+		"",
+		"```",
+		"quoted",
+		"",
+		"more quoted",
+		"```",
+		"The handler at internal/x.go:42 skips verification.",
+	}
+
+	text, _ := extractSection(lines, 5)
+
+	if strings.Contains(text, "```") {
+		t.Errorf("a terminated fence's region gained a marker the elision removes: %q", text)
+	}
+	if !strings.HasPrefix(text, ElidedQuotePlaceholder) {
+		t.Errorf("expected the fenced region to elide to a placeholder, got %q", text)
+	}
+}
+
+// The synthetic marker is atcr's own line, not reviewer content, so it must not set
+// wroteProse — an excerpt that would otherwise be suppressed as carrying no reviewer
+// prose must stay suppressed rather than come back as a lone marker.
+func TestExtractSection_SyntheticMarkerDoesNotRescueAProseFreeExcerpt(t *testing.T) {
+	lines := []string{
+		"## Review",
+		"",
+		"```",
+		"quoted",
+		"",
+		"more quoted",
+		"```",
+	}
+
+	text, _ := extractSection(lines, 5)
+
+	if text != "" {
+		t.Errorf("prose-free excerpt was not suppressed; got %q", text)
+	}
+}

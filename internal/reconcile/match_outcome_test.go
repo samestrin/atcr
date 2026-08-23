@@ -60,6 +60,36 @@ func TestMatchNarrative_ReportsWhyItFoundNothing(t *testing.T) {
 		}
 	})
 
+	// An indexed reference that never RANKS is the no-anchor case, not the elided one,
+	// and this is the distinction the caller provably cannot re-derive from the index:
+	// len(index[file]) is > 0 here — the file is referenced, and with a line number, so
+	// indexLineFiles records it — yet the line is far enough from the finding's that
+	// anchorTier scores it below minAnchorTier and it never becomes a candidate. No
+	// section was ever extracted, so no quote was involved.
+	t.Run("reference indexed but ranks below the tier floor", func(t *testing.T) {
+		narratives := []reviewNarrative{{
+			relPath: "sources/pool/alice/review.md",
+			leaf:    "alice",
+			lines: []string{
+				"## Review",
+				"",
+				"Unrelated: internal/x.go:900 has a different problem entirely.",
+			},
+		}}
+		index := buildAnchorIndex(narratives)
+
+		if len(index["internal/x.go"]) == 0 {
+			t.Fatal("fixture no longer indexes the reference; it cannot exercise the pruning path")
+		}
+
+		_, out := matchNarrative(narratives, index, "internal/x.go", 42, []string{"alice"})
+
+		if out != matchNoAnchor {
+			t.Errorf("outcome = %v, want matchNoAnchor — the only reference ranked below\n"+
+				"minAnchorTier and never became a candidate, so no section was ever elided", out)
+		}
+	})
+
 	t.Run("prose anchor matches", func(t *testing.T) {
 		narratives := []reviewNarrative{{
 			relPath: "sources/pool/alice/review.md",

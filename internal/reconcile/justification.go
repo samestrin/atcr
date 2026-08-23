@@ -626,11 +626,23 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// docs/findings-format.md's "its opening ``` marker is kept" is false for the
 	// common case. Emitting the marker makes the promise unconditional.
 	//
-	// Not prepended when the block already opens with the opener itself (the case the
-	// walk-up did reach), which would render two bare ``` lines where the document has
-	// one. It does NOT set wroteProse: it is atcr's own line, not reviewer content, so
-	// it must never rescue an excerpt the placeholder-only gate would suppress.
-	if strict[start] && !released[start] && !isFenceMarker(lines[start]) {
+	// BOTH conjuncts are load-bearing, and neither is a marker test:
+	//
+	//   - strict[start] alone is what keeps the marker from being doubled when the
+	//     walk-up DID reach the opener. fenceMask marks lines strictly INSIDE a fence,
+	//     assigning after the toggle, so a marker line is never strict — a start that
+	//     is the opener fails this conjunct and the loop below writes that real marker
+	//     as prose. An explicit isFenceMarker(lines[start]) test alongside it would be
+	//     dead code (it survives mutation because it can never decide anything).
+	//   - !released[start] is what restricts this to a DANGLING opener. Inside a
+	//     TERMINATED fence released == strict, so the conjunct declines and the region
+	//     elides to a placeholder with its markers, per this file's contract. Without
+	//     it a block starting inside a balanced fence — reachable when the fence
+	//     contains a blank line — would gain a ``` the document's elision just removed.
+	//
+	// It does NOT set wroteProse: it is atcr's own line, not reviewer content, so it
+	// must never rescue an excerpt the placeholder-only gate would suppress.
+	if strict[start] && !released[start] {
 		b.WriteString("```")
 		runesWritten += 3
 		wroteAny = true
