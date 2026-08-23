@@ -250,6 +250,17 @@ func containsString(xs []string, s string) bool {
 // a narrative whose leaf dir is one of the finding's reviewers, then toward the
 // earliest narrative (sorted), then the earliest line. Returns ok=false when no
 // review.md mentions the finding's file at all.
+//
+// Candidates are tried in that order until one yields a non-empty excerpt, rather
+// than the single best being taken or nothing. extractSection returns "" for a
+// block whose content is entirely fenced, and buildAnchorIndex indexes lines
+// INSIDE fenced blocks with no fence awareness — so a quoted findings-table row
+// wins the equal-tier tiebreak over the real prose below it purely by having the
+// lower line index. Stopping at the best candidate there abandoned the finding
+// outright, dropping BOTH the justification and the source_report pointer where a
+// usable prose anchor was one candidate away; localdebt seeds seen[id] for every
+// open id, so no later reconcile appends a corrected record and the loss is
+// permanent.
 func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string, line int, reviewers []string) (narrativeMatch, bool) {
 	if file == "" {
 		return narrativeMatch{}, false
@@ -259,34 +270,50 @@ func matchNarrative(narratives []reviewNarrative, index anchorIndex, file string
 		return narrativeMatch{}, false
 	}
 	revSet := toSet(reviewers)
-	bestTier, bestRev, bestNarr, bestLine := 0, false, -1, -1
 	// refs are already in (ni, li) order (buildAnchorIndex scans in that order),
 	// and anchorTier re-scores each candidate line for this finding's line, so the
-	// winner is identical to the full-scan version — this only prunes the lines
+	// ranking is identical to the full-scan version — this only prunes the lines
 	// considered from all lines to the handful that mention file.
+	cands := make([]anchorCandidate, 0, len(refs))
 	for _, r := range refs {
 		tier := anchorTier(narratives[r.ni].lines[r.li], file, line)
 		if tier < minAnchorTier {
 			continue
 		}
-		revPref := revSet[narratives[r.ni].leaf]
-		if beatsMatch(tier, revPref, r.ni, r.li, bestTier, bestRev, bestNarr, bestLine) {
-			bestTier, bestRev, bestNarr, bestLine = tier, revPref, r.ni, r.li
+		cands = append(cands, anchorCandidate{tier: tier, revPref: revSet[narratives[r.ni].leaf], ni: r.ni, li: r.li})
+	}
+	if len(cands) == 0 {
+		return narrativeMatch{}, false
+	}
+	// beatsMatch is a total order over candidates ((ni,li) is unique per file —
+	// indexLineFiles dedupes per line), so the sort is deterministic and its head is
+	// byte-for-byte the winner the single-best scan produced.
+	sort.Slice(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		return beatsMatch(a.tier, a.revPref, a.ni, a.li, b.tier, b.revPref, b.ni, b.li)
+	})
+	for _, c := range cands {
+		text, section := extractSection(narratives[c.ni].lines, c.li)
+		if text == "" {
+			continue
 		}
+		return narrativeMatch{
+			text:    text,
+			relPath: narratives[c.ni].relPath,
+			line:    c.li + 1, // 1-based
+			section: section,
+		}, true
 	}
-	if bestNarr < 0 {
-		return narrativeMatch{}, false
-	}
-	text, section := extractSection(narratives[bestNarr].lines, bestLine)
-	if text == "" {
-		return narrativeMatch{}, false
-	}
-	return narrativeMatch{
-		text:    text,
-		relPath: narratives[bestNarr].relPath,
-		line:    bestLine + 1, // 1-based
-		section: section,
-	}, true
+	return narrativeMatch{}, false
+}
+
+// anchorCandidate is one ranked anchor line under consideration by matchNarrative:
+// the tier it scored for this finding, whether its narrative's leaf dir is one of
+// the finding's reviewers, and its position. Ordered by beatsMatch.
+type anchorCandidate struct {
+	tier    int
+	revPref bool
+	ni, li  int
 }
 
 // beatsMatch reports whether a candidate anchor (tier/reviewer-preference/
