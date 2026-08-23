@@ -691,3 +691,35 @@ func TestExtractSection_RuneBudgetIsNotMeasuredInBytes(t *testing.T) {
 	assert.LessOrEqual(t, utf8.RuneCountInString(text), justificationMaxRunes,
 		"the budget is still a ceiling, and it is still counted in runes")
 }
+
+// truncateRunes appends its ellipsis to whatever rune the cut lands on. When that
+// rune is the placeholder's LAST one and content follows, the excerpt ends on the
+// single line "[quoted example elided]…" — no longer the literal either exact-match
+// consumer looks for. cli/debt_resolve.go compares a line with ==, and
+// skills/atcr/debt-resolve.md:70 tells a model the marker is a line reading EXACTLY
+// that literal. The fused line therefore reads as reviewer prose, and in the
+// debt_resolve case can carry a permanent, backlog-suppressing wontfix on its own.
+func TestExtractSection_TruncationNeverFusesTheEllipsisOntoThePlaceholder(t *testing.T) {
+	// 976 runes of prose + 1 newline + the 23-rune placeholder lands the cut exactly
+	// on the placeholder's last rune.
+	const prefix = justificationMaxRunes - 1 - len(ElidedQuotePlaceholder)
+	lines := []string{
+		"## Review",
+		"",
+		strings.Repeat("p", prefix),
+		"```",
+		"quoted example for internal/x.go:42",
+		"```",
+		"trailing prose that forces the truncation",
+	}
+
+	text, _ := extractSection(lines, 2)
+
+	require.True(t, strings.HasSuffix(text, "…"), "fixture precondition: the excerpt really was truncated")
+	for _, line := range strings.Split(text, "\n") {
+		assert.NotEqual(t, ElidedQuotePlaceholder+"…", line,
+			"the elision marker must stay byte-exact so an exact-match consumer still recognizes it")
+	}
+	assert.Contains(t, strings.Split(text, "\n"), ElidedQuotePlaceholder,
+		"and the marker itself must survive the cut as its own line")
+}
