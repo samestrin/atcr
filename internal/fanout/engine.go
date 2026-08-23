@@ -160,14 +160,15 @@ type Agent struct {
 	//     (agentScopeConstraint, capped against the agent budget). chunk_byte_budget
 	//     is not consulted on a baseline scan at all, so a reader who sees
 	//     ChunkTotal > 1 must NOT assume the chunk-tier formula above: baseline
-	//     records also carry ChunkTotal > 1. It is NOT the
-	// size any individual chunk was cut to, because the per-chunk line budget is
-	// separately clamped by
+	//     records also carry ChunkTotal > 1.
+	//
+	// On EITHER path EffectiveBudget is NOT the size any individual chunk was cut
+	// to, because the per-chunk line budget is separately clamped by
 	// cfg.Settings.ChunkByteBudget, an operator-settable ceiling that can sit far
 	// below payload_byte_budget (the two are equal only when chunk_byte_budget is
 	// unset and inherits it). Read it as "what the whole payload was shed to", which
 	// is the quantity that decides which files were DROPPED, and read
-	// chunk_byte_budget for the chunk regime; ResolvedWindow the model's context
+	// chunk_byte_budget for the chunk regime. ResolvedWindow is the model's context
 	// window (tokens);
 	// ReservedOutputTokens the output cap held back — the RESOLVED per-agent value
 	// (resolveMaxTokens: --max-tokens -> the agent's max_tokens -> defaultMaxTokens),

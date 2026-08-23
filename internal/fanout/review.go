@@ -1736,9 +1736,15 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						//
 						//   baseline (this branch) and bulk  — agentScopeConstraint, the
 						//     payload-tier block, capped against agentBudget
-						//   chunked diff (:2033)             — chunkScopeConstraint, the
+						//   chunked diff (the chunkSizing record)
+						//                                    — chunkScopeConstraint, the
 						//     chunk-tier block, capped against
 						//     min(agentBudget, chunk_byte_budget)
+						//
+						// Named by identifier rather than by line: the previous ":2033"
+						// pointed at a prose line inside a comment block, and any edit
+						// above the target silently re-aims a line number at whatever
+						// moved into it.
 						//
 						// The two diverge whenever an operator sets chunk_byte_budget
 						// below the agent budget, so an artifact reader normalizing two
@@ -2125,9 +2131,20 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					// chunk ceiling under the agent budget, and reserving the larger one
 					// UNDERSTATES the budget this prompt was sized to. Three consumers act
 					// on that: the AC4 gate at the fallback build (fbBudget <
-					// primary.EffectiveBudget) silently skips the overflow check and the
-					// truncate re-fit across the gap, the inherited-size operator warning
-					// under-reports, and status.go publishes it as a payload-tier budget.
+					// primary.EffectiveBudget) can silently skip the OVERFLOW CHECK across
+					// the gap, the inherited-size operator warning under-reports, and
+					// status.go publishes it as a payload-tier budget.
+					//
+					// The overflow half is reachable only under an explicit
+					// max_context_lines override: with a DERIVED ml the bytes a chunk
+					// ships always sit below the old effective budget, so the third
+					// conjunct !inheritedPayloadFits(primary, fbBudget) decides
+					// identically on either side of the gap. And the truncate re-fit is
+					// NOT among them — it is structurally unreachable here, because this
+					// path's buildChain passes nil entries and canRefit() requires
+					// len(r.entries) > 0 (see the note at the fallback build below).
+					// Listing it sent maintainers looking for a live consumer that is not
+					// there.
 					effectiveBudget: appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, chunkScopeConstraint),
 					resolvedWindow:  agentWindow,
 					maxLines:        ml,
