@@ -477,6 +477,19 @@ func extractSection(lines []string, idx int) (text, section string) {
 	// whole rest of the document with it. The loss is permanent either way:
 	// localdebt persists Justification into an append-only store whose id excludes
 	// it.
+	//
+	// THE EXCEPTION THIS BUYS, stated plainly because the split is deliberate and
+	// otherwise reads as an oversight: below a DANGLING opener, headings and bullets
+	// go back to being boundaries while record-shaped lines do NOT. So a run of
+	// consecutive findings records in an unterminated fence's tail bounds nothing,
+	// and every finding anchored in that run receives a BYTE-IDENTICAL excerpt — the
+	// very collapse the release was introduced to end, still in force for this one
+	// line shape. Parser parity wins here anyway: isFindingRecordStart's contract is
+	// to agree with the producing parser byte for byte, and a record in that tail is
+	// a line the parser never emitted. Widening recordAt to the released view would
+	// buy back the boundaries at the cost of that contract; the trade has been made
+	// in favour of parity, not overlooked. TestExtractSection_RecordShapedLineBelowA
+	// DanglingFenceIsNotABoundary pins it.
 	strict, released, balanced := fenceMask(lines)
 	headingAt := func(j int) bool { return !released[j] && isHeadingLine(lines[j]) }
 	itemAt := func(j int) bool { return !released[j] && isItemStart(lines[j]) }
@@ -674,6 +687,14 @@ func isFindingRecordStart(s string) bool {
 // is also permanent — Justification is persisted append-only and StampID does not
 // cover it — so the failure directions are not symmetric and this split is chosen
 // deliberately.
+//
+// Note what the split does NOT recover. The collapse named just above is exactly
+// what a run of record-shaped lines below a dangling opener still suffers, because
+// recordAt keeps the strict view: those lines stop bounding blocks, and several
+// findings anchored among them get one byte-identical excerpt. The rationale for
+// releasing headings and bullets therefore does not extend to records, and this
+// paragraph exists so a reader does not conclude from the one that the other was
+// fixed too. extractSection's own comment carries the same caveat.
 //
 // It exists because a model quoting an example row while explaining the format is the
 // documented reason the parser tracks fences at all — that row carries a real severity
