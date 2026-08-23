@@ -2066,13 +2066,26 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					case agentBudget > 0:
 						// The agent's OWN budget bound. Named separately so the remedy is
 						// the one that works: raising an operator ceiling this agent never
-						// reached would change nothing. agentBudget == 0 is excluded — that
-						// state has its own warning on the chunkAction arm above, which
-						// also carries the on_overflow policy.
+						// reached would change nothing.
 						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its own effective budget (%d B, from a resolved window of %d tokens) is too small "+
 							"to fund even one byte of the --sprint-plan SCOPE CONSTRAINT (the plan is capped at budget/8); the block was "+
 							"DROPPED and this review runs unscoped — %s\n",
 							name, agentBudget, agentWindow, zeroBudgetRemedy)
+					default:
+						// agentBudget == 0. Neither guard above can hold here — nothing is
+						// < 0, and 0 is not > 0 — so without this arm the switch falls to
+						// NOTHING on the one state the block exists to report.
+						//
+						// It does NOT fall to the zero-budget warning on the chunkAction
+						// arm above, which was the previous claim. That warning names the
+						// input budget and the chunking floor and never mentions the
+						// SCOPE CONSTRAINT, so the operator reads it as an overflow risk
+						// and never learns the --sprint-plan scoping was dropped. A
+						// compensating warning carrying different information is not one.
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its resolved window of %d tokens leaves no input budget at all "+
+							"(effective budget 0), so not even one byte of the --sprint-plan SCOPE CONSTRAINT can be funded; the block was "+
+							"DROPPED and this review runs unscoped — %s\n",
+							name, agentWindow, zeroBudgetRemedy)
 					}
 				}
 				// Per-agent sizing record for the chunked path (Epic 19.10 F6/F8):
