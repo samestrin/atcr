@@ -621,3 +621,36 @@ func TestExtractSection_ReviewerProseCarryingThePlaceholderIsPassedThroughVerbat
 	assert.Equal(t, line, text,
 		"the reviewer's sentence is their own words and must survive byte-for-byte, collision or not")
 }
+
+// A fenced anchor OUT-RANKS a prose anchor whenever it appears first: buildAnchorIndex
+// indexes lines inside fenced blocks with no fence awareness, and beatsMatch breaks an
+// equal-tier tie toward the earlier line. Once extractSection started returning "" for
+// a fully-fenced block, matchNarrative's `if text == ""` abandoned the finding outright
+// rather than trying the next-best anchor — so a quoted findings-table row four lines
+// above the real narrative destroyed BOTH the justification and the source_report
+// pointer. The loss is permanent: localdebt seeds seen[id] for every open id, so no
+// later reconcile appends a corrected record.
+func TestMatchNarrative_FallsBackWhenTheBestAnchorHasNoProse(t *testing.T) {
+	narratives := []reviewNarrative{{
+		relPath: "review.md",
+		leaf:    "alice",
+		lines: []string{
+			"## Findings",
+			"",
+			"```",
+			"| internal/x.go:42 | HIGH | forged token |",
+			"```",
+			"",
+			"The handler at internal/x.go:42 skips verification.",
+		},
+	}}
+
+	m, ok := matchNarrative(narratives, buildAnchorIndex(narratives), "internal/x.go", 42, []string{"alice"})
+
+	assert.True(t, ok,
+		"a fully-fenced best anchor must not abandon the finding — a real prose anchor for the same file:line is right there")
+	assert.Contains(t, m.text, "skips verification",
+		"the prose anchor is what carries reviewer content, so it is what must be stamped")
+	assert.Equal(t, 7, m.line,
+		"source_report must point at the prose line that was stamped, not at the quoted table row that lost")
+}
