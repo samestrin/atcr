@@ -1647,6 +1647,34 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 		// declaration alone now closes the budget on the default 32768 window.
 		agentScopeConstraint := capScopeConstraintForBudget(scopeConstraint, agentBudget, cfg.Settings.MaxSprintPlanBytes)
 
+		// The AGENT-TIER drop is reported HERE, above the strategy split, because the
+		// cap above runs once per agent and is common to all three paths — chunked,
+		// baseline (--all / --dir) and the default bulk one. Both drop warnings used
+		// to live inside the chunked branch's `if len(chunks) > 1`, so a bulk or
+		// baseline run dropped the operator's scoping in silence. A warning of some
+		// kind usually still fired in this band (the zero-budget or AllDropped one),
+		// but neither mentions the SCOPE CONSTRAINT, so the operator reads a
+		// degradation notice and concludes --sprint-plan was honoured.
+		//
+		// The chunked branch keeps ONE arm below, for the case this check cannot
+		// speak to: chunk_byte_budget binding UNDER an agent budget that was itself
+		// sufficient. There the agent-tier block survives, this check stays quiet, and
+		// the remedy names the operator key. The two are disjoint by construction, so
+		// no drop is reported twice.
+		if warnOversized && len(scopeConstraint) > 0 && len(agentScopeConstraint) == 0 {
+			if agentBudget > 0 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its own effective budget (%d B, from a resolved window of %d tokens) is too small "+
+					"to fund even one byte of the --sprint-plan SCOPE CONSTRAINT (the plan is capped at budget/8); the block was "+
+					"DROPPED and this review runs unscoped — %s\n",
+					name, agentBudget, agentWindow, zeroBudgetRemedy)
+			} else {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its resolved window of %d tokens leaves no input budget at all "+
+					"(effective budget 0), so not even one byte of the --sprint-plan SCOPE CONSTRAINT can be funded; the block was "+
+					"DROPPED and this review runs unscoped — %s\n",
+					name, agentWindow, zeroBudgetRemedy)
+			}
+		}
+
 		// DESIGN NOTE (Sprint 35.0, Phase 1 Decision 2 — pinned so Phase 5 task 5.2
 		// does not re-litigate it). The baseline (--all / --dir) fan-out gains a NEW
 		// branch here, a SIBLING to the reviewStrategyChunked branch below — NOT a
@@ -2065,8 +2093,8 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// Gated on the OPERATOR's key being the binding one: when chunk_byte_budget
 				// is unset (or sits above the agent's own budget) the drop is the window's
 				// doing, and blaming chunk_byte_budget would accuse an innocent key whose
-				// prescribed remedy — unset it — is a no-op. That case gets the SIBLING
-				// arm below rather than this one.
+				// prescribed remedy — unset it — is a no-op. That case is reported by the
+				// hoisted agent-tier check ABOVE the strategy split, not here.
 				//
 				// It cannot be left to the zero-budget/overflow reporting, which was the
 				// original intent: that arm keys on agentBudget == 0, and the drop band
@@ -2075,43 +2103,31 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				// the two the case fell to NOTHING, which is the one outcome a drop of
 				// the operator's scoping must never have.
 				//
-				// Placed INSIDE the multi-chunk commit, not beside the
-				// capScopeConstraintForBudget call that computes the drop: a diff that
+				// Placed INSIDE the multi-chunk commit, not beside the CHUNK-tier
+				// capScopeConstraintForBudget call that computes this drop: a diff that
 				// yields ONE chunk never ships chunkScopeConstraint at all — it falls
 				// through to the bulk path below, which re-scopes with the fully
 				// populated agentScopeConstraint. Warning there told the operator the
 				// --sprint-plan scoping had been dropped while it was in fact applied.
-				if warnOversized && len(scopeConstraint) > 0 && len(chunkScopeConstraint) == 0 {
-					switch {
-					case cfg.Settings.ChunkByteBudget > 0 && cfg.Settings.ChunkByteBudget < agentBudget:
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
-							"--sprint-plan SCOPE CONSTRAINT (the plan is capped at chunk_byte_budget/8); the block was DROPPED and this "+
-							"review runs unscoped. Raise chunk_byte_budget to at least 8, or unset it to inherit payload_byte_budget.\n",
-							name, cfg.Settings.ChunkByteBudget)
-					case agentBudget > 0:
-						// The agent's OWN budget bound. Named separately so the remedy is
-						// the one that works: raising an operator ceiling this agent never
-						// reached would change nothing.
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its own effective budget (%d B, from a resolved window of %d tokens) is too small "+
-							"to fund even one byte of the --sprint-plan SCOPE CONSTRAINT (the plan is capped at budget/8); the block was "+
-							"DROPPED and this review runs unscoped — %s\n",
-							name, agentBudget, agentWindow, zeroBudgetRemedy)
-					default:
-						// agentBudget == 0. Neither guard above can hold here — nothing is
-						// < 0, and 0 is not > 0 — so without this arm the switch falls to
-						// NOTHING on the one state the block exists to report.
-						//
-						// It does NOT fall to the zero-budget warning on the chunkAction
-						// arm above, which was the previous claim. That warning names the
-						// input budget and the chunking floor and never mentions the
-						// SCOPE CONSTRAINT, so the operator reads it as an overflow risk
-						// and never learns the --sprint-plan scoping was dropped. A
-						// compensating warning carrying different information is not one.
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: its resolved window of %d tokens leaves no input budget at all "+
-							"(effective budget 0), so not even one byte of the --sprint-plan SCOPE CONSTRAINT can be funded; the block was "+
-							"DROPPED and this review runs unscoped — %s\n",
-							name, agentWindow, zeroBudgetRemedy)
-					}
+				// (The hoisted check does sit beside a cap call, but it reads the
+				// AGENT-tier result, which no later path re-populates — so it has no
+				// such false positive.)
+				//
+				// ONE arm, not a switch over every cause. The agent-tier causes are
+				// reported by the hoisted check above the strategy split — which fires
+				// on the bulk and baseline paths too, where this branch never runs. What
+				// remains here is the case that check cannot speak to: chunk_byte_budget
+				// binding UNDER an agent budget that was itself sufficient. There
+				// agentScopeConstraint survives (so the hoisted check is silent) while
+				// chunkScopeConstraint does not, and the remedy has to name the operator
+				// key rather than the agent's window. The two conditions are disjoint by
+				// construction, so no drop is ever reported twice.
+				if warnOversized && len(scopeConstraint) > 0 && len(agentScopeConstraint) > 0 && len(chunkScopeConstraint) == 0 &&
+					cfg.Settings.ChunkByteBudget > 0 && cfg.Settings.ChunkByteBudget < agentBudget {
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk_byte_budget (%d B) is too small to fund even one byte of the "+
+						"--sprint-plan SCOPE CONSTRAINT (the plan is capped at chunk_byte_budget/8); the block was DROPPED and this "+
+						"review runs unscoped. Raise chunk_byte_budget to at least 8, or unset it to inherit payload_byte_budget.\n",
+						name, cfg.Settings.ChunkByteBudget)
 				}
 				// Per-agent sizing record for the chunked path (Epic 19.10 F6/F8):
 				// every chunk-Slot of this persona carries the SAME window/budget and
