@@ -75,7 +75,7 @@ func TestBenchmarkExport_ProducesSuiteTaggedJSON(t *testing.T) {
 		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &sub), "export stdout must be valid JSON: %s", out)
-	require.Equal(t, 1, sub.SubmissionSchema)
+	require.Equal(t, 2, sub.SubmissionSchema)
 	require.Equal(t, "benchmark-suite", sub.Source, "distinct from production export")
 	require.Equal(t, "mini", sub.Suite)
 	require.Equal(t, "1.2.0", sub.SuiteVersion)

@@ -134,7 +134,7 @@ func TestLeaderboardCmd_ExportFlag(t *testing.T) {
 		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export stdout must be valid JSON: %s", out)
-	require.Equal(t, 1, env.SubmissionSchema)
+	require.Equal(t, 2, env.SubmissionSchema)
 	require.Len(t, env.Reviewers, 2)
 }
 
@@ -154,7 +154,7 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
 		SubmissionSchema int `json:"submission_schema"`
 	}
 	require.NoError(t, json.Unmarshal(data, &env))
-	require.Equal(t, 1, env.SubmissionSchema)
+	require.Equal(t, 2, env.SubmissionSchema)
 
 	info, err := os.Stat(dest)
 	require.NoError(t, err)

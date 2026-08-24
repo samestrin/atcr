@@ -74,7 +74,7 @@ func TestExport_EnvelopeMatchesSpec(t *testing.T) {
 
 	env := parseEnvelope(t, data)
 	assert.Equal(t, SubmissionSchema, env.SubmissionSchema, "submission_schema is the public schema constant")
-	assert.Equal(t, 1, env.SubmissionSchema, "spec pins submission_schema to 1")
+	assert.Equal(t, 2, env.SubmissionSchema, "epic 35.16.6.2 bumped submission_schema to 2 when the benchmark envelope gained coverage")
 	assert.Equal(t, version.Version, env.AtcrVersion, "atcr_version comes from internal/version")
 	_, perr := time.Parse(time.RFC3339, env.SubmittedAt)
 	require.NoError(t, perr, "submitted_at must be RFC3339")
