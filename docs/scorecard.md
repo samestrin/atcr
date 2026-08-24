@@ -494,6 +494,54 @@ future epic changes either schema:
 - Version negotiation for the public submission format is handled by the export
   paths, not by individual stored records.
 
+### `submission_schema` is shared by two producers
+
+`submission_schema` is one constant (`scorecard.SubmissionSchema`) stamped by **two**
+envelopes:
+
+| Producer | Envelope | Go type |
+|----------|----------|---------|
+| `atcr leaderboard --export` | production submission | `scorecard.ExportEnvelope` |
+| `atcr benchmark export` | suite submission | `benchmark.Submission` |
+
+Because the constant is shared, **a bump made for one producer versions the other**.
+Neither side can evolve its envelope unilaterally, and that is deliberate: a forked
+schema would let the same `submission_schema` value describe two different documents.
+
+#### Version 2 — what changed, and for whom
+
+Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
+`suite_case_ids` and `reviewer_coverage`, so a partial run published via
+`--allow-partial-coverage` is now self-describing to a consumer instead of being
+indistinguishable from a full one.
+
+**The production envelope gained nothing.** Under version 2,
+`leaderboard --export` emits the same key set it emitted under version 1:
+
+- No field of `ExportEnvelope` or `PublicRecord` was renamed, retyped, or removed.
+- No field was added to either type.
+- The only change on the production path is the integer in `submission_schema`.
+
+So a version-2 production submission differs from a version-1 one in exactly one
+byte-range: the version number. The bump is **additive-only** on the producer side.
+
+#### Consumer-side coordination — an open item, not a verified one
+
+The producer-side claim above is checkable in this repository. **The consumer-side
+one is not.** `ExportEnvelope` is only ever *marshaled* here — built in
+`internal/scorecard/export.go` and written out by `cli/leaderboard.go`. This
+repository contains no ingestion, validation, or rendering code for a submission, so
+nothing in it can demonstrate how the public board reacts to:
+
+- a `submission_schema` it has not seen before (does it accept, warn, or reject?), and
+- the two new keys on a **benchmark** submission (are unknown keys tolerated, or does
+  a strict decoder fail closed?).
+
+**This is an explicit hand-off to the board maintainers, not a resolved question.**
+Before version 2 submissions are published, they must confirm that the board accepts
+`submission_schema: 2` and ignores unrecognized envelope keys. If it does not, the
+consumer-side change belongs to the board's own repository — it cannot be made here.
+
 ---
 
 ## Reference Implementation
