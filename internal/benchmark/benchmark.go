@@ -382,18 +382,58 @@ type Submission struct {
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
 
-	// COVERAGE IS DELIBERATELY NOT CARRIED HERE. It would be genuinely useful on the
-	// board — an opted-out partial submission is otherwise indistinguishable from a
-	// full one — but adding a key to this envelope is a schema-versioning decision,
-	// not a documentation fix (docs/benchmark.md, "the run-result contract"), and
-	// submission_schema is scorecard.SubmissionSchema: the SHARED constant the
-	// production `leaderboard --export` envelope also stamps. Bumping it here would
-	// version the production envelope for a benchmark-only reason — the same
-	// fork-a-shared-schema hazard that keeps coverage off scorecard.PublicRecord.
+	// COVERAGE IS CARRIED HERE AS OF submission_schema 2 (epic 35.16.6.2). It was
+	// deliberately withheld under version 1 because adding a key to this envelope is
+	// a schema-versioning decision, not a documentation fix, and submission_schema is
+	// scorecard.SubmissionSchema — the SHARED constant the production
+	// `leaderboard --export` envelope also stamps. That epic paid the versioning
+	// cost explicitly: the constant is bumped, both pinned docs are updated, and the
+	// bump is additive on the production producer (no ExportEnvelope or PublicRecord
+	// field renamed, retyped, or removed).
 	//
-	// Coverage therefore lives on RunResult only, where `benchmark export` reads it
-	// to gate publication and an operator can inspect it directly. Putting it in the
-	// envelope belongs to an epic scoped to bump submission_schema.
+	// Coverage still does NOT live on scorecard.PublicRecord — that type remains
+	// frozen and byte-shared between the two producers. It lives on THIS envelope,
+	// which only `benchmark export` builds, so the production export's key set is
+	// unchanged.
+
+	// SuiteCaseIDs is the suite's full case-id list, in manifest order — the
+	// denominator every Coverage row is short of or equal to. Copied from
+	// RunResult.SuiteCaseIDs as-is, omitempty included: a run-result written before
+	// coverage existed carries no list, and the key must then be ABSENT rather than
+	// null, so a consumer reads "nobody measured" instead of "measured as empty".
+	// That is the same unmeasured-vs-short distinction RunResult and the export gate
+	// already depend on.
+	SuiteCaseIDs []string `json:"suite_case_ids,omitempty"`
+
+	// Coverage names the cases behind each reviewer row, joined to Reviewers by the
+	// (Model, Persona) pair. It is a TRIMMED projection of RunResult.Coverage — see
+	// SubmissionCoverage for why the run-result's outcomes/fallback_cases are not
+	// carried. omitempty for the same unmeasured-vs-short reason as SuiteCaseIDs.
+	Coverage []SubmissionCoverage `json:"reviewer_coverage,omitempty"`
+}
+
+// SubmissionCoverage is the PUBLIC, trimmed coverage row: which suite cases one
+// reviewer row actually scored, and nothing else. It is a separate type from
+// benchmark.ReviewerCoverage on purpose.
+//
+// ReviewerCoverage additionally carries Outcomes and FallbackCases. Those are
+// run-level diagnostics — they answer "how did this row's cases go" and "how often
+// did fanout fall back", questions an operator inspects locally. The public
+// submission is defined as allowlist-based (docs/scorecard.md, "--export is
+// allowlist-based"), and the board's need is narrower: it must be able to tell a
+// full run from a short one, which requires only the covered-case SET. Widening a
+// public envelope to whatever a producer happened to record is how allowlists rot,
+// so the projection is explicit and the extra fields stay run-result-only.
+//
+// The field names and JSON keys deliberately match ReviewerCoverage's for the three
+// keys they share, so a consumer reading either document reads the same shape.
+type SubmissionCoverage struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+	// CaseIDs are the suite case ids this row scored, in manifest order. Compared
+	// as a SET against Submission.SuiteCaseIDs; a row short of the suite was
+	// measured over less than the full benchmark.
+	CaseIDs []string `json:"case_ids"`
 }
 
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not

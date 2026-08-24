@@ -316,6 +316,149 @@ func TestBuildSubmission_ReScrubsReviewerPII(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-3", sub.Reviewers[0].Model, "email PII must be scrubbed from model")
 }
 
+// coverageRunResult is a measured run: a two-case suite where one reviewer row
+// covered both cases and the other covered only one. The short row is the whole
+// point — before submission_schema 2 it published indistinguishably from the full
+// one. Outcomes and FallbackCases are populated precisely so the trimming assertions
+// below have something real to prove is dropped.
+func coverageRunResult() RunResult {
+	return RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{
+			{Persona: "brad", Model: "llm-large", Runs: 1},
+			{Persona: "bruce", Model: "llm-small", Runs: 1},
+		},
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Coverage: []ReviewerCoverage{
+			{
+				Model:         "llm-large",
+				Persona:       "brad",
+				CaseIDs:       []string{"case-01", "case-02"},
+				Outcomes:      map[string]int{"findings": 2},
+				FallbackCases: 1,
+			},
+			{
+				Model:         "llm-small",
+				Persona:       "bruce",
+				CaseIDs:       []string{"case-01"},
+				Outcomes:      map[string]int{"findings": 1},
+				FallbackCases: 0,
+			},
+		},
+	}
+}
+
+// AC1: a measured run carries its denominator and every row's covered-case set into
+// the submission envelope, so a board consumer can tell a short row from a full one
+// without the run-result file. This is the hole submission_schema 2 exists to close.
+func TestBuildSubmission_CarriesCoverage(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(coverageRunResult(), at)
+
+	assert.Equal(t, []string{"case-01", "case-02"}, sub.SuiteCaseIDs,
+		"the suite denominator is carried, in manifest order")
+
+	require.Len(t, sub.Coverage, 2, "one coverage row per reviewer row")
+	assert.Equal(t, SubmissionCoverage{
+		Model:   "llm-large",
+		Persona: "brad",
+		CaseIDs: []string{"case-01", "case-02"},
+	}, sub.Coverage[0], "the fully-covered row carries both case ids")
+	assert.Equal(t, SubmissionCoverage{
+		Model:   "llm-small",
+		Persona: "bruce",
+		CaseIDs: []string{"case-01"},
+	}, sub.Coverage[1], "the SHORT row is what the board could not previously see")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"suite_case_ids"`)
+	assert.Contains(t, s, `"reviewer_coverage"`)
+	assert.Contains(t, s, `"case_ids"`)
+}
+
+// The submission row is a TRIMMED projection: the run-result's per-case outcome
+// tally and fallback count are run-level diagnostics and must not ride along into a
+// public, allowlist-based envelope. The fixture populates both, so their absence
+// here is a real exclusion rather than an artifact of empty input.
+func TestBuildSubmission_TrimsCoverageToCaseSet(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(BuildSubmission(coverageRunResult(), at))
+	require.NoError(t, err)
+	s := string(data)
+
+	assert.NotContains(t, s, `"outcomes"`,
+		"the per-case outcome tally is a run-result diagnostic, not a public field")
+	assert.NotContains(t, s, `"fallback_cases"`,
+		"the fallback count is a run-result diagnostic, not a public field")
+}
+
+// A run-result written before coverage existed is UNMEASURED, not empty. Both keys
+// must be ABSENT — not null, not [] — so a consumer reads "nobody measured" rather
+// than "measured as zero cases", the same distinction RunResult and the export gate
+// already turn on.
+func TestBuildSubmission_OmitsUnmeasuredCoverage(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	assert.Nil(t, sub.SuiteCaseIDs, "an unmeasured run carries no denominator")
+	assert.Nil(t, sub.Coverage, "an unmeasured run carries no coverage rows")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, "suite_case_ids", "omitempty drops the key entirely — not null, not []")
+	assert.NotContains(t, s, "reviewer_coverage")
+}
+
+// Coverage rows come from the same externally-supplied --in file as the reviewer
+// rows, so they get the same defense-in-depth re-scrub. Scrubbing only one array
+// would both leak PII and BREAK the documented (model, persona) join, because the
+// two arrays would then spell the same identity differently.
+func TestBuildSubmission_ReScrubsCoverageIdentities(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{{
+			Persona: "bruce /Users/sam/secret.txt",
+			Model:   "anthropic/claude-3 sam@example.com",
+			Runs:    1,
+		}},
+		SuiteCaseIDs: []string{"case-01"},
+		Coverage: []ReviewerCoverage{{
+			Model:   "anthropic/claude-3 sam@example.com",
+			Persona: "bruce /Users/sam/secret.txt",
+			CaseIDs: []string{"case-01"},
+		}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Coverage, 1)
+	assert.Equal(t, "bruce", sub.Coverage[0].Persona, "absolute-path PII must be scrubbed from a coverage persona")
+	assert.Equal(t, "anthropic/claude-3", sub.Coverage[0].Model, "email PII must be scrubbed from a coverage model")
+
+	require.Len(t, sub.Reviewers, 1)
+	assert.Equal(t, sub.Reviewers[0].Persona, sub.Coverage[0].Persona,
+		"both arrays must scrub identically or the documented join breaks")
+	assert.Equal(t, sub.Reviewers[0].Model, sub.Coverage[0].Model)
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "/Users/sam", "no path may reach a public submission")
+	assert.NotContains(t, string(data), "sam@example.com", "no email may reach a public submission")
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {
