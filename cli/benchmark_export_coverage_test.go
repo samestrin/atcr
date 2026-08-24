@@ -274,10 +274,10 @@ func TestBenchmarkExport_StrippedCoverageArrayIsRejectedNotWarned(t *testing.T) 
 
 // The opt-out publishes, and names the shortfall to the operator on stderr.
 //
-// The shortfall is deliberately NOT carried into the submission envelope: adding a
-// key there is a submission_schema decision, and that constant is shared with the
-// production leaderboard export. So the opt-out is an operator-visible override, not
-// a consumer-visible annotation — see the TD row filed alongside this change.
+// As of submission_schema 2 (epic 35.16.6.2) the shortfall IS carried into the
+// submission envelope, so the opt-out is no longer an operator-only override that
+// leaves the board blind: a consumer can compare each reviewer_coverage row's
+// case_ids against suite_case_ids and see the short row for itself.
 func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	in := writeCoverageRunResult(t, shortCoverageRows, 2, 1)
 	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
@@ -287,17 +287,23 @@ func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	assert.Contains(t, stderr, "partial coverage", "the operator is told what they opted into")
 	assert.Contains(t, stderr, "2/3", "and the shortfall is quantified, not merely named")
 	assert.Contains(t, stderr, "1/3")
-	// The warning must state the consequence truthfully: the shortfall lives in the
-	// run-result ONLY. benchmark.Submission carries no coverage field, so once
-	// published, a consumer cannot tell these rows from fully-covered ones.
-	assert.Contains(t, stderr, "not carried into the submission",
-		"the one reassurance attached to bypassing a data-integrity gate must be true")
-	assert.NotContains(t, stderr, "submission records each row's covered cases")
+	// The warning must state the consequence truthfully. The old text promised the
+	// shortfall stayed out of the submission; that promise is now false, so asserting
+	// its ABSENCE is what keeps the warning honest as the behavior changed underneath it.
+	assert.NotContains(t, stderr, "not carried into the submission",
+		"the pre-schema-2 reassurance is now false and must not survive in the warning")
+	assert.Contains(t, stderr, "carried into the submission",
+		"the operator is told the shortfall is now consumer-visible")
 
-	// The envelope stays at the frozen schema with no new keys.
-	assert.NotContains(t, stdout, "reviewer_coverage",
-		"widening the public envelope is a submission_schema decision, not part of this change")
-	assert.NotContains(t, stdout, "suite_case_ids")
+	// The envelope carries the shortfall: the denominator plus each row's covered set.
+	assert.Contains(t, stdout, "suite_case_ids", "the suite denominator reaches the board")
+	assert.Contains(t, stdout, "reviewer_coverage", "each row's covered-case set reaches the board")
+	assert.Contains(t, stdout, "case_ids")
+	// Trimmed projection: the run-result's diagnostics stay out of the public envelope.
+	assert.NotContains(t, stdout, "outcomes",
+		"the per-case outcome tally is run-result-only, not a public field")
+	assert.NotContains(t, stdout, "fallback_cases",
+		"the fallback count is run-result-only, not a public field")
 }
 
 // A run-result carrying NO coverage at all — any file produced before coverage

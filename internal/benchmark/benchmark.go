@@ -464,5 +464,37 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
 		Reviewers:        scrubbed,
+		SuiteCaseIDs:     rr.SuiteCaseIDs,
+		Coverage:         publicCoverage(rr.Coverage),
 	}
+}
+
+// publicCoverage projects run-result coverage rows onto the trimmed public row,
+// re-scrubbing each identity on the way.
+//
+// nil in, nil out — NOT an empty slice. Submission.Coverage is omitempty, and a
+// zero-length non-nil slice would still marshal to `[]`, which reads as "measured,
+// and this run covered nothing" instead of "nobody measured". The two are different
+// claims and the export gate already distinguishes them, so the projection must
+// preserve nil rather than normalize it away.
+//
+// The scrub goes through scorecard.ScrubPublicRecord — the same function applied to
+// the reviewer rows — rather than a private copy of the rules. That is deliberate:
+// the two arrays are joined by (Model, Persona), so any divergence between how they
+// are scrubbed silently breaks the join. Routing both through one function makes
+// that divergence impossible rather than merely unlikely.
+func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
+	if rows == nil {
+		return nil
+	}
+	out := make([]SubmissionCoverage, len(rows))
+	for i, c := range rows {
+		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: c.Model, Persona: c.Persona})
+		out[i] = SubmissionCoverage{
+			Model:   id.Model,
+			Persona: id.Persona,
+			CaseIDs: c.CaseIDs,
+		}
+	}
+	return out
 }
