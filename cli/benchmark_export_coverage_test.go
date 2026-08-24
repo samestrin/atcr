@@ -535,3 +535,54 @@ func TestBenchmarkExport_AllowPartialCoverageHelpIsTruthful(t *testing.T) {
 	assert.Contains(t, help, "not comparable",
 		"the real reason the gate still fails closed must survive the rewrite")
 }
+
+// The coverage gate validates RAW case ids, but BuildSubmission publishes SCRUBBED
+// ones. Where those two disagree the published document means something the gate
+// never checked — the same seam the reviewer-identity check at benchmark.go closed,
+// one field over.
+//
+// Two distinct raw ids that scrub to one value publish a denominator with a repeated
+// entry, and under the documented SET comparison a short row then reads as fully
+// covered. That defeats the whole point of carrying coverage, on exactly the
+// --allow-partial-coverage path whose warning promises the shortfall is visible.
+func TestBenchmarkExport_RejectsSuiteCaseIDsThatCollideOnceScrubbed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01 a@b.com","case-01 c@d.com"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01 a@b.com"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+	require.NotEqual(t, 0, code, "a denominator that collapses once scrubbed must not publish: %s", out)
+	assert.Contains(t, out, "case-01 a@b.com", "the error names a colliding id in its PRE-scrub form")
+	assert.Contains(t, out, "case-01 c@d.com", "and the id it collides with, or the operator cannot act")
+	assert.NotContains(t, out, `"suite_case_ids"`, "nothing is published on the rejection path")
+}
+
+// A case id consumed entirely by the scrubber publishes as "" — the identical defect
+// the reviewer-identity check rejects because "an identity that scrubs away publishes
+// as \"\" on the leaderboard". Case ids are no different, and the shape is producible:
+// the bundled importer builds ids as <owner>-<repo>-pr-<n>.
+func TestBenchmarkExport_RejectsCaseIDThatScrubsAway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["sk-io-pr-42","case-02"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["sk-io-pr-42","case-02"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "an id that scrubs to empty must not publish as \"\": %s", out)
+	assert.Contains(t, out, "sk-io-pr-42", "the error names the PRE-scrub id; the scrubbed one is empty by construction")
+}
+
+// The guard must not cost a well-formed suite anything.
+func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
+	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.Equal(t, 0, code, "ordinary case ids are untouched by the scrub guard: %s", out)
+	assert.Contains(t, out, `"case-01"`)
+}

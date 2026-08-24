@@ -242,6 +242,17 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Same seam as the reviewer-identity check above, one field over. As of
+	// submission_schema 2 the case ids are PUBLISHED, and BuildSubmission scrubs them
+	// on the way out — but every check below validates the RAW ids. Where the two
+	// disagree, the document that ships means something no gate ever inspected.
+	//
+	// Runs BEFORE the anchor and the gate so their diagnostics are never the last word
+	// on a file whose published form differs from the checked one.
+	if err := validateScrubbedCaseIDs(rr, in); err != nil {
+		return err
+	}
+
 	// Anchor before the gate, not after: checkCoverage's every diagnostic is phrased
 	// against rr.SuiteCaseIDs, so a truncated denominator would otherwise produce a
 	// clean bill of health that the anchor then contradicts.

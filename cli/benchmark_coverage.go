@@ -482,3 +482,64 @@ func summarizeMissing(missing []string) string {
 	}
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
+
+// validateScrubbedCaseIDs rejects a run-result whose case ids do not survive
+// publication intact. It exists because submission_schema 2 made the case ids a
+// PUBLISHED field while every other check in this file still validates the raw ones.
+//
+// Two failure shapes, both of which produce a document the coverage gate approved but
+// never actually examined:
+//
+//   - An id that scrubs to empty publishes as "". This is the identical defect
+//     runBenchmarkExport already rejects for reviewer identities, and the shape is
+//     genuinely producible: the bundled importer builds ids as
+//     <owner>-<repo>-pr-<n>, which a credential rule can consume whole.
+//
+//   - Two distinct raw ids that scrub to the SAME value publish a denominator with a
+//     repeated entry. Under the documented SET comparison of a row's case_ids against
+//     suite_case_ids, a short row then reads as fully covered — defeating the reason
+//     coverage is carried at all, on exactly the --allow-partial-coverage path whose
+//     warning promises the shortfall is visible.
+//
+// Only the denominator needs the distinctness check: every covered id is validated to
+// be a suite member, and duplicates within a row are rejected separately, so distinct
+// scrubbed suite ids force distinct scrubbed covered ids. Row ids are still checked
+// for emptiness, because a row is inspected here even when the denominator is absent.
+//
+// Errors name the PRE-scrub id. The scrubbed value is empty or duplicated by
+// construction, so reporting it would tell the operator what went wrong but never
+// which line of their file to fix.
+func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
+	scrubCaseID := func(s string) string {
+		return scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: s}).Model
+	}
+
+	seen := make(map[string]string, len(rr.SuiteCaseIDs)) // scrubbed -> first raw id
+	for _, id := range rr.SuiteCaseIDs {
+		s := strings.TrimSpace(scrubCaseID(id))
+		if s == "" {
+			return fmt.Errorf("run-result %s lists suite case %q, which is empty once scrubbed for publication; "+
+				"a case id that scrubs away publishes as \"\" in suite_case_ids",
+				path, stripTerminalControlRunes(id))
+		}
+		if first, dup := seen[s]; dup {
+			return fmt.Errorf("run-result %s lists suite cases %q and %q, which are the same id once scrubbed "+
+				"for publication; the published denominator would repeat an entry, so a row short of the suite "+
+				"would read as fully covered",
+				path, stripTerminalControlRunes(first), stripTerminalControlRunes(id))
+		}
+		seen[s] = id
+	}
+
+	for _, c := range rr.Coverage {
+		for _, id := range c.CaseIDs {
+			if strings.TrimSpace(scrubCaseID(id)) == "" {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
+					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage",
+					path, stripTerminalControlRunes(id),
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))
+			}
+		}
+	}
+	return nil
+}
