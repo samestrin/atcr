@@ -519,6 +519,17 @@ func scrubIDs(ids []string) []string {
 //
 // CaseIDs get the same treatment for the same reason, via scrubIDs: they are no less
 // untrusted than the identity sitting beside them in the row.
+//
+// Per-ROW, however, nil is normalized to an empty slice — the opposite of the
+// slice-level rule above, and deliberately so. CaseIDs has no omitempty (it mirrors
+// ReviewerCoverage.CaseIDs), so a nil would marshal to `"case_ids": null`, and that
+// value is reachable: --allow-partial-coverage publishes a row that covered nothing,
+// and a hand-supplied run-result can omit the key. At row level the distinction
+// carries no meaning to begin with — if reviewer_coverage is present at all then
+// coverage WAS measured, so a row with no ids covered no cases. The unmeasured
+// signal lives one level up, in the absence of the whole key. Handing a board
+// decoder a null where it expects an array buys nothing and risks the one thing
+// still unverified about this bump: consumer-side tolerance.
 func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
 	if rows == nil {
 		return nil
@@ -526,10 +537,14 @@ func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
 	out := make([]SubmissionCoverage, len(rows))
 	for i, c := range rows {
 		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: c.Model, Persona: c.Persona})
+		ids := scrubIDs(c.CaseIDs)
+		if ids == nil {
+			ids = []string{}
+		}
 		out[i] = SubmissionCoverage{
 			Model:   id.Model,
 			Persona: id.Persona,
-			CaseIDs: scrubIDs(c.CaseIDs),
+			CaseIDs: ids,
 		}
 	}
 	return out
