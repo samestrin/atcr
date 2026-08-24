@@ -511,3 +511,27 @@ func TestBenchmarkExport_ScrubCollisionOnPersonaAloneIsVersionSkewNotMalformed(t
 	assert.NotContains(t, out, "this file is malformed",
 		"two DIFFERENT raw personas colliding under the scrub is version skew, not tampering")
 }
+
+// The --allow-partial-coverage help text carries the same promise the runtime
+// warning does, and it went stale for the same reason: submission_schema 2 made
+// "the submission does not carry it" false. Unlike the warning, no test read this
+// string, so nothing would have caught the rot.
+//
+// Asserted through the real command tree rather than against the literal, so the
+// text is checked as a user actually encounters it.
+func TestBenchmarkExport_AllowPartialCoverageHelpIsTruthful(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "--allow-partial-coverage", "precondition: the flag is documented in help")
+
+	assert.NotContains(t, help, "the submission does not carry it",
+		"submission_schema 2 carries the shortfall; the old promise is now false")
+	assert.NotContains(t, help, "consumers cannot distinguish these rows from fully-covered ones",
+		"a consumer CAN now distinguish them, by comparing case_ids against suite_case_ids")
+
+	assert.Contains(t, help, "suite_case_ids",
+		"help must name the key a consumer reads the shortfall from")
+	assert.Contains(t, help, "not comparable",
+		"the real reason the gate still fails closed must survive the rewrite")
+}
