@@ -332,8 +332,11 @@ type RunResult struct {
 	// all-`other` signature by correlating entry i's RoutingValues with
 	// Reviewers[i].CorroborationRate — which is why recall is not duplicated here.
 	//
-	// Run-result-only, exactly as Coverage is: it gates nothing and belongs to no
-	// public schema, so BuildSubmission does not carry it into a Submission. omitempty
+	// Run-result-only: it gates nothing and belongs to no public schema, so
+	// BuildSubmission does not carry it into a Submission. (Coverage was
+	// run-result-only for the same reason until submission_schema 2 gave the board a
+	// concrete need for it — a partial run that could not be told from a full one.
+	// This field has no such consumer, so it stays put.) omitempty
 	// drops the key when a new run has no reviewers, so such a run serializes
 	// identically to a run-result written before this field existed — and both
 	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown

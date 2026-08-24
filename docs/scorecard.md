@@ -235,7 +235,7 @@ echoed** (they would leak query parameters about your local dataset):
 
 ```json
 {
-  "submission_schema": 1,
+  "submission_schema": 2,
   "atcr_version": "0.0.0",
   "submitted_at": "2026-06-15T00:00:00Z",
   "reviewers": [
@@ -255,7 +255,7 @@ echoed** (they would leak query parameters about your local dataset):
 
 | Envelope field | Type | Description |
 |----------------|------|-------------|
-| `submission_schema` | int | Public submission schema version (currently `1`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
+| `submission_schema` | int | Public submission schema version (currently `2`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
 | `atcr_version` | string | The ATCR build that produced the submission (`internal/version`; `0.0.0` in dev builds, stamped via ldflags for releases). |
 | `submitted_at` | string | RFC3339 export timestamp (also the `--since` window anchor, so output is reproducible). |
 | `reviewers` | array | One aggregated row per `(persona, model)`. |
@@ -481,7 +481,7 @@ There are **two independent version numbers**:
 
 - `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
   store).
-- `submission_schema` (`1`) is stamped on every **public submission** envelope
+- `submission_schema` (`2`) is stamped on every **public submission** envelope
   (`leaderboard --export` and `benchmark export`).
 
 They are decoupled on purpose: the local store format and the public submission

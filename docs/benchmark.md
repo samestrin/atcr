@@ -217,11 +217,14 @@ qwen3.8-max/brad (8/17 cases, missing case-09, case-10, case-11 and 6 more);
 llm-large/brad (9/17 cases, missing case-01, case-02, case-03 and 5 more)
 ```
 
-`--allow-partial-coverage` overrides it, warning on stderr instead of failing. Note
-the override is **operator-visible, not consumer-visible**: the shortfall is recorded
-in the run-result, but the submission envelope does not carry coverage (adding a key
-there is a `submission_schema` decision — see below), so a published partial run is
-not self-describing to the board. Prefer re-running the missing cases.
+`--allow-partial-coverage` overrides it, warning on stderr instead of failing. As of
+`submission_schema` 2 the override is **consumer-visible**: the submission envelope
+carries `suite_case_ids` and each row's `reviewer_coverage.case_ids`, so a board
+consumer can compare the two and see for itself that a row is short.
+
+That makes a partial submission *honest*, not *comparable* — rows measured over
+different subsets of the suite still cannot be ranked against each other, which is why
+the gate continues to fail closed by default. Prefer re-running the missing cases.
 
 A run-result that records **no** coverage at all — any file written before coverage
 existed — is treated as *unmeasured* rather than short: export warns that it could not
@@ -260,7 +263,7 @@ board accept suite submissions and reject production ones:
 
 ```json
 {
-  "submission_schema": 1,
+  "submission_schema": 2,
   "atcr_version": "0.0.0",
   "submitted_at": "2026-06-24T12:00:00Z",
   "source": "benchmark-suite",
@@ -276,6 +279,14 @@ board accept suite submissions and reject production ones:
       "cost_per_corroborated_finding_usd": 0.006,
       "latency_p50_ms": 8900
     }
+  ],
+  "suite_case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
+  "reviewer_coverage": [
+    {
+      "model": "claude-sonnet-4-6",
+      "persona": "bruce",
+      "case_ids": ["case-01-nil-deref", "case-02-sql-injection"]
+    }
   ]
 }
 ```
@@ -283,6 +294,26 @@ board accept suite submissions and reject production ones:
 The `reviewers[]` rows reuse the **same public reviewer schema** as
 `leaderboard --export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
 public board renders one consistent set of columns for both submission sources.
+
+#### Coverage in the envelope (`submission_schema` 2)
+
+`suite_case_ids` and `reviewer_coverage` were added in `submission_schema` 2. They
+exist so a consumer can tell a full run from a short one **without** the run-result
+file: join a `reviewer_coverage` row to its `reviewers[]` row by `(model, persona)`,
+then compare that row's `case_ids` against `suite_case_ids` as a SET. The row above
+covers both declared cases; a row listing only `case-01-nil-deref` was scored over
+half the suite and is not comparable to one that was not.
+
+Two properties are worth knowing:
+
+- **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
+  entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
+  and stay run-result-only — the public submission is allowlist-based, and the board
+  needs only the covered-case set.
+- **Absent means unmeasured, not empty.** Both keys are omitted entirely by a
+  run-result that recorded no coverage (any file written before coverage existed).
+  An absent key reads as "nobody measured"; it is never emitted as `null` or `[]`,
+  which would claim a measurement of nothing.
 
 #### `atcr_version` is the scorer discriminator
 
@@ -307,11 +338,12 @@ submissions:
   `cost_per_corroborated_finding_usd` across differing `atcr_version` values
   without stating that the scorer changed between them.
 
-A dedicated scoring/metric version in the envelope would say this more directly,
-but `submission_schema` is a frozen public contract; adding a field is a
-schema-versioning decision, not a documentation fix. Until such a field exists,
-`atcr_version` carries the meaning, and consumers must be told so — which is what
-this section does.
+A dedicated scoring/metric version in the envelope would say this more directly, but
+`submission_schema` is a **shared** public contract — the same constant stamps the
+production `leaderboard --export` envelope — so adding a field is a schema-versioning
+decision that costs a bump on both producers, not a documentation fix. (Schema 2 paid
+that cost once, for coverage.) Until such a field exists, `atcr_version` carries the
+meaning, and consumers must be told so — which is what this section does.
 
 ### The run-result contract
 
@@ -370,10 +402,17 @@ emits and the order the documented positional join depends on.
 }
 ```
 
-`suite_case_ids`, `reviewer_coverage`, and `reviewer_vocabulary` are
-**run-result-only** — they are not carried into the submission envelope. Each is
-omitted entirely by a producer that did not measure it, which is what lets export
-tell "unmeasured" apart from "short".
+`reviewer_vocabulary` and `out_of_vocabulary_rate` are **run-result-only** — they are
+not carried into the submission envelope.
+
+`suite_case_ids` and `reviewer_coverage` **are** carried, as of `submission_schema` 2,
+but in trimmed form: the submission keeps `model`, `persona`, and `case_ids`, and drops
+the `outcomes` tally and `fallback_cases` count shown above. Those two remain
+run-result-only.
+
+Every one of these keys is omitted entirely by a producer that did not measure it,
+which is what lets export tell "unmeasured" apart from "short" — and the omission
+carries through to the submission envelope unchanged.
 
 `out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
 share of the run's findings whose category is not a member of the closed reviewer
