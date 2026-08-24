@@ -459,6 +459,63 @@ func TestBuildSubmission_ReScrubsCoverageIdentities(t *testing.T) {
 	assert.NotContains(t, string(data), "sam@example.com", "no email may reach a public submission")
 }
 
+// Case ids are untrusted for the SAME reason the identity fields are: both come from
+// the hand-suppliable --in file, and `benchmark export` is where that file first
+// enters the tool. cli/benchmark_coverage.go already treats them as untrusted for
+// terminal output; carrying them into a PUBLIC envelope owes them the same scrub the
+// identity beside them already gets. Scrubbing one and not the other is the
+// inconsistency, not the scrub.
+//
+// Both arrays are scrubbed with the same function, so the documented set comparison
+// between suite_case_ids and a row's case_ids still lines up afterwards.
+func TestBuildSubmission_ScrubsUntrustedCaseIDs(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+		SuiteCaseIDs: []string{"case-01 /Users/sam/secret.txt", "case-02"},
+		Coverage: []ReviewerCoverage{{
+			Model:   "llm-small",
+			Persona: "bruce",
+			CaseIDs: []string{"case-01 /Users/sam/secret.txt"},
+		}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.SuiteCaseIDs, 2)
+	assert.Equal(t, "case-01", sub.SuiteCaseIDs[0], "path PII must be scrubbed from the denominator")
+	assert.Equal(t, "case-02", sub.SuiteCaseIDs[1], "a clean id is passed through untouched")
+
+	require.Len(t, sub.Coverage, 1)
+	require.Len(t, sub.Coverage[0].CaseIDs, 1)
+	assert.Equal(t, sub.SuiteCaseIDs[0], sub.Coverage[0].CaseIDs[0],
+		"both arrays scrub identically, so the documented set comparison still lines up")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "/Users/sam", "no path may reach a public submission")
+}
+
+// Scrubbing must not mutate the caller's RunResult. `benchmark export` validates
+// coverage against the run-result BEFORE building the submission, and a caller that
+// builds twice, or inspects rr afterwards, must see the file it supplied — not a
+// version this function quietly rewrote in place.
+func TestBuildSubmission_DoesNotMutateSourceRunResult(t *testing.T) {
+	rr := coverageRunResult()
+	rr.SuiteCaseIDs[0] = "case-01 /Users/sam/secret.txt"
+	rr.Coverage[0].CaseIDs[0] = "case-01 /Users/sam/secret.txt"
+
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	_ = BuildSubmission(rr, at)
+
+	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.SuiteCaseIDs[0],
+		"the caller's denominator slice must be left alone")
+	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.Coverage[0].CaseIDs[0],
+		"the caller's per-row case list must be left alone")
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {

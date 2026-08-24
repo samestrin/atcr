@@ -464,25 +464,58 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
 		Reviewers:        scrubbed,
-		SuiteCaseIDs:     rr.SuiteCaseIDs,
+		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs),
 		Coverage:         publicCoverage(rr.Coverage),
 	}
+}
+
+// scrubID applies the reviewer-identity scrub to one untrusted case id.
+//
+// It borrows scorecard.ScrubPublicRecord rather than reimplementing the rules,
+// because the rules must not diverge: the identity fields and the case ids sit in
+// the same envelope, arrive from the same hand-suppliable --in file, and are covered
+// by the same "no paths, emails, or credentials in a public submission" contract
+// (docs/scorecard.md). Two copies of that logic would drift; one function cannot.
+func scrubID(s string) string {
+	return scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: s}).Model
+}
+
+// scrubIDs returns a scrubbed COPY of ids, preserving nil.
+//
+// The copy is the point: `benchmark export` validates coverage against the caller's
+// RunResult before building the submission, so scrubbing in place would rewrite the
+// file's own data underneath a caller that may still read or re-validate it.
+// Preserving nil keeps Submission.SuiteCaseIDs/Coverage exactly as nil-or-not as the
+// RunResult they came from, which is what lets a Go consumer read "unmeasured" off
+// the struct — at the JSON layer omitempty already drops nil and empty alike.
+func scrubIDs(ids []string) []string {
+	if ids == nil {
+		return nil
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = scrubID(id)
+	}
+	return out
 }
 
 // publicCoverage projects run-result coverage rows onto the trimmed public row,
 // re-scrubbing each identity on the way.
 //
-// nil in, nil out — NOT an empty slice. Submission.Coverage is omitempty, and a
-// zero-length non-nil slice would still marshal to `[]`, which reads as "measured,
-// and this run covered nothing" instead of "nobody measured". The two are different
-// claims and the export gate already distinguishes them, so the projection must
-// preserve nil rather than normalize it away.
+// nil in, nil out. At the JSON layer this is invisible — omitempty drops a nil and
+// an empty slice alike — so the reason is Go-level fidelity: Submission.Coverage
+// stays exactly as nil-or-not as the RunResult.Coverage it was projected from, which
+// is what lets an in-process consumer read "nobody measured" straight off the struct
+// instead of having to distinguish it from "measured, covered nothing".
 //
-// The scrub goes through scorecard.ScrubPublicRecord — the same function applied to
-// the reviewer rows — rather than a private copy of the rules. That is deliberate:
-// the two arrays are joined by (Model, Persona), so any divergence between how they
-// are scrubbed silently breaks the join. Routing both through one function makes
-// that divergence impossible rather than merely unlikely.
+// The identity scrub goes through scorecard.ScrubPublicRecord — the same function
+// applied to the reviewer rows — rather than a private copy of the rules. That is
+// deliberate: the two arrays are joined by (Model, Persona), so any divergence
+// between how they are scrubbed silently breaks the join. Routing both through one
+// function makes that divergence impossible rather than merely unlikely.
+//
+// CaseIDs get the same treatment for the same reason, via scrubIDs: they are no less
+// untrusted than the identity sitting beside them in the row.
 func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
 	if rows == nil {
 		return nil
@@ -493,7 +526,7 @@ func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
 		out[i] = SubmissionCoverage{
 			Model:   id.Model,
 			Persona: id.Persona,
-			CaseIDs: c.CaseIDs,
+			CaseIDs: scrubIDs(c.CaseIDs),
 		}
 	}
 	return out
