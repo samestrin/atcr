@@ -586,3 +586,24 @@ func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
 	require.Equal(t, 0, code, "ordinary case ids are untouched by the scrub guard: %s", out)
 	assert.Contains(t, out, `"case-01"`)
 }
+
+// A verbatim-repeated suite id must keep reaching checkCoverage's sharper
+// "more than once" diagnostic, not the scrub-collision one. Both conditions are true
+// of such a file, so the ordering between the two rules is a real choice: the raw
+// duplicate is the plainer defect and the actionable one (delete a line), whereas
+// blaming the privacy scrub would send the operator hunting the wrong thing.
+func TestBenchmarkExport_VerbatimDuplicateSuiteIDPrefersTheRawDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-01"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a repeated suite id is still rejected: %s", out)
+	assert.Contains(t, out, "more than once", "the raw-duplicate rule owns this file")
+	assert.NotContains(t, out, "once scrubbed for publication",
+		"the scrub-collision rule must not claim a collision the raw file already had")
+}

@@ -522,7 +522,15 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 				"a case id that scrubs away publishes as \"\" in suite_case_ids",
 				path, stripTerminalControlRunes(id))
 		}
-		if first, dup := seen[s]; dup {
+		// Only DISTINCT raw ids colliding after the scrub are this function's
+		// business. An id repeated verbatim is a plainer defect with a sharper
+		// existing diagnostic in checkCoverage ("lists suite case %q more than
+		// once"), and that check also guarantees len(suite) is the distinct
+		// denominator every later message quotes. Claiming the scrub caused a
+		// collision the raw file already contained would misdirect the operator
+		// into hunting a privacy rule instead of deleting a duplicate line —
+		// the same identical-raw vs distinct-raw split duplicateIdentityError makes.
+		if first, dup := seen[s]; dup && first != id {
 			return fmt.Errorf("run-result %s lists suite cases %q and %q, which are the same id once scrubbed "+
 				"for publication; the published denominator would repeat an entry, so a row short of the suite "+
 				"would read as fully covered",
