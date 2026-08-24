@@ -34,7 +34,12 @@ func newLeaderboardCmd() *cobra.Command {
 	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
 	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
-	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table")
+	// The version is named here, not only in the docs, because the bump was made for
+	// a BENCHMARK-side change (coverage in the suite envelope) while this envelope
+	// gained no fields — and board acceptance of the new number is an unverified
+	// coordination item. A production submitter reads this help and nothing else, so
+	// omitting it would leave the one group affected by the risk uninformed.
+	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema 2; its field set is unchanged from 1, but a board pinned to 1 must be updated to accept it")
 	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	return cmd
 }

@@ -604,3 +604,18 @@ func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
 	require.NotContains(t, out, "Try widening --since", "duplicate Fprintln must be removed")
 	require.Contains(t, out, "no records match the export filters")
 }
+
+// The production envelope's version moved to 2 for a BENCHMARK-side reason, and
+// board acceptance of version 2 is an explicitly unverified coordination item. A
+// production submitter reads this flag's help and nothing else, so the bump has to be
+// visible here — otherwise the only notice lives in a doc they have no reason to open.
+func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "leaderboard", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "--export", "precondition: the flag is documented in help")
+	require.Contains(t, help, "submission_schema 2",
+		"a production submitter must learn the envelope version changed")
+	require.Contains(t, help, "pinned to 1",
+		"and that a board pinned to the old version needs updating")
+}

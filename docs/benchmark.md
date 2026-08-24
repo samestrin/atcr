@@ -304,7 +304,7 @@ then compare that row's `case_ids` against `suite_case_ids` as a SET. The row ab
 covers both declared cases; a row listing only `case-01-nil-deref` was scored over
 half the suite and is not comparable to one that was not.
 
-Two properties are worth knowing:
+Three properties are worth knowing:
 
 - **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
   entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
@@ -414,8 +414,10 @@ the `outcomes` tally and `fallback_cases` count shown above. Those two remain
 run-result-only.
 
 Every one of these keys is omitted entirely by a producer that did not measure it,
-which is what lets export tell "unmeasured" apart from "short" — and the omission
-carries through to the submission envelope unchanged.
+which is what lets export tell "unmeasured" apart from "short". For `suite_case_ids`
+and `reviewer_coverage` that omission carries through to the submission envelope
+unchanged; the two vocabulary keys have no submission counterpart at all, so they are
+absent from it in every case, measured or not.
 
 `out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
 share of the run's findings whose category is not a member of the closed reviewer

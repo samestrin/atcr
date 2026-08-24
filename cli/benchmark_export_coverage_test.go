@@ -35,8 +35,16 @@ func writeCoverageRunResult(t *testing.T, rows string, runsPrimary, runsBackup i
 const fullCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
 	`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`
 
-const shortCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02"]},` +
-	`{"model":"m-backup","persona":"brad","case_ids":["case-03"]}`
+// shortCoverageRows carries `outcomes` and `fallback_cases` deliberately. The export
+// tests assert those two keys do NOT reach the submission envelope, and an assertion
+// that a field is absent proves nothing when the fixture never supplied it — it would
+// pass just as happily against a BuildSubmission that published the untrimmed
+// run-result row. Each tally sums to its row's covered-case count, which the
+// outcomes-mismatch validation requires.
+const shortCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02"],` +
+	`"outcomes":{"findings":2},"fallback_cases":1},` +
+	`{"model":"m-backup","persona":"brad","case_ids":["case-03"],` +
+	`"outcomes":{"clean":1}}`
 
 // A row measured over half the suite must not be published beside a full one. Case
 // difficulty varies enormously across the suite, so two rows built from different

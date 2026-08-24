@@ -444,6 +444,24 @@ the surface, the less can leak.
 - Repository content, hostnames, usernames, and organization names — none are
   collected into a record in the first place
 
+> **This allowlist governs the production `leaderboard --export` envelope only.**
+> A `benchmark export` submission is a different document, and since
+> `submission_schema` 2 it additionally publishes `suite_case_ids` and each row's
+> `reviewer_coverage.case_ids` — the suite's case ids, **verbatim**.
+>
+> Case ids are producer-controlled and routinely encode repository identity: the
+> bundled importer derives them as `<owner>-<repo>-pr-<number>`, so
+> `standard-v1` ids read like `bluewave-labs-checkmate-pr-2883`. Exporting a
+> submission built from a **private or internal suite therefore discloses those
+> org, repo, and PR identifiers**, which the bullet above does not cover.
+>
+> They pass the same scrubber as `persona`/`model` (so paths, emails, and
+> credentials cannot ride inside one, and an id that scrubs to empty or collides
+> with another is rejected rather than published) — but the scrubber does not
+> treat an org or repo name as sensitive, because for the public suite it is not.
+> Review your case ids before publishing a submission from a suite you did not
+> intend to disclose.
+
 As defense-in-depth, the two string fields that _are_ exported (`persona`,
 `model`) additionally pass through a scrubber that removes any path-like, email,
 or credential-like substring before emission. The allowlist is the primary

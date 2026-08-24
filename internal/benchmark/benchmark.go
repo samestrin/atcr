@@ -451,6 +451,17 @@ var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
 // BuildSubmission wraps a suite RunResult in the public submission envelope,
 // stamping the schema version, build version, source marker, and submittedAt.
 // submittedAt is passed in (not time.Now) so the result is reproducible.
+//
+// PROJECTION ONLY — it validates nothing. It re-scrubs identities and case ids as
+// defense-in-depth, but every coverage INVARIANT is the caller's:
+// suite_case_ids and reviewer_coverage being written together, each covered id being
+// a suite member, no duplicates, and no id that scrubs to empty or collides with
+// another. `atcr benchmark export` enforces all of them (cli/benchmark_coverage.go
+// checkCoverage plus validateScrubbedCaseIDs) before calling this.
+//
+// So a DIFFERENT caller can produce documents the docs say cannot exist — e.g.
+// Coverage set with SuiteCaseIDs nil yields coverage rows with no denominator.
+// Any new caller owes the same checks; this function will not supply them.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
 	// run-result, so re-apply the field scrub here rather than trusting the
