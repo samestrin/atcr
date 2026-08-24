@@ -314,6 +314,9 @@ Two properties are worth knowing:
   run-result that recorded no coverage (any file written before coverage existed).
   An absent key reads as "nobody measured"; it is never emitted as `null` or `[]`,
   which would claim a measurement of nothing.
+- **A present `case_ids` is always an array.** Once `reviewer_coverage` is present,
+  coverage *was* measured, so a row that covered nothing is `"case_ids": []` — never
+  `null`. Consumers can decode the field as a list without a null branch.
 
 #### `atcr_version` is the scorer discriminator
 
