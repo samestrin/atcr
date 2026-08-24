@@ -316,6 +316,29 @@ func TestBuildSubmission_ReScrubsReviewerPII(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-3", sub.Reviewers[0].Model, "email PII must be scrubbed from model")
 }
 
+// The suite envelope stamps the SHARED constant, and this pins both halves of that
+// statement: the literal version, and the fact that it is sourced from
+// scorecard.SubmissionSchema rather than a benchmark-local copy.
+//
+// The literal matters on its own. Asserting only `== scorecard.SubmissionSchema`
+// would pass for any value the constant ever takes, so it cannot notice a bump — and
+// a bump is exactly the event that needs a deliberate decision, because the constant
+// is shared with the production leaderboard export. Pinning the number here forces
+// the next bump to visit this test and, through it, this comment.
+//
+// This is a characterization test: it locks behavior the preceding tasks already
+// produced. It earns its place by failing when the constant moves, not by having
+// failed first.
+func TestBuildSubmission_StampsSharedSubmissionSchema(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(coverageRunResult(), at)
+
+	assert.Equal(t, 2, sub.SubmissionSchema,
+		"epic 35.16.6.2 bumped submission_schema to 2 — the version that added suite_case_ids/reviewer_coverage")
+	assert.Equal(t, scorecard.SubmissionSchema, sub.SubmissionSchema,
+		"the suite envelope must stamp the SHARED constant, never a benchmark-local copy")
+}
+
 // coverageRunResult is a measured run: a two-case suite where one reviewer row
 // covered both cases and the other covered only one. The short row is the whole
 // point — before submission_schema 2 it published indistinguishably from the full
