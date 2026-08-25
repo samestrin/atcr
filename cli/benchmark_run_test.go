@@ -1041,6 +1041,16 @@ func TestValidateSuitePublishableCaseIDs(t *testing.T) {
 			name: "carries a non-printing rune", id: "acme-‮corp-pr-1",
 			wantErr: "non-printing rune",
 		},
+		{
+			// The arm that actually fires for the bundled importer's
+			// <owner>-<repo>-pr-<n> shape: the scrub REWRITES the id rather than
+			// emptying it, so the run would proceed and only fail hours later at
+			// export — precisely the cost this load-time gate was added to remove.
+			// Without a case here the arm survives mutation on the whole tree,
+			// because the scrubs-away case above never reaches it.
+			name: "scrub rewrites without emptying", id: "acme-corp widgets@pr-12",
+			wantErr: "publication scrub rewrites",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{
