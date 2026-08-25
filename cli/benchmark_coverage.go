@@ -547,6 +547,57 @@ func firstNonPrintingRune(s string) (rune, bool) {
 // Errors name the PRE-scrub id. The scrubbed value is empty or rewritten by
 // construction, so reporting it would tell the operator what went wrong but never
 // which line of their file to fix.
+// validateSuiteIdentityForPublication applies validateScrubbedCaseIDs' predicate to
+// the identity that names the WHOLE document.
+//
+// suite/suite_version are published scrubbed (BuildSubmission), and the gate that
+// used to sit here rejected only the value that scrubs to EMPTY. Two arms were
+// missing, and both matter more here than they do for a single case id:
+//
+//   - A value the scrub REWRITES publishes under a different name than the one
+//     anchorSuiteDenominator validated against the manifest — that check compares the
+//     PRE-scrub value. Two genuinely different suites can then publish a
+//     byte-identical (suite, suite_version) and the board merges them into one
+//     comparability bucket. A plain alphanumeric name is enough to trigger it:
+//     "team-suite bench@acme" scrubs to "team-suite".
+//   - The scrub provably does NOT strip control or format runes, so a bidi override
+//     in a suite name reaches the published envelope intact.
+//
+// Printability is checked first — it is the defect a reader cannot see. Empty is
+// checked BEFORE rewrite here, unlike the case-id gate: scrubbing away is also a
+// rewrite, and "publishes as \"\"" is the sharper diagnostic for it. The case-id gate
+// can order them the other way because a case id that scrubs to empty is reported by
+// its rewrite arm with the empty result named in the message anyway.
+func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) error {
+	for _, f := range []struct{ name, value string }{
+		{"suite", rr.Suite},
+		{"suite_version", rr.SuiteVersion},
+	} {
+		if r, bad := firstNonPrintingRune(f.value); bad {
+			return fmt.Errorf("run-result %s has %s %q, which contains a non-printing rune (U+%04X); "+
+				"control and format runes are invisible or reorder text in the published document, "+
+				"so rename the suite in the manifest",
+				path, f.name, f.value, r)
+		}
+		// No TrimSpace: scrubOnce ends with strings.Join(strings.Fields(s), " "),
+		// so the scrubbed value can never carry leading or trailing whitespace.
+		s := scorecard.ScrubPublicString(f.value)
+		if s == "" {
+			return fmt.Errorf("run-result %s has %s %q, which is empty once scrubbed for publication; "+
+				"a suite identity that scrubs away publishes as \"\" in the envelope",
+				path, f.name, f.value)
+		}
+		if s != f.value {
+			return fmt.Errorf("run-result %s has %s %q, which the publication scrub rewrites to %q; "+
+				"the published envelope must name the same suite the manifest does — "+
+				"anchorSuiteDenominator validates the PRE-scrub value, so two different suites "+
+				"would publish one identity; rename the suite in the manifest",
+				path, f.name, f.value, s)
+		}
+	}
+	return nil
+}
+
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 	// Memoized: covered ids are typically a subset of the suite ids, so an
 	// unmemoized closure scrubs the whole case set once per loop — and once per
