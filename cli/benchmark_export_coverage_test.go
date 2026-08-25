@@ -584,6 +584,29 @@ func TestBenchmarkExport_RejectsSuiteCaseIDsThatCollideOnceScrubbed(t *testing.T
 	assert.NotContains(t, out, `"suite_case_ids"`, "nothing is published on the rejection path")
 }
 
+// A reviewer row with NO coverage row is not "short" — it is the one shape the
+// producer cannot emit (buildRunResult appends reviewers and coverage from the same
+// loop), so it is hand-assembly, and publishing it puts a reviewers[] entry on the
+// board with no reviewer_coverage row for the documented join to visit. The gate
+// rejects it as malformed, on the opt-out path too.
+func TestBenchmarkExport_ReviewerWithoutCoverageRowIsMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m-backup","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+	require.NotEqual(t, 0, code,
+		"a reviewer with no coverage row must not publish, even with the opt-out: %s", out)
+	assert.Contains(t, out, "m-backup", "the error names the reviewer lacking a coverage row")
+	assert.NotContains(t, out, `"reviewers"`, "nothing is published on the rejection path")
+}
+
 // A run-result carrying reviewer_coverage but NO suite_case_ids is structurally
 // malformed (the producer writes the two together), and checkCoverage's shape check
 // says exactly that. The scrub gate must not pre-empt it with a privacy diagnostic
