@@ -394,3 +394,54 @@ func TestBackfillJustifications(t *testing.T) {
 		}
 	})
 }
+
+// The line-scoped guard in rewriteJustifications carries ONE live predicate:
+// `cur != rep.from`. It is what makes the rewrite line-scoped rather than id-scoped,
+// and every other shape a line can take is a consequence of it, given how `want` is
+// built:
+//
+//   - rep.from is never "" (BackfillJustifications skips a record with an empty
+//     justification before it can reach want), so a line whose justification is ""
+//     already differs from rep.from.
+//   - rep.to is never rep.from (want is populated only where the replayed text
+//     DIFFERS from the stored one), so a line already carrying rep.to differs too.
+//
+// Both invariants live in the want-construction loop, not here, so this pins them from
+// the consumer's side: if a future edit lets an empty or already-replayed line reach
+// this guard, the rewrite must still decline it.
+func TestRewriteJustifications_RewritesOnlyLinesCarryingTheStaleText(t *testing.T) {
+	store := t.TempDir()
+	const stale = "the stale excerpt"
+	const fresh = "```\nthe replayed excerpt"
+
+	line := func(id, justification string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"r","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":` + strconv.Quote(justification) + `}`
+	}
+	writeShard(t, store, "2026-08",
+		line("aaaa1111", stale), // carries the stale text: the one line to rewrite
+		line("aaaa1111", ""),    // empty: differs from rep.from, so it is not the line
+		line("aaaa1111", fresh), // already the replayed text: likewise
+		line("aaaa1111", "an operator's typed --reason from a resolution trail"),
+	)
+
+	changes, err := rewriteJustifications(store, map[string]replacement{
+		"aaaa1111": {from: stale, to: fresh},
+	}, false)
+	require.NoError(t, err)
+
+	require.Len(t, changes, 1, "only the line carrying the stale text may be rewritten")
+	assert.Equal(t, 1, changes[0].Line)
+	assert.Equal(t, stale, changes[0].Before)
+	assert.Equal(t, fresh, changes[0].After)
+
+	got := shardLines(t, store, "2026-08")
+	require.Len(t, got, 4)
+	assert.Equal(t, fresh, got[0]["justification"])
+	assert.Equal(t, "", got[1]["justification"], "an empty justification is left alone, not filled in")
+	assert.Equal(t, fresh, got[2]["justification"], "a line already carrying the replacement is not re-marshaled into a change")
+	assert.Equal(t, "an operator's typed --reason from a resolution trail", got[3]["justification"],
+		"a human-typed rationale on the same id must survive: the store is append-only, so replaying over it is irreversible")
+}

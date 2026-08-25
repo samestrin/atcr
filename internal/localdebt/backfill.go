@@ -302,8 +302,21 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			if !wanted {
 				continue
 			}
+			// ONE predicate, and it is what makes the rewrite LINE-scoped rather than
+			// id-scoped: only a line still carrying the stale text is replayed over, so
+			// a resolution trail's operator --reason on the same id survives.
+			//
+			// `cur == ""` and `cur == rep.to` used to sit here as extra disjuncts and
+			// were unreachable, given how want is built: rep.from is never "" (a record
+			// with an empty justification is skipped before it can reach want) and
+			// rep.to is never rep.from (want is populated only where the replayed text
+			// DIFFERS), so either shape already satisfies `cur != rep.from`. They read
+			// as live guards while protecting nothing, which is how a future edit to the
+			// want-construction loses a protection it appears to have.
+			// TestRewriteJustifications_RewritesOnlyLinesCarryingTheStaleText pins both
+			// shapes from this side, so removing them cannot go unnoticed.
 			cur, ok := m["justification"].(string)
-			if !ok || cur == "" || cur == rep.to || cur != rep.from {
+			if !ok || cur != rep.from {
 				continue
 			}
 			m["justification"] = rep.to
