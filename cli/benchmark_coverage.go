@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -512,6 +513,10 @@ func summarizeMissing(missing []string) string {
 //     published id means at least one was rewritten, so the rewrite check fires
 //     first and this shape has no reachable diagnostic of its own.
 //
+// Ahead of both, a printability ban rejects any id carrying a control (Cc) or
+// format (Cf) rune — the same predicate stripTerminalControlRunes applies to
+// diagnostics, enforced here for the document that ships.
+//
 // What survives below the rewrite check: a literally EMPTY raw id (no rewrite, yet
 // publishes as ""), and a verbatim-repeated id, which is deferred to checkCoverage's
 // sharper "more than once" diagnostic — the raw duplicate is the plainer defect and
@@ -526,12 +531,34 @@ func summarizeMissing(missing []string) string {
 // Errors name the PRE-scrub id. The scrubbed value is empty or rewritten by
 // construction, so reporting it would tell the operator what went wrong but never
 // which line of their file to fix.
+// firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
+// the same predicate stripTerminalControlRunes applies to operator-facing
+// diagnostics. In validateScrubbedCaseIDs it is a REJECTION, not a sanitization:
+// these runes must not reach the published document at all. A U+202E flips the
+// rendering of the id and everything after it in the same text node on the board,
+// and a zero-width rune makes two different ids render identically, defeating the
+// documented SET comparison at the human layer even while it holds programmatically.
+func firstNonPrintingRune(s string) (rune, bool) {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 	scrubCaseID := func(s string) string {
 		return scorecard.ScrubPublicString(s)
 	}
 
 	for _, id := range rr.SuiteCaseIDs {
+		if r, bad := firstNonPrintingRune(id); bad {
+			return fmt.Errorf("run-result %s lists suite case %q, which contains a non-printing rune (U+%04X); "+
+				"control and format runes are invisible or reorder text in the published document, "+
+				"so rename the case in the suite manifest",
+				path, id, r)
+		}
 		s := strings.TrimSpace(scrubCaseID(id))
 		if s != id {
 			return fmt.Errorf("run-result %s lists suite case %q, which the publication scrub rewrites to %q; "+
@@ -556,6 +583,12 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 			break
 		}
 		for _, id := range c.CaseIDs {
+			if r, bad := firstNonPrintingRune(id); bad {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which contains "+
+					"a non-printing rune (U+%04X); rename the case in the suite manifest",
+					path, id,
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona), r)
+			}
 			s := strings.TrimSpace(scrubCaseID(id))
 			if s != id {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which the publication scrub "+
