@@ -548,8 +548,18 @@ func firstNonPrintingRune(s string) (rune, bool) {
 }
 
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
+	// Memoized: covered ids are typically a subset of the suite ids, so an
+	// unmemoized closure scrubs the whole case set once per loop — and once per
+	// row — over again. BuildSubmission re-scrubs for publication with its own
+	// memo; this gate's job is only to validate, so one map serves both loops.
+	scrubMemo := make(map[string]string, len(rr.SuiteCaseIDs))
 	scrubCaseID := func(s string) string {
-		return scorecard.ScrubPublicString(s)
+		v, ok := scrubMemo[s]
+		if !ok {
+			v = scorecard.ScrubPublicString(s)
+			scrubMemo[s] = v
+		}
+		return v
 	}
 
 	for _, id := range rr.SuiteCaseIDs {

@@ -484,6 +484,10 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 			scrubbed[i].CostPerCorroboratedFindingUSD = &v
 		}
 	}
+	// One memo for the whole projection: covered ids are (after the export gate)
+	// a subset of the suite ids, so without it every row re-scrubs the same list
+	// the denominator just paid for — R+1 full passes over the case set.
+	scrubMemo := make(map[string]string, len(rr.SuiteCaseIDs))
 	return Submission{
 		SubmissionSchema: scorecard.SubmissionSchema,
 		AtcrVersion:      version.Version,
@@ -492,8 +496,8 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Suite:            scrubID(rr.Suite),
 		SuiteVersion:     scrubID(rr.SuiteVersion),
 		Reviewers:        scrubbed,
-		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs),
-		Coverage:         publicCoverage(rr.Coverage),
+		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs, scrubMemo),
+		Coverage:         publicCoverage(rr.Coverage, scrubMemo),
 	}
 }
 
@@ -567,13 +571,18 @@ func scrubID(s string) string {
 // Preserving nil keeps Submission.SuiteCaseIDs/Coverage exactly as nil-or-not as the
 // RunResult they came from, which is what lets a Go consumer read "unmeasured" off
 // the struct — at the JSON layer omitempty already drops nil and empty alike.
-func scrubIDs(ids []string) []string {
+func scrubIDs(ids []string, memo map[string]string) []string {
 	if ids == nil {
 		return nil
 	}
 	out := make([]string, len(ids))
 	for i, id := range ids {
-		out[i] = scrubID(id)
+		s, ok := memo[id]
+		if !ok {
+			s = scrubID(id)
+			memo[id] = s
+		}
+		out[i] = s
 	}
 	return out
 }
@@ -606,14 +615,14 @@ func scrubIDs(ids []string) []string {
 // signal lives one level up, in the absence of the whole key. Handing a board
 // decoder a null where it expects an array buys nothing and risks the one thing
 // still unverified about this bump: consumer-side tolerance.
-func publicCoverage(rows []ReviewerCoverage) []SubmissionCoverage {
+func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []SubmissionCoverage {
 	if rows == nil {
 		return nil
 	}
 	out := make([]SubmissionCoverage, len(rows))
 	for i, c := range rows {
 		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: c.Model, Persona: c.Persona})
-		ids := scrubIDs(c.CaseIDs)
+		ids := scrubIDs(c.CaseIDs, memo)
 		if ids == nil {
 			ids = []string{}
 		}
