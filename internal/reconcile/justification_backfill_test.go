@@ -35,9 +35,9 @@ func TestReExtractJustification(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	t.Run("replays the excerpt for a verified anchor", func(t *testing.T) {
-		text, _, ok, err := ReExtractJustification(path, "internal/thing.go", 42, 9)
+		text, _, ok, err := ReExtractJustification(path, "internal/thing.go", 42, 8)
 		require.NoError(t, err)
-		require.True(t, ok, "line 9 anchors internal/thing.go:42, so the replay must produce an excerpt")
+		require.True(t, ok, "line 8 anchors internal/thing.go:42, so the replay must produce an excerpt")
 		assert.NotEmpty(t, text)
 		var marked bool
 		for _, l := range strings.Split(text, "\n") {
@@ -60,7 +60,7 @@ func TestReExtractJustification(t *testing.T) {
 	})
 
 	t.Run("reports a missing review.md as an error, never as no-match", func(t *testing.T) {
-		_, _, _, err := ReExtractJustification(filepath.Join(dir, "gone.md"), "internal/thing.go", 42, 9)
+		_, _, _, err := ReExtractJustification(filepath.Join(dir, "gone.md"), "internal/thing.go", 42, 8)
 		require.Error(t, err, "a caller must be able to tell 'source pruned' from 'anchor did not match'")
 	})
 
