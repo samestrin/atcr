@@ -646,6 +646,26 @@ func TestBuildSubmission_ScrubsSuiteIdentity(t *testing.T) {
 	assert.NotContains(t, sub.SuiteVersion, "example.com")
 }
 
+// Two run-results with identical logical content but coverage rows in a different
+// order must produce byte-identical submission bytes — the same determinism
+// scorecard.Export guarantees the production envelope (export.go sorts its rows).
+// Sorting the projection by the scrubbed (Model, Persona) pair is what makes the
+// bytes independent of the caller's row order.
+func TestBuildSubmission_CoverageRowOrderIsDeterministic(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+
+	forward, err := json.Marshal(BuildSubmission(coverageRunResult(), at))
+	require.NoError(t, err)
+
+	reversed := coverageRunResult()
+	reversed.Coverage[0], reversed.Coverage[1] = reversed.Coverage[1], reversed.Coverage[0]
+	backward, err := json.Marshal(BuildSubmission(reversed, at))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(forward), string(backward),
+		"coverage row order in the source run-result must not change the submission bytes")
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {
