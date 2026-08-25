@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -798,6 +799,65 @@ func TestBenchmarkExport_RejectsSuiteIdentityThatScrubsAway(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
 	require.NotEqual(t, 0, code, "a suite name that scrubs away must not publish as \"\": %s", out)
 	assert.Contains(t, out, "empty once scrubbed", "the rejection names the actual defect")
+}
+
+// A suite identity the scrub REWRITES is worse than one it empties: the envelope
+// publishes under a different name than the one anchorSuiteDenominator validated
+// against the manifest (that check compares the PRE-scrub value), so two genuinely
+// different suites can publish a byte-identical (suite, suite_version) and the board
+// merges them into one comparability bucket. The same commit range added exactly this
+// rejection one field over, for case ids.
+func TestBenchmarkExport_RejectsSuiteIdentityTheScrubRewrites(t *testing.T) {
+	for _, tc := range []struct {
+		name, suite, suiteVersion string
+	}{
+		{"suite carrying an email-shaped token", "team-suite bench@acme", "1.2.0"},
+		{"suite carrying a home path", "standard-v1 (imported from ~/suites)", "1.2.0"},
+		{"suite version carrying a secret-shaped token", "standard-v1", "v1.0.0-rc1 token=abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":` + strconv.Quote(tc.suite) + `,"suite_version":` + strconv.Quote(tc.suiteVersion) +
+				`,"generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code,
+				"a suite identity that publishes under a rewritten name must be rejected: %s", out)
+			assert.Contains(t, out, "publication scrub rewrites",
+				"the rejection names the same defect class the case-id gate already names")
+		})
+	}
+}
+
+// The suite identity gets no non-printing-rune check today, and the scrub provably
+// does not strip control or format runes — so a bidi override in a suite name reaches
+// the published envelope. Case ids are already guarded against exactly this.
+func TestBenchmarkExport_RejectsSuiteIdentityWithInvisibleRunes(t *testing.T) {
+	for _, tc := range []struct{ name, suite, suiteVersion string }{
+		{"bidi override in the suite name", "standard-\u202E01", "1.2.0"},
+		{"zero-width space in the suite version", "standard-v1", "1.2.\u200B0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":` + strconv.Quote(tc.suite) + `,"suite_version":` + strconv.Quote(tc.suiteVersion) +
+				`,"generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code,
+				"an invisible rune in the identity that names the whole document must not publish: %s", out)
+			assert.Contains(t, out, "non-printing rune")
+		})
+	}
 }
 
 // The guard must not cost a well-formed suite anything.
