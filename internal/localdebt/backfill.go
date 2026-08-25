@@ -23,6 +23,12 @@ type BackfillResult struct {
 	Unresolved int // no surviving review.md anchored the finding
 	Ambiguous  int // several surviving candidates disagreed, so none was written
 
+	// SkippedSettled counts effective records the fold filter suppressed because the
+	// id is settled. Without it the suppression is invisible: a store whose ids are
+	// all settled reports "0 scanned, 0 rewritten", which reads identically to a
+	// store that needs no repair.
+	SkippedSettled int
+
 	// RewrittenLines counts the SHARD LINES the pass wrote, which Rewritten does
 	// not: one id can carry several lines (a re-detection after a resolution
 	// appends a fresh record under the same id), so a record count understates the

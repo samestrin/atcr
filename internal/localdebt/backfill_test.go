@@ -168,6 +168,27 @@ func TestBackfillJustifications(t *testing.T) {
 			"a wontfix record is settled: its justification is the operator's --reason, not a review excerpt, so it must not even be scanned")
 		assert.Equal(t, reason, findByID(t, store, "2026-09", "cccc3333")["justification"],
 			"the human-typed --reason exists nowhere else in the tree and the store is append-only, so replaying over it is irreversible loss")
+		assert.Equal(t, 1, res.SkippedSettled,
+			"the skip has to be REPORTED: a settled id is suppressed silently, so \"0 scanned\" is otherwise indistinguishable from \"nothing needs repair\"")
+	})
+
+	// The skip is per-record inside the fold, so ONE settled record makes the whole
+	// id unreachable to the repair. That is the safe direction and stays - but an
+	// operator reading "0 scanned, 0 rewritten" over a store that is entirely settled
+	// has no way to tell a suppressed scan from an empty one. The counter is the
+	// difference.
+	t.Run("reports the settled records it suppressed", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		writeTerminal(t, store, "cccc3333", StatusWontfix, "intentional per ADR-12")
+		writeTerminal(t, store, "eeee5555", StatusResolved, "fixed in PR #900")
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, res.SkippedSettled,
+			"both settled classes are counted: resolved and wontfix")
+		assert.Equal(t, 2, res.Scanned,
+			"the counter reports the suppression; it does not change what is scanned")
 	})
 
 	t.Run("repairs a deferred record's stale excerpt", func(t *testing.T) {
