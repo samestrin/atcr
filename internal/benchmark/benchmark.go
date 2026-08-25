@@ -485,13 +485,13 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 
 // scrubID applies the reviewer-identity scrub to one untrusted case id.
 //
-// It borrows scorecard.ScrubPublicRecord rather than reimplementing the rules,
+// It borrows scorecard.ScrubPublicString rather than reimplementing the rules,
 // because the rules must not diverge: the identity fields and the case ids sit in
 // the same envelope, arrive from the same hand-suppliable --in file, and are covered
 // by the same "no paths, emails, or credentials in a public submission" contract
 // (docs/scorecard.md). Two copies of that logic would drift; one function cannot.
 func scrubID(s string) string {
-	return scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: s}).Model
+	return scorecard.ScrubPublicString(s)
 }
 
 // scrubIDs returns a scrubbed COPY of ids, preserving nil.

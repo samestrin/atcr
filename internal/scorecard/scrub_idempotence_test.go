@@ -54,6 +54,26 @@ func TestScrubField_IsIdempotent(t *testing.T) {
 	}
 }
 
+// ScrubPublicString is the field-level scrub exported for non-identity values that
+// share the envelope and its privacy contract — benchmark suite case ids, which the
+// CLI gate and BuildSubmission scrub through the same rules. It must be exactly the
+// Model-field scrub, no more and no less: a dedicated case-id scrub would diverge,
+// and laundering ids through a synthetic PublicRecord couples them to Model-specific
+// semantics.
+func TestScrubPublicString_MatchesTheIdentityFieldScrub(t *testing.T) {
+	inputs := []string{
+		"case-01-nil-deref",
+		"sk-io-pr-42",
+		"case-01 /Users/sam/secret.txt",
+		"bedrock@us-east-1/claude",
+		"",
+	}
+	for _, in := range inputs {
+		assert.Equal(t, ScrubPublicRecord(PublicRecord{Model: in}).Model, ScrubPublicString(in),
+			"the exported string scrub must be exactly the Model-field scrub for %q", in)
+	}
+}
+
 // The identity-parity consequence, stated at the level the run-result cares about:
 // ScrubPublicRecord must land on a fixed point too, since that is the call every
 // layer actually makes.

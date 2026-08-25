@@ -166,9 +166,24 @@ func AnonymizeRecord(raw Record) PublicRecord {
 // governed by the PublicRecord allowlist and are left untouched. Idempotent: a
 // record already scrubbed at ingestion passes through unchanged.
 func ScrubPublicRecord(r PublicRecord) PublicRecord {
-	r.Model = scrubField(r.Model)
-	r.Persona = scrubField(r.Persona)
+	r.Model = ScrubPublicString(r.Model)
+	r.Persona = ScrubPublicString(r.Persona)
 	return r
+}
+
+// ScrubPublicString applies the identity-field scrub to one untrusted string. It is
+// the field-level core of ScrubPublicRecord, exported for callers whose values are
+// not (Model, Persona) pairs but share the same envelope and the same "no paths,
+// emails, or credentials in a public submission" contract — benchmark suite case
+// ids above all (benchmark.scrubID, cli.validateScrubbedCaseIDs). Laundering those
+// through a synthetic PublicRecord{Model: s} coupled them to the Model field's
+// semantics, so this is the supported path. The coupling is still real, one level
+// down: any identity-specific rule added to scrubField rewrites published case ids
+// too — deliberately (the rules must not diverge), but a rule that only makes sense
+// for model/provider ids does not belong in scrubField. Idempotent for the same
+// reason scrubField is.
+func ScrubPublicString(s string) string {
+	return scrubField(s)
 }
 
 // clampNonNeg* / clampRate guard the public submission against a corrupt-but-

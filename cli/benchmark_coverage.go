@@ -528,7 +528,7 @@ func summarizeMissing(missing []string) string {
 // which line of their file to fix.
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 	scrubCaseID := func(s string) string {
-		return scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: s}).Model
+		return scorecard.ScrubPublicString(s)
 	}
 
 	for _, id := range rr.SuiteCaseIDs {
