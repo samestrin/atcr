@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -614,8 +615,9 @@ func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
 	help := stdout + stderr
 
 	require.Contains(t, help, "--export", "precondition: the flag is documented in help")
-	require.Contains(t, help, "submission_schema 2",
-		"a production submitter must learn the envelope version changed")
-	require.Contains(t, help, "pinned to 1",
-		"and that a board pinned to the old version needs updating")
+	require.Contains(t, help, fmt.Sprintf("submission_schema %d", scorecard.SubmissionSchema),
+		"a production submitter must learn the envelope version changed — "+
+			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
+	require.Contains(t, help, "pinned to",
+		"and that a board pinned to an older version needs updating")
 }

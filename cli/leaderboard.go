@@ -38,8 +38,9 @@ func newLeaderboardCmd() *cobra.Command {
 	// a BENCHMARK-side change (coverage in the suite envelope) while this envelope
 	// gained no fields — and board acceptance of the new number is an unverified
 	// coordination item. A production submitter reads this help and nothing else, so
-	// omitting it would leave the one group affected by the risk uninformed.
-	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema 2; its field set is unchanged from 1, but a board pinned to 1 must be updated to accept it")
+	// omitting it would leave the one group affected by the risk uninformed. The
+	// number is formatted from the constant so one bump updates every surface.
+	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d; its field set is unchanged from 1, but a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
 	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	return cmd
 }
