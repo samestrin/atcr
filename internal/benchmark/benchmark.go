@@ -486,6 +486,22 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 			scrubbed[i].CostPerCorroboratedFindingUSD = &v
 		}
 	}
+	// Sort the SCRUBBED reviewers with the same comparator publicCoverage sorts its
+	// rows by, so reviewers[i] and reviewer_coverage[i] are one row.
+	//
+	// rr.Reviewers arrives in the producer's order, and cli/benchmark_run.go emits
+	// coverage in that same order — but publicCoverage then re-sorts, on the SCRUBBED
+	// pair, for the determinism guarantee. Copying Reviewers through unsorted broke
+	// the positional join that buildRunResult documents ("a consumer can join coverage
+	// to its row positionally as well as by identity"), and nothing upstream requires
+	// a hand-supplied run-result's rows to arrive sorted at all.
+	//
+	// Sorting HERE rather than dropping publicCoverage's sort keeps both properties:
+	// one order for the two arrays, and byte-identical output for two run-results
+	// with identical logical content in different row orders.
+	sort.SliceStable(scrubbed, func(i, j int) bool {
+		return modelPersonaLess(scrubbed[i].Model, scrubbed[i].Persona, scrubbed[j].Model, scrubbed[j].Persona)
+	})
 	// One memo for the whole projection: covered ids are (after the export gate)
 	// a subset of the suite ids, so without it every row re-scrubs the same list
 	// the denominator just paid for — R+1 full passes over the case set.
@@ -608,13 +624,17 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 	}
 	// Deterministic row order: two run-results with identical logical content but
 	// differently-ordered rows must marshal to the same bytes, the guarantee
-	// scorecard.Export makes for the production envelope. Sort by the SCRUBBED
-	// (Model, Persona) pair so the order matches how the producer sorted Reviewers.
+	// scorecard.Export makes for the production envelope.
+	//
+	// modelPersonaLess, not a second copy of the comparator: score.go's doc comment
+	// says the positional alignment "rests on this ONE definition, not on duplicated
+	// comparators drifting apart", and the duplicate here was exactly that drift
+	// risk. BuildSubmission sorts the scrubbed Reviewers with the same call, which is
+	// what makes reviewers[i] and reviewer_coverage[i] one row — the earlier claim
+	// that this order "matches how the producer sorted Reviewers" was true of the
+	// coverage half only.
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Model != out[j].Model {
-			return out[i].Model < out[j].Model
-		}
-		return out[i].Persona < out[j].Persona
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
 	})
 	return out
 }
