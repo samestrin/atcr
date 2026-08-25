@@ -279,6 +279,12 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("parsing generated_at %q: %w", rr.GeneratedAt, err)
 	}
 	sub := benchmark.BuildSubmission(rr, generatedAt)
+	// Backstop only: the gates above already enforce everything Validate checks,
+	// with sharper diagnostics keyed on the raw file. A failure here means
+	// BuildSubmission drifted from its own documented invariants.
+	if err := sub.Validate(); err != nil {
+		return fmt.Errorf("internal: submission built from %s violates its own invariants: %w", in, err)
+	}
 	out, err := json.MarshalIndent(sub, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding submission: %w", err)

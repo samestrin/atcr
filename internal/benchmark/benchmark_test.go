@@ -40,6 +40,62 @@ func TestStandardV1CaseIDs_SurviveThePublicationScrub(t *testing.T) {
 	}
 }
 
+// BuildSubmission validates nothing by design, so the envelope invariants the
+// docs promise need a home a FUTURE caller (an MCP surface, a library consumer)
+// will actually find: Validate on the built Submission. Each case below builds a
+// document the docs say cannot exist and asserts it is rejected.
+func TestSubmission_Validate(t *testing.T) {
+	valid := func() Submission {
+		return Submission{
+			SuiteCaseIDs: []string{"case-01", "case-02"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p"}},
+			Coverage: []SubmissionCoverage{
+				{Model: "m", Persona: "p", CaseIDs: []string{"case-01"}},
+			},
+		}
+	}
+
+	require.NoError(t, valid().Validate(), "the healthy envelope validates")
+	require.NoError(t, Submission{}.Validate(),
+		"both keys absent is the legal unmeasured shape")
+
+	t.Run("coverage without a denominator", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = nil
+		require.Error(t, s.Validate())
+	})
+	t.Run("denominator without coverage", func(t *testing.T) {
+		s := valid()
+		s.Coverage = nil
+		require.Error(t, s.Validate())
+	})
+	t.Run("repeated denominator id", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = []string{"case-01", "case-01"}
+		require.Error(t, s.Validate())
+	})
+	t.Run("empty denominator id", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = []string{"case-01", ""}
+		require.Error(t, s.Validate())
+	})
+	t.Run("covered id outside the denominator", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].CaseIDs = []string{"case-99"}
+		require.Error(t, s.Validate())
+	})
+	t.Run("null row case_ids", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].CaseIDs = nil
+		require.Error(t, s.Validate(), "the never-null contract is structural, not per-writer")
+	})
+	t.Run("coverage row with no reviewer", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].Model = "someone-else"
+		require.Error(t, s.Validate())
+	})
+}
+
 func TestLoad_MissingSuiteJSON(t *testing.T) {
 	_, err := Load(t.TempDir())
 	require.Error(t, err, "a directory without suite.json must fail to load")

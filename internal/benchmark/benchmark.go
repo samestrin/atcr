@@ -462,6 +462,7 @@ var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
 // So a DIFFERENT caller can produce documents the docs say cannot exist — e.g.
 // Coverage set with SuiteCaseIDs nil yields coverage rows with no denominator.
 // Any new caller owes the same checks; this function will not supply them.
+// Submission.Validate exists for exactly that caller.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
 	// run-result, so re-apply the field scrub here rather than trusting the
@@ -481,6 +482,57 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs),
 		Coverage:         publicCoverage(rr.Coverage),
 	}
+}
+
+// Validate checks the envelope invariants the submission docs promise a consumer:
+// suite_case_ids and reviewer_coverage written together or both absent, a
+// denominator with no empty or repeated id, every covered id a member of that
+// denominator, every row's case_ids an array (never null), and every row joined
+// to a reviewers[] identity.
+//
+// BuildSubmission validates NOTHING — it is a projection — so any caller that did
+// not come through `atcr benchmark export`'s RunResult gate owes this call before
+// publishing. The CLI makes it too, as a backstop beneath its sharper
+// diagnostic-level checks.
+func (s Submission) Validate() error {
+	if (len(s.SuiteCaseIDs) == 0) != (len(s.Coverage) == 0) {
+		return fmt.Errorf("submission carries %d suite_case_ids but %d reviewer_coverage rows; "+
+			"the two are written together or both absent", len(s.SuiteCaseIDs), len(s.Coverage))
+	}
+	denominator := make(map[string]bool, len(s.SuiteCaseIDs))
+	for _, id := range s.SuiteCaseIDs {
+		if id == "" {
+			return fmt.Errorf("submission carries an empty suite_case_ids entry")
+		}
+		if denominator[id] {
+			return fmt.Errorf("submission lists suite case %q more than once", id)
+		}
+		denominator[id] = true
+	}
+	joined := make(map[[2]string]bool, len(s.Reviewers))
+	for _, r := range s.Reviewers {
+		joined[[2]string{r.Model, r.Persona}] = true
+	}
+	for _, c := range s.Coverage {
+		if !joined[[2]string{c.Model, c.Persona}] {
+			return fmt.Errorf("submission records coverage for %q/%q with no matching reviewers[] row",
+				c.Model, c.Persona)
+		}
+		if c.CaseIDs == nil {
+			return fmt.Errorf("submission records a null case_ids for %q/%q; the key is always an array",
+				c.Model, c.Persona)
+		}
+		for _, id := range c.CaseIDs {
+			if id == "" {
+				return fmt.Errorf("submission records an empty covered case id for %q/%q", c.Model, c.Persona)
+			}
+			if !denominator[id] {
+				return fmt.Errorf("submission records covered case %q for %q/%q, which is not in suite_case_ids",
+					id, c.Model, c.Persona)
+			}
+		}
+	}
+	return nil
 }
 
 // scrubID applies the reviewer-identity scrub to one untrusted case id.
