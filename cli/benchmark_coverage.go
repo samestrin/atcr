@@ -559,7 +559,9 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 				"so rename the case in the suite manifest",
 				path, id, r)
 		}
-		s := strings.TrimSpace(scrubCaseID(id))
+		// No TrimSpace: scrubOnce ends with strings.Join(strings.Fields(s), " "),
+		// so the scrubbed value can never carry leading or trailing whitespace.
+		s := scrubCaseID(id)
 		if s != id {
 			return fmt.Errorf("run-result %s lists suite case %q, which the publication scrub rewrites to %q; "+
 				"the published suite_case_ids must name the same cases as the raw file, "+
@@ -574,7 +576,7 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 		if s == "" {
 			return fmt.Errorf("run-result %s lists suite case %q, which is empty once scrubbed for publication; "+
 				"a case id that scrubs away publishes as \"\" in suite_case_ids",
-				path, stripTerminalControlRunes(id))
+				path, id)
 		}
 	}
 
@@ -589,7 +591,7 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 					path, id,
 					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona), r)
 			}
-			s := strings.TrimSpace(scrubCaseID(id))
+			s := scrubCaseID(id)
 			if s != id {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which the publication scrub "+
 					"rewrites to %q; rename the case in the suite manifest",
@@ -599,7 +601,7 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 			if s == "" {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
 					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage",
-					path, stripTerminalControlRunes(id),
+					path, id,
 					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))
 			}
 		}
