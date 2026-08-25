@@ -1038,7 +1038,7 @@ func TestValidateSuitePublishableCaseIDs(t *testing.T) {
 		},
 		{
 			// U+202E reorders the id and everything after it in the same text node.
-			name: "carries a non-printing rune", id: "acme-‮corp-pr-1",
+			name: "carries a non-printing rune", id: "acme-\u202Ecorp-pr-1",
 			wantErr: "non-printing rune",
 		},
 		{
