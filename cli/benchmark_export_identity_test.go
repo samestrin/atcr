@@ -95,3 +95,44 @@ func TestBenchmarkExport_AcceptsIdentityThatSurvivesTheScrub(t *testing.T) {
 	assert.Contains(t, stdout, "anthropic/claude-3")
 	assert.Contains(t, stdout, "qwen3.8-max")
 }
+
+// The reviewer-identity gate is the third arm of the same publication predicate the
+// suite identity (validateSuiteIdentityForPublication) and the case ids
+// (validateScrubbedCaseIDs) already carry, and it was the one left checking only the
+// scrubs-to-empty half.
+//
+// Every input below is non-empty RAW and non-empty SCRUBBED — ScrubPublicString leaves
+// control and format runes untouched — so the empty-only gate cannot see them and no
+// sibling gate catches the row on the way out. A leaderboard row rendering
+// "gpt-4<U+202E>evil" misattributes results to a model that was never measured.
+func TestBenchmarkExport_RejectsReviewerIdentityWithNonPrintingRune(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		model   string
+		persona string
+		offend  string
+		rune    string
+	}{
+		{"bidi override in the model", "gpt-4\u202Eevil", "p-a", "gpt-4\u202Eevil", "U+202E"},
+		{"zero-width space in the persona", "m-a", "bra\u200Bd", "bra\u200Bd", "U+200B"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guard the premise: the empty-only gate must NOT be able to catch these,
+			// or the test would pass against the unfixed code for the wrong reason.
+			pub := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: tc.model, Persona: tc.persona})
+			require.NotEmpty(t, pub.Model, "premise broken: %q now scrubs to empty, so the pre-existing gate catches it", tc.model)
+			require.NotEmpty(t, pub.Persona, "premise broken: %q now scrubs to empty, so the pre-existing gate catches it", tc.persona)
+
+			path := writeRunResultWithReviewers(t, []scorecard.PublicRecord{{Model: tc.model, Persona: tc.persona}})
+			stdout, _, err := execExportErr(t, path)
+
+			require.Error(t, err, "a reviewer identity carrying an invisible rune must not reach the published envelope")
+			// Same diagnostic shape as the suite and case-id gates: the PRE-scrub value
+			// under %q so the operator can find the row, and the rune under U+%04X so
+			// they can see what is in it.
+			assert.Contains(t, err.Error(), tc.offend)
+			assert.Contains(t, err.Error(), tc.rune)
+			assert.Empty(t, stdout, "no submission may be emitted for a rejected file")
+		})
+	}
+}
