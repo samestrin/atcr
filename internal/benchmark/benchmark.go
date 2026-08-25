@@ -429,6 +429,18 @@ type SubmissionCoverage struct {
 	CaseIDs []string `json:"case_ids"`
 }
 
+// MarshalJSON makes the "case_ids is always an array, never null" contract
+// structural: it holds no matter how the row was constructed, so a writer that
+// builds SubmissionCoverage directly cannot bypass it the way routing through
+// publicCoverage used to be required.
+func (c SubmissionCoverage) MarshalJSON() ([]byte, error) {
+	type alias SubmissionCoverage // no recursion through this method
+	if c.CaseIDs == nil {
+		c.CaseIDs = []string{}
+	}
+	return json.Marshal(alias(c))
+}
+
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not
 // a production review). The public board accepts only this source.
 const SourceBenchmarkSuite = "benchmark-suite"
