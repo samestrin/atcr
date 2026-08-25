@@ -83,6 +83,8 @@ func TestDebtBackfillJustifications(t *testing.T) {
 		assert.Contains(t, out, "2026-08.jsonl:1", "each line is named by shard and line number")
 		assert.Contains(t, out, "before:")
 		assert.Contains(t, out, "after:")
+		assert.Contains(t, out, "0 skipped (settled: resolved or wontfix)",
+			"the settled suppression is per-record and silent otherwise: without this counter \"0 scanned\" reads the same whether the store needed no repair or was entirely suppressed")
 	})
 
 	// The DEFAULT --review-root is the whole repo root — the widest search scope, on

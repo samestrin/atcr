@@ -102,13 +102,30 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				// between the two predicates decides both directions here.
 				// `resolved` and `wontfix` are done: a resolved id is settled
 				// history whose excerpt gates nothing, and a wontfix id's
-				// justification is NOT a review excerpt at all but the operator's
-				// --reason (cli/debt_resolve.go replaces it), which exists nowhere
-				// else in the tree — replaying over it in an append-only store is
-				// irreversible loss. `deferred` carries a terminal marker but means
-				// "not now": it is live, closeable debt whose stale excerpt is
-				// exactly what this pass exists to repair, so it must NOT be
-				// skipped.
+				// justification MAY be the operator's --reason rather than a review
+				// excerpt — which exists nowhere else in the tree, so replaying over
+				// it in an append-only store is irreversible loss. `deferred`
+				// carries a terminal marker but means "not now": it is live,
+				// closeable debt whose stale excerpt is exactly what this pass exists
+				// to repair, so it must NOT be skipped.
+				//
+				// MAY, not DOES: --reason is OPTIONAL for wontfix. cli/debt_resolve.go
+				// permits an empty --reason whenever isRecordedRationale holds of the
+				// justification already stored, and an empty reason preserves that
+				// text rather than replacing it — which a legacy marker-free excerpt
+				// satisfies. So a wontfix record routinely DOES carry the stale review
+				// excerpt this pass repairs, and skipping it is over-broad.
+				//
+				// The skip stays anyway, and stays per-record inside the fold, so ONE
+				// settled record makes the whole id unreachable. It is the safe
+				// direction: the alternative failure is overwriting a human-typed
+				// rationale in an append-only store, and the line-scoped `cur !=
+				// rep.from` predicate in rewriteJustifications cannot separate the two
+				// here — rep.from IS the settled record's own justification once
+				// FoldRecords makes it effective. What the skip owes instead is
+				// VISIBILITY: counted below, so "0 scanned" is distinguishable from a
+				// scan that was suppressed.
+				res.SkippedSettled++
 				continue
 			}
 			sr := r.SourceReport

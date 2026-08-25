@@ -75,10 +75,14 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// The rewritten counter names LINES as well as records. They differ whenever an
 	// id carries a resolution trail, and the line count is the one that describes
 	// what was written to an append-only store.
+	// The settled counter is printed for the same reason: the fold suppresses a
+	// settled id per-record, so a store whose ids are all settled reports "0 scanned,
+	// 0 rewritten" — byte-identical to a store that needs no repair. Naming the
+	// suppression is what lets an operator tell those apart.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no surviving review.md), %d ambiguous (candidates disagreed)\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no surviving review.md), %d ambiguous (candidates disagreed), %d skipped (settled: resolved or wontfix)\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
-		res.Unchanged, res.Unresolved, res.Ambiguous)
+		res.Unchanged, res.Unresolved, res.Ambiguous, res.SkippedSettled)
 
 	// A dry run shows the text, not just the count. It is documented as the step to
 	// run FIRST on the one subcommand that rewrites the store in place, and a bare

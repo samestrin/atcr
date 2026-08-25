@@ -179,8 +179,16 @@ func TestBackfillJustifications(t *testing.T) {
 	// difference.
 	t.Run("reports the settled records it suppressed", func(t *testing.T) {
 		store, reviewRoot := setup(t)
+		// Two settled ids of DIFFERENT classes. writeShard overwrites the month it
+		// writes, so they go to separate shards rather than two calls to one.
 		writeTerminal(t, store, "cccc3333", StatusWontfix, "intentional per ADR-12")
-		writeTerminal(t, store, "eeee5555", StatusResolved, "fixed in PR #900")
+		writeShard(t, store, "2026-10",
+			`{"schema_version":3,"id":"eeee5555","run_id":"2026-10-01T00:00:00Z-resolved","ts":"2026-10-01T00:00:00Z",`+
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p4","fix":"f4","category":"correctness",`+
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+				`"status":"`+StatusResolved+`","resolved_at":"2026-10-01T00:00:00Z",`+
+				`"justification":"fixed in PR #900",`+
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`)
 
 		res, err := BackfillJustifications(store, reviewRoot, false)
 		require.NoError(t, err)
