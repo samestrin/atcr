@@ -105,6 +105,10 @@ func TestExport_EnvelopeKeysAreSpecExact(t *testing.T) {
 		`"tokens_in"`, `"tokens_out"`, `"latency_ms_avg"`, `"run_id"`} {
 		assert.NotContains(t, s, k, "dropped/legacy key %s must not appear", k)
 	}
+	for _, k := range []string{`"suite_case_ids"`, `"reviewer_coverage"`} {
+		assert.NotContains(t, s, k,
+			"benchmark-only key %s must not leak into the production envelope — the submission_schema 2 bump is additive-only on this producer (docs/scorecard.md)", k)
+	}
 }
 
 func TestExport_FindingsRaisedAvgIsPerRun(t *testing.T) {
