@@ -623,6 +623,29 @@ func TestBuildSubmission_DoesNotMutateSourceRunResult(t *testing.T) {
 		"the caller's cost metric must not alias the submission's")
 }
 
+// Suite and SuiteVersion arrive from the same hand-suppliable --in file as the
+// case ids and reviewer identities, and they publish in the same envelope — a
+// private path or a credential in either one is exactly what the scrub exists to
+// catch. They must get the same defense-in-depth re-scrub, not a raw copy.
+func TestBuildSubmission_ScrubsSuiteIdentity(t *testing.T) {
+	rr := coverageRunResult()
+	rr.Suite = "internal-suite /Users/sam/secret.txt"
+	rr.SuiteVersion = "1.0.0 ops@example.com"
+
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, "/Users/sam/secret.txt",
+		"a private path must not ride into the public envelope via suite")
+	assert.NotContains(t, s, "ops@example.com",
+		"an email must not ride into the public envelope via suite_version")
+	assert.NotContains(t, sub.Suite, "secret.txt", "the projection is scrubbed, not raw")
+	assert.NotContains(t, sub.SuiteVersion, "example.com")
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {

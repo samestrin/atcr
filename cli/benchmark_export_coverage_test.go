@@ -784,6 +784,22 @@ func TestBenchmarkExport_RejectsCaseIDWithInvisibleRunes(t *testing.T) {
 	}
 }
 
+// The suite identity publishes too, so a suite name that scrubs away entirely is
+// the same defect as a case id that does — reject it instead of publishing "".
+func TestBenchmarkExport_RejectsSuiteIdentityThatScrubsAway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"/Users/sam/secret.txt","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a suite name that scrubs away must not publish as \"\": %s", out)
+	assert.Contains(t, out, "empty once scrubbed", "the rejection names the actual defect")
+}
+
 // The guard must not cost a well-formed suite anything.
 func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
 	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
