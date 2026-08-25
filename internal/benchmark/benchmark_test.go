@@ -601,14 +601,26 @@ func TestBuildSubmission_DoesNotMutateSourceRunResult(t *testing.T) {
 	rr := coverageRunResult()
 	rr.SuiteCaseIDs[0] = "case-01 /Users/sam/secret.txt"
 	rr.Coverage[0].CaseIDs[0] = "case-01 /Users/sam/secret.txt"
+	rate, cost := 0.5, 0.01
+	rr.Reviewers[0].SurvivedSkepticRate = &rate
+	rr.Reviewers[0].CostPerCorroboratedFindingUSD = &cost
 
 	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	_ = BuildSubmission(rr, at)
+	sub := BuildSubmission(rr, at)
 
 	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.SuiteCaseIDs[0],
 		"the caller's denominator slice must be left alone")
 	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.Coverage[0].CaseIDs[0],
 		"the caller's per-row case list must be left alone")
+
+	// The pointer metrics must be deep-copied too: a struct copy aliases them, so
+	// mutating the submission would silently rewrite the caller's RunResult.
+	*sub.Reviewers[0].SurvivedSkepticRate = 0.99
+	*sub.Reviewers[0].CostPerCorroboratedFindingUSD = 9.99
+	assert.Equal(t, 0.5, *rr.Reviewers[0].SurvivedSkepticRate,
+		"the caller's survived-skeptic rate must not alias the submission's")
+	assert.Equal(t, 0.01, *rr.Reviewers[0].CostPerCorroboratedFindingUSD,
+		"the caller's cost metric must not alias the submission's")
 }
 
 // --- helpers ---
