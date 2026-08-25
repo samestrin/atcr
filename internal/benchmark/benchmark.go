@@ -470,6 +470,17 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
 	for i, rev := range rr.Reviewers {
 		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+		// Deep-copy the pointer metrics: a PublicRecord struct copy aliases them,
+		// so mutating the submission would rewrite the caller's RunResult — the
+		// same non-mutation rule the string slices below follow.
+		if rev.SurvivedSkepticRate != nil {
+			v := *rev.SurvivedSkepticRate
+			scrubbed[i].SurvivedSkepticRate = &v
+		}
+		if rev.CostPerCorroboratedFindingUSD != nil {
+			v := *rev.CostPerCorroboratedFindingUSD
+			scrubbed[i].CostPerCorroboratedFindingUSD = &v
+		}
 	}
 	return Submission{
 		SubmissionSchema: scorecard.SubmissionSchema,
