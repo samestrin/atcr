@@ -674,6 +674,28 @@ func TestBenchmarkExport_RejectsCaseIDTheScrubWouldRewrite(t *testing.T) {
 		"and points at the file that owns the id — editing the run-result is the wrong action")
 }
 
+// Unicode control (Cc) and format (Cf) runes pass the scrub byte-for-byte — a
+// RIGHT-TO-LEFT OVERRIDE flips the rendering of the id and everything after it on
+// the board, and a zero-width space makes two different ids render identically,
+// defeating the documented SET comparison at the human layer. stripTerminalControlRunes
+// already bans both categories from diagnostics; the published document owes the
+// same ban, as a rejection rather than a silent rewrite.
+func TestBenchmarkExport_RejectsCaseIDWithInvisibleRunes(t *testing.T) {
+	for _, id := range []string{"case-01\u202Etxt", "case\u200B01"} {
+		path := filepath.Join(t.TempDir(), "run-result.json")
+		body := fmt.Sprintf(`{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",`+
+			`"suite_case_ids":[%q,"case-02"],`+
+			`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":[%q,"case-02"]}],`+
+			`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,`+
+			`"corroboration_rate":0.5,"latency_p50_ms":10}]}`, id, id)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+		require.NotEqual(t, 0, code, "an id carrying an invisible rune must not publish: %s", out)
+		assert.Contains(t, out, "non-printing rune", "the rejection names the defect class for %q", id)
+	}
+}
+
 // The guard must not cost a well-formed suite anything.
 func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
 	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
