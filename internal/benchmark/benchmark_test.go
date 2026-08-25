@@ -109,6 +109,51 @@ func TestSubmission_Validate(t *testing.T) {
 	})
 }
 
+// cli/benchmark_run.go promises the run-result's coverage rows are "emitted in the
+// same order as the reviewer rows, so a consumer can join coverage to its row
+// positionally as well as by identity". publicCoverage sorts by the SCRUBBED
+// (Model, Persona) pair; BuildSubmission copied Reviewers in source order and never
+// sorted them — so within one submission reviewers[i] and reviewer_coverage[i] could
+// name different rows. docs/benchmark.md invites hand-supplied run-results, and
+// nothing in checkCoverage requires Reviewers to arrive sorted.
+func TestBuildSubmission_ReviewersAndCoverageShareOneOrder(t *testing.T) {
+	rr := RunResult{
+		Suite:        "mini",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01"},
+		// Deliberately NOT in sorted order, which a hand-supplied run-result may be.
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "zeta", Persona: "p"},
+			{Model: "alpha", Persona: "p"},
+			{Model: "mid", Persona: "b"},
+			{Model: "mid", Persona: "a"},
+		},
+		Coverage: []ReviewerCoverage{
+			{Model: "zeta", Persona: "p", CaseIDs: []string{"case-01"}},
+			{Model: "alpha", Persona: "p", CaseIDs: []string{"case-01"}},
+			{Model: "mid", Persona: "b", CaseIDs: []string{"case-01"}},
+			{Model: "mid", Persona: "a", CaseIDs: []string{"case-01"}},
+		},
+	}
+
+	sub := BuildSubmission(rr, time.Unix(0, 0).UTC())
+	require.Len(t, sub.Reviewers, 4)
+	require.Len(t, sub.Coverage, 4)
+	for i := range sub.Coverage {
+		assert.Equal(t, sub.Reviewers[i].Model, sub.Coverage[i].Model,
+			"reviewers[%d] and reviewer_coverage[%d] must name one row", i, i)
+		assert.Equal(t, sub.Reviewers[i].Persona, sub.Coverage[i].Persona,
+			"reviewers[%d] and reviewer_coverage[%d] must name one row", i, i)
+	}
+
+	// And the shared order is the DETERMINISTIC one the sort comment promises, so
+	// two run-results with identical logical content but differently-ordered rows
+	// still marshal to the same bytes.
+	assert.Equal(t, []string{"alpha", "mid", "mid", "zeta"},
+		[]string{sub.Reviewers[0].Model, sub.Reviewers[1].Model, sub.Reviewers[2].Model, sub.Reviewers[3].Model})
+	assert.Equal(t, "a", sub.Reviewers[1].Persona, "the persona breaks a model tie, as modelPersonaLess says")
+}
+
 func TestLoad_MissingSuiteJSON(t *testing.T) {
 	_, err := Load(t.TempDir())
 	require.Error(t, err, "a directory without suite.json must fail to load")
