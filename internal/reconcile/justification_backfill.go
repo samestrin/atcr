@@ -35,7 +35,10 @@ import (
 // the one, or its section is pure quoted example" (try another candidate). Collapsing
 // them would make a pruned review dir indistinguishable from a mismatch.
 func ReExtractJustification(path, file string, line, anchorLine int) (text, section string, ok bool, err error) {
-	b, err := os.ReadFile(path) // #nosec G304 -- path comes from a persisted SourceReport the operator is replaying
+	// path is a review.md the caller located by walking a directory it chose; the
+	// operator is deliberately replaying their own reviews, so there is no
+	// untrusted-input step here to guard.
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", false, fmt.Errorf("reading review narrative %s: %w", path, err)
 	}

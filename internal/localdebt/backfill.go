@@ -113,11 +113,13 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
-	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// An unreadable subtree is skipped, not fatal: reviewRoot is an open
-			// tree and a single bad directory must not abort the whole pass.
-			return nil //nolint:nilerr // deliberate: skip unreadable subtrees
+	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
+		// tree — the same resilience stance collectReviewNarratives takes over
+		// sources/ — and one bad directory must not abort a repair pass over the
+		// whole store. Propagating walkErr here would do exactly that.
+		if walkErr != nil {
+			return nil
 		}
 		if d.IsDir() || !strings.HasSuffix(p, rel) {
 			return nil
@@ -160,7 +162,9 @@ func rewriteJustifications(dir string, want map[string]string) error {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		b, rerr := os.ReadFile(path) // #nosec G304 -- path is a shard inside the locked store dir
+		// path is dir + an entry name os.ReadDir just returned, inside the store
+		// directory this pass already holds the lock on — not caller input.
+		b, rerr := os.ReadFile(path)
 		if rerr != nil {
 			return fmt.Errorf("reading shard for backfill: %w", basePathErr(rerr))
 		}
