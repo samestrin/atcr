@@ -307,7 +307,7 @@ then compare that row's `case_ids` against `suite_case_ids` as a SET. The row ab
 covers both declared cases; a row listing only `case-01-nil-deref` was scored over
 half the suite and is not comparable to one that was not.
 
-Three properties are worth knowing:
+Four properties are worth knowing:
 
 - **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
   entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
@@ -320,6 +320,11 @@ Three properties are worth knowing:
 - **A present `case_ids` is always an array.** Once `reviewer_coverage` is present,
   coverage *was* measured, so a row that covered nothing is `"case_ids": []` — never
   `null`. Consumers can decode the field as a list without a null branch.
+- **The two keys are written together or not at all.** `atcr benchmark run` emits
+  `suite_case_ids` and `reviewer_coverage` from the same accumulator, and
+  `atcr benchmark export` rejects a run-result carrying either one without the
+  other — so a consumer never reads coverage rows with no denominator to compare
+  against, nor a denominator with no rows.
 
 #### `atcr_version` is the scorer discriminator
 
