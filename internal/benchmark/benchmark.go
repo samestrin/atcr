@@ -308,8 +308,8 @@ type RunResult struct {
 	// deliberately: that type is the frozen public schema shared byte-for-byte
 	// between `benchmark export` and production `leaderboard --export`, and forking
 	// a shared schema for a benchmark-only concern is a worse defect than the hole
-	// it would close (see score.go:139-143 for the same argument applied to the cost
-	// denominator's unit).
+	// it would close (see the cost-denominator comment in score.go's
+	// scoreOne for the same argument applied to the unit).
 	//
 	// It exists because Runs is a COUNT, not a SET. Case difficulty on this suite
 	// varies enormously, so a recall computed over one 8-case subset is not

@@ -71,7 +71,7 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 		// names survived the scrub, and that is the name they have to rename away from.
 		// Remedy ORDER is load-bearing. Re-running was listed first, and for the
 		// version-skew cause the same sentence names it provably cannot work: the
-		// producer's own collision check (benchmark_run.go:267-273) uses the same
+		// producer's own collision check (buildRunResult in benchmark_run.go) uses the same
 		// fixed-point ScrubPublicRecord this key does, and scrubField(scrubOnce(x))
 		// has the same fixed point as scrubField(x) — so a file that collides at
 		// export implies the raw ids collide at fixed point too, which means

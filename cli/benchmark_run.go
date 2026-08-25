@@ -356,7 +356,7 @@ func rosterSignature(cfg *fanout.ReviewConfig) []string {
 // prompt actually ran.
 //
 // It is deliberately the same identity benchmark.Score already sorts and publishes
-// on (score.go:60-75), so a lane that failed over mid-suite yields one row per model
+// on, so a lane that failed over mid-suite yields one row per model
 // actually used instead of crediting every case to whichever model happened to serve
 // the first one. Keying by the LANE (the agent name) is what silently attributed 9 of
 // Run B's 17 cases to a model that never saw them.
