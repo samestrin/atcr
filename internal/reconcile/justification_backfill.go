@@ -32,12 +32,20 @@ import (
 //
 // The two negative outcomes are deliberately distinct: err is "the source is gone or
 // unreadable" (prune the pointer or restore the file), ok=false is "this file is not
-// the one, or its section is pure quoted example" (try another candidate). Collapsing
-// them would make a pruned review dir indistinguishable from a mismatch.
+// the one, its section is pure quoted example, or it is larger than the producer
+// would ever have stamped from" (try another candidate). Collapsing them would make a
+// pruned review dir indistinguishable from a mismatch.
 func ReExtractJustification(path, file string, line, anchorLine int) (text, section string, ok bool, err error) {
 	// path is a review.md the caller located by walking a directory it chose; the
 	// operator is deliberately replaying their own reviews, so there is no
 	// untrusted-input step here to guard.
+	// The producer's size cap, applied at the replay too: collectReviewNarratives
+	// skips any review.md over maxReviewBytes, so a file it would never have stamped
+	// from must not yield an authoritative excerpt here either. Not an error — this
+	// candidate is simply not one the stamp could have come from.
+	if fi, serr := os.Stat(path); serr == nil && fi.Size() > maxReviewBytes {
+		return "", "", false, nil
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", "", false, fmt.Errorf("reading review narrative %s: %w", path, err)

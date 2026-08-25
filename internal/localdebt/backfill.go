@@ -159,7 +159,12 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 		if walkErr != nil {
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(p, rel) {
+		// IsRegular, not merely !IsDir: internal/reconcile's collectReviewNarratives
+		// deliberately excludes symlinks, FIFOs and devices named review.md, and
+		// ReExtractJustification's os.ReadFile would FOLLOW a link. A file the
+		// producer would never have stamped from must not become an authoritative
+		// candidate for the replay — the replay set may not exceed the stamp set.
+		if !d.Type().IsRegular() || !pathHasSuffix(p, rel) {
 			return nil
 		}
 		text, _, ok, rerr := reconcile.ReExtractJustification(p, rec.File, rec.Line, rec.SourceReport.Line)
@@ -185,6 +190,22 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 type replacement struct {
 	from string // the stored text, as the EFFECTIVE record carries it
 	to   string // the replayed excerpt
+}
+
+// pathHasSuffix reports whether p ends with the path-relative rel on a SEGMENT
+// boundary.
+//
+// A plain strings.HasSuffix is not segment-aware, and the difference is not
+// theoretical: rel is review-dir-relative (`sources/pool/raw/agent/dax/review.md`),
+// so a sibling directory named `xsources/` or `my-sources/` at the same depth
+// matched it. That produced a second, unrelated candidate and turned a repairable
+// record into `ambiguous` — a silently declined repair the operator is then told to
+// investigate as a real disagreement between reviews.
+func pathHasSuffix(p, rel string) bool {
+	if p == rel {
+		return true
+	}
+	return strings.HasSuffix(p, string(os.PathSeparator)+rel)
 }
 
 // rewriteJustifications edits the justification field of every line whose id is in
