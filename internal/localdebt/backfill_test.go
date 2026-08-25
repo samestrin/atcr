@@ -324,4 +324,44 @@ func TestBackfillJustifications(t *testing.T) {
 		assert.Zero(t, res.Ambiguous, "the producer skips a review.md over 1 MiB, so the replayer must too")
 		assert.Equal(t, 1, res.Rewritten)
 	})
+
+	// The `sr == nil || sr.Path == "" || r.Justification == ""` precondition weakens
+	// to `sr == nil` with the whole tree green. The `sr.Path == ""` arm is the
+	// load-bearing one: without it replayCandidates computes rel = "" and matches on
+	// an empty suffix, so every review.md under reviewRoot — which DEFAULTS to the
+	// whole repo root — becomes a candidate for a record that names no source. In a
+	// tree holding one review that resolves, that is a WRONG rewrite on the
+	// destructive path; in a larger tree it silently inflates Ambiguous.
+	t.Run("a record with no usable source or justification is never scanned", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		lineFor := func(id, srPath, justification string) string {
+			sr := `"source_report":{"path":` + strconv.Quote(srPath) + `,"line":8}`
+			return `{"schema_version":3,"id":"` + id + `","run_id":"2026-09-01T00:00:00Z-multi-agent","ts":"2026-09-01T00:00:00Z",` +
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-` + id + `","fix":"f","category":"correctness",` +
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+				`"justification":` + strconv.Quote(justification) + `,` + sr + `}`
+		}
+		// One record per missing precondition, each otherwise resolvable: same
+		// file:line as the surviving review.md, so ONLY the precondition can be
+		// keeping them out of the scanned set.
+		writeShard(t, store, "2026-09",
+			lineFor("ffff6666", "", "- **internal/thing.go:42** the real narrative explaining the defect."),
+			lineFor("99990000", "sources/pool/raw/agent/dax/review.md", ""))
+		before := shardLines(t, store, "2026-09")
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, res.Scanned,
+			"a record naming no source, and one carrying no justification, have nothing to replay — the fixture's own two records are the whole scanned set")
+		assert.Zero(t, res.Ambiguous,
+			"an empty source_report.path must not match every review.md in the tree")
+
+		after := shardLines(t, store, "2026-09")
+		require.Len(t, after, 2)
+		for i := range after {
+			assert.Equal(t, before[i]["justification"], after[i]["justification"],
+				"record %v must be left byte-for-byte alone", after[i]["id"])
+		}
+	})
 }
