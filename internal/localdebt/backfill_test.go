@@ -445,3 +445,72 @@ func TestRewriteJustifications_RewritesOnlyLinesCarryingTheStaleText(t *testing.
 	assert.Equal(t, "an operator's typed --reason from a resolution trail", got[3]["justification"],
 		"a human-typed rationale on the same id must survive: the store is append-only, so replaying over it is irreversible")
 }
+
+// The six IO error wraps in rewriteJustifications are the return-path half of the
+// function's signature change from `error` to `([]JustificationChange, error)`, so
+// every one of them was rewritten without a test reaching it. Two are reachable
+// portably, through directory permissions rather than a fake filesystem: the ReadDir
+// wrap on a store that cannot be listed, and the CreateTemp wrap on a store that can
+// be read but not written.
+//
+// The remaining four (ReadFile, json.Marshal, the temp write, and the rename) are
+// left uncovered deliberately — reaching them needs either a fake filesystem or a
+// value json.Marshal rejects, and each is a single fmt.Errorf wrap over an os error
+// whose worst outcome is a less precise message. That is documented on the function
+// rather than pinned with a fake, the same stance the repoRoot error arm takes.
+func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
+	// Permission bits do not constrain root, so this whole class of test is
+	// meaningless there — skip rather than assert something false.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny access")
+	}
+
+	const stale = "the stale excerpt"
+	want := map[string]replacement{"aaaa1111": {from: stale, to: "the replayed excerpt"}}
+
+	t.Run("wraps a store it cannot list", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "unlistable")
+		require.NoError(t, os.Mkdir(dir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		_, err := rewriteJustifications(dir, want, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reading localdebt dir for backfill",
+			"the wrap names the operation; a bare os error reads as if it came from elsewhere in the debt namespace")
+	})
+
+	t.Run("wraps a store it cannot write", func(t *testing.T) {
+		dir := t.TempDir()
+		writeShard(t, dir, "2026-08",
+			`{"schema_version":3,"id":"aaaa1111","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",`+
+				`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+				`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
+		// Readable and traversable, but not writable: the shard is read and edited in
+		// memory, and the failure lands on the temp file the rewrite publishes through.
+		require.NoError(t, os.Chmod(dir, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		_, err := rewriteJustifications(dir, want, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "creating temp file for backfill")
+	})
+
+	// A dry run reaches neither write path, so the same unwritable store succeeds —
+	// which is what makes --dry-run safe to recommend as the first step.
+	t.Run("a dry run over an unwritable store still reports what it would change", func(t *testing.T) {
+		dir := t.TempDir()
+		writeShard(t, dir, "2026-08",
+			`{"schema_version":3,"id":"aaaa1111","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",`+
+				`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+				`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
+		require.NoError(t, os.Chmod(dir, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+		changes, err := rewriteJustifications(dir, want, true)
+		require.NoError(t, err)
+		require.Len(t, changes, 1)
+		assert.Equal(t, stale, changes[0].Before)
+	})
+}

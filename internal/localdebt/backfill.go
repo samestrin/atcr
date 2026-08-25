@@ -270,6 +270,17 @@ func pathHasSuffix(p, rel string) bool {
 //
 // Each shard is staged to a temp beside itself and renamed, so a failure mid-pass
 // leaves whole shards, never a half-written one.
+//
+// # Coverage of the IO error paths
+//
+// Six wraps here return an os error with the operation named. Two are pinned through
+// directory permissions — the ReadDir wrap on an unlistable store and the CreateTemp
+// wrap on an unwritable one (TestRewriteJustifications_WrapsItsIOErrors). The other
+// four — ReadFile, json.Marshal, the temp write, and the rename — are left UNCOVERED
+// deliberately: reaching them needs a fake filesystem or a value json.Marshal rejects,
+// and each is a single fmt.Errorf over an os error whose worst outcome is a less
+// precise message, never a wrong write. Said here rather than pinned with a fake, the
+// same stance repoRoot's error arm takes in cli/debt_backfill.go.
 func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, error) {
 	var changes []JustificationChange
 	entries, err := os.ReadDir(dir)
