@@ -86,7 +86,10 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// Fold first: the gate reads the EFFECTIVE record, so that is the excerpt
 		// whose staleness matters. An id's other rows are updated alongside it below,
 		// because they carry the same stamp.
-		want := map[string]string{} // id -> replayed excerpt, for ids that need one
+		// id -> the replacement AND the stale text it replaces. The stale text is
+		// what makes the rewrite LINE-scoped instead of id-scoped: see
+		// rewriteJustifications.
+		want := map[string]replacement{}
 		for _, r := range FoldRecords(recs) {
 			if IsSettledStatus(r.Status) {
 				// SETTLED, not merely closed — the distinction record.go draws
@@ -120,13 +123,19 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				res.Unchanged++
 			default:
 				res.Rewritten++
-				want[r.ID] = texts[0]
+				want[r.ID] = replacement{from: r.Justification, to: texts[0]}
 			}
 		}
-		if dryRun || len(want) == 0 {
+		if len(want) == 0 {
 			return nil
 		}
-		return rewriteJustifications(dir, want)
+		changes, rerr := rewriteJustifications(dir, want, dryRun)
+		if rerr != nil {
+			return rerr
+		}
+		res.Changes = changes
+		res.RewrittenLines = len(changes)
+		return nil
 	})
 	if err != nil {
 		return BackfillResult{}, err
@@ -171,8 +180,32 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 	return out, nil
 }
 
+// replacement pairs the stale justification a record carries with the excerpt
+// replayed from its review.md.
+type replacement struct {
+	from string // the stored text, as the EFFECTIVE record carries it
+	to   string // the replayed excerpt
+}
+
 // rewriteJustifications edits the justification field of every line whose id is in
-// want, in place, shard by shard.
+// want AND whose stored justification is still the stale text want names.
+//
+// The second half of that predicate is what keeps the pass LINE-scoped rather than
+// id-scoped, and it is load-bearing rather than an optimisation. One id can carry
+// several lines — a resolution appended by `debt resolve` copies the effective
+// record verbatim, and FoldRecords rule 2 lets a later re-detection displace it, so
+// open@t1 -> resolved@t2 -> open@t3 is an ordinary shape. The resolved line's
+// justification is then the operator's --reason (cli/debt_resolve.go replaces it),
+// which exists nowhere else in the tree and cannot be replayed from anything. An
+// id-scoped rewrite overwrites it with a review excerpt, irreversibly.
+//
+// Matching on the stale TEXT rather than on the presence of a status field is
+// deliberate: a `deferred` line is a resolution-trail line too, but when it was
+// filed without a --reason it merely COPIED the stale excerpt, and repairing it is
+// the whole point of the pass for the one status class that is both stale and still
+// closeable. Text provenance separates the two cases; a status check cannot.
+//
+// When dryRun is set the changes are computed and returned but no shard is written.
 //
 // It works at the JSON-object level rather than through Record + stageShard on
 // purpose: stageShard re-marshals a decoded Record, which cannot round-trip a field
@@ -181,10 +214,11 @@ func replayCandidates(reviewRoot string, rec Record) ([]string, error) {
 //
 // Each shard is staged to a temp beside itself and renamed, so a failure mid-pass
 // leaves whole shards, never a half-written one.
-func rewriteJustifications(dir string, want map[string]string) error {
+func rewriteJustifications(dir string, want map[string]replacement, dryRun bool) ([]JustificationChange, error) {
+	var changes []JustificationChange
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("reading localdebt dir for backfill: %w", basePathErr(err))
+		return nil, fmt.Errorf("reading localdebt dir for backfill: %w", basePathErr(err))
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
@@ -195,7 +229,7 @@ func rewriteJustifications(dir string, want map[string]string) error {
 		// directory this pass already holds the lock on — not caller input.
 		b, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return fmt.Errorf("reading shard for backfill: %w", basePathErr(rerr))
+			return nil, fmt.Errorf("reading shard for backfill: %w", basePathErr(rerr))
 		}
 		lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		changed := false
@@ -208,27 +242,31 @@ func rewriteJustifications(dir string, want map[string]string) error {
 				continue // a forward-incompatible or corrupt line is carried through untouched
 			}
 			id, _ := m["id"].(string)
-			text, wanted := want[id]
+			rep, wanted := want[id]
 			if !wanted {
 				continue
 			}
-			if cur, ok := m["justification"].(string); !ok || cur == "" || cur == text {
+			cur, ok := m["justification"].(string)
+			if !ok || cur == "" || cur == rep.to || cur != rep.from {
 				continue
 			}
-			m["justification"] = text
+			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
-				return fmt.Errorf("re-encoding backfilled record %s: %w", id, merr)
+				return nil, fmt.Errorf("re-encoding backfilled record %s: %w", id, merr)
 			}
 			lines[i] = string(enc)
 			changed = true
+			changes = append(changes, JustificationChange{
+				ID: id, Shard: e.Name(), Line: i + 1, Before: cur, After: rep.to,
+			})
 		}
-		if !changed {
+		if !changed || dryRun {
 			continue
 		}
 		tmp, terr := os.CreateTemp(dir, "."+e.Name()+".tmp-*")
 		if terr != nil {
-			return fmt.Errorf("creating temp file for backfill: %w", basePathErr(terr))
+			return nil, fmt.Errorf("creating temp file for backfill: %w", basePathErr(terr))
 		}
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
@@ -236,12 +274,12 @@ func rewriteJustifications(dir string, want map[string]string) error {
 		}
 		if werr != nil {
 			_ = os.Remove(tmp.Name())
-			return fmt.Errorf("writing backfilled shard: %w", basePathErr(werr))
+			return nil, fmt.Errorf("writing backfilled shard: %w", basePathErr(werr))
 		}
 		if rnerr := os.Rename(tmp.Name(), path); rnerr != nil {
 			_ = os.Remove(tmp.Name())
-			return fmt.Errorf("publishing backfilled shard: %w", basePathErr(rnerr))
+			return nil, fmt.Errorf("publishing backfilled shard: %w", basePathErr(rnerr))
 		}
 	}
-	return nil
+	return changes, nil
 }

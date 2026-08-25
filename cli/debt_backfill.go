@@ -67,8 +67,33 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// the two the operator may need to act on — a pruned review tree, or a repo
 	// holding several reviews that anchor one finding — and a counter that appears
 	// only when non-zero reads as "not checked" rather than "checked, none found".
+	// The rewritten counter names LINES as well as records. They differ whenever an
+	// id carries a resolution trail, and the line count is the one that describes
+	// what was written to an append-only store.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten, %d unchanged, %d unresolved (no surviving review.md), %d ambiguous (candidates disagreed)\n",
-		prefix, res.Scanned, res.Rewritten, res.Unchanged, res.Unresolved, res.Ambiguous)
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no surviving review.md), %d ambiguous (candidates disagreed)\n",
+		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
+		res.Unchanged, res.Unresolved, res.Ambiguous)
+
+	// A dry run shows the text, not just the count. It is documented as the step to
+	// run FIRST on the one subcommand that rewrites the store in place, and a bare
+	// counter cannot reveal WHICH line would change — the difference between a stale
+	// review excerpt and an operator's typed --reason is only visible in the text.
+	// %q keeps a multi-line excerpt on one line and, more importantly, escapes it:
+	// the store is world-appendable, so its text is untrusted input that must never
+	// be echoed verbatim to a terminal.
+	if dryRun {
+		for _, c := range res.Changes {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %s\n    before: %q\n    after:  %q\n",
+				c.Shard, c.Line, c.ID, c.Before, c.After)
+		}
+	}
 	return nil
+}
+
+func pluralLines(n int) string {
+	if n == 1 {
+		return "line"
+	}
+	return "lines"
 }

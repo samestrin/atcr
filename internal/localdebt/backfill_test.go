@@ -219,13 +219,20 @@ func TestBackfillJustifications(t *testing.T) {
 		assert.Contains(t, got[0]["justification"], "```", "a line carrying the stale excerpt is repaired")
 		assert.Contains(t, got[2]["justification"], "```", "including the re-detection that copied it")
 
-		assert.Equal(t, 2, res.RewrittenLines,
-			"the counter must report LINES: a record count says 1 and understates the write to an append-only store")
-		require.Len(t, res.Changes, 2, "every written line is described so --dry-run can show it")
-		assert.Equal(t, staleText, res.Changes[0].Before)
-		assert.Contains(t, res.Changes[0].After, "```")
-		assert.Equal(t, "2026-09.jsonl", res.Changes[0].Shard)
-		assert.Equal(t, 1, res.Changes[0].Line)
+		var trail []JustificationChange
+		for _, c := range res.Changes {
+			if c.ID == "eeee5555" {
+				trail = append(trail, c)
+			}
+		}
+		require.Len(t, trail, 2,
+			"the counter must report LINES: this id's record count says 1 and understates the write to an append-only store")
+		assert.Equal(t, 3, res.RewrittenLines, "2 lines for this id plus the fixture's own 1")
+		assert.Equal(t, staleText, trail[0].Before)
+		assert.Contains(t, trail[0].After, "```")
+		assert.Equal(t, "2026-09.jsonl", trail[0].Shard)
+		assert.Equal(t, 1, trail[0].Line, "line numbers are 1-based within the shard")
+		assert.Equal(t, 3, trail[1].Line)
 	})
 
 	t.Run("dry run reports the lines it would touch without writing them", func(t *testing.T) {
