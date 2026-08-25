@@ -632,6 +632,28 @@ func TestBenchmarkExport_CoverageWithoutDenominatorGetsStructuralError(t *testin
 		"a privacy-scrub diagnostic about one id would misdirect the operator")
 }
 
+// The coverage-ROW check is a separate branch from the denominator check: a clean
+// suite_case_ids with a poisoned id inside a reviewer_coverage row must be rejected
+// with the row-specific message, which names the row's identity so the operator
+// knows which reviewer to look at. (TestBenchmarkExport_RejectsCaseIDThatScrubsAway
+// poisons both arrays, so the denominator loop returns first and never proves this
+// branch works.)
+func TestBenchmarkExport_RejectsCoverageRowIDTheScrubRewrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02"],` +
+		`"reviewer_coverage":[{"model":"m-row","persona":"p-row","case_ids":["case-01","sk-io-pr-42"]}],` +
+		`"reviewers":[{"model":"m-row","persona":"p-row","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a poisoned id inside a coverage row must not publish: %s", out)
+	assert.Contains(t, out, "records covered case", "the row-specific message fires, not the denominator one")
+	assert.Contains(t, out, "sk-io-pr-42", "the error names the PRE-scrub id")
+	assert.Contains(t, out, "m-row", "and the row's identity, so the operator knows which reviewer to inspect")
+}
+
 // A case id consumed entirely by the scrubber publishes as "" — the identical defect
 // the reviewer-identity check rejects because "an identity that scrubs away publishes
 // as \"\" on the leaderboard". Case ids are no different, and the shape is producible:
