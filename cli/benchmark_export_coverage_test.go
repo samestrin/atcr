@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,10 +304,42 @@ func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	assert.Contains(t, stderr, "carried into the submission",
 		"the operator is told the shortfall is now consumer-visible")
 
-	// The envelope carries the shortfall: the denominator plus each row's covered set.
-	assert.Contains(t, stdout, "suite_case_ids", "the suite denominator reaches the board")
-	assert.Contains(t, stdout, "reviewer_coverage", "each row's covered-case set reaches the board")
-	assert.Contains(t, stdout, "case_ids")
+	// The envelope carries the shortfall: the denominator plus each row's covered
+	// set. Asserted by UNMARSHALLING, not substring match — "case_ids" is a
+	// substring of "suite_case_ids", so a Contains proves nothing about the
+	// row-level key (a renamed SubmissionCoverage.CaseIDs tag used to pass here).
+	var sub struct {
+		SuiteCaseIDs []string `json:"suite_case_ids"`
+		Reviewers    []struct {
+			Model   string `json:"model"`
+			Persona string `json:"persona"`
+		} `json:"reviewers"`
+		Coverage []struct {
+			Model   string   `json:"model"`
+			Persona string   `json:"persona"`
+			CaseIDs []string `json:"case_ids"`
+		} `json:"reviewer_coverage"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &sub),
+		"the export must be parseable submission JSON")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, sub.SuiteCaseIDs,
+		"the suite denominator reaches the board")
+	type identity struct{ model, persona string }
+	reviewerIDs := make(map[identity]bool, len(sub.Reviewers))
+	for _, r := range sub.Reviewers {
+		reviewerIDs[identity{r.Model, r.Persona}] = true
+	}
+	covered := make(map[identity][]string, len(sub.Coverage))
+	for _, row := range sub.Coverage {
+		key := identity{row.Model, row.Persona}
+		assert.True(t, reviewerIDs[key],
+			"coverage row %s/%s must join to a reviewers[] identity", row.Model, row.Persona)
+		covered[key] = row.CaseIDs
+	}
+	assert.Equal(t, []string{"case-01", "case-02"}, covered[identity{"m-primary", "brad"}],
+		"the primary row's covered-case list reaches the board")
+	assert.Equal(t, []string{"case-03"}, covered[identity{"m-backup", "brad"}],
+		"the backup row's covered-case list reaches the board")
 	// Trimmed projection: the run-result's diagnostics stay out of the public envelope.
 	assert.NotContains(t, stdout, "outcomes",
 		"the per-case outcome tally is run-result-only, not a public field")
