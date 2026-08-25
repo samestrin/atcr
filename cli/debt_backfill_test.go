@@ -83,6 +83,56 @@ func TestDebtBackfillJustifications(t *testing.T) {
 		assert.Contains(t, out, "after:")
 	})
 
+	// The DEFAULT --review-root is the whole repo root — the widest search scope, on
+	// the one subcommand that rewrites the store in place, and the scope an operator
+	// is most likely to run under. Both other cases pass --review-root explicitly, so
+	// the branch that decides it was never exercised.
+	t.Run("omitting --review-root searches the repo root", func(t *testing.T) {
+		store, reviewRoot := backfillFixture(t)
+		// repoRoot() walks up for a .git DIRECTORY. Planting one at the parent of
+		// the review tree makes that walk terminate at a known path, so the
+		// assertion below is about the resolution, not about the ambient checkout.
+		repo := filepath.Dir(reviewRoot)
+		require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o750))
+		// Run from a subdirectory that holds NO review.md. Only a search rooted at
+		// the repo can reach the narrative from here, so a resolution that quietly
+		// used the working directory instead would report "0 rewritten".
+		elsewhere := filepath.Join(repo, "elsewhere")
+		require.NoError(t, os.MkdirAll(elsewhere, 0o750))
+		t.Chdir(elsewhere)
+
+		code, out := execCmdCapture(t, "debt", "backfill-justifications", "--store", store)
+		require.Equal(t, 0, code, out)
+		assert.Contains(t, out, "1 rewritten (1 line)",
+			"the default root must reach the review.md that --review-root reached explicitly")
+
+		b, err := os.ReadFile(filepath.Join(store, "2026-08.jsonl"))
+		require.NoError(t, err)
+		assert.Contains(t, string(b), "```")
+	})
+
+	// The BackfillJustifications error is WRAPPED, not returned bare: without the
+	// "backfill-justifications:" prefix a store-level failure reads as if it came
+	// from somewhere else in the debt namespace.
+	t.Run("wraps a store failure with the subcommand name", func(t *testing.T) {
+		_, reviewRoot := backfillFixture(t)
+		// A regular file where the store directory belongs. Every store operation
+		// fails on it, and the specific errno is not what this test pins — the
+		// prefix is.
+		notADir := filepath.Join(t.TempDir(), "store-is-a-file")
+		require.NoError(t, os.WriteFile(notADir, []byte("x"), 0o600))
+
+		code, out := execCmdCapture(t, "debt", "backfill-justifications",
+			"--store", notADir, "--review-root", reviewRoot)
+		require.NotEqual(t, 0, code, "a store that cannot be read must not report success: %s", out)
+		assert.Contains(t, out, "backfill-justifications:")
+	})
+
+	// repoRoot()'s own error arm (cli/debt_backfill.go) is unreachable from a test:
+	// repoRoot falls back to the working directory and returns an error only when
+	// os.Getwd fails, which no portable test can force. It is left uncovered
+	// deliberately rather than pinned with a fake.
+
 	t.Run("is registered under debt", func(t *testing.T) {
 		_, out := execCmdCapture(t, "debt", "--help")
 		assert.Contains(t, out, "backfill-justifications")
