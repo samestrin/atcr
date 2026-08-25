@@ -66,6 +66,14 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// The SAME gate `benchmark run` applies at load (cli/benchmark_run.go). verify is
+	// the suite-author pre-flight — its whole job is validation — so it must not
+	// print "valid" for a manifest run hard-rejects seconds later. Wiring the gate
+	// into run alone left the earliest surface an author touches as the one surface
+	// that did not apply it.
+	if err := validateSuitePublishableCaseIDs(m, suitePath); err != nil {
+		return err
+	}
 	hash, err := benchmark.ReproHashManifest(m, suitePath)
 	if err != nil {
 		return err
