@@ -87,10 +87,25 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// %q keeps a multi-line excerpt on one line and, more importantly, escapes it:
 	// the store is world-appendable, so its text is untrusted input that must never
 	// be echoed verbatim to a terminal.
+	//
+	// That rule covers EVERY field of the line, not just the excerpt. The id reaches
+	// JustificationChange as an unvalidated `m["id"].(string)` (internal/localdebt/
+	// backfill.go), and the shard is a store filename, so both are untrusted for the
+	// same reason. Printing them under %s let an ANSI CSI or a bidi override through to
+	// the terminal on the one surface an operator consults to decide whether to let the
+	// in-place rewrite proceed - where reordering WHICH line is named is the whole
+	// attack. The sibling listing `atcr debt list` already strips them (cli/debt.go ->
+	// cell -> sanitizeCell).
+	//
+	// The two get different treatment on purpose. The id takes %q, which escapes the
+	// FORMAT runes (Cf) sanitizeCell deliberately keeps - a bidi override is not a C0/C1
+	// control, and it is the rune that reorders which line appears to be named. The
+	// shard takes sanitizeCell so the `<shard>:<line>` locator stays copy-pasteable;
+	// quoting it would put the line number outside the name.
 	if dryRun {
 		for _, c := range res.Changes {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %s\n    before: %q\n    after:  %q\n",
-				c.Shard, c.Line, c.ID, c.Before, c.After)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
+				sanitizeCell(c.Shard), c.Line, c.ID, c.Before, c.After)
 		}
 	}
 	return nil
