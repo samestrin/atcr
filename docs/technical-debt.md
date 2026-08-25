@@ -304,7 +304,7 @@ that line alone. The run reports both counts, e.g. `3 rewritten (5 lines)`, and
 ```console
 $ atcr debt backfill-justifications --dry-run
 dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (no surviving review.md), 0 ambiguous (candidates disagreed)
-  2026-08.jsonl:1 aaaa1111
+  2026-08.jsonl:1 "aaaa1111"
     before: "- **internal/thing.go:42** the real narrative explaining the defect."
     after:  "```\n- **internal/thing.go:42** the real narrative explaining the defect."
 ```
