@@ -666,6 +666,20 @@ func TestBuildSubmission_CoverageRowOrderIsDeterministic(t *testing.T) {
 		"coverage row order in the source run-result must not change the submission bytes")
 }
 
+// The "case_ids is always an array, never null" contract must hold even for a row
+// built WITHOUT routing through publicCoverage — a future writer constructing
+// SubmissionCoverage directly cannot bypass it. The invariant is structural
+// (MarshalJSON), not conventional.
+func TestSubmissionCoverage_NilCaseIDsMarshalAsEmptyArray(t *testing.T) {
+	row := SubmissionCoverage{Model: "llm-small", Persona: "bruce"} // CaseIDs nil, built directly
+
+	data, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"case_ids":[]`,
+		"a directly-built row with nil CaseIDs still marshals an array")
+	assert.NotContains(t, string(data), `"case_ids":null`)
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {
