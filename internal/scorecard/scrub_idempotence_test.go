@@ -77,9 +77,13 @@ func TestScrubPublicString_MatchesTheIdentityFieldScrub(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, ScrubPublicString(tc.in),
 			"the exported string scrub must produce the documented output for %q", tc.in)
-		// scrubField is the ingestion-side field scrub. "exactly the Model-field
-		// scrub, no more and no less" is a claim about THAT function, and it is a
-		// real cross-check: the two are separate call paths.
+		// A REDUNDANT IDENTITY, kept to document the delegation — not a cross-check.
+		// ScrubPublicString's whole body is `return scrubField(s)` (export.go), so
+		// this equality holds for ANY implementation of either and constrains
+		// neither; it is the same tautology the comment above this test warns
+		// against, one assertion down. What carries the test is the concrete-output
+		// assertion above. This line's only job is to fail loudly if
+		// ScrubPublicString ever stops delegating and grows a body of its own.
 		assert.Equal(t, scrubField(tc.in), ScrubPublicString(tc.in),
 			"the exported string scrub must be exactly the identity-field scrub for %q", tc.in)
 	}
