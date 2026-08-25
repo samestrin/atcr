@@ -239,3 +239,50 @@ func TestDebtBackfillJustifications_DryRunCounterPluralisesLines(t *testing.T) {
 		"a multi-line repair must read \"lines\", not \"line\"")
 	assert.NotContains(t, out, "(2 line)")
 }
+
+// ReExtractJustification applies the producer's size cap and regular-file rule at the
+// replay, returning (ok=false, err=nil) — the same shape as "this file is not the one".
+// replayCandidates collapses both into an empty candidate list, so a record whose
+// review.md is PRESENT and readable at its own source_report path, merely excluded by
+// policy, was reported as "unresolved (no surviving review.md)". The documented remedy
+// for that label is "prune the pointer or restore the file", which sends the operator
+// to fix a file that is already there.
+//
+// The exclusion itself is correct and mirrors the producer. Only the reported reason
+// was wrong, so what this pins is the WORDING an operator acts on.
+func TestDebtBackfillJustifications_UnresolvedLabelDoesNotClaimTheFileIsGone(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	// Over the producer's 1 MiB cap, so the replay declines it by policy. The
+	// narrative it would otherwise yield sits at the top, so the ONLY reason this
+	// candidate fails is its size.
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n" +
+		strings.Repeat("padding line to push the file over the producer size cap\n", 40000)
+	reviewPath := filepath.Join(rd, "review.md")
+	require.NoError(t, os.WriteFile(reviewPath, []byte(body), 0o600))
+	fi, err := os.Stat(reviewPath)
+	require.NoError(t, err)
+	require.Greater(t, fi.Size(), int64(1<<20), "premise: the file must exceed the producer's cap")
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	require.Contains(t, out, "1 unresolved", "premise: the record must land in the unresolved bucket")
+	assert.NotContains(t, out, "no surviving review.md",
+		"the review.md is present and readable at the record's own path — the label must not send the operator to restore it")
+	assert.FileExists(t, reviewPath, "premise: nothing removed the file")
+}
