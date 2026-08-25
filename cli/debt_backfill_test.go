@@ -168,7 +168,7 @@ func TestDebtResolveDocumentsBackfillScope(t *testing.T) {
 // strips these through sanitizeCell. The escaping has to hold for EVERY field of the
 // line, not only before/after.
 func TestDebtBackfillJustifications_DryRunEscapesTheUntrustedID(t *testing.T) {
-	const hostileID = "aaaa\x1b[31m1111‮"
+	const hostileID = "aaaa\x1b[31m1111\u202E"
 
 	root := t.TempDir()
 	store := filepath.Join(root, "debt")
@@ -198,7 +198,7 @@ func TestDebtBackfillJustifications_DryRunEscapesTheUntrustedID(t *testing.T) {
 	require.Contains(t, out, "2026-08.jsonl:1", "the dry run must have listed the record")
 
 	assert.NotContains(t, out, "\x1b", "an ANSI escape from the store must never reach the terminal raw")
-	assert.NotContains(t, out, "‮", "a bidi override from the store must never reach the terminal raw")
+	assert.NotContains(t, out, "\u202E", "a bidi override from the store must never reach the terminal raw")
 	// The id still has to be identifiable — escaping is not redaction.
 	assert.Contains(t, out, strconv.Quote(hostileID))
 }
