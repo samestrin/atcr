@@ -247,8 +247,18 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		consumed[key] = rev
 		cov, ok := byIdentity[key]
 		if !ok {
-			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", model, persona))
-			continue
+			// The producer appends reviewers and coverage from the same accumulator
+			// loop, so a reviewer row with no coverage row cannot come from it — this
+			// is the one shape that is hand-assembly by construction. It is also the
+			// one shape the documented shortfall join cannot describe: there is no
+			// reviewer_coverage row whose case_ids a consumer could compare against
+			// suite_case_ids, and the runs/covered-set sanity check below has nothing
+			// to run against. Reject rather than mark short, in both gate modes — the
+			// opt-out publishes a shortfall the submission makes visible, and this
+			// row would be invisible.
+			return fmt.Errorf("run-result %s: reviewer %s/%s has no coverage row; "+
+				"`atcr benchmark run` writes the two arrays from the same accumulator, so this file is malformed",
+				path, model, persona)
 		}
 		// `runs` and the covered set are appended together by the producer, so they
 		// are equal by construction and a mismatch can only come from editing. Left
