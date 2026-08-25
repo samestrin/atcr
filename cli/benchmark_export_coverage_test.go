@@ -584,6 +584,27 @@ func TestBenchmarkExport_RejectsSuiteCaseIDsThatCollideOnceScrubbed(t *testing.T
 	assert.NotContains(t, out, `"suite_case_ids"`, "nothing is published on the rejection path")
 }
 
+// A run-result carrying reviewer_coverage but NO suite_case_ids is structurally
+// malformed (the producer writes the two together), and checkCoverage's shape check
+// says exactly that. The scrub gate must not pre-empt it with a privacy diagnostic
+// about an individual covered id — the sharper, actionable defect is the missing
+// denominator, so the coverage loop skips a file that has none.
+func TestBenchmarkExport_CoverageWithoutDenominatorGetsStructuralError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["sk-io-pr-42"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "coverage without a denominator must not export: %s", out)
+	assert.Contains(t, out, "records reviewer coverage but no suite_case_ids",
+		"the structural rejection is the sharper diagnostic for this shape")
+	assert.NotContains(t, out, "empty once scrubbed",
+		"a privacy-scrub diagnostic about one id would misdirect the operator")
+}
+
 // A case id consumed entirely by the scrubber publishes as "" — the identical defect
 // the reviewer-identity check rejects because "an identity that scrubs away publishes
 // as \"\" on the leaderboard". Case ids are no different, and the shape is producible:
