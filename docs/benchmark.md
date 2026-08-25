@@ -307,7 +307,7 @@ then compare that row's `case_ids` against `suite_case_ids` as a SET. The row ab
 covers both declared cases; a row listing only `case-01-nil-deref` was scored over
 half the suite and is not comparable to one that was not.
 
-Four properties are worth knowing:
+Five properties are worth knowing:
 
 - **The coverage row is trimmed.** The run-result's richer `reviewer_coverage`
   entries also carry `outcomes` and `fallback_cases`. Those are run-level diagnostics
@@ -325,6 +325,13 @@ Four properties are worth knowing:
   `atcr benchmark export` rejects a run-result carrying either one without the
   other — so a consumer never reads coverage rows with no denominator to compare
   against, nor a denominator with no rows.
+- **The envelope grows O(rows × cases).** Each `reviewer_coverage` row repeats its
+  full covered-case list, so the document carries on the order of rows × cases id
+  strings — a 500-case third-party suite with 10 reviewer rows yields roughly 5,500.
+  Publishing each row's *missing* ids instead (typically far shorter for a near-full
+  run) was considered and rejected: the covered-list shape is what the consumer-side
+  contract — join on `(model, persona)`, covered set ⊆ `suite_case_ids` — is defined
+  over, and `submission_schema` 2 ships that contract.
 
 #### `atcr_version` is the scorer discriminator
 
