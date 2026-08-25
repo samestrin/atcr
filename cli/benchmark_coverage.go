@@ -503,8 +503,11 @@ func summarizeMissing(missing []string) string {
 //
 // Only the denominator needs the distinctness check: every covered id is validated to
 // be a suite member, and duplicates within a row are rejected separately, so distinct
-// scrubbed suite ids force distinct scrubbed covered ids. Row ids are still checked
-// for emptiness, because a row is inspected here even when the denominator is absent.
+// scrubbed suite ids force distinct scrubbed covered ids. Row ids are checked for
+// emptiness only when a denominator EXISTS: a coverage array with no suite_case_ids
+// is already destined for checkCoverage's sharper structural rejection ("records
+// reviewer coverage but no suite_case_ids"), and a per-id scrub diagnostic would
+// pre-empt it with a privacy message about a file whose real defect is its shape.
 //
 // Errors name the PRE-scrub id. The scrubbed value is empty or duplicated by
 // construction, so reporting it would tell the operator what went wrong but never
@@ -540,6 +543,9 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 	}
 
 	for _, c := range rr.Coverage {
+		if len(rr.SuiteCaseIDs) == 0 {
+			break
+		}
 		for _, id := range c.CaseIDs {
 			if strings.TrimSpace(scrubCaseID(id)) == "" {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
