@@ -69,8 +69,18 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		// because they carry the same stamp.
 		want := map[string]string{} // id -> replayed excerpt, for ids that need one
 		for _, r := range FoldRecords(recs) {
-			if IsClosedStatus(r.Status) && !IsSuppressingStatus(r.Status) {
-				// A resolved id is settled history; its excerpt gates nothing.
+			if IsSettledStatus(r.Status) {
+				// SETTLED, not merely closed — the distinction record.go draws
+				// between the two predicates decides both directions here.
+				// `resolved` and `wontfix` are done: a resolved id is settled
+				// history whose excerpt gates nothing, and a wontfix id's
+				// justification is NOT a review excerpt at all but the operator's
+				// --reason (cli/debt_resolve.go replaces it), which exists nowhere
+				// else in the tree — replaying over it in an append-only store is
+				// irreversible loss. `deferred` carries a terminal marker but means
+				// "not now": it is live, closeable debt whose stale excerpt is
+				// exactly what this pass exists to repair, so it must NOT be
+				// skipped.
 				continue
 			}
 			sr := r.SourceReport
