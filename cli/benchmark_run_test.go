@@ -1016,3 +1016,65 @@ func TestWarnIfVocabularyCeilingExceeded_DistinguishesRatesWithinTheCeilingsFirs
 	// The ceiling itself stays exact rather than gaining trailing zeroes.
 	assert.Contains(t, onTheCeiling, "0.05 ceiling")
 }
+
+// buildRunResult copies m.Cases[i].ID into SuiteCaseIDs verbatim (cli/benchmark_run.go),
+// and submission schema 2 PUBLISHES that array — so validateScrubbedCaseIDs hard-rejects
+// any id the publication scrub rewrites. That gate runs at `benchmark export`, i.e. after
+// the whole panel has already executed, which makes a legitimate suite permanently
+// unexportable and only says so hours later. `benchmark run` must apply the identical
+// rule to the manifest at load time.
+func TestValidateSuitePublishableCaseIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		id      string
+		wantErr string // substring; "" means the id must be accepted
+	}{
+		{name: "importer-shaped id publishes verbatim", id: "acme-corp-widgets-pr-12"},
+		{
+			// The importer builds ids as <owner>-<repo>-pr-<n>; a credential rule can
+			// consume the whole slug, publishing "" in suite_case_ids.
+			name: "scrubs away entirely", id: "admin@internal.host-widgets-pr-1",
+			wantErr: "empty once scrubbed",
+		},
+		{
+			// U+202E reorders the id and everything after it in the same text node.
+			name: "carries a non-printing rune", id: "acme-‮corp-pr-1",
+			wantErr: "non-printing rune",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{
+				{ID: tc.id, ExpectedCategories: []string{"correctness"}},
+			}}
+			err := validateSuitePublishableCaseIDs(m, "suite.json")
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Contains(t, err.Error(), tc.id, "the diagnostic names the PRE-scrub id — the published value is empty or rewritten by construction, so it identifies no line to edit")
+			assert.Contains(t, err.Error(), "suite manifest", "the remedy names the file to fix; suite_case_ids is a verbatim copy of the manifest, so editing the run-result is the wrong action")
+		})
+	}
+}
+
+// The gate must run before the panel, not merely before the export: discovering an
+// unexportable suite after a full run is the cost this item exists to remove.
+func TestExecuteBenchmarkRun_RejectsScrubUnsafeSuiteCaseIDBeforeExecuting(t *testing.T) {
+	dir := t.TempDir()
+	// A VALID diff, so the only thing this test can fail on is the suite gate: an
+	// unparseable fixture would reject the run for an unrelated reason and the
+	// assertion below would pass without the gate existing.
+	diff := "--- a/pay.go\n+++ b/pay.go\n@@ -1,3 +1,3 @@\n func total() int {\n-\treturn 0\n+\treturn 1\n }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"), []byte(diff), 0o600))
+	manifest := `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"admin@internal.host-widgets-pr-1","diff":"case-01.diff","expected_categories":["correctness"]}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+	completer := &countingCompleter{}
+	_, err := executeBenchmarkRun(context.Background(), benchCfg([3]string{"greta", "m-greta", "greta"}), completer, dir, time.Unix(0, 0), "")
+
+	require.Error(t, err, "a suite whose case id cannot publish must be rejected at load")
+	assert.Contains(t, err.Error(), "empty once scrubbed")
+	assert.Zero(t, completer.calls.Load(), "the suite gate must fire before any reviewer is invoked — otherwise the operator still pays for the full panel")
+}

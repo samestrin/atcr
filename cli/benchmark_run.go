@@ -19,6 +19,12 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
+// validateSuitePublishableCaseIDs is a stub — see the RED test in
+// cli/benchmark_run_test.go.
+func validateSuitePublishableCaseIDs(_ *benchmark.Manifest, _ string) error {
+	return nil
+}
+
 // executeBenchmarkRun executes a benchmark suite end to end and returns the
 // suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
 // + validates the suite (benchmark.Load), then for each case ingests the case diff
