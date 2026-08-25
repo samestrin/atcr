@@ -264,8 +264,13 @@ rewrite itself on every append). The manual command remains for on-demand use.
 
 ### `atcr debt backfill-justifications`
 
-Re-derives each open or `wontfix` record's `justification` from the `review.md` it
-was originally stamped from, and rewrites the ones that changed.
+Re-derives each **live** record's `justification` from the `review.md` it was
+originally stamped from, and rewrites the ones that changed. Live means `open` or
+`deferred`. A `resolved` or `wontfix` record is settled and is never scanned: its
+justification may be the operator's `--reason` (see `debt resolve`), which exists
+nowhere else in the tree and cannot be replayed from anything. `deferred` is the
+opposite case — it carries a terminal marker but means "not now", so it is still
+closeable debt whose stale excerpt still gates the `wontfix` path.
 
 It exists because a record's id excludes its justification. `StampID` hashes
 `file\x00line\x00problem`, so a re-detected finding hashes to the same id, the
@@ -288,6 +293,21 @@ re-scored against the record's own `file:line` to tell them apart, and a record
 whose candidates disagree is left alone rather than rewritten from a guess. The
 run reports those as `ambiguous`, and records whose narrative tree is gone as
 `unresolved`.
+
+Within a repaired id, only the **lines** still carrying the stale excerpt are
+written. One id can hold several lines — `debt resolve` appends a copy of the
+effective record, and a later re-detection displaces it — and a resolution line's
+justification may be an operator's `--reason`. Matching on the stored text leaves
+that line alone. The run reports both counts, e.g. `3 rewritten (5 lines)`, and
+`--dry-run` prints the before and after of every line it would touch:
+
+```console
+$ atcr debt backfill-justifications --dry-run
+dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (no surviving review.md), 0 ambiguous (candidates disagreed)
+  2026-08.jsonl:1 aaaa1111
+    before: "- **internal/thing.go:42** the real narrative explaining the defect."
+    after:  "```\n- **internal/thing.go:42** the real narrative explaining the defect."
+```
 
 It is deliberately a one-off command and **not** a step in the write path.
 Refreshing excerpts on every reconcile would re-append a record whenever a reviewer

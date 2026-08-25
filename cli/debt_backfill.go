@@ -21,9 +21,11 @@ func newDebtBackfillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-justifications",
 		Short: "Replay stored justifications from their source review.md (one-off repair)",
-		Long: "atcr debt backfill-justifications re-derives each open or wontfix record's\n" +
-			"justification from the review.md it was originally stamped from, and rewrites\n" +
-			"the ones that changed.\n\n" +
+		Long: "atcr debt backfill-justifications re-derives each LIVE record's justification\n" +
+			"from the review.md it was originally stamped from, and rewrites the ones that\n" +
+			"changed. Live means open or deferred: a resolved or wontfix record is settled,\n" +
+			"and its justification may be the operator's --reason rather than a review\n" +
+			"excerpt, which nothing can replay.\n\n" +
 			"It exists because a record's id excludes its justification: a re-detected\n" +
 			"finding hashes to the same id and is deduped away, so an improvement to the\n" +
 			"extractor reaches only records persisted after it. Excerpts already in the\n" +
@@ -32,7 +34,10 @@ func newDebtBackfillCmd() *cobra.Command {
 			"A record is repaired only when exactly one surviving review.md anchors it.\n" +
 			"source_report paths are review-dir-relative, so several reviews hold the same\n" +
 			"relative path; a record whose candidates disagree is left alone rather than\n" +
-			"rewritten from a guess. Run --dry-run first.",
+			"rewritten from a guess. Within a repaired id only the LINES still carrying the\n" +
+			"stale excerpt are written, so a resolution trail's --reason is left intact.\n" +
+			"Run --dry-run first: it prints the before and after of every line it would\n" +
+			"touch.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtBackfill,
 	}
