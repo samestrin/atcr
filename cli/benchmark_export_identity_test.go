@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -129,8 +130,10 @@ func TestBenchmarkExport_RejectsReviewerIdentityWithNonPrintingRune(t *testing.T
 			require.Error(t, err, "a reviewer identity carrying an invisible rune must not reach the published envelope")
 			// Same diagnostic shape as the suite and case-id gates: the PRE-scrub value
 			// under %q so the operator can find the row, and the rune under U+%04X so
-			// they can see what is in it.
-			assert.Contains(t, err.Error(), tc.offend)
+			// they can see what is in it. strconv.Quote is what %q renders, escape and
+			// all - asserting the raw string would assert the invisible rune reached the
+			// terminal unescaped, which is the opposite of what this gate is for.
+			assert.Contains(t, err.Error(), strconv.Quote(tc.offend))
 			assert.Contains(t, err.Error(), tc.rune)
 			assert.Empty(t, stdout, "no submission may be emitted for a rejected file")
 		})

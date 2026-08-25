@@ -248,6 +248,22 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// construction here, so reporting it would tell the operator only that something in
 	// their file is empty, and never which row.
 	for i, rev := range rr.Reviewers {
+		// Printability is checked on the RAW identity, before the scrub, for the same
+		// reason validateSuiteIdentityForPublication checks it first: ScrubPublicString
+		// provably leaves control (Cc) and format (Cf) runes alone, so an invisible rune
+		// survives into the published envelope and no arm below can see it. The empty-only
+		// gate cannot reach it either — the value is non-empty on both sides.
+		for _, f := range []struct{ name, value string }{
+			{"model", rev.Model},
+			{"persona", rev.Persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return fmt.Errorf("run-result %s has reviewer %d with %s %q, which contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured",
+					in, i, f.name, f.value, r)
+			}
+		}
 		pub := scorecard.ScrubPublicRecord(rev)
 		if strings.TrimSpace(pub.Model) == "" || strings.TrimSpace(pub.Persona) == "" {
 			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona once scrubbed for publication (%q/%q); "+
