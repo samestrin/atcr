@@ -99,9 +99,9 @@ func TestBenchmarkExport_SuitePathScrubErrorPrecedesAnchor(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--suite-path", suite)
 
 	require.NotEqual(t, 0, code, "a scrub-poisoned id must not export: %s", out)
-	assert.Contains(t, out, "empty once scrubbed for publication",
+	assert.Contains(t, out, "publication scrub rewrites",
 		"the scrub gate's own diagnostic must fire")
-	assert.NotContains(t, out, "suite manifest",
+	assert.NotContains(t, out, "suite manifest at",
 		"the anchor's mismatch text must not be the last word on a scrub-poisoned file")
 }
 

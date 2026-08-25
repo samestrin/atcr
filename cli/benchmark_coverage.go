@@ -496,29 +496,34 @@ func summarizeMissing(missing []string) string {
 // publication intact. It exists because submission_schema 2 made the case ids a
 // PUBLISHED field while every other check in this file still validates the raw ones.
 //
-// Two failure shapes, both of which produce a document the coverage gate approved but
+// The governing check is that the published id NAMES THE SAME CASE as the raw one:
+// any id the scrub rewrites is rejected. That single check subsumes the two failure
+// shapes below, both of which produce a document the coverage gate approved but
 // never actually examined:
 //
-//   - An id that scrubs to empty publishes as "". This is the identical defect
-//     runBenchmarkExport already rejects for reviewer identities, and the shape is
-//     genuinely producible: the bundled importer builds ids as
+//   - An id that scrubs to empty publishes as "" — a rewrite to the empty string.
+//     Genuinely producible: the bundled importer builds ids as
 //     <owner>-<repo>-pr-<n>, which a credential rule can consume whole.
 //
-//   - Two distinct raw ids that scrub to the SAME value publish a denominator with a
-//     repeated entry. Under the documented SET comparison of a row's case_ids against
-//     suite_case_ids, a short row then reads as fully covered — defeating the reason
-//     coverage is carried at all, on exactly the --allow-partial-coverage path whose
-//     warning promises the shortfall is visible.
+//   - Two distinct raw ids that scrub to the SAME value publish a denominator with
+//     a repeated entry. Under the documented SET comparison of a row's case_ids
+//     against suite_case_ids, a short row then reads as fully covered — defeating
+//     the reason coverage is carried at all. But two DISTINCT raw ids reaching one
+//     published id means at least one was rewritten, so the rewrite check fires
+//     first and this shape has no reachable diagnostic of its own.
 //
-// Only the denominator needs the distinctness check: every covered id is validated to
-// be a suite member, and duplicates within a row are rejected separately, so distinct
-// scrubbed suite ids force distinct scrubbed covered ids. Row ids are checked for
-// emptiness only when a denominator EXISTS: a coverage array with no suite_case_ids
-// is already destined for checkCoverage's sharper structural rejection ("records
-// reviewer coverage but no suite_case_ids"), and a per-id scrub diagnostic would
-// pre-empt it with a privacy message about a file whose real defect is its shape.
+// What survives below the rewrite check: a literally EMPTY raw id (no rewrite, yet
+// publishes as ""), and a verbatim-repeated id, which is deferred to checkCoverage's
+// sharper "more than once" diagnostic — the raw duplicate is the plainer defect and
+// the actionable one.
 //
-// Errors name the PRE-scrub id. The scrubbed value is empty or duplicated by
+// Row ids are checked only when a denominator EXISTS: a coverage array with no
+// suite_case_ids is already destined for checkCoverage's sharper structural
+// rejection ("records reviewer coverage but no suite_case_ids"), and a per-id scrub
+// diagnostic would pre-empt it with a privacy message about a file whose real
+// defect is its shape.
+//
+// Errors name the PRE-scrub id. The scrubbed value is empty or rewritten by
 // construction, so reporting it would tell the operator what went wrong but never
 // which line of their file to fix.
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
@@ -526,29 +531,24 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 		return scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: s}).Model
 	}
 
-	seen := make(map[string]string, len(rr.SuiteCaseIDs)) // scrubbed -> first raw id
 	for _, id := range rr.SuiteCaseIDs {
 		s := strings.TrimSpace(scrubCaseID(id))
+		if s != id {
+			return fmt.Errorf("run-result %s lists suite case %q, which the publication scrub rewrites to %q; "+
+				"the published suite_case_ids must name the same cases as the raw file, "+
+				"so rename the case in the suite manifest",
+				path, id, s)
+		}
+		// Reachable only for a literally empty raw id: anything the scrub empties
+		// is a rewrite, caught above, and a verbatim repeat defers to
+		// checkCoverage's "lists suite case %q more than once" — the plainer
+		// defect with the actionable remedy (delete a line, not hunt a privacy
+		// rule).
 		if s == "" {
 			return fmt.Errorf("run-result %s lists suite case %q, which is empty once scrubbed for publication; "+
 				"a case id that scrubs away publishes as \"\" in suite_case_ids",
 				path, stripTerminalControlRunes(id))
 		}
-		// Only DISTINCT raw ids colliding after the scrub are this function's
-		// business. An id repeated verbatim is a plainer defect with a sharper
-		// existing diagnostic in checkCoverage ("lists suite case %q more than
-		// once"), and that check also guarantees len(suite) is the distinct
-		// denominator every later message quotes. Claiming the scrub caused a
-		// collision the raw file already contained would misdirect the operator
-		// into hunting a privacy rule instead of deleting a duplicate line —
-		// the same identical-raw vs distinct-raw split duplicateIdentityError makes.
-		if first, dup := seen[s]; dup && first != id {
-			return fmt.Errorf("run-result %s lists suite cases %q and %q, which are the same id once scrubbed "+
-				"for publication; the published denominator would repeat an entry, so a row short of the suite "+
-				"would read as fully covered",
-				path, stripTerminalControlRunes(first), stripTerminalControlRunes(id))
-		}
-		seen[s] = id
 	}
 
 	for _, c := range rr.Coverage {
@@ -556,7 +556,14 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 			break
 		}
 		for _, id := range c.CaseIDs {
-			if strings.TrimSpace(scrubCaseID(id)) == "" {
+			s := strings.TrimSpace(scrubCaseID(id))
+			if s != id {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which the publication scrub "+
+					"rewrites to %q; rename the case in the suite manifest",
+					path, id,
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona), s)
+			}
+			if s == "" {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
 					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage",
 					path, stripTerminalControlRunes(id),

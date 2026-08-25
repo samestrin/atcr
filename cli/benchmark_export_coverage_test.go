@@ -568,7 +568,10 @@ func TestBenchmarkExportHelpNamesTheSchemaVersion(t *testing.T) {
 // entry, and under the documented SET comparison a short row then reads as fully
 // covered. That defeats the whole point of carrying coverage, on exactly the
 // --allow-partial-coverage path whose warning promises the shortfall is visible.
-func TestBenchmarkExport_RejectsSuiteCaseIDsThatCollideOnceScrubbed(t *testing.T) {
+// Two DISTINCT raws reaching one published id means at least one was rewritten, so
+// the rewrite check owns this shape: it names the first rewritten id and the file
+// that owns it.
+func TestBenchmarkExport_RejectsSuiteCaseIDsTheScrubRewrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run-result.json")
 	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
 		`"suite_case_ids":["case-01 a@b.com","case-01 c@d.com"],` +
@@ -578,9 +581,10 @@ func TestBenchmarkExport_RejectsSuiteCaseIDsThatCollideOnceScrubbed(t *testing.T
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
-	require.NotEqual(t, 0, code, "a denominator that collapses once scrubbed must not publish: %s", out)
-	assert.Contains(t, out, "case-01 a@b.com", "the error names a colliding id in its PRE-scrub form")
-	assert.Contains(t, out, "case-01 c@d.com", "and the id it collides with, or the operator cannot act")
+	require.NotEqual(t, 0, code, "a denominator whose ids the scrub rewrites must not publish: %s", out)
+	assert.Contains(t, out, "case-01 a@b.com", "the error names the first rewritten id in its PRE-scrub form")
+	assert.Contains(t, out, "rename the case in the suite manifest",
+		"and points at the file that owns the id — editing the run-result is the wrong action")
 	assert.NotContains(t, out, `"suite_case_ids"`, "nothing is published on the rejection path")
 }
 
