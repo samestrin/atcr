@@ -200,3 +200,40 @@ func TestDebtBackfillJustifications_DryRunEscapesTheUntrustedID(t *testing.T) {
 	// The id still has to be identifiable — escaping is not redaction.
 	assert.Contains(t, out, strconv.Quote(hostileID))
 }
+
+// The counter's plural branch (pluralLines' `return "lines"`) is reachable from the
+// cli only through a multi-line rewrite, and every other cli subtest rewrites exactly
+// one line — so the wording an operator reads on any real repair was exercised for
+// n == 1 only. internal/localdebt pins the underlying multi-line BEHAVIOUR; what is
+// unpinned here is the rendering.
+func TestDebtBackfillJustifications_DryRunCounterPluralisesLines(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	// Two DISTINCT records anchored at the same finding: both carry the same stale
+	// marker-free excerpt, so one pass rewrites two lines of the shard.
+	rec := func(id string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"),
+		[]byte(rec("aaaa1111")+"\n"+rec("bbbb2222")+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	assert.Contains(t, out, "2 rewritten (2 lines)",
+		"a multi-line repair must read \"lines\", not \"line\"")
+	assert.NotContains(t, out, "(2 line)")
+}
