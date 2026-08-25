@@ -189,7 +189,7 @@ func newBenchmarkExportCmd() *cobra.Command {
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json) the run-result was produced from. Optional: when given, the run-result's suite_case_ids must equal the manifest's case list, which anchors the coverage gate's denominator to the suite instead of to the file being checked. Without it the gate can only prove the file is internally consistent — a run-result that truncated its own case list passes.")
-	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, the shortfall is carried into the submission — a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short — but a short row still is not comparable to a full one, which is why the gate stays closed by default.")
+	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, "+partialCoverageVisibilityAdvisory+" — but a short row still is not comparable to a full one, which is why the gate stays closed by default.")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
 }
@@ -323,6 +323,15 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vocabulary " +
 	"agreement rather than detection: a category outside the enumeration matches no expected " +
 	"category, so it zeroes recall independently of what the reviewer actually found.\n"
+
+// partialCoverageVisibilityAdvisory is the shared coverage-carriage clause of the
+// --allow-partial-coverage opt-out: what a consumer can see when a short row
+// publishes. One constant, two surfaces (the checkCoverage warning in
+// benchmark_coverage.go and the flag help below), so a reword cannot drift them
+// apart — the rule vocabularyAgreementAdvisory already established, applied to the
+// pair that has now gone stale twice.
+const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission — " +
+	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short"
 
 // maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
 // is a findings-parser regression, which drifts every reviewer at once — on a 27-model

@@ -323,10 +323,9 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 	if allowPartial {
 		_, _ = fmt.Fprintf(w,
-			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s. "+
-				"The shortfall is carried into the submission (suite_case_ids plus each row's "+
-				"reviewer_coverage.case_ids), so a consumer can see these rows are short — but the "+
-				"rows still are not comparable to fully-covered ones.\n",
+			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s — "+
+				partialCoverageVisibilityAdvisory+
+				", but the rows still are not comparable to fully-covered ones.\n",
 			path, strings.Join(short, "; "))
 		return nil
 	}
