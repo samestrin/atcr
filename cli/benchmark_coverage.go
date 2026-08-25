@@ -493,6 +493,22 @@ func summarizeMissing(missing []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
 }
 
+// firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
+// the same predicate stripTerminalControlRunes applies to operator-facing
+// diagnostics. In validateScrubbedCaseIDs it is a REJECTION, not a sanitization:
+// these runes must not reach the published document at all. A U+202E flips the
+// rendering of the id and everything after it in the same text node on the board,
+// and a zero-width rune makes two different ids render identically, defeating the
+// documented SET comparison at the human layer even while it holds programmatically.
+func firstNonPrintingRune(s string) (rune, bool) {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
 // validateScrubbedCaseIDs rejects a run-result whose case ids do not survive
 // publication intact. It exists because submission_schema 2 made the case ids a
 // PUBLISHED field while every other check in this file still validates the raw ones.
@@ -531,22 +547,6 @@ func summarizeMissing(missing []string) string {
 // Errors name the PRE-scrub id. The scrubbed value is empty or rewritten by
 // construction, so reporting it would tell the operator what went wrong but never
 // which line of their file to fix.
-// firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
-// the same predicate stripTerminalControlRunes applies to operator-facing
-// diagnostics. In validateScrubbedCaseIDs it is a REJECTION, not a sanitization:
-// these runes must not reach the published document at all. A U+202E flips the
-// rendering of the id and everything after it in the same text node on the board,
-// and a zero-width rune makes two different ids render identically, defeating the
-// documented SET comparison at the human layer even while it holds programmatically.
-func firstNonPrintingRune(s string) (rune, bool) {
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return r, true
-		}
-	}
-	return 0, false
-}
-
 func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 	// Memoized: covered ids are typically a subset of the suite ids, so an
 	// unmemoized closure scrubs the whole case set once per loop — and once per
