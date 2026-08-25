@@ -24,6 +24,22 @@ func TestLoad_ValidSuite(t *testing.T) {
 	assert.Equal(t, []string{"security", "correctness"}, m.Cases[1].ExpectedCategories)
 }
 
+// The export gate hard-rejects any case id the publication scrub rewrites, but
+// every gate fixture uses synthetic "case-01" ids — a future scrub rule touching
+// hyphenated tokens (say "-pr-<digits>") would make every submission built from
+// the bundled suite fail export while the whole test suite stayed green. Pin the
+// ids of the ACTUALLY SHIPPED suite against the scrubber.
+func TestStandardV1CaseIDs_SurviveThePublicationScrub(t *testing.T) {
+	m, err := Load("../../benchmarks/standard-v1")
+	require.NoError(t, err, "the bundled standard-v1 suite must load")
+	require.NotEmpty(t, m.Cases, "precondition: the suite has cases")
+	for _, c := range m.Cases {
+		assert.Equal(t, c.ID, scorecard.ScrubPublicString(c.ID),
+			"the publication scrub must not rewrite shipped suite case id %q — "+
+				"the export gate rejects rewritten ids, so this suite would become unexportable", c.ID)
+	}
+}
+
 func TestLoad_MissingSuiteJSON(t *testing.T) {
 	_, err := Load(t.TempDir())
 	require.Error(t, err, "a directory without suite.json must fail to load")
