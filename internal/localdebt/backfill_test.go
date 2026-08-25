@@ -251,4 +251,77 @@ func TestBackfillJustifications(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, string(before), string(after), "a dry run must not touch the store")
 	})
+
+	// replayCandidates matches candidate files by suffix against the review-dir-
+	// RELATIVE source_report.path. A plain strings.HasSuffix is not path-segment
+	// aware, so a sibling directory whose name merely ENDS with the first segment
+	// matches too — and a second, unrelated narrative turns a repairable record into
+	// `ambiguous`: a silently declined repair the operator is told to investigate as
+	// a real disagreement.
+	t.Run("a sibling directory that merely ends with the first path segment is not a candidate", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		rd := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "xsources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+			[]byte(strings.Replace(danglingReview, "the real narrative explaining the defect.", "an UNRELATED narrative from xsources.", 1)), 0o600))
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+		assert.Zero(t, res.Ambiguous,
+			"`xsources/` is not `sources/`; treating it as one declines a repair that has exactly one answer")
+		assert.Equal(t, 1, res.Rewritten)
+	})
+
+	// The distinct-candidate dedupe: two copies of the same review (a re-run, a
+	// backup) agree, and calling that ambiguity would decline a repair with one
+	// answer. Nothing pinned this rule before.
+	t.Run("two byte-identical copies of one review are one answer, not a disagreement", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		rd := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(danglingReview), 0o600))
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+		assert.Zero(t, res.Ambiguous, "identical candidates agree")
+		assert.Equal(t, 1, res.Rewritten)
+	})
+
+	// The producer refuses to stamp from a non-regular file or one over 1 MiB
+	// (collectReviewNarratives). A file the producer would never have stamped from
+	// must not become an authoritative candidate for the REPLAY either, or the
+	// replay set exceeds the stamp set.
+	t.Run("a symlinked review.md is not a candidate", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		real := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax", "review.md")
+		rd := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		// Points at a DIFFERENT narrative, so if the link is followed the record
+		// becomes ambiguous rather than repaired.
+		other := filepath.Join(reviewRoot, "other.md")
+		require.NoError(t, os.WriteFile(other,
+			[]byte(strings.Replace(danglingReview, "the real narrative explaining the defect.", "a narrative reached only through a symlink.", 1)), 0o600))
+		require.NoError(t, os.Symlink(other, filepath.Join(rd, "review.md")))
+		require.FileExists(t, real)
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+		assert.Zero(t, res.Ambiguous, "the producer excludes symlinks, so the replayer must too")
+		assert.Equal(t, 1, res.Rewritten)
+	})
+
+	t.Run("an oversized review.md is not a candidate", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		rd := filepath.Join(reviewRoot, "sprint-b", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		big := strings.Replace(danglingReview, "the real narrative explaining the defect.",
+			"an oversized narrative the producer would never have stamped from.", 1) +
+			strings.Repeat("\npadding", 1<<18)
+		require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(big), 0o600))
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+		assert.Zero(t, res.Ambiguous, "the producer skips a review.md over 1 MiB, so the replayer must too")
+		assert.Equal(t, 1, res.Rewritten)
+	})
 }
