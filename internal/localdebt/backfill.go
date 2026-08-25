@@ -22,6 +22,25 @@ type BackfillResult struct {
 	Unchanged  int // replayed excerpt was byte-identical
 	Unresolved int // no surviving review.md anchored the finding
 	Ambiguous  int // several surviving candidates disagreed, so none was written
+
+	// RewrittenLines counts the SHARD LINES the pass wrote, which Rewritten does
+	// not: one id can carry several lines (a re-detection after a resolution
+	// appends a fresh record under the same id), so a record count understates the
+	// blast radius of a write to an append-only store.
+	RewrittenLines int
+	// Changes describes each line the pass wrote, or WOULD write on a dry run.
+	// --dry-run is documented as the safety step to run first, so it has to be able
+	// to show what it would touch; a bare counter cannot.
+	Changes []JustificationChange
+}
+
+// JustificationChange is one shard line the backfill rewrote or would rewrite.
+type JustificationChange struct {
+	ID     string // the record id the line carries
+	Shard  string // shard file name, e.g. "2026-08.jsonl"
+	Line   int    // 1-based line number within the shard
+	Before string // the stored justification
+	After  string // the replayed excerpt that replaces it
 }
 
 // BackfillJustifications repairs the justifications ALREADY in the store by replaying

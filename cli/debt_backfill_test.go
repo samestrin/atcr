@@ -66,6 +66,23 @@ func TestDebtBackfillJustifications(t *testing.T) {
 		assert.Equal(t, string(before), string(after))
 	})
 
+	// --dry-run is documented as the step to run FIRST on the one subcommand that
+	// rewrites the store in place. A bare counter cannot reveal that the pass would
+	// overwrite an operator's typed rationale, so the dry run has to show the text.
+	t.Run("dry run prints the before and after of every line it would touch", func(t *testing.T) {
+		store, reviewRoot := backfillFixture(t)
+
+		code, out := execCmdCapture(t, "debt", "backfill-justifications",
+			"--store", store, "--review-root", reviewRoot, "--dry-run")
+		require.Equal(t, 0, code, out)
+
+		assert.Contains(t, out, "1 rewritten (1 line)",
+			"the counter must name LINES as well as records: one id can carry several lines")
+		assert.Contains(t, out, "2026-08.jsonl:1", "each line is named by shard and line number")
+		assert.Contains(t, out, "before:")
+		assert.Contains(t, out, "after:")
+	})
+
 	t.Run("is registered under debt", func(t *testing.T) {
 		_, out := execCmdCapture(t, "debt", "--help")
 		assert.Contains(t, out, "backfill-justifications")

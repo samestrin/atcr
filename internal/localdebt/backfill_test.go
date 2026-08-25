@@ -183,4 +183,65 @@ func TestBackfillJustifications(t *testing.T) {
 		assert.Contains(t, findByID(t, store, "2026-09", "dddd4444")["justification"], "```",
 			"the one status class that is both stale and still wontfix-able must be the one the repair reaches")
 	})
+
+	// A store where one id carries a resolution trail: detected, resolved with an
+	// operator --reason, then RE-DETECTED (FoldRecords rule 2 — a non-suppressing
+	// terminal record is displaced by a later open one). The effective record is the
+	// ordinary open one, so the id is in scope for the replay — but the resolved
+	// line's justification is the operator's typed rationale, not a review excerpt.
+	t.Run("rewrites only the lines carrying the stale excerpt, sparing a resolution trail's reason", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		const staleText = "- **internal/thing.go:42** the real narrative explaining the defect."
+		const operatorReason = "fixed in PR #900 - hoisted the alloc"
+		line := func(ts, status, justification string) string {
+			st := ""
+			if status != "" {
+				st = `"status":"` + status + `","resolved_at":"` + ts + `",`
+			}
+			return `{"schema_version":3,"id":"eeee5555","run_id":"` + ts + `-multi-agent","ts":"` + ts + `",` +
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p5","fix":"f5","category":"correctness",` +
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` + st +
+				`"justification":` + strconv.Quote(justification) + `,` +
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+		}
+		writeShard(t, store, "2026-09",
+			line("2026-09-01T00:00:00Z", "", staleText),
+			line("2026-09-02T00:00:00Z", StatusResolved, operatorReason),
+			line("2026-09-03T00:00:00Z", "", staleText))
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		got := shardLines(t, store, "2026-09")
+		require.Len(t, got, 3)
+		assert.Equal(t, operatorReason, got[1]["justification"],
+			"the resolved line's justification is the operator's --reason, which exists nowhere else in the tree")
+		assert.Contains(t, got[0]["justification"], "```", "a line carrying the stale excerpt is repaired")
+		assert.Contains(t, got[2]["justification"], "```", "including the re-detection that copied it")
+
+		assert.Equal(t, 2, res.RewrittenLines,
+			"the counter must report LINES: a record count says 1 and understates the write to an append-only store")
+		require.Len(t, res.Changes, 2, "every written line is described so --dry-run can show it")
+		assert.Equal(t, staleText, res.Changes[0].Before)
+		assert.Contains(t, res.Changes[0].After, "```")
+		assert.Equal(t, "2026-09.jsonl", res.Changes[0].Shard)
+		assert.Equal(t, 1, res.Changes[0].Line)
+	})
+
+	t.Run("dry run reports the lines it would touch without writing them", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		before, err := os.ReadFile(filepath.Join(store, "2026-08.jsonl"))
+		require.NoError(t, err)
+
+		res, err := BackfillJustifications(store, reviewRoot, true)
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.RewrittenLines)
+		require.Len(t, res.Changes, 1,
+			"the documented safety step must be able to show the before/after, not just a count")
+		assert.NotEqual(t, res.Changes[0].Before, res.Changes[0].After)
+
+		after, err := os.ReadFile(filepath.Join(store, "2026-08.jsonl"))
+		require.NoError(t, err)
+		assert.Equal(t, string(before), string(after), "a dry run must not touch the store")
+	})
 }
