@@ -640,7 +640,13 @@ func TestBenchmarkExport_RejectsSuiteCaseIDsTheScrubRewrites(t *testing.T) {
 		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
-	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+	// No --allow-partial-coverage here even though the fixture's row covers 1 of 2
+	// declared cases: validateScrubbedCaseIDs runs BEFORE checkCoverage, so the
+	// rewrite rejection fires first and the competing short-coverage rejection is
+	// never reached. (And should the gate be reverted, the assertions below — not
+	// the exit code — are what catch it: a short-coverage error would not name the
+	// pre-scrub id or the remedy.)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
 	require.NotEqual(t, 0, code, "a denominator whose ids the scrub rewrites must not publish: %s", out)
 	assert.Contains(t, out, "case-01 a@b.com", "the error names the first rewritten id in its PRE-scrub form")
 	assert.Contains(t, out, "rename the case in the suite manifest",
