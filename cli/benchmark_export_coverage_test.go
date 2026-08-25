@@ -63,12 +63,61 @@ func TestBenchmarkExport_RejectsPartialCoverage(t *testing.T) {
 	assert.Contains(t, out, "case-03", "the error must name a missing case so it is actionable")
 }
 
+// submissionEnvelope is the decode target for the export assertions below: the
+// keys a board consumer reads, no more. Unmarshalling beats substring matching
+// here because "case_ids" is a substring of "suite_case_ids" — a Contains on the
+// row-level key is satisfied by the denominator alone.
+type submissionEnvelope struct {
+	SuiteCaseIDs []string `json:"suite_case_ids"`
+	Reviewers    []struct {
+		Model   string `json:"model"`
+		Persona string `json:"persona"`
+	} `json:"reviewers"`
+	Coverage []struct {
+		Model   string   `json:"model"`
+		Persona string   `json:"persona"`
+		CaseIDs []string `json:"case_ids"`
+	} `json:"reviewer_coverage"`
+}
+
+// coveredByReviewer indexes the envelope's coverage rows by identity, asserting
+// each one joins to a reviewers[] entry — the join the board performs.
+func coveredByReviewer(t *testing.T, sub submissionEnvelope) map[string][]string {
+	t.Helper()
+	reviewerIDs := make(map[string]bool, len(sub.Reviewers))
+	for _, r := range sub.Reviewers {
+		reviewerIDs[r.Model+"/"+r.Persona] = true
+	}
+	covered := make(map[string][]string, len(sub.Coverage))
+	for _, row := range sub.Coverage {
+		key := row.Model + "/" + row.Persona
+		assert.True(t, reviewerIDs[key],
+			"coverage row %s must join to a reviewers[] identity", key)
+		covered[key] = row.CaseIDs
+	}
+	return covered
+}
+
 // Full coverage exports normally — the gate must not fire on the healthy path.
 func TestBenchmarkExport_AcceptsFullCoverage(t *testing.T) {
 	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.Equal(t, 0, code, "a fully-covered run-result exports: %s", out)
 	assert.Contains(t, out, "benchmark-suite")
+
+	// The DEFAULT, gate-passing path must carry the coverage too — until now only
+	// the --allow-partial-coverage test proved a reviewer row's case list is
+	// published at all.
+	var sub submissionEnvelope
+	require.NoError(t, json.Unmarshal([]byte(out), &sub),
+		"the export must be parseable submission JSON")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, sub.SuiteCaseIDs,
+		"the suite denominator reaches the board")
+	covered := coveredByReviewer(t, sub)
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, covered["m-primary/brad"],
+		"the primary row's full case list reaches the board")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, covered["m-backup/brad"],
+		"the backup row's full case list reaches the board")
 }
 
 // Coverage is compared as a SET, not a count: a row with the right NUMBER of cases
@@ -308,37 +357,15 @@ func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	// set. Asserted by UNMARSHALLING, not substring match — "case_ids" is a
 	// substring of "suite_case_ids", so a Contains proves nothing about the
 	// row-level key (a renamed SubmissionCoverage.CaseIDs tag used to pass here).
-	var sub struct {
-		SuiteCaseIDs []string `json:"suite_case_ids"`
-		Reviewers    []struct {
-			Model   string `json:"model"`
-			Persona string `json:"persona"`
-		} `json:"reviewers"`
-		Coverage []struct {
-			Model   string   `json:"model"`
-			Persona string   `json:"persona"`
-			CaseIDs []string `json:"case_ids"`
-		} `json:"reviewer_coverage"`
-	}
+	var sub submissionEnvelope
 	require.NoError(t, json.Unmarshal([]byte(stdout), &sub),
 		"the export must be parseable submission JSON")
 	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, sub.SuiteCaseIDs,
 		"the suite denominator reaches the board")
-	type identity struct{ model, persona string }
-	reviewerIDs := make(map[identity]bool, len(sub.Reviewers))
-	for _, r := range sub.Reviewers {
-		reviewerIDs[identity{r.Model, r.Persona}] = true
-	}
-	covered := make(map[identity][]string, len(sub.Coverage))
-	for _, row := range sub.Coverage {
-		key := identity{row.Model, row.Persona}
-		assert.True(t, reviewerIDs[key],
-			"coverage row %s/%s must join to a reviewers[] identity", row.Model, row.Persona)
-		covered[key] = row.CaseIDs
-	}
-	assert.Equal(t, []string{"case-01", "case-02"}, covered[identity{"m-primary", "brad"}],
+	covered := coveredByReviewer(t, sub)
+	assert.Equal(t, []string{"case-01", "case-02"}, covered["m-primary/brad"],
 		"the primary row's covered-case list reaches the board")
-	assert.Equal(t, []string{"case-03"}, covered[identity{"m-backup", "brad"}],
+	assert.Equal(t, []string{"case-03"}, covered["m-backup/brad"],
 		"the backup row's covered-case list reaches the board")
 	// Trimmed projection: the run-result's diagnostics stay out of the public envelope.
 	assert.NotContains(t, stdout, "outcomes",
