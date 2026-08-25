@@ -594,5 +594,15 @@ func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []Submissio
 			CaseIDs: ids,
 		}
 	}
+	// Deterministic row order: two run-results with identical logical content but
+	// differently-ordered rows must marshal to the same bytes, the guarantee
+	// scorecard.Export makes for the production envelope. Sort by the SCRUBBED
+	// (Model, Persona) pair so the order matches how the producer sorted Reviewers.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		return out[i].Persona < out[j].Persona
+	})
 	return out
 }
