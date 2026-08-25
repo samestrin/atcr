@@ -544,6 +544,21 @@ func TestBenchmarkExport_AllowPartialCoverageHelpIsTruthful(t *testing.T) {
 		"the real reason the gate still fails closed must survive the rewrite")
 }
 
+// The export command emits the very envelope that GAINED two keys at
+// submission_schema 2, so a strict board decoder pinned to 1 fails closed on its
+// output — a risk docs/scorecard.md explicitly calls unresolved. The leaderboard
+// --export help carries the version notice (TestLeaderboardExportHelpNamesTheSchemaVersion
+// pins it) but a benchmark submitter reads THIS command's help, not that one.
+func TestBenchmarkExportHelpNamesTheSchemaVersion(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "submission_schema 2",
+		"a benchmark submitter must learn the envelope this command emits stamps submission_schema 2")
+	require.Contains(t, help, "pinned to 1",
+		"and that a board pinned to the old version needs updating")
+}
+
 // The coverage gate validates RAW case ids, but BuildSubmission publishes SCRUBBED
 // ones. Where those two disagree the published document means something the gate
 // never checked — the same seam the reviewer-identity check at benchmark.go closed,
