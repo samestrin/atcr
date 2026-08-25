@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -125,5 +126,61 @@ func TestBackfillJustifications(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, res.Ambiguous)
 		assert.Zero(t, res.Rewritten, "two candidates disagree, so neither may be written")
+	})
+
+	// The fold filter decides which stored excerpts the replay may touch. Two record
+	// classes sit on opposite sides of it and both were wrong before this test:
+	// `wontfix` carries the operator's --reason (cli/debt_resolve.go replaces the
+	// justification with it), which exists nowhere else in the tree and must never be
+	// replayed over; `deferred` is live, closeable debt whose stale excerpt is exactly
+	// what the repair exists to fix.
+	writeTerminal := func(t *testing.T, store, id, status, justification string) {
+		t.Helper()
+		writeShard(t, store, "2026-09",
+			`{"schema_version":3,"id":"`+id+`","run_id":"2026-09-01T00:00:00Z-`+status+`","ts":"2026-09-01T00:00:00Z",`+
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p3","fix":"f3","category":"correctness",`+
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+				`"status":"`+status+`","resolved_at":"2026-09-01T00:00:00Z",`+
+				`"justification":`+strconv.Quote(justification)+`,`+
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`)
+	}
+
+	findByID := func(t *testing.T, store, month, id string) map[string]any {
+		t.Helper()
+		for _, m := range shardLines(t, store, month) {
+			if m["id"] == id {
+				return m
+			}
+		}
+		t.Fatalf("no record %s in shard %s", id, month)
+		return nil
+	}
+
+	t.Run("never replays over a wontfix record's operator reason", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		const reason = "intentional per ADR-12; the alloc is hoisted deliberately"
+		writeTerminal(t, store, "cccc3333", StatusWontfix, reason)
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, res.Scanned,
+			"a wontfix record is settled: its justification is the operator's --reason, not a review excerpt, so it must not even be scanned")
+		assert.Equal(t, reason, findByID(t, store, "2026-09", "cccc3333")["justification"],
+			"the human-typed --reason exists nowhere else in the tree and the store is append-only, so replaying over it is irreversible loss")
+	})
+
+	t.Run("repairs a deferred record's stale excerpt", func(t *testing.T) {
+		store, reviewRoot := setup(t)
+		writeTerminal(t, store, "dddd4444", StatusDeferred,
+			"- **internal/thing.go:42** the real narrative explaining the defect.")
+
+		res, err := BackfillJustifications(store, reviewRoot, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 3, res.Scanned,
+			"deferred means \"not now\", not \"done\" — it is live, closeable debt whose excerpt still gates the wontfix path")
+		assert.Contains(t, findByID(t, store, "2026-09", "dddd4444")["justification"], "```",
+			"the one status class that is both stale and still wontfix-able must be the one the repair reaches")
 	})
 }
