@@ -96,11 +96,27 @@ func TestSubmission_Validate(t *testing.T) {
 		assert.ErrorContains(t, s.Validate(), "empty covered case id",
 			"the empty arm has its OWN diagnostic; without a case here it falls through to the not-in-denominator one")
 	})
-	t.Run("null row case_ids", func(t *testing.T) {
-		s := valid()
-		s.Coverage[0].CaseIDs = nil
-		assert.ErrorContains(t, s.Validate(), "null case_ids",
-			"the never-null contract is structural, not per-writer")
+	// The never-null contract belongs to SubmissionCoverage.MarshalJSON, which makes
+	// it unreachable on the wire. Validate must therefore ACCEPT a nil CaseIDs: it is
+	// byte-identical to the empty slice it already accepts, so rejecting one and not
+	// the other would gate a difference no consumer can observe.
+	t.Run("null row case_ids is accepted and marshals identically to an empty one", func(t *testing.T) {
+		nilRow := valid()
+		nilRow.Coverage[0].CaseIDs = nil
+		require.NoError(t, nilRow.Validate(),
+			"nil and []string{} are one document; the encoder, not the validator, owns the never-null contract")
+
+		emptyRow := valid()
+		emptyRow.Coverage[0].CaseIDs = []string{}
+		require.NoError(t, emptyRow.Validate())
+
+		nilBytes, err := json.Marshal(nilRow)
+		require.NoError(t, err)
+		emptyBytes, err := json.Marshal(emptyRow)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(emptyBytes), string(nilBytes))
+		assert.Contains(t, string(nilBytes), `"case_ids":[]`,
+			"the encoder emits an array for a nil slice, which is why Validate need not")
 	})
 	t.Run("coverage row with no reviewer", func(t *testing.T) {
 		s := valid()

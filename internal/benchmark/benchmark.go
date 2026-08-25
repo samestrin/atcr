@@ -433,6 +433,13 @@ type SubmissionCoverage struct {
 // structural: it holds no matter how the row was constructed, so a writer that
 // builds SubmissionCoverage directly cannot bypass it the way routing through
 // publicCoverage used to be required.
+//
+// It is the SOLE owner of that contract. Submission.Validate used to re-check
+// `CaseIDs == nil` as well, which could only ever reject a construction that is
+// byte-identical on the wire to one it accepted — nil and []string{} both marshal
+// to `"case_ids":[]` — while never catching anything a consumer could observe.
+// A wire-format invariant an encoder enforces unconditionally does not also belong
+// in a struct-level validator.
 func (c SubmissionCoverage) MarshalJSON() ([]byte, error) {
 	type alias SubmissionCoverage // no recursion through this method
 	if c.CaseIDs == nil {
@@ -522,8 +529,12 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 // Validate checks the envelope invariants the submission docs promise a consumer:
 // suite_case_ids and reviewer_coverage written together or both absent, a
 // denominator with no empty or repeated id, every covered id a member of that
-// denominator, every row's case_ids an array (never null), and every row joined
-// to a reviewers[] identity.
+// denominator and non-empty, and every row joined to a reviewers[] identity.
+//
+// The "case_ids is always an array, never null" contract is deliberately NOT here:
+// SubmissionCoverage.MarshalJSON owns it and makes it unreachable on the wire, so
+// re-checking the Go value only rejected a construction semantically identical to
+// one this function accepts.
 //
 // BuildSubmission validates NOTHING — it is a projection — so any caller that did
 // not come through `atcr benchmark export`'s RunResult gate owes this call before
@@ -551,10 +562,6 @@ func (s Submission) Validate() error {
 	for _, c := range s.Coverage {
 		if !joined[[2]string{c.Model, c.Persona}] {
 			return fmt.Errorf("submission records coverage for %q/%q with no matching reviewers[] row",
-				c.Model, c.Persona)
-		}
-		if c.CaseIDs == nil {
-			return fmt.Errorf("submission records a null case_ids for %q/%q; the key is always an array",
 				c.Model, c.Persona)
 		}
 		for _, id := range c.CaseIDs {
