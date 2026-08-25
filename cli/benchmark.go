@@ -174,8 +174,17 @@ func newBenchmarkExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Emit a suite-tagged public submission record from a benchmark run-result",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE:  runBenchmarkExport,
+		// The version is named here, not only in the docs, for the same reason
+		// leaderboard --export names it: this envelope is the one that GAINED keys
+		// at submission_schema 2, and board acceptance of the new number is an
+		// unverified coordination item. A benchmark submitter reads this help and
+		// nothing else, so omitting it would leave the group most affected by the
+		// risk uninformed. The number is formatted from the constant so one bump
+		// updates every surface.
+		Long: "Emit a suite-tagged public submission record from a benchmark run-result. " +
+			fmt.Sprintf("The envelope stamps submission_schema %d; a board pinned to 1 must be updated to accept it.", scorecard.SubmissionSchema),
+		Args: usageArgs(cobra.NoArgs),
+		RunE: runBenchmarkExport,
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
