@@ -674,6 +674,39 @@ func TestSubmissionCoverage_NilCaseIDsMarshalAsEmptyArray(t *testing.T) {
 	assert.NotContains(t, string(data), `"case_ids":null`)
 }
 
+// A coverage row that omits case_ids must still publish an ARRAY, never null.
+//
+// Reachable in practice: `--allow-partial-coverage` publishes a row that covered
+// nothing, and a hand-supplied run-result can omit the key outright. At the ROW level
+// nil and empty carry no distinct meaning — if reviewer_coverage is present at all
+// then coverage WAS measured, so a row with no ids simply covered no cases. The
+// unmeasured signal lives one level up, in the absence of the whole key.
+//
+// Emitting null there would hand a strict board decoder a type it did not ask for,
+// on the exact field this schema bump exists to introduce — and board-side tolerance
+// is an open coordination item, not something to spend on a value that means nothing.
+func TestBuildSubmission_EmptyCoverageRowPublishesArrayNotNull(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+		SuiteCaseIDs: []string{"case-01"},
+		Coverage:     []ReviewerCoverage{{Model: "llm-small", Persona: "bruce"}}, // CaseIDs omitted -> nil
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Coverage, 1)
+	assert.NotNil(t, sub.Coverage[0].CaseIDs, "a row's case list is an array even when it is empty")
+	assert.Empty(t, sub.Coverage[0].CaseIDs, "and it is empty, not fabricated")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"case_ids":[]`, "the wire form is [], never null")
+	assert.NotContains(t, string(data), `"case_ids":null`)
+}
+
 // --- helpers ---
 
 func writeManifest(t *testing.T, dir, body string) {
@@ -706,37 +739,4 @@ func appendByte(t *testing.T, path string) {
 	_, err = f.WriteString("x")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
-}
-
-// A coverage row that omits case_ids must still publish an ARRAY, never null.
-//
-// Reachable in practice: `--allow-partial-coverage` publishes a row that covered
-// nothing, and a hand-supplied run-result can omit the key outright. At the ROW level
-// nil and empty carry no distinct meaning — if reviewer_coverage is present at all
-// then coverage WAS measured, so a row with no ids simply covered no cases. The
-// unmeasured signal lives one level up, in the absence of the whole key.
-//
-// Emitting null there would hand a strict board decoder a type it did not ask for,
-// on the exact field this schema bump exists to introduce — and board-side tolerance
-// is an open coordination item, not something to spend on a value that means nothing.
-func TestBuildSubmission_EmptyCoverageRowPublishesArrayNotNull(t *testing.T) {
-	rr := RunResult{
-		Suite:        "fixture-mini",
-		SuiteVersion: "1.0.0",
-		GeneratedAt:  "2026-06-24T00:00:00Z",
-		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
-		SuiteCaseIDs: []string{"case-01"},
-		Coverage:     []ReviewerCoverage{{Model: "llm-small", Persona: "bruce"}}, // CaseIDs omitted -> nil
-	}
-	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	sub := BuildSubmission(rr, at)
-
-	require.Len(t, sub.Coverage, 1)
-	assert.NotNil(t, sub.Coverage[0].CaseIDs, "a row's case list is an array even when it is empty")
-	assert.Empty(t, sub.Coverage[0].CaseIDs, "and it is empty, not fabricated")
-
-	data, err := json.Marshal(sub)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"case_ids":[]`, "the wire form is [], never null")
-	assert.NotContains(t, string(data), `"case_ids":null`)
 }
