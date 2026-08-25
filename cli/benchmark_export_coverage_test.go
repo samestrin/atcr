@@ -801,6 +801,70 @@ func TestBenchmarkExport_RejectsSuiteIdentityThatScrubsAway(t *testing.T) {
 	assert.Contains(t, out, "empty once scrubbed", "the rejection names the actual defect")
 }
 
+// exportRunResult writes a run-result with the given denominator and one coverage
+// row, and returns the export exit code + output. Each caller below plants its defect
+// in exactly ONE of the two arrays, so the site it targets is the only gate that can
+// reject the file.
+func exportRunResult(t *testing.T, suiteCaseIDs, coveredIDs []string) (int, string) {
+	t.Helper()
+	den, err := json.Marshal(suiteCaseIDs)
+	require.NoError(t, err)
+	cov, err := json.Marshal(coveredIDs)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":` + string(den) + `,` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":` + string(cov) + `}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return execCmdCapture(t, "benchmark", "export", "--in", path)
+}
+
+// Three publication gates were individually unpinned: each survived mutation on the
+// whole tree because a redundant SIBLING gate caught the same fixture.
+// TestBenchmarkExport_RejectsCaseIDWithInvisibleRunes puts its ids in BOTH
+// suite_case_ids and the coverage rows, so disabling either rune site left the other
+// asserting the message. The three tests below each plant the defect in one array
+// only, so each kills its own site.
+//
+// The redundancy is what hid the gap, not what removed it: the printability gate is
+// load-bearing on its own, because the publication scrub provably does NOT strip
+// control or format runes (probed: "case-\u202E01" and "case-\u200B01" pass through
+// byte for byte).
+
+// Site 1 — the SUITE-level non-printing-rune check. The rune is only in the
+// denominator. Nothing else rejects this file: the scrub leaves the rune alone, so
+// the rewrite and empty arms both decline.
+func TestBenchmarkExport_SuiteDenominatorRuneGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01\u202E", "case-02"}, []string{"case-02"})
+	require.NotEqual(t, 0, code, "an invisible rune in the denominator must not publish: %s", out)
+	assert.Contains(t, out, "non-printing rune")
+	assert.Contains(t, out, "lists suite case", "the SUITE-level diagnostic, not the row-level one")
+}
+
+// Site 2 — the ROW-level non-printing-rune check. The rune is only in a coverage row,
+// on an id absent from the denominator. With this site disabled the file still fails,
+// but on checkCoverage's membership diagnostic — so the assertion is on the MESSAGE.
+func TestBenchmarkExport_CoverageRowRuneGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01"}, []string{"case-01", "case-02\u202E"})
+	require.NotEqual(t, 0, code, "an invisible rune in a coverage row must not publish: %s", out)
+	assert.Contains(t, out, "non-printing rune",
+		"without this site the file is rejected by checkCoverage for membership instead, which reports the wrong defect")
+	assert.Contains(t, out, "records covered case", "the ROW-level diagnostic, not the suite-level one")
+}
+
+// Site 3 — the ROW-level scrub-rewrite check. The covered id is rewritten by the
+// scrub; the denominator's id is not. Same reasoning as site 2: the message is the
+// assertion, because membership would reject the file anyway.
+func TestBenchmarkExport_CoverageRowScrubRewriteGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01"}, []string{"case-01", "widgets pr@acme"})
+	require.NotEqual(t, 0, code, "a covered id the scrub rewrites must not publish: %s", out)
+	assert.Contains(t, out, "publication scrub rewrites")
+	assert.Contains(t, out, "records covered case")
+	assert.Contains(t, out, `"widgets"`, "the diagnostic names the value that WOULD publish")
+}
+
 // A suite identity the scrub REWRITES is worse than one it empties: the envelope
 // publishes under a different name than the one anchorSuiteDenominator validated
 // against the manifest (that check compares the PRE-scrub value), so two genuinely
