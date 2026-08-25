@@ -133,6 +133,7 @@ after the first. When divergent terminal records exist for one id, precedence is
 | `atcr debt dashboard` | Render an aggregated Markdown dashboard |
 | `atcr debt resolve` | List open items and record resolutions |
 | `atcr debt compact` | Fold the append-only store to its live records |
+| `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
 
 ### `atcr debt list`
 
@@ -260,6 +261,39 @@ Compaction also runs **automatically** after a reconcile append, once the store
 trips **100k records or 100 MiB, whichever comes first** (and only when it has
 grown materially since the last compaction, so an already-compact store does not
 rewrite itself on every append). The manual command remains for on-demand use.
+
+### `atcr debt backfill-justifications`
+
+Re-derives each open or `wontfix` record's `justification` from the `review.md` it
+was originally stamped from, and rewrites the ones that changed.
+
+It exists because a record's id excludes its justification. `StampID` hashes
+`file\x00line\x00problem`, so a re-detected finding hashes to the same id, the
+reconcile append is deduped away, and an improvement to the narrative extractor
+reaches only records persisted after it. Excerpts already on disk keep their
+original text — which is what `debt resolve --status wontfix` reads when deciding
+whether an item already carries a recorded rationale.
+
+```bash
+atcr debt backfill-justifications --dry-run  # reports what would change; writes nothing
+atcr debt backfill-justifications            # rewrites the excerpts that changed
+```
+
+`--review-root` selects the tree searched for source narratives; unset, it is the
+repo root. A record is repaired only when **exactly one** surviving `review.md`
+anchors it: `source_report.path` is review-dir-relative
+(`sources/pool/raw/agent/dax/review.md`) and every review directory holds the same
+relative paths, so the path alone selects dozens of namesakes. The anchor line is
+re-scored against the record's own `file:line` to tell them apart, and a record
+whose candidates disagree is left alone rather than rewritten from a guess. The
+run reports those as `ambiguous`, and records whose narrative tree is gone as
+`unresolved`.
+
+It is deliberately a one-off command and **not** a step in the write path.
+Refreshing excerpts on every reconcile would re-append a record whenever a reviewer
+reworded its narrative, and store growth would stop being bounded by finding count
+— which is the whole reason the append path dedupes. Running the repair once, on
+demand, does not. The pass is idempotent: a second run rewrites nothing.
 
 ## End to end
 
