@@ -398,6 +398,13 @@ type Submission struct {
 	// frozen and byte-shared between the two producers. It lives on THIS envelope,
 	// which only `benchmark export` builds, so the production export's key set is
 	// unchanged.
+	//
+	// NIL POLICY — one rule for the whole envelope, stated here and not restated
+	// per function: where the JSON layer can distinguish absent from empty, that
+	// distinction is the contract. Keys WITH omitempty (SuiteCaseIDs, Coverage)
+	// preserve nil, so an unmeasured run reads as an ABSENT key rather than
+	// "measured as empty". Keys WITHOUT it (Reviewers, and each row's CaseIDs)
+	// are always arrays, never null — a decoder never needs a null branch.
 
 	// SuiteCaseIDs is the suite's full case-id list, in manifest order — the
 	// denominator every Coverage row is short of or equal to. Copied from
@@ -563,14 +570,12 @@ func scrubID(s string) string {
 	return scorecard.ScrubPublicString(s)
 }
 
-// scrubIDs returns a scrubbed COPY of ids, preserving nil.
+// scrubIDs returns a scrubbed COPY of ids, preserving nil per the Submission nil
+// policy.
 //
 // The copy is the point: `benchmark export` validates coverage against the caller's
 // RunResult before building the submission, so scrubbing in place would rewrite the
 // file's own data underneath a caller that may still read or re-validate it.
-// Preserving nil keeps Submission.SuiteCaseIDs/Coverage exactly as nil-or-not as the
-// RunResult they came from, which is what lets a Go consumer read "unmeasured" off
-// the struct — at the JSON layer omitempty already drops nil and empty alike.
 func scrubIDs(ids []string, memo map[string]string) []string {
 	if ids == nil {
 		return nil
@@ -588,13 +593,11 @@ func scrubIDs(ids []string, memo map[string]string) []string {
 }
 
 // publicCoverage projects run-result coverage rows onto the trimmed public row,
-// re-scrubbing each identity on the way.
-//
-// nil in, nil out. At the JSON layer this is invisible — omitempty drops a nil and
-// an empty slice alike — so the reason is Go-level fidelity: Submission.Coverage
-// stays exactly as nil-or-not as the RunResult.Coverage it was projected from, which
-// is what lets an in-process consumer read "nobody measured" straight off the struct
-// instead of having to distinguish it from "measured, covered nothing".
+// re-scrubbing each identity on the way. Nil handling follows the Submission nil
+// policy, with the row-level consequence made concrete: CaseIDs has no omitempty,
+// so a row's nil is normalized to an empty slice — `"case_ids": null` is reachable
+// (--allow-partial-coverage publishes a row that covered nothing, and a
+// hand-supplied run-result can omit the key), and a board decoder expects an array.
 //
 // The identity scrub goes through scorecard.ScrubPublicRecord — the same function
 // applied to the reviewer rows — rather than a private copy of the rules. That is
@@ -604,17 +607,6 @@ func scrubIDs(ids []string, memo map[string]string) []string {
 //
 // CaseIDs get the same treatment for the same reason, via scrubIDs: they are no less
 // untrusted than the identity sitting beside them in the row.
-//
-// Per-ROW, however, nil is normalized to an empty slice — the opposite of the
-// slice-level rule above, and deliberately so. CaseIDs has no omitempty (it mirrors
-// ReviewerCoverage.CaseIDs), so a nil would marshal to `"case_ids": null`, and that
-// value is reachable: --allow-partial-coverage publishes a row that covered nothing,
-// and a hand-supplied run-result can omit the key. At row level the distinction
-// carries no meaning to begin with — if reviewer_coverage is present at all then
-// coverage WAS measured, so a row with no ids covered no cases. The unmeasured
-// signal lives one level up, in the absence of the whole key. Handing a board
-// decoder a null where it expects an array buys nothing and risks the one thing
-// still unverified about this bump: consumer-side tolerance.
 func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []SubmissionCoverage {
 	if rows == nil {
 		return nil
