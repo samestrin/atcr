@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -151,4 +153,50 @@ func TestDebtResolveDocumentsBackfillScope(t *testing.T) {
 	assert.True(t,
 		strings.Contains(src, "not retroactive") || strings.Contains(src, "NOT RETROACTIVE"),
 		"the docstring must say the guarantee does not reach records persisted earlier")
+}
+
+// The store is world-appendable, so every field of a record is untrusted input. The
+// --dry-run listing is the documented step to run FIRST on the one subcommand that
+// rewrites the store in place, so a bidi override or an ANSI CSI in an id can
+// misrepresent WHICH line is about to be overwritten — on the exact surface an
+// operator consults to decide whether to proceed.
+//
+// The id reaches JustificationChange unvalidated (internal/localdebt/backfill.go reads
+// it as `id, _ := m["id"].(string)`), and the sibling surface `atcr debt list` already
+// strips these through sanitizeCell. The escaping has to hold for EVERY field of the
+// line, not only before/after.
+func TestDebtBackfillJustifications_DryRunEscapesTheUntrustedID(t *testing.T) {
+	const hostileID = "aaaa\x1b[31m1111‮"
+
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	recID, err := json.Marshal(hostileID)
+	require.NoError(t, err)
+	rec := `{"schema_version":3,"id":` + string(recID) + `,"run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	// Premise: the listing really did reach this record, so the assertions below are
+	// about escaping rather than about a line that was never printed.
+	require.Contains(t, out, "2026-08.jsonl:1", "the dry run must have listed the record")
+
+	assert.NotContains(t, out, "\x1b", "an ANSI escape from the store must never reach the terminal raw")
+	assert.NotContains(t, out, "‮", "a bidi override from the store must never reach the terminal raw")
+	// The id still has to be identifiable — escaping is not redaction.
+	assert.Contains(t, out, strconv.Quote(hostileID))
 }
