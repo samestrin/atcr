@@ -75,7 +75,7 @@ func TestBackfillJustifications(t *testing.T) {
 
 		assert.Equal(t, 2, res.Scanned)
 		assert.Equal(t, 1, res.Rewritten, "the resolvable record's excerpt is replayed from source")
-		assert.Equal(t, 1, res.Unresolved, "the orphan has no surviving review.md and must be reported, not guessed at")
+		assert.Equal(t, 1, res.Unresolved, "the orphan has no review.md anywhere in the tree and must be reported, not guessed at")
 
 		got := shardLines(t, store, "2026-08")
 		require.Len(t, got, 2)

@@ -80,7 +80,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// 0 rewritten" — byte-identical to a store that needs no repair. Naming the
 	// suppression is what lets an operator tell those apart.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no surviving review.md), %d ambiguous (candidates disagreed), %d skipped (settled: resolved or wontfix)\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (no review.md yielded the excerpt), %d ambiguous (candidates disagreed), %d skipped (settled: resolved or wontfix)\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
 		res.Unchanged, res.Unresolved, res.Ambiguous, res.SkippedSettled)
 

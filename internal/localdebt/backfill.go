@@ -17,10 +17,19 @@ import (
 // holding several reviews that anchor the same finding (Ambiguous), or a store that
 // is already settled (Unchanged).
 type BackfillResult struct {
-	Scanned    int // effective records carrying both a source_report path and a justification
-	Rewritten  int // replayed excerpt differed from the stored one and was written
-	Unchanged  int // replayed excerpt was byte-identical
-	Unresolved int // no surviving review.md anchored the finding
+	Scanned   int // effective records carrying both a source_report path and a justification
+	Rewritten int // replayed excerpt differed from the stored one and was written
+	Unchanged int // replayed excerpt was byte-identical
+	// Unresolved counts records no review.md yielded an excerpt for. It does NOT
+	// mean the file is gone. ReExtractJustification returns (ok=false, err=nil) both
+	// for "this file is not the one" and for the producer's own POLICY exclusions — a
+	// review.md over the size cap, or one that is not a regular file — and
+	// replayCandidates cannot tell the two apart, so a review.md present and readable
+	// at the record's own source_report path lands here too. The label an operator
+	// reads must therefore describe the OBSERVATION (nothing yielded an excerpt), not
+	// infer a cause ("no surviving review.md"), which sent them to restore a file that
+	// was already there.
+	Unresolved int
 	Ambiguous  int // several surviving candidates disagreed, so none was written
 
 	// SkippedSettled counts effective records the fold filter suppressed because the
@@ -139,6 +148,9 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 			}
 			switch {
 			case len(texts) == 0:
+				// See BackfillResult.Unresolved: this covers a pruned review tree AND
+				// a review.md the replay declined by policy. Both are reported the
+				// same way because replayCandidates cannot distinguish them.
 				res.Unresolved++
 			case len(texts) > 1:
 				res.Ambiguous++
