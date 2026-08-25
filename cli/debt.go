@@ -20,7 +20,8 @@ import (
 // the local technical-debt store. As of Plan 35.13 all five subcommands read and
 // write ONE store — the .atcr/-scoped, month-sharded JSONL backlog under
 // .atcr/debt/ that `atcr reconcile` populates — resolved through a --dir flag
-// with a shared default. The previous .planning/-scoped README+shard store that
+// with a shared default. backfill-justifications joins them as a one-off repair
+// for excerpts persisted before the extractor that produced them was corrected. The previous .planning/-scoped README+shard store that
 // list/add/dashboard used is no longer read or written by any atcr code.
 func newDebtCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -28,14 +29,14 @@ func newDebtCmd() *cobra.Command {
 		Short: "Query, capture, and report on technical debt",
 		Long: "atcr debt reads and writes the local technical-debt store under\n" +
 			".atcr/debt/ (month-sharded, append-only JSONL) that atcr reconcile\n" +
-			"populates. All five subcommands — list, add, dashboard, resolve, and\n" +
-			"compact — operate on that one store, so an item filed by add is visible\n" +
+			"populates. Its subcommands — list, add, dashboard, resolve, compact, and\n" +
+			"backfill-justifications — operate on that one store, so an item filed by add is visible\n" +
 			"to list and closeable by resolve. Use --dir to point them at a store\n" +
 			"other than the current repo's.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtCompactCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtCompactCmd(), newDebtBackfillCmd())
 	return cmd
 }
 
