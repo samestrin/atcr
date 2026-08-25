@@ -69,4 +69,27 @@ func TestReExtractJustification(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, ok)
 	})
+
+	// A VERIFIED anchor whose whole block is quoted example text. extractSection
+	// elides a terminated fence to a placeholder and returns "" — matchAllElided, not
+	// a match. It is the one path that reaches the anchor check and still has no
+	// narrative to give, and it is the sole defence against ok=true with an empty
+	// text: localdebt.BackfillJustifications would write that "" over a stored
+	// excerpt, on an append-only store, irreversibly.
+	t.Run("an anchor whose section is entirely quoted example is no-match, never an empty rewrite", func(t *testing.T) {
+		elided := "## Review\n" +
+			"\n" +
+			"```\n" +
+			"internal/thing.go:42 HIGH the token is never rotated\n" +
+			"```\n"
+		p := filepath.Join(dir, "elided.md")
+		require.NoError(t, os.WriteFile(p, []byte(elided), 0o600))
+
+		text, _, ok, err := ReExtractJustification(p, "internal/thing.go", 42, 4)
+		require.NoError(t, err)
+		assert.False(t, ok,
+			"an all-elided section carries no reviewer content, so it must not authorise a rewrite")
+		assert.Empty(t, text,
+			"returning ok=true here would blank a stored justification that no later reconcile can replace")
+	})
 }
