@@ -585,7 +585,8 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 		// rule).
 		if s == "" {
 			return fmt.Errorf("run-result %s lists suite case %q, which is empty once scrubbed for publication; "+
-				"a case id that scrubs away publishes as \"\" in suite_case_ids",
+				"a case id that scrubs away publishes as \"\" in suite_case_ids, "+
+				"so rename the case in the suite manifest",
 				path, id)
 		}
 	}
@@ -610,7 +611,8 @@ func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
 			}
 			if s == "" {
 				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
-					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage",
+					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage, "+
+					"so rename the case in the suite manifest",
 					path, id,
 					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))
 			}

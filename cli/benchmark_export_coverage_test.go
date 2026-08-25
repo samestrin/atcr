@@ -828,3 +828,38 @@ func TestBenchmarkExport_VerbatimDuplicateSuiteIDPrefersTheRawDiagnostic(t *test
 	assert.NotContains(t, out, "once scrubbed for publication",
 		"the scrub-collision rule must not claim a collision the raw file already had")
 }
+
+// A rejection that names the defect but not the file to fix sends the operator to
+// the wrong place: suite_case_ids is a VERBATIM copy of the suite manifest, so
+// editing the run-result is never the remedy. The rewrite and non-printing
+// diagnostics already say so; the two empty-once-scrubbed ones must too.
+func TestBenchmarkExport_EmptyCaseIDRejectionNamesTheSuiteManifest(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{
+			name: "suite_case_ids entry",
+			body: `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["","case-02"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-02"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`,
+		},
+		{
+			name: "reviewer_coverage entry",
+			body: `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01","case-02"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["","case-02"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code, "an empty case id must not publish: %s", out)
+			assert.Contains(t, out, "empty once scrubbed", "the rejection names the defect")
+			assert.Contains(t, out, "suite manifest", "and the file to fix — not the run-result it was copied into")
+		})
+	}
+}
