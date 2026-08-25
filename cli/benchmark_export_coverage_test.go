@@ -646,6 +646,30 @@ func TestBenchmarkExport_RejectsCaseIDThatScrubsAway(t *testing.T) {
 	assert.Contains(t, out, "sk-io-pr-42", "the error names the PRE-scrub id; the scrubbed one is empty by construction")
 }
 
+// The gate checks published case ids for emptiness and collisions, but a third
+// shape defeats the documented SET comparison just as completely: an id the scrub
+// REWRITES without emptying ("case-01 /Users/sam/secret.txt" publishes as
+// "case-01"). anchorSuiteDenominator compares the RAW ids against the manifest, so
+// it anchors clean while the published suite_case_ids names a case that exists in
+// no suite anywhere. The published id must name the same case as the raw one.
+func TestBenchmarkExport_RejectsCaseIDTheScrubWouldRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01 /Users/sam/secret.txt","case-02"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01 /Users/sam/secret.txt","case-02"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code,
+		"an id the scrub rewrites must not publish under a name that exists in no suite: %s", out)
+	assert.Contains(t, out, "case-01 /Users/sam/secret.txt",
+		"the error names the PRE-scrub id, or the operator cannot find the line to fix")
+	assert.Contains(t, out, "rename the case in the suite manifest",
+		"and points at the file that owns the id — editing the run-result is the wrong action")
+}
+
 // The guard must not cost a well-formed suite anything.
 func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
 	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
