@@ -475,10 +475,9 @@ func TestBuildSubmission_CarriesCoverage(t *testing.T) {
 	assert.Contains(t, s, `"case_ids"`)
 }
 
-// The submission row is a TRIMMED projection: the run-result's per-case outcome
-// tally and fallback count are run-level diagnostics and must not ride along into a
-// public, allowlist-based envelope. The fixture populates both, so their absence
-// here is a real exclusion rather than an artifact of empty input.
+// The fixture populates outcomes and fallback_cases, so their absence from the
+// wire is a real exclusion, not an artifact of empty input. Rationale for the
+// trimming: see SubmissionCoverage in benchmark.go.
 func TestBuildSubmission_TrimsCoverageToCaseSet(t *testing.T) {
 	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
 	data, err := json.Marshal(BuildSubmission(coverageRunResult(), at))
@@ -554,15 +553,10 @@ func TestBuildSubmission_ReScrubsCoverageIdentities(t *testing.T) {
 	assert.NotContains(t, string(data), "sam@example.com", "no email may reach a public submission")
 }
 
-// Case ids are untrusted for the SAME reason the identity fields are: both come from
-// the hand-suppliable --in file, and `benchmark export` is where that file first
-// enters the tool. cli/benchmark_coverage.go already treats them as untrusted for
-// terminal output; carrying them into a PUBLIC envelope owes them the same scrub the
-// identity beside them already gets. Scrubbing one and not the other is the
-// inconsistency, not the scrub.
-//
-// Both arrays are scrubbed with the same function, so the documented set comparison
-// between suite_case_ids and a row's case_ids still lines up afterwards.
+// Case ids arrive from the same hand-suppliable --in file as the identities beside
+// them, so both must scrub identically or the documented set comparison between
+// suite_case_ids and a row's case_ids breaks. Rationale: see scrubID in
+// benchmark.go.
 func TestBuildSubmission_ScrubsUntrustedCaseIDs(t *testing.T) {
 	rr := RunResult{
 		Suite:        "fixture-mini",
