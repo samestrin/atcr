@@ -1053,7 +1053,11 @@ func TestValidateSuitePublishableCaseIDs(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
-			assert.Contains(t, err.Error(), tc.id, "the diagnostic names the PRE-scrub id — the published value is empty or rewritten by construction, so it identifies no line to edit")
+			// %q, not the raw id: the diagnostic names the PRE-scrub id (the published
+			// value is empty or rewritten by construction, so it identifies no line to
+			// edit) and must render it ESCAPED — printing a U+202E verbatim would
+			// reorder the operator's own terminal, the defect being reported.
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.id))
 			assert.Contains(t, err.Error(), "suite manifest", "the remedy names the file to fix; suite_case_ids is a verbatim copy of the manifest, so editing the run-result is the wrong action")
 		})
 	}
