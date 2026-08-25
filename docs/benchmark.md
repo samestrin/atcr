@@ -259,7 +259,10 @@ a check that silently did nothing.
 
 The output envelope is **distinct from the production `leaderboard --export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public
-board accept suite submissions and reject production ones:
+board accept suite submissions and reject production ones. The example below uses a
+neutral `example-suite` with synthetic case ids; a real `standard-v1` submission's
+ids are shaped like `bluewave-labs-checkmate-pr-2883` and disclose the org, repo,
+and PR they name (see [`docs/scorecard.md`](scorecard.md)):
 
 ```json
 {
@@ -267,7 +270,7 @@ board accept suite submissions and reject production ones:
   "atcr_version": "0.0.0",
   "submitted_at": "2026-06-24T12:00:00Z",
   "source": "benchmark-suite",
-  "suite": "standard-v1",
+  "suite": "example-suite",
   "suite_version": "1.0.0",
   "reviewers": [
     {
