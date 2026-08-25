@@ -464,9 +464,11 @@ var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
 // Any new caller owes the same checks; this function will not supply them.
 // Submission.Validate exists for exactly that caller.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
-	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
-	// run-result, so re-apply the field scrub here rather than trusting the
-	// producer (see PRIVACY CONTRACT above).
+	// Defense-in-depth re-scrub: rr.Reviewers — and the suite identity — may come
+	// from an externally-supplied run-result, so re-apply the field scrub here
+	// rather than trusting the producer (see PRIVACY CONTRACT above). anchorSuiteDenominator
+	// compares the PRE-scrub rr.Suite against the manifest, so scrubbing only this
+	// projection does not disturb anchoring.
 	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
 	for i, rev := range rr.Reviewers {
 		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
@@ -487,8 +489,8 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		AtcrVersion:      version.Version,
 		SubmittedAt:      submittedAt.UTC().Format(time.RFC3339),
 		Source:           SourceBenchmarkSuite,
-		Suite:            rr.Suite,
-		SuiteVersion:     rr.SuiteVersion,
+		Suite:            scrubID(rr.Suite),
+		SuiteVersion:     scrubID(rr.SuiteVersion),
 		Reviewers:        scrubbed,
 		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs),
 		Coverage:         publicCoverage(rr.Coverage),

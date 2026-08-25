@@ -214,6 +214,15 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(rr.Suite) == "" || strings.TrimSpace(rr.SuiteVersion) == "" {
 		return fmt.Errorf("run-result %s is missing suite/suite_version", in)
 	}
+	// Same seam as the reviewer-identity check below, one field over: the suite
+	// identity is PUBLISHED (scrubbed, in BuildSubmission), so a value that scrubs
+	// away must be rejected here rather than publish as "". The message names the
+	// PRE-scrub strings under %q — the scrubbed value is empty by construction.
+	if scorecard.ScrubPublicString(rr.Suite) == "" || scorecard.ScrubPublicString(rr.SuiteVersion) == "" {
+		return fmt.Errorf("run-result %s has suite/suite_version %q/%q, which is empty once scrubbed for publication; "+
+			"a suite identity that scrubs away publishes as \"\" in the envelope",
+			in, rr.Suite, rr.SuiteVersion)
+	}
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
