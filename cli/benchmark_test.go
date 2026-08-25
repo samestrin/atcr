@@ -39,6 +39,35 @@ func TestBenchmarkVerify_InvalidSuiteFails(t *testing.T) {
 	require.NotEqual(t, 0, code, "a directory without suite.json must fail verify: %s", out)
 }
 
+// `benchmark verify` is the documented suite-author pre-flight — its entire job is
+// validation — so it must not print "valid" for a manifest `benchmark run` hard-
+// rejects at load. The publishable-case-id gate is wired only into
+// executeBenchmarkRun today, which makes the earliest surface an author touches the
+// one surface that does not apply it. Third-party suites are supported, and the
+// bundled importer's <owner>-<repo>-pr-<n> id shape is exactly what the scrub
+// rewrites.
+func TestBenchmarkVerify_RejectsSuiteThatRunWouldReject(t *testing.T) {
+	for _, tc := range []struct{ name, id, want string }{
+		{"id that scrubs away", "admin@internal.host-widgets-pr-1", "empty once scrubbed"},
+		{"id carrying a non-printing rune", "acme-\u202Ecorp-pr-1", "non-printing rune"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"),
+				[]byte("--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new\n"), 0o600))
+			manifest := `{"suite":"mini","suite_version":"1.2.0","cases":[` +
+				`{"id":` + strconv.Quote(tc.id) + `,"diff":"case-01.diff","expected_categories":["correctness"]}]}`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "verify", "--suite-path", dir)
+			require.NotEqual(t, 0, code,
+				"verify must not report a run-rejecting suite as valid: %s", out)
+			require.Contains(t, out, tc.want,
+				"verify and run must give the SAME diagnostic for the same manifest")
+		})
+	}
+}
+
 func TestBenchmarkVerify_RequiresSuitePath(t *testing.T) {
 	code, _ := execCmdCapture(t, "benchmark", "verify")
 	require.NotEqual(t, 0, code, "verify without --suite-path is a usage error")
