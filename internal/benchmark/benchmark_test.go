@@ -59,40 +59,53 @@ func TestSubmission_Validate(t *testing.T) {
 	require.NoError(t, Submission{}.Validate(),
 		"both keys absent is the legal unmeasured shape")
 
+	// Each case asserts the MESSAGE, not merely that an error came back. Validate is
+	// the backstop `atcr benchmark export` calls after BuildSubmission, and that call
+	// site is unreachable while the code is correct — so this table is the only place
+	// the diagnostics are ever read. An arm that returns the WRONG neighbour's message
+	// would otherwise satisfy a bare require.Error.
 	t.Run("coverage without a denominator", func(t *testing.T) {
 		s := valid()
 		s.SuiteCaseIDs = nil
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), "written together or both absent")
 	})
 	t.Run("denominator without coverage", func(t *testing.T) {
 		s := valid()
 		s.Coverage = nil
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), "written together or both absent")
 	})
 	t.Run("repeated denominator id", func(t *testing.T) {
 		s := valid()
 		s.SuiteCaseIDs = []string{"case-01", "case-01"}
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), `lists suite case "case-01" more than once`)
 	})
 	t.Run("empty denominator id", func(t *testing.T) {
 		s := valid()
 		s.SuiteCaseIDs = []string{"case-01", ""}
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), "empty suite_case_ids entry")
 	})
 	t.Run("covered id outside the denominator", func(t *testing.T) {
 		s := valid()
 		s.Coverage[0].CaseIDs = []string{"case-99"}
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), `covered case "case-99"`)
+		assert.ErrorContains(t, s.Validate(), "not in suite_case_ids")
+	})
+	t.Run("empty covered case id", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].CaseIDs = []string{""}
+		assert.ErrorContains(t, s.Validate(), "empty covered case id",
+			"the empty arm has its OWN diagnostic; without a case here it falls through to the not-in-denominator one")
 	})
 	t.Run("null row case_ids", func(t *testing.T) {
 		s := valid()
 		s.Coverage[0].CaseIDs = nil
-		require.Error(t, s.Validate(), "the never-null contract is structural, not per-writer")
+		assert.ErrorContains(t, s.Validate(), "null case_ids",
+			"the never-null contract is structural, not per-writer")
 	})
 	t.Run("coverage row with no reviewer", func(t *testing.T) {
 		s := valid()
 		s.Coverage[0].Model = "someone-else"
-		require.Error(t, s.Validate())
+		assert.ErrorContains(t, s.Validate(), "no matching reviewers[] row")
 	})
 }
 

@@ -298,6 +298,14 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// Backstop only: the gates above already enforce everything Validate checks,
 	// with sharper diagnostics keyed on the raw file. A failure here means
 	// BuildSubmission drifted from its own documented invariants.
+	//
+	// This branch is therefore DELIBERATELY UNREACHABLE AND UNTESTED. Reaching it
+	// requires BuildSubmission to be wrong, which no fixture can arrange from
+	// outside — a run-result that would produce an invalid Submission is rejected
+	// by the gates above first. Validate's own arms and diagnostics are pinned in
+	// internal/benchmark (TestSubmission_Validate), which constructs the invalid
+	// documents directly; the value here is the assertion that they never occur,
+	// not a path anything exercises.
 	if err := sub.Validate(); err != nil {
 		return fmt.Errorf("internal: submission built from %s violates its own invariants: %w", in, err)
 	}
