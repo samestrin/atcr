@@ -385,19 +385,11 @@ type Submission struct {
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
 
-	// COVERAGE IS CARRIED HERE AS OF submission_schema 2 (epic 35.16.6.2). It was
-	// deliberately withheld under version 1 because adding a key to this envelope is
-	// a schema-versioning decision, not a documentation fix, and submission_schema is
-	// scorecard.SubmissionSchema — the SHARED constant the production
-	// `leaderboard --export` envelope also stamps. That epic paid the versioning
-	// cost explicitly: the constant is bumped, both pinned docs are updated, and the
-	// bump is additive on the production producer (no ExportEnvelope or PublicRecord
-	// field renamed, retyped, or removed).
-	//
-	// Coverage still does NOT live on scorecard.PublicRecord — that type remains
-	// frozen and byte-shared between the two producers. It lives on THIS envelope,
-	// which only `benchmark export` builds, so the production export's key set is
-	// unchanged.
+	// COVERAGE IS CARRIED HERE AS OF submission_schema 2 (epic 35.16.6.2); the
+	// constant is shared with the production `leaderboard --export` envelope, so
+	// the bump versioned both — see "Schema versioning" in docs/scorecard.md.
+	// Coverage still does NOT live on scorecard.PublicRecord, so the production
+	// export's key set is unchanged.
 	//
 	// NIL POLICY — one rule for the whole envelope, stated here and not restated
 	// per function: where the JSON layer can distinguish absent from empty, that
@@ -423,20 +415,11 @@ type Submission struct {
 }
 
 // SubmissionCoverage is the PUBLIC, trimmed coverage row: which suite cases one
-// reviewer row actually scored, and nothing else. It is a separate type from
-// benchmark.ReviewerCoverage on purpose.
-//
-// ReviewerCoverage additionally carries Outcomes and FallbackCases. Those are
-// run-level diagnostics — they answer "how did this row's cases go" and "how often
-// did fanout fall back", questions an operator inspects locally. The public
-// submission is defined as allowlist-based (docs/scorecard.md, "--export is
-// allowlist-based"), and the board's need is narrower: it must be able to tell a
-// full run from a short one, which requires only the covered-case SET. Widening a
-// public envelope to whatever a producer happened to record is how allowlists rot,
-// so the projection is explicit and the extra fields stay run-result-only.
-//
-// The field names and JSON keys deliberately match ReviewerCoverage's for the three
-// keys they share, so a consumer reading either document reads the same shape.
+// reviewer row actually scored, and nothing else. ReviewerCoverage's Outcomes and
+// FallbackCases are run-level diagnostics and stay out of the public allowlist
+// (docs/scorecard.md); the board needs only the covered-case SET to tell a full
+// run from a short one. The shared field names and JSON keys match
+// ReviewerCoverage's, so a consumer reading either document reads the same shape.
 type SubmissionCoverage struct {
 	Model   string `json:"model"`
 	Persona string `json:"persona"`
@@ -559,23 +542,19 @@ func (s Submission) Validate() error {
 	return nil
 }
 
-// scrubID applies the reviewer-identity scrub to one untrusted case id.
-//
-// It borrows scorecard.ScrubPublicString rather than reimplementing the rules,
-// because the rules must not diverge: the identity fields and the case ids sit in
-// the same envelope, arrive from the same hand-suppliable --in file, and are covered
-// by the same "no paths, emails, or credentials in a public submission" contract
-// (docs/scorecard.md). Two copies of that logic would drift; one function cannot.
+// scrubID applies the reviewer-identity scrub to one untrusted case id, borrowing
+// scorecard.ScrubPublicString so the identity and case-id rules cannot diverge —
+// both sit in the same envelope under the same "no paths, emails, or credentials"
+// contract (docs/scorecard.md). BuildSubmission's defense-in-depth re-scrub depends
+// on the scrub being idempotent; scrubField guarantees it.
 func scrubID(s string) string {
 	return scorecard.ScrubPublicString(s)
 }
 
 // scrubIDs returns a scrubbed COPY of ids, preserving nil per the Submission nil
-// policy.
-//
-// The copy is the point: `benchmark export` validates coverage against the caller's
-// RunResult before building the submission, so scrubbing in place would rewrite the
-// file's own data underneath a caller that may still read or re-validate it.
+// policy: `benchmark export` validates coverage against the caller's RunResult
+// before building the submission, so scrubbing in place would rewrite the file's
+// own data underneath a caller that may still read or re-validate it.
 func scrubIDs(ids []string, memo map[string]string) []string {
 	if ids == nil {
 		return nil
@@ -592,21 +571,12 @@ func scrubIDs(ids []string, memo map[string]string) []string {
 	return out
 }
 
-// publicCoverage projects run-result coverage rows onto the trimmed public row,
-// re-scrubbing each identity on the way. Nil handling follows the Submission nil
-// policy, with the row-level consequence made concrete: CaseIDs has no omitempty,
-// so a row's nil is normalized to an empty slice — `"case_ids": null` is reachable
-// (--allow-partial-coverage publishes a row that covered nothing, and a
-// hand-supplied run-result can omit the key), and a board decoder expects an array.
-//
-// The identity scrub goes through scorecard.ScrubPublicRecord — the same function
-// applied to the reviewer rows — rather than a private copy of the rules. That is
-// deliberate: the two arrays are joined by (Model, Persona), so any divergence
-// between how they are scrubbed silently breaks the join. Routing both through one
-// function makes that divergence impossible rather than merely unlikely.
-//
-// CaseIDs get the same treatment for the same reason, via scrubIDs: they are no less
-// untrusted than the identity sitting beside them in the row.
+// publicCoverage projects run-result coverage rows onto the trimmed public row.
+// Two invariants live here: a row's nil CaseIDs is normalized to an empty slice —
+// case_ids has no omitempty and is always an array, never null — and identities go
+// through scorecard.ScrubPublicRecord, the same function as Reviewers, so the
+// (Model, Persona) join between the two arrays cannot diverge. CaseIDs get the same
+// scrub via scrubIDs.
 func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []SubmissionCoverage {
 	if rows == nil {
 		return nil
