@@ -288,6 +288,20 @@ func TestTaxonomySection_SubHeadingDoesNotTruncate(t *testing.T) {
 		"a ### sub-heading must not truncate the taxonomy section")
 }
 
+// The row-detection contract has no negative pin: a mutation that loosens what
+// counts as a row (a dropped backtick check, a widened prefix) would turn green
+// every assertion that depends on it. These malformed lines must all be rejected.
+func TestTaxonomyRowCells_RejectsMalformedLines(t *testing.T) {
+	for _, line := range []string{
+		"| no-backticks | Defect class | a plain first cell is not a category |",
+		"| `unclosed | Defect class | missing closing backtick |",
+		"not a table line at all",
+	} {
+		_, ok := taxonomyRowCells(line)
+		assert.False(t, ok, "taxonomyRowCells must reject %q", line)
+	}
+}
+
 // Adding a category to the constant without adding its row — or removing one, or
 // reordering the offer order the prompt renders — must fail here rather than leave
 // the doc quietly describing a vocabulary that no longer exists.
