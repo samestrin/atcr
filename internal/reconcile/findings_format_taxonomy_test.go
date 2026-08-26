@@ -141,15 +141,41 @@ func taxonomyRowCells(line string) ([]string, bool) {
 }
 
 // taxonomyTableRows returns the parsed rows of the taxonomy table within the
-// section.
+// section: collection starts at the table's header line and stops at the first
+// blank line after it, so a second table under the same heading can neither
+// contribute rows nor truncate the section.
 func taxonomyTableRows(section []string) [][]string {
 	var rows [][]string
+	inTable := false
 	for _, line := range section {
+		trimmed := strings.TrimSpace(line)
+		if !inTable {
+			if isTaxonomyTableHeader(trimmed) {
+				inTable = true
+			}
+			continue
+		}
+		if trimmed == "" {
+			break
+		}
 		if cells, ok := taxonomyRowCells(line); ok {
 			rows = append(rows, cells)
 		}
 	}
 	return rows
+}
+
+// isTaxonomyTableHeader reports whether a trimmed line is the taxonomy table's
+// header row (its first cell is "Category").
+func isTaxonomyTableHeader(trimmed string) bool {
+	if !strings.HasPrefix(trimmed, "|") {
+		return false
+	}
+	cells := strings.Split(trimmed, "|")
+	if len(cells) < 3 {
+		return false
+	}
+	return strings.TrimSpace(cells[1]) == "Category"
 }
 
 // A second table under the same heading (a categoryMerges alias legend is the
@@ -267,10 +293,8 @@ func TestTaxonomySection_SubHeadingDoesNotTruncate(t *testing.T) {
 // the doc quietly describing a vocabulary that no longer exists.
 func TestFindingsFormatDoc_TaxonomyTableTracksCategories(t *testing.T) {
 	var got []string
-	for _, line := range taxonomySectionLines(t) {
-		if cells, ok := taxonomyRowCells(line); ok {
-			got = append(got, strings.Trim(strings.TrimSpace(cells[1]), "`"))
-		}
+	for _, cells := range taxonomyTableRows(taxonomySectionLines(t)) {
+		got = append(got, strings.Trim(strings.TrimSpace(cells[1]), "`"))
 	}
 
 	assert.Equal(t, reclib.Categories(), got,
@@ -284,13 +308,12 @@ func TestFindingsFormatDoc_TaxonomyTableTracksCategories(t *testing.T) {
 // ordinary categories will misuse both, so the table's Group cell must mark them as
 // routing values.
 func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
-	lines := taxonomySectionLines(t)
+	rows := taxonomyTableRows(taxonomySectionLines(t))
 
 	for _, routing := range []string{reclib.CategoryOutOfScope, reclib.CategoryOther} {
 		found := false
-		for _, line := range lines {
-			cells, ok := taxonomyRowCells(line)
-			if !ok || strings.Trim(strings.TrimSpace(cells[1]), "`") != routing {
+		for _, cells := range rows {
+			if strings.Trim(strings.TrimSpace(cells[1]), "`") != routing {
 				continue
 			}
 			found = true
