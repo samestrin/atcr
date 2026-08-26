@@ -199,6 +199,33 @@ func TestTaxonomySection_FencedHeadingIsNotTheSection(t *testing.T) {
 		"a heading inside a fenced code block must not be taken for the taxonomy section")
 }
 
+// A ### sub-heading inside the taxonomy section (a "Notes" block is the likely
+// future addition) must not truncate extraction — the table after it is still
+// part of the section. Only a same-or-higher-level heading ends it.
+func TestTaxonomySection_SubHeadingDoesNotTruncate(t *testing.T) {
+	doc := []string{
+		"## CATEGORY vocabulary",
+		"",
+		"| Category | Group | What it labels |",
+		"|----------|-------|----------------|",
+		"| `correctness` | Defect class | Wrong result. |",
+		"### Notes",
+		"| `aftersub` | Defect class | row after a sub-heading |",
+		"",
+		"## Next Section",
+		"| `nextsec` | Defect class | from the next section |",
+	}
+
+	var rows []string
+	for _, line := range taxonomySection(doc) {
+		if cells, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		}
+	}
+	assert.Equal(t, []string{"correctness", "aftersub"}, rows,
+		"a ### sub-heading must not truncate the taxonomy section")
+}
+
 // Adding a category to the constant without adding its row — or removing one, or
 // reordering the offer order the prompt renders — must fail here rather than leave
 // the doc quietly describing a vocabulary that no longer exists.
