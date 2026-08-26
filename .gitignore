@@ -68,6 +68,7 @@ Thumbs.db
 # rationale as .planning/: this file is the local session's guidance, not part
 # of atcr's public git history).
 CLAUDE.md
+.agents/
 
 # atcr workspace runtime outputs (diff cache + reviewer outputs, never committed).
 # Committed here (not just .git/info/exclude) so the rule travels to every clone
