@@ -393,6 +393,51 @@ func TestBackfillJustifications(t *testing.T) {
 				"record %v must be left byte-for-byte alone", after[i]["id"])
 		}
 	})
+
+	// pathHasSuffix carries two arms, and every subtest above reaches only the
+	// separator-anchored one: they all build reviewRoot from t.TempDir(), which is
+	// absolute, so the walked p is absolute and rel never equals it. The exact-match
+	// arm needs a RELATIVE review root — filepath.WalkDir joins each entry onto its
+	// root and filepath.Join cleans a "." root away, so p IS the review-dir-relative
+	// path and equals rel outright. That is not a synthetic shape:
+	// cli/debt_backfill.go resolves the repo root by default, and a caller passing
+	// --review-root . lands here.
+	t.Run("a relative review root is matched on the exact-match arm", func(t *testing.T) {
+		root := t.TempDir()
+		store := filepath.Join(root, "debt")
+		require.NoError(t, os.MkdirAll(store, 0o750))
+		reviewRoot := filepath.Join(root, "reviews")
+		// Placed DIRECTLY under reviewRoot, with no sprint/multi-agent prefix, so the
+		// walked path equals source_report.path exactly rather than merely ending
+		// with it — the separator-anchored arm cannot carry this one.
+		rd := filepath.Join(reviewRoot, "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(danglingReview), 0o600))
+		writeShard(t, store, "2026-08",
+			`{"schema_version":3,"id":"cccc3333","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+				`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+				`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+				`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",`+
+				`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`)
+
+		// The store path is absolute, so it survives the move; only reviewRoot is
+		// relative, which is the whole point of the case.
+		t.Chdir(reviewRoot)
+
+		res, err := BackfillJustifications(store, ".", false)
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, res.Rewritten,
+			"the record is REPAIRED through the exact-match arm, not left for a human")
+		assert.Zero(t, res.Unresolved,
+			"an unresolved count here would mean the walked path never matched rel at all")
+		assert.Zero(t, res.Ambiguous)
+
+		got := shardLines(t, store, "2026-08")
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0]["justification"], "```",
+			"the replayed excerpt carries the synthetic dangling-fence marker the stored one lacked")
+	})
 }
 
 // The line-scoped guard in rewriteJustifications carries ONE live predicate:
