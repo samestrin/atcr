@@ -91,7 +91,7 @@ func taxonomySection(lines []string) []string {
 		if fenced {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "#") || isSetextUnderline(trimmed) {
+		if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") || isSetextUnderline(trimmed) {
 			break
 		}
 		section = append(section, line)
