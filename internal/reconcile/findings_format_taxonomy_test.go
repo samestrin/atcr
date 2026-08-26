@@ -344,4 +344,13 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 		}
 		assert.True(t, found, "the %q table in %s must carry a row for the routing value %q", taxonomyHeading, findingsFormatDoc, routing)
 	}
+
+	// Distinguishing is a two-sided claim: the marker must appear on exactly the
+	// routing rows. A table in which every Group cell reads "Routing value" passes
+	// the loop above — this walk is what fails it.
+	for _, row := range rows {
+		isRouting := row.name == reclib.CategoryOutOfScope || row.name == reclib.CategoryOther
+		assert.Equal(t, isRouting, strings.Contains(row.cells[2], taxonomyRoutingMarker),
+			"the Group cell of the %q row in %s must contain %q if and only if the category is a routing value", row.name, findingsFormatDoc, taxonomyRoutingMarker)
+	}
 }
