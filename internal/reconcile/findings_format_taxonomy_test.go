@@ -140,6 +140,42 @@ func taxonomyRowCells(line string) ([]string, bool) {
 	return cells, true
 }
 
+// taxonomyTableRows returns the parsed rows of the taxonomy table within the
+// section.
+func taxonomyTableRows(section []string) [][]string {
+	var rows [][]string
+	for _, line := range section {
+		if cells, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, cells)
+		}
+	}
+	return rows
+}
+
+// A second table under the same heading (a categoryMerges alias legend is the
+// likely future addition) must not contribute rows to the taxonomy assertion,
+// and a #-prefixed prose line ("#1 note:") must not truncate the section.
+func TestTaxonomyTableRows_SecondTableAndProseLineIgnored(t *testing.T) {
+	section := []string{
+		"intro prose",
+		"#1 note: a prose line that must not truncate anything",
+		"| Category | Group | What it labels |",
+		"|----------|-------|----------------|",
+		"| `correctness` | Defect class | Wrong result. |",
+		"",
+		"| Alias | Canonical |",
+		"|-------|-----------|",
+		"| `legendbogus` | `correctness` |",
+	}
+
+	var names []string
+	for _, cells := range taxonomyTableRows(section) {
+		names = append(names, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+	}
+	assert.Equal(t, []string{"correctness"}, names,
+		"row parsing must be anchored to the taxonomy table's header, not to any pipe line in the section")
+}
+
 // A setext heading (text followed by a line of = or -) does not start with #, and
 // a ~~~ fence is not a backtick fence — both are valid CommonMark that an ordinary
 // future edit could introduce, and both must not let rows outside the taxonomy
