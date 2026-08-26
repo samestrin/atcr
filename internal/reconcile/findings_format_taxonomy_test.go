@@ -339,8 +339,8 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 				continue
 			}
 			found = true
-			assert.Contains(t, row.cells[2], taxonomyRoutingMarker,
-				"the Group cell of the %q row in %s must say %q — it routes a finding rather than describing a defect", routing, findingsFormatDoc, taxonomyRoutingMarker)
+			assert.Equal(t, "**"+taxonomyRoutingMarker+"**", strings.TrimSpace(row.cells[2]),
+				"the Group cell of the %q row in %s must be exactly %q — a bare mention (even a negation like %q) does not mark the routing role", routing, findingsFormatDoc, "**"+taxonomyRoutingMarker+"**", "Not a "+taxonomyRoutingMarker)
 		}
 		assert.True(t, found, "the %q table in %s must carry a row for the routing value %q", taxonomyHeading, findingsFormatDoc, routing)
 	}
