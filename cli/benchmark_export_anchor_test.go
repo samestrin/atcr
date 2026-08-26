@@ -79,6 +79,32 @@ func TestBenchmarkExport_SuitePathAcceptsMatchingDenominator(t *testing.T) {
 	assert.Contains(t, out, "benchmark-suite")
 }
 
+// runBenchmarkExport validates scrubbed case ids BEFORE anchoring so a poisoned id
+// gets its own diagnostic — the anchor's "not in the manifest" text must never be
+// the last word on a file whose published form differs from the checked one. With
+// the calls swapped, this fixture fails with the anchor's mismatch text instead.
+func TestBenchmarkExport_SuitePathScrubErrorPrecedesAnchor(t *testing.T) {
+	suite := writeThreeCaseSuite(t)
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03","sk-io-pr-42"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
+		`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m-backup","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--suite-path", suite)
+
+	require.NotEqual(t, 0, code, "a scrub-poisoned id must not export: %s", out)
+	assert.Contains(t, out, "publication scrub rewrites",
+		"the scrub gate's own diagnostic must fire")
+	assert.NotContains(t, out, "suite manifest at",
+		"the anchor's mismatch text must not be the last word on a scrub-poisoned file")
+}
+
 // Anchoring to the WRONG suite is an operator error, not a coverage shortfall. The
 // suite identity is checked before the case list so the diagnostic names the real
 // mistake instead of reporting every case as missing.

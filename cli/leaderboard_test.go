@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -134,7 +135,7 @@ func TestLeaderboardCmd_ExportFlag(t *testing.T) {
 		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export stdout must be valid JSON: %s", out)
-	require.Equal(t, 1, env.SubmissionSchema)
+	require.Equal(t, 2, env.SubmissionSchema)
 	require.Len(t, env.Reviewers, 2)
 }
 
@@ -154,7 +155,7 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
 		SubmissionSchema int `json:"submission_schema"`
 	}
 	require.NoError(t, json.Unmarshal(data, &env))
-	require.Equal(t, 1, env.SubmissionSchema)
+	require.Equal(t, 2, env.SubmissionSchema)
 
 	info, err := os.Stat(dest)
 	require.NoError(t, err)
@@ -603,4 +604,20 @@ func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
 	require.Equal(t, 1, code)
 	require.NotContains(t, out, "Try widening --since", "duplicate Fprintln must be removed")
 	require.Contains(t, out, "no records match the export filters")
+}
+
+// The production envelope's version moved to 2 for a BENCHMARK-side reason, and
+// board acceptance of version 2 is an explicitly unverified coordination item. A
+// production submitter reads this flag's help and nothing else, so the bump has to be
+// visible here — otherwise the only notice lives in a doc they have no reason to open.
+func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "leaderboard", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "--export", "precondition: the flag is documented in help")
+	require.Contains(t, help, fmt.Sprintf("submission_schema %d", scorecard.SubmissionSchema),
+		"a production submitter must learn the envelope version changed — "+
+			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
+	require.Contains(t, help, "pinned to",
+		"and that a board pinned to an older version needs updating")
 }

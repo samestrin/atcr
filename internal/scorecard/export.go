@@ -21,7 +21,19 @@ var ErrNoExportRecords = errors.New("no records match the export filters")
 // (Epic 10.0). It is intentionally decoupled from the on-disk store's
 // SchemaVersion: the local record format and the public submission format evolve
 // independently, so bumping one must not silently change the other.
-const SubmissionSchema = 1
+//
+// The constant is SHARED: both ExportEnvelope (production `leaderboard --export`)
+// and benchmark.Submission (`benchmark export`) stamp it, so a bump made for one
+// producer versions the other. Version 2 is such a bump — it was made for the
+// benchmark side, which gained suite_case_ids/reviewer_coverage in epic 35.16.6.2.
+//
+// The bump is ADDITIVE on both producers: no field of ExportEnvelope or
+// PublicRecord was renamed, retyped, or removed, and ExportEnvelope's key set is
+// byte-for-byte what version 1 emitted. A version-2 production submission
+// therefore differs from a version-1 one only in this integer. See the
+// "Schema versioning" section of docs/scorecard.md for the consumer-side
+// coordination note.
+const SubmissionSchema = 2
 
 // PublicRecord is one aggregated reviewer row of the public submission schema,
 // matching the Epic 10.0 spec JSON exactly. It is an allowlist: only these fields
@@ -154,9 +166,24 @@ func AnonymizeRecord(raw Record) PublicRecord {
 // governed by the PublicRecord allowlist and are left untouched. Idempotent: a
 // record already scrubbed at ingestion passes through unchanged.
 func ScrubPublicRecord(r PublicRecord) PublicRecord {
-	r.Model = scrubField(r.Model)
-	r.Persona = scrubField(r.Persona)
+	r.Model = ScrubPublicString(r.Model)
+	r.Persona = ScrubPublicString(r.Persona)
 	return r
+}
+
+// ScrubPublicString applies the identity-field scrub to one untrusted string. It is
+// the field-level core of ScrubPublicRecord, exported for callers whose values are
+// not (Model, Persona) pairs but share the same envelope and the same "no paths,
+// emails, or credentials in a public submission" contract — benchmark suite case
+// ids above all (benchmark.scrubID, cli.validateScrubbedCaseIDs). Laundering those
+// through a synthetic PublicRecord{Model: s} coupled them to the Model field's
+// semantics, so this is the supported path. The coupling is still real, one level
+// down: any identity-specific rule added to scrubField rewrites published case ids
+// too — deliberately (the rules must not diverge), but a rule that only makes sense
+// for model/provider ids does not belong in scrubField. Idempotent for the same
+// reason scrubField is.
+func ScrubPublicString(s string) string {
+	return scrubField(s)
 }
 
 // clampNonNeg* / clampRate guard the public submission against a corrupt-but-

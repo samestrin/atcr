@@ -308,8 +308,8 @@ type RunResult struct {
 	// deliberately: that type is the frozen public schema shared byte-for-byte
 	// between `benchmark export` and production `leaderboard --export`, and forking
 	// a shared schema for a benchmark-only concern is a worse defect than the hole
-	// it would close (see score.go:139-143 for the same argument applied to the cost
-	// denominator's unit).
+	// it would close (see the cost-denominator comment in score.go's
+	// scoreOne for the same argument applied to the unit).
 	//
 	// It exists because Runs is a COUNT, not a SET. Case difficulty on this suite
 	// varies enormously, so a recall computed over one 8-case subset is not
@@ -332,8 +332,11 @@ type RunResult struct {
 	// all-`other` signature by correlating entry i's RoutingValues with
 	// Reviewers[i].CorroborationRate — which is why recall is not duplicated here.
 	//
-	// Run-result-only, exactly as Coverage is: it gates nothing and belongs to no
-	// public schema, so BuildSubmission does not carry it into a Submission. omitempty
+	// Run-result-only: it gates nothing and belongs to no public schema, so
+	// BuildSubmission does not carry it into a Submission. (Coverage was
+	// run-result-only for the same reason until submission_schema 2 gave the board a
+	// concrete need for it — a partial run that could not be told from a full one.
+	// This field has no such consumer, so it stays put.) omitempty
 	// drops the key when a new run has no reviewers, so such a run serializes
 	// identically to a run-result written before this field existed — and both
 	// unmarshal to nil (the key is absent, tag or no tag), reading as "no breakdown
@@ -382,18 +385,67 @@ type Submission struct {
 	SuiteVersion     string                   `json:"suite_version"`
 	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
 
-	// COVERAGE IS DELIBERATELY NOT CARRIED HERE. It would be genuinely useful on the
-	// board — an opted-out partial submission is otherwise indistinguishable from a
-	// full one — but adding a key to this envelope is a schema-versioning decision,
-	// not a documentation fix (docs/benchmark.md, "the run-result contract"), and
-	// submission_schema is scorecard.SubmissionSchema: the SHARED constant the
-	// production `leaderboard --export` envelope also stamps. Bumping it here would
-	// version the production envelope for a benchmark-only reason — the same
-	// fork-a-shared-schema hazard that keeps coverage off scorecard.PublicRecord.
+	// COVERAGE IS CARRIED HERE AS OF submission_schema 2 (epic 35.16.6.2); the
+	// constant is shared with the production `leaderboard --export` envelope, so
+	// the bump versioned both — see "Schema versioning" in docs/scorecard.md.
+	// Coverage still does NOT live on scorecard.PublicRecord, so the production
+	// export's key set is unchanged.
 	//
-	// Coverage therefore lives on RunResult only, where `benchmark export` reads it
-	// to gate publication and an operator can inspect it directly. Putting it in the
-	// envelope belongs to an epic scoped to bump submission_schema.
+	// NIL POLICY — one rule for the whole envelope, stated here and not restated
+	// per function: where the JSON layer can distinguish absent from empty, that
+	// distinction is the contract. Keys WITH omitempty (SuiteCaseIDs, Coverage)
+	// preserve nil, so an unmeasured run reads as an ABSENT key rather than
+	// "measured as empty". Keys WITHOUT it (Reviewers, and each row's CaseIDs)
+	// are always arrays, never null — a decoder never needs a null branch.
+
+	// SuiteCaseIDs is the suite's full case-id list, in manifest order — the
+	// denominator every Coverage row is short of or equal to. Copied from
+	// RunResult.SuiteCaseIDs as-is, omitempty included: a run-result written before
+	// coverage existed carries no list, and the key must then be ABSENT rather than
+	// null, so a consumer reads "nobody measured" instead of "measured as empty".
+	// That is the same unmeasured-vs-short distinction RunResult and the export gate
+	// already depend on.
+	SuiteCaseIDs []string `json:"suite_case_ids,omitempty"`
+
+	// Coverage names the cases behind each reviewer row, joined to Reviewers by the
+	// (Model, Persona) pair. It is a TRIMMED projection of RunResult.Coverage — see
+	// SubmissionCoverage for why the run-result's outcomes/fallback_cases are not
+	// carried. omitempty for the same unmeasured-vs-short reason as SuiteCaseIDs.
+	Coverage []SubmissionCoverage `json:"reviewer_coverage,omitempty"`
+}
+
+// SubmissionCoverage is the PUBLIC, trimmed coverage row: which suite cases one
+// reviewer row actually scored, and nothing else. ReviewerCoverage's Outcomes and
+// FallbackCases are run-level diagnostics and stay out of the public allowlist
+// (docs/scorecard.md); the board needs only the covered-case SET to tell a full
+// run from a short one. The shared field names and JSON keys match
+// ReviewerCoverage's, so a consumer reading either document reads the same shape.
+type SubmissionCoverage struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+	// CaseIDs are the suite case ids this row scored, in manifest order. Compared
+	// as a SET against Submission.SuiteCaseIDs; a row short of the suite was
+	// measured over less than the full benchmark.
+	CaseIDs []string `json:"case_ids"`
+}
+
+// MarshalJSON makes the "case_ids is always an array, never null" contract
+// structural: it holds no matter how the row was constructed, so a writer that
+// builds SubmissionCoverage directly cannot bypass it the way routing through
+// publicCoverage used to be required.
+//
+// It is the SOLE owner of that contract. Submission.Validate used to re-check
+// `CaseIDs == nil` as well, which could only ever reject a construction that is
+// byte-identical on the wire to one it accepted — nil and []string{} both marshal
+// to `"case_ids":[]` — while never catching anything a consumer could observe.
+// A wire-format invariant an encoder enforces unconditionally does not also belong
+// in a struct-level validator.
+func (c SubmissionCoverage) MarshalJSON() ([]byte, error) {
+	type alias SubmissionCoverage // no recursion through this method
+	if c.CaseIDs == nil {
+		c.CaseIDs = []string{}
+	}
+	return json.Marshal(alias(c))
 }
 
 // SourceBenchmarkSuite marks a submission as produced by the standard suite (not
@@ -408,21 +460,188 @@ var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
 // BuildSubmission wraps a suite RunResult in the public submission envelope,
 // stamping the schema version, build version, source marker, and submittedAt.
 // submittedAt is passed in (not time.Now) so the result is reproducible.
+//
+// PROJECTION ONLY — it validates nothing. It re-scrubs identities and case ids as
+// defense-in-depth, but every coverage INVARIANT is the caller's:
+// suite_case_ids and reviewer_coverage being written together, each covered id being
+// a suite member, no duplicates, and no id that scrubs to empty or collides with
+// another. `atcr benchmark export` enforces all of them (cli/benchmark_coverage.go
+// checkCoverage plus validateScrubbedCaseIDs) before calling this.
+//
+// So a DIFFERENT caller can produce documents the docs say cannot exist — e.g.
+// Coverage set with SuiteCaseIDs nil yields coverage rows with no denominator.
+// Any new caller owes the same checks; this function will not supply them.
+// Submission.Validate exists for exactly that caller.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
-	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
-	// run-result, so re-apply the field scrub here rather than trusting the
-	// producer (see PRIVACY CONTRACT above).
+	// Defense-in-depth re-scrub: rr.Reviewers — and the suite identity — may come
+	// from an externally-supplied run-result, so re-apply the field scrub here
+	// rather than trusting the producer (see PRIVACY CONTRACT above). anchorSuiteDenominator
+	// compares the PRE-scrub rr.Suite against the manifest, so scrubbing only this
+	// projection does not disturb anchoring.
 	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
 	for i, rev := range rr.Reviewers {
 		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+		// Deep-copy the pointer metrics: a PublicRecord struct copy aliases them,
+		// so mutating the submission would rewrite the caller's RunResult — the
+		// same non-mutation rule the string slices below follow.
+		if rev.SurvivedSkepticRate != nil {
+			v := *rev.SurvivedSkepticRate
+			scrubbed[i].SurvivedSkepticRate = &v
+		}
+		if rev.CostPerCorroboratedFindingUSD != nil {
+			v := *rev.CostPerCorroboratedFindingUSD
+			scrubbed[i].CostPerCorroboratedFindingUSD = &v
+		}
 	}
+	// Sort the SCRUBBED reviewers with the same comparator publicCoverage sorts its
+	// rows by, so reviewers[i] and reviewer_coverage[i] are one row.
+	//
+	// rr.Reviewers arrives in the producer's order, and cli/benchmark_run.go emits
+	// coverage in that same order — but publicCoverage then re-sorts, on the SCRUBBED
+	// pair, for the determinism guarantee. Copying Reviewers through unsorted broke
+	// the positional join that buildRunResult documents ("a consumer can join coverage
+	// to its row positionally as well as by identity"), and nothing upstream requires
+	// a hand-supplied run-result's rows to arrive sorted at all.
+	//
+	// Sorting HERE rather than dropping publicCoverage's sort keeps both properties:
+	// one order for the two arrays, and byte-identical output for two run-results
+	// with identical logical content in different row orders.
+	sort.SliceStable(scrubbed, func(i, j int) bool {
+		return modelPersonaLess(scrubbed[i].Model, scrubbed[i].Persona, scrubbed[j].Model, scrubbed[j].Persona)
+	})
+	// One memo for the whole projection: covered ids are (after the export gate)
+	// a subset of the suite ids, so without it every row re-scrubs the same list
+	// the denominator just paid for — R+1 full passes over the case set.
+	scrubMemo := make(map[string]string, len(rr.SuiteCaseIDs))
 	return Submission{
 		SubmissionSchema: scorecard.SubmissionSchema,
 		AtcrVersion:      version.Version,
 		SubmittedAt:      submittedAt.UTC().Format(time.RFC3339),
 		Source:           SourceBenchmarkSuite,
-		Suite:            rr.Suite,
-		SuiteVersion:     rr.SuiteVersion,
+		Suite:            scrubID(rr.Suite),
+		SuiteVersion:     scrubID(rr.SuiteVersion),
 		Reviewers:        scrubbed,
+		SuiteCaseIDs:     scrubIDs(rr.SuiteCaseIDs, scrubMemo),
+		Coverage:         publicCoverage(rr.Coverage, scrubMemo),
 	}
+}
+
+// Validate checks the envelope invariants the submission docs promise a consumer:
+// suite_case_ids and reviewer_coverage written together or both absent, a
+// denominator with no empty or repeated id, every covered id a member of that
+// denominator and non-empty, and every row joined to a reviewers[] identity.
+//
+// The "case_ids is always an array, never null" contract is deliberately NOT here:
+// SubmissionCoverage.MarshalJSON owns it and makes it unreachable on the wire, so
+// re-checking the Go value only rejected a construction semantically identical to
+// one this function accepts.
+//
+// BuildSubmission validates NOTHING — it is a projection — so any caller that did
+// not come through `atcr benchmark export`'s RunResult gate owes this call before
+// publishing. The CLI makes it too, as a backstop beneath its sharper
+// diagnostic-level checks.
+func (s Submission) Validate() error {
+	if (len(s.SuiteCaseIDs) == 0) != (len(s.Coverage) == 0) {
+		return fmt.Errorf("submission carries %d suite_case_ids but %d reviewer_coverage rows; "+
+			"the two are written together or both absent", len(s.SuiteCaseIDs), len(s.Coverage))
+	}
+	denominator := make(map[string]bool, len(s.SuiteCaseIDs))
+	for _, id := range s.SuiteCaseIDs {
+		if id == "" {
+			return fmt.Errorf("submission carries an empty suite_case_ids entry")
+		}
+		if denominator[id] {
+			return fmt.Errorf("submission lists suite case %q more than once", id)
+		}
+		denominator[id] = true
+	}
+	joined := make(map[[2]string]bool, len(s.Reviewers))
+	for _, r := range s.Reviewers {
+		joined[[2]string{r.Model, r.Persona}] = true
+	}
+	for _, c := range s.Coverage {
+		if !joined[[2]string{c.Model, c.Persona}] {
+			return fmt.Errorf("submission records coverage for %q/%q with no matching reviewers[] row",
+				c.Model, c.Persona)
+		}
+		for _, id := range c.CaseIDs {
+			if id == "" {
+				return fmt.Errorf("submission records an empty covered case id for %q/%q", c.Model, c.Persona)
+			}
+			if !denominator[id] {
+				return fmt.Errorf("submission records covered case %q for %q/%q, which is not in suite_case_ids",
+					id, c.Model, c.Persona)
+			}
+		}
+	}
+	return nil
+}
+
+// scrubID applies the reviewer-identity scrub to one untrusted case id, borrowing
+// scorecard.ScrubPublicString so the identity and case-id rules cannot diverge —
+// both sit in the same envelope under the same "no paths, emails, or credentials"
+// contract (docs/scorecard.md). BuildSubmission's defense-in-depth re-scrub depends
+// on the scrub being idempotent; scrubField guarantees it.
+func scrubID(s string) string {
+	return scorecard.ScrubPublicString(s)
+}
+
+// scrubIDs returns a scrubbed COPY of ids, preserving nil per the Submission nil
+// policy: `benchmark export` validates coverage against the caller's RunResult
+// before building the submission, so scrubbing in place would rewrite the file's
+// own data underneath a caller that may still read or re-validate it.
+func scrubIDs(ids []string, memo map[string]string) []string {
+	if ids == nil {
+		return nil
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		s, ok := memo[id]
+		if !ok {
+			s = scrubID(id)
+			memo[id] = s
+		}
+		out[i] = s
+	}
+	return out
+}
+
+// publicCoverage projects run-result coverage rows onto the trimmed public row.
+// Two invariants live here: a row's nil CaseIDs is normalized to an empty slice —
+// case_ids has no omitempty and is always an array, never null — and identities go
+// through scorecard.ScrubPublicRecord, the same function as Reviewers, so the
+// (Model, Persona) join between the two arrays cannot diverge. CaseIDs get the same
+// scrub via scrubIDs.
+func publicCoverage(rows []ReviewerCoverage, memo map[string]string) []SubmissionCoverage {
+	if rows == nil {
+		return nil
+	}
+	out := make([]SubmissionCoverage, len(rows))
+	for i, c := range rows {
+		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: c.Model, Persona: c.Persona})
+		ids := scrubIDs(c.CaseIDs, memo)
+		if ids == nil {
+			ids = []string{}
+		}
+		out[i] = SubmissionCoverage{
+			Model:   id.Model,
+			Persona: id.Persona,
+			CaseIDs: ids,
+		}
+	}
+	// Deterministic row order: two run-results with identical logical content but
+	// differently-ordered rows must marshal to the same bytes, the guarantee
+	// scorecard.Export makes for the production envelope.
+	//
+	// modelPersonaLess, not a second copy of the comparator: score.go's doc comment
+	// says the positional alignment "rests on this ONE definition, not on duplicated
+	// comparators drifting apart", and the duplicate here was exactly that drift
+	// risk. BuildSubmission sorts the scrubbed Reviewers with the same call, which is
+	// what makes reviewers[i] and reviewer_coverage[i] one row — the earlier claim
+	// that this order "matches how the producer sorted Reviewers" was true of the
+	// coverage half only.
+	sort.SliceStable(out, func(i, j int) bool {
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
+	})
+	return out
 }

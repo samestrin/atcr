@@ -19,6 +19,91 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
+// validateSuitePublishableCaseIDs rejects a suite whose case ids cannot survive
+// publication intact, BEFORE any reviewer is invoked.
+//
+// buildRunResult copies m.Cases[i].ID into SuiteCaseIDs verbatim, and submission
+// schema 2 PUBLISHES that array — so validateScrubbedCaseIDs (cli/benchmark_coverage.go)
+// hard-rejects any id the publication scrub rewrites. That gate is a consumer-side
+// check that runs at `benchmark export`, i.e. after the whole panel has already been
+// paid for: a legitimate importer-built suite is then permanently unexportable and
+// the operator only learns so hours later. This applies the identical rule at load
+// time, where the remedy costs nothing.
+//
+// It is the case-id counterpart of the post-scrub reviewer-IDENTITY collision check
+// in buildRunResult, and lives here rather than there for the same reason that check
+// lives at its own producer point: buildRunResult runs at the END of the fold, so a
+// rejection there would still follow the full run.
+//
+// Only the printability and rewrite rules are needed. Two DISTINCT raw ids reaching
+// one published id means at least one was rewritten, so the collision shape has no
+// reachable diagnostic of its own — the reasoning documented on
+// validateScrubbedCaseIDs. Verbatim-duplicate raw ids belong to manifest validation.
+//
+// Errors name the PRE-scrub id and the SUITE MANIFEST: the scrubbed value is empty
+// or rewritten by construction, and suite_case_ids is a verbatim copy of the
+// manifest, so editing a run-result would be the wrong action.
+func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) error {
+	// The suite IDENTITY is published scrubbed by the same BuildSubmission pass that
+	// publishes the ids, and validateSuiteIdentityForPublication hard-rejects all three
+	// arms at export. Checking only m.Cases here left that half enforced at export and
+	// nowhere else: `benchmark verify` printed "valid" for a manifest export rejects,
+	// and `benchmark run` paid for the whole reviewer panel before the rejection
+	// surfaced. Identity is checked BEFORE the cases: it names the whole document, so
+	// it is the defect to report first when both are present.
+	for _, f := range []struct{ noun, value string }{
+		{"suite name", m.Suite},
+		{"suite_version", m.SuiteVersion},
+	} {
+		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, "the published envelope must name the same suite the manifest does", "rename the suite in the suite manifest"); err != nil {
+			return err
+		}
+	}
+	for _, c := range m.Cases {
+		if err := checkPublishable(suitePath, "declares case", c.ID, "the published suite_case_ids must name the same cases as the manifest", "rename the case in the suite manifest"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkPublishable is the three-arm publication predicate the case ids and the suite
+// identity now share: a value must carry no control or format rune, must not scrub
+// away, and must not be rewritten by the scrub.
+//
+// One helper rather than two copies is what makes "verify, run and export agree on
+// what a publishable suite is" a property of the code rather than of two edits staying
+// in sync. Arm ORDER matters and is fixed here: printability first (the defect a
+// reader cannot see), then empty (the sharper diagnostic for a value that scrubs away),
+// then rewrite.
+//
+// Every message names the PRE-scrub value under %q - the published value is empty or
+// rewritten by construction, so it identifies no line to edit - and ends with remedy,
+// which names the MANIFEST: suite_case_ids and the envelope identity are verbatim
+// copies of it, so editing a run-result would be the wrong action.
+func checkPublishable(suitePath, subject, value, consequence, remedy string) error {
+	if r, bad := firstNonPrintingRune(value); bad {
+		return fmt.Errorf("suite %s %s %q, which contains a non-printing rune (U+%04X); "+
+			"control and format runes are invisible or reorder text in the published document, "+
+			"so %s",
+			suitePath, subject, value, r, remedy)
+	}
+	s := scorecard.ScrubPublicString(value)
+	if s == "" {
+		return fmt.Errorf("suite %s %s %q, which is empty once scrubbed for publication; "+
+			"the run would publish \"\" and be rejected at export, "+
+			"so %s",
+			suitePath, subject, value, remedy)
+	}
+	if s != value {
+		return fmt.Errorf("suite %s %s %q, which the publication scrub rewrites to %q; "+
+			"%s, "+
+			"so %s",
+			suitePath, subject, value, s, consequence, remedy)
+	}
+	return nil
+}
+
 // executeBenchmarkRun executes a benchmark suite end to end and returns the
 // suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
 // + validates the suite (benchmark.Load), then for each case ingests the case diff
@@ -42,6 +127,11 @@ import (
 func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
+		return nil, err
+	}
+	// Pre-flight, before a single reviewer runs: an id that cannot publish makes the
+	// finished run unexportable, and the export gate would only say so afterwards.
+	if err := validateSuitePublishableCaseIDs(m, suitePath); err != nil {
 		return nil, err
 	}
 
@@ -356,7 +446,7 @@ func rosterSignature(cfg *fanout.ReviewConfig) []string {
 // prompt actually ran.
 //
 // It is deliberately the same identity benchmark.Score already sorts and publishes
-// on (score.go:60-75), so a lane that failed over mid-suite yields one row per model
+// on, so a lane that failed over mid-suite yields one row per model
 // actually used instead of crediting every case to whichever model happened to serve
 // the first one. Keying by the LANE (the agent name) is what silently attributed 9 of
 // Run B's 17 cases to a model that never saw them.

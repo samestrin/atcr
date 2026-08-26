@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,8 +37,16 @@ func writeCoverageRunResult(t *testing.T, rows string, runsPrimary, runsBackup i
 const fullCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]},` +
 	`{"model":"m-backup","persona":"brad","case_ids":["case-01","case-02","case-03"]}`
 
-const shortCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02"]},` +
-	`{"model":"m-backup","persona":"brad","case_ids":["case-03"]}`
+// shortCoverageRows carries `outcomes` and `fallback_cases` deliberately. The export
+// tests assert those two keys do NOT reach the submission envelope, and an assertion
+// that a field is absent proves nothing when the fixture never supplied it — it would
+// pass just as happily against a BuildSubmission that published the untrimmed
+// run-result row. Each tally sums to its row's covered-case count, which the
+// outcomes-mismatch validation requires.
+const shortCoverageRows = `{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02"],` +
+	`"outcomes":{"findings":2},"fallback_cases":1},` +
+	`{"model":"m-backup","persona":"brad","case_ids":["case-03"],` +
+	`"outcomes":{"clean":1}}`
 
 // A row measured over half the suite must not be published beside a full one. Case
 // difficulty varies enormously across the suite, so two rows built from different
@@ -54,12 +64,61 @@ func TestBenchmarkExport_RejectsPartialCoverage(t *testing.T) {
 	assert.Contains(t, out, "case-03", "the error must name a missing case so it is actionable")
 }
 
+// submissionEnvelope is the decode target for the export assertions below: the
+// keys a board consumer reads, no more. Unmarshalling beats substring matching
+// here because "case_ids" is a substring of "suite_case_ids" — a Contains on the
+// row-level key is satisfied by the denominator alone.
+type submissionEnvelope struct {
+	SuiteCaseIDs []string `json:"suite_case_ids"`
+	Reviewers    []struct {
+		Model   string `json:"model"`
+		Persona string `json:"persona"`
+	} `json:"reviewers"`
+	Coverage []struct {
+		Model   string   `json:"model"`
+		Persona string   `json:"persona"`
+		CaseIDs []string `json:"case_ids"`
+	} `json:"reviewer_coverage"`
+}
+
+// coveredByReviewer indexes the envelope's coverage rows by identity, asserting
+// each one joins to a reviewers[] entry — the join the board performs.
+func coveredByReviewer(t *testing.T, sub submissionEnvelope) map[string][]string {
+	t.Helper()
+	reviewerIDs := make(map[string]bool, len(sub.Reviewers))
+	for _, r := range sub.Reviewers {
+		reviewerIDs[r.Model+"/"+r.Persona] = true
+	}
+	covered := make(map[string][]string, len(sub.Coverage))
+	for _, row := range sub.Coverage {
+		key := row.Model + "/" + row.Persona
+		assert.True(t, reviewerIDs[key],
+			"coverage row %s must join to a reviewers[] identity", key)
+		covered[key] = row.CaseIDs
+	}
+	return covered
+}
+
 // Full coverage exports normally — the gate must not fire on the healthy path.
 func TestBenchmarkExport_AcceptsFullCoverage(t *testing.T) {
 	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
 	require.Equal(t, 0, code, "a fully-covered run-result exports: %s", out)
 	assert.Contains(t, out, "benchmark-suite")
+
+	// The DEFAULT, gate-passing path must carry the coverage too — until now only
+	// the --allow-partial-coverage test proved a reviewer row's case list is
+	// published at all.
+	var sub submissionEnvelope
+	require.NoError(t, json.Unmarshal([]byte(out), &sub),
+		"the export must be parseable submission JSON")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, sub.SuiteCaseIDs,
+		"the suite denominator reaches the board")
+	covered := coveredByReviewer(t, sub)
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, covered["m-primary/brad"],
+		"the primary row's full case list reaches the board")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, covered["m-backup/brad"],
+		"the backup row's full case list reaches the board")
 }
 
 // Coverage is compared as a SET, not a count: a row with the right NUMBER of cases
@@ -274,10 +333,10 @@ func TestBenchmarkExport_StrippedCoverageArrayIsRejectedNotWarned(t *testing.T) 
 
 // The opt-out publishes, and names the shortfall to the operator on stderr.
 //
-// The shortfall is deliberately NOT carried into the submission envelope: adding a
-// key there is a submission_schema decision, and that constant is shared with the
-// production leaderboard export. So the opt-out is an operator-visible override, not
-// a consumer-visible annotation — see the TD row filed alongside this change.
+// As of submission_schema 2 (epic 35.16.6.2) the shortfall IS carried into the
+// submission envelope, so the opt-out is no longer an operator-only override that
+// leaves the board blind: a consumer can compare each reviewer_coverage row's
+// case_ids against suite_case_ids and see the short row for itself.
 func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	in := writeCoverageRunResult(t, shortCoverageRows, 2, 1)
 	code, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--in", in, "--allow-partial-coverage")
@@ -287,17 +346,33 @@ func TestBenchmarkExport_AllowPartialCoverageWarnsAndPublishes(t *testing.T) {
 	assert.Contains(t, stderr, "partial coverage", "the operator is told what they opted into")
 	assert.Contains(t, stderr, "2/3", "and the shortfall is quantified, not merely named")
 	assert.Contains(t, stderr, "1/3")
-	// The warning must state the consequence truthfully: the shortfall lives in the
-	// run-result ONLY. benchmark.Submission carries no coverage field, so once
-	// published, a consumer cannot tell these rows from fully-covered ones.
-	assert.Contains(t, stderr, "not carried into the submission",
-		"the one reassurance attached to bypassing a data-integrity gate must be true")
-	assert.NotContains(t, stderr, "submission records each row's covered cases")
+	// The warning must state the consequence truthfully. The old text promised the
+	// shortfall stayed out of the submission; that promise is now false, so asserting
+	// its ABSENCE is what keeps the warning honest as the behavior changed underneath it.
+	assert.NotContains(t, stderr, "not carried into the submission",
+		"the pre-schema-2 reassurance is now false and must not survive in the warning")
+	assert.Contains(t, stderr, "carried into the submission",
+		"the operator is told the shortfall is now consumer-visible")
 
-	// The envelope stays at the frozen schema with no new keys.
-	assert.NotContains(t, stdout, "reviewer_coverage",
-		"widening the public envelope is a submission_schema decision, not part of this change")
-	assert.NotContains(t, stdout, "suite_case_ids")
+	// The envelope carries the shortfall: the denominator plus each row's covered
+	// set. Asserted by UNMARSHALLING, not substring match — "case_ids" is a
+	// substring of "suite_case_ids", so a Contains proves nothing about the
+	// row-level key (a renamed SubmissionCoverage.CaseIDs tag used to pass here).
+	var sub submissionEnvelope
+	require.NoError(t, json.Unmarshal([]byte(stdout), &sub),
+		"the export must be parseable submission JSON")
+	assert.Equal(t, []string{"case-01", "case-02", "case-03"}, sub.SuiteCaseIDs,
+		"the suite denominator reaches the board")
+	covered := coveredByReviewer(t, sub)
+	assert.Equal(t, []string{"case-01", "case-02"}, covered["m-primary/brad"],
+		"the primary row's covered-case list reaches the board")
+	assert.Equal(t, []string{"case-03"}, covered["m-backup/brad"],
+		"the backup row's covered-case list reaches the board")
+	// Trimmed projection: the run-result's diagnostics stay out of the public envelope.
+	assert.NotContains(t, stdout, "outcomes",
+		"the per-case outcome tally is run-result-only, not a public field")
+	assert.NotContains(t, stdout, "fallback_cases",
+		"the fallback count is run-result-only, not a public field")
 }
 
 // A run-result carrying NO coverage at all — any file produced before coverage
@@ -504,4 +579,411 @@ func TestBenchmarkExport_ScrubCollisionOnPersonaAloneIsVersionSkewNotMalformed(t
 		"the raw persona that differs must be named, exactly as the differing raw model is")
 	assert.NotContains(t, out, "this file is malformed",
 		"two DIFFERENT raw personas colliding under the scrub is version skew, not tampering")
+}
+
+// The --allow-partial-coverage help text carries the same promise the runtime
+// warning does, and it went stale for the same reason: submission_schema 2 made
+// "the submission does not carry it" false. Unlike the warning, no test read this
+// string, so nothing would have caught the rot.
+//
+// Asserted through the real command tree rather than against the literal, so the
+// text is checked as a user actually encounters it.
+func TestBenchmarkExport_AllowPartialCoverageHelpIsTruthful(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "--allow-partial-coverage", "precondition: the flag is documented in help")
+
+	assert.NotContains(t, help, "the submission does not carry it",
+		"submission_schema 2 carries the shortfall; the old promise is now false")
+	assert.NotContains(t, help, "consumers cannot distinguish these rows from fully-covered ones",
+		"a consumer CAN now distinguish them, by comparing case_ids against suite_case_ids")
+
+	assert.Contains(t, help, "suite_case_ids",
+		"help must name the key a consumer reads the shortfall from")
+	assert.Contains(t, help, "not comparable",
+		"the real reason the gate still fails closed must survive the rewrite")
+}
+
+// The export command emits the very envelope that GAINED two keys at
+// submission_schema 2, so a strict board decoder pinned to 1 fails closed on its
+// output — a risk docs/scorecard.md explicitly calls unresolved. The leaderboard
+// --export help carries the version notice (TestLeaderboardExportHelpNamesTheSchemaVersion
+// pins it) but a benchmark submitter reads THIS command's help, not that one.
+func TestBenchmarkExportHelpNamesTheSchemaVersion(t *testing.T) {
+	_, stdout, stderr := execCmdSplit(t, "benchmark", "export", "--help")
+	help := stdout + stderr
+
+	require.Contains(t, help, "submission_schema 2",
+		"a benchmark submitter must learn the envelope this command emits stamps submission_schema 2")
+	require.Contains(t, help, "pinned to 1",
+		"and that a board pinned to the old version needs updating")
+}
+
+// The coverage gate validates RAW case ids, but BuildSubmission publishes SCRUBBED
+// ones. Where those two disagree the published document means something the gate
+// never checked — the same seam the reviewer-identity check at benchmark.go closed,
+// one field over.
+//
+// Two distinct raw ids that scrub to one value publish a denominator with a repeated
+// entry, and under the documented SET comparison a short row then reads as fully
+// covered. That defeats the whole point of carrying coverage, on exactly the
+// --allow-partial-coverage path whose warning promises the shortfall is visible.
+// Two DISTINCT raws reaching one published id means at least one was rewritten, so
+// the rewrite check owns this shape: it names the first rewritten id and the file
+// that owns it.
+func TestBenchmarkExport_RejectsSuiteCaseIDsTheScrubRewrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01 a@b.com","case-01 c@d.com"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01 a@b.com"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	// No --allow-partial-coverage here even though the fixture's row covers 1 of 2
+	// declared cases: validateScrubbedCaseIDs runs BEFORE checkCoverage, so the
+	// rewrite rejection fires first and the competing short-coverage rejection is
+	// never reached. (And should the gate be reverted, the assertions below — not
+	// the exit code — are what catch it: a short-coverage error would not name the
+	// pre-scrub id or the remedy.)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a denominator whose ids the scrub rewrites must not publish: %s", out)
+	assert.Contains(t, out, "case-01 a@b.com", "the error names the first rewritten id in its PRE-scrub form")
+	assert.Contains(t, out, "rename the case in the suite manifest",
+		"and points at the file that owns the id — editing the run-result is the wrong action")
+	assert.NotContains(t, out, `"suite_case_ids"`, "nothing is published on the rejection path")
+}
+
+// A reviewer row with NO coverage row is not "short" — it is the one shape the
+// producer cannot emit (buildRunResult appends reviewers and coverage from the same
+// loop), so it is hand-assembly, and publishing it puts a reviewers[] entry on the
+// board with no reviewer_coverage row for the documented join to visit. The gate
+// rejects it as malformed, on the opt-out path too.
+func TestBenchmarkExport_ReviewerWithoutCoverageRowIsMalformed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02","case-03"],` +
+		`"reviewer_coverage":[{"model":"m-primary","persona":"brad","case_ids":["case-01","case-02","case-03"]}],` +
+		`"reviewers":[{"model":"m-primary","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10},` +
+		`{"model":"m-backup","persona":"brad","runs":3,` +
+		`"findings_raised_avg":1.0,"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path, "--allow-partial-coverage")
+	require.NotEqual(t, 0, code,
+		"a reviewer with no coverage row must not publish, even with the opt-out: %s", out)
+	assert.Contains(t, out, "m-backup", "the error names the reviewer lacking a coverage row")
+	assert.NotContains(t, out, `"reviewers"`, "nothing is published on the rejection path")
+}
+
+// A run-result carrying reviewer_coverage but NO suite_case_ids is structurally
+// malformed (the producer writes the two together), and checkCoverage's shape check
+// says exactly that. The scrub gate must not pre-empt it with a privacy diagnostic
+// about an individual covered id — the sharper, actionable defect is the missing
+// denominator, so the coverage loop skips a file that has none.
+func TestBenchmarkExport_CoverageWithoutDenominatorGetsStructuralError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["sk-io-pr-42"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "coverage without a denominator must not export: %s", out)
+	assert.Contains(t, out, "records reviewer coverage but no suite_case_ids",
+		"the structural rejection is the sharper diagnostic for this shape")
+	assert.NotContains(t, out, "empty once scrubbed",
+		"a privacy-scrub diagnostic about one id would misdirect the operator")
+}
+
+// The coverage-ROW check is a separate branch from the denominator check: a clean
+// suite_case_ids with a poisoned id inside a reviewer_coverage row must be rejected
+// with the row-specific message, which names the row's identity so the operator
+// knows which reviewer to look at. (TestBenchmarkExport_RejectsCaseIDThatScrubsAway
+// poisons both arrays, so the denominator loop returns first and never proves this
+// branch works.)
+func TestBenchmarkExport_RejectsCoverageRowIDTheScrubRewrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-02"],` +
+		`"reviewer_coverage":[{"model":"m-row","persona":"p-row","case_ids":["case-01","sk-io-pr-42"]}],` +
+		`"reviewers":[{"model":"m-row","persona":"p-row","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a poisoned id inside a coverage row must not publish: %s", out)
+	assert.Contains(t, out, "records covered case", "the row-specific message fires, not the denominator one")
+	assert.Contains(t, out, "sk-io-pr-42", "the error names the PRE-scrub id")
+	assert.Contains(t, out, "m-row", "and the row's identity, so the operator knows which reviewer to inspect")
+}
+
+// A case id consumed entirely by the scrubber publishes as "" — the identical defect
+// the reviewer-identity check rejects because "an identity that scrubs away publishes
+// as \"\" on the leaderboard". Case ids are no different, and the shape is producible:
+// the bundled importer builds ids as <owner>-<repo>-pr-<n>.
+func TestBenchmarkExport_RejectsCaseIDThatScrubsAway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["sk-io-pr-42","case-02"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["sk-io-pr-42","case-02"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "an id that scrubs to empty must not publish as \"\": %s", out)
+	assert.Contains(t, out, "sk-io-pr-42", "the error names the PRE-scrub id; the scrubbed one is empty by construction")
+}
+
+// The gate checks published case ids for emptiness and collisions, but a third
+// shape defeats the documented SET comparison just as completely: an id the scrub
+// REWRITES without emptying ("case-01 /Users/sam/secret.txt" publishes as
+// "case-01"). anchorSuiteDenominator compares the RAW ids against the manifest, so
+// it anchors clean while the published suite_case_ids names a case that exists in
+// no suite anywhere. The published id must name the same case as the raw one.
+func TestBenchmarkExport_RejectsCaseIDTheScrubWouldRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01 /Users/sam/secret.txt","case-02"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01 /Users/sam/secret.txt","case-02"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code,
+		"an id the scrub rewrites must not publish under a name that exists in no suite: %s", out)
+	assert.Contains(t, out, "case-01 /Users/sam/secret.txt",
+		"the error names the PRE-scrub id, or the operator cannot find the line to fix")
+	assert.Contains(t, out, "rename the case in the suite manifest",
+		"and points at the file that owns the id — editing the run-result is the wrong action")
+}
+
+// Unicode control (Cc) and format (Cf) runes pass the scrub byte-for-byte — a
+// RIGHT-TO-LEFT OVERRIDE flips the rendering of the id and everything after it on
+// the board, and a zero-width space makes two different ids render identically,
+// defeating the documented SET comparison at the human layer. stripTerminalControlRunes
+// already bans both categories from diagnostics; the published document owes the
+// same ban, as a rejection rather than a silent rewrite.
+func TestBenchmarkExport_RejectsCaseIDWithInvisibleRunes(t *testing.T) {
+	for _, id := range []string{"case-01\u202Etxt", "case\u200B01"} {
+		path := filepath.Join(t.TempDir(), "run-result.json")
+		body := fmt.Sprintf(`{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",`+
+			`"suite_case_ids":[%q,"case-02"],`+
+			`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":[%q,"case-02"]}],`+
+			`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,`+
+			`"corroboration_rate":0.5,"latency_p50_ms":10}]}`, id, id)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+		require.NotEqual(t, 0, code, "an id carrying an invisible rune must not publish: %s", out)
+		assert.Contains(t, out, "non-printing rune", "the rejection names the defect class for %q", id)
+	}
+}
+
+// The suite identity publishes too, so a suite name that scrubs away entirely is
+// the same defect as a case id that does — reject it instead of publishing "".
+func TestBenchmarkExport_RejectsSuiteIdentityThatScrubsAway(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"/Users/sam/secret.txt","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a suite name that scrubs away must not publish as \"\": %s", out)
+	assert.Contains(t, out, "empty once scrubbed", "the rejection names the actual defect")
+}
+
+// exportRunResult writes a run-result with the given denominator and one coverage
+// row, and returns the export exit code + output. Each caller below plants its defect
+// in exactly ONE of the two arrays, so the site it targets is the only gate that can
+// reject the file.
+func exportRunResult(t *testing.T, suiteCaseIDs, coveredIDs []string) (int, string) {
+	t.Helper()
+	den, err := json.Marshal(suiteCaseIDs)
+	require.NoError(t, err)
+	cov, err := json.Marshal(coveredIDs)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":` + string(den) + `,` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":` + string(cov) + `}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":2,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return execCmdCapture(t, "benchmark", "export", "--in", path)
+}
+
+// Three publication gates were individually unpinned: each survived mutation on the
+// whole tree because a redundant SIBLING gate caught the same fixture.
+// TestBenchmarkExport_RejectsCaseIDWithInvisibleRunes puts its ids in BOTH
+// suite_case_ids and the coverage rows, so disabling either rune site left the other
+// asserting the message. The three tests below each plant the defect in one array
+// only, so each kills its own site.
+//
+// The redundancy is what hid the gap, not what removed it: the printability gate is
+// load-bearing on its own, because the publication scrub provably does NOT strip
+// control or format runes (probed: "case-\u202E01" and "case-\u200B01" pass through
+// byte for byte).
+
+// Site 1 — the SUITE-level non-printing-rune check. The rune is only in the
+// denominator. Nothing else rejects this file: the scrub leaves the rune alone, so
+// the rewrite and empty arms both decline.
+func TestBenchmarkExport_SuiteDenominatorRuneGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01\u202E", "case-02"}, []string{"case-02"})
+	require.NotEqual(t, 0, code, "an invisible rune in the denominator must not publish: %s", out)
+	assert.Contains(t, out, "non-printing rune")
+	assert.Contains(t, out, "lists suite case", "the SUITE-level diagnostic, not the row-level one")
+}
+
+// Site 2 — the ROW-level non-printing-rune check. The rune is only in a coverage row,
+// on an id absent from the denominator. With this site disabled the file still fails,
+// but on checkCoverage's membership diagnostic — so the assertion is on the MESSAGE.
+func TestBenchmarkExport_CoverageRowRuneGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01"}, []string{"case-01", "case-02\u202E"})
+	require.NotEqual(t, 0, code, "an invisible rune in a coverage row must not publish: %s", out)
+	assert.Contains(t, out, "non-printing rune",
+		"without this site the file is rejected by checkCoverage for membership instead, which reports the wrong defect")
+	assert.Contains(t, out, "records covered case", "the ROW-level diagnostic, not the suite-level one")
+}
+
+// Site 3 — the ROW-level scrub-rewrite check. The covered id is rewritten by the
+// scrub; the denominator's id is not. Same reasoning as site 2: the message is the
+// assertion, because membership would reject the file anyway.
+func TestBenchmarkExport_CoverageRowScrubRewriteGateIsPinned(t *testing.T) {
+	code, out := exportRunResult(t, []string{"case-01"}, []string{"case-01", "widgets pr@acme"})
+	require.NotEqual(t, 0, code, "a covered id the scrub rewrites must not publish: %s", out)
+	assert.Contains(t, out, "publication scrub rewrites")
+	assert.Contains(t, out, "records covered case")
+	assert.Contains(t, out, `"widgets"`, "the diagnostic names the value that WOULD publish")
+}
+
+// A suite identity the scrub REWRITES is worse than one it empties: the envelope
+// publishes under a different name than the one anchorSuiteDenominator validated
+// against the manifest (that check compares the PRE-scrub value), so two genuinely
+// different suites can publish a byte-identical (suite, suite_version) and the board
+// merges them into one comparability bucket. The same commit range added exactly this
+// rejection one field over, for case ids.
+func TestBenchmarkExport_RejectsSuiteIdentityTheScrubRewrites(t *testing.T) {
+	for _, tc := range []struct {
+		name, suite, suiteVersion string
+	}{
+		{"suite carrying an email-shaped token", "team-suite bench@acme", "1.2.0"},
+		{"suite carrying a home path", "standard-v1 (imported from ~/suites)", "1.2.0"},
+		{"suite version carrying a secret-shaped token", "standard-v1", "v1.0.0-rc1 token=abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":` + strconv.Quote(tc.suite) + `,"suite_version":` + strconv.Quote(tc.suiteVersion) +
+				`,"generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code,
+				"a suite identity that publishes under a rewritten name must be rejected: %s", out)
+			assert.Contains(t, out, "publication scrub rewrites",
+				"the rejection names the same defect class the case-id gate already names")
+		})
+	}
+}
+
+// The suite identity gets no non-printing-rune check today, and the scrub provably
+// does not strip control or format runes — so a bidi override in a suite name reaches
+// the published envelope. Case ids are already guarded against exactly this.
+func TestBenchmarkExport_RejectsSuiteIdentityWithInvisibleRunes(t *testing.T) {
+	for _, tc := range []struct{ name, suite, suiteVersion string }{
+		{"bidi override in the suite name", "standard-\u202E01", "1.2.0"},
+		{"zero-width space in the suite version", "standard-v1", "1.2.\u200B0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			body := `{"suite":` + strconv.Quote(tc.suite) + `,"suite_version":` + strconv.Quote(tc.suiteVersion) +
+				`,"generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code,
+				"an invisible rune in the identity that names the whole document must not publish: %s", out)
+			assert.Contains(t, out, "non-printing rune")
+		})
+	}
+}
+
+// The guard must not cost a well-formed suite anything.
+func TestBenchmarkExport_CleanCaseIDsStillExport(t *testing.T) {
+	in := writeCoverageRunResult(t, fullCoverageRows, 3, 3)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.Equal(t, 0, code, "ordinary case ids are untouched by the scrub guard: %s", out)
+	assert.Contains(t, out, `"case-01"`)
+}
+
+// A verbatim-repeated suite id must keep reaching checkCoverage's sharper
+// "more than once" diagnostic, not the scrub-collision one. Both conditions are true
+// of such a file, so the ordering between the two rules is a real choice: the raw
+// duplicate is the plainer defect and the actionable one (delete a line), whereas
+// blaming the privacy scrub would send the operator hunting the wrong thing.
+func TestBenchmarkExport_VerbatimDuplicateSuiteIDPrefersTheRawDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"suite_case_ids":["case-01","case-01"],` +
+		`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-01"]}],` +
+		`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+		`"corroboration_rate":0.5,"latency_p50_ms":10}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "a repeated suite id is still rejected: %s", out)
+	assert.Contains(t, out, "more than once", "the raw-duplicate rule owns this file")
+	assert.NotContains(t, out, "once scrubbed for publication",
+		"the scrub-collision rule must not claim a collision the raw file already had")
+}
+
+// A rejection that names the defect but not the file to fix sends the operator to
+// the wrong place: suite_case_ids is a VERBATIM copy of the suite manifest, so
+// editing the run-result is never the remedy. The rewrite and non-printing
+// diagnostics already say so; the two empty-once-scrubbed ones must too.
+func TestBenchmarkExport_EmptyCaseIDRejectionNamesTheSuiteManifest(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{
+			name: "suite_case_ids entry",
+			body: `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["","case-02"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["case-02"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`,
+		},
+		{
+			name: "reviewer_coverage entry",
+			body: `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+				`"suite_case_ids":["case-01","case-02"],` +
+				`"reviewer_coverage":[{"model":"m","persona":"p","case_ids":["","case-02"]}],` +
+				`"reviewers":[{"model":"m","persona":"p","runs":1,"findings_raised_avg":1.0,` +
+				`"corroboration_rate":0.5,"latency_p50_ms":10}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "run-result.json")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+
+			code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+			require.NotEqual(t, 0, code, "an empty case id must not publish: %s", out)
+			assert.Contains(t, out, "empty once scrubbed", "the rejection names the defect")
+			assert.Contains(t, out, "suite manifest", "and the file to fix — not the run-result it was copied into")
+		})
+	}
 }

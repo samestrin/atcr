@@ -235,7 +235,7 @@ echoed** (they would leak query parameters about your local dataset):
 
 ```json
 {
-  "submission_schema": 1,
+  "submission_schema": 2,
   "atcr_version": "0.0.0",
   "submitted_at": "2026-06-15T00:00:00Z",
   "reviewers": [
@@ -255,7 +255,7 @@ echoed** (they would leak query parameters about your local dataset):
 
 | Envelope field | Type | Description |
 |----------------|------|-------------|
-| `submission_schema` | int | Public submission schema version (currently `1`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
+| `submission_schema` | int | Public submission schema version (currently `2`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
 | `atcr_version` | string | The ATCR build that produced the submission (`internal/version`; `0.0.0` in dev builds, stamped via ldflags for releases). |
 | `submitted_at` | string | RFC3339 export timestamp (also the `--since` window anchor, so output is reproducible). |
 | `reviewers` | array | One aggregated row per `(persona, model)`. |
@@ -444,6 +444,26 @@ the surface, the less can leak.
 - Repository content, hostnames, usernames, and organization names — none are
   collected into a record in the first place
 
+> **This allowlist governs the production `leaderboard --export` envelope only.**
+> A `benchmark export` submission is a different document, and since
+> `submission_schema` 2 it additionally publishes `suite_case_ids` and each row's
+> `reviewer_coverage.case_ids` — the suite's case ids, **scrubbed but otherwise
+> unaltered**.
+>
+> Case ids are producer-controlled and routinely encode repository identity: the
+> bundled importer derives them as `<owner>-<repo>-pr-<number>`, so
+> `standard-v1` ids read like `bluewave-labs-checkmate-pr-2883`. Exporting a
+> submission built from a **private or internal suite therefore discloses those
+> org, repo, and PR identifiers**, which the bullet above does not cover.
+>
+> They pass the same scrubber as `persona`/`model` (so paths, emails, and
+> credentials cannot ride inside one, and any id the scrub would rewrite —
+> including one it empties — is rejected rather than published) — but the
+> scrubber does not
+> treat an org or repo name as sensitive, because for the public suite it is not.
+> Review your case ids before publishing a submission from a suite you did not
+> intend to disclose.
+
 As defense-in-depth, the two string fields that _are_ exported (`persona`,
 `model`) additionally pass through a scrubber that removes any path-like, email,
 or credential-like substring before emission. The allowlist is the primary
@@ -481,7 +501,7 @@ There are **two independent version numbers**:
 
 - `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
   store).
-- `submission_schema` (`1`) is stamped on every **public submission** envelope
+- `submission_schema` (`2`) is stamped on every **public submission** envelope
   (`leaderboard --export` and `benchmark export`).
 
 They are decoupled on purpose: the local store format and the public submission
@@ -493,6 +513,54 @@ future epic changes either schema:
   unknown/absent optional fields degrade gracefully.
 - Version negotiation for the public submission format is handled by the export
   paths, not by individual stored records.
+
+### `submission_schema` is shared by two producers
+
+`submission_schema` is one constant (`scorecard.SubmissionSchema`) stamped by **two**
+envelopes:
+
+| Producer | Envelope | Go type |
+|----------|----------|---------|
+| `atcr leaderboard --export` | production submission | `scorecard.ExportEnvelope` |
+| `atcr benchmark export` | suite submission | `benchmark.Submission` |
+
+Because the constant is shared, **a bump made for one producer versions the other**.
+Neither side can evolve its envelope unilaterally, and that is deliberate: a forked
+schema would let the same `submission_schema` value describe two different documents.
+
+#### Version 2 — what changed, and for whom
+
+Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
+`suite_case_ids` and `reviewer_coverage`, so a partial run published via
+`--allow-partial-coverage` is now self-describing to a consumer instead of being
+indistinguishable from a full one.
+
+**The production envelope gained nothing.** Under version 2,
+`leaderboard --export` emits the same key set it emitted under version 1:
+
+- No field of `ExportEnvelope` or `PublicRecord` was renamed, retyped, or removed.
+- No field was added to either type.
+- The only change on the production path is the integer in `submission_schema`.
+
+So a version-2 production submission differs from a version-1 one in exactly one
+byte-range: the version number. The bump is **additive-only** on the producer side.
+
+#### Consumer-side coordination — an open item, not a verified one
+
+The producer-side claim above is checkable in this repository. **The consumer-side
+one is not.** `ExportEnvelope` is only ever *marshaled* here — built in
+`internal/scorecard/export.go` and written out by `cli/leaderboard.go`. This
+repository contains no ingestion, validation, or rendering code for a submission, so
+nothing in it can demonstrate how the public board reacts to:
+
+- a `submission_schema` it has not seen before (does it accept, warn, or reject?), and
+- the two new keys on a **benchmark** submission (are unknown keys tolerated, or does
+  a strict decoder fail closed?).
+
+**This is an explicit hand-off to the board maintainers, not a resolved question.**
+Before version 2 submissions are published, they must confirm that the board accepts
+`submission_schema: 2` and ignores unrecognized envelope keys. If it does not, the
+consumer-side change belongs to the board's own repository — it cannot be made here.
 
 ---
 

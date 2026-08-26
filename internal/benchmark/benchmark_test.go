@@ -24,6 +24,152 @@ func TestLoad_ValidSuite(t *testing.T) {
 	assert.Equal(t, []string{"security", "correctness"}, m.Cases[1].ExpectedCategories)
 }
 
+// The export gate hard-rejects any case id the publication scrub rewrites, but
+// every gate fixture uses synthetic "case-01" ids — a future scrub rule touching
+// hyphenated tokens (say "-pr-<digits>") would make every submission built from
+// the bundled suite fail export while the whole test suite stayed green. Pin the
+// ids of the ACTUALLY SHIPPED suite against the scrubber.
+func TestStandardV1CaseIDs_SurviveThePublicationScrub(t *testing.T) {
+	m, err := Load("../../benchmarks/standard-v1")
+	require.NoError(t, err, "the bundled standard-v1 suite must load")
+	require.NotEmpty(t, m.Cases, "precondition: the suite has cases")
+	for _, c := range m.Cases {
+		assert.Equal(t, c.ID, scorecard.ScrubPublicString(c.ID),
+			"the publication scrub must not rewrite shipped suite case id %q — "+
+				"the export gate rejects rewritten ids, so this suite would become unexportable", c.ID)
+	}
+}
+
+// BuildSubmission validates nothing by design, so the envelope invariants the
+// docs promise need a home a FUTURE caller (an MCP surface, a library consumer)
+// will actually find: Validate on the built Submission. Each case below builds a
+// document the docs say cannot exist and asserts it is rejected.
+func TestSubmission_Validate(t *testing.T) {
+	valid := func() Submission {
+		return Submission{
+			SuiteCaseIDs: []string{"case-01", "case-02"},
+			Reviewers:    []scorecard.PublicRecord{{Model: "m", Persona: "p"}},
+			Coverage: []SubmissionCoverage{
+				{Model: "m", Persona: "p", CaseIDs: []string{"case-01"}},
+			},
+		}
+	}
+
+	require.NoError(t, valid().Validate(), "the healthy envelope validates")
+	require.NoError(t, Submission{}.Validate(),
+		"both keys absent is the legal unmeasured shape")
+
+	// Each case asserts the MESSAGE, not merely that an error came back. Validate is
+	// the backstop `atcr benchmark export` calls after BuildSubmission, and that call
+	// site is unreachable while the code is correct — so this table is the only place
+	// the diagnostics are ever read. An arm that returns the WRONG neighbour's message
+	// would otherwise satisfy a bare require.Error.
+	t.Run("coverage without a denominator", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = nil
+		assert.ErrorContains(t, s.Validate(), "written together or both absent")
+	})
+	t.Run("denominator without coverage", func(t *testing.T) {
+		s := valid()
+		s.Coverage = nil
+		assert.ErrorContains(t, s.Validate(), "written together or both absent")
+	})
+	t.Run("repeated denominator id", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = []string{"case-01", "case-01"}
+		assert.ErrorContains(t, s.Validate(), `lists suite case "case-01" more than once`)
+	})
+	t.Run("empty denominator id", func(t *testing.T) {
+		s := valid()
+		s.SuiteCaseIDs = []string{"case-01", ""}
+		assert.ErrorContains(t, s.Validate(), "empty suite_case_ids entry")
+	})
+	t.Run("covered id outside the denominator", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].CaseIDs = []string{"case-99"}
+		assert.ErrorContains(t, s.Validate(), `covered case "case-99"`)
+		assert.ErrorContains(t, s.Validate(), "not in suite_case_ids")
+	})
+	t.Run("empty covered case id", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].CaseIDs = []string{""}
+		assert.ErrorContains(t, s.Validate(), "empty covered case id",
+			"the empty arm has its OWN diagnostic; without a case here it falls through to the not-in-denominator one")
+	})
+	// The never-null contract belongs to SubmissionCoverage.MarshalJSON, which makes
+	// it unreachable on the wire. Validate must therefore ACCEPT a nil CaseIDs: it is
+	// byte-identical to the empty slice it already accepts, so rejecting one and not
+	// the other would gate a difference no consumer can observe.
+	t.Run("null row case_ids is accepted and marshals identically to an empty one", func(t *testing.T) {
+		nilRow := valid()
+		nilRow.Coverage[0].CaseIDs = nil
+		require.NoError(t, nilRow.Validate(),
+			"nil and []string{} are one document; the encoder, not the validator, owns the never-null contract")
+
+		emptyRow := valid()
+		emptyRow.Coverage[0].CaseIDs = []string{}
+		require.NoError(t, emptyRow.Validate())
+
+		nilBytes, err := json.Marshal(nilRow)
+		require.NoError(t, err)
+		emptyBytes, err := json.Marshal(emptyRow)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(emptyBytes), string(nilBytes))
+		assert.Contains(t, string(nilBytes), `"case_ids":[]`,
+			"the encoder emits an array for a nil slice, which is why Validate need not")
+	})
+	t.Run("coverage row with no reviewer", func(t *testing.T) {
+		s := valid()
+		s.Coverage[0].Model = "someone-else"
+		assert.ErrorContains(t, s.Validate(), "no matching reviewers[] row")
+	})
+}
+
+// cli/benchmark_run.go promises the run-result's coverage rows are "emitted in the
+// same order as the reviewer rows, so a consumer can join coverage to its row
+// positionally as well as by identity". publicCoverage sorts by the SCRUBBED
+// (Model, Persona) pair; BuildSubmission copied Reviewers in source order and never
+// sorted them — so within one submission reviewers[i] and reviewer_coverage[i] could
+// name different rows. docs/benchmark.md invites hand-supplied run-results, and
+// nothing in checkCoverage requires Reviewers to arrive sorted.
+func TestBuildSubmission_ReviewersAndCoverageShareOneOrder(t *testing.T) {
+	rr := RunResult{
+		Suite:        "mini",
+		SuiteVersion: "1.0.0",
+		SuiteCaseIDs: []string{"case-01"},
+		// Deliberately NOT in sorted order, which a hand-supplied run-result may be.
+		Reviewers: []scorecard.PublicRecord{
+			{Model: "zeta", Persona: "p"},
+			{Model: "alpha", Persona: "p"},
+			{Model: "mid", Persona: "b"},
+			{Model: "mid", Persona: "a"},
+		},
+		Coverage: []ReviewerCoverage{
+			{Model: "zeta", Persona: "p", CaseIDs: []string{"case-01"}},
+			{Model: "alpha", Persona: "p", CaseIDs: []string{"case-01"}},
+			{Model: "mid", Persona: "b", CaseIDs: []string{"case-01"}},
+			{Model: "mid", Persona: "a", CaseIDs: []string{"case-01"}},
+		},
+	}
+
+	sub := BuildSubmission(rr, time.Unix(0, 0).UTC())
+	require.Len(t, sub.Reviewers, 4)
+	require.Len(t, sub.Coverage, 4)
+	for i := range sub.Coverage {
+		assert.Equal(t, sub.Reviewers[i].Model, sub.Coverage[i].Model,
+			"reviewers[%d] and reviewer_coverage[%d] must name one row", i, i)
+		assert.Equal(t, sub.Reviewers[i].Persona, sub.Coverage[i].Persona,
+			"reviewers[%d] and reviewer_coverage[%d] must name one row", i, i)
+	}
+
+	// And the shared order is the DETERMINISTIC one the sort comment promises, so
+	// two run-results with identical logical content but differently-ordered rows
+	// still marshal to the same bytes.
+	assert.Equal(t, []string{"alpha", "mid", "mid", "zeta"},
+		[]string{sub.Reviewers[0].Model, sub.Reviewers[1].Model, sub.Reviewers[2].Model, sub.Reviewers[3].Model})
+	assert.Equal(t, "a", sub.Reviewers[1].Persona, "the persona breaks a model tie, as modelPersonaLess says")
+}
+
 func TestLoad_MissingSuiteJSON(t *testing.T) {
 	_, err := Load(t.TempDir())
 	require.Error(t, err, "a directory without suite.json must fail to load")
@@ -314,6 +460,325 @@ func TestBuildSubmission_ReScrubsReviewerPII(t *testing.T) {
 	require.Len(t, sub.Reviewers, 1)
 	assert.Equal(t, "bruce", sub.Reviewers[0].Persona, "absolute-path PII must be scrubbed from persona")
 	assert.Equal(t, "anthropic/claude-3", sub.Reviewers[0].Model, "email PII must be scrubbed from model")
+}
+
+// The suite envelope stamps the SHARED constant, and this pins both halves of that
+// statement: the literal version, and the fact that it is sourced from
+// scorecard.SubmissionSchema rather than a benchmark-local copy.
+//
+// The literal matters on its own. Asserting only `== scorecard.SubmissionSchema`
+// would pass for any value the constant ever takes, so it cannot notice a bump — and
+// a bump is exactly the event that needs a deliberate decision, because the constant
+// is shared with the production leaderboard export. Pinning the number here forces
+// the next bump to visit this test and, through it, this comment.
+//
+// This is a characterization test: it locks behavior the preceding tasks already
+// produced. It earns its place by failing when the constant moves, not by having
+// failed first.
+func TestBuildSubmission_StampsSharedSubmissionSchema(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(coverageRunResult(), at)
+
+	assert.Equal(t, 2, sub.SubmissionSchema,
+		"epic 35.16.6.2 bumped submission_schema to 2 — the version that added suite_case_ids/reviewer_coverage")
+	assert.Equal(t, scorecard.SubmissionSchema, sub.SubmissionSchema,
+		"the suite envelope must stamp the SHARED constant, never a benchmark-local copy")
+}
+
+// coverageRunResult is a measured run: a two-case suite where one reviewer row
+// covered both cases and the other covered only one. The short row is the whole
+// point — before submission_schema 2 it published indistinguishably from the full
+// one. Outcomes and FallbackCases are populated precisely so the trimming assertions
+// below have something real to prove is dropped.
+func coverageRunResult() RunResult {
+	return RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{
+			{Persona: "brad", Model: "llm-large", Runs: 1},
+			{Persona: "bruce", Model: "llm-small", Runs: 1},
+		},
+		SuiteCaseIDs: []string{"case-01", "case-02"},
+		Coverage: []ReviewerCoverage{
+			{
+				Model:         "llm-large",
+				Persona:       "brad",
+				CaseIDs:       []string{"case-01", "case-02"},
+				Outcomes:      map[string]int{"findings": 2},
+				FallbackCases: 1,
+			},
+			{
+				Model:         "llm-small",
+				Persona:       "bruce",
+				CaseIDs:       []string{"case-01"},
+				Outcomes:      map[string]int{"findings": 1},
+				FallbackCases: 0,
+			},
+		},
+	}
+}
+
+// AC1: a measured run carries its denominator and every row's covered-case set into
+// the submission envelope, so a board consumer can tell a short row from a full one
+// without the run-result file. This is the hole submission_schema 2 exists to close.
+func TestBuildSubmission_CarriesCoverage(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(coverageRunResult(), at)
+
+	assert.Equal(t, []string{"case-01", "case-02"}, sub.SuiteCaseIDs,
+		"the suite denominator is carried, in manifest order")
+
+	require.Len(t, sub.Coverage, 2, "one coverage row per reviewer row")
+	assert.Equal(t, SubmissionCoverage{
+		Model:   "llm-large",
+		Persona: "brad",
+		CaseIDs: []string{"case-01", "case-02"},
+	}, sub.Coverage[0], "the fully-covered row carries both case ids")
+	assert.Equal(t, SubmissionCoverage{
+		Model:   "llm-small",
+		Persona: "bruce",
+		CaseIDs: []string{"case-01"},
+	}, sub.Coverage[1], "the SHORT row is what the board could not previously see")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.Contains(t, s, `"suite_case_ids"`)
+	assert.Contains(t, s, `"reviewer_coverage"`)
+	assert.Contains(t, s, `"case_ids"`)
+}
+
+// The fixture populates outcomes and fallback_cases, so their absence from the
+// wire is a real exclusion, not an artifact of empty input. Rationale for the
+// trimming: see SubmissionCoverage in benchmark.go.
+func TestBuildSubmission_TrimsCoverageToCaseSet(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(BuildSubmission(coverageRunResult(), at))
+	require.NoError(t, err)
+	s := string(data)
+
+	assert.NotContains(t, s, `"outcomes"`,
+		"the per-case outcome tally is a run-result diagnostic, not a public field")
+	assert.NotContains(t, s, `"fallback_cases"`,
+		"the fallback count is a run-result diagnostic, not a public field")
+}
+
+// A run-result written before coverage existed is UNMEASURED, not empty. Both keys
+// must be ABSENT — not null, not [] — so a consumer reads "nobody measured" rather
+// than "measured as zero cases", the same distinction RunResult and the export gate
+// already turn on.
+func TestBuildSubmission_OmitsUnmeasuredCoverage(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	assert.Nil(t, sub.SuiteCaseIDs, "an unmeasured run carries no denominator")
+	assert.Nil(t, sub.Coverage, "an unmeasured run carries no coverage rows")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, "suite_case_ids", "omitempty drops the key entirely — not null, not []")
+	assert.NotContains(t, s, "reviewer_coverage")
+}
+
+// Coverage rows come from the same externally-supplied --in file as the reviewer
+// rows, so they get the same defense-in-depth re-scrub. Scrubbing only one array
+// would both leak PII and BREAK the documented (model, persona) join, because the
+// two arrays would then spell the same identity differently.
+func TestBuildSubmission_ReScrubsCoverageIdentities(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{{
+			Persona: "bruce /Users/sam/secret.txt",
+			Model:   "anthropic/claude-3 sam@example.com",
+			Runs:    1,
+		}},
+		SuiteCaseIDs: []string{"case-01"},
+		Coverage: []ReviewerCoverage{{
+			Model:   "anthropic/claude-3 sam@example.com",
+			Persona: "bruce /Users/sam/secret.txt",
+			CaseIDs: []string{"case-01"},
+		}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Coverage, 1)
+	assert.Equal(t, "bruce", sub.Coverage[0].Persona, "absolute-path PII must be scrubbed from a coverage persona")
+	assert.Equal(t, "anthropic/claude-3", sub.Coverage[0].Model, "email PII must be scrubbed from a coverage model")
+
+	require.Len(t, sub.Reviewers, 1)
+	assert.Equal(t, sub.Reviewers[0].Persona, sub.Coverage[0].Persona,
+		"both arrays must scrub identically or the documented join breaks")
+	assert.Equal(t, sub.Reviewers[0].Model, sub.Coverage[0].Model)
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "/Users/sam", "no path may reach a public submission")
+	assert.NotContains(t, string(data), "sam@example.com", "no email may reach a public submission")
+}
+
+// Case ids arrive from the same hand-suppliable --in file as the identities beside
+// them, so both must scrub identically or the documented set comparison between
+// suite_case_ids and a row's case_ids breaks. Rationale: see scrubID in
+// benchmark.go.
+func TestBuildSubmission_ScrubsUntrustedCaseIDs(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+		SuiteCaseIDs: []string{"case-01 /Users/sam/secret.txt", "case-02"},
+		Coverage: []ReviewerCoverage{{
+			Model:   "llm-small",
+			Persona: "bruce",
+			CaseIDs: []string{"case-01 /Users/sam/secret.txt"},
+		}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.SuiteCaseIDs, 2)
+	assert.Equal(t, "case-01", sub.SuiteCaseIDs[0], "path PII must be scrubbed from the denominator")
+	assert.Equal(t, "case-02", sub.SuiteCaseIDs[1], "a clean id is passed through untouched")
+
+	require.Len(t, sub.Coverage, 1)
+	require.Len(t, sub.Coverage[0].CaseIDs, 1)
+	assert.Equal(t, sub.SuiteCaseIDs[0], sub.Coverage[0].CaseIDs[0],
+		"both arrays scrub identically, so the documented set comparison still lines up")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "/Users/sam", "no path may reach a public submission")
+}
+
+// Scrubbing must not mutate the caller's RunResult. `benchmark export` validates
+// coverage against the run-result BEFORE building the submission, and a caller that
+// builds twice, or inspects rr afterwards, must see the file it supplied — not a
+// version this function quietly rewrote in place.
+func TestBuildSubmission_DoesNotMutateSourceRunResult(t *testing.T) {
+	rr := coverageRunResult()
+	rr.SuiteCaseIDs[0] = "case-01 /Users/sam/secret.txt"
+	rr.Coverage[0].CaseIDs[0] = "case-01 /Users/sam/secret.txt"
+	rate, cost := 0.5, 0.01
+	rr.Reviewers[0].SurvivedSkepticRate = &rate
+	rr.Reviewers[0].CostPerCorroboratedFindingUSD = &cost
+
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.SuiteCaseIDs[0],
+		"the caller's denominator slice must be left alone")
+	assert.Equal(t, "case-01 /Users/sam/secret.txt", rr.Coverage[0].CaseIDs[0],
+		"the caller's per-row case list must be left alone")
+
+	// The pointer metrics must be deep-copied too: a struct copy aliases them, so
+	// mutating the submission would silently rewrite the caller's RunResult.
+	*sub.Reviewers[0].SurvivedSkepticRate = 0.99
+	*sub.Reviewers[0].CostPerCorroboratedFindingUSD = 9.99
+	assert.Equal(t, 0.5, *rr.Reviewers[0].SurvivedSkepticRate,
+		"the caller's survived-skeptic rate must not alias the submission's")
+	assert.Equal(t, 0.01, *rr.Reviewers[0].CostPerCorroboratedFindingUSD,
+		"the caller's cost metric must not alias the submission's")
+}
+
+// Suite and SuiteVersion arrive from the same hand-suppliable --in file as the
+// case ids and reviewer identities, and they publish in the same envelope — a
+// private path or a credential in either one is exactly what the scrub exists to
+// catch. They must get the same defense-in-depth re-scrub, not a raw copy.
+func TestBuildSubmission_ScrubsSuiteIdentity(t *testing.T) {
+	rr := coverageRunResult()
+	rr.Suite = "internal-suite /Users/sam/secret.txt"
+	rr.SuiteVersion = "1.0.0 ops@example.com"
+
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	s := string(data)
+	assert.NotContains(t, s, "/Users/sam/secret.txt",
+		"a private path must not ride into the public envelope via suite")
+	assert.NotContains(t, s, "ops@example.com",
+		"an email must not ride into the public envelope via suite_version")
+	assert.NotContains(t, sub.Suite, "secret.txt", "the projection is scrubbed, not raw")
+	assert.NotContains(t, sub.SuiteVersion, "example.com")
+}
+
+// Two run-results with identical logical content but coverage rows in a different
+// order must produce byte-identical submission bytes — the same determinism
+// scorecard.Export guarantees the production envelope (export.go sorts its rows).
+// Sorting the projection by the scrubbed (Model, Persona) pair is what makes the
+// bytes independent of the caller's row order.
+func TestBuildSubmission_CoverageRowOrderIsDeterministic(t *testing.T) {
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+
+	forward, err := json.Marshal(BuildSubmission(coverageRunResult(), at))
+	require.NoError(t, err)
+
+	reversed := coverageRunResult()
+	reversed.Coverage[0], reversed.Coverage[1] = reversed.Coverage[1], reversed.Coverage[0]
+	backward, err := json.Marshal(BuildSubmission(reversed, at))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(forward), string(backward),
+		"coverage row order in the source run-result must not change the submission bytes")
+}
+
+// The "case_ids is always an array, never null" contract must hold even for a row
+// built WITHOUT routing through publicCoverage — a future writer constructing
+// SubmissionCoverage directly cannot bypass it. The invariant is structural
+// (MarshalJSON), not conventional.
+func TestSubmissionCoverage_NilCaseIDsMarshalAsEmptyArray(t *testing.T) {
+	row := SubmissionCoverage{Model: "llm-small", Persona: "bruce"} // CaseIDs nil, built directly
+
+	data, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"case_ids":[]`,
+		"a directly-built row with nil CaseIDs still marshals an array")
+	assert.NotContains(t, string(data), `"case_ids":null`)
+}
+
+// A coverage row that omits case_ids must still publish an ARRAY, never null.
+//
+// Reachable in practice: `--allow-partial-coverage` publishes a row that covered
+// nothing, and a hand-supplied run-result can omit the key outright. At the ROW level
+// nil and empty carry no distinct meaning — if reviewer_coverage is present at all
+// then coverage WAS measured, so a row with no ids simply covered no cases. The
+// unmeasured signal lives one level up, in the absence of the whole key.
+//
+// Emitting null there would hand a strict board decoder a type it did not ask for,
+// on the exact field this schema bump exists to introduce — and board-side tolerance
+// is an open coordination item, not something to spend on a value that means nothing.
+func TestBuildSubmission_EmptyCoverageRowPublishesArrayNotNull(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers:    []scorecard.PublicRecord{{Persona: "bruce", Model: "llm-small", Runs: 1}},
+		SuiteCaseIDs: []string{"case-01"},
+		Coverage:     []ReviewerCoverage{{Model: "llm-small", Persona: "bruce"}}, // CaseIDs omitted -> nil
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Coverage, 1)
+	assert.NotNil(t, sub.Coverage[0].CaseIDs, "a row's case list is an array even when it is empty")
+	assert.Empty(t, sub.Coverage[0].CaseIDs, "and it is empty, not fabricated")
+
+	data, err := json.Marshal(sub)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"case_ids":[]`, "the wire form is [], never null")
+	assert.NotContains(t, string(data), `"case_ids":null`)
 }
 
 // --- helpers ---

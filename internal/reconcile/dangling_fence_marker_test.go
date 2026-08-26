@@ -37,9 +37,10 @@ func TestExtractSection_DanglingFenceOverAListKeepsAFenceMarker(t *testing.T) {
 		t.Fatal("excerpt was suppressed entirely; want the released tail behind a fence marker")
 	}
 	first := strings.SplitN(text, "\n", 2)[0]
-	if !isFenceMarker(first) {
-		t.Errorf("excerpt does not open with a fence marker, so a reader cannot tell the\n"+
-			"tail is a released quote:\nfirst line = %q\nfull excerpt = %q", first, text)
+	if first != "```" {
+		t.Errorf("the marker must be the excerpt's whole first LINE — a fused\n"+
+			"\"```- ...\" line satisfies a HasPrefix check while burying the marker,\n"+
+			"so isFenceMarker(first) is too weak here:\nfirst line = %q\nfull excerpt = %q", first, text)
 	}
 	if !strings.Contains(text, "the refresh token is never rotated") {
 		t.Errorf("excerpt dropped the released tail it exists to carry: %q", text)
@@ -62,8 +63,9 @@ func TestExtractSection_DanglingFenceOverAHeadingKeepsAFenceMarker(t *testing.T)
 		t.Fatal("excerpt was suppressed entirely; want the released tail behind a fence marker")
 	}
 	first := strings.SplitN(text, "\n", 2)[0]
-	if !isFenceMarker(first) {
-		t.Errorf("excerpt does not open with a fence marker: first line = %q, full = %q", first, text)
+	if first != "```" {
+		t.Errorf("the marker must be the excerpt's whole first LINE, not a prefix of a\n"+
+			"fused line: first line = %q, full = %q", first, text)
 	}
 }
 

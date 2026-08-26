@@ -66,6 +66,14 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// The SAME gate `benchmark run` applies at load (cli/benchmark_run.go). verify is
+	// the suite-author pre-flight — its whole job is validation — so it must not
+	// print "valid" for a manifest run hard-rejects seconds later. Wiring the gate
+	// into run alone left the earliest surface an author touches as the one surface
+	// that did not apply it.
+	if err := validateSuitePublishableCaseIDs(m, suitePath); err != nil {
+		return err
+	}
 	hash, err := benchmark.ReproHashManifest(m, suitePath)
 	if err != nil {
 		return err
@@ -174,13 +182,22 @@ func newBenchmarkExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Emit a suite-tagged public submission record from a benchmark run-result",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE:  runBenchmarkExport,
+		// The version is named here, not only in the docs, for the same reason
+		// leaderboard --export names it: this envelope is the one that GAINED keys
+		// at submission_schema 2, and board acceptance of the new number is an
+		// unverified coordination item. A benchmark submitter reads this help and
+		// nothing else, so omitting it would leave the group most affected by the
+		// risk uninformed. The number is formatted from the constant so one bump
+		// updates every surface.
+		Long: "Emit a suite-tagged public submission record from a benchmark run-result. " +
+			fmt.Sprintf("The envelope stamps submission_schema %d; a board pinned to 1 must be updated to accept it.", scorecard.SubmissionSchema),
+		Args: usageArgs(cobra.NoArgs),
+		RunE: runBenchmarkExport,
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by atcr benchmark run)")
 	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json) the run-result was produced from. Optional: when given, the run-result's suite_case_ids must equal the manifest's case list, which anchors the coverage gate's denominator to the suite instead of to the file being checked. Without it the gate can only prove the file is internally consistent — a run-result that truncated its own case list passes.")
-	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, the shortfall is recorded in the run-result only — the submission does not carry it, so consumers cannot distinguish these rows from fully-covered ones.")
+	cmd.Flags().Bool("allow-partial-coverage", false, "publish even when a reviewer row was scored over less than the full suite. Off by default: rows measured over different subsets of the suite are not comparable, and a mid-run model failover makes partial coverage a normal outcome rather than an exotic one. When set, "+partialCoverageVisibilityAdvisory+" — but a short row still is not comparable to a full one, which is why the gate stays closed by default.")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
 }
@@ -205,6 +222,14 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(rr.Suite) == "" || strings.TrimSpace(rr.SuiteVersion) == "" {
 		return fmt.Errorf("run-result %s is missing suite/suite_version", in)
 	}
+	// Same seam as the reviewer-identity check below, one field over: the suite
+	// identity is PUBLISHED (scrubbed, in BuildSubmission), so it owes the SAME
+	// predicate validateScrubbedCaseIDs applies to the ids one field over — not just
+	// the scrubs-to-empty half of it. The messages name the PRE-scrub strings under
+	// %q, as the case-id diagnostics do.
+	if err := validateSuiteIdentityForPublication(rr, in); err != nil {
+		return err
+	}
 	if len(rr.Reviewers) == 0 {
 		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
@@ -223,6 +248,22 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	// construction here, so reporting it would tell the operator only that something in
 	// their file is empty, and never which row.
 	for i, rev := range rr.Reviewers {
+		// Printability is checked on the RAW identity, before the scrub, for the same
+		// reason validateSuiteIdentityForPublication checks it first: ScrubPublicString
+		// provably leaves control (Cc) and format (Cf) runes alone, so an invisible rune
+		// survives into the published envelope and no arm below can see it. The empty-only
+		// gate cannot reach it either — the value is non-empty on both sides.
+		for _, f := range []struct{ name, value string }{
+			{"model", rev.Model},
+			{"persona", rev.Persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return fmt.Errorf("run-result %s has reviewer %d with %s %q, which contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured",
+					in, i, f.name, f.value, r)
+			}
+		}
 		pub := scorecard.ScrubPublicRecord(rev)
 		if strings.TrimSpace(pub.Model) == "" || strings.TrimSpace(pub.Persona) == "" {
 			return fmt.Errorf("run-result %s has reviewer %d with empty model/persona once scrubbed for publication (%q/%q); "+
@@ -239,6 +280,17 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if err := validateReviewerVocabulary(cmd.ErrOrStderr(), rr, in); err != nil {
+		return err
+	}
+
+	// Same seam as the reviewer-identity check above, one field over. As of
+	// submission_schema 2 the case ids are PUBLISHED, and BuildSubmission scrubs them
+	// on the way out — but every check below validates the RAW ids. Where the two
+	// disagree, the document that ships means something no gate ever inspected.
+	//
+	// Runs BEFORE the anchor and the gate so their diagnostics are never the last word
+	// on a file whose published form differs from the checked one.
+	if err := validateScrubbedCaseIDs(rr, in); err != nil {
 		return err
 	}
 
@@ -259,6 +311,20 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("parsing generated_at %q: %w", rr.GeneratedAt, err)
 	}
 	sub := benchmark.BuildSubmission(rr, generatedAt)
+	// Backstop only: the gates above already enforce everything Validate checks,
+	// with sharper diagnostics keyed on the raw file. A failure here means
+	// BuildSubmission drifted from its own documented invariants.
+	//
+	// This branch is therefore DELIBERATELY UNREACHABLE AND UNTESTED. Reaching it
+	// requires BuildSubmission to be wrong, which no fixture can arrange from
+	// outside — a run-result that would produce an invalid Submission is rejected
+	// by the gates above first. Validate's own arms and diagnostics are pinned in
+	// internal/benchmark (TestSubmission_Validate), which constructs the invalid
+	// documents directly; the value here is the assertion that they never occur,
+	// not a path anything exercises.
+	if err := sub.Validate(); err != nil {
+		return fmt.Errorf("internal: submission built from %s violates its own invariants: %w", in, err)
+	}
 	out, err := json.MarshalIndent(sub, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding submission: %w", err)
@@ -303,6 +369,15 @@ func warnVocabularyDiagnostics(w io.Writer, rr *benchmark.RunResult) {
 const vocabularyAgreementAdvisory = "Treat corroboration_rate as a measure of vocabulary " +
 	"agreement rather than detection: a category outside the enumeration matches no expected " +
 	"category, so it zeroes recall independently of what the reviewer actually found.\n"
+
+// partialCoverageVisibilityAdvisory is the shared coverage-carriage clause of the
+// --allow-partial-coverage opt-out: what a consumer can see when a short row
+// publishes. One constant, two surfaces (the checkCoverage warning in
+// benchmark_coverage.go and the flag help below), so a reword cannot drift them
+// apart — the rule vocabularyAgreementAdvisory already established, applied to the
+// pair that has now gone stale twice.
+const partialCoverageVisibilityAdvisory = "the shortfall is carried into the submission — " +
+	"a consumer can compare each reviewer_coverage row's case_ids against suite_case_ids and see the row is short"
 
 // maxDriftWarningRows caps the per-reviewer drift listing. The realistic breach cause
 // is a findings-parser regression, which drifts every reviewer at once — on a 27-model
