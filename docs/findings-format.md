@@ -68,7 +68,8 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 
 `CATEGORY` takes one lowercase word from this closed set. The set is rendered into
 every reviewer prompt through `{{.ScopeRule}}`, and its authority is
-`reconcile.Categories()` (`reconcile/category.go`). The table below is
+`reconcile.Categories()` (`reconcile/category.go`; `out-of-scope` is declared in
+`reconcile/merge.go`). The table below is
 hand-maintained in that constant's **offer order** — the order the prompt uses — and
 pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`, which compares
 it against the released `reconcile` module this repository pins in `go.mod`. So the
