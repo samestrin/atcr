@@ -58,11 +58,63 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 | 2 | `FILE:LINE` | Path and 1-based line | Split on the **last** colon; a non-numeric or missing line parses as `0`, and a path containing a colon is preserved. |
 | 3 | `PROBLEM` | What is wrong | On merge: the longest/most-detailed wins; severity disagreements are appended inline. |
 | 4 | `FIX` | Suggested remediation | Longest wins on merge. |
-| 5 | `CATEGORY` | One lowercase word from the **closed reviewer vocabulary** (`security`, `performance`, `correctness`, `maintainability`, …) | The vocabulary is rendered into every reviewer prompt through `{{.ScopeRule}}`; its authority is `reconcile.Categories()`, never a persona file. **Not enforced at parse time** — a word outside the vocabulary is accepted as written, so drift shows up as a lower score rather than an error (the benchmark surfaces it as `out_of_vocabulary_rate`). Modal value wins on merge. |
+| 5 | `CATEGORY` | One lowercase word from the **closed reviewer vocabulary** (`security`, `performance`, `correctness`, `maintainability`, …) | The vocabulary is rendered into every reviewer prompt through `{{.ScopeRule}}`; its authority is `reconcile.Categories()`, never a persona file. **Not enforced at parse time** — a word outside the vocabulary is accepted as written, so drift shows up as a lower score rather than an error (the benchmark surfaces it as `out_of_vocabulary_rate`). Modal value wins on merge. The full member list is in [CATEGORY vocabulary](#category-vocabulary). |
 | 6 | `EST_MINUTES` | Integer effort estimate | Best-effort; non-numeric parses as `0`. Max wins on merge. Also consumed as a routing input by the executor's complexity ceiling (`max_estimated_minutes`) — see [registry.md](registry.md#executor-fix-generation-active-in-70). |
 | 7 | `EVIDENCE` | Supporting snippet or rationale | In reconciled rows, prefixed with the reviewer name. |
 | 8 | `REVIEWER` (per-source) / `REVIEWERS` (reconciled) | Source attribution | Single name vs. comma-joined set. |
 | 9 | `CONFIDENCE` (reconciled only) | `HIGH` / `MEDIUM` / `LOW` | Reviewer-agreement signal, refined by per-run PageRank authority (an isolated finding from an above-`1/N`-authority model is promoted to `HIGH`; never demoted). |
+
+## CATEGORY vocabulary
+
+`CATEGORY` takes one lowercase word from this closed set. The set is rendered into
+every reviewer prompt through `{{.ScopeRule}}`, and its authority is
+`reconcile.Categories()` (`reconcile/category.go`). The table below is derived from
+that constant, in the same **offer order** the prompt uses, and is pinned to it by
+`internal/reconcile/findings_format_taxonomy_test.go` — adding, removing, or
+reordering a member without updating this table fails the suite.
+
+The last two rows are **routing values**, not defect classes. `out-of-scope` is a
+reserved control token: its findings are annotated rather than promoted — kept in the
+artifacts, counted in summaries, listed in their own report section, and excluded from
+a severity gate. `other` is the escape hatch that makes the set closed rather than
+lossy: a real finding that genuinely fits no member above. Neither says anything about
+what is wrong with the code.
+
+| Category | Group | What it labels |
+|----------|-------|----------------|
+| `correctness` | Defect class | The code produces a wrong result: off-by-one, inverted condition, unreachable branch. |
+| `logic` | Defect class | Accepted equivalent spelling of `correctness`; a member because a shipped persona's worked example emits it. |
+| `security` | Defect class | Injection, auth bypass, traversal — every vulnerability class except credential exposure. |
+| `secret` | Defect class | An exposed credential specifically: hardcoded key, secret in a log, weak secret handling. |
+| `performance` | Defect class | Hot-path cost: N+1 calls, needless allocation, accidental O(n^2). |
+| `concurrency` | Defect class | Synchronization and lifecycle misuse: lock discipline, channel/WaitGroup hazards, goroutines with no exit path. |
+| `race` | Defect class | A specific unsynchronized access to specific shared state, including check-then-act (TOCTOU). |
+| `error-handling` | Defect class | Swallowed or ignored errors, missing timeouts, unbounded retries, partial-failure states. |
+| `state` | Defect class | Stale caches, mutation of shared data, ordering assumptions. |
+| `invariant` | Defect class | A property the code assumes but never establishes or enforces. |
+| `type` | Defect class | Type-safety gaps: over-broad any/dynamic typing, unchecked assertions, lossy conversion. |
+| `api-contract` | Contract and interface | The published interface itself is wrong: signature, error type, or ownership semantics callers must code around. |
+| `contract` | Contract and interface | This change violates an existing contract — the function does not honour its own name, docs, or signature. |
+| `validation` | Contract and interface | A validation rule that is missing, too weak, or applied on the wrong side of the boundary. |
+| `input-validation` | Contract and interface | Untrusted input reaching logic unchecked — the trust-boundary subset of `validation`. |
+| `resource-leak` | Resource and dependency | An acquired resource with no release path: unclosed handle, connection churn, unbounded cache. |
+| `leak` | Resource and dependency | A leak of something other than a held resource: memory retained by a live reference, a leaked secret or internal detail. |
+| `dependency` | Resource and dependency | A dependency that is unnecessary, unpinned, misused, or points the wrong way. |
+| `configuration` | Resource and dependency | Dangerous defaults, unvalidated config, undocumented environment dependence. |
+| `coupling` | Structure and design | Hidden dependencies, layer violations, config reach-through, two sources of truth. |
+| `complexity` | Structure and design | This code is harder to follow than the problem requires. |
+| `bloat` | Structure and design | Code that should not exist at all: dead branches, unused abstraction, speculative generality. |
+| `duplication` | Structure and design | Parallel implementations that will drift apart. |
+| `extensibility` | Structure and design | A hardcoded assumption the known roadmap already contradicts. |
+| `maintainability` | Structure and design | Structural readability cost not captured above: functions doing three jobs, misleading structure, comments that lie. |
+| `naming` | Structure and design | An identifier that promises something the code does not do, or one concept spelled three ways. |
+| `style` | Structure and design | Formatting and idiom only — no behavioural or structural claim. |
+| `observability` | Cross-cutting | If this breaks in production nobody will know: no log, metric, or error context. |
+| `testing` | Cross-cutting | Absent, vacuous, or non-isolated tests. |
+| `docs` | Cross-cutting | Documentation or comments made wrong by this change. |
+| `out-of-scope` | **Routing value** | Outside the reviewed change — a pre-existing issue in files mode, out-of-range in diff/blocks mode. Annotated, never promoted. |
+| `other` | **Routing value** | A real finding that genuinely fits no member above. Keeps the set closed rather than lossy. |
+
 
 ## AXI TOON encoding (`atcr report --format axi`)
 
