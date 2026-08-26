@@ -71,11 +71,14 @@ every reviewer prompt through `{{.ScopeRule}}`, and its authority is
 `reconcile.Categories()` (`reconcile/category.go`; `out-of-scope` is declared in
 `reconcile/merge.go`). The table below is
 hand-maintained in that constant's **offer order** — the order the prompt uses — and
-pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`, which compares
-it against the released `reconcile` module this repository pins in `go.mod`. So the
-table always describes the vocabulary atcr actually ships: adding, removing, or
-reordering a member without updating it fails the suite, at the latest when that pin
-is bumped.
+pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`. Which
+vocabulary it pins against depends on the build: CI and a fresh clone build with
+`GOWORK=off`, so the test compares the table against the released `reconcile` module
+pinned in `go.mod`; a developer building through this tree's `go.work` instead
+resolves the in-tree module, so a local run tracks the unreleased vocabulary.
+Either way, adding, removing, or reordering a member without updating the table
+fails the suite — immediately on a `go.work` build, and for CI at the latest when
+that pin is bumped.
 
 The last two rows are **routing values**, not defect classes. `out-of-scope` is a
 reserved control token: its findings are annotated rather than promoted — kept in the
