@@ -1,3 +1,14 @@
+## [35.16.6.4] - 2026-08-26
+
+### Added
+- **`docs/findings-format.md` now enumerates the closed CATEGORY vocabulary.** A new "CATEGORY vocabulary" section lists all 32 members in the offer order the reviewer prompt uses, each with the class of defect it labels, so a reader no longer has to open Go source to learn the member list. `out-of-scope` and `other` are marked as routing values rather than defect classes: `out-of-scope` is a reserved control token whose findings are annotated instead of promoted, and `other` is the escape hatch that keeps the set closed rather than lossy.
+- A drift guard (`internal/reconcile/findings_format_taxonomy_test.go`) pins that table to `reconcile.Categories()` itself — never to a duplicated literal list — so adding, removing, or reordering a member without updating the table fails the suite. The comparison targets the released `reconcile` module pinned in `go.mod` (CI builds with `GOWORK=off`), which the section and the test both state, so the table always describes the vocabulary atcr actually ships.
+
+### Changed
+- The `CATEGORY` row of the Columns table now links to the full member list. Its "Not enforced at parse time" wording is unchanged — parse-boundary canonicalization remains epic 51.0.
+
+*Shipped via /execute-epic (epic 35.16.6.4)*
+
 ## [35.16.6.2] - 2026-08-24
 
 ### Added
