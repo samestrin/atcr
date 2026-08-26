@@ -54,6 +54,41 @@ func TestScrubField_IsIdempotent(t *testing.T) {
 	}
 }
 
+// ScrubPublicString is the field-level scrub exported for non-identity values that
+// share the envelope and its privacy contract — benchmark suite case ids, which the
+// CLI gate and BuildSubmission scrub through the same rules. It must be exactly the
+// Model-field scrub, no more and no less: a dedicated case-id scrub would diverge,
+// and laundering ids through a synthetic PublicRecord couples them to Model-specific
+// semantics.
+// Asserted against CONCRETE outputs, and against scrubField — never against
+// ScrubPublicRecord. ScrubPublicRecord now calls ScrubPublicString (export.go), so
+// comparing the two routes both sides of the assertion through one function and the
+// equality holds for ANY implementation: replacing ScrubPublicString's body with
+// `return s` left this package green. Before that rewiring the two sides went through
+// different call paths and the comparison was a genuine cross-check; afterwards it was
+// a tautology. Expected values constrain the implementation; a self-comparison cannot.
+func TestScrubPublicString_MatchesTheIdentityFieldScrub(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"case-01-nil-deref", "case-01-nil-deref"},
+		{"sk-io-pr-42", ""},
+		{"case-01 /Users/sam/secret.txt", "case-01"},
+		{"bedrock@us-east-1/claude", ""},
+		{"", ""},
+	} {
+		assert.Equal(t, tc.want, ScrubPublicString(tc.in),
+			"the exported string scrub must produce the documented output for %q", tc.in)
+		// A REDUNDANT IDENTITY, kept to document the delegation — not a cross-check.
+		// ScrubPublicString's whole body is `return scrubField(s)` (export.go), so
+		// this equality holds for ANY implementation of either and constrains
+		// neither; it is the same tautology the comment above this test warns
+		// against, one assertion down. What carries the test is the concrete-output
+		// assertion above. This line's only job is to fail loudly if
+		// ScrubPublicString ever stops delegating and grows a body of its own.
+		assert.Equal(t, scrubField(tc.in), ScrubPublicString(tc.in),
+			"the exported string scrub must be exactly the identity-field scrub for %q", tc.in)
+	}
+}
+
 // The identity-parity consequence, stated at the level the run-result cares about:
 // ScrubPublicRecord must land on a fixed point too, since that is the call every
 // layer actually makes.

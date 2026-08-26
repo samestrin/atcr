@@ -60,6 +60,28 @@ func TestMatchNarrative_ReportsWhyItFoundNothing(t *testing.T) {
 		}
 	})
 
+	// A finding with no File at all must also report matchNoAnchor: the empty-file
+	// arm returns before any index lookup, so a mutant returning matchAllElided
+	// there would send the operator hunting a quoted example that never existed.
+	t.Run("finding with empty file", func(t *testing.T) {
+		narratives := []reviewNarrative{{
+			relPath: "sources/pool/alice/review.md",
+			leaf:    "alice",
+			lines: []string{
+				"## Review",
+				"",
+				"The handler at internal/x.go:42 skips verification.",
+			},
+		}}
+
+		_, out := matchNarrative(narratives, buildAnchorIndex(narratives), "", 42, []string{"alice"})
+
+		if out != matchNoAnchor {
+			t.Errorf("outcome = %v, want matchNoAnchor — a finding with no File has no anchor\n"+
+				"whose section could have been elided", out)
+		}
+	})
+
 	// An indexed reference that never RANKS is the no-anchor case, not the elided one,
 	// and this is the distinction the caller provably cannot re-derive from the index:
 	// len(index[file]) is > 0 here — the file is referenced, and with a line number, so

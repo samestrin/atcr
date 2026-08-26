@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -70,7 +71,7 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 		// names survived the scrub, and that is the name they have to rename away from.
 		// Remedy ORDER is load-bearing. Re-running was listed first, and for the
 		// version-skew cause the same sentence names it provably cannot work: the
-		// producer's own collision check (benchmark_run.go:267-273) uses the same
+		// producer's own collision check (buildRunResult in benchmark_run.go) uses the same
 		// fixed-point ScrubPublicRecord this key does, and scrubField(scrubOnce(x))
 		// has the same fixed point as scrubField(x) — so a file that collides at
 		// export implies the raw ids collide at fixed point too, which means
@@ -247,8 +248,18 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 		consumed[key] = rev
 		cov, ok := byIdentity[key]
 		if !ok {
-			short = append(short, fmt.Sprintf("%s/%s (no coverage recorded)", model, persona))
-			continue
+			// The producer appends reviewers and coverage from the same accumulator
+			// loop, so a reviewer row with no coverage row cannot come from it — this
+			// is the one shape that is hand-assembly by construction. It is also the
+			// one shape the documented shortfall join cannot describe: there is no
+			// reviewer_coverage row whose case_ids a consumer could compare against
+			// suite_case_ids, and the runs/covered-set sanity check below has nothing
+			// to run against. Reject rather than mark short, in both gate modes — the
+			// opt-out publishes a shortfall the submission makes visible, and this
+			// row would be invisible.
+			return fmt.Errorf("run-result %s: reviewer %s/%s has no coverage row; "+
+				"`atcr benchmark run` writes the two arrays from the same accumulator, so this file is malformed",
+				path, model, persona)
 		}
 		// `runs` and the covered set are appended together by the producer, so they
 		// are equal by construction and a mismatch can only come from editing. Left
@@ -313,9 +324,9 @@ func checkCoverage(w io.Writer, rr benchmark.RunResult, path string, allowPartia
 	}
 	if allowPartial {
 		_, _ = fmt.Fprintf(w,
-			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s. "+
-				"The shortfall is recorded in this run-result only and is not carried into the submission, "+
-				"so a consumer cannot distinguish these rows from fully-covered ones.\n",
+			"warning: publishing %s with partial coverage (--allow-partial-coverage): %s — "+
+				partialCoverageVisibilityAdvisory+
+				", but the rows still are not comparable to fully-covered ones.\n",
 			path, strings.Join(short, "; "))
 		return nil
 	}
@@ -480,4 +491,183 @@ func summarizeMissing(missing []string) string {
 		return strings.Join(safe, ", ")
 	}
 	return fmt.Sprintf("%s and %d more", strings.Join(safe, ", "), len(missing)-maxNamedMissingCases)
+}
+
+// firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
+// the same predicate stripTerminalControlRunes applies to operator-facing
+// diagnostics. In validateScrubbedCaseIDs it is a REJECTION, not a sanitization:
+// these runes must not reach the published document at all. A U+202E flips the
+// rendering of the id and everything after it in the same text node on the board,
+// and a zero-width rune makes two different ids render identically, defeating the
+// documented SET comparison at the human layer even while it holds programmatically.
+func firstNonPrintingRune(s string) (rune, bool) {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
+// validateScrubbedCaseIDs rejects a run-result whose case ids do not survive
+// publication intact. It exists because submission_schema 2 made the case ids a
+// PUBLISHED field while every other check in this file still validates the raw ones.
+//
+// The governing check is that the published id NAMES THE SAME CASE as the raw one:
+// any id the scrub rewrites is rejected. That single check subsumes the two failure
+// shapes below, both of which produce a document the coverage gate approved but
+// never actually examined:
+//
+//   - An id that scrubs to empty publishes as "" — a rewrite to the empty string.
+//     Genuinely producible: the bundled importer builds ids as
+//     <owner>-<repo>-pr-<n>, which a credential rule can consume whole.
+//
+//   - Two distinct raw ids that scrub to the SAME value publish a denominator with
+//     a repeated entry. Under the documented SET comparison of a row's case_ids
+//     against suite_case_ids, a short row then reads as fully covered — defeating
+//     the reason coverage is carried at all. But two DISTINCT raw ids reaching one
+//     published id means at least one was rewritten, so the rewrite check fires
+//     first and this shape has no reachable diagnostic of its own.
+//
+// Ahead of both, a printability ban rejects any id carrying a control (Cc) or
+// format (Cf) rune — the same predicate stripTerminalControlRunes applies to
+// diagnostics, enforced here for the document that ships.
+//
+// What survives below the rewrite check: a literally EMPTY raw id (no rewrite, yet
+// publishes as ""), and a verbatim-repeated id, which is deferred to checkCoverage's
+// sharper "more than once" diagnostic — the raw duplicate is the plainer defect and
+// the actionable one.
+//
+// Row ids are checked only when a denominator EXISTS: a coverage array with no
+// suite_case_ids is already destined for checkCoverage's sharper structural
+// rejection ("records reviewer coverage but no suite_case_ids"), and a per-id scrub
+// diagnostic would pre-empt it with a privacy message about a file whose real
+// defect is its shape.
+//
+// Errors name the PRE-scrub id. The scrubbed value is empty or rewritten by
+// construction, so reporting it would tell the operator what went wrong but never
+// which line of their file to fix.
+func validateScrubbedCaseIDs(rr benchmark.RunResult, path string) error {
+	// Memoized: covered ids are typically a subset of the suite ids, so an
+	// unmemoized closure scrubs the whole case set once per loop — and once per
+	// row — over again. BuildSubmission re-scrubs for publication with its own
+	// memo; this gate's job is only to validate, so one map serves both loops.
+	scrubMemo := make(map[string]string, len(rr.SuiteCaseIDs))
+	scrubCaseID := func(s string) string {
+		v, ok := scrubMemo[s]
+		if !ok {
+			v = scorecard.ScrubPublicString(s)
+			scrubMemo[s] = v
+		}
+		return v
+	}
+
+	for _, id := range rr.SuiteCaseIDs {
+		if r, bad := firstNonPrintingRune(id); bad {
+			return fmt.Errorf("run-result %s lists suite case %q, which contains a non-printing rune (U+%04X); "+
+				"control and format runes are invisible or reorder text in the published document, "+
+				"so rename the case in the suite manifest",
+				path, id, r)
+		}
+		// No TrimSpace: scrubOnce ends with strings.Join(strings.Fields(s), " "),
+		// so the scrubbed value can never carry leading or trailing whitespace.
+		s := scrubCaseID(id)
+		if s != id {
+			return fmt.Errorf("run-result %s lists suite case %q, which the publication scrub rewrites to %q; "+
+				"the published suite_case_ids must name the same cases as the raw file, "+
+				"so rename the case in the suite manifest",
+				path, id, s)
+		}
+		// Reachable only for a literally empty raw id: anything the scrub empties
+		// is a rewrite, caught above, and a verbatim repeat defers to
+		// checkCoverage's "lists suite case %q more than once" — the plainer
+		// defect with the actionable remedy (delete a line, not hunt a privacy
+		// rule).
+		if s == "" {
+			return fmt.Errorf("run-result %s lists suite case %q, which is empty once scrubbed for publication; "+
+				"a case id that scrubs away publishes as \"\" in suite_case_ids, "+
+				"so rename the case in the suite manifest",
+				path, id)
+		}
+	}
+
+	for _, c := range rr.Coverage {
+		if len(rr.SuiteCaseIDs) == 0 {
+			break
+		}
+		for _, id := range c.CaseIDs {
+			if r, bad := firstNonPrintingRune(id); bad {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which contains "+
+					"a non-printing rune (U+%04X); rename the case in the suite manifest",
+					path, id,
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona), r)
+			}
+			s := scrubCaseID(id)
+			if s != id {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which the publication scrub "+
+					"rewrites to %q; rename the case in the suite manifest",
+					path, id,
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona), s)
+			}
+			if s == "" {
+				return fmt.Errorf("run-result %s records covered case %q for %s/%s, which is empty once scrubbed "+
+					"for publication; a case id that scrubs away publishes as \"\" in reviewer_coverage, "+
+					"so rename the case in the suite manifest",
+					path, id,
+					stripTerminalControlRunes(c.Model), stripTerminalControlRunes(c.Persona))
+			}
+		}
+	}
+	return nil
+}
+
+// validateSuiteIdentityForPublication applies validateScrubbedCaseIDs' predicate to
+// the identity that names the WHOLE document.
+//
+// suite/suite_version are published scrubbed (BuildSubmission), and the gate that
+// used to sit here rejected only the value that scrubs to EMPTY. Two arms were
+// missing, and both matter more here than they do for a single case id:
+//
+//   - A value the scrub REWRITES publishes under a different name than the one
+//     anchorSuiteDenominator validated against the manifest — that check compares the
+//     PRE-scrub value. Two genuinely different suites can then publish a
+//     byte-identical (suite, suite_version) and the board merges them into one
+//     comparability bucket. A plain alphanumeric name is enough to trigger it:
+//     "team-suite bench@acme" scrubs to "team-suite".
+//   - The scrub provably does NOT strip control or format runes, so a bidi override
+//     in a suite name reaches the published envelope intact.
+//
+// Printability is checked first — it is the defect a reader cannot see. Empty is
+// checked BEFORE rewrite here, unlike the case-id gate: scrubbing away is also a
+// rewrite, and "publishes as \"\"" is the sharper diagnostic for it. The case-id gate
+// can order them the other way because a case id that scrubs to empty is reported by
+// its rewrite arm with the empty result named in the message anyway.
+func validateSuiteIdentityForPublication(rr benchmark.RunResult, path string) error {
+	for _, f := range []struct{ name, value string }{
+		{"suite", rr.Suite},
+		{"suite_version", rr.SuiteVersion},
+	} {
+		if r, bad := firstNonPrintingRune(f.value); bad {
+			return fmt.Errorf("run-result %s has %s %q, which contains a non-printing rune (U+%04X); "+
+				"control and format runes are invisible or reorder text in the published document, "+
+				"so rename the suite in the manifest",
+				path, f.name, f.value, r)
+		}
+		// No TrimSpace: scrubOnce ends with strings.Join(strings.Fields(s), " "),
+		// so the scrubbed value can never carry leading or trailing whitespace.
+		s := scorecard.ScrubPublicString(f.value)
+		if s == "" {
+			return fmt.Errorf("run-result %s has %s %q, which is empty once scrubbed for publication; "+
+				"a suite identity that scrubs away publishes as \"\" in the envelope",
+				path, f.name, f.value)
+		}
+		if s != f.value {
+			return fmt.Errorf("run-result %s has %s %q, which the publication scrub rewrites to %q; "+
+				"the published envelope must name the same suite the manifest does — "+
+				"anchorSuiteDenominator validates the PRE-scrub value, so two different suites "+
+				"would publish one identity; rename the suite in the manifest",
+				path, f.name, f.value, s)
+		}
+	}
+	return nil
 }

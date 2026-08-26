@@ -467,3 +467,21 @@ func TestExtractSection_RecordAnchorDoesNotAbsorbThePreambleAboveIt(t *testing.T
 		"the excerpt must START at the record: an anchor that is itself a record ends the "+
 			"walk-up on entry and never absorbs the prose above it")
 }
+
+// String exists only to keep a failed assertion legible, so no PASSING run ever
+// reaches it — a wrong arm would mislabel the outcome in the very message a
+// maintainer reads to diagnose the split. Pin every arm, including the fallback.
+func TestMatchOutcome_String(t *testing.T) {
+	cases := []struct {
+		outcome matchOutcome
+		want    string
+	}{
+		{matchNoAnchor, "matchNoAnchor"},
+		{matchAllElided, "matchAllElided"},
+		{matchFound, "matchFound"},
+		{matchOutcome(99), "matchOutcome(?)"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, c.outcome.String(), "String() for outcome %d", int(c.outcome))
+	}
+}

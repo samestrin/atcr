@@ -59,6 +59,24 @@ import (
 //
 // Both are discounted on the same terms regardless: whether a permanent dismissal is
 // auditable must not depend on whether the reviewing model closed its fence.
+//
+// SCOPE — the synthetic-marker guarantee is NOT RETROACTIVE, and cannot be made so
+// from here. Record.StampID (internal/localdebt/record.go) hashes only
+// file\x00line\x00problem; Justification is excluded, so a re-detected finding hashes
+// to the same id, PersistForReconcile seeds seen[id] for every open and suppressing
+// id, and the corrected record is never appended. Every excerpt persisted before the
+// emission existed therefore keeps its marker-free text permanently, and this
+// function still returns true for those — a permanent dismissal whose whole audit
+// trail is quoted example text.
+//
+// That gap is repaired by DATA, not by code: `atcr debt backfill-justifications`
+// replays each stored excerpt from its source review.md (cli/debt_backfill.go). It is
+// a one-off command rather than a hook in the write path on purpose — refreshing on
+// every reconcile would re-append a record whenever a reviewer reworded its narrative,
+// and store growth would stop being bounded by finding count, which is the whole
+// reason PersistForReconcile dedupes. So: this function is correct for records written
+// after the emission landed, and correct for older ones only once the backfill has
+// been run against a tree that still holds their review.md files.
 func isRecordedRationale(justification string) bool {
 	inFence := false
 	for _, line := range strings.Split(justification, "\n") {

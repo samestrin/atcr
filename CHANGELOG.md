@@ -1,3 +1,24 @@
+## [35.16.6.2] - 2026-08-24
+
+### Added
+- **A benchmark submission now carries its own coverage.** The `benchmark export` envelope gained `suite_case_ids` (the suite's case list) and `reviewer_coverage` (the case ids each reviewer row scored), so a run published with `--allow-partial-coverage` is self-describing: a consumer joins a coverage row to its `reviewers[]` row by `(model, persona)` and compares its `case_ids` against `suite_case_ids` as a set. Previously a partial submission was indistinguishable from a full one on the board.
+- Export now rejects a run-result whose case ids do not survive publication intact — an id that scrubs to empty (it would publish as `""`), or two distinct ids that scrub to the same value (the published denominator would repeat an entry, making a short row read as fully covered). This mirrors the check already applied to reviewer identities.
+
+### Changed
+- **`submission_schema` is now `2`.** The constant is shared, so the production `leaderboard --export` envelope stamps the new number too — but its field set is **unchanged from version 1**: no field of `ExportEnvelope` or `PublicRecord` was added, renamed, retyped, or removed. The bump is additive-only on that producer, and `leaderboard --export --help` now says so.
+- The submission's coverage row is a **trimmed** projection: `model`, `persona`, `case_ids`. The run-result's `outcomes` tally and `fallback_cases` count remain run-result-only, keeping the public envelope allowlist-based.
+- `--allow-partial-coverage`'s warning and help text no longer claim the shortfall stays out of the submission — it no longer does. The gate still fails closed by default, because a short row remains *not comparable* to a full one even once it is visible.
+- Case ids in a submission pass the same privacy scrub as `persona`/`model`.
+
+### Fixed
+- `reviewer_coverage[].case_ids` is always an array in a published submission, never `null`, so consumers can decode it without a null branch.
+
+### Notes
+- **Board coordination is an open item.** This repository only ever *writes* submissions — it contains no ingestion or rendering code — so board acceptance of `submission_schema: 2` and tolerance of the two new keys cannot be verified here and must be confirmed by the board maintainers before version 2 submissions are published.
+- **A benchmark submission publishes case ids verbatim**, and case ids routinely encode repository identity (the bundled importer derives them as `<owner>-<repo>-pr-<number>`). Exporting from a private suite discloses those identifiers; `docs/scorecard.md` now documents this and scopes its "organization names are never exported" guarantee to the production envelope.
+
+*Shipped via /execute-epic (epic 35.16.6.2)*
+
 ## [Technical Debt] - 2026-08-23
 
 ### Fixed
