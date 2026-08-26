@@ -18,6 +18,21 @@ import (
 // table is pinned against reclib.Categories() itself — never against a second
 // literal list here, which would be a third copy free to drift from both.
 //
+// WHICH vocabulary is pinned, precisely: reconcile is a separate published module
+// and this repository consumes the RELEASED version pinned in go.mod. CI builds with
+// GOWORK=off (.github/workflows/ci.yml) deliberately, so reclib.Categories() here is
+// the shipped vocabulary, not the in-tree reconcile/category.go. That is the right
+// target for a doc that describes what atcr actually renders into prompts: the table
+// can never claim a member users do not yet have. An in-tree addition is therefore
+// caught at the moment the pin is bumped — and immediately, before the release, for
+// any developer whose go.work builds against the in-tree module. The doc's own
+// wording states this boundary rather than promising more.
+//
+// What is machine-checked is the Category column and its order. The Group cell is
+// checked only for the two routing values below; the prose column is not checked at
+// all — both are hand-maintained restatements of category.go's comments, so treat
+// this guard as covering membership and order, not glosses.
+//
 // It lives in internal/reconcile rather than in the published reconcile module for
 // the same reason justification_record_boundary_test.go does: that module is
 // embedded by external tools and must not assume this repository's file layout, and
@@ -29,9 +44,9 @@ const (
 )
 
 // taxonomySectionLines returns the lines of the doc's taxonomy section, from the
-// heading to the next heading. Both tests read the section rather than the whole
-// document so an unrelated table elsewhere in findings-format.md can never satisfy
-// or break a claim about this one.
+// heading to the next heading of any level, with fenced blocks dropped. Both tests
+// read that section rather than the whole document so no table, example, or appendix
+// elsewhere in findings-format.md can satisfy or break a claim about this one.
 func taxonomySectionLines(t *testing.T) []string {
 	t.Helper()
 
@@ -47,33 +62,44 @@ func taxonomySectionLines(t *testing.T) []string {
 		}
 	}
 	require.NotEqual(t, -1, start,
-		"docs/findings-format.md must carry a %q section — it is the table's declared home", taxonomyHeading)
+		"%s must carry a %q section — it is the taxonomy table's declared home", findingsFormatDoc, taxonomyHeading)
 
-	for i, line := range lines[start:] {
-		if strings.HasPrefix(line, "## ") {
-			return lines[start : start+i]
+	var section []string
+	fenced := false
+	for _, line := range lines[start:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			fenced = !fenced
+			continue
 		}
+		if fenced {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			break
+		}
+		section = append(section, line)
 	}
-	return lines[start:]
+	return section
 }
 
-// taxonomyRowCategory extracts the backticked category from a table row's first
-// cell, reporting false for any line that is not such a row. The header and
-// separator rows carry no backticks and are skipped by that same rule.
-func taxonomyRowCategory(line string) (string, bool) {
+// taxonomyRowCells splits a taxonomy table row into its cells, reporting false for
+// any line that is not such a row. A row is identified by a backticked first cell,
+// which the header and separator rows do not have.
+func taxonomyRowCells(line string) ([]string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if !strings.HasPrefix(trimmed, "|") {
-		return "", false
+		return nil, false
 	}
 	cells := strings.Split(trimmed, "|")
-	if len(cells) < 2 {
-		return "", false
+	if len(cells) < 3 {
+		return nil, false
 	}
 	first := strings.TrimSpace(cells[1])
 	if len(first) < 3 || !strings.HasPrefix(first, "`") || !strings.HasSuffix(first, "`") {
-		return "", false
+		return nil, false
 	}
-	return strings.Trim(first, "`"), true
+	return cells, true
 }
 
 // Adding a category to the constant without adding its row — or removing one, or
@@ -82,34 +108,35 @@ func taxonomyRowCategory(line string) (string, bool) {
 func TestFindingsFormatDoc_TaxonomyTableTracksCategories(t *testing.T) {
 	var got []string
 	for _, line := range taxonomySectionLines(t) {
-		if word, ok := taxonomyRowCategory(line); ok {
-			got = append(got, word)
+		if cells, ok := taxonomyRowCells(line); ok {
+			got = append(got, strings.Trim(strings.TrimSpace(cells[1]), "`"))
 		}
 	}
 
 	assert.Equal(t, reclib.Categories(), got,
-		"the taxonomy table must list exactly the members reconcile.Categories() returns, in the same order — offer order is part of the rendered prompt, not a presentation choice")
+		"the %q table in %s must list exactly the members reconcile.Categories() returns, in the same order — offer order is part of the rendered prompt, not a presentation choice. If the constant is the side that changed, update the table; if the go.mod pin has not been bumped yet, the table describes the released vocabulary and must wait for it",
+		taxonomyHeading, findingsFormatDoc)
 }
 
 // `other` and `out-of-scope` are not defect classes: `other` is the escape hatch
 // that keeps the set closed rather than lossy, and `out-of-scope` is a control token
 // whose findings are annotated instead of promoted. A reader who meets them as
-// ordinary categories will misuse both, so the table must mark them as routing
-// values.
+// ordinary categories will misuse both, so the table's Group cell must mark them as
+// routing values.
 func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 	lines := taxonomySectionLines(t)
 
 	for _, routing := range []string{reclib.CategoryOutOfScope, reclib.CategoryOther} {
 		found := false
 		for _, line := range lines {
-			word, ok := taxonomyRowCategory(line)
-			if !ok || word != routing {
+			cells, ok := taxonomyRowCells(line)
+			if !ok || strings.Trim(strings.TrimSpace(cells[1]), "`") != routing {
 				continue
 			}
 			found = true
-			assert.Contains(t, line, taxonomyRoutingMarker,
-				"the %q row must be marked %q — it routes a finding rather than describing a defect", routing, taxonomyRoutingMarker)
+			assert.Contains(t, cells[2], taxonomyRoutingMarker,
+				"the Group cell of the %q row in %s must say %q — it routes a finding rather than describing a defect", routing, findingsFormatDoc, taxonomyRoutingMarker)
 		}
-		assert.True(t, found, "the taxonomy table must carry a row for the routing value %q", routing)
+		assert.True(t, found, "the %q table in %s must carry a row for the routing value %q", taxonomyHeading, findingsFormatDoc, routing)
 	}
 }

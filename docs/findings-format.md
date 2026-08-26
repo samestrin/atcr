@@ -68,10 +68,13 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 
 `CATEGORY` takes one lowercase word from this closed set. The set is rendered into
 every reviewer prompt through `{{.ScopeRule}}`, and its authority is
-`reconcile.Categories()` (`reconcile/category.go`). The table below is derived from
-that constant, in the same **offer order** the prompt uses, and is pinned to it by
-`internal/reconcile/findings_format_taxonomy_test.go` — adding, removing, or
-reordering a member without updating this table fails the suite.
+`reconcile.Categories()` (`reconcile/category.go`). The table below is
+hand-maintained in that constant's **offer order** — the order the prompt uses — and
+pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`, which compares
+it against the released `reconcile` module this repository pins in `go.mod`. So the
+table always describes the vocabulary atcr actually ships: adding, removing, or
+reordering a member without updating it fails the suite, at the latest when that pin
+is bumped.
 
 The last two rows are **routing values**, not defect classes. `out-of-scope` is a
 reserved control token: its findings are annotated rather than promoted — kept in the
