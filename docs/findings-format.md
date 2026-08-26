@@ -115,7 +115,6 @@ what is wrong with the code.
 | `out-of-scope` | **Routing value** | Outside the reviewed change — a pre-existing issue in files mode, out-of-range in diff/blocks mode. Annotated, never promoted. |
 | `other` | **Routing value** | A real finding that genuinely fits no member above. Keeps the set closed rather than lossy. |
 
-
 ## AXI TOON encoding (`atcr report --format axi`)
 
 `atcr report --format axi` re-encodes these same reconciled findings as a token-dense [TOON](https://toonformat.dev/) tabular array for agent consumption. It is a **re-encoding of this contract, not a competing schema** — the columns map to the reconciled 9-column stream field-for-field:
