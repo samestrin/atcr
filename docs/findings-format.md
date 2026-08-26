@@ -72,9 +72,9 @@ every reviewer prompt through `{{.ScopeRule}}`, and its authority is
 `reconcile/merge.go`). The table below is
 hand-maintained in that constant's **offer order** — the order the prompt uses — and
 pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`. Which
-vocabulary it pins against depends on the build: CI and a fresh clone build with
-`GOWORK=off`, so the test compares the table against the released `reconcile` module
-pinned in `go.mod`; a developer building through this tree's `go.work` instead
+vocabulary it pins against depends on the build: CI sets `GOWORK=off` and a fresh
+clone has no `go.work`, so both compare the table against the released `reconcile`
+module pinned in `go.mod`; a developer building through a local `go.work` instead
 resolves the in-tree module, so a local run tracks the unreleased vocabulary.
 Either way, adding, removing, or reordering a member without updating the table
 fails the suite — immediately on a `go.work` build, and for CI at the latest when
