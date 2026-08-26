@@ -52,8 +52,17 @@ func taxonomySectionLines(t *testing.T) []string {
 
 	b, err := os.ReadFile(findingsFormatDoc)
 	require.NoError(t, err)
-	lines := strings.Split(string(b), "\n")
 
+	section := taxonomySection(strings.Split(string(b), "\n"))
+	require.NotNil(t, section,
+		"%s must carry a %q section — it is the taxonomy table's declared home", findingsFormatDoc, taxonomyHeading)
+	return section
+}
+
+// taxonomySection is the pure half of taxonomySectionLines: it locates the
+// taxonomy heading and collects the section's lines, dropping fenced blocks, so
+// probe documents can be fed to it directly.
+func taxonomySection(lines []string) []string {
 	start := -1
 	for i, line := range lines {
 		if strings.TrimSpace(line) == taxonomyHeading {
@@ -61,8 +70,9 @@ func taxonomySectionLines(t *testing.T) []string {
 			break
 		}
 	}
-	require.NotEqual(t, -1, start,
-		"%s must carry a %q section — it is the taxonomy table's declared home", findingsFormatDoc, taxonomyHeading)
+	if start == -1 {
+		return nil
+	}
 
 	var section []string
 	fenced := false
@@ -79,6 +89,9 @@ func taxonomySectionLines(t *testing.T) []string {
 			break
 		}
 		section = append(section, line)
+	}
+	if section == nil {
+		section = []string{}
 	}
 	return section
 }
@@ -100,6 +113,37 @@ func taxonomyRowCells(line string) ([]string, bool) {
 		return nil, false
 	}
 	return cells, true
+}
+
+// A setext heading (text followed by a line of = or -) does not start with #, and
+// a ~~~ fence is not a backtick fence — both are valid CommonMark that an ordinary
+// future edit could introduce, and both must not let rows outside the taxonomy
+// table leak into the section.
+func TestTaxonomySection_SetextHeadingAndTildeFence(t *testing.T) {
+	doc := []string{
+		"## CATEGORY vocabulary",
+		"",
+		"| Category | Group | What it labels |",
+		"|----------|-------|----------------|",
+		"| `correctness` | Defect class | Wrong result. |",
+		"",
+		"~~~",
+		"| `tildebogus` | Defect class | inside a tilde fence |",
+		"~~~",
+		"",
+		"Next Section",
+		"------------",
+		"| `setextbogus` | Defect class | from a table under a setext heading |",
+	}
+
+	var rows []string
+	for _, line := range taxonomySection(doc) {
+		if cells, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		}
+	}
+	assert.Equal(t, []string{"correctness"}, rows,
+		"a setext heading must terminate the section and a ~~~ fence must hide its rows")
 }
 
 // Adding a category to the constant without adding its row — or removing one, or
