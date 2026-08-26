@@ -165,6 +165,34 @@ func TestTaxonomySection_SetextHeadingAndTildeFence(t *testing.T) {
 		"a setext heading must terminate the section and a ~~~ fence must hide its rows")
 }
 
+// A fenced example that quotes the taxonomy heading — findings-format.md is a
+// document ABOUT a text format and dense with fenced examples — must not be
+// mistaken for the section itself: the guard would then parse the quoted copy
+// and could pass while the real table drifted.
+func TestTaxonomySection_FencedHeadingIsNotTheSection(t *testing.T) {
+	doc := []string{
+		"```",
+		"## CATEGORY vocabulary",
+		"| `fencedbogus` | Defect class | a quoted example, not the real table |",
+		"```",
+		"",
+		"## CATEGORY vocabulary",
+		"",
+		"| Category | Group | What it labels |",
+		"|----------|-------|----------------|",
+		"| `correctness` | Defect class | Wrong result. |",
+	}
+
+	var rows []string
+	for _, line := range taxonomySection(doc) {
+		if cells, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		}
+	}
+	assert.Equal(t, []string{"correctness"}, rows,
+		"a heading inside a fenced code block must not be taken for the taxonomy section")
+}
+
 // Adding a category to the constant without adding its row — or removing one, or
 // reordering the offer order the prompt renders — must fail here rather than leave
 // the doc quietly describing a vocabulary that no longer exists.
