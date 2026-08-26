@@ -123,29 +123,37 @@ func isSetextUnderline(trimmed string) bool {
 
 // taxonomyRowCells splits a taxonomy table row into its cells, reporting false for
 // any line that is not such a row. A row is identified by a backticked first cell,
-// which the header and separator rows do not have.
-func taxonomyRowCells(line string) ([]string, bool) {
+// which the header and separator rows do not have. The normalized category name
+// (backticks stripped) is returned alongside the cells so no caller re-derives it.
+func taxonomyRowCells(line string) (cells []string, name string, ok bool) {
 	trimmed := strings.TrimSpace(line)
 	if !strings.HasPrefix(trimmed, "|") {
-		return nil, false
+		return nil, "", false
 	}
-	cells := strings.Split(trimmed, "|")
+	cells = strings.Split(trimmed, "|")
 	if len(cells) < 3 {
-		return nil, false
+		return nil, "", false
 	}
 	first := strings.TrimSpace(cells[1])
 	if len(first) < 3 || !strings.HasPrefix(first, "`") || !strings.HasSuffix(first, "`") {
-		return nil, false
+		return nil, "", false
 	}
-	return cells, true
+	return cells, strings.Trim(first, "`"), true
+}
+
+// taxonomyRow is one parsed taxonomy table row: its cells and the normalized
+// category name from the first cell.
+type taxonomyRow struct {
+	cells []string
+	name  string
 }
 
 // taxonomyTableRows returns the parsed rows of the taxonomy table within the
 // section: collection starts at the table's header line and stops at the first
 // blank line after it, so a second table under the same heading can neither
 // contribute rows nor truncate the section.
-func taxonomyTableRows(section []string) [][]string {
-	var rows [][]string
+func taxonomyTableRows(section []string) []taxonomyRow {
+	var rows []taxonomyRow
 	inTable := false
 	for _, line := range section {
 		trimmed := strings.TrimSpace(line)
@@ -158,8 +166,8 @@ func taxonomyTableRows(section []string) [][]string {
 		if trimmed == "" {
 			break
 		}
-		if cells, ok := taxonomyRowCells(line); ok {
-			rows = append(rows, cells)
+		if cells, name, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, taxonomyRow{cells: cells, name: name})
 		}
 	}
 	return rows
@@ -195,8 +203,8 @@ func TestTaxonomyTableRows_SecondTableAndProseLineIgnored(t *testing.T) {
 	}
 
 	var names []string
-	for _, cells := range taxonomyTableRows(section) {
-		names = append(names, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+	for _, row := range taxonomyTableRows(section) {
+		names = append(names, row.name)
 	}
 	assert.Equal(t, []string{"correctness"}, names,
 		"row parsing must be anchored to the taxonomy table's header, not to any pipe line in the section")
@@ -225,8 +233,8 @@ func TestTaxonomySection_SetextHeadingAndTildeFence(t *testing.T) {
 
 	var rows []string
 	for _, line := range taxonomySection(doc) {
-		if cells, ok := taxonomyRowCells(line); ok {
-			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		if _, name, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, name)
 		}
 	}
 	assert.Equal(t, []string{"correctness"}, rows,
@@ -253,8 +261,8 @@ func TestTaxonomySection_FencedHeadingIsNotTheSection(t *testing.T) {
 
 	var rows []string
 	for _, line := range taxonomySection(doc) {
-		if cells, ok := taxonomyRowCells(line); ok {
-			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		if _, name, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, name)
 		}
 	}
 	assert.Equal(t, []string{"correctness"}, rows,
@@ -280,8 +288,8 @@ func TestTaxonomySection_SubHeadingDoesNotTruncate(t *testing.T) {
 
 	var rows []string
 	for _, line := range taxonomySection(doc) {
-		if cells, ok := taxonomyRowCells(line); ok {
-			rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+		if _, name, ok := taxonomyRowCells(line); ok {
+			rows = append(rows, name)
 		}
 	}
 	assert.Equal(t, []string{"correctness", "aftersub"}, rows,
@@ -297,7 +305,7 @@ func TestTaxonomyRowCells_RejectsMalformedLines(t *testing.T) {
 		"| `unclosed | Defect class | missing closing backtick |",
 		"not a table line at all",
 	} {
-		_, ok := taxonomyRowCells(line)
+		_, _, ok := taxonomyRowCells(line)
 		assert.False(t, ok, "taxonomyRowCells must reject %q", line)
 	}
 }
@@ -307,8 +315,8 @@ func TestTaxonomyRowCells_RejectsMalformedLines(t *testing.T) {
 // the doc quietly describing a vocabulary that no longer exists.
 func TestFindingsFormatDoc_TaxonomyTableTracksCategories(t *testing.T) {
 	var got []string
-	for _, cells := range taxonomyTableRows(taxonomySectionLines(t)) {
-		got = append(got, strings.Trim(strings.TrimSpace(cells[1]), "`"))
+	for _, row := range taxonomyTableRows(taxonomySectionLines(t)) {
+		got = append(got, row.name)
 	}
 
 	assert.Equal(t, reclib.Categories(), got,
@@ -326,12 +334,12 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 
 	for _, routing := range []string{reclib.CategoryOutOfScope, reclib.CategoryOther} {
 		found := false
-		for _, cells := range rows {
-			if strings.Trim(strings.TrimSpace(cells[1]), "`") != routing {
+		for _, row := range rows {
+			if row.name != routing {
 				continue
 			}
 			found = true
-			assert.Contains(t, cells[2], taxonomyRoutingMarker,
+			assert.Contains(t, row.cells[2], taxonomyRoutingMarker,
 				"the Group cell of the %q row in %s must say %q — it routes a finding rather than describing a defect", routing, findingsFormatDoc, taxonomyRoutingMarker)
 		}
 		assert.True(t, found, "the %q table in %s must carry a row for the routing value %q", taxonomyHeading, findingsFormatDoc, routing)
