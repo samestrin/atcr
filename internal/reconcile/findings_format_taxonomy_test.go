@@ -64,8 +64,14 @@ func taxonomySectionLines(t *testing.T) []string {
 // probe documents can be fed to it directly.
 func taxonomySection(lines []string) []string {
 	start := -1
+	searchFenced := false
 	for i, line := range lines {
-		if strings.TrimSpace(line) == taxonomyHeading {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			searchFenced = !searchFenced
+			continue
+		}
+		if !searchFenced && trimmed == taxonomyHeading {
 			start = i + 1
 			break
 		}
