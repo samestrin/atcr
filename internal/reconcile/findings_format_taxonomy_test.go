@@ -78,14 +78,14 @@ func taxonomySection(lines []string) []string {
 	fenced := false
 	for _, line := range lines[start:] {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			fenced = !fenced
 			continue
 		}
 		if fenced {
 			continue
 		}
-		if strings.HasPrefix(trimmed, "#") {
+		if strings.HasPrefix(trimmed, "#") || isSetextUnderline(trimmed) {
 			break
 		}
 		section = append(section, line)
@@ -94,6 +94,25 @@ func taxonomySection(lines []string) []string {
 		section = []string{}
 	}
 	return section
+}
+
+// isSetextUnderline reports whether a trimmed line is a setext heading underline
+// (a run of only = or only -), which marks the preceding text as a heading —
+// and therefore the end of the taxonomy section — without starting with #.
+func isSetextUnderline(trimmed string) bool {
+	if trimmed == "" {
+		return false
+	}
+	c := trimmed[0]
+	if c != '=' && c != '-' {
+		return false
+	}
+	for i := 1; i < len(trimmed); i++ {
+		if trimmed[i] != c {
+			return false
+		}
+	}
+	return true
 }
 
 // taxonomyRowCells splits a taxonomy table row into its cells, reporting false for
