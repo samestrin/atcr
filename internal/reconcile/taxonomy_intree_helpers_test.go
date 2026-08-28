@@ -218,5 +218,25 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 			}
 		}
 	}
+
+	// The reverse direction: a slice member that reaches no block never gets its
+	// Group cell checked, because this function is the block authority and it
+	// reads category.go alone while inTreeCategories walks the whole directory.
+	// out-of-scope is exempt — it is a routing value declared outside
+	// category.go (merge.go) by design, and its Group cell is pinned separately.
+	inBlock := make(map[string]bool, len(out))
+	for _, b := range out {
+		for _, value := range b {
+			inBlock[value] = true
+		}
+	}
+	for _, value := range vocabulary {
+		if value == "out-of-scope" {
+			continue
+		}
+		if !inBlock[value] {
+			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it in a block there or remove it from the slice", value, dir)
+		}
+	}
 	return out, nil
 }
