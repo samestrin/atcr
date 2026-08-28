@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,15 +19,21 @@ import (
 // table is pinned against reclib.Categories() itself — never against a second
 // literal list here, which would be a third copy free to drift from both.
 //
-// WHICH vocabulary is pinned, precisely: reconcile is a separate published module
-// and this repository consumes the RELEASED version pinned in go.mod. CI builds with
-// GOWORK=off (.github/workflows/ci.yml) deliberately, so reclib.Categories() here is
-// the shipped vocabulary, not the in-tree reconcile/category.go. That is the right
-// target for a doc that describes what atcr actually renders into prompts: the table
-// can never claim a member users do not yet have. An in-tree addition is therefore
-// caught at the moment the pin is bumped — and immediately, before the release, for
-// any developer whose go.work builds against the in-tree module. The doc's own
-// wording states this boundary rather than promising more.
+// WHICH vocabulary is pinned, precisely: the IN-TREE reconcile/category.go, read
+// from source by inTreeCategories rather than through reclib.Categories(). That call
+// is ambient — reconcile is a separate published module, so it resolves to the
+// in-tree module under a local go.work and to the go.mod pin under GOWORK=off, which
+// is what CI sets (.github/workflows/ci.yml). Pinning the table against it made this
+// guard unsatisfiable during the release window: adding a member in-tree demanded a
+// 33-row table locally and a 32-row table in CI, and no table content satisfied both,
+// so the developer had either a red local suite or a red CI until the module was
+// tagged and the pin bumped. Reading the source by path resolves identically in both
+// environments, which also means the PR that adds the member fails its OWN CI run
+// instead of the next unrelated PR that happens to bump the pin.
+//
+// The released pin is still checked, but against the in-tree list and never against
+// the doc — see TestReconcileModule_ReleasedVocabularyMatchesInTree below, which
+// reports a pending release rather than failing the table.
 //
 // What is machine-checked is the Category column and its order. The Group cell is
 // checked only for the two routing values below; the prose column is not checked at
@@ -41,6 +48,7 @@ const (
 	findingsFormatDoc     = "../../docs/findings-format.md"
 	taxonomyHeading       = "## CATEGORY vocabulary"
 	taxonomyRoutingMarker = "Routing value"
+	inTreeReconcileDir    = "../../reconcile"
 )
 
 // taxonomySectionLines returns the lines of the doc's taxonomy section, from the
@@ -319,9 +327,51 @@ func TestFindingsFormatDoc_TaxonomyTableTracksCategories(t *testing.T) {
 		got = append(got, row.name)
 	}
 
-	assert.Equal(t, reclib.Categories(), got,
-		"the %q table in %s must list exactly the members reconcile.Categories() returns, in the same order — offer order is part of the rendered prompt, not a presentation choice. If the constant is the side that changed, update the table; if the go.mod pin has not been bumped yet, the table describes the released vocabulary and must wait for it",
-		taxonomyHeading, findingsFormatDoc)
+	assert.Equal(t, inTreeVocabulary(t), got,
+		"the %q table in %s must list exactly the members %s declares, in the same order — offer order is part of the rendered prompt, not a presentation choice. If the constant is the side that changed, update the table",
+		taxonomyHeading, findingsFormatDoc, inTreeReconcileDir)
+}
+
+// inTreeVocabulary reads the vocabulary the reconcile module declares in THIS
+// tree. Resolving it by path rather than through reclib keeps the doc guard's
+// answer identical under go.work and under GOWORK=off.
+func inTreeVocabulary(t *testing.T) []string {
+	t.Helper()
+
+	got, err := inTreeCategories(inTreeReconcileDir)
+	require.NoError(t, err, "the taxonomy guard cannot run without the in-tree vocabulary at %s", inTreeReconcileDir)
+	require.NotEmpty(t, got, "the in-tree vocabulary must not be empty")
+	return got
+}
+
+// The wiring is only worth anything if the path resolves to the real module, so
+// pin two members the vocabulary cannot lose: the routing values, which the
+// table below asserts against independently.
+func TestInTreeVocabulary_ResolvesTheRealReconcileModule(t *testing.T) {
+	got := inTreeVocabulary(t)
+
+	assert.Contains(t, got, reclib.CategoryOutOfScope)
+	assert.Contains(t, got, reclib.CategoryOther)
+}
+
+// The doc tracks the in-tree vocabulary, so a member added here is documented
+// immediately — but atcr renders the RELEASED module into its prompts, and until
+// the module is tagged and the go.mod pin bumped, users are offered the older
+// list. That gap is a real, expected, temporary state, not a defect in the doc,
+// so this reports it and skips instead of failing: a failure here would put the
+// deadlock back one step from where it was.
+func TestReconcileModule_ReleasedVocabularyMatchesInTree(t *testing.T) {
+	inTree := inTreeVocabulary(t)
+	released := reclib.Categories()
+
+	if !slices.Equal(released, inTree) {
+		t.Skipf("the in-tree reconcile vocabulary is ahead of the released module pinned in go.mod — "+
+			"release reconcile and bump the pin.\n  in-tree  (%d): %s\n  released (%d): %s",
+			len(inTree), strings.Join(inTree, ", "), len(released), strings.Join(released, ", "))
+	}
+
+	assert.Equal(t, inTree, released,
+		"released and in-tree vocabularies agree, so this must hold — a mismatch reaching here means the skip above stopped detecting the release window")
 }
 
 // `other` and `out-of-scope` are not defect classes: `other` is the escape hatch

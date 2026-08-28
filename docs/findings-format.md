@@ -71,14 +71,17 @@ every reviewer prompt through `{{.ScopeRule}}`, and its authority is
 `reconcile.Categories()` (`reconcile/category.go`; `out-of-scope` is declared in
 `reconcile/merge.go`). The table below is
 hand-maintained in that constant's **offer order** — the order the prompt uses — and
-pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`. Which
-vocabulary it pins against depends on the build: CI sets `GOWORK=off` and a fresh
-clone has no `go.work`, so both compare the table against the released `reconcile`
-module pinned in `go.mod`; a developer building through a local `go.work` instead
-resolves the in-tree module, so a local run tracks the unreleased vocabulary.
-Either way, adding, removing, or reordering a member without updating the table
-fails the suite — immediately on a `go.work` build, and for CI at the latest when
-that pin is bumped.
+pinned to it by `internal/reconcile/findings_format_taxonomy_test.go`. That guard
+reads `reconcile/category.go` **from source in this tree**, so it resolves the same
+vocabulary whether the build uses a local `go.work` or `GOWORK=off` (what CI sets):
+adding, removing, or reordering a member without updating the table fails the suite
+immediately, in the same pull request that made the change.
+
+`reconcile` is a separate published module, so the vocabulary atcr actually renders
+into prompts is the one in the `go.mod` pin, which can briefly lag this tree. That
+gap is reported rather than enforced — the release-lag guard in the same file skips
+with `release reconcile and bump the pin` — because failing on it would only move
+the release deadlock one step, not remove it.
 
 The last two rows are **routing values**, not defect classes. `out-of-scope` is a
 reserved control token: its findings are annotated rather than promoted — kept in the
