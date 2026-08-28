@@ -336,6 +336,48 @@ var categories = []string{
 		"an unparenthesized const carries its comment on GenDecl.Doc (vs.Doc == nil) and must be skipped, not folded into the last block")
 }
 
+// The reverse direction of the sibling cross-check: a Category* constant that
+// reaches the categories slice but no comment-marked block is a fault in the
+// BLOCKS, not the doc table — inTreeCategories walks the whole directory while
+// inTreeCategoryBlocks reads category.go alone, so a constant declared in any
+// other file (merge.go's CategoryOutOfScope is the precedent) enters the
+// vocabulary, makes the doc guard demand a row for it, yet never reaches a
+// block, leaving its Group cell unpinned. out-of-scope is exempt: it is a
+// routing value declared outside category.go by design, and its Group cell is
+// pinned separately.
+func TestInTreeCategoryBlocks_SliceMemberAbsentFromBlocksIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryStray,
+	CategoryOutOfScope,
+	CategoryOther,
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+
+const CategoryOutOfScope = "out-of-scope"
+const CategoryStray = "stray"
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "a slice member that appears in no comment-marked block must be an error, not a silently unpinned Group cell")
+	assert.Contains(t, err.Error(), "stray",
+		"the error must name the member that no block declares")
+	assert.NotContains(t, err.Error(), "out-of-scope",
+		"out-of-scope is exempt: it is a routing value declared outside category.go by design")
+}
+
 // Same contract as its sibling: a directory that marks no block must be an
 // error, never an empty partition. An empty partition would make the Group
 // column guard vacuously pass instead of reporting that nothing was read.
