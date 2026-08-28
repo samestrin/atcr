@@ -16,8 +16,9 @@ import (
 // couple it to the constant it documents. The drift this test exists to prevent is
 // the one that already happened once: the doc described CATEGORY as a free-text tag
 // long after reconcile had closed the vocabulary, and no test noticed. So the doc's
-// table is pinned against reclib.Categories() itself — never against a second
-// literal list here, which would be a third copy free to drift from both.
+// table is pinned against the vocabulary the reconcile module itself declares —
+// never against a second literal list here, which would be a third copy free to
+// drift from both.
 //
 // WHICH vocabulary is pinned, precisely: the IN-TREE reconcile/category.go, read
 // from source by inTreeCategories rather than through reclib.Categories(). That call
