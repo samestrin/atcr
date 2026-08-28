@@ -73,3 +73,17 @@ const (
 	assert.Equal(t, [][]string{{"correctness", "logic"}, {"docs"}, {"other"}}, got,
 		"each comment-marked run of constants is one block, in declared order")
 }
+
+// Same contract as its sibling: a directory that marks no block must be an
+// error, never an empty partition. An empty partition would make the Group
+// column guard vacuously pass instead of reporting that nothing was read.
+func TestInTreeCategoryBlocks_NoMarkedBlocksIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const CategoryLoose = "loose"
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	assert.Error(t, err, "constants outside any comment-marked block must not read as a partition")
+}
