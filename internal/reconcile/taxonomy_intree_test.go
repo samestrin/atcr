@@ -276,6 +276,37 @@ const (
 		"how merge.go declares out-of-scope (parenthesized or not) must not move the partition")
 }
 
+// The sibling above proves nothing about the NAME exclusion on its own: merge.go
+// is not parsed, so its fixture cannot reach the guard. Declare out-of-scope
+// inside a comment-marked block of category.go itself — the one place the reader
+// does look — so the `ident.Name == "CategoryOutOfScope"` skip is the only thing
+// keeping it out of the partition.
+func TestInTreeCategoryBlocks_OutOfScopeInsideAMarkedBlockIsStillExcluded(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOutOfScope = "out-of-scope"
+	CategoryOther      = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOutOfScope,
+	CategoryOther,
+}
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
+		"out-of-scope is excluded by NAME, so declaring it inside a comment-marked block of category.go must still keep it out of the partition")
+}
+
 // A constant that reaches a comment-marked block but never the categories slice
 // is a fault in the SLICE, not in the doc table — yet the two doc guards read
 // different authorities (the slice vs the const blocks), so without a cross-check
