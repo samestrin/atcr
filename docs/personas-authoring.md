@@ -115,7 +115,13 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > **The Rules line is not the whole CATEGORY contract.** "One lowercase word" is
 > the *shape*; the permitted words are a closed vocabulary that reaches the model
 > through `{{.ScopeRule}}` in the `## Scope` section above, whose authority is
-> `reconcile.Categories()`. Do **not** restate or narrow that list inside your own
+> `reconcile.Categories()`. The rendered member list lives in
+> [CATEGORY vocabulary](findings-format.md#category-vocabulary) — note that this
+> table tracks the *in-tree* `reconcile` source, so it can briefly lead the
+> released module `{{.ScopeRule}}` actually renders during a release window (the
+> boundary stated in the "separate published module" paragraph of
+> [CATEGORY vocabulary](findings-format.md#category-vocabulary)). Do **not**
+> restate or narrow that list inside your own
 > prompt — a persona-local list is exactly the drift the injection exists to
 > prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
 > as written and let `{{.ScopeRule}}` carry the enumeration.
