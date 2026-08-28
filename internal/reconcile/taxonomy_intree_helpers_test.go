@@ -154,7 +154,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.CONST {
+		if !ok || gen.Tok != token.CONST || !gen.Lparen.IsValid() {
 			continue
 		}
 		for _, spec := range gen.Specs {
