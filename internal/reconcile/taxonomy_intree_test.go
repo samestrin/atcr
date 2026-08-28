@@ -74,6 +74,32 @@ const (
 		"each comment-marked run of constants is one block, in declared order")
 }
 
+// A constant that reaches a comment-marked block but never the categories slice
+// is a fault in the SLICE, not in the doc table — yet the two doc guards read
+// different authorities (the slice vs the const blocks), so without a cross-check
+// both blame the table and no table content satisfies them. The partition reader
+// must fail here, naming the slice.
+func TestInTreeCategoryBlocks_BlockMemberAbsentFromSliceIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+	CategoryForgot      = "forgot"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "a block member absent from the categories slice must be an error, not a doc-table mismatch")
+	assert.Contains(t, err.Error(), "absent from the categories slice",
+		"the error must name the categories slice as the side at fault")
+}
+
 // Same contract as its sibling: a directory that marks no block must be an
 // error, never an empty partition. An empty partition would make the Group
 // column guard vacuously pass instead of reporting that nothing was read.
