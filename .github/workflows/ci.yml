@@ -90,6 +90,28 @@ jobs:
             go test -v -race -timeout 20m -coverprofile=coverage.out ./...
           fi
 
+      - name: Surface reconcile release-lag skip
+        # TestReconcileModule_ReleasedVocabularyMatchesInTree reports a pending
+        # reconcile release with t.Skip, and a skip renders as a green `ok` in
+        # the suite run above — a skip and a pass are indistinguishable in
+        # `go test` output (the hazard the sandbox proof job below documents).
+        # Re-run just that test verbosely and annotate when the skip fires, so a
+        # lagging go.mod pin is visible on the run instead of silent. The lag is
+        # an expected release-window state, so this warns rather than fails.
+        # If the test is renamed or moved, the -run pattern matches nothing and
+        # `go test` still exits 0 ("no tests to run") — fail the step on that
+        # instead of silently disarming the annotation.
+        run: |
+          out=$(go test ./internal/reconcile/ -run TestReconcileModule_ReleasedVocabularyMatchesInTree -v -count=1 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          if echo "$out" | grep -q "no tests to run"; then
+            echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed or moved?"
+            exit 1
+          fi
+          if echo "$out" | grep -q "in-tree reconcile vocabulary is ahead"; then
+            echo "::warning::the in-tree reconcile vocabulary is ahead of the released module pinned in go.mod — release reconcile and bump the pin"
+          fi
+
       - name: Upload coverage profile
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: github.event_name == 'push'
