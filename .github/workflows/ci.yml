@@ -98,9 +98,16 @@ jobs:
         # Re-run just that test verbosely and annotate when the skip fires, so a
         # lagging go.mod pin is visible on the run instead of silent. The lag is
         # an expected release-window state, so this warns rather than fails.
+        # If the test is renamed or moved, the -run pattern matches nothing and
+        # `go test` still exits 0 ("no tests to run") — fail the step on that
+        # instead of silently disarming the annotation.
         run: |
           out=$(go test ./internal/reconcile/ -run TestReconcileModule_ReleasedVocabularyMatchesInTree -v -count=1 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
+          if echo "$out" | grep -q "no tests to run"; then
+            echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed or moved?"
+            exit 1
+          fi
           if echo "$out" | grep -q "in-tree reconcile vocabulary is ahead"; then
             echo "::warning::the in-tree reconcile vocabulary is ahead of the released module pinned in go.mod — release reconcile and bump the pin"
           fi
