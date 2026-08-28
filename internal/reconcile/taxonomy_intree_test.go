@@ -81,6 +81,33 @@ var categories = []string{
 		"each comment-marked run of constants is one block, in declared order")
 }
 
+// A Category* const that opens a parenthesized const block BEFORE any leading
+// comment belongs to no block. The len(blocks) == 0 guard is what keeps it out
+// of the partition; the sibling NoMarkedBlocksIsAnError fixture cannot pin it
+// because its non-parenthesized const is rejected earlier. This fixture's loose
+// const IS parenthesized, so only the guard stands between it and the partition.
+func TestInTreeCategoryBlocks_LeadingSpecWithoutCommentIsNotABlock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	CategoryLoose = "loose"
+
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+}
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness"}}, got,
+		"a constant declared before any leading comment belongs to no block and must be skipped")
+}
+
 // The partition restates category.go's block structure, so a cosmetic refactor
 // of ANOTHER file — wrapping merge.go's CategoryOutOfScope in `const ( ... )`,
 // the style merge.go already uses for Sev* and Conf* — must not move it.
