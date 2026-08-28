@@ -90,6 +90,14 @@ a severity gate. `other` is the escape hatch that makes the set closed rather th
 lossy: a real finding that genuinely fits no member above. Neither says anything about
 what is wrong with the code.
 
+**What the guard checks in this table:** the `Category` column and its order, and the
+partition the `Group` column describes — categories declared in one comment-marked
+block of `reconcile/category.go` must share a `Group` cell, and separate blocks must
+not. The `Group` wording and the whole **`What it labels` column are hand-maintained
+prose, not machine-checked**: pinning either would mean exporting the glosses from a
+module external tools embed. Treat them as a reader's aid that can lag
+`category.go`'s comments, and fix them by hand when the constant's wording changes.
+
 | Category | Group | What it labels |
 |----------|-------|----------------|
 | `correctness` | Defect class | The code produces a wrong result: off-by-one, inverted condition, unreachable branch. |
