@@ -125,3 +125,82 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 	}
 	return value, true
 }
+
+// inTreeCategoryBlocks returns the vocabulary at dir partitioned into the blocks
+// its const declaration marks with a leading comment ("Defect classes …",
+// "Contract and interface …", …), in declared order.
+//
+// It backs the doc table's Group column. Pinning that column's TEXT would mean
+// exporting the glosses from the reconcile module — new public API on a module
+// external tools embed — so what is pinned instead is the partition: which
+// categories share a Group cell, and where the boundaries fall. A category moved
+// between blocks, or a block split or merged, then fails the guard, while the
+// wording of either side stays free.
+//
+// Only constants declared at dir are partitioned. CategoryOutOfScope is declared
+// in merge.go outside any commented block, so it is absent here by construction;
+// its Group cell is pinned separately as a routing value.
+func inTreeCategoryBlocks(dir string) ([][]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	fset := token.NewFileSet()
+	var blocks [][]string
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, err)
+		}
+
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST || !gen.Lparen.IsValid() {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				// A leading comment opens a new block; a spec without one
+				// continues the block it follows. A constant declared before any
+				// comment belongs to no block and is skipped rather than
+				// silently opening one.
+				if vs.Doc != nil {
+					blocks = append(blocks, nil)
+				}
+				if len(blocks) == 0 {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if !strings.HasPrefix(ident.Name, "Category") || i >= len(vs.Values) {
+						continue
+					}
+					if value, ok := stringLiteral(vs.Values[i]); ok {
+						blocks[len(blocks)-1] = append(blocks[len(blocks)-1], value)
+					}
+				}
+			}
+		}
+	}
+
+	// Drop blocks a comment opened that hold no category (a note between
+	// groups), so an empty run never reaches a caller as a real block.
+	out := make([][]string, 0, len(blocks))
+	for _, b := range blocks {
+		if len(b) > 0 {
+			out = append(out, b)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no comment-marked Category* blocks declared in %s", dir)
+	}
+	return out, nil
+}

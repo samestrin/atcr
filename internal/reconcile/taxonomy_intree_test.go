@@ -48,3 +48,28 @@ func TestInTreeCategories_EmptyDirectoryIsAnError(t *testing.T) {
 	_, err := inTreeCategories(t.TempDir())
 	assert.Error(t, err, "a directory with no categories slice must not read as an empty vocabulary")
 }
+
+// The partition must follow the comment-marked blocks, in declared order, and
+// must not invent a block for a constant that carries no leading comment.
+func TestInTreeCategoryBlocks_FollowsCommentMarkedBlocks(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+	CategoryLogic       = "logic"
+
+	// Cross-cutting concerns.
+	CategoryDocs = "docs"
+
+	// Control values.
+	CategoryOther = "other"
+)
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness", "logic"}, {"docs"}, {"other"}}, got,
+		"each comment-marked run of constants is one block, in declared order")
+}

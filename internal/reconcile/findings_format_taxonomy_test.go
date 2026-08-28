@@ -36,10 +36,13 @@ import (
 // the doc — see TestReconcileModule_ReleasedVocabularyMatchesInTree below, which
 // reports a pending release rather than failing the table.
 //
-// What is machine-checked is the Category column and its order. The Group cell is
-// checked only for the two routing values below; the prose column is not checked at
-// all — both are hand-maintained restatements of category.go's comments, so treat
-// this guard as covering membership and order, not glosses.
+// What is machine-checked is the Category column, its order, and the PARTITION the
+// Group column describes: which categories share a Group cell and where the
+// boundaries fall are pinned against the comment-marked blocks of category.go's
+// const declaration. The Group cell's WORDING is not pinned, and the "What it
+// labels" prose is not checked at all — pinning either would mean exporting the
+// glosses from a module external tools embed. Treat this guard as covering
+// membership, order, and grouping structure, not the glosses themselves.
 //
 // It lives in internal/reconcile rather than in the published reconcile module for
 // the same reason justification_record_boundary_test.go does: that module is
@@ -403,5 +406,51 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 		isRouting := row.name == reclib.CategoryOutOfScope || row.name == reclib.CategoryOther
 		assert.Equal(t, isRouting, strings.Contains(row.cells[2], taxonomyRoutingMarker),
 			"the Group cell of the %q row in %s must contain %q if and only if the category is a routing value", row.name, findingsFormatDoc, taxonomyRoutingMarker)
+	}
+}
+
+// The Group column is the second hand-maintained restatement of category.go, and
+// a reworded or misfiled gloss there is invisible to the membership assertion
+// above. What is pinnable without exporting the glosses is the SHAPE the column
+// describes: categories declared in one commented block of the const declaration
+// must share a Group cell, and separate blocks must not share one. Moving
+// `naming` out of "Structure and design", or merging two blocks in the doc that
+// the constant keeps apart, fails here.
+//
+// out-of-scope is absent from the partition by construction — it is declared in
+// merge.go outside any block — and its Group cell is pinned as a routing value by
+// the test below instead.
+func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
+	group := map[string]string{}
+	for _, row := range taxonomyTableRows(taxonomySectionLines(t)) {
+		require.GreaterOrEqual(t, len(row.cells), 3, "row %q must have a Group cell", row.name)
+		group[row.name] = strings.TrimSpace(row.cells[2])
+	}
+
+	blocks, err := inTreeCategoryBlocks(inTreeReconcileDir)
+	require.NoError(t, err)
+	require.Greater(t, len(blocks), 1, "a single block would make this guard vacuous")
+
+	seen := map[string]int{} // Group cell -> index of the block that claimed it
+	for i, block := range blocks {
+		var want string
+		for j, category := range block {
+			got, ok := group[category]
+			require.True(t, ok, "%s declares %q but the %q table in %s has no row for it",
+				inTreeReconcileDir, category, taxonomyHeading, findingsFormatDoc)
+			if j == 0 {
+				want = got
+				if claimed, dup := seen[want]; dup {
+					assert.Failf(t, "two declared blocks share a Group cell",
+						"block %d and block %d both use Group cell %q in %s — separate blocks in %s/category.go must be distinguishable in the table",
+						claimed, i, want, findingsFormatDoc, inTreeReconcileDir)
+				}
+				seen[want] = i
+				continue
+			}
+			assert.Equal(t, want, got,
+				"%q and %q are declared in the same block of %s/category.go, so their Group cells in %s must match",
+				block[0], category, inTreeReconcileDir, findingsFormatDoc)
+		}
 	}
 }
