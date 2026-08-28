@@ -175,10 +175,11 @@ var categories = []string{
 	assert.Error(t, err, "an element that is neither an identifier nor a string literal must be an error")
 }
 
-// A Category* constant whose value is not a string literal (a rune, an integer)
-
 // The partition must follow the comment-marked blocks, in declared order, and
 // must not invent a block for a constant that carries no leading comment.
+// A comment that opens a run of non-Category* constants (a note between groups)
+// opens an EMPTY block, which the drop filter must remove: the partition stays
+// exactly three blocks, never four.
 func TestInTreeCategoryBlocks_FollowsCommentMarkedBlocks(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
@@ -193,6 +194,9 @@ const (
 
 	// Control values.
 	CategoryOther = "other"
+
+	// A note between groups, introducing no category.
+	BlockNote = "note"
 )
 
 var categories = []string{
@@ -206,7 +210,7 @@ var categories = []string{
 	got, err := inTreeCategoryBlocks(dir)
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"correctness", "logic"}, {"docs"}, {"other"}}, got,
-		"each comment-marked run of constants is one block, in declared order")
+		"each comment-marked run of constants is one block, in declared order — a comment-opened run with no Category* member drops to nothing")
 }
 
 // A Category* const that opens a parenthesized const block BEFORE any leading
