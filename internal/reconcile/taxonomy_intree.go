@@ -137,55 +137,50 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 // between blocks, or a block split or merged, then fails the guard, while the
 // wording of either side stays free.
 //
-// Only constants declared at dir are partitioned. CategoryOutOfScope is declared
-// in merge.go outside any commented block, so it is absent here by construction;
-// its Group cell is pinned separately as a routing value.
+// Only category.go is read: the table's Group column restates that one file's
+// block structure, and walking the whole directory let a cosmetic refactor of
+// merge.go (parenthesizing its const, the style it already uses for Sev*/Conf*)
+// move the partition and fail the guard with a message naming category.go.
+// CategoryOutOfScope is excluded by NAME, wherever and however it is declared —
+// it is a routing value whose Group cell is pinned separately.
 func inTreeCategoryBlocks(dir string) ([][]string, error) {
-	entries, err := os.ReadDir(dir)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(dir, "category.go"), nil, parser.ParseComments)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", dir, err)
+		return nil, fmt.Errorf("parse category.go: %w", err)
 	}
 
-	fset := token.NewFileSet()
 	var blocks [][]string
 
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
 			continue
 		}
-		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", name, err)
-		}
-
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.CONST || !gen.Lparen.IsValid() {
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
 				continue
 			}
-			for _, spec := range gen.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
+			// A leading comment opens a new block; a spec without one
+			// continues the block it follows. A constant declared before any
+			// comment belongs to no block and is skipped rather than
+			// silently opening one.
+			if vs.Doc != nil {
+				blocks = append(blocks, nil)
+			}
+			if len(blocks) == 0 {
+				continue
+			}
+			for i, ident := range vs.Names {
+				if !strings.HasPrefix(ident.Name, "Category") || i >= len(vs.Values) {
 					continue
 				}
-				// A leading comment opens a new block; a spec without one
-				// continues the block it follows. A constant declared before any
-				// comment belongs to no block and is skipped rather than
-				// silently opening one.
-				if vs.Doc != nil {
-					blocks = append(blocks, nil)
-				}
-				if len(blocks) == 0 {
+				if ident.Name == "CategoryOutOfScope" {
 					continue
 				}
-				for i, ident := range vs.Names {
-					if !strings.HasPrefix(ident.Name, "Category") || i >= len(vs.Values) {
-						continue
-					}
-					if value, ok := stringLiteral(vs.Values[i]); ok {
-						blocks[len(blocks)-1] = append(blocks[len(blocks)-1], value)
-					}
+				if value, ok := stringLiteral(vs.Values[i]); ok {
+					blocks[len(blocks)-1] = append(blocks[len(blocks)-1], value)
 				}
 			}
 		}
