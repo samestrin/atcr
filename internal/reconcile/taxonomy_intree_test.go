@@ -390,4 +390,6 @@ const CategoryLoose = "loose"
 
 	_, err := inTreeCategoryBlocks(dir)
 	assert.Error(t, err, "constants outside any comment-marked block must not read as a partition")
+	assert.Contains(t, err.Error(), "no comment-marked Category* blocks",
+		"the fixture declares no categories slice, so the cross-check's \"no non-empty categories slice\" error also satisfies a bare assert.Error — pin the intended error specifically")
 }
