@@ -64,6 +64,12 @@ Thumbs.db
 # launch (Sprint 33.2). The blanket rule below subsumes the former granular rules.
 .planning/
 
+# Local Claude Code project instructions (kept locally, never committed — same
+# rationale as .planning/: this file is the local session's guidance, not part
+# of atcr's public git history).
+CLAUDE.md
+.agents/
+
 # atcr workspace runtime outputs (diff cache + reviewer outputs, never committed).
 # Committed here (not just .git/info/exclude) so the rule travels to every clone
 # and to CI, where the diff cache (up to cache_max_bytes) and review JSON would
