@@ -76,6 +76,107 @@ func TestInTreeCategories_EmptyDirectoryIsAnError(t *testing.T) {
 	assert.Error(t, err, "a directory with no categories slice must not read as an empty vocabulary")
 }
 
+// A directory that cannot be read at all must be an error, for the same reason:
+// an unreadable source tree must never read as an empty vocabulary.
+func TestInTreeCategories_UnreadableDirectoryIsAnError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not make a directory unreadable")
+	}
+	dir := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o000))
+	defer func() { _ = os.Chmod(dir, 0o755) }() // restore so t.TempDir cleanup can remove it
+
+	_, err := inTreeCategories(dir)
+	assert.Error(t, err, "an unreadable directory must be an error, not an empty vocabulary")
+	assert.Contains(t, err.Error(), "read "+dir,
+		"the error must report the read failure, not a downstream symptom like a missing slice")
+}
+
+// A syntactically invalid .go file must be an error: silently skipping it would
+// drop whatever vocabulary it declared and report the doc table as wrong.
+func TestInTreeCategories_InvalidGoFileIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte("package reconcile\n\nconst (\n"), 0o644))
+
+	_, err := inTreeCategories(dir)
+	assert.Error(t, err, "a file that does not parse must be an error, not a silently skipped file")
+	assert.Contains(t, err.Error(), "parse",
+		"the error must report the parse failure, not a downstream symptom like a missing slice")
+}
+
+// A categories slice that references an identifier no Category* constant
+// declares must be an error naming the identifier: resolving it to an empty
+// string would admit a blank member to the vocabulary.
+func TestInTreeCategories_UndeclaredIdentifierIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryMissing,
+}
+`), 0o644))
+
+	_, err := inTreeCategories(dir)
+	require.Error(t, err, "a slice element no constant declares must be an error, not an empty member")
+	assert.Contains(t, err.Error(), "CategoryMissing",
+		"the error must name the undeclared identifier")
+}
+
+// A bare string literal in the categories slice is a legitimate member — it is
+// how a value can be listed without a named constant — and must be carried into
+// the vocabulary as-is.
+func TestInTreeCategories_BareStringLiteralElementIsAMember(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	"bare-literal",
+}
+`), 0o644))
+
+	got, err := inTreeCategories(dir)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"correctness", "bare-literal"}, got,
+		"a bare string literal element must be carried into the vocabulary in its declared position")
+}
+
+// A slice element that is neither a Category* identifier nor a string literal
+// (a call, an arithmetic expression) cannot be resolved to a value and must be
+// an error rather than a silently dropped or invented member.
+func TestInTreeCategories_UnresolvableElementIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	len("computed"),
+}
+`), 0o644))
+
+	_, err := inTreeCategories(dir)
+	assert.Error(t, err, "an element that is neither an identifier nor a string literal must be an error")
+}
+
+// A Category* constant whose value is not a string literal (a rune, an integer)
+
 // The partition must follow the comment-marked blocks, in declared order, and
 // must not invent a block for a constant that carries no leading comment.
 func TestInTreeCategoryBlocks_FollowsCommentMarkedBlocks(t *testing.T) {
