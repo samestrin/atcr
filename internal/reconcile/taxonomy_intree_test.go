@@ -81,6 +81,42 @@ var categories = []string{
 		"each comment-marked run of constants is one block, in declared order")
 }
 
+// The partition restates category.go's block structure, so a cosmetic refactor
+// of ANOTHER file — wrapping merge.go's CategoryOutOfScope in `const ( ... )`,
+// the style merge.go already uses for Sev* and Conf* — must not move it.
+// out-of-scope is excluded by name, not by the syntax of its declaration.
+func TestInTreeCategoryBlocks_MergeGoDeclarationStyleDoesNotMoveThePartition(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOutOfScope,
+	CategoryOther,
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+
+const (
+	// CategoryOutOfScope tags a finding as outside the reviewed change.
+	CategoryOutOfScope = "out-of-scope"
+)
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
+		"how merge.go declares out-of-scope (parenthesized or not) must not move the partition")
+}
+
 // A constant that reaches a comment-marked block but never the categories slice
 // is a fault in the SLICE, not in the doc table — yet the two doc guards read
 // different authorities (the slice vs the const blocks), so without a cross-check
