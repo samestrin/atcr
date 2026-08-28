@@ -302,6 +302,40 @@ var categories = []string{
 		"the error must name the categories slice as the side at fault")
 }
 
+// An UNPARENTHESIZED `const CategoryX = "..."` carries its leading comment on
+// GenDecl.Doc, not on the ValueSpec — so vs.Doc is nil, no new block opens, and
+// without an Lparen guard the constant is folded into the LAST parenthesized
+// block. That fold re-creates the doc-guard deadlock this guard exists to
+// remove: the folded member fails the slice cross-check, or worse, moves the
+// partition a doc row is pinned against. Unparenthesized declarations are not
+// block-bearing syntax; they must be skipped entirely.
+func TestInTreeCategoryBlocks_UnparenthesizedConstIsNotABlock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+// Late additions.
+const CategoryLate = "late"
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOther,
+}
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
+		"an unparenthesized const carries its comment on GenDecl.Doc (vs.Doc == nil) and must be skipped, not folded into the last block")
+}
+
 // Same contract as its sibling: a directory that marks no block must be an
 // error, never an empty partition. An empty partition would make the Group
 // column guard vacuously pass instead of reporting that nothing was read.
