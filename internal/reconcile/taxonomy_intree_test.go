@@ -307,6 +307,43 @@ var categories = []string{
 		"out-of-scope is excluded by NAME, so declaring it inside a comment-marked block of category.go must still keep it out of the partition")
 }
 
+// The partition restates category.go's block structure and NOTHING else. Walking
+// the whole directory is what let another file's declarations move it, so a
+// comment-marked block in a sibling file must stay out — even when every value
+// it declares is already a legitimate member of the vocabulary. The alias fixture
+// below is exactly that case: restoring the directory walk gives the partition a
+// third block that category.go never declared.
+func TestInTreeCategoryBlocks_MarkedBlockInAnotherFileIsNotPartOfThePartition(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOther,
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "extra.go"), []byte(`package reconcile
+
+const (
+	// Deprecated aliases, kept for callers that still import them.
+	CategoryCorrectnessAlias = "correctness"
+)
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
+		"only category.go declares the partition — a comment-marked block in extra.go must not add one")
+}
+
 // A constant that reaches a comment-marked block but never the categories slice
 // is a fault in the SLICE, not in the doc table — yet the two doc guards read
 // different authorities (the slice vs the const blocks), so without a cross-check
