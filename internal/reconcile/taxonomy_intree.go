@@ -202,5 +202,26 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no comment-marked Category* blocks declared in %s", dir)
 	}
+
+	// Cross-check the partition against the categories slice. The two doc guards
+	// read different authorities — inTreeCategories resolves the slice, this
+	// function walks the const blocks — so a constant that reaches a block but
+	// never the slice leaves them mutually unsatisfiable, both blaming the doc
+	// table. Fail here instead, naming the slice as the side at fault.
+	vocabulary, err := inTreeCategories(dir)
+	if err != nil {
+		return nil, err
+	}
+	inSlice := make(map[string]bool, len(vocabulary))
+	for _, value := range vocabulary {
+		inSlice[value] = true
+	}
+	for _, b := range out {
+		for _, value := range b {
+			if !inSlice[value] {
+				return nil, fmt.Errorf("%q is declared in a comment-marked block of %s but absent from the categories slice", value, dir)
+			}
+		}
+	}
 	return out, nil
 }

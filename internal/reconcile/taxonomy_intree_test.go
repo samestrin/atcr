@@ -66,6 +66,13 @@ const (
 	// Control values.
 	CategoryOther = "other"
 )
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryLogic,
+	CategoryDocs,
+	CategoryOther,
+}
 `), 0o644))
 
 	got, err := inTreeCategoryBlocks(dir)
