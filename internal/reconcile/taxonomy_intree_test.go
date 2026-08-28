@@ -41,6 +41,33 @@ const CategoryOutOfScope = "out-of-scope"
 		"the reader must return the declared slice order, including a member that has not been released yet")
 }
 
+// A Category* constant whose value is not a string literal (a rune, an integer)
+// is not a vocabulary member. The Kind check in stringLiteral is what excludes
+// it: without that check a rune literal unquotes successfully and is admitted
+// silently. Referencing it from the slice must therefore be an error naming the
+// constant — not a vocabulary that quietly gained a member.
+func TestInTreeCategories_RejectsNonStringCategoryValues(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+	CategoryRune        = 'a'
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryRune,
+}
+`), 0o644))
+
+	_, err := inTreeCategories(dir)
+	require.Error(t, err, "a rune literal is not a string value: CategoryRune must not be admitted to the vocabulary")
+	assert.Contains(t, err.Error(), "CategoryRune",
+		"the error must name the constant whose value is not a string literal")
+}
+
 // A directory that declares no vocabulary must be an error, never an empty
 // slice: an empty result compared against a doc table would report the table as
 // wrong when the real fault is that the source was not read.
