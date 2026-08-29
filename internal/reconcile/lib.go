@@ -85,7 +85,10 @@ func ConfidenceFor(reviewerCount int) string { return reclib.ConfidenceFor(revie
 type Result struct {
 	Findings  []Merged
 	Ambiguous []AmbiguousCluster
-	Summary   Summary
+	// Unresolved holds findings routed out of the primary stream by Tier 4.
+	// STUB — see GREEN.
+	Unresolved []JSONFinding
+	Summary    Summary
 	// jsonFindings caches the path-validated findings.json records the ATCR I/O
 	// layer stamps after reconcile (Phase 2 Clarification Q1): the library Merged
 	// no longer carries PathValid/PathWarning/PathSuggestion, so path validation

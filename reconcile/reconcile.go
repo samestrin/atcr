@@ -94,6 +94,19 @@ type Summary struct {
 	// "strict with nothing to filter". Observability only — the dropped findings
 	// live in the sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
+	// UnresolvedFiltered is the number of findings the epic-35.16.6.5 Tier 4
+	// content check routed OUT of the primary stream into the unresolved sidecar:
+	// their cited file does not exist, no filename-level tier (5.4 Tiers 1-3)
+	// produced a candidate, and the constructs their prose names are declared
+	// nowhere in the tracked tree.
+	//
+	// Like ConsensusFiltered this is observability only — the routed findings are
+	// preserved on disk, never deleted — and, like SkippedSources, it is NOT
+	// produced by the library pipeline: content resolution needs a checked-out
+	// tree and a parser, so the ATCR I/O layer computes it and stamps it here
+	// after Reconcile returns. It is therefore always 0 for a pure in-memory
+	// embedder.
+	UnresolvedFiltered int `json:"unresolved_filtered"`
 	// ConsensusLevel records the level the filter actually ran at, which
 	// ConsensusFiltered alone cannot convey (0 is ambiguous between "off" and
 	// "strict with nothing to filter"). Always one of the canonical levels: an

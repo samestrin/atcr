@@ -22,6 +22,8 @@ const (
 	ReportMD      = "report.md"
 	SummaryJSON   = "summary.json"
 	AmbiguousJSON = "ambiguous.json"
+	// UnresolvedJSON is the Tier 4 content-resolution sidecar (Epic 35.16.6.5).
+	UnresolvedJSON = "unresolved.json"
 	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
 	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
 	DisagreementsJSON = "disagreements.json"
