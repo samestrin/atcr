@@ -680,3 +680,60 @@ func TestRunLeaderboardExport_SemanticContract(t *testing.T) {
 	_, eerr := Export(nil, FilterOpts{Since: "365d"}, fixedExportNow)
 	assert.ErrorIs(t, eerr, ErrNoExportRecords)
 }
+
+// TestExport_UsesOneDenominatorEra pins that a public submission never averages
+// the two FindingsRaised definitions together.
+//
+// Epic 35.16.6.5 put the Tier-4-routed findings into the denominator. Export
+// applies no consensus_level or era filter at all — unlike TrustPriors — so a
+// submission spanning the change reported a corroboration_rate and a
+// findings_raised_avg computed from two incompatible counts, under a
+// submission_schema integer that did not move. The same prefer-current rule
+// TrustPriors uses applies here: when the set holds any current-era record, only
+// those count; when it holds none, the older records are used unchanged so an
+// existing store still exports.
+func TestExport_UsesOneDenominatorEra(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		// Pre-epic: phantoms were not in the denominator, so a flattering 1.00.
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-01T00:00:00Z-old", Reviewer: "bruce", Model: "m",
+			FindingsRaised: 1, FindingsCorroborated: 1,
+		},
+		// Current era: the same reviewer with its phantoms counted.
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-02T00:00:00Z-new", Reviewer: "bruce", Model: "m",
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4, FindingsCorroborated: 1,
+		},
+	}
+
+	out, err := Export(recs, FilterOpts{}, base.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	env := parseEnvelope(t, out)
+	require.Len(t, env.Reviewers, 1)
+	assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 0.0001,
+		"only the current-era record may contribute; blending the two gives 0.4")
+	assert.InDelta(t, 4.0, env.Reviewers[0].FindingsRaisedAvg, 0.0001,
+		"findings_raised_avg carries the same exposure and must use the same set")
+}
+
+// TestExport_PreUnresolvedOnlyStoreStillExports pins the other half: a store that
+// predates the change entirely still produces a submission, unchanged. Dropping
+// those records outright would silently empty an existing submitter's export.
+func TestExport_PreUnresolvedOnlyStoreStillExports(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	recs := []Record{{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID: "2026-07-01T00:00:00Z-old", Reviewer: "bruce", Model: "m",
+		FindingsRaised: 2, FindingsCorroborated: 1,
+	}}
+
+	out, err := Export(recs, FilterOpts{}, base.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	env := parseEnvelope(t, out)
+	require.Len(t, env.Reviewers, 1)
+	assert.InDelta(t, 0.5, env.Reviewers[0].CorroborationRate, 0.0001)
+}
