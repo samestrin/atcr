@@ -528,3 +528,64 @@ func TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable(t *testing.T) {
 	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
 		"zero eligible files is an unavailable index, and must say so in the metrics")
 }
+
+// TestSymbolIndex_UnparsedLanguageStillFeedsPresent pins the polyglot hole:
+// eligiblePaths used to drop every tracked file whose extension has no parser
+// language BEFORE the index was built, so Ruby, Swift, Scala, Elixir, SQL,
+// Terraform, YAML and Markdown were structurally invisible to `present` while
+// `complete` stayed true. A finding whose construct genuinely lives in one of
+// those files, but whose citation names a non-existent parser-language path, then
+// reached tier4NoMatch and was routed out of findings.json as fabricated.
+//
+// Every tracked file now feeds the raw-token scan; only byName keeps the parser
+// filter.
+func TestSymbolIndex_UnparsedLanguageStillFeedsPresent(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "config.rb"),
+		[]byte("def parse_config(path)\n  YAML.load_file(path)\nend\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"lib/config.rb", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"parse_config"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a construct declared in an unparseable language is real code — never a phantom")
+
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"the tree is still searchable: a genuinely absent anchor is still a no-match")
+
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome, "byName keeps the parser filter and still localizes")
+	assert.Equal(t, "internal/net/pool.go", got)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "the .rb file is read, never parsed")
+}
+
+// TestSymbolIndex_BinaryFileSkippedWithoutHole pins the bound on the scan above.
+// Tracked binaries (this repo carries ~31MB of embedded .wasm parser plugins)
+// must not be token-scanned: the cost is real and their byte noise would inflate
+// `present` with tokens that no reviewer ever named. Skipping one is NOT a hole
+// either — no source construct is declared in a binary — so `complete` stays
+// true and the no-match verdict remains available.
+func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "plugins"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plugins", "go.wasm"),
+		append([]byte("\x00asm\x01\x00\x00\x00"), []byte("embeddedBinaryToken\x00\x00")...), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"plugins/go.wasm", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"embeddedBinaryToken"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"a binary's byte noise must not enter `present`, and skipping it must not withhold the verdict")
+
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome)
+	assert.Equal(t, "internal/net/pool.go", got)
+}
