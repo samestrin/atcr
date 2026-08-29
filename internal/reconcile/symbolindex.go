@@ -124,6 +124,11 @@ type symbolIndex struct {
 	// finding in the primary stream (the safe direction); the no-match test, which
 	// routes a finding OUT, reads this narrower one.
 	presentInSource map[string]struct{}
+	// parserLoadFailed records that at least one language's parser could not be
+	// obtained during the build, so every file of that language lost its
+	// DECLARATIONS. Paired with an empty byName it means the resolution half of
+	// Tier 4 is dead — see state().
+	parserLoadFailed bool
 	// present holds every identifier-shaped token seen in the RAW SOURCE TEXT of
 	// the indexed files, not just the ones the parser named. It exists solely to
 	// make the no-match verdict safe.
@@ -294,15 +299,29 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 // (validateFindingPaths) only asks once it has consulted the resolver, so the
 // lazy contract is preserved: asking for the state never triggers a build.
 //
-// The three answers map 1:1 onto the reasons a lookup can fail to reach a
-// verdict, which is exactly what makes them worth reporting separately: a nil
-// index means the build could not run at all (cap, no parser, nothing readable,
-// no contained file), an incomplete one means a region of the tree went
-// unsearched so every no-match was withheld, and anything else means the check
-// was fully in force.
+// The answers map 1:1 onto the reasons a lookup can fail to reach a verdict,
+// which is exactly what makes them worth reporting separately: a nil index means
+// the build could not run at all (cap, nothing readable, no contained file), an
+// incomplete one means a region of the tree went unsearched so every no-match was
+// withheld, and anything else means the check was fully in force.
+//
+// A parser load failure that left byName EMPTY is reported unavailable too. The
+// files were read, so readFiles > 0 and `complete` stayed true and the index was
+// built — but locate() can never resolve against an empty declaration set, so
+// Tier 4's resolution half is dead while tier4UnavailableMetric has already
+// counted the run as degraded. Reporting "applied" there had report.md calling
+// healthy exactly the run the metric called broken.
+//
+// The condition is a CONJUNCTION on purpose. An empty byName alone is the
+// ordinary state of a tree with no parser-language file (Terraform, Ruby, SQL):
+// the raw-token scan searched it in full and the no-match verdict is available,
+// so that run is applied, not unavailable. And a parser failure alone, in a tree
+// where other languages parsed fine, leaves a genuinely working index.
 func (lz *lazySymbolIndex) state() string {
 	switch {
 	case lz == nil || lz.idx == nil:
+		return reclib.UnresolvedStateUnavailable
+	case lz.idx.parserLoadFailed && len(lz.idx.byName) == 0:
 		return reclib.UnresolvedStateUnavailable
 	case !lz.idx.complete:
 		return reclib.UnresolvedStateIncomplete
@@ -468,7 +487,13 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		sort.Strings(files) // stable output regardless of map iteration order
 		byName[name] = files
 	}
-	lz.idx = &symbolIndex{byName: byName, present: present, presentInSource: presentInSource, complete: complete}
+	lz.idx = &symbolIndex{
+		byName:           byName,
+		present:          present,
+		presentInSource:  presentInSource,
+		parserLoadFailed: len(parserFailed) > 0,
+		complete:         complete,
+	}
 }
 
 // collectSourceIdentifiers adds every identifier-shaped token in src to out.
