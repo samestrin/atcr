@@ -20,12 +20,22 @@ import (
 // and shared across every finding, never rebuilt per-finding. A nil index
 // (root is not a git repo, or git is unavailable) degrades to existence-only
 // validation with no suggestion.
-func validateFindingPaths(ctx context.Context, findings []JSONFinding, root string) {
+//
+// STUB seam — the Tier 4 wiring lands in GREEN.
+type tier4Resolver interface {
+	resolve(anchors []string) (string, tier4Outcome)
+}
+
+var newTier4Index = func(root string, paths []string) tier4Resolver {
+	return newLazySymbolIndex(root, paths)
+}
+
+func validateFindingPaths(ctx context.Context, findings []JSONFinding, root string) []int {
 	if root == "" {
-		return
+		return nil
 	}
 	if len(findings) == 0 {
-		return
+		return nil
 	}
 	idx := stream.BuildFileIndex(ctx, root)
 	for i := range findings {
@@ -38,4 +48,5 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		findings[i].PathWarning = sf.PathWarning
 		findings[i].PathSuggestion = sf.PathSuggestion
 	}
+	return nil
 }
