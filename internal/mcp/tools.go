@@ -205,7 +205,15 @@ type ReconcileResult struct {
 	// discoverable from the tool result without opening the sidecar by hand
 	// (Epic 35.16.6.5 TD). omitempty: an empty sidecar is the common case.
 	Unresolved []reconcile.JSONFinding `json:"unresolved,omitempty"`
-	Findings   []reconcile.JSONFinding `json:"findings,omitempty"`
+	// UnresolvedReadError says why the sidecar could not be read, mirroring
+	// DebtSkippedReason below. Without it a read failure is indistinguishable
+	// from an empty sidecar: `Unresolved` is omitempty, so a nil slice erases
+	// the key, and the warning goes only to the server logger a stdio client
+	// never sees. A client comparing a nonzero UnresolvedFiltered against a
+	// missing `unresolved` key needs to be told which of the two it is looking
+	// at. omitempty: the common case is a read that worked.
+	UnresolvedReadError string                  `json:"unresolved_read_error,omitempty"`
+	Findings            []reconcile.JSONFinding `json:"findings,omitempty"`
 	// DebtPersisted reports whether the local TD store write ran against a
 	// resolved root (individual findings may still be dropped by path
 	// validation), and DebtSkippedReason says why it did not run at all (TD

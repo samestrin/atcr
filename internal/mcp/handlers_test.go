@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -1241,4 +1243,49 @@ func TestReconcileHandler_UnresolvedSidecarSurfaced(t *testing.T) {
 	rec, ok := routed[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "internal/ghost/phantom.go", rec["file"])
+}
+
+// TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced pins the read-error
+// branch of the sidecar read. Without a transmitted reason a failed read is
+// indistinguishable from an empty sidecar — `unresolved` is omitempty, so a nil
+// slice erases the key, and the Warn goes only to the server logger a stdio
+// client never sees. A client seeing unresolved_filtered > 0 and no `unresolved`
+// must be told the read failed.
+//
+// The reader is swapped rather than the file corrupted: the handler writes the
+// sidecar immediately before reading it, so any on-disk fixture that breaks the
+// read also breaks the write. Do not run this in parallel — it mutates a
+// package-level seam.
+func TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		return nil, errors.New("parsing unresolved.json: unexpected end of JSON input")
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-08-29_unresolved_readerr"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"],
+		"the reconcile itself must still succeed — the sidecar read is best-effort")
+	_, present := out["unresolved"]
+	require.False(t, present, "a failed read yields no records, so the key is omitted")
+	assert.Contains(t, out["unresolved_read_error"], "unexpected end of JSON input",
+		"the reason must ride in the result, not only in the server log")
 }
