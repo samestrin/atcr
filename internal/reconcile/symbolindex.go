@@ -625,7 +625,7 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	head := make([]byte, binarySniffBytes)
 	n, err := io.ReadFull(f, head)
