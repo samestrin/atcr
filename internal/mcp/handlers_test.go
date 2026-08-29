@@ -999,6 +999,40 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 			"the result field must match the run's summary.json count")
 	})
 
+	// The count alone cannot tell "the check ran and routed nothing" from "the
+	// check never ran", and an agent reading a bare 0 will read it as the former.
+	// The state must reach the agentic path exactly as it reaches the CLI.
+	t.Run("unresolved_state accompanies the count", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		id := consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+
+		out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{})
+
+		state, ok := out["unresolved_state"]
+		require.True(t, ok,
+			"the key must be present even when empty: an absent key is indistinguishable from a check that ran, which is the ambiguity this field removes")
+		assert.Contains(t,
+			[]any{
+				"", // content resolution did not run: no store root resolved
+				reclib.UnresolvedStateApplied,
+				reclib.UnresolvedStateDisabled,
+				reclib.UnresolvedStateUnavailable,
+				reclib.UnresolvedStateIncomplete,
+			},
+			state, "the state must be a canonical value or empty, never a raw echo")
+
+		data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "summary.json"))
+		require.NoError(t, err)
+		var s struct {
+			UnresolvedState string `json:"unresolved_state"`
+		}
+		require.NoError(t, json.Unmarshal(data, &s))
+		assert.Equal(t, s.UnresolvedState, state,
+			"the result field must match the run's summary.json state")
+	})
+
 	// A case-variant is rejected by the input schema's enum — JSON Schema enums
 	// are exact-match, so the rejection fires before the handler's
 	// case-insensitive normalization can run. The MCP surface is stricter than

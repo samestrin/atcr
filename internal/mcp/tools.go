@@ -183,6 +183,23 @@ type ReconcileResult struct {
 	// the same reason as DebtPersisted — 0 is the answer worth transmitting,
 	// because the field exists to explain a smaller TotalFindings.
 	UnresolvedFiltered int `json:"unresolved_filtered"`
+	// UnresolvedState is what the Tier 4 check actually DID, which the count above
+	// cannot convey: a 0 is produced by several conditions and most of them mean
+	// the check never adjudicated anything. The agentic path needs this exactly as
+	// much as the CLI does — more so, since an agent reading a bare 0 will read it
+	// as "no fabricated findings" when it may mean "never looked".
+	//
+	// NOT omitempty, for the same reason as UnresolvedFiltered above: the zero
+	// value is the answer worth transmitting. An EMPTY state means content
+	// resolution did not run at all for this reconcile, which is the ordinary
+	// case here — the MCP server operates on a review-artifact dir and passes an
+	// empty Root unless a store root resolves (see the Root comment in
+	// reconcileHandler). Omitting the key would leave a client unable to tell
+	// that from a check that ran; it is precisely the ambiguity this field
+	// exists to remove. The published Summary keeps omitempty instead, because
+	// its contract is byte-identical output for an embedder that never resolves
+	// content — a different surface with a different, equally explicit rule.
+	UnresolvedState string `json:"unresolved_state"`
 	// Unresolved carries the routed records themselves — the same records
 	// reconciled/unresolved.json persists — so a wrongly-routed finding is
 	// discoverable from the tool result without opening the sidecar by hand

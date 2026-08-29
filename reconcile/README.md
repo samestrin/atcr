@@ -195,6 +195,18 @@ result safely.
   resolution needs a checked-out tree and a parser, so the ATCR I/O layer
   stamps it after `Reconcile` returns, and it is always `0` for a pure
   in-memory embedder.
+- **Unresolved state — `Summary.UnresolvedState`.** The count above is not
+  self-interpreting: a `0` is produced by at least six conditions and five of
+  them mean Tier 4 never adjudicated anything (no tracked file index, the AST
+  opt-out, an eligible set over the index cap, a tracked tree with nothing
+  readable, an incomplete index that withheld every no-match verdict). Only the
+  sixth — the check ran and routed nothing — is a healthy run. `UnresolvedState`
+  (`unresolved_state` in `summary.json`) is the discriminator, exactly as
+  `ConsensusLevel` is for `ConsensusFiltered`, and is one of `applied`,
+  `disabled`, `unavailable`, `incomplete`, or empty. Empty means "not recorded":
+  like `UnresolvedFiltered` it is stamped by the ATCR I/O layer, so a pure
+  in-memory embedder always sees empty. It renders in `report.md`
+  unconditionally.
 - **Consensus level — `Options.Consensus`.** The corroboration bar above is
   configurable: `ConsensusStrict` (the default, and what `""` means) drops every
   singleton below `HIGH`, exactly as described; `ConsensusLenient` raises the
@@ -237,11 +249,12 @@ of ATCR's internal `atcr-findings/v1` wire format; evolution within v1 is
 additive-only and unknown producer fields are ignored on decode. ATCR-internal
 path-validation fields are not part of the schema.
 
-Compatibility note: `summary.unresolved_filtered` is an additive field added by
-epic 35.16.6.5. The adapter's own decoder ignores unknown fields, but an
-embedder decoding `summary.json` into its own struct with
-`DisallowUnknownFields` must add the field (or upgrade) before consuming output
-from ATCR versions that emit it.
+Compatibility note: `summary.unresolved_filtered` and `summary.unresolved_state`
+are additive fields added by epic 35.16.6.5. The adapter's own decoder ignores
+unknown fields, but an embedder decoding `summary.json` into its own struct with
+`DisallowUnknownFields` must add them (or upgrade) before consuming output from
+ATCR versions that emit them. `unresolved_state` is `omitempty`, so a run that
+did not resolve content still decodes byte-identically to before.
 
 ```go
 sources, err := json.Decode(inputBytes)        // []reconcile.Source

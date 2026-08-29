@@ -105,6 +105,9 @@ than ingesting atcr's pre-collapsed blob.
 - `unresolved_filtered` — count of findings routed OUT of the primary stream
   into `unresolved.json` (see "Findings excluded from the primary stream"
   below). `0` on a run where every finding cited resolvable code.
+- `unresolved_state` — what the content check actually did: `applied`,
+  `disabled`, `unavailable`, `incomplete`, or absent. Read it BEFORE reading
+  `unresolved_filtered`; see below for why a bare `0` cannot be interpreted.
 
 ## Findings excluded from the primary stream
 
@@ -125,8 +128,24 @@ sidecar. A caller that needs every finding the panel produced must read the
 sidecars alongside `findings.json`; a caller that wants only findings that
 correspond to real code can read `findings.json` alone.
 
-`unresolved_filtered` is `0` whenever `ATCR_DISABLE_AST_GROUPING` is set —
-content resolution is disabled with AST clustering, and nothing is routed.
+### Reading `unresolved_filtered`
+
+A `0` here does **not** by itself mean "no finding was fabricated". At least six
+conditions produce it, and five of them mean the check never adjudicated
+anything:
+
+| `unresolved_state` | Meaning | What a `0` count means |
+|---|---|---|
+| `applied` | The check ran over the tracked tree. | Nothing was routed. The healthy case. |
+| `disabled` | `ATCR_DISABLE_AST_GROUPING` is set, or there was no tracked file index (the root is not a git repository, or git was unavailable). | Nothing was checked. |
+| `unavailable` | The index could not be built — over the file cap, no parser would load, or nothing in the tracked tree could be read. | Nothing was checked. |
+| `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. | Nothing could be routed. |
+| absent | Content resolution did not run for this reconcile (no repo root was resolved — the ordinary case on the MCP path). | Nothing was checked. |
+
+`unresolved_state` renders in `report.md` unconditionally and rides the
+`tier-4 content resolution` log line on every CLI path, so the distinction
+survives outside `summary.json`. A caller treating a `0` as a clean bill of
+health must first confirm the state is `applied`.
 
 Re-running `atcr reconcile` over the same review directory rewrites every
 `reconciled/` artifact unconditionally — including replacing a non-empty
