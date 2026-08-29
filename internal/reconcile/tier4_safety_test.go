@@ -3,7 +3,9 @@ package reconcile
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -189,4 +191,71 @@ func TestTier4Safety_UnicodeIdentifierIsNotAFalseNoMatch(t *testing.T) {
 	anchors, _ := extractAnchorSet("the `refreshJetón` helper drops the error")
 	assert.Equal(t, []string{"refreshJetón"}, anchors,
 		"a non-ASCII identifier must be extractable, or its finding is judged on a search that never looked for it")
+}
+
+// gitRepoWithCaseAliases builds a repo from files, then adds extra TRACKED
+// entries that differ from an existing path only by case.
+//
+// The aliases go straight into the git index via update-index --cacheinfo rather
+// than onto disk, because the case-insensitive filesystems this scenario exists
+// for (macOS, Windows) cannot hold both spellings at once — which is precisely
+// how a repo ends up with two fold-colliding tracked paths in the first place.
+func gitRepoWithCaseAliases(t *testing.T, files map[string]string, aliases map[string]string) string {
+	t.Helper()
+	root := gitRepoWithSources(t, files)
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	for alias, source := range aliases {
+		blob := run("hash-object", "-w", filepath.FromSlash(source))
+		run("update-index", "--add", "--cacheinfo", "100644,"+blob+","+alias)
+	}
+	return root
+}
+
+// TestTier4Safety_AmbiguousCaseOnlyMismatchIsNeverRouted covers the fold gate in
+// tier4Eligible — `len(idx.ByFold(file)) == 0` — which
+// TestTier4Safety_CaseOnlyMismatchIsNeverRouted above does NOT reach.
+//
+// With ONE fold match, stream.CaseCorrection returns a suggestion, so
+// validateFindingPaths short-circuits on `sf.PathSuggestion != ""` before Tier 4
+// is consulted at all. With SEVERAL, CaseCorrection reports mismatch=true with an
+// EMPTY suggestion — leaving PathWarning set and PathSuggestion empty, which is
+// indistinguishable at that layer from a path resolving to nothing. The fold gate
+// is then the ONLY thing standing between a real finding and the sidecar.
+//
+// Mutating that gate to `return true` must fail here: the cited file
+// demonstrably exists in the tracked tree under two spellings, and the finding's
+// anchor is absent from the tree, so without the gate it reaches tier4NoMatch and
+// is routed out of findings.json as fabricated.
+func TestTier4Safety_AmbiguousCaseOnlyMismatchIsNeverRouted(t *testing.T) {
+	root := gitRepoWithCaseAliases(t,
+		map[string]string{
+			"internal/auth/session.go": "package auth\n\nfunc loadSession() error { return nil }\n",
+		},
+		// A second tracked spelling of the same path: both fold to
+		// "internal/auth/session.go", so no single correction is preferable.
+		map[string]string{"internal/auth/Session.go": "internal/auth/session.go"},
+	)
+
+	reviewDir := t.TempDir()
+	// Cited with a THIRD casing, matching neither tracked spelling exactly, and
+	// naming a construct that is genuinely absent from the tree.
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/auth/SESSION.go:12|`parseBearerHeader` never checks the scheme|validate it|security|15|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, res.Findings, 1, "the finding stays in the primary stream")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"the cited file exists in the tracked tree — an ambiguous case mismatch is a Tier 3 concern, never fabrication evidence")
+	assert.Empty(t, res.Unresolved, "nothing may reach the sidecar on a case-only mismatch")
 }
