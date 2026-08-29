@@ -520,6 +520,14 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 // multi-megabyte blob, so `complete` stays true and the no-match verdict stays
 // available. maxSymbolIndexFiles bounds how many files are read; this bounds how
 // large any one of them may be.
+//
+// KNOWN GAP, in the unsafe direction, and it is the same one isBinaryContent
+// carries: a genuine SOURCE file over the cap (a generated or minified bundle)
+// is skipped, so its identifiers never reach `present` and a finding about one
+// of them could reach a no-match verdict. `complete` deliberately stays true —
+// clearing it would let one large artifact withhold every verdict for the whole
+// repo, which is the failure the non-regular-file skip above exists to prevent.
+// Widen this by RAISING the cap, never by clearing `complete` here.
 const maxSourceFileBytes = 4 << 20 // 4MiB
 
 // binarySniffBytes is how much of a file is inspected for a NUL byte before the
