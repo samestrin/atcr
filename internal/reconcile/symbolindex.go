@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"path"
@@ -357,24 +358,29 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			complete = false // symlink escaping root: refuse to read, and admit the hole
 			continue
 		}
-		if fi, lerr := os.Lstat(abs); lerr == nil && !fi.Mode().IsRegular() {
-			// A tracked entry that is not a regular file. `git ls-files` emits a
-			// git SUBMODULE as one gitlink row naming its directory, and since
-			// eligiblePaths stopped filtering by parser language that row now
-			// reaches this loop, where os.ReadFile fails with "is a directory".
-			// Admitting that as a hole below would clear `complete` and withhold
-			// EVERY no-match verdict, so a single submodule silently disabled
-			// Tier 4 for the whole repo. No declaration lives in a non-file, so
-			// this is a resolution limit, not a search hole: `complete` stays
-			// true, exactly as for the binary skip below.
-			continue
+		if fi, lerr := os.Lstat(abs); lerr == nil {
+			if !fi.Mode().IsRegular() {
+				// A tracked entry that is not a regular file. `git ls-files` emits a
+				// git SUBMODULE as one gitlink row naming its directory, and since
+				// eligiblePaths stopped filtering by parser language that row now
+				// reaches this loop, where a read fails with "is a directory".
+				// Admitting that as a hole below would clear `complete` and withhold
+				// EVERY no-match verdict, so a single submodule silently disabled
+				// Tier 4 for the whole repo. No declaration lives in a non-file, so
+				// this is a resolution limit, not a search hole: `complete` stays
+				// true, exactly as for the binary and over-cap skips below.
+				continue
+			}
+			if fi.Size() > maxSourceFileBytes {
+				continue // over-cap artifact: skipped, not a hole. See maxSourceFileBytes.
+			}
 		}
-		src, err := os.ReadFile(abs)
+		src, skip, err := readIndexSource(abs)
 		if err != nil {
 			complete = false // absent or unreadable: a region of the tree went unsearched
 			continue
 		}
-		if isBinaryContent(src) {
+		if skip {
 			// Not a hole: no declaration lives in a compiled blob. See isBinaryContent.
 			continue
 		}
@@ -504,8 +510,16 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 	return out
 }
 
-// maxSourceFileBytes caps a single file read during the index build. STUB: not
-// yet enforced.
+// maxSourceFileBytes caps how much of a SINGLE tracked file the index build will
+// read. The whole-tree sweep reads every contained tracked file, so without this
+// one checked-in artifact — a dataset, a database dump, a model weight — is
+// pulled into memory in full on every build.
+//
+// Exceeding it SKIPS the file and is NOT a hole, for the same reason a binary
+// skip is not: a reviewer does not name a source construct inside a
+// multi-megabyte blob, so `complete` stays true and the no-match verdict stays
+// available. maxSymbolIndexFiles bounds how many files are read; this bounds how
+// large any one of them may be.
 const maxSourceFileBytes = 4 << 20 // 4MiB
 
 // binarySniffBytes is how much of a file is inspected for a NUL byte before the
@@ -538,6 +552,50 @@ func isBinaryContent(src []byte) bool {
 		src = src[:binarySniffBytes]
 	}
 	return bytes.IndexByte(src, 0) >= 0
+}
+
+// readIndexSource reads one tracked file for the index build, sniffing for
+// binary content BEFORE the whole file is in memory.
+//
+// isBinaryContent only ever inspects the first binarySniffBytes, so reading the
+// file whole and then sniffing paid the full cost of every blob it was about to
+// discard — ~31MB of embedded .wasm in this repo alone, on every build. Reading
+// the sniff window first and returning early is the same decision made for the
+// same reason, minus the allocation.
+//
+// skip reports "this is not source text" (the binary verdict), which the caller
+// treats as a resolution limit rather than a search hole; err reports a genuine
+// read failure, which is a hole.
+func readIndexSource(abs string) (src []byte, skip bool, err error) {
+	f, err := os.Open(abs)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+
+	head := make([]byte, binarySniffBytes)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, false, err
+	}
+	head = head[:n]
+	if isBinaryContent(head) {
+		return nil, true, nil
+	}
+	if n < binarySniffBytes {
+		return head, false, nil // the whole file fit in the sniff window
+	}
+
+	// Bounded by maxSourceFileBytes+1 so a file that grew past the cap between
+	// the caller's Lstat and this read is still refused rather than read whole.
+	rest, err := io.ReadAll(io.LimitReader(f, maxSourceFileBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(head))+int64(len(rest)) > maxSourceFileBytes {
+		return nil, true, nil // raced past the cap: skip, exactly as the caller would have
+	}
+	return append(head, rest...), false, nil
 }
 
 // escapesIndexRoot reports whether a tracked relpath would read outside the
