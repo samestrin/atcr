@@ -110,3 +110,87 @@ func TestEmitForReconcile_NoScorecardSuppresses(t *testing.T) {
 	_, statErr := os.Stat(dir)
 	require.True(t, os.IsNotExist(statErr), "suppressed run must not create the store directory")
 }
+
+// TestEmitForReconcile_RoutedFindingsStayInDenominator pins the trust-inflation
+// fix for Epic 35.16.6.5: Tier 4 routing removes a finding from res.Findings
+// BEFORE this bridge reads it, so a reviewer's uncorroborated hallucinated-path
+// singletons would silently leave the FindingsRaised denominator — the exact
+// evidence that should DEPRESS its corroboration rate. res.Unresolved must be
+// counted as raised-but-never-corroborated, so routing a phantom lowers the
+// rate instead of raising it.
+func TestEmitForReconcile_RoutedFindingsStayInDenominator(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce", "greta"}}},
+		},
+		// Two singletons bruce raised against files that do not exist, routed to
+		// the sidecar by the Tier 4 content check.
+		Unresolved: []reconcile.JSONFinding{
+			{File: "phantom1.go", Line: 3, Problem: "ghost1", Reviewers: []string{"bruce"}},
+			{File: "phantom2.go", Line: 9, Problem: "ghost2", Reviewers: []string{"bruce"}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	assert.Equal(t, 3, bruce.FindingsRaised,
+		"the two routed phantoms are still findings bruce raised")
+	assert.Equal(t, 1, bruce.FindingsCorroborated,
+		"a routed finding is never corroborated — it is the fabrication evidence itself")
+	assert.Equal(t, 2, bruce.FindingsSolo)
+	assert.InDelta(t, 1.0/3.0, bruce.CorroborationRate, 1e-9,
+		"routing must DEPRESS the rate; dropping the phantoms would report 1.00")
+
+	greta := findReviewer(recs, "greta")
+	require.NotNil(t, greta)
+	assert.Equal(t, 1, greta.FindingsRaised, "greta raised no routed finding")
+	assert.Equal(t, 1, greta.FindingsCorroborated)
+}
+
+// TestEmitForReconcile_RoutedOnlyReviewerStillRecorded pins the companion hole:
+// a reviewer whose every finding was routed to the sidecar has no entry in
+// res.Findings at all, so without registering the routed records' reviewers it
+// would vanish from the scorecard entirely — no record, no rate, and therefore
+// no trust penalty for a run that produced nothing but phantoms.
+func TestEmitForReconcile_RoutedOnlyReviewerStillRecorded(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"greta"}}},
+		},
+		Unresolved: []reconcile.JSONFinding{
+			{File: "phantom.go", Line: 3, Problem: "ghost", Reviewers: []string{"bruce"}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce, "a reviewer whose only finding was routed must still get a record")
+	assert.Equal(t, 1, bruce.FindingsRaised)
+	assert.Zero(t, bruce.FindingsCorroborated)
+	assert.Zero(t, bruce.CorroborationRate)
+}
