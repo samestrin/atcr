@@ -901,3 +901,37 @@ func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 	assert.Equal(t, tier4Resolved, outcome, "the rest of the tree must still resolve")
 	assert.Equal(t, "internal/net/pool.go", got)
 }
+
+// TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins that documentation prose
+// cannot stand in for a declaration.
+//
+// The read set was widened to every text file so unparsed LANGUAGES stay
+// searchable, which also pulled README/CHANGELOG/docs prose into `present`.
+// Those files carry camelCase and snake_case tokens that pass isIdentifierShaped,
+// so a construct DELETED from the code but still named in a changelog scored
+// "present" and the finding came back inconclusive instead of routed — the
+// no-match detector losing sensitivity while still reporting state=applied.
+func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 1.2.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"a construct named only in prose is declared nowhere in source: that is a no-match, not evidence it exists")
+
+	// The widening this guard narrows must survive: a real construct in an
+	// unparsed LANGUAGE still counts as present.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"), []byte("def ruby_only_helper\nend\n"), 0o644))
+	lz2 := newLazySymbolIndex(root, []string{"lib/helper.rb", "internal/net/pool.go"})
+	lz2.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+	_, outcome = lz2.resolve(context.Background(), []string{"ruby_only_helper"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a construct that genuinely lives in an unparsed language must still be shielded from no-match")
+}
