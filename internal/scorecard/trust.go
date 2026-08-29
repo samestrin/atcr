@@ -225,6 +225,32 @@ func strictRuns(records []Record) []Record {
 // a reviewer record simply forms its own group — Aggregate drops the non-reviewer
 // rows immediately after, so grouping them costs nothing and needs no special case
 // here.
+//
+// Three asymmetries are deliberate:
+//
+//   - strictRuns is NOT per reviewer, and must not be. It classifies each record
+//     independently on that record's own consensus_level, so it asks no
+//     whole-slice question and no reviewer's records can answer for another's.
+//     Only a rule that consults the SET needs a grouping key.
+//
+//   - The key is the reviewer ALONE, not (reviewer, model), because the rate this
+//     protects is per reviewer: trustPriorsSince sums a reviewer's models into one
+//     tally, so a finer key would let a current-era model and a pre-epic one blend
+//     inside that sum — the mix this exists to forbid. The cost lands on Export,
+//     which groups by (reviewer, model): a reviewer that changed models across the
+//     upgrade loses the old model's row from the leaderboard. That is narrower
+//     than the blend it buys, and it is the direction the filed fix chose.
+//
+//   - The key is strings.ToLower(Reviewer), matching trustPriorsSince's byReviewer
+//     key exactly. Export keys on scrubField(Reviewer) instead, so two identities
+//     differing only by a non-printing rune form one export group but two era
+//     groups here. Reachable only from a hand-edited store — the export path
+//     already rejects non-printing runes in an identity — and matching the
+//     consumer this filter is defined for is worth more than matching the other.
+//
+// Non-empty in, non-empty out: a reviewer with no current-era record keeps all of
+// its records, and one with a current-era record keeps at least that record. So
+// Export's ErrNoExportRecords check at the call site stays correct where it is.
 func unresolvedEraRuns(records []Record) []Record {
 	hasCurrent := make(map[string]bool, len(records))
 	for _, r := range records {
