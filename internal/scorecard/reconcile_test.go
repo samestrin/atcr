@@ -194,3 +194,38 @@ func TestEmitForReconcile_RoutedOnlyReviewerStillRecorded(t *testing.T) {
 	assert.Zero(t, bruce.FindingsCorroborated)
 	assert.Zero(t, bruce.CorroborationRate)
 }
+
+// TestEmitForReconcile_RoutedEmptyReviewerNameNotRegistered pins the empty-name
+// guard on the routed-findings loop. `Reviewers` is free text carried from a
+// reviewer's own findings.txt, so an empty cell reaches here; registering it
+// would emit a scorecard record under the empty name — a phantom reviewer with
+// its own corroboration rate that `atcr scorecard` would then list forever.
+func TestEmitForReconcile_RoutedEmptyReviewerNameNotRegistered(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"greta"}}},
+		},
+		Unresolved: []reconcile.JSONFinding{
+			// One routed finding naming a real reviewer AND an empty cell.
+			{File: "phantom.go", Line: 3, Problem: "ghost", Reviewers: []string{"", "bruce"}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+
+	EmitForReconcile(reviewDir, res, EmitOpts{})
+
+	cfg, err := os.UserConfigDir()
+	require.NoError(t, err)
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+	require.NoError(t, err)
+
+	assert.Nil(t, findReviewer(recs, ""),
+		"an empty reviewer name must never earn a record of its own")
+	require.NotNil(t, findReviewer(recs, "bruce"),
+		"the real reviewer on the same routed finding must still be recorded")
+}
