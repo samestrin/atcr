@@ -85,8 +85,15 @@ func ConfidenceFor(reviewerCount int) string { return reclib.ConfidenceFor(revie
 type Result struct {
 	Findings  []Merged
 	Ambiguous []AmbiguousCluster
-	// Unresolved holds findings routed out of the primary stream by Tier 4.
-	// STUB — see GREEN.
+	// Unresolved holds the findings the Epic 35.16.6.5 Tier 4 content check
+	// routed OUT of the primary stream: their cited file does not exist, no
+	// filename-level tier produced a candidate, and the constructs their prose
+	// names are declared nowhere in the tracked tree. They are written to
+	// unresolved.json and are absent from Findings/JSONFindings — which is how
+	// they stay out of report.md and out of the findings.json subset
+	// internal/verify reads, with no change to internal/verify itself (AC3).
+	// Preserved, never deleted (AC4). Empty on every path but RunReconcile,
+	// which is the only one with a checked-out tree to resolve against.
 	Unresolved []JSONFinding
 	Summary    Summary
 	// jsonFindings caches the path-validated findings.json records the ATCR I/O

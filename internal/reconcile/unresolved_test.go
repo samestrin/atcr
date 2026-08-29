@@ -108,6 +108,11 @@ func TestRunReconcile_NoUnresolvedLeavesEverythingIntact(t *testing.T) {
 	sidecar, err := ReadUnresolvedFindings(reviewDir)
 	require.NoError(t, err)
 	assert.Empty(t, sidecar)
+
+	raw, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", UnresolvedJSON))
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", string(raw),
+		"an empty sidecar is [] like ambiguous.json, never null")
 }
 
 // TestEmit_WritesUnresolvedSidecar pins the artifact itself: always written

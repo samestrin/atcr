@@ -236,7 +236,23 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// Stamped after merge, before Emit, so the warning rides into findings.json and
 	// the reports. No-op when opts.Root is empty.
 	jf := res.JSONFindings()
-	validateFindingPaths(ctx, jf, opts.Root)
+	unresolvedIdx := validateFindingPaths(ctx, jf, opts.Root)
+	// Route findings that exhausted all four path-resolution tiers with zero
+	// symbol correspondence out of the primary stream and into unresolved.json
+	// (Epic 35.16.6.5 T4), following the epic-14.2 consensus-filter precedent:
+	// excluded from report.md and from the findings.json subset internal/verify
+	// reads, counted in the summary, and preserved on disk rather than deleted.
+	// Done here — before the remaining stamps — so symbol anchoring, narrative
+	// correlation, and fallback provenance are not spent on a phantom, and so
+	// Findings/jf stay index-aligned for internal/mcp's failingFindings walk.
+	// Summary counters the library computed over the pre-routing set are
+	// recomputed for the same reason it recomputes them after its own filter.
+	if len(unresolvedIdx) > 0 {
+		res.Findings, jf, res.Unresolved = routeUnresolved(res.Findings, jf, unresolvedIdx)
+		res.Summary.UnresolvedFiltered = len(res.Unresolved)
+		res.Summary.TotalFindings = len(res.Findings)
+		res.Summary.OutOfScope = countOutOfScope(res.Findings)
+	}
 	// Stamp a "(symbol) " anchor onto each Problem cell from the finding's
 	// enclosing named AST block (epic 18.1), reusing the same grouper (its
 	// per-run tree cache is already warm from clustering). No-op when the grouper
