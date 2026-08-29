@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -68,6 +69,24 @@ const (
 // unindexed remainder, which is exactly the false-fabrication verdict the
 // sidecar must never be reached on.
 const maxSymbolIndexFiles = 5000
+
+// tier4IndexMaxFilesEnv overrides maxSymbolIndexFiles for an operator whose
+// tracked tree exceeds the default cap but who still wants Tier 4 — the only
+// other escape today is ATCR_DISABLE_AST_GROUPING, which also turns off AST
+// clustering. Parsed like astGroupingDisabled: an unparseable or non-positive
+// value falls back to the default, because a silently-zero cap would disable
+// Tier 4 with no signal distinguishable from an intentional opt-out.
+const tier4IndexMaxFilesEnv = "ATCR_TIER4_INDEX_MAX_FILES"
+
+// symbolIndexFileCap returns the effective Tier 4 index file cap: the
+// tier4IndexMaxFilesEnv override when it parses to a positive integer, else
+// maxSymbolIndexFiles.
+func symbolIndexFileCap() int {
+	if n, err := strconv.Atoi(os.Getenv(tier4IndexMaxFilesEnv)); err == nil && n > 0 {
+		return n
+	}
+	return maxSymbolIndexFiles
+}
 
 // symbolIndex maps a declared identifier to the DISTINCT tracked files that
 // declare it. Only the file set matters: PathSuggestion is a path (the 5.4
@@ -238,9 +257,9 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	if len(eligible) == 0 {
 		return
 	}
-	if len(eligible) > maxSymbolIndexFiles {
+	if maxFiles := symbolIndexFileCap(); len(eligible) > maxFiles {
 		slog.Warn("astgroup: tier-4 symbol index disabled, tracked file count over cap",
-			"eligible", len(eligible), "cap", maxSymbolIndexFiles)
+			"eligible", len(eligible), "cap", maxFiles)
 		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
 	}

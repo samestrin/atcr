@@ -212,6 +212,40 @@ func TestSymbolIndex_FileCapDisablesTier4(t *testing.T) {
 		"tripping the cap is counted so an always-off Tier 4 is visible in CI")
 }
 
+// TestSymbolIndex_FileCapEnvOverride pins the operator override:
+// ATCR_TIER4_INDEX_MAX_FILES retunes the Tier 4 index cap without a rebuild,
+// and an unset, unparseable, or non-positive value falls back to
+// maxSymbolIndexFiles — a silently-zero cap would disable Tier 4 with no
+// signal distinguishable from an intentional opt-out.
+func TestSymbolIndex_FileCapEnvOverride(t *testing.T) {
+	assert.Equal(t, maxSymbolIndexFiles, symbolIndexFileCap(), "unset env keeps the default cap")
+
+	t.Setenv(tier4IndexMaxFilesEnv, "2")
+	assert.Equal(t, 2, symbolIndexFileCap())
+
+	// A tree over the override disables Tier 4 exactly as over the default does.
+	root := t.TempDir()
+	writeTracked(t, root, "internal/net/pool.go")
+
+	paths := []string{"internal/gen/f0.go", "internal/gen/f1.go", "internal/gen/f2.go"}
+
+	var calls int32
+	lz := newLazySymbolIndex(root, paths)
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	before := metrics.Counter(tier4UnavailableMetric).Value()
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome, "over the override cap, Tier 4 reports 'could not check', not 'no match'")
+	assert.Empty(t, got)
+	assert.Zero(t, atomic.LoadInt32(&calls), "the cap is checked before any parsing work")
+	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value())
+
+	for _, bad := range []string{"abc", "0", "-5"} {
+		t.Setenv(tier4IndexMaxFilesEnv, bad)
+		assert.Equal(t, maxSymbolIndexFiles, symbolIndexFileCap(), "value %q must fall back to the default cap", bad)
+	}
+}
+
 // TestSymbolIndex_EscapingPathSkipped pins that a tracked path which would
 // escape root is never read, mirroring the containment discipline in
 // stream.ValidatePath and astgroup.Grouper.canonicalPath.

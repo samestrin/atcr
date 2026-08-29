@@ -58,6 +58,13 @@ every review that exits normally.
 |--------|------|-------------|
 | `atcr_circuit_breaker_state{provider}` | gauge | Per-provider circuit state: `0` closed (normal), `1` open (failing fast), `2` half-open (probing recovery). A provider trips open after 3 consecutive breaker-failures (5xx, timeout, or connection-level transport error; 4xx including 429/401 never count) and returns to half-open after a 60s cooldown. |
 
+### Reconcile counters
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `atcr_tier4_index_unavailable_total` | counter | Reconcile runs where a Tier 4 symbol index was needed but could not be built — the tracked-file count exceeded the cap (default 5000, override `ATCR_TIER4_INDEX_MAX_FILES`), no parser would load, or the build was aborted. While Tier 4 is off, every lookup reports "could not check" and nothing is routed to `unresolved.json`, so a non-zero value separates a silently degraded run from a clean one. |
+| `atcr_tier4_index_incomplete_total` | counter | Reconcile runs where the Tier 4 index was built but some eligible tracked file could not be read (deleted-but-tracked, permission error, symlink escaping the repo), so every no-match verdict was withheld. Distinct from `atcr_tier4_index_unavailable_total`: that one is "no index at all", this one is "a hole in an otherwise working index". |
+
 ## End-of-review CLI summary
 
 After a review, `atcr review` prints a four-line summary reflecting that review
