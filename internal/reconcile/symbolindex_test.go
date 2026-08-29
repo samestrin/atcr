@@ -802,3 +802,70 @@ func TestSymbolIndex_ParserLanguageSkipIsNotAHole(t *testing.T) {
 	assert.Equal(t, beforeIncomplete, metrics.Counter(tier4IncompleteMetric).Value(),
 		"a language whose parser will not load is a resolution loss, not a hole in the search")
 }
+
+// TestContainedIndexPath_ExitCoverage covers all four exits of the symlink
+// containment resolver, two of which no test reached: the best-effort
+// EvalSymlinks(root) fallback and the filepath.Rel error branch.
+//
+// Both are driven by an UNRESOLVABLE root, which is also the only way to reach
+// the Rel branch on the supported platforms: Rel fails when exactly one of its
+// arguments is absolute, and `resolved` is always absolute, so the failure needs
+// a realRoot that stayed relative — which is precisely what the fallback leaves
+// behind when EvalSymlinks(root) fails on a relative root.
+//
+// The resolver must answer ("", false) there rather than panicking or, worse,
+// admitting the path: a root it cannot resolve is a root it cannot contain
+// anything against.
+func TestContainedIndexPath_ExitCoverage(t *testing.T) {
+	real := t.TempDir()
+	writeTracked(t, real, "internal/net/pool.go")
+
+	t.Run("contained path resolves", func(t *testing.T) {
+		got, ok := containedIndexPath(real, "internal/net/pool.go")
+		require.True(t, ok)
+		assert.True(t, filepath.IsAbs(got))
+		assert.Equal(t, "pool.go", filepath.Base(got))
+	})
+
+	t.Run("absent target is treated as absent", func(t *testing.T) {
+		got, ok := containedIndexPath(real, "internal/net/gone.go")
+		assert.False(t, ok, "a path that cannot be resolved is skipped, exactly as the read would have")
+		assert.Empty(t, got)
+	})
+
+	t.Run("unresolvable root falls back, then Rel rejects", func(t *testing.T) {
+		// root "" cannot be EvalSymlinks'd, so realRoot keeps the unresolvable
+		// value; the joined path still resolves (it is absolute), and Rel then
+		// fails because realRoot is not.
+		got, ok := containedIndexPath("", filepath.Join(real, "internal", "net", "pool.go"))
+		assert.False(t, ok, "a root that cannot be resolved must contain nothing")
+		assert.Empty(t, got)
+	})
+
+	t.Run("unresolvable root and unresolvable target", func(t *testing.T) {
+		got, ok := containedIndexPath(filepath.Join(real, "no-such-root"), "internal/net/pool.go")
+		assert.False(t, ok)
+		assert.Empty(t, got)
+	})
+}
+
+// TestIsBinaryContent_SniffWindow pins the bound on the binary sniff: only the
+// first binarySniffBytes are inspected, so a NUL past that window is not seen.
+// That is the deliberate trade — an unbounded scan of every tracked file is the
+// cost this cap exists to avoid — and the miss is in the SAFE direction: the file
+// is token-scanned, which over-collects into `present` and can only withhold a
+// no-match verdict, never manufacture one.
+func TestIsBinaryContent_SniffWindow(t *testing.T) {
+	assert.False(t, isBinaryContent([]byte("package net\n\nfunc DialPeer() {}\n")),
+		"ordinary source text is not binary")
+	assert.True(t, isBinaryContent(append([]byte("\x00asm"), make([]byte, 64)...)),
+		"a NUL inside the sniff window classifies the blob as binary")
+
+	late := make([]byte, binarySniffBytes+16)
+	for i := range late {
+		late[i] = 'a'
+	}
+	late[binarySniffBytes+8] = 0
+	assert.False(t, isBinaryContent(late),
+		"a NUL past the sniff window is not seen — bounded on purpose, and safe: the file is merely scanned")
+}
