@@ -660,3 +660,31 @@ func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
 	assert.Equal(t, tier4Resolved, outcome)
 	assert.Equal(t, "internal/net/pool.go", got)
 }
+
+// TestSymbolIndex_AllEligibleFilesUnreadable pins the readFiles==0 bail, which
+// no test reached on its own merits: the file-cap tests used to hand the index
+// paths that were never written, so they arrived here by accident while claiming
+// to cover the cap. Both now write their fixtures, leaving this path uncovered
+// unless a test aims at it.
+//
+// The bail is what stops an index that read NOTHING from answering "checked and
+// found nothing" — the false-fabrication verdict this epic exists to prevent.
+// Mutating it to `if false` must fail here.
+func TestSymbolIndex_AllEligibleFilesUnreadable(t *testing.T) {
+	root := t.TempDir()
+	// Tracked, parser-language, root-contained — and absent from disk, so every
+	// one fails its read.
+	paths := []string{"internal/gen/gone0.go", "internal/gen/gone1.go"}
+
+	var calls int32
+	lz := newLazySymbolIndex(root, paths)
+	lz.newParser = newStubFactory(fileTree{}, &calls)
+
+	before := metrics.Counter(tier4UnavailableMetric).Value()
+	got, outcome := lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"an index that read nothing knows nothing — 'not in the tree' carries no information")
+	assert.Empty(t, got)
+	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
+		"an index that read nothing is unavailable, and must say so in the metrics")
+}
