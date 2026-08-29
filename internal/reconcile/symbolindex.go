@@ -271,6 +271,10 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 func (lz *lazySymbolIndex) build(ctx context.Context) {
 	eligible := lz.eligiblePaths()
 	if len(eligible) == 0 {
+		// A tracked tree with no parser-supported file disables Tier 4 exactly
+		// like the cap, the missing-parser and the aborted-build paths below —
+		// count it the same way or it is indistinguishable from a healthy run.
+		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
 	}
 	if maxFiles := symbolIndexFileCap(); len(eligible) > maxFiles {
