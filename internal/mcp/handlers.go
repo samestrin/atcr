@@ -464,14 +464,15 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	}
 
 	out := ReconcileResult{
-		ReviewID:          id,
-		Pass:              true,
-		TotalFindings:     res.Summary.TotalFindings,
-		Partial:           res.Summary.Partial,
-		FailOn:            threshold,
-		Consensus:         consensusLevel,
-		DebtPersisted:     debtPersisted,
-		DebtSkippedReason: debtSkippedReason,
+		ReviewID:           id,
+		Pass:               true,
+		TotalFindings:      res.Summary.TotalFindings,
+		Partial:            res.Summary.Partial,
+		FailOn:             threshold,
+		Consensus:          consensusLevel,
+		UnresolvedFiltered: res.Summary.UnresolvedFiltered,
+		DebtPersisted:      debtPersisted,
+		DebtSkippedReason:  debtSkippedReason,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false

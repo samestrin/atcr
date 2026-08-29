@@ -974,6 +974,31 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 		})
 	}
 
+	// Wire-level (not the typed struct) so the key itself is asserted: a client
+	// sees the JSON, not the Go field. unresolved_filtered must be present even
+	// at 0 — like DebtPersisted, the zero is the answer worth transmitting,
+	// because the whole point of the field is explaining a smaller finding count.
+	t.Run("unresolved_filtered always present", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		id := consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+
+		out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{})
+
+		v, ok := out["unresolved_filtered"]
+		require.True(t, ok, "ReconcileResult must always carry unresolved_filtered")
+
+		data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "summary.json"))
+		require.NoError(t, err)
+		var s struct {
+			UnresolvedFiltered int `json:"unresolved_filtered"`
+		}
+		require.NoError(t, json.Unmarshal(data, &s))
+		assert.Equal(t, float64(s.UnresolvedFiltered), v,
+			"the result field must match the run's summary.json count")
+	})
+
 	// A case-variant is rejected by the input schema's enum — JSON Schema enums
 	// are exact-match, so the rejection fires before the handler's
 	// case-insensitive normalization can run. The MCP surface is stricter than

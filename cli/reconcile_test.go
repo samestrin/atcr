@@ -211,6 +211,25 @@ func TestRunReconcile_ConsensusLevelLoggedOnFailure(t *testing.T) {
 		"the log must name the level that was in effect")
 }
 
+// TestRunReconcile_UnresolvedFilteredLogged verifies the Tier 4
+// content-resolution count is surfaced on the CLI: the consensus filter has had
+// its own post-run line since epic 35.9.1, but unresolved_filtered showed up
+// only inside report.md and summary.json, so `atcr reconcile` printed a
+// quietly smaller finding count with no stated cause.
+func TestRunReconcile_UnresolvedFilteredLogged(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+	})
+	var logBuf, errBuf bytes.Buffer
+	runReconcileWithLogger(t, &logBuf, &errBuf, "r")
+
+	assert.Contains(t, logBuf.String(), "tier-4 content resolution applied",
+		"the unresolved sidecar count must be logged post-run beside the consensus line")
+	assert.Contains(t, logBuf.String(), "unresolved_filtered=0",
+		"even a run routing nothing logs the count, so a nonzero count is never silent")
+}
+
 // TestRunReconcile_NonStrictScorecardWarn verifies the docs/scorecard.md
 // caution is surfaced in-run: a non-strict consensus level with scorecard
 // emission enabled warns naming --no-scorecard, because the relaxed run's

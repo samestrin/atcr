@@ -406,6 +406,9 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// count between runs is the signal. Logged (not printed) so the --axi
 	// stdout contract is untouched.
 	log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+	// Mirrors the `atcr reconcile` line: a resumed reconcile routes to the
+	// unresolved sidecar exactly like a fresh one, so the count is just as visible.
+	log.FromContext(ctx).Info("tier-4 content resolution applied", "unresolved_filtered", rec.Summary.UnresolvedFiltered)
 	// Persist the resumed reconcile's findings to the local TD store, mirroring
 	// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
 	// cli/resume.go:382): this auto-reconcile used to persist nothing, so a

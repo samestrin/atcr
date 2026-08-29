@@ -1015,6 +1015,26 @@ func TestReviewCmd_LogsResolvedConsensusLevel(t *testing.T) {
 	require.Contains(t, stderr, "off", "the log must name the level that was in effect")
 }
 
+// TestReviewCmd_LogsUnresolvedFiltered mirrors
+// TestReviewCmd_LogsResolvedConsensusLevel for the Tier 4 content-resolution
+// count: the one-shot reconcile block is the primary CI invocation, so it must
+// surface unresolved_filtered the same way `atcr reconcile` does.
+func TestReviewCmd_LogsUnresolvedFiltered(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+
+	srv := perAgentMockProvider(t, map[string]string{
+		"m-one": "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "one")
+
+	code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, stderr, "tier-4 content resolution applied",
+		"the one-shot review path must surface the unresolved sidecar count")
+}
+
 // TestRunReview_ResolvesSharedSettingsInOneLoad is the review half of the
 // single-load contract. It is written as a differential rather than an absolute
 // count because the roster load is a separate, legitimate consumer of the same

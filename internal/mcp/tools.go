@@ -172,13 +172,18 @@ type ReviewResult struct {
 // that case Findings carries the offending records so the client can render them
 // inline without a follow-up atcr_report call (AC 04-03 Scenario 7).
 type ReconcileResult struct {
-	ReviewID      string                  `json:"review_id"`
-	Pass          bool                    `json:"pass"`
-	TotalFindings int                     `json:"total_findings"`
-	Partial       bool                    `json:"partial"`
-	FailOn        string                  `json:"fail_on,omitempty"`
-	Consensus     string                  `json:"consensus,omitempty"`
-	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
+	ReviewID      string `json:"review_id"`
+	Pass          bool   `json:"pass"`
+	TotalFindings int    `json:"total_findings"`
+	Partial       bool   `json:"partial"`
+	FailOn        string `json:"fail_on,omitempty"`
+	Consensus     string `json:"consensus,omitempty"`
+	// UnresolvedFiltered is the Tier 4 content-resolution count: findings routed
+	// out of the primary stream into the unresolved sidecar. Not omitempty, for
+	// the same reason as DebtPersisted — 0 is the answer worth transmitting,
+	// because the field exists to explain a smaller TotalFindings.
+	UnresolvedFiltered int                     `json:"unresolved_filtered"`
+	Findings           []reconcile.JSONFinding `json:"findings,omitempty"`
 	// DebtPersisted reports whether the local TD store write ran against a
 	// resolved root (individual findings may still be dropped by path
 	// validation), and DebtSkippedReason says why it did not run at all (TD

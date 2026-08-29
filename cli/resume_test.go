@@ -752,3 +752,24 @@ func TestResume_LogsResolvedConsensusLevel(t *testing.T) {
 		"the resume path must record the level it resolved")
 	require.Contains(t, out, "off", "the log must name the level that was in effect")
 }
+
+// TestResume_LogsUnresolvedFiltered mirrors TestResume_LogsResolvedConsensusLevel
+// for the Tier 4 content-resolution count: a resumed reconcile routes findings
+// to the unresolved sidecar exactly like a fresh one, so the count must be just
+// as visible.
+func TestResume_LogsUnresolvedFiltered(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	dir := writeResumeReviewFixture(t, "2026-06-18_demo",
+		gitRevParse(t, "HEAD^"), gitRevParse(t, "HEAD"), []string{"bruce"}, []string{"bruce"})
+	seedPanelSources(t, dir, trustPanelSources())
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "tier-4 content resolution applied",
+		"the resume path must surface the unresolved sidecar count")
+}

@@ -253,6 +253,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// the level itself is recorded at resolve time above.
 	logger.Info("consensus filter applied", "filtered", res.Summary.ConsensusFiltered)
 
+	// Same contract as the consensus line above: the Tier 4 routing count was
+	// visible only inside report.md and summary.json, so `atcr reconcile`
+	// printed a quietly smaller finding count with no stated cause.
+	logger.Info("tier-4 content resolution applied", "unresolved_filtered", res.Summary.UnresolvedFiltered)
+
 	// The trust priors are read through a 180d window (scorecard.ResolveTrustPriors,
 	// epic 35.11), so a reviewer with no runs inside it silently drops out of the
 	// map and loses trust exemption/demotion. Nothing else surfaces that: the
