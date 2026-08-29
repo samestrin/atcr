@@ -166,3 +166,38 @@ func TestRenderMarkdown_UnresolvedLine(t *testing.T) {
 	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}))
 	assert.NotContains(t, withoutCount.String(), "Unresolved findings:")
 }
+
+// TestRunReconcile_UnresolvedRecountsOutOfScope covers the post-routing
+// out-of-scope recount in gate.go and the countOutOfScope helper it calls.
+//
+// Summary.OutOfScope is computed by the library over the PRE-routing merged
+// slice. When routing then drops records, that count describes a set that no
+// longer exists — and no test noticed, because every routing test so far routed
+// a finding that was not itself out-of-scope, leaving the pre- and post-routing
+// counts identical. Here the ROUTED finding is out-of-scope, so the count must
+// actually drop: 2 before, 1 after.
+//
+// Mutating the recount to `_ = countOutOfScope` must fail here.
+func TestRunReconcile_UnresolvedRecountsOutOfScope(t *testing.T) {
+	root := gitRepoWithFiles(t, "internal/auth/session.go")
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		// Routed: a phantom path whose anchor resolves nowhere, AND out-of-scope.
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` predates this change|ignore it|out-of-scope|10|ev|greta\n"+
+			// Survives: a real tracked path, also out-of-scope.
+			"LOW|internal/auth/session.go:3|`RefreshToken` predates this change|ignore it|out-of-scope|5|ev|greta\n")
+
+	res := runReconcileWithFakeTier4(t, root, reviewDir, &fakeTier4{})
+
+	require.Len(t, res.Unresolved, 1, "the phantom is routed")
+	require.Len(t, res.Findings, 1, "the real out-of-scope finding survives")
+
+	assert.Equal(t, 1, res.Summary.OutOfScope,
+		"out_of_scope must describe the POST-routing set; without the recount it reports the pre-routing 2")
+	assert.Equal(t, 1, res.Summary.TotalFindings)
+
+	js, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	assert.Len(t, js, res.Summary.OutOfScope,
+		"every surviving finding here is out-of-scope, so the count and findings.json must agree")
+}
