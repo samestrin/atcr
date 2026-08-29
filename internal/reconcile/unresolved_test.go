@@ -201,3 +201,62 @@ func TestRunReconcile_UnresolvedRecountsOutOfScope(t *testing.T) {
 	assert.Len(t, js, res.Summary.OutOfScope,
 		"every surviving finding here is out-of-scope, so the count and findings.json must agree")
 }
+
+// TestReadUnresolvedFindings_ErrorContract covers the three branches of the
+// sidecar recovery reader that TestReadUnresolvedFindings_MissingIsEmpty leaves
+// untouched: a read error that is NOT os.IsNotExist, a present-but-empty file,
+// and an unparseable body. Only the missing-file case had a test, so the error
+// contract of the exported reader was entirely unverified — and the three
+// outcomes are deliberately different (propagate, empty, wrapped parse error).
+func TestReadUnresolvedFindings_ErrorContract(t *testing.T) {
+	write := func(t *testing.T, body string, mode os.FileMode) string {
+		t.Helper()
+		dir := t.TempDir()
+		recon := filepath.Join(dir, reconciledSubdir)
+		require.NoError(t, os.MkdirAll(recon, 0o755))
+		path := filepath.Join(recon, UnresolvedJSON)
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		if mode != 0o644 {
+			require.NoError(t, os.Chmod(path, mode))
+			t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+		}
+		return dir
+	}
+
+	t.Run("unreadable file propagates the error", func(t *testing.T) {
+		dir := write(t, `[{"file":"a.go"}]`, 0o000)
+		if _, err := os.ReadFile(filepath.Join(dir, reconciledSubdir, UnresolvedJSON)); err == nil {
+			t.Skip("filesystem or privileges ignore mode 0000")
+		}
+		got, err := ReadUnresolvedFindings(dir)
+		require.Error(t, err, "a sidecar that exists but cannot be read is NOT an empty sidecar")
+		assert.False(t, os.IsNotExist(err), "the not-exist branch must not swallow this")
+		assert.Nil(t, got)
+	})
+
+	t.Run("zero-byte file is empty, not an error", func(t *testing.T) {
+		got, err := ReadUnresolvedFindings(write(t, "", 0o644))
+		assert.NoError(t, err, "a run that routed nothing is legitimately empty")
+		assert.Empty(t, got)
+	})
+
+	t.Run("whitespace-only file is empty, not an error", func(t *testing.T) {
+		got, err := ReadUnresolvedFindings(write(t, "  \n\t\n", 0o644))
+		assert.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("malformed JSON is a wrapped parse error", func(t *testing.T) {
+		got, err := ReadUnresolvedFindings(write(t, `[{"file": `, 0o644))
+		require.Error(t, err, "a present-but-unparseable sidecar must never read as empty")
+		assert.Contains(t, err.Error(), UnresolvedJSON, "the error names the file it failed on")
+		assert.Nil(t, got)
+	})
+
+	t.Run("well-formed body round-trips", func(t *testing.T) {
+		got, err := ReadUnresolvedFindings(write(t, `[{"file":"internal/ghost/phantom.go","line":9,"severity":"HIGH"}]`, 0o644))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "internal/ghost/phantom.go", got[0].File)
+	})
+}
