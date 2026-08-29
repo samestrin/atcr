@@ -207,11 +207,13 @@ func TestEmitForReconcile_RoutedEmptyReviewerNameNotRegistered(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 
 	res := reconcile.Result{
+		// An empty cell on BOTH loops: the surviving-findings loop and the routed
+		// loop each carry their own copy of the guard, and a test that exercises
+		// only one leaves its twin free to regress.
 		Findings: []reconcile.Merged{
-			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"greta"}}},
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"", "greta"}}},
 		},
 		Unresolved: []reconcile.JSONFinding{
-			// One routed finding naming a real reviewer AND an empty cell.
 			{File: "phantom.go", Line: 3, Problem: "ghost", Reviewers: []string{"", "bruce"}},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
@@ -228,4 +230,6 @@ func TestEmitForReconcile_RoutedEmptyReviewerNameNotRegistered(t *testing.T) {
 		"an empty reviewer name must never earn a record of its own")
 	require.NotNil(t, findReviewer(recs, "bruce"),
 		"the real reviewer on the same routed finding must still be recorded")
+	require.NotNil(t, findReviewer(recs, "greta"),
+		"the real reviewer on the same surviving finding must still be recorded")
 }
