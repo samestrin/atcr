@@ -600,11 +600,10 @@ func BenchmarkResolveTrustPriors(b *testing.B) {
 // drifting as the old records age out — silently moving trustExempt and
 // demoteByTrust with nothing marking the boundary.
 //
-// The fail-safe direction is the opposite of the empty-consensus_level case:
-// there, an absent value genuinely meant strict, so reading it as strict
-// preserved real history. Here an absent flag genuinely means the OTHER
-// definition, so it is excluded, and a reviewer with only pre-epic history gets
-// no prior — which is the pre-trust behaviour, not a wrong one.
+// The rule is prefer-current, not require-current: a window holding any
+// current-era record uses only those, and a window holding none falls back to the
+// pre-epic records unchanged (see the companion test below). What is ruled out is
+// the MIX, which is the only combination that measures nothing.
 func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 	dir := t.TempDir()
 
@@ -644,11 +643,15 @@ func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
 		"only the current-definition records may contribute; blending the two eras gives 0.4")
 }
 
-// TestTrustPriors_PreUnresolvedOnlyHistoryYieldsNoPrior pins the fail-safe: a
-// store that predates the denominator change entirely produces NO prior rather
-// than one of ambiguous meaning. No prior means trustExempt and demoteByTrust
-// simply do not fire — the behaviour before trust priors existed.
-func TestTrustPriors_PreUnresolvedOnlyHistoryYieldsNoPrior(t *testing.T) {
+// TestTrustPriors_PreUnresolvedOnlyHistoryStillCounts pins the other half of the
+// prefer-current rule: a store that predates the denominator change entirely is
+// still used, unchanged.
+//
+// Requiring the flag would black out every existing reviewer history the moment
+// this ships — the same stranding the empty-consensus_level rule above exists to
+// avoid — and a pre-epic-only window is at least internally consistent. It is the
+// MIX that has no meaning, and the mix is what the test above rules out.
+func TestTrustPriors_PreUnresolvedOnlyHistoryStillCounts(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < DefaultTrustMinRuns; i++ {
 		require.NoError(t, Append(dir, Record{
@@ -664,6 +667,7 @@ func TestTrustPriors_PreUnresolvedOnlyHistoryYieldsNoPrior(t *testing.T) {
 	}
 	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
 	require.NoError(t, err)
-	assert.NotContains(t, priors, "bruce",
-		"a rate whose denominator definition is unknown must not be reported as one")
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 1.0, priors["bruce"], 0.0001,
+		"with no current-era record in the window, the pre-epic history is used as it always was")
 }

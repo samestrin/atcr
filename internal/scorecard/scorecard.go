@@ -74,7 +74,16 @@ type Record struct {
 	// semantics assume. Omitted when empty: a store written before 35.9.1 has no
 	// level, and every one of those runs was strict by construction.
 	ConsensusLevel string `json:"consensus_level,omitempty"`
-	// RaisedIncludesUnresolved: STUB — not yet stamped or filtered on.
+	// RaisedIncludesUnresolved records that FindingsRaised counts the findings the
+	// Epic 35.16.6.5 Tier 4 content check routed out of the primary stream. It is
+	// the era discriminator for that denominator, and it exists for the same
+	// reason ConsensusLevel above does: the number changed meaning, so a rate
+	// summed across both meanings measures neither.
+	//
+	// Omitted when false, which is how a record written before the epic reads.
+	// Unlike ConsensusLevel, an absent value here is NOT read as the current
+	// definition — absent genuinely means the other one — so TrustPriors excludes
+	// those records rather than blending them. See unresolvedEraRuns.
 	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
@@ -205,21 +214,27 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		routedRaised, _ := reviewerCounts(name, in.UnresolvedFindings)
 		raised += routedRaised
 		rec := Record{
-			SchemaVersion:        SchemaVersion,
-			RecordType:           RecordTypeReviewer,
-			RunID:                in.RunID,
-			ConsensusLevel:       in.ConsensusLevel,
-			Reviewer:             name,
-			Model:                meta.Model,
-			Role:                 defaultRole,
-			FindingsRaised:       raised,
-			FindingsCorroborated: corroborated,
-			FindingsSolo:         raised - corroborated,
-			CorroborationRate:    ratio(corroborated, raised),
-			CostUSD:              llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
-			TokensIn:             meta.TokensIn,
-			TokensOut:            meta.TokensOut,
-			LatencyMS:            meta.LatencyMS,
+			SchemaVersion: SchemaVersion,
+			// Stamped unconditionally, not only when UnresolvedFindings is
+			// non-empty: the flag records which DEFINITION this record's
+			// denominator was computed under, and every record this emitter writes
+			// uses the current one. Stamping it only when routing happened would
+			// make an ordinary clean run indistinguishable from a pre-epic record.
+			RaisedIncludesUnresolved: true,
+			RecordType:               RecordTypeReviewer,
+			RunID:                    in.RunID,
+			ConsensusLevel:           in.ConsensusLevel,
+			Reviewer:                 name,
+			Model:                    meta.Model,
+			Role:                     defaultRole,
+			FindingsRaised:           raised,
+			FindingsCorroborated:     corroborated,
+			FindingsSolo:             raised - corroborated,
+			CorroborationRate:        ratio(corroborated, raised),
+			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
+			TokensIn:                 meta.TokensIn,
+			TokensOut:                meta.TokensOut,
+			LatencyMS:                meta.LatencyMS,
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]

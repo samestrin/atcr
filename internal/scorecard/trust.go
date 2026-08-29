@@ -127,7 +127,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
-	for _, row := range Aggregate(strictRuns(records)) {
+	for _, row := range Aggregate(unresolvedEraRuns(strictRuns(records))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -185,6 +185,41 @@ func strictRuns(records []Record) []Record {
 		}
 	}
 	return kept
+}
+
+// unresolvedEraRuns keeps the records of ONE FindingsRaised definition, never a
+// mix of both.
+//
+// It is the second era filter on this path, and it is here for the reason
+// strictRuns is: FindingsRaised changed meaning when Epic 35.16.6.5 put the
+// Tier-4-routed findings into the denominator, and summing both meanings produces
+// a rate that measures neither. A reviewer that raised six corroborated findings
+// and four phantoms reports 0.60 under the new definition and 1.00 under the old,
+// so a blended window drifts as the old records age out, silently moving
+// trustExempt and demoteByTrust with nothing marking the boundary.
+//
+// The rule is PREFER-CURRENT, not require-current: when the window holds any
+// record stamped with the current definition, only those count; when it holds
+// none, the pre-epic records are used as they always were. Both halves matter.
+// Requiring the flag would black out every existing reviewer history on upgrade —
+// the same stranding strictRuns' empty-means-strict rule exists to avoid — and a
+// pre-epic-only store is at least INTERNALLY consistent, which a blend never is.
+// The one-time step when the first current-era record lands is the honest cost of
+// switching between two coherent measurements; it is not a drift.
+//
+// Like strictRuns this is scoped to TrustPriors and NOT applied to Aggregate: the
+// `atcr scorecard` leaderboard reports what actually happened across all runs.
+func unresolvedEraRuns(records []Record) []Record {
+	current := make([]Record, 0, len(records))
+	for _, r := range records {
+		if r.RaisedIncludesUnresolved {
+			current = append(current, r)
+		}
+	}
+	if len(current) > 0 {
+		return current
+	}
+	return records
 }
 
 // ResolveTrustPriors resolves the default scorecard store directory and reads
