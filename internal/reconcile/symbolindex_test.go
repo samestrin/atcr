@@ -512,21 +512,51 @@ func TestLazySymbolIndex_NilReceiverIsInconclusive(t *testing.T) {
 
 // TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable pins that the
 // zero-eligible-files early return increments atcr_tier4_index_unavailable_total
-// like the four other Tier-4-disabling paths, so a tracked tree containing no
-// parser-supported file is distinguishable from a healthy run in the metrics.
+// like the four other Tier-4-disabling paths, so a tracked tree that yields no
+// searchable file is distinguishable from a healthy run in the metrics.
+//
+// Eligibility is CONTAINMENT, not parser support: the fixture is a tracked set
+// every member of which escapes root (or is blank). A tree of .md/.yaml files is
+// deliberately NOT zero-eligible — see
+// TestSymbolIndex_NonParserOnlyTreeIsStillSearchable.
 func TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable(t *testing.T) {
 	root := t.TempDir()
-	writeTracked(t, root, "docs/readme.md", "config/app.yaml")
+	writeTracked(t, root, "docs/readme.md")
 
-	lz := newLazySymbolIndex(root, []string{"docs/readme.md", "config/app.yaml"})
-	// No newParser override: eligibility filtering drops both files (no parser
-	// language for .md/.yaml) before any parser would be requested.
+	lz := newLazySymbolIndex(root, []string{"../outside/evil.go", "/etc/hosts", ""})
+	// No newParser override: containment filtering drops every path before any
+	// parser would be requested.
 
 	before := metrics.Counter(tier4UnavailableMetric).Value()
 	_, outcome := lz.resolve(context.Background(), []string{"Anything"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome)
 	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
 		"zero eligible files is an unavailable index, and must say so in the metrics")
+}
+
+// TestSymbolIndex_NonParserOnlyTreeIsStillSearchable pins the counterpart the
+// test above used to contradict: a tracked tree of only non-parser-language
+// files is a perfectly searchable tree. Its raw tokens feed `present`, so the
+// index is available (no unavailable counter), a construct named in it is real
+// code, and only an anchor absent from all of it is a no-match.
+func TestSymbolIndex_NonParserOnlyTreeIsStillSearchable(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "infra"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "infra", "main.tf"),
+		[]byte("resource \"aws_s3_bucket\" \"artifactStore\" {}\n"), 0o644))
+	writeTracked(t, root, "docs/readme.md")
+
+	lz := newLazySymbolIndex(root, []string{"infra/main.tf", "docs/readme.md"})
+
+	before := metrics.Counter(tier4UnavailableMetric).Value()
+	_, outcome := lz.resolve(context.Background(), []string{"artifactStore"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a construct named in Terraform is real code, not a phantom")
+	assert.Equal(t, before, metrics.Counter(tier4UnavailableMetric).Value(),
+		"a parser-less tree is searchable, so Tier 4 is available and must not be counted unavailable")
+
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome, "the tree was searched, and the anchor is genuinely absent")
 }
 
 // TestSymbolIndex_UnparsedLanguageStillFeedsPresent pins the polyglot hole:

@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
@@ -322,10 +323,21 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			complete = false // absent or unreadable: a region of the tree went unsearched
 			continue
 		}
+		if isBinaryContent(src) {
+			// Not a hole: no declaration lives in a compiled blob. See isBinaryContent.
+			continue
+		}
 		readFiles++
 		collectSourceIdentifiers(src, present)
 
 		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(rel)))
+		if lang == "" {
+			// No parser for this extension, so it contributes no DECLARATIONS. Its
+			// raw tokens were harvested above, which is all the no-match verdict
+			// needs from it — so this is a resolution limit, not a search hole, and
+			// `complete` deliberately stays true.
+			continue
+		}
 		if parserFailed[lang] {
 			continue
 		}
@@ -412,9 +424,22 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 	}
 }
 
-// eligiblePaths filters the tracked set to root-contained files whose extension
-// has a parser, preserving a deterministic (sorted) order so a capped or
-// partially-failing build is reproducible.
+// eligiblePaths filters the tracked set to root-contained files, preserving a
+// deterministic (sorted) order so a capped or partially-failing build is
+// reproducible.
+//
+// It deliberately does NOT filter by parser language. astgroup.LanguageForExt
+// covers only go/py/ts-js/php/rust/bash/java/kotlin/c-cpp/csharp, so filtering
+// here made Ruby, Swift, Scala, Elixir, SQL, Terraform, proto, YAML and Markdown
+// structurally invisible to `present` while `complete` stayed true — the largest
+// hole the incomplete-index downgrade could have, and the one it never saw. A
+// finding whose construct genuinely lives in a .rb file, cited against a
+// non-existent .go path, then reached tier4NoMatch and was routed out of
+// findings.json as fabricated.
+//
+// The parser filter still applies, one level down in build: it gates byName
+// (which needs declarations) and nothing else. Reading a file and harvesting its
+// raw tokens needs no parser at all.
 func (lz *lazySymbolIndex) eligiblePaths() []string {
 	out := make([]string, 0, len(lz.paths))
 	for _, rel := range lz.paths {
@@ -422,13 +447,34 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 		if rel == "" || escapesIndexRoot(rel) {
 			continue
 		}
-		if astgroup.LanguageForExt(strings.ToLower(path.Ext(rel))) == "" {
-			continue
-		}
 		out = append(out, rel)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// binarySniffBytes is how much of a file is inspected for a NUL byte before the
+// content is accepted as text. A NUL in the first chunk is the same heuristic
+// git itself uses to classify a blob as binary.
+const binarySniffBytes = 8000
+
+// isBinaryContent reports whether src looks like a binary blob rather than
+// source text.
+//
+// Tracked binaries must not be token-scanned. This repository alone carries
+// ~31MB of embedded .wasm parser plugins, so scanning them would dominate the
+// index build cost, and their byte noise would inflate `present` with tokens no
+// reviewer ever named — weakening the very set the no-match verdict depends on.
+//
+// Skipping one is NOT a hole in the search, so it does not clear `complete`: a
+// source construct is declared in source text, never in a compiled blob. That
+// distinction is what keeps the no-match verdict available on a normal
+// repository instead of being withheld by every checked-in image and plugin.
+func isBinaryContent(src []byte) bool {
+	if len(src) > binarySniffBytes {
+		src = src[:binarySniffBytes]
+	}
+	return bytes.IndexByte(src, 0) >= 0
 }
 
 // escapesIndexRoot reports whether a tracked relpath would read outside the
