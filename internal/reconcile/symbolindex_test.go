@@ -190,18 +190,30 @@ func TestSymbolIndex_ParserFactoryFailureDegrades(t *testing.T) {
 // TestSymbolIndex_FileCapDisablesTier4 pins the clarified cost cap: a tree with
 // more eligible files than the cap disables Tier 4 for that run instead of
 // half-indexing, so no finding is judged against a partial view of the repo.
+//
+// Every over-cap fixture file is WRITTEN TO DISK, and the sub-cap companion below
+// is the reason why. An earlier version of this test handed the index paths that
+// were never created, so tier4Inconclusive, the zero parser calls and the +1
+// unavailable counter all held via the readFiles==0 bail whether or not the cap
+// fired — the assertions were guaranteed by the missing files, not by the cap.
+// With the files present, removing the cap flips this test.
 func TestSymbolIndex_FileCapDisablesTier4(t *testing.T) {
-	root := t.TempDir()
-	writeTracked(t, root, "internal/net/pool.go")
+	// A cap small enough to write real fixtures for. The default 5000 is exercised
+	// by symbolIndexFileCap's own assertions in the env-override test; what needs
+	// covering HERE is the branch, and the branch reads the effective cap.
+	t.Setenv(tier4IndexMaxFilesEnv, "4")
+	require.Equal(t, 4, symbolIndexFileCap())
 
-	paths := make([]string, 0, maxSymbolIndexFiles+1)
-	for i := 0; i <= maxSymbolIndexFiles; i++ {
+	root := t.TempDir()
+	paths := make([]string, 0, 5)
+	for i := range 5 { // 5 > cap 4
 		paths = append(paths, fmt.Sprintf("internal/gen/f%d.go", i))
 	}
+	writeTracked(t, root, paths...) // ON DISK: the cap must be what disables Tier 4
 
 	var calls int32
 	lz := newLazySymbolIndex(root, paths)
-	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+	lz.newParser = newStubFactory(fileTree{"f0.go": file(fn("DialPeer", 7))}, &calls)
 
 	before := metrics.Counter(tier4UnavailableMetric).Value()
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
@@ -210,6 +222,33 @@ func TestSymbolIndex_FileCapDisablesTier4(t *testing.T) {
 	assert.Zero(t, atomic.LoadInt32(&calls), "the cap is checked before any parsing work")
 	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
 		"tripping the cap is counted so an always-off Tier 4 is visible in CI")
+}
+
+// TestSymbolIndex_JustUnderFileCapStillResolves is the companion that makes the
+// test above load-bearing. Same fixtures, same parser, one fewer file — under the
+// cap the index builds and resolves. Disabling the cap branch turns the over-cap
+// case into this one, so the pair fails in exactly the way a working cap forbids.
+func TestSymbolIndex_JustUnderFileCapStillResolves(t *testing.T) {
+	t.Setenv(tier4IndexMaxFilesEnv, "4")
+
+	root := t.TempDir()
+	paths := make([]string, 0, 4)
+	for i := range 4 { // 4 == cap 4, not over it
+		paths = append(paths, fmt.Sprintf("internal/gen/f%d.go", i))
+	}
+	writeTracked(t, root, paths...)
+
+	var calls int32
+	lz := newLazySymbolIndex(root, paths)
+	lz.newParser = newStubFactory(fileTree{"f0.go": file(fn("DialPeer", 7))}, &calls)
+
+	before := metrics.Counter(tier4UnavailableMetric).Value()
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome, "at the cap the index builds normally")
+	assert.Equal(t, "internal/gen/f0.go", got)
+	assert.NotZero(t, atomic.LoadInt32(&calls), "parsing happens when the cap is not tripped")
+	assert.Equal(t, before, metrics.Counter(tier4UnavailableMetric).Value(),
+		"a healthy build must not touch the unavailable counter")
 }
 
 // TestSymbolIndex_FileCapEnvOverride pins the operator override:
@@ -224,14 +263,16 @@ func TestSymbolIndex_FileCapEnvOverride(t *testing.T) {
 	assert.Equal(t, 2, symbolIndexFileCap())
 
 	// A tree over the override disables Tier 4 exactly as over the default does.
+	// The fixtures are written to disk for the same reason the default-cap test
+	// writes its own: with the files absent, the readFiles==0 bail produces every
+	// assertion below whether or not the cap fires.
 	root := t.TempDir()
-	writeTracked(t, root, "internal/net/pool.go")
-
 	paths := []string{"internal/gen/f0.go", "internal/gen/f1.go", "internal/gen/f2.go"}
+	writeTracked(t, root, paths...)
 
 	var calls int32
 	lz := newLazySymbolIndex(root, paths)
-	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+	lz.newParser = newStubFactory(fileTree{"f0.go": file(fn("DialPeer", 7))}, &calls)
 
 	before := metrics.Counter(tier4UnavailableMetric).Value()
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
