@@ -313,3 +313,140 @@ func TestSymbolIndex_RealGoParser(t *testing.T) {
 	_, outcome = lz.resolve(context.Background(), []string{"NotInThisFile"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome)
 }
+
+// benchGoSource returns a realistic small Go source file for the index-build
+// benchmark: a package clause, imports, a struct and several top-level funcs,
+// so each parsed file yields a handful of declarations rather than one.
+func benchGoSource(i int) string {
+	return fmt.Sprintf(`package pkg%03d
+
+import (
+	"errors"
+	"fmt"
+)
+
+type Conn%03d struct {
+	addr string
+	open bool
+}
+
+func DialPeer%03d(addr string) (*Conn%03d, error) {
+	if addr == "" {
+		return nil, errors.New("empty addr")
+	}
+	return &Conn%03d{addr: addr, open: true}, nil
+}
+
+func (c *Conn%03d) Close() error {
+	c.open = false
+	return nil
+}
+
+func (c *Conn%03d) String() string {
+	return fmt.Sprintf("conn(%%s)", c.addr)
+}
+
+func closeIdle%03d(conns []*Conn%03d) int {
+	n := 0
+	for _, c := range conns {
+		if !c.open {
+			n++
+		}
+	}
+	return n
+}
+`, i, i, i, i, i, i, i, i, i)
+}
+
+// BenchmarkSymbolIndexBuild_RealGoParser measures the wall-clock cost of the
+// SERIAL Tier 4 index build against the real embedded go.wasm parser.
+//
+// It exists to answer a specific question before any code changes: the build
+// loop in lazySymbolIndex.build parses eligible files one at a time, and the
+// standing proposal is to parallelize it. internal/astgroup/host.go already
+// commits this codebase to measuring before adding parser instances ("If
+// profiling later shows real same-language contention, the remedy is a
+// per-language pool of instances sized to GOMAXPROCS ... deferred until
+// measurement justifies the extra instances"). A wasm module instance
+// serializes its own Parse calls behind a mutex, so goroutines around one
+// parser cannot speed this loop up at all — only additional instances could,
+// and this benchmark is what decides whether that is worth their memory.
+//
+// Sized in files rather than run at the 5000-file cap so one iteration fits a
+// normal `go test -bench` budget. The build loop is linear in file count, so
+// per-file cost extrapolates: cap_cost = 5000 * (ns_per_op / files).
+//
+// The shared wasm host is warmed before the timer starts. That matches
+// production: the Tier 4 index reuses the process-lifetime host that AST
+// clustering and symbol anchoring have already compiled (T2), so one-time
+// module compilation is not part of the per-run build cost this row is about.
+func BenchmarkSymbolIndexBuild_RealGoParser(b *testing.B) {
+	for _, fileCount := range []int{50, 200} {
+		b.Run(fmt.Sprintf("files=%d", fileCount), func(b *testing.B) {
+			root := b.TempDir()
+			paths := make([]string, 0, fileCount)
+			for i := range fileCount {
+				rel := fmt.Sprintf("internal/pkg%03d/file.go", i)
+				abs := filepath.Join(root, filepath.FromSlash(rel))
+				require.NoError(b, os.MkdirAll(filepath.Dir(abs), 0o755))
+				require.NoError(b, os.WriteFile(abs, []byte(benchGoSource(i)), 0o644))
+				paths = append(paths, rel)
+			}
+
+			anchor := fmt.Sprintf("DialPeer%03d", 0)
+
+			// Warm the shared host, and prove the build actually resolves before
+			// timing anything — a benchmark over an index that silently failed to
+			// build would report a fast, meaningless number.
+			warm := newLazySymbolIndex(root, paths)
+			if _, outcome := warm.resolve(context.Background(), []string{anchor}, nil); outcome != tier4Resolved {
+				b.Fatalf("index build did not resolve %s (outcome %v) — benchmark would measure nothing", anchor, outcome)
+			}
+
+			b.ResetTimer()
+			for range b.N {
+				lz := newLazySymbolIndex(root, paths)
+				lz.resolve(context.Background(), []string{anchor}, nil)
+			}
+		})
+	}
+}
+
+// nopParser is a Parser that returns an empty file node without inspecting the
+// source. It isolates everything the build loop does APART from parsing.
+type nopParser struct{}
+
+func (nopParser) Parse([]byte) (astgroup.Node, error) { return file(), nil }
+
+// BenchmarkSymbolIndexBuild_NoParseBaseline is the companion measurement to
+// BenchmarkSymbolIndexBuild_RealGoParser: the same build over the same corpus
+// with the wasm Parse call replaced by a no-op, so it times only the parts of
+// the loop that are free to run concurrently — os.ReadFile, path containment,
+// and collectSourceIdentifiers.
+//
+// The gap between the two benchmarks is the parse cost, and parse is the part
+// a single wasm instance serializes internally. That gap is what decides the
+// standing "parallelize the index build" question: if it dominates, goroutines
+// around one parser buy nothing and only a pool of instances could help.
+func BenchmarkSymbolIndexBuild_NoParseBaseline(b *testing.B) {
+	for _, fileCount := range []int{50, 200} {
+		b.Run(fmt.Sprintf("files=%d", fileCount), func(b *testing.B) {
+			root := b.TempDir()
+			paths := make([]string, 0, fileCount)
+			for i := range fileCount {
+				rel := fmt.Sprintf("internal/pkg%03d/file.go", i)
+				abs := filepath.Join(root, filepath.FromSlash(rel))
+				require.NoError(b, os.MkdirAll(filepath.Dir(abs), 0o755))
+				require.NoError(b, os.WriteFile(abs, []byte(benchGoSource(i)), 0o644))
+				paths = append(paths, rel)
+			}
+
+			b.ResetTimer()
+			for range b.N {
+				lz := newLazySymbolIndex(root, paths)
+				lz.newParser = func(string) (astgroup.Parser, error) { return nopParser{}, nil }
+				lz.resolve(context.Background(), []string{"DialPeer000"}, nil)
+			}
+		})
+	}
+}
