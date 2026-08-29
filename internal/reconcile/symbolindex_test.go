@@ -731,10 +731,21 @@ func TestSymbolIndex_UnreadableFileAdmitsHole(t *testing.T) {
 	root := t.TempDir()
 	writeTracked(t, root, "internal/net/pool.go")
 
+	// The fixture must be a file that RESOLVES but cannot be READ. An absent file
+	// is not one: containedIndexPath's EvalSymlinks fails first, so it admits its
+	// hole through the containment branch and never reaches the read at all —
+	// which is why TestTier4Safety_IncompleteIndexIsNeverNoMatch, whose fixture is
+	// a missing file, leaves this branch uncovered despite appearances.
+	unreadable := filepath.Join(root, "internal", "net", "locked.go")
+	require.NoError(t, os.WriteFile(unreadable, []byte("package net\n"), 0o644))
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o644) }) // let TempDir clean up
+	if _, err := os.ReadFile(unreadable); err == nil {
+		t.Skip("filesystem or privileges ignore mode 0000; cannot stage an unreadable file")
+	}
+
 	var calls int32
-	// "internal/net/gone.go" is tracked and parser-eligible but absent from disk,
-	// so its read fails while pool.go still builds a working index.
-	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go", "internal/net/gone.go"})
+	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go", "internal/net/locked.go"})
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
 	beforeIncomplete := metrics.Counter(tier4IncompleteMetric).Value()
