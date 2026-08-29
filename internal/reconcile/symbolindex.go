@@ -108,6 +108,22 @@ func symbolIndexFileCap() int {
 // order-stable without re-sorting.
 type symbolIndex struct {
 	byName map[string][]string
+	// presentInSource is `present` minus the documentation and markup files, and
+	// it is what the NO-MATCH test consults.
+	//
+	// The read set was widened to every text file so unparsed LANGUAGES (Ruby,
+	// Swift, Terraform, proto) stay searchable. That also pulled README,
+	// CHANGELOG and docs/ prose in, and English prose is full of camelCase and
+	// snake_case tokens that pass isIdentifierShaped — so a construct DELETED
+	// from the code but still named in a changelog scored "present" and its
+	// finding came back inconclusive. The detector lost sensitivity while still
+	// reporting state=applied.
+	//
+	// A construct is declared in source, never in prose. `present` stays wide for
+	// the primaryMatched gate in resolve, where a broader set only ever KEEPS a
+	// finding in the primary stream (the safe direction); the no-match test, which
+	// routes a finding OUT, reads this narrower one.
+	presentInSource map[string]struct{}
 	// present holds every identifier-shaped token seen in the RAW SOURCE TEXT of
 	// the indexed files, not just the ones the parser named. It exists solely to
 	// make the no-match verdict safe.
@@ -196,10 +212,11 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 		return "", tier4Inconclusive // the search had holes: "not found" is unproven
 	}
 	for _, a := range primary {
-		if _, seen := x.present[a]; seen {
-			// Named somewhere in the source text even though the parser did not
+		if _, seen := x.presentInSource[a]; seen {
+			// Named somewhere in the SOURCE text even though the parser did not
 			// declare it (a Go type, a const, a struct field). Real code, just not
-			// localizable — never a phantom.
+			// localizable — never a phantom. Documentation is deliberately not
+			// consulted here; see presentInSource.
 			return "", tier4Inconclusive
 		}
 		if len(x.byName[a]) > 0 {
@@ -334,6 +351,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 
 	sites := make(map[string]map[string]struct{})
 	present := make(map[string]struct{})
+	presentInSource := make(map[string]struct{})
 	parsers := make(map[string]astgroup.Parser)
 	parserFailed := make(map[string]bool)
 	readFiles := 0
@@ -386,6 +404,9 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		}
 		readFiles++
 		collectSourceIdentifiers(src, present)
+		if !isDocExt(strings.ToLower(path.Ext(rel))) {
+			collectSourceIdentifiers(src, presentInSource)
+		}
 
 		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(rel)))
 		if lang == "" {
@@ -447,7 +468,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		sort.Strings(files) // stable output regardless of map iteration order
 		byName[name] = files
 	}
-	lz.idx = &symbolIndex{byName: byName, present: present, complete: complete}
+	lz.idx = &symbolIndex{byName: byName, present: present, presentInSource: presentInSource, complete: complete}
 }
 
 // collectSourceIdentifiers adds every identifier-shaped token in src to out.
@@ -604,6 +625,24 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 		return nil, true, nil // raced past the cap: skip, exactly as the caller would have
 	}
 	return append(head, rest...), false, nil
+}
+
+// docExts are the documentation and markup extensions whose tokens are kept out
+// of presentInSource. Prose names constructs it does not declare — a changelog
+// entry announcing a REMOVAL is the exact case — so admitting it to the no-match
+// test suppresses the verdict for constructs that are genuinely gone.
+//
+// Keep this list to formats that are prose by definition. A config or data format
+// (.yaml, .json, .sql, .tf) legitimately DECLARES names, so it belongs in the
+// source set even though no parser reads it.
+var docExts = map[string]struct{}{
+	".md": {}, ".markdown": {}, ".rst": {}, ".txt": {}, ".adoc": {},
+}
+
+// isDocExt reports whether ext (lowercased, leading dot included) is prose.
+func isDocExt(ext string) bool {
+	_, ok := docExts[ext]
+	return ok
 }
 
 // escapesIndexRoot reports whether a tracked relpath would read outside the
