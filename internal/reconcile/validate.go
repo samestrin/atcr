@@ -7,6 +7,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // tier4Resolver is the Tier 4 lookup capability validateFindingPaths consumes
@@ -15,6 +16,10 @@ import (
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
 	resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome)
+	// state reports what the index build achieved, for Summary.UnresolvedState.
+	// It is only meaningful after resolve has forced the build, and asking must
+	// never trigger one — the AC5 laziness is part of this contract.
+	state() string
 }
 
 // newTier4Index constructs the per-run Tier 4 index. It is a package var so
@@ -64,12 +69,15 @@ var newTier4Index = func(root string, paths []string) tier4Resolver {
 // clustering (AC6): validation degrades to 5.4's Tier 1-3-only behavior, and the
 // returned slice is empty. With no Tier 4 there is no search to have exhausted,
 // so there is no evidence any finding is fabricated.
-func validateFindingPaths(ctx context.Context, findings []JSONFinding, root string) []int {
+// It also returns the Tier 4 state for Summary.UnresolvedState. An EMPTY state
+// means "not recorded" — no root, or no findings — and is the only case the
+// caller leaves unstamped.
+func validateFindingPaths(ctx context.Context, findings []JSONFinding, root string) ([]int, string) {
 	if root == "" {
-		return nil
+		return nil, ""
 	}
 	if len(findings) == 0 {
-		return nil
+		return nil, ""
 	}
 	idx := stream.BuildFileIndex(ctx, root)
 
@@ -78,6 +86,16 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 	// finding that actually needs it, so an all-valid run pays nothing (AC5).
 	tier4Available := idx != nil && !astGroupingDisabled()
 	var tier4 tier4Resolver
+
+	// A run where Tier 4 is available but no finding ever needs it is APPLIED,
+	// not unavailable: the check was in force and simply had nothing to
+	// adjudicate, which is the healthy case a bare 0 count cannot express. The
+	// index is never constructed on that path (AC5), so the state cannot come
+	// from it — it is seeded here and overwritten below only if a build happened.
+	tier4State := reclib.UnresolvedStateDisabled
+	if tier4Available {
+		tier4State = reclib.UnresolvedStateApplied
+	}
 
 	var unresolved []int
 	for i := range findings {
@@ -128,7 +146,11 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			// nothing".
 		}
 	}
-	return unresolved
+	if tier4 != nil {
+		// An index WAS built, so its own verdict on the build supersedes the seed.
+		tier4State = tier4.state()
+	}
+	return unresolved, tier4State
 }
 
 // tier4Eligible reports whether a finding with an unresolved path may be judged

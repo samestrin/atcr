@@ -24,7 +24,7 @@ import (
 // falsely flagged.
 func TestValidateFindingPaths_SkipsWhenRootEmpty(t *testing.T) {
 	findings := []JSONFinding{{File: "does/not/exist.go"}}
-	validateFindingPaths(context.Background(), findings, "")
+	_, _ = validateFindingPaths(context.Background(), findings, "")
 
 	assert.False(t, findings[0].PathValid)
 	assert.Empty(t, findings[0].PathWarning)
@@ -40,7 +40,7 @@ func TestValidateFindingPaths_StampsWhenRootSet(t *testing.T) {
 		{File: "exists.go"},
 		{File: "missing.go"},
 	}
-	validateFindingPaths(context.Background(), findings, root)
+	_, _ = validateFindingPaths(context.Background(), findings, root)
 
 	assert.True(t, findings[0].PathValid)
 	assert.Empty(t, findings[0].PathWarning)
@@ -58,7 +58,7 @@ func TestValidateFindingPaths_FlowsIntoJSONRecord(t *testing.T) {
 		{Severity: "HIGH", File: "missing.go", Line: 7},
 		{Severity: "LOW", File: "real.go", Line: 1},
 	}
-	validateFindingPaths(context.Background(), js, root)
+	_, _ = validateFindingPaths(context.Background(), js, root)
 
 	require.Len(t, js, 2)
 	assert.False(t, js[0].PathValid)

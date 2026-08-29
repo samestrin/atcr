@@ -1031,8 +1031,10 @@ func TestReviewCmd_LogsUnresolvedFiltered(t *testing.T) {
 
 	code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL")
 	require.Equal(t, 0, code, stderr)
-	require.Contains(t, stderr, "tier-4 content resolution applied",
+	require.Contains(t, stderr, "tier-4 content resolution",
 		"the one-shot review path must surface the unresolved sidecar count")
+	require.Contains(t, stderr, "state=",
+		"and the state that disambiguates a zero count, exactly as `atcr reconcile` does")
 }
 
 // TestRunReview_ResolvesSharedSettingsInOneLoad is the review half of the

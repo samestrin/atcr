@@ -15,6 +15,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/metrics"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // tier4UnavailableMetric counts reconcile runs where a Tier 4 index was needed
@@ -266,6 +267,30 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 	}
 	lz.once.Do(func() { lz.build(ctx) })
 	return lz.idx.resolve(primary, secondary)
+}
+
+// state reports what the build actually achieved, for Summary.UnresolvedState.
+//
+// It is meaningful only AFTER a resolve has forced the build — before that the
+// index is deliberately unbuilt (AC5) and there is nothing to report. The caller
+// (validateFindingPaths) only asks once it has consulted the resolver, so the
+// lazy contract is preserved: asking for the state never triggers a build.
+//
+// The three answers map 1:1 onto the reasons a lookup can fail to reach a
+// verdict, which is exactly what makes them worth reporting separately: a nil
+// index means the build could not run at all (cap, no parser, nothing readable,
+// no contained file), an incomplete one means a region of the tree went
+// unsearched so every no-match was withheld, and anything else means the check
+// was fully in force.
+func (lz *lazySymbolIndex) state() string {
+	switch {
+	case lz == nil || lz.idx == nil:
+		return reclib.UnresolvedStateUnavailable
+	case !lz.idx.complete:
+		return reclib.UnresolvedStateIncomplete
+	default:
+		return reclib.UnresolvedStateApplied
+	}
 }
 
 // build parses every eligible tracked file once and populates lz.idx, or leaves

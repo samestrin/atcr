@@ -548,6 +548,16 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// report.md stays byte-identical on the common (small-panel) path.
 		fmt.Fprintf(&b, "- Consensus filtered: %d (uncorroborated singletons routed to the ambiguous sidecar)\n", summary.ConsensusFiltered)
 	}
+	if summary.UnresolvedState != "" {
+		// Rendered UNCONDITIONALLY (unlike the count below), for the same reason
+		// Consensus level above is: a count of 0 cannot distinguish "the Tier 4
+		// content check ran and routed nothing" from "it never ran at all" — the
+		// opt-out, a missing tracked index, an over-cap or unbuildable index, and
+		// an incomplete one all produce the same 0. Guarded on non-empty only so a
+		// Summary from a pure in-memory embedder (which never runs content
+		// resolution) renders byte-identically to before.
+		fmt.Fprintf(&b, "- Unresolved check: %s\n", summary.UnresolvedState)
+	}
 	if summary.UnresolvedFiltered > 0 {
 		// Surface epic-35.16.6.5 Tier 4 routing the same way the consensus filter
 		// above surfaces its own: rendered only when nonzero, so report.md stays

@@ -236,7 +236,15 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// Stamped after merge, before Emit, so the warning rides into findings.json and
 	// the reports. No-op when opts.Root is empty.
 	jf := res.JSONFindings()
-	unresolvedIdx := validateFindingPaths(ctx, jf, opts.Root)
+	unresolvedIdx, tier4State := validateFindingPaths(ctx, jf, opts.Root)
+	// Stamped UNCONDITIONALLY, unlike the count below. A 0 UnresolvedFiltered is
+	// produced by several conditions and most of them mean Tier 4 never
+	// adjudicated anything, so a report carrying only the count cannot tell a
+	// healthy run from a silently-disabled one. This is the same reasoning that
+	// makes ConsensusLevel accompany ConsensusFiltered. Empty when validation did
+	// not run at all (no root, no findings), which leaves report.md unchanged for
+	// a pure in-memory embedder.
+	res.Summary.UnresolvedState = tier4State
 	// Route findings that exhausted all four path-resolution tiers with zero
 	// symbol correspondence out of the primary stream and into unresolved.json
 	// (Epic 35.16.6.5 T4), following the epic-14.2 consensus-filter precedent:

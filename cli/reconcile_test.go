@@ -224,10 +224,12 @@ func TestRunReconcile_UnresolvedFilteredLogged(t *testing.T) {
 	var logBuf, errBuf bytes.Buffer
 	runReconcileWithLogger(t, &logBuf, &errBuf, "r")
 
-	assert.Contains(t, logBuf.String(), "tier-4 content resolution applied",
+	assert.Contains(t, logBuf.String(), "tier-4 content resolution",
 		"the unresolved sidecar count must be logged post-run beside the consensus line")
 	assert.Contains(t, logBuf.String(), "unresolved_filtered=0",
 		"even a run routing nothing logs the count, so a nonzero count is never silent")
+	assert.Contains(t, logBuf.String(), "state=",
+		"the count alone cannot tell a healthy 0 from a silently-disabled one; the state must ride with it")
 }
 
 // TestRunReconcile_NonStrictScorecardWarn verifies the docs/scorecard.md

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,19 @@ type fakeTier4 struct {
 	byAnchor map[string]string // anchor -> resolved file
 	inconc   map[string]bool   // anchor -> report inconclusive
 	calls    int
+	// buildState is what state() reports. Zero value means "applied": a scripted
+	// resolver always answers, which is what a fully-in-force index looks like.
+	// Tests that need a degraded build set it explicitly.
+	buildState string
+}
+
+// state satisfies tier4Resolver for Summary.UnresolvedState. A scripted resolver
+// has no real build, so it reports applied unless a test says otherwise.
+func (f *fakeTier4) state() string {
+	if f.buildState != "" {
+		return f.buildState
+	}
+	return reclib.UnresolvedStateApplied
 }
 
 func (f *fakeTier4) resolve(_ context.Context, primary, secondary []string) (string, tier4Outcome) {
@@ -72,7 +86,7 @@ func TestTier4_PromotesDissimilarFilename(t *testing.T) {
 		Problem: "`RefreshToken` never checks the expiry before reissuing",
 		Fix:     "compare against the issued-at claim first",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.False(t, findings[0].PathValid)
 	assert.Equal(t, stream.PathNotFoundWarning, findings[0].PathWarning)
@@ -96,7 +110,7 @@ func TestTier4_NoMatchIsSidecarEligible(t *testing.T) {
 		Problem: "`quantumFlux` leaks a handle on every retry",
 		Fix:     "close it in `quantumFlux`",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Equal(t, []int{0}, unresolved)
 	assert.Empty(t, findings[0].PathSuggestion, "a no-match never invents a suggestion")
@@ -115,7 +129,7 @@ func TestTier4_InconclusiveStaysInPrimary(t *testing.T) {
 		File:    "internal/ghost/phantom.go",
 		Problem: "`Close` is called twice on the same handle",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Empty(t, unresolved)
 	assert.Empty(t, findings[0].PathSuggestion)
@@ -133,7 +147,7 @@ func TestTier4_NotConsultedWhenTiers123Suggested(t *testing.T) {
 		File:    "internal/auth/validator.go", // Tier 2 typo hit
 		Problem: "`ValidatePath` swallows the error",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Equal(t, "internal/auth/validate.go", findings[0].PathSuggestion, "the Tier 2 answer stands")
 	assert.Empty(t, unresolved)
@@ -153,7 +167,7 @@ func TestTier4_NotConsultedForValidPaths(t *testing.T) {
 		File:    "internal/auth/session.go",
 		Problem: "`RefreshToken` is fine but slow",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.True(t, findings[0].PathValid)
 	assert.Empty(t, unresolved)
@@ -176,7 +190,7 @@ func TestTier4_DisabledByEnv(t *testing.T) {
 		File:    "internal/ghost/phantom.go",
 		Problem: "`RefreshToken` never checks the expiry",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.False(t, findings[0].PathValid, "Tier 1-3 existence validation still runs")
 	assert.Equal(t, stream.PathNotFoundWarning, findings[0].PathWarning)
@@ -198,7 +212,7 @@ func TestTier4_NoAnchorsIsNeverSidecarEligible(t *testing.T) {
 		Problem: "this file is too long and hard to follow",
 		Fix:     "split it up",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Empty(t, unresolved)
 	assert.Empty(t, findings[0].PathSuggestion)
@@ -218,7 +232,7 @@ func TestTier4_DegradesWithoutGitIndex(t *testing.T) {
 		File:    "internal/ghost/phantom.go",
 		Problem: "`quantumFlux` leaks a handle",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Equal(t, stream.PathNotFoundWarning, findings[0].PathWarning)
 	assert.Empty(t, unresolved)
@@ -244,7 +258,7 @@ func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
 		// resolve — which is exactly what must not happen.
 		Fix: "route through `RefreshToken` then `anchorA` `anchorB` `anchorC` `anchorD` `anchorE` `anchorF` `anchorG` `anchorH`",
 	}}
-	unresolved := validateFindingPaths(context.Background(), findings, root)
+	unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 	assert.Empty(t, findings[0].PathSuggestion,
 		"a truncated FIX anchor set is a prefix — no suggestion may be drawn from it")

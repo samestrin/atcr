@@ -770,6 +770,8 @@ func TestResume_LogsUnresolvedFiltered(t *testing.T) {
 
 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 0, code, out)
-	require.Contains(t, out, "tier-4 content resolution applied",
+	require.Contains(t, out, "tier-4 content resolution",
 		"the resume path must surface the unresolved sidecar count")
+	require.Contains(t, out, "state=",
+		"and the state that disambiguates a zero count, exactly as `atcr reconcile` does")
 }
