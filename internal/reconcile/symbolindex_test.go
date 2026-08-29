@@ -146,7 +146,7 @@ func TestSymbolIndex_SkipsUnusableFiles(t *testing.T) {
 
 	var calls int32
 	lz := newLazySymbolIndex(root, []string{
-		"docs/readme.md",           // no parser language
+		"docs/readme.md",           // read and token-scanned, never parsed
 		"internal/net/pool.go",     // parses
 		"internal/bad/broken.go",   // parser returns an error
 		"internal/gone/deleted.go", // tracked but absent on disk

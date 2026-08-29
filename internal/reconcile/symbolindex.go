@@ -60,9 +60,18 @@ const (
 )
 
 // maxSymbolIndexFiles caps how many tracked files a Tier 4 index build will
-// parse. Nothing else in this codebase parses the whole repository —
-// astgroup.Grouper parses only the files findings actually cite, lazily, one at
-// a time — so a repo-wide sweep is a genuinely new cost and is bounded here.
+// READ. The parse set is a subset of that — only files with a parser language
+// are parsed — but the cap is measured on the read set, because reading and
+// token-scanning is what the whole tracked tree now pays. Nothing else in this
+// codebase touches the whole repository — astgroup.Grouper parses only the files
+// findings actually cite, lazily, one at a time — so a repo-wide sweep is a
+// genuinely new cost and is bounded here.
+//
+// Because the cap counts every contained tracked file rather than only the
+// parser-language ones, a tree near the limit can trip it on its docs and
+// fixtures. That direction is safe (Tier 4 goes fully inconclusive, nothing is
+// routed), it is counted in tier4UnavailableMetric rather than silent, and
+// tier4IndexMaxFilesEnv retunes it without a rebuild.
 //
 // Exceeding the cap DISABLES Tier 4 for the run (every lookup reports
 // tier4Inconclusive) rather than indexing a prefix. A half-built index would
@@ -262,19 +271,24 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 // build parses every eligible tracked file once and populates lz.idx, or leaves
 // it nil when Tier 4 cannot run for this repo.
 //
-// Eligibility is "has a parser language" (astgroup.LanguageForExt) and "does not
-// escape root". Per-file failures — an absent file, an unreadable one, an
-// unparseable one — are SKIPPED, not fatal: a repo where one file fails to parse
-// must still get Tier 4 for the rest. A failure to obtain the parser for a
-// language at all is different in kind (every file of that language is now
-// invisible), and if it leaves the index with nothing at all the index is
-// discarded so lookups report "could not check".
+// Eligibility is "does not escape root" — nothing more. EVERY contained tracked
+// file is read and token-scanned into `present`; the parser language
+// (astgroup.LanguageForExt) gates only byName, the declaration half. Filtering
+// eligibility by parser language instead is what once made whole languages
+// invisible to the no-match verdict (see eligiblePaths).
+//
+// Per-file failures — an absent file, an unreadable one, an unparseable one —
+// are SKIPPED, not fatal: a repo where one file fails to parse must still get
+// Tier 4 for the rest. A failure to obtain the parser for a language at all is
+// different in kind (every file of that language loses its declarations), and if
+// it leaves the index with nothing at all the index is discarded so lookups
+// report "could not check".
 func (lz *lazySymbolIndex) build(ctx context.Context) {
 	eligible := lz.eligiblePaths()
 	if len(eligible) == 0 {
-		// A tracked tree with no parser-supported file disables Tier 4 exactly
-		// like the cap, the missing-parser and the aborted-build paths below —
-		// count it the same way or it is indistinguishable from a healthy run.
+		// A tracked tree with no root-contained file disables Tier 4 exactly like
+		// the cap, the missing-parser and the aborted-build paths below — count it
+		// the same way or it is indistinguishable from a healthy run.
 		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
 	}
@@ -470,6 +484,14 @@ const binarySniffBytes = 8000
 // source construct is declared in source text, never in a compiled blob. That
 // distinction is what keeps the no-match verdict available on a normal
 // repository instead of being withheld by every checked-in image and plugin.
+//
+// KNOWN GAP, in the unsafe direction: a UTF-16/UTF-32 encoded SOURCE file
+// carries NULs and is classified binary here, so its identifiers never reach
+// `present` and a finding about one of them could reach a no-match verdict. The
+// exposure is small — git itself treats such a blob as binary, and toolchains
+// normalize to UTF-8 — but it is real. Widen this by DECODING those encodings,
+// never by dropping the NUL test: without it the ~31MB of embedded .wasm in this
+// repo alone would be scanned on every build.
 func isBinaryContent(src []byte) bool {
 	if len(src) > binarySniffBytes {
 		src = src[:binarySniffBytes]
