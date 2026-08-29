@@ -671,3 +671,116 @@ func TestTrustPriors_PreUnresolvedOnlyHistoryStillCounts(t *testing.T) {
 	assert.InDelta(t, 1.0, priors["bruce"], 0.0001,
 		"with no current-era record in the window, the pre-epic history is used as it always was")
 }
+
+// TestTrustPriors_EraFilterIsPerReviewerNotGlobal pins that the era filter never
+// lets ONE reviewer's upgrade black out ANOTHER reviewer's history.
+//
+// unresolvedEraRuns partitioned the whole record slice at once: if any record
+// anywhere carried the flag, every unflagged record was dropped — across all
+// reviewers. So the first post-upgrade run, which flags only the reviewers on
+// that panel, erased every other reviewer's entire history. Those reviewers left
+// `byReviewer` altogether, so they were absent from the prior map at ANY minRuns,
+// and absent is not neutral: trustExempt (reconcile/consensus.go:246) reads a
+// missing key as "not exempt" and demoteByTrust (consensus.go:263) reads the same
+// missing key as "do not demote", so a low-trust phantom-raiser silently stopped
+// being demoted — the opposite of what putting phantoms in the denominator was
+// for.
+//
+// The prefer-current rule is per reviewer: each reviewer's own records are asked
+// whether THEY hold a current-era one.
+func TestTrustPriors_EraFilterIsPerReviewerNotGlobal(t *testing.T) {
+	dir := t.TempDir()
+
+	// bruce: pre-epic history only. It has not run since the upgrade.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-bruce%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       4,
+			FindingsCorroborated: 1,
+		}))
+	}
+	// greta: one current-era record, enough to trip the global partition.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:            SchemaVersion,
+			RecordType:               RecordTypeReviewer,
+			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-greta%02d", i),
+			Reviewer:                 "greta",
+			Model:                    "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           2,
+			FindingsCorroborated:     1,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	require.Contains(t, priors, "bruce",
+		"greta crossing into the current era must not erase bruce's history: absent is read as 'no history' by every consumer")
+	assert.InDelta(t, 0.25, priors["bruce"], 0.0001,
+		"bruce's own records are all pre-epic and internally consistent, so they are used unchanged")
+	require.Contains(t, priors, "greta")
+	assert.InDelta(t, 0.5, priors["greta"], 0.0001)
+}
+
+// TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix pins the other half:
+// making the partition per reviewer must not weaken it. A reviewer holding BOTH
+// eras still contributes only its current-era records — the mix is the one
+// combination that measures neither definition.
+func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
+	dir := t.TempDir()
+
+	// bruce spans the change: a flattering pre-epic half and a current-era half.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:            SchemaVersion,
+			RecordType:               RecordTypeReviewer,
+			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
+			Reviewer:                 "bruce",
+			Model:                    "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4,
+			FindingsCorroborated:     1,
+		}))
+	}
+	// carol never crossed over, and must keep its own pre-epic history.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-carol%02d", i),
+			Reviewer:             "carol",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       5,
+			FindingsCorroborated: 1,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.25, priors["bruce"], 0.0001,
+		"bruce holds both eras, so only its current-era records count; blending gives 0.4")
+	assert.InDelta(t, 0.2, priors["carol"], 0.0001,
+		"carol holds no current-era record, so its own pre-epic history is used unchanged")
+}
