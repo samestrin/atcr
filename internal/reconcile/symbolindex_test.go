@@ -290,17 +290,46 @@ func TestSymbolIndex_FileCapEnvOverride(t *testing.T) {
 // TestSymbolIndex_EscapingPathSkipped pins that a tracked path which would
 // escape root is never read, mirroring the containment discipline in
 // stream.ValidatePath and astgroup.Grouper.canonicalPath.
+//
+// All THREE lexical rejections are exercised — absolute path, leading slash, and
+// `..` — because they are separate branches of escapesIndexRoot and only the
+// `..` one was ever covered. The absolute/leading-slash half is the lexical part
+// of the posture that keeps the Tier 4 index from becoming an arbitrary-file
+// reader, so each case names a real file OUTSIDE root whose symbol must not be
+// resolvable through the index.
 func TestSymbolIndex_EscapingPathSkipped(t *testing.T) {
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "evil.go"),
+		[]byte("package evil\n\nfunc leakedOutsideSymbol() {}\n"), 0o644))
+
 	root := t.TempDir()
 	writeTracked(t, root, "internal/net/pool.go")
 
-	var calls int32
-	lz := newLazySymbolIndex(root, []string{"../outside/evil.go", "internal/net/pool.go"})
-	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+	for _, tc := range []struct {
+		name string
+		rel  string
+	}{
+		{"relative dot-dot", "../outside/evil.go"},
+		{"absolute path", filepath.Join(outside, "evil.go")},
+		{"leading slash", "/etc/hosts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.True(t, escapesIndexRoot(filepath.ToSlash(tc.rel)),
+				"%q must be rejected on its spelling alone", tc.rel)
 
-	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
-	assert.Equal(t, tier4Resolved, outcome)
-	assert.Equal(t, "internal/net/pool.go", got)
+			var calls int32
+			lz := newLazySymbolIndex(root, []string{tc.rel, "internal/net/pool.go"})
+			lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+			_, outcome := lz.resolve(context.Background(), []string{"leakedOutsideSymbol"}, nil)
+			assert.NotEqual(t, tier4Resolved, outcome,
+				"a symbol declared outside root must never be resolvable through the index")
+
+			got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+			assert.Equal(t, tier4Resolved, outcome, "the contained file is still indexed")
+			assert.Equal(t, "internal/net/pool.go", got)
+		})
+	}
 }
 
 // TestSymbolIndex_SymlinkEscapeSkipped pins the containment fix: a tracked path
