@@ -1172,3 +1172,39 @@ func TestReconcileHandler_LogsResolvedConsensusLevel(t *testing.T) {
 		"the MCP reconcile path must record the level it resolved")
 	assert.Contains(t, buf.String(), "off", "the log must name the level that was in effect")
 }
+
+// TestReconcileHandler_UnresolvedSidecarSurfaced closes the Epic 35.16.6.5 TD
+// row that reconciled/unresolved.json had no read path: a finding Tier 4 routes
+// out of the primary stream must come back in the atcr_reconcile result as
+// `unresolved`, so a wrongly-routed finding is discoverable without opening
+// the sidecar file by hand.
+func TestReconcileHandler_UnresolvedSidecarSurfaced(t *testing.T) {
+	isolateUserConfig(t)
+	root, _, _ := gitRepo(t) // tracked: auth.go declaring funcs a and b
+	id := "2026-08-29_unresolved"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	// A ghost path whose PROBLEM anchor is declared nowhere in the tracked
+	// tree: Tier 4 no-match, routed to the sidecar.
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off", // keep the consensus filter from sidecar-ing the singleton first
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"], "the ghost finding must route to the sidecar")
+	routed, ok := out["unresolved"].([]any)
+	require.True(t, ok, "ReconcileResult must carry the routed records as `unresolved`")
+	require.Len(t, routed, 1)
+	rec, ok := routed[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "internal/ghost/phantom.go", rec["file"])
+}
