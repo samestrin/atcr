@@ -67,6 +67,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `findings_verified` | int | conditional | Findings confirmed by the skeptic stage. Present only when verification data drove the run. |
 | `findings_refuted` | int | conditional | Findings refuted by the skeptic stage. Conditional, same as above. |
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Conditional, same as above. |
+| `raised_includes_unresolved` | bool | conditional | `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward). Omitted on records written before it, whose denominator excluded them. `TrustPriors` uses it to avoid averaging the two definitions together — see the caution below. |
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -360,6 +361,14 @@ than growing a third aggregation.
   > counts as `strict` — those runs were strict by construction. This applies to
   > every surface, CLI and MCP alike, because the filter lives in `TrustPriors`
   > rather than at the emission site.
+  >
+  > **`findings_raised` also changed meaning once, and is filtered the same way.**
+  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, so a rate
+  > averaged across records from both eras measures neither. Every record written
+  > since carries `raised_includes_unresolved: true`, and `TrustPriors` prefers
+  > those: when the window holds any, only they count; when it holds none, the
+  > older records are used unchanged, so an existing history is never blacked out.
+  > What is excluded is the mix.
   >
   > Two consequences worth knowing:
   > - `minRuns` is a floor on **strict** runs. A reviewer with 15 `strict` and 10
