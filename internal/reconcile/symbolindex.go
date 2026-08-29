@@ -10,7 +10,18 @@ import (
 	"sync"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/metrics"
 )
+
+// tier4UnavailableMetric counts reconcile runs where a Tier 4 index was needed
+// but could not be built — over the file cap, or no parser would load.
+//
+// A slog.Warn alone is not enough here, for the same reason stream.BuildFileIndex
+// counts its own git failure: when Tier 4 is silently off, every lookup reports
+// "could not check", nothing is ever routed to the sidecar, and the run looks
+// EXACTLY like a healthy one where no finding was fabricated. The counter is the
+// only durable signal separating those two.
+const tier4UnavailableMetric = "atcr_tier4_index_unavailable_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
@@ -167,6 +178,7 @@ func (lz *lazySymbolIndex) build() {
 	if len(eligible) > maxSymbolIndexFiles {
 		slog.Warn("astgroup: tier-4 symbol index disabled, tracked file count over cap",
 			"eligible", len(eligible), "cap", maxSymbolIndexFiles)
+		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
 	}
 
@@ -227,6 +239,7 @@ func (lz *lazySymbolIndex) build() {
 		// Nothing was indexed, so "not in the index" carries no information.
 		// Leaving lz.idx nil makes every lookup inconclusive rather than a
 		// false no-match.
+		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
 	}
 

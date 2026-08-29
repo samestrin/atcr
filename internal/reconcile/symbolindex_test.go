@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,9 +168,12 @@ func TestSymbolIndex_ParserFactoryFailureDegrades(t *testing.T) {
 	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go"})
 	lz.newParser = func(string) (astgroup.Parser, error) { return nil, errors.New("wasm load failed") }
 
+	before := metrics.Counter(tier4UnavailableMetric).Value()
 	got, outcome := lz.resolve([]string{"DialPeer"})
 	assert.Equal(t, tier4Inconclusive, outcome)
 	assert.Empty(t, got)
+	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
+		"a silently-disabled Tier 4 must be observable, not indistinguishable from a clean run")
 }
 
 // TestSymbolIndex_FileCapDisablesTier4 pins the clarified cost cap: a tree with
@@ -188,10 +192,13 @@ func TestSymbolIndex_FileCapDisablesTier4(t *testing.T) {
 	lz := newLazySymbolIndex(root, paths)
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
+	before := metrics.Counter(tier4UnavailableMetric).Value()
 	got, outcome := lz.resolve([]string{"DialPeer"})
 	assert.Equal(t, tier4Inconclusive, outcome, "over the cap, Tier 4 reports 'could not check', not 'no match'")
 	assert.Empty(t, got)
 	assert.Zero(t, atomic.LoadInt32(&calls), "the cap is checked before any parsing work")
+	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
+		"tripping the cap is counted so an always-off Tier 4 is visible in CI")
 }
 
 // TestSymbolIndex_EscapingPathSkipped pins that a tracked path which would

@@ -65,6 +65,7 @@ ${OUT_DIR}/
     summary.json                 # reconcile tallies
     ambiguous.json               # gray-zone clusters
     disagreements.json           # severity-conflict radar
+    unresolved.json              # findings with no symbol correspondence in the tracked tree
 ```
 
 A backend caller typically verifies these four files exist before consuming:
