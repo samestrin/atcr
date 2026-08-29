@@ -717,3 +717,77 @@ func TestSymbolIndex_AllEligibleFilesUnreadable(t *testing.T) {
 	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
 		"an index that read nothing is unavailable, and must say so in the metrics")
 }
+
+// TestSymbolIndex_UnreadableFileAdmitsHole covers the unreadable-file
+// `complete = false` branch and the atcr_tier4_index_incomplete_total counter
+// end to end. TestTier4Safety_IncompleteIndexIsNeverNoMatch asserts the VERDICT
+// this branch produces but never the counter, and no test at all separated
+// "read nothing" (unavailable) from "a hole in a working index" (incomplete) —
+// the two counters exist precisely because their causes and fixes differ.
+//
+// Mutating the `complete = false` on the read-error path to a no-op must fail
+// here: the index would then answer no-match for a symbol it never searched for.
+func TestSymbolIndex_UnreadableFileAdmitsHole(t *testing.T) {
+	root := t.TempDir()
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	// "internal/net/gone.go" is tracked and parser-eligible but absent from disk,
+	// so its read fails while pool.go still builds a working index.
+	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go", "internal/net/gone.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	beforeIncomplete := metrics.Counter(tier4IncompleteMetric).Value()
+	beforeUnavailable := metrics.Counter(tier4UnavailableMetric).Value()
+
+	_, outcome := lz.resolve(context.Background(), []string{"GenuinelyAbsentSymbol"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a region of the tree went unsearched, so 'not found' is unproven")
+
+	assert.Equal(t, beforeIncomplete+1, metrics.Counter(tier4IncompleteMetric).Value(),
+		"a hole in an otherwise working index is counted as incomplete")
+	assert.Equal(t, beforeUnavailable, metrics.Counter(tier4UnavailableMetric).Value(),
+		"an incomplete index is NOT an unavailable one — the two causes and fixes differ")
+
+	// The index still works for what it did read: only the no-match direction is
+	// withheld, never resolution.
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome)
+	assert.Equal(t, "internal/net/pool.go", got)
+}
+
+// TestSymbolIndex_ParserLanguageSkipIsNotAHole covers the parserFailed language
+// skip: once a language's parser cannot be obtained, every later file of that
+// language is skipped for DECLARATIONS only. Its raw tokens were already
+// harvested, so the skip costs resolution, never the no-match guard — and it must
+// NOT be counted as a hole, or one broken parser would withhold every verdict.
+func TestSymbolIndex_ParserLanguageSkipIsNotAHole(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+	for i, name := range []string{"pool.go", "dial.go"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", name),
+			[]byte(fmt.Sprintf("package net\n\nfunc dialPeer%d() error { return nil }\n", i)), 0o644))
+	}
+
+	var attempts int32
+	lz := newLazySymbolIndex(root, []string{"internal/net/dial.go", "internal/net/pool.go"})
+	lz.newParser = func(string) (astgroup.Parser, error) {
+		atomic.AddInt32(&attempts, 1)
+		return nil, errors.New("wasm load failed")
+	}
+
+	beforeIncomplete := metrics.Counter(tier4IncompleteMetric).Value()
+
+	_, outcome := lz.resolve(context.Background(), []string{"dialPeer0"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"the token scan ran, so a symbol plainly in the source is real code")
+
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"a failed parser costs resolution, not the search: a genuinely absent symbol is still a no-match")
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts),
+		"parserFailed short-circuits the second file of the same language")
+	assert.Equal(t, beforeIncomplete, metrics.Counter(tier4IncompleteMetric).Value(),
+		"a language whose parser will not load is a resolution loss, not a hole in the search")
+}
