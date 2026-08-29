@@ -357,6 +357,18 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			complete = false // symlink escaping root: refuse to read, and admit the hole
 			continue
 		}
+		if fi, lerr := os.Lstat(abs); lerr == nil && !fi.Mode().IsRegular() {
+			// A tracked entry that is not a regular file. `git ls-files` emits a
+			// git SUBMODULE as one gitlink row naming its directory, and since
+			// eligiblePaths stopped filtering by parser language that row now
+			// reaches this loop, where os.ReadFile fails with "is a directory".
+			// Admitting that as a hole below would clear `complete` and withhold
+			// EVERY no-match verdict, so a single submodule silently disabled
+			// Tier 4 for the whole repo. No declaration lives in a non-file, so
+			// this is a resolution limit, not a search hole: `complete` stays
+			// true, exactly as for the binary skip below.
+			continue
+		}
 		src, err := os.ReadFile(abs)
 		if err != nil {
 			complete = false // absent or unreadable: a region of the tree went unsearched
