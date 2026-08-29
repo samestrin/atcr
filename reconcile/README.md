@@ -185,6 +185,16 @@ result safely.
   confirmed. The `Summary.ConsensusFiltered` count records how many were routed
   this way; a two-reviewer panel (the host + 1 pool persona workflow) leaves the
   filter inert so real findings are never dropped wholesale.
+- **Unresolved sidecar — `Summary.UnresolvedFiltered`.** ATCR's Tier 4 content
+  check routes a finding OUT of the primary stream when its cited file does not
+  exist, no filename-level tier produced a candidate, and the constructs its
+  prose names are declared nowhere in the tracked tree; the count lands in
+  `Summary.UnresolvedFiltered` (`unresolved_filtered` in `summary.json`). Like
+  `ConsensusFiltered` it is observability only — routed findings are preserved
+  on disk, never deleted. It is NOT computed by the library pipeline: content
+  resolution needs a checked-out tree and a parser, so the ATCR I/O layer
+  stamps it after `Reconcile` returns, and it is always `0` for a pure
+  in-memory embedder.
 - **Consensus level — `Options.Consensus`.** The corroboration bar above is
   configurable: `ConsensusStrict` (the default, and what `""` means) drops every
   singleton below `HIGH`, exactly as described; `ConsensusLenient` raises the
@@ -226,6 +236,12 @@ document. Its schema family, **`reconcile-json/v1`**, is versioned **independent
 of ATCR's internal `atcr-findings/v1` wire format; evolution within v1 is
 additive-only and unknown producer fields are ignored on decode. ATCR-internal
 path-validation fields are not part of the schema.
+
+Compatibility note: `summary.unresolved_filtered` is an additive field added by
+epic 35.16.6.5. The adapter's own decoder ignores unknown fields, but an
+embedder decoding `summary.json` into its own struct with
+`DisallowUnknownFields` must add the field (or upgrade) before consuming output
+from ATCR versions that emit it.
 
 ```go
 sources, err := json.Decode(inputBytes)        // []reconcile.Source
