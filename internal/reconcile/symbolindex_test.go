@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -72,11 +73,11 @@ func TestSymbolIndex_LazyUntilFirstResolve(t *testing.T) {
 
 	assert.Zero(t, atomic.LoadInt32(&calls), "no parser requested before the first resolve")
 
-	_, outcome := lz.resolve([]string{"RefreshToken"})
+	_, outcome := lz.resolve(context.Background(), []string{"RefreshToken"}, nil)
 	assert.Equal(t, tier4Resolved, outcome)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "parser requested exactly once")
 
-	_, _ = lz.resolve([]string{"RefreshToken"})
+	_, _ = lz.resolve(context.Background(), []string{"RefreshToken"}, nil)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&calls), "index is built once per run, not per lookup")
 }
 
@@ -94,43 +95,43 @@ func TestSymbolIndex_ResolveOutcomes(t *testing.T) {
 	}, &calls)
 
 	t.Run("single declaring file resolves", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"RefreshToken"})
+		got, outcome := lz.resolve(context.Background(), []string{"RefreshToken"}, nil)
 		assert.Equal(t, tier4Resolved, outcome)
 		assert.Equal(t, "internal/auth/session.go", got)
 	})
 
 	t.Run("declared in two files is ambiguous, never suggested", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"Close"})
+		got, outcome := lz.resolve(context.Background(), []string{"Close"}, nil)
 		assert.Equal(t, tier4Inconclusive, outcome, "AC7: multiple equally-plausible hits produce no suggestion")
 		assert.Empty(t, got)
 	})
 
 	t.Run("unknown anchor matches nothing", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"NeverDeclaredAnywhere"})
+		got, outcome := lz.resolve(context.Background(), []string{"NeverDeclaredAnywhere"}, nil)
 		assert.Equal(t, tier4NoMatch, outcome)
 		assert.Empty(t, got)
 	})
 
 	t.Run("no anchors is not evidence of anything", func(t *testing.T) {
-		_, outcome := lz.resolve(nil)
+		_, outcome := lz.resolve(context.Background(), nil, nil)
 		assert.Equal(t, tier4Inconclusive, outcome,
 			"zero anchors means 'could not check' — it must never be reported as 'checked and found nothing'")
 	})
 
 	t.Run("one precise anchor wins over a co-cited noisy one", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"Close", "DialPeer"})
+		got, outcome := lz.resolve(context.Background(), []string{"Close", "DialPeer"}, nil)
 		assert.Equal(t, tier4Resolved, outcome)
 		assert.Equal(t, "internal/net/pool.go", got)
 	})
 
 	t.Run("two precise anchors disagreeing is ambiguous", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"RefreshToken", "DialPeer"})
+		got, outcome := lz.resolve(context.Background(), []string{"RefreshToken", "DialPeer"}, nil)
 		assert.Equal(t, tier4Inconclusive, outcome)
 		assert.Empty(t, got)
 	})
 
 	t.Run("a matched anchor plus an unknown one still resolves", func(t *testing.T) {
-		got, outcome := lz.resolve([]string{"DialPeer", "NeverDeclaredAnywhere"})
+		got, outcome := lz.resolve(context.Background(), []string{"DialPeer", "NeverDeclaredAnywhere"}, nil)
 		assert.Equal(t, tier4Resolved, outcome)
 		assert.Equal(t, "internal/net/pool.go", got)
 	})
@@ -152,28 +153,38 @@ func TestSymbolIndex_SkipsUnusableFiles(t *testing.T) {
 	})
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
-	got, outcome := lz.resolve([]string{"DialPeer"})
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	require.Equal(t, tier4Resolved, outcome, "one bad file must not abort the whole build")
 	assert.Equal(t, "internal/net/pool.go", got)
 }
 
 // TestSymbolIndex_ParserFactoryFailureDegrades pins that a parser that cannot be
-// obtained at all (a .wasm plugin that will not load) disables Tier 4 for the
-// run rather than erroring: every lookup reports "could not check", so nothing
-// is routed to the sidecar on the strength of an index that was never built.
+// obtained at all (a .wasm plugin that will not load) costs Tier 4 its
+// RESOLUTION ability for that language without erroring — and, critically,
+// without turning that loss into no-match "evidence": the file's raw tokens were
+// harvested before the parse was attempted, so a symbol that is plainly in the
+// source still reports "could not check".
 func TestSymbolIndex_ParserFactoryFailureDegrades(t *testing.T) {
 	root := t.TempDir()
-	writeTracked(t, root, "internal/net/pool.go")
+	// Real source text here, not the basename placeholder writeTracked uses: this
+	// test is precisely about the raw-token scan surviving a parser that never loads.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"),
+		[]byte("package net\n\nfunc DialPeer(addr string) error { return nil }\n"), 0o644))
 
 	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go"})
 	lz.newParser = func(string) (astgroup.Parser, error) { return nil, errors.New("wasm load failed") }
 
 	before := metrics.Counter(tier4UnavailableMetric).Value()
-	got, outcome := lz.resolve([]string{"DialPeer"})
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome)
 	assert.Empty(t, got)
 	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
 		"a silently-disabled Tier 4 must be observable, not indistinguishable from a clean run")
+
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThatFile"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"the raw-token scan still ran, so a genuinely absent symbol is still a no-match")
 }
 
 // TestSymbolIndex_FileCapDisablesTier4 pins the clarified cost cap: a tree with
@@ -193,7 +204,7 @@ func TestSymbolIndex_FileCapDisablesTier4(t *testing.T) {
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
 	before := metrics.Counter(tier4UnavailableMetric).Value()
-	got, outcome := lz.resolve([]string{"DialPeer"})
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome, "over the cap, Tier 4 reports 'could not check', not 'no match'")
 	assert.Empty(t, got)
 	assert.Zero(t, atomic.LoadInt32(&calls), "the cap is checked before any parsing work")
@@ -212,7 +223,7 @@ func TestSymbolIndex_EscapingPathSkipped(t *testing.T) {
 	lz := newLazySymbolIndex(root, []string{"../outside/evil.go", "internal/net/pool.go"})
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
-	got, outcome := lz.resolve([]string{"DialPeer"})
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome)
 	assert.Equal(t, "internal/net/pool.go", got)
 }
@@ -238,11 +249,14 @@ func TestSymbolIndex_SymlinkEscapeSkipped(t *testing.T) {
 		"secret.go": file(fn("LeakedSymbol", 3)),
 	}, &calls)
 
-	_, outcome := lz.resolve([]string{"LeakedSymbol"})
-	assert.Equal(t, tier4NoMatch, outcome, "a symlinked-out file must not appear in the index")
+	file, outcome := lz.resolve(context.Background(), []string{"LeakedSymbol"}, nil)
+	assert.NotEqual(t, tier4Resolved, outcome, "a symlinked-out file must not appear in the index")
+	assert.Empty(t, file)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"refusing to read it also left a hole in the search, so no-match is withheld too")
 
-	got, outcome := lz.resolve([]string{"DialPeer"})
-	assert.Equal(t, tier4Resolved, outcome, "the contained file is still indexed")
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome, "the contained file is still indexed and resolvable")
 	assert.Equal(t, "internal/net/pool.go", got)
 }
 
@@ -258,10 +272,10 @@ func TestSymbolIndex_RealGoParser(t *testing.T) {
 
 	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go"})
 
-	got, outcome := lz.resolve([]string{"DialPeer"})
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	require.Equal(t, tier4Resolved, outcome, "the real embedded go.wasm parser must find a top-level func")
 	assert.Equal(t, "internal/net/pool.go", got)
 
-	_, outcome = lz.resolve([]string{"NotInThisFile"})
+	_, outcome = lz.resolve(context.Background(), []string{"NotInThisFile"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome)
 }

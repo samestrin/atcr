@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -22,6 +24,14 @@ import (
 // EXACTLY like a healthy one where no finding was fabricated. The counter is the
 // only durable signal separating those two.
 const tier4UnavailableMetric = "atcr_tier4_index_unavailable_total"
+
+// tier4IncompleteMetric counts runs where the index was built but some eligible
+// tracked file could not be read, so every no-match verdict was withheld. It is
+// distinct from tier4UnavailableMetric because the causes and the fixes differ:
+// unavailable means "no index at all" (cap, no parser), incomplete means "a hole
+// in an otherwise working index" (a deleted-but-tracked file, a permission
+// problem, a symlink pointing out of the repo).
+const tier4IncompleteMetric = "atcr_tier4_index_incomplete_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
@@ -67,6 +77,29 @@ const maxSymbolIndexFiles = 5000
 // order-stable without re-sorting.
 type symbolIndex struct {
 	byName map[string][]string
+	// present holds every identifier-shaped token seen in the RAW SOURCE TEXT of
+	// the indexed files, not just the ones the parser named. It exists solely to
+	// make the no-match verdict safe.
+	//
+	// The declaration index is only as complete as the parser's naming rules, and
+	// those vary sharply by language. The embedded go.wasm parser, for instance,
+	// names *ast.FuncDecl and nothing else — so every Go type, interface, const
+	// and var is absent from byName while being plainly present in the tree. Left
+	// unguarded, a perfectly real finding ("`FileIndex` is not concurrency-safe")
+	// resolves to "declared nowhere" and is routed out of the report as
+	// fabricated. That failure is Go-specific, silent, and would fire on atcr's
+	// own reviews.
+	//
+	// So the two directions are held to different standards: a RESOLUTION needs a
+	// byName hit (a declaration site is what PathSuggestion points at), while a
+	// NO-MATCH additionally requires the anchor to be absent from present — absent
+	// from the source text entirely, by any parser's reckoning.
+	present map[string]struct{}
+	// complete reports that every eligible tracked file was actually read. When
+	// false, some region of the tree was never searched, so "not found" is
+	// unproven and no-match downgrades to inconclusive — the same reasoning the
+	// file-cap branch applies, reached through a different door.
+	complete bool
 }
 
 // resolve applies the Tier 4 decision procedure to one finding's anchors.
@@ -81,39 +114,71 @@ type symbolIndex struct {
 // Disagreement between two precise anchors is inconclusive, not a coin flip: a
 // wrong Tier 4 guess that suggests the wrong file is worse than no suggestion
 // (the suggest-never-auto-correct constraint inherited from 5.4).
-func (x *symbolIndex) resolve(anchors []string) (string, tier4Outcome) {
+// resolve applies the Tier 4 decision procedure to one finding's anchors.
+//
+// primary holds the PROBLEM anchors and secondary the FIX anchors. Both may
+// produce a resolution, but ONLY primary may produce a no-match: a FIX names the
+// construct the reviewer wants created, so its absence from the tree is expected
+// rather than incriminating. primary is consulted first so a resolution is
+// attributed to the finding's subject rather than to whichever anchor happens to
+// be unique — a FIX-named collaborator must not out-rank the thing the PROBLEM
+// is actually about.
+//
+// Within a tier, PRECISE anchors win: an anchor declared in exactly one file
+// localizes the finding, while an anchor declared in many (Close, Run, New) is
+// too common to localize and is ignored as long as some other anchor is precise.
+// Disagreement between two precise anchors is inconclusive, not a coin flip: a
+// wrong Tier 4 guess that suggests the wrong file is worse than no suggestion
+// (the suggest-never-auto-correct constraint inherited from 5.4).
+func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
-	if len(anchors) == 0 {
-		return "", tier4Inconclusive // nothing to search for: could not check
+	if file, ok := x.locate(primary); ok {
+		return file, tier4Resolved
 	}
+	if file, ok := x.locate(secondary); ok {
+		return file, tier4Resolved
+	}
+	if len(primary) == 0 {
+		// The PROBLEM named no construct, so nothing was ever searched for on the
+		// only evidence that counts. A FIX-only anchor set cannot stand in.
+		return "", tier4Inconclusive
+	}
+	if !x.complete {
+		return "", tier4Inconclusive // the search had holes: "not found" is unproven
+	}
+	for _, a := range primary {
+		if _, seen := x.present[a]; seen {
+			// Named somewhere in the source text even though the parser did not
+			// declare it (a Go type, a const, a struct field). Real code, just not
+			// localizable — never a phantom.
+			return "", tier4Inconclusive
+		}
+		if len(x.byName[a]) > 0 {
+			return "", tier4Inconclusive // declared, just not in one place (AC7)
+		}
+	}
+	return "", tier4NoMatch // searched the whole tree, found nothing: sidecar-eligible
+}
+
+// locate returns the single file declaring one of anchors, if exactly one such
+// file is agreed on by every precise anchor in the set.
+func (x *symbolIndex) locate(anchors []string) (string, bool) {
 	precise := ""
-	matchedSomewhere := false
 	for _, a := range anchors {
 		files := x.byName[a]
-		if len(files) == 0 {
-			continue
-		}
-		matchedSomewhere = true
-		if len(files) > 1 {
-			continue // too common to localize; a precise anchor may still decide
+		if len(files) != 1 {
+			continue // absent, or too common to localize
 		}
 		switch {
 		case precise == "":
 			precise = files[0]
 		case precise != files[0]:
-			return "", tier4Inconclusive // precise anchors disagree (AC7)
+			return "", false // precise anchors disagree (AC7)
 		}
 	}
-	switch {
-	case precise != "":
-		return precise, tier4Resolved
-	case matchedSomewhere:
-		return "", tier4Inconclusive // real code, just not localized (AC7)
-	default:
-		return "", tier4NoMatch // searched, found nothing: sidecar-eligible
-	}
+	return precise, precise != ""
 }
 
 // parserFactory obtains a parser for a language id. It is the seam that lets
@@ -134,8 +199,6 @@ type lazySymbolIndex struct {
 
 	// newParser is overridable for tests; nil means "use the shared host".
 	newParser parserFactory
-	// readFile is overridable for tests; nil means os.ReadFile.
-	readFile func(string) ([]byte, error)
 
 	once sync.Once
 	idx  *symbolIndex // nil after build => Tier 4 unavailable this run
@@ -152,12 +215,12 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // procedure. A build that could not run at all yields tier4Inconclusive for
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
-func (lz *lazySymbolIndex) resolve(anchors []string) (string, tier4Outcome) {
+func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
-	lz.once.Do(lz.build)
-	return lz.idx.resolve(anchors)
+	lz.once.Do(func() { lz.build(ctx) })
+	return lz.idx.resolve(primary, secondary)
 }
 
 // build parses every eligible tracked file once and populates lz.idx, or leaves
@@ -170,7 +233,7 @@ func (lz *lazySymbolIndex) resolve(anchors []string) (string, tier4Outcome) {
 // language at all is different in kind (every file of that language is now
 // invisible), and if it leaves the index with nothing at all the index is
 // discarded so lookups report "could not check".
-func (lz *lazySymbolIndex) build() {
+func (lz *lazySymbolIndex) build(ctx context.Context) {
 	eligible := lz.eligiblePaths()
 	if len(eligible) == 0 {
 		return
@@ -182,10 +245,6 @@ func (lz *lazySymbolIndex) build() {
 		return
 	}
 
-	readFile := lz.readFile
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
 	newParser := lz.newParser
 	if newParser == nil {
 		// The process-lifetime shared host, so the compiled-parser cache is the
@@ -194,11 +253,39 @@ func (lz *lazySymbolIndex) build() {
 	}
 
 	sites := make(map[string]map[string]struct{})
+	present := make(map[string]struct{})
 	parsers := make(map[string]astgroup.Parser)
 	parserFailed := make(map[string]bool)
-	indexedFiles := 0
+	readFiles := 0
+	complete := true
 
 	for _, rel := range eligible {
+		if ctx != nil && ctx.Err() != nil {
+			// A cancelled or timed-out reconcile must be able to interrupt the
+			// repo-wide sweep. An aborted build is an incomplete search, so it is
+			// discarded outright rather than answered from.
+			slog.Warn("astgroup: tier-4 symbol index aborted", "err", ctx.Err())
+			metrics.Counter(tier4UnavailableMetric).Inc()
+			return
+		}
+		// Read BEFORE parsing, and harvest the raw token set from the bytes
+		// regardless of whether a parser is available or the parse succeeds. That
+		// ordering is what keeps `present` complete when `byName` is not: a file
+		// whose language has no working parser still proves which identifiers exist
+		// in the tree, which is all the no-match verdict needs from it.
+		abs, ok := containedIndexPath(lz.root, rel)
+		if !ok {
+			complete = false // symlink escaping root: refuse to read, and admit the hole
+			continue
+		}
+		src, err := os.ReadFile(abs)
+		if err != nil {
+			complete = false // absent or unreadable: a region of the tree went unsearched
+			continue
+		}
+		readFiles++
+		collectSourceIdentifiers(src, present)
+
 		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(rel)))
 		if parserFailed[lang] {
 			continue
@@ -208,39 +295,39 @@ func (lz *lazySymbolIndex) build() {
 			var err error
 			p, err = newParser(lang)
 			if err != nil || p == nil {
+				// Every file of this language loses its DECLARATIONS, so Tier 4 can
+				// no longer resolve anything in it. Its raw tokens were already
+				// harvested above, so the no-match guard stays sound — but the lost
+				// resolution capability is a real degradation and is counted, not
+				// just logged to a sink that may be discarded.
 				slog.Warn("astgroup: tier-4 parser unavailable, language skipped", "lang", lang, "err", err)
+				metrics.Counter(tier4UnavailableMetric).Inc()
 				parserFailed[lang] = true
 				continue
 			}
 			parsers[lang] = p
 		}
-		abs, ok := containedIndexPath(lz.root, rel)
-		if !ok {
-			continue // symlink escaping root: refuse to read, skip
-		}
-		src, err := readFile(abs)
-		if err != nil {
-			continue // absent or unreadable tracked file: skip, never fatal
-		}
 		tree, err := p.Parse(src)
 		if err != nil {
-			continue // unparseable file: skip, never fatal
+			continue // unparseable: no declarations, but its tokens still counted above
 		}
-		indexedFiles++
-		for _, sym := range astgroup.NamedSymbols(tree) {
-			if sites[sym.Name] == nil {
-				sites[sym.Name] = make(map[string]struct{})
+		for _, name := range astgroup.NamedSymbols(tree) {
+			if sites[name] == nil {
+				sites[name] = make(map[string]struct{})
 			}
-			sites[sym.Name][rel] = struct{}{}
+			sites[name][rel] = struct{}{}
 		}
 	}
 
-	if indexedFiles == 0 {
-		// Nothing was indexed, so "not in the index" carries no information.
+	if readFiles == 0 {
+		// Nothing was read, so "not in the tree" carries no information at all.
 		// Leaving lz.idx nil makes every lookup inconclusive rather than a
 		// false no-match.
 		metrics.Counter(tier4UnavailableMetric).Inc()
 		return
+	}
+	if !complete {
+		metrics.Counter(tier4IncompleteMetric).Inc()
 	}
 
 	byName := make(map[string][]string, len(sites))
@@ -252,7 +339,38 @@ func (lz *lazySymbolIndex) build() {
 		sort.Strings(files) // stable output regardless of map iteration order
 		byName[name] = files
 	}
-	lz.idx = &symbolIndex{byName: byName}
+	lz.idx = &symbolIndex{byName: byName, present: present, complete: complete}
+}
+
+// collectSourceIdentifiers adds every identifier-shaped token in src to out.
+//
+// This is a lexer-free scan on purpose: it must work for a language whose parser
+// failed to load, and it must not depend on any parser's naming rules — that
+// dependence is exactly what makes byName an unsafe basis for a no-match
+// verdict. Over-collection is harmless and in fact desirable here: a token
+// appearing in a comment or a string literal still proves the finding's subject
+// is not a total phantom, and the only consequence of a false positive is a
+// finding kept in the primary report.
+func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
+	start := -1
+	for i := 0; i <= len(src); i++ {
+		var b byte
+		if i < len(src) {
+			b = src[i]
+		}
+		isWord := i < len(src) && (b == '_' ||
+			(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') || b >= utf8.RuneSelf)
+		switch {
+		case isWord && start < 0:
+			start = i
+		case !isWord && start >= 0:
+			if tok := string(src[start:i]); isIdentifierShaped(tok) {
+				out[tok] = struct{}{}
+			}
+			start = -1
+		}
+	}
 }
 
 // eligiblePaths filters the tracked set to root-contained files whose extension

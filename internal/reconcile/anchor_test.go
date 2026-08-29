@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,7 +81,7 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractAnchors(tc.problem, tc.fix)
+			got := mergeAnchorsForTest(tc.problem, tc.fix)
 			assert.Equal(t, tc.want, got)
 		})
 	}
@@ -93,12 +94,12 @@ func TestExtractAnchors_Deterministic(t *testing.T) {
 	problem := "`zebraCheck` and `alphaCheck` disagree; see `middleCheck()` and `zebraCheck`"
 	fix := "make `alphaCheck` authoritative"
 
-	first := extractAnchors(problem, fix)
+	first := mergeAnchorsForTest(problem, fix)
 	require.Equal(t, []string{"alphaCheck", "middleCheck", "zebraCheck"}, first,
 		"anchors are deduped and lexically sorted, never map-iteration ordered")
 
 	for i := 0; i < 25; i++ {
-		assert.Equal(t, first, extractAnchors(problem, fix), "run %d drifted", i)
+		assert.Equal(t, first, mergeAnchorsForTest(problem, fix), "run %d drifted", i)
 	}
 }
 
@@ -110,7 +111,7 @@ func TestExtractAnchors_Capped(t *testing.T) {
 	for _, n := range []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight", "iNine", "jTen", "kEleven", "lTwelve"} {
 		problem += "`" + n + "` "
 	}
-	got := extractAnchors(problem, "")
+	got := mergeAnchorsForTest(problem, "")
 	assert.Len(t, got, maxAnchorsPerFinding)
 	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
 		"the cap keeps the lexically-first anchors so the truncation is deterministic too")
@@ -121,7 +122,7 @@ func TestExtractAnchors_Capped(t *testing.T) {
 // it. A single interleaved scan mis-pairs "parser's" with "doesn't" and loses
 // every identifier in between.
 func TestExtractAnchors_ApostropheProse(t *testing.T) {
-	got := extractAnchors(
+	got := mergeAnchorsForTest(
 		"the parser's cache is stale so `readTree` doesn't refresh `openTree`",
 		"the caller's fix is to invalidate in `dropCache`")
 	assert.Equal(t, []string{"dropCache", "openTree", "readTree"}, got)
@@ -130,6 +131,32 @@ func TestExtractAnchors_ApostropheProse(t *testing.T) {
 // TestExtractAnchors_UnterminatedDelimiter pins that a lone opener contributes
 // nothing and never panics on the slice bounds.
 func TestExtractAnchors_UnterminatedDelimiter(t *testing.T) {
-	assert.Nil(t, extractAnchors("a stray backtick ` at the very end", ""))
-	assert.Equal(t, []string{"realName"}, extractAnchors("`realName` then a stray ` tail", ""))
+	assert.Nil(t, mergeAnchorsForTest("a stray backtick ` at the very end", ""))
+	assert.Equal(t, []string{"realName"}, mergeAnchorsForTest("`realName` then a stray ` tail", ""))
+}
+
+// mergeAnchorsForTest is the pre-split extraction shape, retained ONLY so the
+// original T1 extraction table keeps exercising the tokenizer against both
+// fields at once. Production no longer merges the two: see extractAnchorSet's
+// doc for why a FIX anchor may never be no-match evidence.
+func mergeAnchorsForTest(problem, fix string) []string {
+	seen := map[string]struct{}{}
+	for _, text := range []string{problem, fix} {
+		a, _ := extractAnchorSet(text)
+		for _, tok := range a {
+			seen[tok] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for tok := range seen {
+		out = append(out, tok)
+	}
+	sort.Strings(out)
+	if len(out) > maxAnchorsPerFinding {
+		out = out[:maxAnchorsPerFinding]
+	}
+	return out
 }

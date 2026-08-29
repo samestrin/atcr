@@ -19,9 +19,10 @@ type fakeTier4 struct {
 	calls    int
 }
 
-func (f *fakeTier4) resolve(anchors []string) (string, tier4Outcome) {
+func (f *fakeTier4) resolve(_ context.Context, primary, secondary []string) (string, tier4Outcome) {
 	f.calls++
-	if len(anchors) == 0 {
+	anchors := append(append([]string{}, primary...), secondary...)
+	if len(primary) == 0 {
 		return "", tier4Inconclusive
 	}
 	for _, a := range anchors {

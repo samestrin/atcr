@@ -245,8 +245,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// Done here — before the remaining stamps — so symbol anchoring, narrative
 	// correlation, and fallback provenance are not spent on a phantom, and so
 	// Findings/jf stay index-aligned for internal/mcp's failingFindings walk.
-	// Summary counters the library computed over the pre-routing set are
-	// recomputed for the same reason it recomputes them after its own filter.
+	// TotalFindings and OutOfScope are recomputed so they keep describing what
+	// findings.json actually holds. The MERGE DIAGNOSTICS — ClustersCollapsed,
+	// SeverityDisagreements, NoiseCount, PerSourceCounts, AmbiguousCount — are
+	// deliberately left describing the pre-routing set: they report what the
+	// reconcile PASS did (how many clusters it collapsed, where reviewers
+	// disagreed), which is a fact about the run and not a property of the surviving
+	// findings. Recomputing them would silently rewrite the record of work that
+	// genuinely happened. See the Summary field comments in the published module.
 	if len(unresolvedIdx) > 0 {
 		res.Findings, jf, res.Unresolved = routeUnresolved(res.Findings, jf, unresolvedIdx)
 		res.Summary.UnresolvedFiltered = len(res.Unresolved)

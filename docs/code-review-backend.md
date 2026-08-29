@@ -102,6 +102,31 @@ than ingesting atcr's pre-collapsed blob.
 - `authority_promoted` — count of findings PageRank authority promotion raised
   from MEDIUM to HIGH confidence in the run (observability for the promotion
   signal; `0` when no single-reviewer finding was promoted).
+- `unresolved_filtered` — count of findings routed OUT of the primary stream
+  into `unresolved.json` (see "Findings excluded from the primary stream"
+  below). `0` on a run where every finding cited resolvable code.
+
+## Findings excluded from the primary stream
+
+`findings.txt`, `findings.json` and `report.md` do **not** necessarily contain
+every finding the reviewers produced. Two filters can route a finding into a
+sidecar instead:
+
+- **Consensus filter** → `ambiguous.json`, counted by `consensus_filtered`.
+  Uncorroborated single-reviewer findings below the confidence bar, on a panel
+  large enough for the filter to run.
+- **Content resolution** → `unresolved.json`, counted by `unresolved_filtered`.
+  Findings whose cited file does not exist, for which no filename-level
+  correction was found, and whose described constructs appear nowhere in the
+  tracked tree.
+
+Neither filter deletes anything: a routed finding is written in full to its
+sidecar. A caller that needs every finding the panel produced must read the
+sidecars alongside `findings.json`; a caller that wants only findings that
+correspond to real code can read `findings.json` alone.
+
+`unresolved_filtered` is `0` whenever `ATCR_DISABLE_AST_GROUPING` is set —
+content resolution is disabled with AST clustering, and nothing is routed.
 
 ## Behavioral notes for callers
 

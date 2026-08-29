@@ -106,6 +106,12 @@ type Summary struct {
 	// tree and a parser, so the ATCR I/O layer computes it and stamps it here
 	// after Reconcile returns. It is therefore always 0 for a pure in-memory
 	// embedder.
+	// A caller comparing counters across a routed run should note that
+	// TotalFindings and OutOfScope describe the POST-routing set (what
+	// findings.json holds) while the merge diagnostics above —
+	// ClustersCollapsed, SeverityDisagreements, NoiseCount, PerSourceCounts,
+	// AmbiguousCount — describe the pre-routing reconcile pass, which is a
+	// record of work performed rather than a property of the surviving set.
 	UnresolvedFiltered int `json:"unresolved_filtered"`
 	// ConsensusLevel records the level the filter actually ran at, which
 	// ConsensusFiltered alone cannot convey (0 is ambiguous between "off" and

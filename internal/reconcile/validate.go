@@ -2,7 +2,10 @@ package reconcile
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
+	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -11,7 +14,7 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	resolve(anchors []string) (string, tier4Outcome)
+	resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome)
 }
 
 // newTier4Index constructs the per-run Tier 4 index. It is a package var so
@@ -87,21 +90,56 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		if !tier4Available || sf.PathWarning == "" || sf.PathSuggestion != "" {
 			continue // path resolved, or Tiers 1-3 already answered: Tier 4 is out of scope
 		}
+		if !tier4Eligible(findings[i].File, idx) {
+			continue
+		}
 		if tier4 == nil {
 			tier4 = newTier4Index(root, idx.Paths())
 		}
-		suggestion, outcome := tier4.resolve(extractAnchors(findings[i].Problem, findings[i].Fix))
-		switch outcome {
-		case tier4Resolved:
+		problemAnchors, problemTruncated := extractAnchorSet(findings[i].Problem)
+		fixAnchors, _ := extractAnchorSet(findings[i].Fix)
+		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
+		switch {
+		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
-		case tier4NoMatch:
+		case outcome == tier4NoMatch && !problemTruncated:
 			unresolved = append(unresolved, i)
+		case outcome == tier4NoMatch:
+			// The finding named more constructs than the anchor cap admits, so the
+			// set searched was a PREFIX of what it actually named — and the one
+			// anchor that would have matched may be among the dropped ones. A
+			// partial search cannot produce a "found nothing" verdict.
 		default:
-			// tier4Inconclusive: the finding named no identifier, the index could
-			// not be built, or the anchors matched more than one file (AC7). No
-			// suggestion, and emphatically NOT sidecar-routed — "could not check"
-			// is not "checked and found nothing".
+			// tier4Inconclusive: the PROBLEM named no identifier, the index could
+			// not be built or was incomplete, or the anchors matched real code
+			// without localizing to one file (AC7). No suggestion, and emphatically
+			// NOT sidecar-routed — "could not check" is not "checked and found
+			// nothing".
 		}
 	}
 	return unresolved
+}
+
+// tier4Eligible reports whether a finding with an unresolved path may be judged
+// by a content search at all. Both gates below decide whether a REAL finding can
+// be routed out of the primary report, so both fail toward keeping it.
+//
+//   - No parser language for the cited file. A symbol index built from source
+//     trees cannot adjudicate a citation of docs/x.md or config/app.yaml: the
+//     construct such a finding names may live in prose or in configuration that
+//     no parser reads. This mirrors the extension short-circuit lazyGrouper's
+//     GroupKey/EnclosingSymbol already perform before touching the runtime.
+//
+//   - An AMBIGUOUS case-only mismatch. stream.CaseCorrection reports
+//     mismatch=true with an EMPTY suggestion when several tracked files differ
+//     from the citation only by case, which leaves PathWarning set and
+//     PathSuggestion empty — indistinguishable, at this layer, from a path that
+//     resolves to nothing. But the file demonstrably exists in the tracked tree;
+//     the citation just spelled its case wrong, which is a Tier 3 concern and
+//     never grounds for calling the finding fabricated.
+func tier4Eligible(file string, idx *stream.FileIndex) bool {
+	if astgroup.LanguageForExt(strings.ToLower(filepath.Ext(file))) == "" {
+		return false
+	}
+	return len(idx.ByFold(file)) == 0
 }
