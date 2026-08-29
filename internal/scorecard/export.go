@@ -244,6 +244,15 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
 	}
+	// Keep ONE FindingsRaised definition, never a mix — the same prefer-current
+	// rule TrustPriors applies, and for the same reason: Epic 35.16.6.5 put the
+	// Tier-4-routed findings into the denominator, so corroboration_rate and
+	// findings_raised_avg computed across both eras measure neither. Unlike
+	// TrustPriors this runs AFTER ApplyFilters, so the "no records" error still
+	// reports what the user's own filters selected rather than an era they never
+	// asked about; and because the rule falls back rather than excluding, it can
+	// never empty a submission built from a pre-epic store.
+	filtered = unresolvedEraRuns(filtered)
 
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
