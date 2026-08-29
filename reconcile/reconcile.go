@@ -67,9 +67,10 @@ const (
 	// there was no tracked file index to search (the root is not a git
 	// repository, or git was unavailable).
 	UnresolvedStateDisabled = "disabled"
-	// UnresolvedStateUnavailable means Tier 4 was in force but its index could not
-	// be built — over the file cap, no parser would load, or nothing in the
-	// tracked tree could be read. Every lookup reported "could not check".
+	// UnresolvedStateUnavailable means Tier 4 was in force but could not reach a
+	// usable index — over the file cap, nothing in the tracked tree readable, no
+	// root-contained file, or a parser failure that left the declaration set
+	// empty. Nothing was resolved, and no finding was routed.
 	UnresolvedStateUnavailable = "unavailable"
 	// UnresolvedStateIncomplete means the index was built but some eligible
 	// tracked file could not be read, so a region of the tree went unsearched and

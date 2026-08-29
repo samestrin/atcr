@@ -138,7 +138,7 @@ anything:
 |---|---|---|
 | `applied` | The check ran over the tracked tree. | Nothing was routed. The healthy case. |
 | `disabled` | `ATCR_DISABLE_AST_GROUPING` is set, or there was no tracked file index (the root is not a git repository, or git was unavailable). | Nothing was checked. |
-| `unavailable` | The index could not be built — over the file cap, no parser would load, or nothing in the tracked tree could be read. | Nothing was checked. |
+| `unavailable` | No usable index — over the file cap, nothing in the tracked tree readable, no root-contained file, or a parser failure that left the declaration set empty. | Nothing was resolved, and nothing was routed. |
 | `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. | Nothing could be routed. |
 | absent | Content resolution did not run for this reconcile (no repo root was resolved — the ordinary case on the MCP path). | Nothing was checked. |
 
