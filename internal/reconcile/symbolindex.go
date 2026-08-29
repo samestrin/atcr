@@ -635,8 +635,13 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 // Keep this list to formats that are prose by definition. A config or data format
 // (.yaml, .json, .sql, .tf) legitimately DECLARES names, so it belongs in the
 // source set even though no parser reads it.
+//
+// `.txt` is the one uncomfortable entry: a data manifest can wear it
+// (requirements.txt names real packages). It is kept because the overwhelming
+// majority of tracked .txt is prose, and the cost of the rare miss is one
+// finding routed to a preserved sidecar rather than deleted.
 var docExts = map[string]struct{}{
-	".md": {}, ".markdown": {}, ".rst": {}, ".txt": {}, ".adoc": {},
+	".md": {}, ".markdown": {}, ".mdx": {}, ".rst": {}, ".txt": {}, ".adoc": {},
 }
 
 // isDocExt reports whether ext (lowercased, leading dot included) is prose.
