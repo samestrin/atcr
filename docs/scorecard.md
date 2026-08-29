@@ -56,9 +56,9 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
-| `findings_raised` | int | always | Findings this reviewer raised. |
-| `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). |
-| `findings_solo` | int | always | `findings_raised - findings_corroborated`. |
+| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. |
+| `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
+| `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
 | `corroboration_rate` | float | always | `findings_corroborated / findings_raised` (0.0 when none raised; never NaN). |
 | `cost_usd` | float | always | Estimated cost from the per-model rate table (see [Cost is approximate](#cost-is-approximate)). |
 | `tokens_in` | int | always | Prompt tokens consumed (summed across turns for tool-using agents). |
@@ -345,10 +345,12 @@ than growing a third aggregation.
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
-  > records are computed from the **post-filter** finding set (`res.Findings`), so
-  > under `lenient` or `off` the extra surviving singletons each increment
-  > `findings_raised` without incrementing `findings_corroborated`, lowering that
-  > reviewer's corroboration rate for that run.
+  > records are computed from the **post-filter** finding set (`res.Findings`)
+  > plus the Tier-4-routed set (`res.Unresolved`, which contributes to
+  > `findings_raised` only), so under `lenient` or `off` the extra surviving
+  > singletons each increment `findings_raised` without incrementing
+  > `findings_corroborated`, lowering that reviewer's corroboration rate for that
+  > run.
   >
   > **The trust-prior feedback loop this used to create is now closed.** Every
   > record carries the level it was measured under (`consensus_level`), and
