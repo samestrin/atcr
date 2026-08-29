@@ -203,7 +203,9 @@ result safely.
   sixth — the check ran and routed nothing — is a healthy run. `UnresolvedState`
   (`unresolved_state` in `summary.json`) is the discriminator, exactly as
   `ConsensusLevel` is for `ConsensusFiltered`, and is one of `applied`,
-  `disabled`, `unavailable`, `incomplete`, or empty. Empty means "not recorded":
+  `disabled`, `unavailable`, `incomplete`, or empty. `applied` asserts the check
+  was IN FORCE, not that an index was built: when every finding cites a file that
+  exists, no finding is Tier-4-eligible and none is built. Empty means "not recorded":
   like `UnresolvedFiltered` it is stamped by the ATCR I/O layer, so a pure
   in-memory embedder always sees empty. It renders in `report.md`
   unconditionally.

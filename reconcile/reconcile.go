@@ -58,10 +58,15 @@ type Result struct {
 // The canonical Summary.UnresolvedState values. See that field's doc for why a
 // bare UnresolvedFiltered count cannot stand in for them.
 const (
-	// UnresolvedStateApplied means the Tier 4 content check was in force for this
-	// run: an index was built over the tracked tree and every no-match verdict it
-	// could reach was available to it. A 0 UnresolvedFiltered here is the healthy
-	// case — nothing was judged fabricated.
+	// UnresolvedStateApplied means the Tier 4 content check was IN FORCE for this
+	// run: every verdict it could reach was available to it. A 0
+	// UnresolvedFiltered here is the healthy case — nothing was judged fabricated.
+	//
+	// It does NOT assert that an index was built, and on the most common path
+	// none is: when every finding cites a file that exists, no finding is
+	// Tier-4-eligible, so the index is never constructed and not one file is read
+	// (the AC5 laziness). "In force with nothing to adjudicate" and "in force and
+	// found nothing to route" are both applied, and both are healthy.
 	UnresolvedStateApplied = "applied"
 	// UnresolvedStateDisabled means Tier 4 never ran: the AST opt-out was set, or
 	// there was no tracked file index to search (the root is not a git

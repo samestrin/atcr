@@ -136,7 +136,7 @@ anything:
 
 | `unresolved_state` | Meaning | What a `0` count means |
 |---|---|---|
-| `applied` | The check ran over the tracked tree. | Nothing was routed. The healthy case. |
+| `applied` | The check was in force. It does not assert an index was built — when every finding cites a file that exists, none is needed. | Nothing was routed. The healthy case. |
 | `disabled` | `ATCR_DISABLE_AST_GROUPING` is set, or there was no tracked file index (the root is not a git repository, or git was unavailable). | Nothing was checked. |
 | `unavailable` | No usable index — over the file cap, nothing in the tracked tree readable, no root-contained file, or a parser failure that left the declaration set empty. | Nothing was resolved, and nothing was routed. |
 | `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. | Nothing could be routed. |

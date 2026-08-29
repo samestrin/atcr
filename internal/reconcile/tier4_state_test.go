@@ -181,3 +181,35 @@ func TestUnresolvedState_SubmoduleIsNotASearchHole(t *testing.T) {
 	assert.Equal(t, 1, res.Summary.UnresolvedFiltered,
 		"the phantom must still be routed in a repo that carries a submodule")
 }
+
+// TestUnresolvedState_AppliedWithoutBuildingAnIndex pins what "applied" actually
+// asserts. The published godoc used to say it meant "an index was built over the
+// tracked tree", and on the most common path that is false: when every finding
+// cites a file that exists, no finding is Tier-4-eligible, AC5 laziness means the
+// index is never constructed and not one file is read — yet "applied" is
+// correctly what gets stamped, because the check WAS in force and simply had
+// nothing to adjudicate.
+//
+// The state is the claim; this test is its referent. Keep the doc wording in
+// reconcile/reconcile.go and docs/code-review-backend.md matched to it.
+func TestUnresolvedState_AppliedWithoutBuildingAnIndex(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/auth/session.go": "package auth\n\nfunc loadSession() error { return nil }\n",
+	})
+	built := withFakeTier4(t, &fakeTier4{})
+
+	reviewDir := t.TempDir()
+	// The cited path EXISTS, so path validation resolves at Tier 1 and Tier 4 is
+	// never consulted.
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/auth/session.go:3|`loadSession` leaks a handle|close it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(), Root: root,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, *built, "AC5: no finding needed Tier 4, so no index may be constructed")
+	assert.Equal(t, reclib.UnresolvedStateApplied, res.Summary.UnresolvedState,
+		"the check was in force with nothing to adjudicate — that is applied, not disabled")
+	assert.Zero(t, res.Summary.UnresolvedFiltered)
+}
