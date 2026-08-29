@@ -504,6 +504,10 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 	return out
 }
 
+// maxSourceFileBytes caps a single file read during the index build. STUB: not
+// yet enforced.
+const maxSourceFileBytes = 4 << 20 // 4MiB
+
 // binarySniffBytes is how much of a file is inspected for a NUL byte before the
 // content is accepted as text. A NUL in the first chunk is the same heuristic
 // git itself uses to classify a blob as binary.

@@ -869,3 +869,35 @@ func TestIsBinaryContent_SniffWindow(t *testing.T) {
 	assert.False(t, isBinaryContent(late),
 		"a NUL past the sniff window is not seen — bounded on purpose, and safe: the file is merely scanned")
 }
+
+// TestSymbolIndex_OversizeFileSkippedWithoutHole pins the single-file read cap.
+//
+// The index build reads EVERY contained tracked file, so one checked-in artifact
+// — a dataset, a dump, a model weight — is otherwise pulled into memory whole on
+// every build. Skipping it is not a hole for the same reason a binary is not: a
+// reviewer does not name a source construct inside a multi-megabyte blob, so the
+// no-match verdict stays available.
+func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o755))
+	// Text (no NUL, so the binary sniff does not catch it) and over the cap.
+	huge := make([]byte, maxSourceFileBytes+1)
+	for i := range huge {
+		huge[i] = 'a'
+	}
+	copy(huge, []byte("oversizeDatasetToken\n"))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "dump.txt"), huge, 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"data/dump.txt", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"oversizeDatasetToken"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"an over-cap file must not enter `present`, and skipping it must not withhold the verdict")
+
+	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+	assert.Equal(t, tier4Resolved, outcome, "the rest of the tree must still resolve")
+	assert.Equal(t, "internal/net/pool.go", got)
+}
