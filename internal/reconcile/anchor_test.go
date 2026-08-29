@@ -77,6 +77,60 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			fix:     "",
 			want:    nil,
 		},
+		{
+			// collectCallAnchors scans BACKWARDS from every "(". A paren with no
+			// identifier run before it must be skipped, not recorded as a
+			// zero-length span. Parenthesised prose is common in review text, so
+			// this is the ordinary case, not a pathological one.
+			name:    "bare paren with no identifier before it",
+			problem: "the guard (x) is applied before `readTree` runs",
+			want:    []string{"readTree"},
+		},
+		{
+			name:    "paren opening a clause contributes nothing",
+			problem: "the retry path (see the comment above) drops the error",
+			want:    nil,
+		},
+		{
+			// The "." case of isQualifiedIdentByte, reachable ONLY through a CALL
+			// shape: a backtick span never consults it, so `stream.ValidatePath`
+			// above leaves this branch untouched. Without it the backwards scan
+			// stops at the dot and records the receiver segment instead.
+			name:    "package-qualified call keeps the trailing segment",
+			problem: "stream.ValidatePath() swallows the permission error",
+			want:    []string{"ValidatePath"},
+		},
+		{
+			// The "_" case of isQualifiedIdentByte, likewise call-shape only.
+			name:    "snake_case call shape",
+			problem: "read_tree() is invoked once per finding",
+			want:    []string{"read_tree"},
+		},
+		{
+			name:    "receiver-qualified snake_case call",
+			problem: "idx.by_fold() is consulted before the parser runs",
+			want:    []string{"by_fold"},
+		},
+		{
+			// isIdentifierShaped rejects a digit-leading token: no language admits
+			// one as an identifier, so it is a version string or a numeric literal
+			// the reviewer quoted, never a construct to search the tree for.
+			name:    "digit-leading token is not an identifier",
+			problem: "the `9abc` marker is emitted twice",
+			want:    nil,
+		},
+		{
+			name:    "digit-leading call shape is not an identifier",
+			problem: "9abc() appears in the generated table",
+			want:    nil,
+		},
+		{
+			// The companion direction: a digit INSIDE an identifier is fine, so the
+			// rejection above must be keyed on position, not on digits at all.
+			name:    "interior digit is allowed",
+			problem: "the `readTree2` helper duplicates `readTree`",
+			want:    []string{"readTree", "readTree2"},
+		},
 	}
 
 	for _, tc := range cases {
