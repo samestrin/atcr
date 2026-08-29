@@ -1033,7 +1033,10 @@ func TestReviewCmd_LogsUnresolvedFiltered(t *testing.T) {
 	require.Equal(t, 0, code, stderr)
 	require.Contains(t, stderr, "tier-4 content resolution",
 		"the one-shot review path must surface the unresolved sidecar count")
-	require.Contains(t, stderr, "state=",
+	// Pinned to the exact value: this path runs against a real checked-out tree,
+	// so the content check IS in force and its 0 count is a genuine clean result
+	// — the one case a bare 0 is allowed to be read as such.
+	require.Contains(t, stderr, "state=applied",
 		"and the state that disambiguates a zero count, exactly as `atcr reconcile` does")
 }
 

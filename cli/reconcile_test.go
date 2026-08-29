@@ -228,8 +228,12 @@ func TestRunReconcile_UnresolvedFilteredLogged(t *testing.T) {
 		"the unresolved sidecar count must be logged post-run beside the consensus line")
 	assert.Contains(t, logBuf.String(), "unresolved_filtered=0",
 		"even a run routing nothing logs the count, so a nonzero count is never silent")
-	assert.Contains(t, logBuf.String(), "state=",
-		"the count alone cannot tell a healthy 0 from a silently-disabled one; the state must ride with it")
+	// Pinned to the exact value, not just the key: this fixture is not a git
+	// repository, so there is no tracked file index and the content check never
+	// runs. That is precisely the run whose `unresolved_filtered=0` above reads
+	// as a clean bill of health and is not one.
+	assert.Contains(t, logBuf.String(), `"tier-4 content resolution" state=disabled`,
+		"a 0 count with no state is indistinguishable from a healthy run; the state must ride with it")
 }
 
 // TestRunReconcile_NonStrictScorecardWarn verifies the docs/scorecard.md

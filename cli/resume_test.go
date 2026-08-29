@@ -772,6 +772,10 @@ func TestResume_LogsUnresolvedFiltered(t *testing.T) {
 	require.Equal(t, 0, code, out)
 	require.Contains(t, out, "tier-4 content resolution",
 		"the resume path must surface the unresolved sidecar count")
-	require.Contains(t, out, "state=",
+	// Pinned to the exact value: this fixture reconciles no findings, so path
+	// validation returns before Tier 4 is reached and the state is legitimately
+	// "not recorded". Asserting the empty value rather than merely the key is
+	// what keeps that distinct from a state that silently stopped being stamped.
+	require.Contains(t, out, `state=""`,
 		"and the state that disambiguates a zero count, exactly as `atcr reconcile` does")
 }
