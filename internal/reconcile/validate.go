@@ -21,6 +21,9 @@ type tier4Resolver interface {
 // tests can substitute a scripted resolver and observe whether an index was
 // constructed at all — the observable proxy for AC5's "a run with zero
 // Tier-4-eligible findings never instantiates the wazero AST runtime".
+//
+// Because tests swap and restore this var, no test in this package may call
+// t.Parallel — a parallel test would race on the swap (see the package doc).
 var newTier4Index = func(root string, paths []string) tier4Resolver {
 	return newLazySymbolIndex(root, paths)
 }
