@@ -737,3 +737,96 @@ func TestExport_PreUnresolvedOnlyStoreStillExports(t *testing.T) {
 	require.Len(t, env.Reviewers, 1)
 	assert.InDelta(t, 0.5, env.Reviewers[0].CorroborationRate, 0.0001)
 }
+
+// TestExport_EraFilterDoesNotDropOtherReviewers pins the export half of the
+// per-reviewer era rule.
+//
+// The era partition was applied to the whole record slice at once, so ONE
+// reviewer carrying a current-era record truncated the public submission to that
+// reviewer alone. A store with eleven reviewers and a hundred runs each published
+// one reviewer at runs:1, and nothing in ExportEnvelope marks the truncation — no
+// record count, no era field, and submission_schema does not move — so a board
+// consumer reads the missing reviewers as never used, indistinguishable from a
+// submitter that genuinely never ran them.
+//
+// Export is a SEPARATE consumer from TrustPriors and needs its own guard: the two
+// share the helper today, and a future change that re-widens the partition for one
+// of them must fail here too.
+func TestExport_EraFilterDoesNotDropOtherReviewers(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		// bruce: pre-epic only, and it has not run since the upgrade.
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-01T00:00:00Z-bruce", Reviewer: "bruce", Model: "m",
+			FindingsRaised: 2, FindingsCorroborated: 1,
+		},
+		// greta: one current-era record — enough to trip the global partition.
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-02T00:00:00Z-greta", Reviewer: "greta", Model: "m",
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4, FindingsCorroborated: 1,
+		},
+	}
+
+	out, err := Export(recs, FilterOpts{}, base.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	env := parseEnvelope(t, out)
+
+	require.Len(t, env.Reviewers, 2,
+		"greta crossing into the current era must not erase bruce from the submission")
+	byPersona := map[string]PublicRecord{}
+	for _, r := range env.Reviewers {
+		byPersona[r.Persona] = r
+	}
+	require.Contains(t, byPersona, "bruce")
+	assert.InDelta(t, 0.5, byPersona["bruce"].CorroborationRate, 0.0001,
+		"bruce's own records are all pre-epic and internally consistent, so they are used unchanged")
+	assert.InDelta(t, 0.25, byPersona["greta"].CorroborationRate, 0.0001)
+}
+
+// TestExport_EraFilterIsIndependentOfTheUserFilters pins the second symptom of the
+// global partition: because the era rule runs AFTER ApplyFilters, its scope used
+// to depend on what the user's own flags happened to select. `--persona bruce`
+// took the fallback path (no current-era record in that slice) and reported
+// bruce's full history, while the unfiltered export dropped bruce entirely — two
+// invocations of the same command disagreeing about the same reviewer. With the
+// partition keyed per reviewer, the two must agree.
+func TestExport_EraFilterIsIndependentOfTheUserFilters(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	recs := []Record{
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-01T00:00:00Z-bruce", Reviewer: "bruce", Model: "m",
+			FindingsRaised: 2, FindingsCorroborated: 1,
+		},
+		{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: "2026-07-02T00:00:00Z-greta", Reviewer: "greta", Model: "m",
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4, FindingsCorroborated: 1,
+		},
+	}
+	at := base.AddDate(0, 0, 1)
+
+	scopedOut, err := Export(recs, FilterOpts{Persona: "bruce"}, at)
+	require.NoError(t, err)
+	scoped := parseEnvelope(t, scopedOut)
+	require.Len(t, scoped.Reviewers, 1)
+
+	wholeOut, err := Export(recs, FilterOpts{}, at)
+	require.NoError(t, err)
+	whole := parseEnvelope(t, wholeOut)
+
+	var bruceWhole PublicRecord
+	for _, r := range whole.Reviewers {
+		if r.Persona == "bruce" {
+			bruceWhole = r
+		}
+	}
+	assert.Equal(t, scoped.Reviewers[0].CorroborationRate, bruceWhole.CorroborationRate,
+		"the same reviewer must report the same rate whether or not the user narrowed the export")
+	assert.Equal(t, scoped.Reviewers[0].Runs, bruceWhole.Runs,
+		"and the same sample size — a filter must not change which of a reviewer's records count")
+}
