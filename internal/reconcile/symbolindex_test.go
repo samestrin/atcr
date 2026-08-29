@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -975,5 +976,56 @@ func TestSymbolIndex_StateUnavailableWhenEveryParserFailed(t *testing.T) {
 		_, _ = lz.resolve(context.Background(), []string{"artifactStore"}, nil)
 		assert.Equal(t, reclib.UnresolvedStateApplied, lz.state(),
 			"a parser-less tree was searched in full; the check was in force")
+	})
+}
+
+// TestReadIndexSource_BeyondTheSniffWindow covers the multi-chunk path: the
+// sniff-first read returns the head alone for a small file, so a file LARGER than
+// binarySniffBytes is the only thing that exercises the second read, the cap race
+// guard, and the concatenation.
+func TestReadIndexSource_BeyondTheSniffWindow(t *testing.T) {
+	t.Run("identifier past the sniff window is still harvested", func(t *testing.T) {
+		root := t.TempDir()
+		body := append(make([]byte, 0, binarySniffBytes*2),
+			[]byte("package big\n\n// "+strings.Repeat("padding ", binarySniffBytes/8)+"\n")...)
+		body = append(body, []byte("\nfunc tailOfTheFileSymbol() {}\n")...)
+		require.Greater(t, len(body), binarySniffBytes, "the fixture must exceed the sniff window")
+		p := filepath.Join(root, "big.go")
+		require.NoError(t, os.WriteFile(p, body, 0o644))
+
+		src, skip, err := readIndexSource(p)
+		require.NoError(t, err)
+		require.False(t, skip)
+		assert.Equal(t, len(body), len(src), "the whole file must be returned, not just the sniff window")
+		assert.Contains(t, string(src), "tailOfTheFileSymbol")
+	})
+
+	t.Run("a file that grew past the cap after the caller's stat is skipped", func(t *testing.T) {
+		root := t.TempDir()
+		p := filepath.Join(root, "grown.txt")
+		require.NoError(t, os.WriteFile(p, make([]byte, maxSourceFileBytes+64), 0o644))
+		// NUL-free so the binary sniff does not catch it first.
+		big := make([]byte, maxSourceFileBytes+64)
+		for i := range big {
+			big[i] = 'a'
+		}
+		require.NoError(t, os.WriteFile(p, big, 0o644))
+
+		// Called directly, bypassing the caller's Lstat cap check — which is
+		// exactly the race the LimitReader bound exists to catch.
+		src, skip, err := readIndexSource(p)
+		require.NoError(t, err)
+		assert.True(t, skip, "an over-cap file must be refused here too, not read whole")
+		assert.Nil(t, src)
+	})
+
+	t.Run("a read failure after a successful open is a hole, not a skip", func(t *testing.T) {
+		// os.Open on a directory succeeds on Unix; the read then fails. Production
+		// never reaches this (build's Lstat skips non-regular entries first), so
+		// this is the only way to pin that a read error propagates as an error
+		// rather than being swallowed as a binary skip.
+		_, skip, err := readIndexSource(t.TempDir())
+		require.Error(t, err)
+		assert.False(t, skip, "a read failure must not masquerade as a binary skip")
 	})
 }
