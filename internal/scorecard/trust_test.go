@@ -587,3 +587,83 @@ func BenchmarkResolveTrustPriors(b *testing.B) {
 		}
 	})
 }
+
+// TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns pins the second era filter,
+// which exists for exactly the reason strictRuns does: FindingsRaised changed
+// meaning, and a rate computed by summing both meanings is a measurement of
+// neither.
+//
+// Epic 35.16.6.5 put the Tier-4-routed findings into the denominator. Records
+// written before it exclude them; records written after include them. The only
+// discriminator strictRuns applies is consensus_level, so without this filter a
+// reviewer's prior is a blend of two definitions for the whole 180-day window,
+// drifting as the old records age out — silently moving trustExempt and
+// demoteByTrust with nothing marking the boundary.
+//
+// The fail-safe direction is the opposite of the empty-consensus_level case:
+// there, an absent value genuinely meant strict, so reading it as strict
+// preserved real history. Here an absent flag genuinely means the OTHER
+// definition, so it is excluded, and a reviewer with only pre-epic history gets
+// no prior — which is the pre-trust behaviour, not a wrong one.
+func TestTrustPriors_IgnoresPreUnresolvedDenominatorRuns(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-epic era: no flag, and a flattering rate because phantoms were never
+	// counted against this reviewer.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+	// Current era: the same reviewer, with its phantoms now in the denominator.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:            SchemaVersion,
+			RecordType:               RecordTypeReviewer,
+			RunID:                    fmt.Sprintf("2026-07-02T00:00:00Z-new%02d", i),
+			Reviewer:                 "bruce",
+			Model:                    "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4,
+			FindingsCorroborated:     1,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 0.25, priors["bruce"], 0.0001,
+		"only the current-definition records may contribute; blending the two eras gives 0.4")
+}
+
+// TestTrustPriors_PreUnresolvedOnlyHistoryYieldsNoPrior pins the fail-safe: a
+// store that predates the denominator change entirely produces NO prior rather
+// than one of ambiguous meaning. No prior means trustExempt and demoteByTrust
+// simply do not fire — the behaviour before trust priors existed.
+func TestTrustPriors_PreUnresolvedOnlyHistoryYieldsNoPrior(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion:        SchemaVersion,
+			RecordType:           RecordTypeReviewer,
+			RunID:                fmt.Sprintf("2026-07-01T00:00:00Z-old%02d", i),
+			Reviewer:             "bruce",
+			Model:                "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       1,
+			FindingsCorroborated: 1,
+		}))
+	}
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	assert.NotContains(t, priors, "bruce",
+		"a rate whose denominator definition is unknown must not be reported as one")
+}

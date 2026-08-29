@@ -74,6 +74,8 @@ type Record struct {
 	// semantics assume. Omitted when empty: a store written before 35.9.1 has no
 	// level, and every one of those runs was strict by construction.
 	ConsensusLevel string `json:"consensus_level,omitempty"`
+	// RaisedIncludesUnresolved: STUB — not yet stamped or filtered on.
+	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
