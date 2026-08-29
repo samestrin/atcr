@@ -500,3 +500,12 @@ func TestSymbolIndex_SecondaryResolutionRequiresPrimaryMatch(t *testing.T) {
 		assert.Equal(t, "internal/config/load.go", got)
 	})
 }
+
+// TestLazySymbolIndex_NilReceiverIsInconclusive pins the defensive nil-receiver
+// guard: a nil *lazySymbolIndex resolves to tier4Inconclusive — never
+// tier4NoMatch — so a nil index can never route a finding to the sidecar.
+func TestLazySymbolIndex_NilReceiverIsInconclusive(t *testing.T) {
+	var lz *lazySymbolIndex
+	_, outcome := lz.resolve(context.Background(), []string{"Anything"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome)
+}
