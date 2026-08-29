@@ -62,7 +62,7 @@ every review that exits normally.
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `atcr_tier4_index_unavailable_total` | counter | Reconcile runs where a Tier 4 symbol index was needed but could not be built — the tracked-file count exceeded the cap (default 5000, override `ATCR_TIER4_INDEX_MAX_FILES`), no parser would load, or the build was aborted. While Tier 4 is off, every lookup reports "could not check" and nothing is routed to `unresolved.json`, so a non-zero value separates a silently degraded run from a clean one. |
+| `atcr_tier4_index_unavailable_total` | counter | Reconcile runs where a Tier 4 symbol index was needed but was wholly or partially unavailable — no tracked file had a parser-supported extension, the eligible tracked-file count exceeded the cap (default 5000, override `ATCR_TIER4_INDEX_MAX_FILES`), the build was aborted (context cancelled), a parser failed to load for a language in the tree (that language's declarations lost), or the build completed but zero eligible files could be read. While Tier 4 is off, every lookup reports "could not check" and nothing is routed to `unresolved.json`, so a non-zero value separates a silently degraded run from a clean one. |
 | `atcr_tier4_index_incomplete_total` | counter | Reconcile runs where the Tier 4 index was built but some eligible tracked file could not be read (deleted-but-tracked, permission error, symlink escaping the repo), so every no-match verdict was withheld. Distinct from `atcr_tier4_index_unavailable_total`: that one is "no index at all", this one is "a hole in an otherwise working index". |
 
 ## End-of-review CLI summary
