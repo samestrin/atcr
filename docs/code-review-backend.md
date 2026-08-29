@@ -128,6 +128,13 @@ correspond to real code can read `findings.json` alone.
 `unresolved_filtered` is `0` whenever `ATCR_DISABLE_AST_GROUPING` is set —
 content resolution is disabled with AST clustering, and nothing is routed.
 
+Re-running `atcr reconcile` over the same review directory rewrites every
+`reconciled/` artifact unconditionally — including replacing a non-empty
+`unresolved.json` with `[]` when the re-run routes nothing. Before overwriting,
+the prior generation is copied to `reconciled.bak/` in full, sidecars
+included, so an overwritten sidecar is recoverable from
+`reconciled.bak/unresolved.json` until the next re-run replaces the backup.
+
 ## Behavioral notes for callers
 
 - **Partial runs are normal.** If an agent times out or errors, `partial` is
