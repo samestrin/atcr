@@ -182,8 +182,13 @@ type ReconcileResult struct {
 	// out of the primary stream into the unresolved sidecar. Not omitempty, for
 	// the same reason as DebtPersisted — 0 is the answer worth transmitting,
 	// because the field exists to explain a smaller TotalFindings.
-	UnresolvedFiltered int                     `json:"unresolved_filtered"`
-	Findings           []reconcile.JSONFinding `json:"findings,omitempty"`
+	UnresolvedFiltered int `json:"unresolved_filtered"`
+	// Unresolved carries the routed records themselves — the same records
+	// reconciled/unresolved.json persists — so a wrongly-routed finding is
+	// discoverable from the tool result without opening the sidecar by hand
+	// (Epic 35.16.6.5 TD). omitempty: an empty sidecar is the common case.
+	Unresolved []reconcile.JSONFinding `json:"unresolved,omitempty"`
+	Findings   []reconcile.JSONFinding `json:"findings,omitempty"`
 	// DebtPersisted reports whether the local TD store write ran against a
 	// resolved root (individual findings may still be dropped by path
 	// validation), and DebtSkippedReason says why it did not run at all (TD

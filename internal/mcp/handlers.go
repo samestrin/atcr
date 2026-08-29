@@ -463,6 +463,16 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		}
 	}
 
+	// Read the sidecar back rather than reusing res.Unresolved so the field is
+	// exactly what a human would recover from disk — and so the sidecar reader
+	// has a production caller (Epic 35.16.6.5 TD: the sidecar had no read path).
+	// Best-effort like every other post-reconcile surface here: a read failure
+	// degrades to an omitted field, never a failed reconcile.
+	unresolved, uerr := reconcile.ReadUnresolvedFindings(dir)
+	if uerr != nil {
+		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
+	}
+
 	out := ReconcileResult{
 		ReviewID:           id,
 		Pass:               true,
@@ -471,6 +481,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		FailOn:             threshold,
 		Consensus:          consensusLevel,
 		UnresolvedFiltered: res.Summary.UnresolvedFiltered,
+		Unresolved:         unresolved,
 		DebtPersisted:      debtPersisted,
 		DebtSkippedReason:  debtSkippedReason,
 	}
