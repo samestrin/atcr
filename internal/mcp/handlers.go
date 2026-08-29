@@ -477,22 +477,28 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// Best-effort like every other post-reconcile surface here: a read failure
 	// degrades to an omitted field, never a failed reconcile.
 	unresolved, uerr := readUnresolvedSidecar(dir)
+	unresolvedReadErr := ""
 	if uerr != nil {
 		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
+		// Transmit the reason too. The Warn reaches the server's own logger,
+		// which a stdio client never sees, and `Unresolved` is omitempty — so
+		// without this a failed read is byte-identical to an empty sidecar.
+		unresolvedReadErr = uerr.Error()
 	}
 
 	out := ReconcileResult{
-		ReviewID:           id,
-		Pass:               true,
-		TotalFindings:      res.Summary.TotalFindings,
-		Partial:            res.Summary.Partial,
-		FailOn:             threshold,
-		Consensus:          consensusLevel,
-		UnresolvedFiltered: res.Summary.UnresolvedFiltered,
-		UnresolvedState:    res.Summary.UnresolvedState,
-		Unresolved:         unresolved,
-		DebtPersisted:      debtPersisted,
-		DebtSkippedReason:  debtSkippedReason,
+		ReviewID:            id,
+		Pass:                true,
+		TotalFindings:       res.Summary.TotalFindings,
+		Partial:             res.Summary.Partial,
+		FailOn:              threshold,
+		Consensus:           consensusLevel,
+		UnresolvedFiltered:  res.Summary.UnresolvedFiltered,
+		UnresolvedState:     res.Summary.UnresolvedState,
+		Unresolved:          unresolved,
+		UnresolvedReadError: unresolvedReadErr,
+		DebtPersisted:       debtPersisted,
+		DebtSkippedReason:   debtSkippedReason,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false
