@@ -141,7 +141,10 @@ type symbolIndex struct {
 // rather than incriminating. primary is consulted first so a resolution is
 // attributed to the finding's subject rather than to whichever anchor happens to
 // be unique — a FIX-named collaborator must not out-rank the thing the PROBLEM
-// is actually about.
+// is actually about. For the same reason a secondary resolution is accepted
+// only when at least one primary anchor matched something in the tree: a FIX
+// naming an existing collaborator must not localize a finding whose actual
+// subject is absent.
 //
 // Within a tier, PRECISE anchors win: an anchor declared in exactly one file
 // localizes the finding, while an anchor declared in many (Close, Run, New) is
@@ -156,8 +159,21 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 	if file, ok := x.locate(primary); ok {
 		return file, tier4Resolved
 	}
-	if file, ok := x.locate(secondary); ok {
-		return file, tier4Resolved
+	// The secondary set may only LOCALIZE, never substitute for the subject:
+	// with no primary anchor present anywhere in the tree, a FIX-derived hit
+	// would render "did you mean X?" for a finding whose subject is fabricated
+	// — the exact verdict inversion the no-match direction exists to catch.
+	primaryMatched := false
+	for _, a := range primary {
+		if _, seen := x.present[a]; seen || len(x.byName[a]) > 0 {
+			primaryMatched = true
+			break
+		}
+	}
+	if primaryMatched {
+		if file, ok := x.locate(secondary); ok {
+			return file, tier4Resolved
+		}
 	}
 	if len(primary) == 0 {
 		// The PROBLEM named no construct, so nothing was ever searched for on the

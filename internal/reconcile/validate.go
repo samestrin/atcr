@@ -100,7 +100,15 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			tier4 = newTier4Index(root, idx.Paths())
 		}
 		problemAnchors, problemTruncated := extractAnchorSet(findings[i].Problem)
-		fixAnchors, _ := extractAnchorSet(findings[i].Fix)
+		fixAnchors, fixTruncated := extractAnchorSet(findings[i].Fix)
+		if fixTruncated {
+			// The FIX named more constructs than the anchor cap admits, so the
+			// set that would be searched is a PREFIX of what it actually named —
+			// the same partial-search condition the no-match direction below
+			// refuses to accept. A partial search cannot ground a suggestion
+			// either, so a truncated FIX contributes no secondary anchors.
+			fixAnchors = nil
+		}
 		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
 		switch {
 		case outcome == tier4Resolved:
