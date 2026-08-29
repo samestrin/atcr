@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/metrics"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -934,4 +935,45 @@ func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
 	_, outcome = lz2.resolve(context.Background(), []string{"ruby_only_helper"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome,
 		"a construct that genuinely lives in an unparsed language must still be shielded from no-match")
+}
+
+// TestSymbolIndex_StateUnavailableWhenEveryParserFailed pins state() against the
+// metric it must agree with.
+//
+// When every parser fails to load, the files are still READ (readFiles > 0) and
+// `complete` stays true, so the index is built with an empty byName: locate() can
+// never resolve and Tier 4's resolution half is dead. state() nonetheless reported
+// "applied" while tier4UnavailableMetric was incremented for the same run — one
+// surface calling it healthy, the other calling it degraded.
+//
+// The companion assertion below is why the condition is a CONJUNCTION rather than
+// the disjunction "byName empty OR a parser failed": a tree with no
+// parser-language file at all also has an empty byName, and it is healthy — the
+// raw-token scan searched it and the no-match verdict is available.
+func TestSymbolIndex_StateUnavailableWhenEveryParserFailed(t *testing.T) {
+	t.Run("every parser failed", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"),
+			[]byte("package net\n\nfunc DialPeer(addr string) error { return nil }\n"), 0o644))
+
+		lz := newLazySymbolIndex(root, []string{"internal/net/pool.go"})
+		lz.newParser = func(string) (astgroup.Parser, error) { return nil, errors.New("wasm load failed") }
+
+		_, _ = lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+		assert.Equal(t, reclib.UnresolvedStateUnavailable, lz.state(),
+			"an index that can resolve nothing must not report itself as applied")
+	})
+
+	t.Run("no parser-language file in the tree is still applied", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "infra"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "infra", "main.tf"),
+			[]byte("resource \"aws_s3_bucket\" \"artifactStore\" {}\n"), 0o644))
+
+		lz := newLazySymbolIndex(root, []string{"infra/main.tf"})
+		_, _ = lz.resolve(context.Background(), []string{"artifactStore"}, nil)
+		assert.Equal(t, reclib.UnresolvedStateApplied, lz.state(),
+			"a parser-less tree was searched in full; the check was in force")
+	})
 }
