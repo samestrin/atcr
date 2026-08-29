@@ -209,3 +209,52 @@ func TestSymbolIndex_EscapingPathSkipped(t *testing.T) {
 	assert.Equal(t, tier4Resolved, outcome)
 	assert.Equal(t, "internal/net/pool.go", got)
 }
+
+// TestSymbolIndex_SymlinkEscapeSkipped pins the containment fix: a tracked path
+// whose spelling is contained but which resolves, via a symlink, to a file
+// outside root is never read or indexed. Git can track such a symlink, so the
+// lexical check alone is not enough.
+func TestSymbolIndex_SymlinkEscapeSkipped(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.go")
+	require.NoError(t, os.WriteFile(secret, []byte("secret.go"), 0o644))
+
+	root := t.TempDir()
+	writeTracked(t, root, "internal/net/pool.go")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "pkg"), 0o755))
+	require.NoError(t, os.Symlink(secret, filepath.Join(root, "pkg", "linked.go")))
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"pkg/linked.go", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{
+		"pool.go":   file(fn("DialPeer", 7)),
+		"secret.go": file(fn("LeakedSymbol", 3)),
+	}, &calls)
+
+	_, outcome := lz.resolve([]string{"LeakedSymbol"})
+	assert.Equal(t, tier4NoMatch, outcome, "a symlinked-out file must not appear in the index")
+
+	got, outcome := lz.resolve([]string{"DialPeer"})
+	assert.Equal(t, tier4Resolved, outcome, "the contained file is still indexed")
+	assert.Equal(t, "internal/net/pool.go", got)
+}
+
+// TestSymbolIndex_RealGoParser exercises the PRODUCTION path end to end: the
+// default parser factory (astgroup.SharedHost().Parser) against the real
+// embedded Go .wasm plugin, on real source. Every other test in this file stubs
+// the parser, so without this one the wiring that actually ships is untested.
+func TestSymbolIndex_RealGoParser(t *testing.T) {
+	root := t.TempDir()
+	src := "package pool\n\nfunc DialPeer(addr string) error {\n\treturn nil\n}\n\nfunc closeIdle() {}\n"
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"), []byte(src), 0o644))
+
+	lz := newLazySymbolIndex(root, []string{"internal/net/pool.go"})
+
+	got, outcome := lz.resolve([]string{"DialPeer"})
+	require.Equal(t, tier4Resolved, outcome, "the real embedded go.wasm parser must find a top-level func")
+	assert.Equal(t, "internal/net/pool.go", got)
+
+	_, outcome = lz.resolve([]string{"NotInThisFile"})
+	assert.Equal(t, tier4NoMatch, outcome)
+}
