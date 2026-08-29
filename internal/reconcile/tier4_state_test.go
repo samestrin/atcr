@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -138,4 +139,45 @@ func TestUnresolvedState_RenderedUnconditionally(t *testing.T) {
 	var unstamped bytes.Buffer
 	require.NoError(t, renderMarkdown(&unstamped, Summary{}, nil, DisagreementsFile{}))
 	assert.NotContains(t, unstamped.String(), "Unresolved check:")
+}
+
+// TestUnresolvedState_SubmoduleIsNotASearchHole pins that a tracked entry which
+// is not a regular file does not disable the Tier 4 no-match verdict.
+//
+// `git ls-files` emits a submodule as a single gitlink row naming its DIRECTORY.
+// eligiblePaths stopped filtering by parser language (Epic 35.16.6.5), so that
+// row now reaches the read loop, where os.ReadFile returns "is a directory". Read
+// as a hole that would clear `complete`, which withholds EVERY no-match verdict:
+// on any repo carrying a submodule the state would read "incomplete" and nothing
+// would ever be routed. No declaration lives in a non-file, so it is a resolution
+// limit, not a search hole.
+func TestUnresolvedState_SubmoduleIsNotASearchHole(t *testing.T) {
+	inner := gitRepoWithSources(t, map[string]string{
+		"lib/inner.go": "package lib\n\nfunc innerHelper() error { return nil }\n",
+	})
+	root := gitRepoWithSources(t, map[string]string{
+		"internal/auth/session.go": "package auth\n\nfunc loadSession() error { return nil }\n",
+	})
+	gitIn := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "git %v: %s", args, out)
+	}
+	gitIn("-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "sub")
+	gitIn("commit", "-q", "-m", "add submodule")
+
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle|close it|security|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(), Root: root,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, reclib.UnresolvedStateApplied, res.Summary.UnresolvedState,
+		"a submodule gitlink is not a readable source file, so it must not clear `complete`")
+	assert.Equal(t, 1, res.Summary.UnresolvedFiltered,
+		"the phantom must still be routed in a repo that carries a submodule")
 }
