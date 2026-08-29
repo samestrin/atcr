@@ -198,28 +198,51 @@ func strictRuns(records []Record) []Record {
 // so a blended window drifts as the old records age out, silently moving
 // trustExempt and demoteByTrust with nothing marking the boundary.
 //
-// The rule is PREFER-CURRENT, not require-current: when the window holds any
+// The rule is PREFER-CURRENT, not require-current: when a reviewer holds any
 // record stamped with the current definition, only those count; when it holds
-// none, the pre-epic records are used as they always were. Both halves matter.
+// none, its pre-epic records are used as they always were. Both halves matter.
 // Requiring the flag would black out every existing reviewer history on upgrade —
 // the same stranding strictRuns' empty-means-strict rule exists to avoid — and a
-// pre-epic-only store is at least INTERNALLY consistent, which a blend never is.
-// The one-time step when the first current-era record lands is the honest cost of
-// switching between two coherent measurements; it is not a drift.
+// pre-epic-only history is at least INTERNALLY consistent, which a blend never is.
+// The one-time step when a reviewer's first current-era record lands is the honest
+// cost of switching between two coherent measurements; it is not a drift.
+//
+// The partition is PER REVIEWER, and that is the whole subtlety. Applied to the
+// slice as a whole it asks the wrong question — "has anyone upgraded?" — so the
+// first post-upgrade run, which flags only the reviewers on that panel, dropped
+// every OTHER reviewer's records entirely. Those reviewers then left byReviewer
+// and were absent from the prior map at any minRuns, and absent is not neutral:
+// trustExempt reads a missing key as "not exempt" while demoteByTrust reads the
+// same missing key as "do not demote", so a low-trust phantom-raiser silently
+// stopped being demoted — the reverse of what putting phantoms in the denominator
+// was for. A reviewer's era is a property of its own history, so only its own
+// records may answer for it.
 //
 // Like strictRuns this is scoped to TrustPriors and NOT applied to Aggregate: the
 // `atcr scorecard` leaderboard reports what actually happened across all runs.
+//
+// Input order is preserved, and a record whose Reviewer is empty or which is not
+// a reviewer record simply forms its own group — Aggregate drops the non-reviewer
+// rows immediately after, so grouping them costs nothing and needs no special case
+// here.
 func unresolvedEraRuns(records []Record) []Record {
-	current := make([]Record, 0, len(records))
+	hasCurrent := make(map[string]bool, len(records))
 	for _, r := range records {
 		if r.RaisedIncludesUnresolved {
-			current = append(current, r)
+			hasCurrent[strings.ToLower(r.Reviewer)] = true
 		}
 	}
-	if len(current) > 0 {
-		return current
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		// Keep the record when its own reviewer has no current-era record at all
+		// (the untouched pre-epic history) or when this record IS a current-era
+		// one. What is dropped is only the older half of a reviewer that spans
+		// the change — the mix, which is the one combination measuring neither.
+		if !hasCurrent[strings.ToLower(r.Reviewer)] || r.RaisedIncludesUnresolved {
+			kept = append(kept, r)
+		}
 	}
-	return records
+	return kept
 }
 
 // ResolveTrustPriors resolves the default scorecard store directory and reads
