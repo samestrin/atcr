@@ -509,3 +509,22 @@ func TestLazySymbolIndex_NilReceiverIsInconclusive(t *testing.T) {
 	_, outcome := lz.resolve(context.Background(), []string{"Anything"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome)
 }
+
+// TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable pins that the
+// zero-eligible-files early return increments atcr_tier4_index_unavailable_total
+// like the four other Tier-4-disabling paths, so a tracked tree containing no
+// parser-supported file is distinguishable from a healthy run in the metrics.
+func TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	writeTracked(t, root, "docs/readme.md", "config/app.yaml")
+
+	lz := newLazySymbolIndex(root, []string{"docs/readme.md", "config/app.yaml"})
+	// No newParser override: eligibility filtering drops both files (no parser
+	// language for .md/.yaml) before any parser would be requested.
+
+	before := metrics.Counter(tier4UnavailableMetric).Value()
+	_, outcome := lz.resolve(context.Background(), []string{"Anything"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome)
+	assert.Equal(t, before+1, metrics.Counter(tier4UnavailableMetric).Value(),
+		"zero eligible files is an unavailable index, and must say so in the metrics")
+}
