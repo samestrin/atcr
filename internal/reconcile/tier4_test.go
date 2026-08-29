@@ -224,3 +224,30 @@ func TestTier4_DegradesWithoutGitIndex(t *testing.T) {
 	assert.Empty(t, unresolved)
 	assert.Zero(t, *built)
 }
+
+// TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion pins that the FIX
+// truncation flag is honoured the way the PROBLEM one is: the searched anchor
+// set was a PREFIX of what the reviewer named, and a partial search cannot
+// ground a suggestion — so a truncated FIX contributes no secondary anchors at
+// all rather than suggesting from its prefix.
+func TestTier4_TruncatedFixAnchorSetYieldsNoSuggestion(t *testing.T) {
+	root := tier4Repo(t, "internal/auth/session.go")
+	fake := &fakeTier4{byAnchor: map[string]string{"RefreshToken": "internal/auth/session.go"}}
+	withFakeTier4(t, fake)
+
+	findings := []JSONFinding{{
+		File:    "internal/ghost/phantom.go",
+		Line:    9,
+		Problem: "`ghostThing` leaks a handle on every retry",
+		// Nine anchors: sorted, RefreshToken lands inside the kept prefix of
+		// eight, so an implementation that searches the truncated set WOULD
+		// resolve — which is exactly what must not happen.
+		Fix: "route through `RefreshToken` then `anchorA` `anchorB` `anchorC` `anchorD` `anchorE` `anchorF` `anchorG` `anchorH`",
+	}}
+	unresolved := validateFindingPaths(context.Background(), findings, root)
+
+	assert.Empty(t, findings[0].PathSuggestion,
+		"a truncated FIX anchor set is a prefix — no suggestion may be drawn from it")
+	assert.Equal(t, []int{0}, unresolved,
+		"the PROBLEM anchor still matched nothing: sidecar-eligible")
+}

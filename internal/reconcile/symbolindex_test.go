@@ -450,3 +450,53 @@ func BenchmarkSymbolIndexBuild_NoParseBaseline(b *testing.B) {
 		})
 	}
 }
+
+// TestSymbolIndex_SecondaryResolutionRequiresPrimaryMatch pins the rule that a
+// FIX-derived suggestion is only meaningful when the finding's subject
+// demonstrably exists in the tree. When no PROBLEM anchor matched anything,
+// locate(secondary) must not fire: a FIX naming an existing collaborator
+// ("route this through `parseConfigFile`") otherwise localizes a finding whose
+// actual subject is absent, rendering a bogus "did you mean X?" suggestion
+// instead of the no-match verdict the absent subject warrants.
+func TestSymbolIndex_SecondaryResolutionRequiresPrimaryMatch(t *testing.T) {
+	root := t.TempDir()
+	writeTracked(t, root, "internal/config/load.go", "internal/config/dump.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"internal/config/load.go", "internal/config/dump.go"})
+	lz.newParser = newStubFactory(fileTree{
+		"load.go": file(fn("parseConfigFile", 5), fn("Close", 20)),
+		"dump.go": file(fn("Close", 9)),
+	}, &calls)
+
+	t.Run("unmatched primary rejects the FIX-derived suggestion", func(t *testing.T) {
+		got, outcome := lz.resolve(context.Background(), []string{"AbsentSubject"}, []string{"parseConfigFile"})
+		assert.Equal(t, tier4NoMatch, outcome,
+			"subject absent from the whole tree: sidecar-eligible, not resolved by its FIX")
+		assert.Empty(t, got)
+	})
+
+	t.Run("empty primary cannot stand in via FIX anchors", func(t *testing.T) {
+		got, outcome := lz.resolve(context.Background(), nil, []string{"parseConfigFile"})
+		assert.Equal(t, tier4Inconclusive, outcome,
+			"a FIX-only anchor set cannot stand in")
+		assert.Empty(t, got)
+	})
+
+	t.Run("primary present in source text keeps the FIX-derived suggestion", func(t *testing.T) {
+		// "load" is not parser-declared but appears in the raw source text of
+		// load.go (the fixture content is the basename), so the subject is real
+		// and a FIX-named collaborator may still localize the finding.
+		got, outcome := lz.resolve(context.Background(), []string{"load"}, []string{"parseConfigFile"})
+		assert.Equal(t, tier4Resolved, outcome)
+		assert.Equal(t, "internal/config/load.go", got)
+	})
+
+	t.Run("imprecise primary declaration keeps the FIX-derived suggestion", func(t *testing.T) {
+		// "Close" is declared in both files — real code, not localizable — so
+		// the secondary resolution remains available.
+		got, outcome := lz.resolve(context.Background(), []string{"Close"}, []string{"parseConfigFile"})
+		assert.Equal(t, tier4Resolved, outcome)
+		assert.Equal(t, "internal/config/load.go", got)
+	})
+}
