@@ -525,6 +525,19 @@ future epic changes either schema:
 - Version negotiation for the public submission format is handled by the export
   paths, not by individual stored records.
 
+**Not every meaning change moves a version number.** Epic 35.16.6.5 changed what
+`findings_raised` COUNTS (it now includes the Tier-4-routed findings) without
+changing any field's name, type, or presence, so neither integer moved. The
+discriminator is the per-record `raised_includes_unresolved` flag instead, and
+both derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+prefer-current rule: a set holding any current-era record uses only those, a set
+holding none uses the older records unchanged. So a single submission is always
+computed under one definition, and an existing store never stops exporting.
+
+The `atcr scorecard` local leaderboard (`Aggregate`) is deliberately NOT filtered
+this way — like the consensus-level filter, it reports what actually happened
+across all runs.
+
 ### `submission_schema` is shared by two producers
 
 `submission_schema` is one constant (`scorecard.SubmissionSchema`) stamped by **two**
