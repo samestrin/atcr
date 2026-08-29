@@ -79,9 +79,17 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 		},
 		{
 			// collectCallAnchors scans BACKWARDS from every "(". A paren with no
-			// identifier run before it must be skipped, not recorded as a
-			// zero-length span. Parenthesised prose is common in review text, so
-			// this is the ordinary case, not a pathological one.
+			// identifier run before it yields a zero-length span, which the
+			// `start == i` early-out skips. Parenthesised prose is common in review
+			// text, so this is the ordinary case, not a pathological one.
+			//
+			// NOT A MUTATION GUARD, deliberately: that early-out is provably
+			// redundant. start == i means the span is empty, and addAnchor already
+			// rejects an empty span on isIdentifierShaped's minAnchorLen test, so
+			// deleting the early-out changes no output for any input. This case
+			// pins the OUTPUT (parenthesised prose contributes nothing) and
+			// documents the early-out as belt-and-braces. Do not "strengthen" it
+			// into a claim that the branch is pinned — it cannot be.
 			name:    "bare paren with no identifier before it",
 			problem: "the guard (x) is applied before `readTree` runs",
 			want:    []string{"readTree"},
@@ -115,13 +123,18 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			// isIdentifierShaped rejects a digit-leading token: no language admits
 			// one as an identifier, so it is a version string or a numeric literal
 			// the reviewer quoted, never a construct to search the tree for.
+			//
+			// The token must carry an identifier SIGNAL (the interior case change
+			// in `9abcDef`), or hasIdentifierSignal rejects it first and this case
+			// passes whether or not the digit-leading test exists. A plain `9abc`
+			// looks like the obvious fixture and is exactly that dead assertion.
 			name:    "digit-leading token is not an identifier",
-			problem: "the `9abc` marker is emitted twice",
+			problem: "the `9abcDef` marker is emitted twice",
 			want:    nil,
 		},
 		{
 			name:    "digit-leading call shape is not an identifier",
-			problem: "9abc() appears in the generated table",
+			problem: "9abcDef() appears in the generated table",
 			want:    nil,
 		},
 		{
