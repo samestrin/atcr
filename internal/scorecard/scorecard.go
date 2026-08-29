@@ -138,8 +138,25 @@ type EmitInput struct {
 	// under; it is stamped onto every emitted record (see Record.ConsensusLevel).
 	// Empty means "not recorded" and is read as strict downstream, matching a
 	// pre-35.9.1 store.
-	ConsensusLevel   string
-	VerificationPath string
+	ConsensusLevel string
+	// UnresolvedFindings holds the findings the Epic 35.16.6.5 Tier 4 content
+	// check routed OUT of the primary stream (reconcile.Result.Unresolved): their
+	// cited file does not exist and the constructs their prose names are declared
+	// nowhere in the tracked tree. They are counted in FindingsRaised and NEVER in
+	// FindingsCorroborated.
+	//
+	// They must be counted, and they must be counted this way. Routing removes
+	// them from Findings before this emitter runs, so leaving them out would
+	// delete exactly the highest-signal fabrication evidence from the denominator
+	// the corroboration rate divides by — a reviewer raising six corroborated
+	// findings and four phantoms would report 1.00 instead of 0.60, cross
+	// trustHighThreshold, and earn the consensus-filter exemption its phantoms
+	// argue against. And they are never corroborated even when two reviewers
+	// agreed on one: agreement on a construct that exists nowhere in the tree is
+	// not corroboration, and treating it as such would restore the same inflation
+	// through a narrower door.
+	UnresolvedFindings []Finding
+	VerificationPath   string
 }
 
 // Emit computes per-reviewer metrics, builds one record per reviewer plus one
@@ -182,6 +199,9 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	for _, name := range names {
 		meta := in.Reviewers[name]
 		raised, corroborated := reviewerCounts(name, in.Findings)
+		// Routed phantoms add to the denominator only — see UnresolvedFindings.
+		routedRaised, _ := reviewerCounts(name, in.UnresolvedFindings)
+		raised += routedRaised
 		rec := Record{
 			SchemaVersion:        SchemaVersion,
 			RecordType:           RecordTypeReviewer,

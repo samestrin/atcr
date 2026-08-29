@@ -64,6 +64,32 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
+	// The Tier 4 content check (Epic 35.16.6.5) routed these OUT of res.Findings
+	// before this bridge ran, so they are invisible above. Carry them separately:
+	// they belong in FindingsRaised (they ARE findings the reviewer raised) and
+	// never in FindingsCorroborated. Registering their reviewers here matters as
+	// much as the counts — a reviewer whose every finding was routed appears in
+	// neither res.Findings nor the pool summary of a path-anchored review, and
+	// would otherwise get no record at all: no rate, and so no trust penalty for
+	// a run that produced nothing but phantoms.
+	unresolved := make([]Finding, 0, len(res.Unresolved))
+	for _, u := range res.Unresolved {
+		unresolved = append(unresolved, Finding{
+			File:      u.File,
+			Line:      u.Line,
+			Problem:   u.Problem,
+			Reviewers: u.Reviewers,
+		})
+		for _, rev := range u.Reviewers {
+			if rev == "" {
+				continue
+			}
+			if _, ok := reviewers[rev]; !ok {
+				reviewers[rev] = ReviewerMeta{}
+			}
+		}
+	}
+
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
 	// Emit is best-effort and logs its own failures; ignore the return so
@@ -77,7 +103,8 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		// level is what lets TrustPriors restrict itself to the strict runs its
 		// historical semantics assume, instead of letting an exploratory off or
 		// lenient run durably depress the priors later strict runs read.
-		ConsensusLevel:   res.Summary.ConsensusLevel,
-		VerificationPath: verPath,
+		ConsensusLevel:     res.Summary.ConsensusLevel,
+		UnresolvedFindings: unresolved,
+		VerificationPath:   verPath,
 	}, opts)
 }
