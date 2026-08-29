@@ -115,3 +115,21 @@ func TestExtractAnchors_Capped(t *testing.T) {
 	assert.Equal(t, []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}, got,
 		"the cap keeps the lexically-first anchors so the truncation is deterministic too")
 }
+
+// TestExtractAnchors_ApostropheProse pins the per-delimiter scan: an apostrophe
+// used as English punctuation must not swallow the backtick spans that follow
+// it. A single interleaved scan mis-pairs "parser's" with "doesn't" and loses
+// every identifier in between.
+func TestExtractAnchors_ApostropheProse(t *testing.T) {
+	got := extractAnchors(
+		"the parser's cache is stale so `readTree` doesn't refresh `openTree`",
+		"the caller's fix is to invalidate in `dropCache`")
+	assert.Equal(t, []string{"dropCache", "openTree", "readTree"}, got)
+}
+
+// TestExtractAnchors_UnterminatedDelimiter pins that a lone opener contributes
+// nothing and never panics on the slice bounds.
+func TestExtractAnchors_UnterminatedDelimiter(t *testing.T) {
+	assert.Nil(t, extractAnchors("a stray backtick ` at the very end", ""))
+	assert.Equal(t, []string{"realName"}, extractAnchors("`realName` then a stray ` tail", ""))
+}
