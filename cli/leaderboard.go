@@ -237,14 +237,26 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 	if len(records) == 0 {
 		return fmt.Errorf("no scorecard data yet; run 'atcr reconcile' to generate records")
 	}
-	// One timestamp for both passes. It is the --since anchor as well as the envelope's
-	// submitted_at, so calling time.Now() twice could select a different record set than
-	// the one the guard below inspected.
+	// One timestamp for the selection and the envelope. It is the --since anchor as well
+	// as submitted_at, so calling time.Now() twice could select a different record set
+	// than the one the guard below inspected.
 	now := time.Now().UTC()
-	if err := validatePublishableRecordIdentities(records, filters, now); err != nil {
+	// ONE selection, used by the guard and by the serializer. The export path
+	// deliberately reads ALL history (window is forced to 0 above), so selecting twice
+	// re-parsed every RunID in an unrotated store through time.Parse for nothing — and,
+	// worse, gave the guard a SUPERSET of the envelope: a record ApplyFilters selects
+	// but the era pass drops used to hard-fail an export whose envelope was clean.
+	//
+	// A filter error is returned as-is: it is a usage error (a bad --since), not an
+	// identity defect, and it must read the same as it did when Export raised it.
+	selected, err := scorecard.PublishedSet(records, filters, now)
+	if err != nil {
 		return err
 	}
-	data, err := scorecard.Export(records, filters, now)
+	if err := validatePublishableRecordIdentities(selected); err != nil {
+		return err
+	}
+	data, err := scorecard.ExportSelected(selected, now)
 	if err != nil {
 		if errors.Is(err, scorecard.ErrNoExportRecords) {
 			return err
@@ -273,27 +285,15 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 // (Cf) runes alone, so an invisible rune survives into the envelope and no other arm
 // can see it — the value is non-empty on both sides of the scrub.
 //
-// It runs on the POST-FILTER set rather than on every stored record, so a record the
-// operator's own --since/--model excluded cannot fail an export it was never part of.
-// now is threaded rather than re-read so this pass and Export's own resolve --since
-// against the same instant.
-//
-// The filtered set is a SUPERSET of what publishes, not an exact match: Export applies
-// a further unresolvedEraRuns pass afterwards, dropping the losing half of a reviewer
-// that spans the 35.16.6.5 FindingsRaised era boundary. A record selected by the
-// filters but dropped by that era rule is still rejected here, so the guard is
-// deliberately stricter than the envelope in that one shape. Closing the gap needs one
-// shared definition of "what publishes" on the scorecard side — either an exported
-// selection helper or moving this guard inside Export after the era pass — which is a
-// change to that package's API rather than to this caller.
-//
-// A filter error is returned as-is: Export would raise the same one a moment later, and
-// reporting it here keeps a bad --since from being reported as an identity defect.
-func validatePublishableRecordIdentities(records []scorecard.Record, filters scorecard.FilterOpts, now time.Time) error {
-	filtered, err := scorecard.ApplyFilters(records, filters, now)
-	if err != nil {
-		return err
-	}
+// It takes the ALREADY-SELECTED set — scorecard.PublishedSet, the one definition of
+// what the envelope carries — rather than selecting again from every stored record.
+// That is what makes it neither too loose nor too strict: a record the operator's own
+// --since/--model excluded cannot fail an export it was never part of, and neither can
+// one the post-filter unresolvedEraRuns pass drops (the losing half of a reviewer
+// spanning the 35.16.6.5 FindingsRaised era boundary), which the earlier ApplyFilters
+// call here did reject. It also means the store is walked once on the one path that
+// deliberately reads all of it.
+func validatePublishableRecordIdentities(filtered []scorecard.Record) error {
 	for _, rec := range filtered {
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).

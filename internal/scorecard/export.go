@@ -237,22 +237,28 @@ func clampRate(f float64) float64 {
 // the envelope timestamp and as the --since window anchor, so the document is
 // fully reproducible (no hidden time.Now()).
 func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, error) {
-	filtered, err := ApplyFilters(records, opts, exportedAt)
+	filtered, err := PublishedSet(records, opts, exportedAt)
 	if err != nil {
 		return nil, err
 	}
+	return ExportSelected(filtered, exportedAt)
+}
+
+// ExportSelected anonymizes, aggregates, and serializes an already-selected set (see
+// PublishedSet). It is split out of Export so leaderboard --export can validate the
+// published identities and serialize them from ONE selection instead of computing the
+// selection twice over a store the export path deliberately reads in full.
+//
+// The empty check moved behind the era pass with this split, which is
+// behaviour-preserving: unresolvedEraRuns falls back rather than excluding — a record
+// is kept when its reviewer has no current-era record at all, and when a reviewer does
+// have one, that record itself is kept — so a non-empty selection can never come out
+// empty, and ErrNoExportRecords still reports exactly what the user's own filters
+// selected.
+func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
 	}
-	// Keep ONE FindingsRaised definition, never a mix — the same prefer-current
-	// rule TrustPriors applies, and for the same reason: Epic 35.16.6.5 put the
-	// Tier-4-routed findings into the denominator, so corroboration_rate and
-	// findings_raised_avg computed across both eras measure neither. Unlike
-	// TrustPriors this runs AFTER ApplyFilters, so the "no records" error still
-	// reports what the user's own filters selected rather than an era they never
-	// asked about; and because the rule falls back rather than excluding, it can
-	// never empty a submission built from a pre-epic store.
-	filtered = unresolvedEraRuns(filtered)
 
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
@@ -436,6 +442,16 @@ var (
 // exportedAt is the --since anchor, threaded rather than re-read so the guard and the
 // envelope resolve the window against the same instant.
 func PublishedSet(records []Record, opts FilterOpts, exportedAt time.Time) ([]Record, error) {
-	// Wrong-answer stub: replaced in GREEN.
-	return records, nil
+	filtered, err := ApplyFilters(records, opts, exportedAt)
+	if err != nil {
+		return nil, err
+	}
+	// Keep ONE FindingsRaised definition, never a mix — the same prefer-current rule
+	// TrustPriors applies, and for the same reason: Epic 35.16.6.5 put the Tier-4-routed
+	// findings into the denominator, so corroboration_rate and findings_raised_avg
+	// computed across both eras measure neither. It runs AFTER ApplyFilters so Export's
+	// "no records" error still reports what the user's own filters selected rather than
+	// an era they never asked about; and because the rule falls back rather than
+	// excluding, it can never empty a submission built from a pre-epic store.
+	return unresolvedEraRuns(filtered), nil
 }
