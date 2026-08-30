@@ -357,3 +357,8 @@ func writeExportFile(path string, data []byte) error {
 	}
 	return nil
 }
+
+// runLeaderboardExportAt is a wrong-answer compiling stub, replaced in GREEN.
+func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string, _ time.Time) error {
+	return runLeaderboardExport(cmd, records, filters, output)
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -766,4 +767,44 @@ func TestPublishedSet_IsTheSelectionExportPublishes(t *testing.T) {
 
 	_, ferr := scorecard.PublishedSet(recs, scorecard.FilterOpts{Since: "banana"}, time.Now().UTC())
 	require.Error(t, ferr, "a filter error must surface from the shared selection, not only from Export")
+}
+
+// The selection anchor and the envelope timestamp must be ONE instant. runLeaderboardExport
+// resolves --since through scorecard.PublishedSet and stamps submitted_at through
+// scorecard.ExportSelected; a second time.Now() in either would let the published document
+// claim a submission time that does not match the window its rows were selected under, and
+// on the --since boundary it would publish a different record set than the one the identity
+// guard inspected. Nothing pinned that sharing — reverting either argument to
+// time.Now().UTC() left the whole ./cli/ suite green.
+//
+// The injected instant is fixed and far from wall-clock now, so either mutation is caught:
+// the boundary record falls outside a real-now 1h window, and submitted_at stops matching.
+func TestRunLeaderboardExportAt_SelectionAndEnvelopeShareOneInstant(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	recs := []scorecard.Record{
+		{
+			// 12 hours inside the 1d window anchored at `at`, and ~7 months outside a
+			// window anchored at real wall-clock now.
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer,
+			RunID:    at.Add(-30*time.Minute).Format(time.RFC3339) + "-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+	}
+
+	cmd := exportTestCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runLeaderboardExportAt(cmd, recs, scorecard.FilterOpts{Since: "1d"}, "", at))
+
+	var env struct {
+		SubmittedAt string `json:"submitted_at"`
+		Reviewers   []struct {
+			Model string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1, "the record inside the injected window must publish")
+	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+	require.Equal(t, at.Format(time.RFC3339), env.SubmittedAt,
+		"submitted_at must be the SAME instant the --since window was resolved against")
 }
