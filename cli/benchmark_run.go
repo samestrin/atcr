@@ -173,8 +173,7 @@ func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
 	//
 	// Sorted, so a panel with two offending lanes reports the same one on every run
 	// rather than whichever the map iteration reached first.
-	names := append([]string(nil), cfg.Project.Agents...)
-	names = append(names, cfg.Project.SerialAgents...)
+	names := reviewerRoster(cfg)
 	sort.Strings(names)
 	for _, n := range names {
 		// seen bounds the fallback walk. registry.Validate already rejects a cycle, but
@@ -356,7 +355,10 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		if err != nil {
 			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
 		}
-		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(cfg.Project.Agents))
+		// The reviewer count is the FULL roster, both lanes: fanout builds slots for
+		// SerialAgents exactly as it does for Agents, so counting the parallel lane
+		// alone under-reports every serial reviewer on every case.
+		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(reviewerRoster(cfg)))
 		res, err := fanout.ExecuteReview(ctx, completer, prep)
 		if err != nil {
 			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
@@ -568,6 +570,22 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	}, nil
 }
 
+// reviewerRoster returns the full configured reviewer panel: the parallel lane then
+// the serial one, mirroring fanout.rosterNames, which is what actually builds the
+// slots. Every caller that means "the reviewers this run has" reads it from here, so
+// the load-time identity gate, the per-case log line, and the resume roster guard
+// cannot disagree about who is on the panel. Iterating cfg.Project.Agents alone let
+// rosterSignature compare EQUAL across a changed serial lane and resume, publishing
+// two panels as one comparable measurement — the AC4 outcome the guard exists to stop.
+//
+// The result is a fresh slice: callers sort it in place.
+func reviewerRoster(cfg *fanout.ReviewConfig) []string {
+	names := make([]string, 0, len(cfg.Project.Agents)+len(cfg.Project.SerialAgents))
+	names = append(names, cfg.Project.Agents...)
+	names = append(names, cfg.Project.SerialAgents...)
+	return names
+}
+
 // rosterSignature builds the deterministic "agent=model=persona" signature of the
 // configured reviewer panel, sorted by agent name. It uses the CONFIGURED values
 // (registry), not runtime usage-reported ones, so the same config always yields the
@@ -577,7 +595,7 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 // An agent with no configured model or persona contributes an empty component,
 // which still distinguishes it from a later-configured one.
 func rosterSignature(cfg *fanout.ReviewConfig) []string {
-	names := append([]string(nil), cfg.Project.Agents...)
+	names := reviewerRoster(cfg)
 	sort.Strings(names)
 	sig := make([]string, len(names))
 	for i, n := range names {
