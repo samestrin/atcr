@@ -287,7 +287,7 @@ measured. `atcr benchmark export` applies the same control/format-rune rule to i
 envelope, so no invisible rune reaches the board from either producer.
 
 **Identity that is empty once scrubbed → row skipped, export continues.** A record
-whose `model` or `reviewer` is non-empty in the store but scrubs away to nothing
+whose `model` or `reviewer` is non-blank in the store but scrubs away to nothing
 (`"admin@internal.host"` loses its email-shaped token whole; so do
 `"/models/mistral-7b.gguf"`, `"bedrock@us-east-1/claude"` and `"~/models/foo"`) is
 **dropped from the envelope** and named on stderr — it is never published as
@@ -295,7 +295,10 @@ whose `model` or `reviewer` is non-empty in the store but scrubs away to nothing
 history and `--export` reads the whole unrotated store, so one such record would
 otherwise take down an export that had succeeded the day before, clearable only by
 hand-editing a JSONL store. If every selected record is dropped, the ordinary
-no-records error is raised instead of an empty envelope.
+no-records error is raised instead of an empty envelope. An identity that is already
+empty — or whitespace-only, which is the same thing to every reader of the store — is
+a record written without a model, not a scrub casualty: it is left alone and still
+publishes.
 
 `benchmark export` applies the same rule as a **hard rejection** rather than a skip.
 The asymmetry is deliberate: it validates one just-produced run-result file, where
