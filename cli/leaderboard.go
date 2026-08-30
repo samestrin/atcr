@@ -319,6 +319,23 @@ func validatePublishableRecordIdentities(filtered []scorecard.Record) error {
 					"edit or remove that record in the scorecard store, then re-run the export",
 					rec.RunID, f.name, f.value, r)
 			}
+			// Empty ONCE SCRUBBED, the arm `benchmark export` already applies through
+			// checkPublishable. Without it the two sibling producers into the SAME
+			// envelope disagreed: benchmark hard-rejected an identity the scrub deletes
+			// outright (an email- or path-shaped id), while leaderboard published it as
+			// model:"".
+			//
+			// Scoped to a value that is NON-EMPTY before the scrub. An identity already
+			// empty in the store is a different defect — a record written without a
+			// model — and failing it here would hard-fail every export against a store
+			// that already holds such records. Widening this arm to cover them is a data
+			// decision about existing history, not an identity-printability one.
+			if f.value != "" && scorecard.ScrubPublicString(f.value) == "" {
+				return fmt.Errorf("scorecard record %q has %s %q, which is empty once scrubbed for publication; "+
+					"the export would publish \"\" and be rejected at the leaderboard — "+
+					"edit or remove that record in the scorecard store, then re-run the export",
+					rec.RunID, f.name, f.value)
+			}
 		}
 	}
 	return nil
