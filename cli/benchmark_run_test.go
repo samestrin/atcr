@@ -1341,3 +1341,93 @@ func TestCheckPublishable_NamesTheOffendingIdentityFieldInItsRemedy(t *testing.T
 			"the consequence must be threaded per field, not shared")
 	})
 }
+
+// The load-time gate has to cover every identity the run can PUBLISH, not just the
+// obvious field on the obvious lane. Each case below reaches the published identity by
+// a route the first version of the gate missed, and each must still fail before the
+// panel is invoked — a rejection that lands at the fold instead is a rejection the
+// operator paid for.
+func TestExecuteBenchmarkRun_ReviewerGateCoversEveryPublishableIdentitySource(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cfg      func() *fanout.ReviewConfig
+		offend   string
+		wantsVia bool
+	}{
+		{
+			// fanout builds slots for cfg.Project.SerialAgents exactly as it does for
+			// the parallel lane (its own rosterNames is the union of the two), so a
+			// serial reviewer publishes a leaderboard row like any other.
+			name: "serial lane",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", "m-\u200Bdax", "dax"})
+				c.Project.Agents = []string{"greta"}
+				c.Project.SerialAgents = []string{"dax"}
+				return c
+			},
+			offend: "m-\u200Bdax",
+		},
+		{
+			// reviewerModel prefers a.FallbackModel over the primary, and the fallback
+			// is just another registry entry reachable by name — so its identity is
+			// fully knowable at load.
+			name: "fallback chain",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"greta-backup", "m-\u200Bbackup", "greta"})
+				c.Project.Agents = []string{"greta"}
+				a := c.Registry.Agents["greta"]
+				a.Fallback = "greta-backup"
+				c.Registry.Agents["greta"] = a
+				return c
+			},
+			offend:   "m-\u200Bbackup",
+			wantsVia: true,
+		},
+		{
+			// reviewerPersona falls back to the AGENT NAME when the registry persona is
+			// empty, so the roster key itself becomes a published identity — and a
+			// project roster entry is validated only for non-emptiness.
+			name: "agent name used as the persona",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"gre\u200Bta", "m-greta", ""})
+				return c
+			},
+			offend: "gre\u200Bta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			diff := "--- a/pay.go\n+++ b/pay.go\n@@ -1,3 +1,3 @@\n func total() int {\n-\treturn 0\n+\treturn 1\n }\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"), []byte(diff), 0o600))
+			manifest := `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"case-01","diff":"case-01.diff","expected_categories":["correctness"]}]}`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+			completer := &countingCompleter{}
+			_, err := executeBenchmarkRun(context.Background(), tc.cfg(), completer, dir, time.Unix(0, 0), "")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "non-printing rune")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			if tc.wantsVia {
+				assert.Contains(t, err.Error(), "fallback of",
+					"a defect in a fallback entry must name the roster agent that reaches it, or the operator cannot find the row they configured")
+			}
+			assert.Zero(t, completer.calls.Load(),
+				"every publishable-identity source must be rejected BEFORE the panel runs, not at the fold")
+		})
+	}
+}
+
+// A fallback chain that loops must not hang the pre-flight. registry.Validate rejects a
+// cycle, but this gate runs on whatever config reached it, and an infinite loop inside
+// a guard is a worse failure than the defect it guards against.
+func TestValidatePublishableReviewerRoster_TerminatesOnAFallbackCycle(t *testing.T) {
+	c := benchCfg([3]string{"a", "m-a", "p-a"}, [3]string{"b", "m-b", "p-b"})
+	c.Project.Agents = []string{"a"}
+	for name, to := range map[string]string{"a": "b", "b": "a"} {
+		ac := c.Registry.Agents[name]
+		ac.Fallback = to
+		c.Registry.Agents[name] = ac
+	}
+	require.NoError(t, validatePublishableReviewerRoster(c), "a clean cycle must terminate and pass")
+}

@@ -148,32 +148,68 @@ func checkPublishable(suitePath, subject, value, consequence, remedy string) err
 // registry — so rejecting a configured value the run would never publish would fail a
 // panel for a row it does not emit.
 //
-// The panel iterated is cfg.Project.Agents, the same set rosterSignature builds from,
-// so the gate covers exactly the lanes that would be invoked. Errors name the AGENT and
-// the REGISTRY: the identity is a verbatim copy of the registry entry, so editing a
-// produced run-result would be the wrong action.
+// The gate must cover every identity the run can actually publish, or the
+// before-payment guarantee is only apparent. Three sources feed it, and all three are
+// known at load:
+//
+//   - BOTH lanes. cfg.Project.SerialAgents is a second roster fanout builds slots for
+//     exactly as it does the parallel one (fanout.rosterNames is the union). Iterating
+//     Agents alone left every serial reviewer covered only by the fold backstop —
+//     which is to say, covered only after the panel was paid for.
+//   - The FALLBACK chain. reviewerModel prefers a.FallbackModel over the primary, and
+//     every fallback is another registry entry reachable by name, so a rune in a
+//     `-backup` agent's model is knowable here rather than hours later.
+//   - The REALIZED persona. reviewerPersona falls back to the AGENT NAME when the
+//     registry persona is empty, and a project roster entry is validated only for
+//     non-emptiness — so the agent key itself is a publishable identity.
+//
+// Errors name the AGENT and the REGISTRY: the identity is a verbatim copy of the
+// registry entry, so editing a produced run-result would be the wrong action.
 func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
-	// No nil guard on cfg/Project/Registry, matching rosterSignature a few lines
-	// below: both are reached only from executeBenchmarkRun, which is handed a fully
-	// built config by its caller. A guard here would be unreachable by construction,
-	// so it could only be covered by a test asserting a state the CLI cannot produce.
+	// No nil guard on cfg/Project/Registry, matching rosterSignature below: both are
+	// reached only from executeBenchmarkRun, which is handed a fully built config by
+	// its caller. A guard here would be unreachable by construction, so it could only
+	// be covered by a test asserting a state the CLI cannot produce.
 	//
 	// Sorted, so a panel with two offending lanes reports the same one on every run
 	// rather than whichever the map iteration reached first.
 	names := append([]string(nil), cfg.Project.Agents...)
+	names = append(names, cfg.Project.SerialAgents...)
 	sort.Strings(names)
 	for _, n := range names {
-		a := cfg.Registry.Agents[n]
-		for _, f := range []struct{ name, value string }{
-			{"model", a.Model},
-			{"persona", a.Persona},
-		} {
-			if r, bad := firstNonPrintingRune(f.value); bad {
-				return fmt.Errorf("reviewer agent %q declares %s %q, which contains a non-printing rune (U+%04X); "+
+		// seen bounds the fallback walk. registry.Validate already rejects a cycle, but
+		// this runs on a config that reached us however it reached us, and an infinite
+		// loop inside a pre-flight would be a worse failure than the one it guards.
+		seen := map[string]bool{}
+		for cur := n; cur != "" && !seen[cur]; cur = cfg.Registry.Agents[cur].Fallback {
+			seen[cur] = true
+			a := cfg.Registry.Agents[cur]
+			// reviewerPersona's own rule, applied to the value the run would publish
+			// rather than to the raw field.
+			persona := a.Persona
+			if persona == "" {
+				persona = cur
+			}
+			for _, f := range []struct{ name, value string }{
+				{"model", a.Model},
+				{"persona", persona},
+			} {
+				r, bad := firstNonPrintingRune(f.value)
+				if !bad {
+					continue
+				}
+				// A fallback link is named by BOTH agents: the operator reads the
+				// roster entry they configured, but the defect is in the entry the
+				// chain reached.
+				via := ""
+				if cur != n {
+					via = fmt.Sprintf(" (reached as a fallback of %q)", n)
+				}
+				return fmt.Errorf("reviewer agent %q%s declares %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured — "+
 					"rename the %s in the reviewer registry",
-					n, f.name, f.value, r, f.name)
+					cur, via, f.name, f.value, r, f.name)
 			}
 		}
 	}
@@ -453,9 +489,18 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 			{"persona", k.persona},
 		} {
 			if r, bad := firstNonPrintingRune(f.value); bad {
+				// The remedy is named because this arm, unlike the load-time gate, can
+				// fire on an identity NO local file contains: a model id echoed back in
+				// a provider's usage payload. Failing here forfeits the run rather than
+				// writing an artifact export would refuse permanently, so the message
+				// has to say where to look and that a checkpoint replays into the same
+				// rejection until it is discarded.
 				return nil, fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
-					"so a leaderboard row can be misattributed to a model that was never measured",
+					"so a leaderboard row can be misattributed to a model that was never measured — "+
+					"if the reviewer registry is clean the id came from the provider's own usage report, "+
+					"so pin or repoint that model; a checkpoint holding this identity replays into the "+
+					"same rejection and must be discarded",
 					f.name, f.value, r)
 			}
 		}
