@@ -237,6 +237,10 @@ func TestDebtBackfillJustifications_DryRunCounterPluralisesLines(t *testing.T) {
 		"--store", store, "--review-root", reviewRoot, "--dry-run")
 	require.Equal(t, 0, code, out)
 
+	// Two changes in ONE shard are not a collision: the disambiguator keys on the raw
+	// filename, so the everyday multi-line listing must stay free of hash suffixes.
+	assert.Contains(t, out, "2026-08.jsonl:1 ", "a shard listed twice is still one file, so no suffix")
+	assert.Contains(t, out, "2026-08.jsonl:2 ", "a shard listed twice is still one file, so no suffix")
 	assert.Contains(t, out, "2 rewritten (2 lines)",
 		"a multi-line repair must read \"lines\", not \"line\"")
 	assert.NotContains(t, out, "(2 line)")
