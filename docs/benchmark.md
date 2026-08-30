@@ -183,11 +183,17 @@ Behavior:
   [Publishable identity](#publishable-identity).
 - A configured reviewer whose `model` or `persona` carries a control (Cc) or format
   (Cf) rune → error, also at load and also before any reviewer is invoked. The remedy
-  is in the reviewer registry, so the error names the agent. The gate covers every
-  identity the run can publish that is knowable at load: **both** roster lanes
-  (`agents` and `serial_agents`), each agent's transitive `fallback` chain (a fallback
-  model can serve a case in place of the primary), and the **agent name itself** where
-  it stands in for an empty `persona`.
+  is in the reviewer registry, so the error names the agent. The gate covers **both**
+  roster lanes (`agents` and `serial_agents`), and the two identity fields have
+  deliberately different reach:
+  - **`model` is checked along each agent's transitive `fallback` chain.** A fallback
+    model can serve a case in place of the primary, so a chain entry's model is
+    genuinely published.
+  - **`persona` is checked on the roster agent only**, never along the chain. Fanout
+    reassigns each result to the PRIMARY slot name, so a fallback entry's own persona
+    never reaches the envelope; walking the chain for it refused whole panels over
+    strings that print nowhere. Where the roster agent declares no persona,
+    the **agent name itself** stands in for it — and that name is what is checked.
 - The same rule is applied again to the *realized* identity when the run-result is
   folded. That arm exists for the one source the load gate cannot see: a model id
   echoed back in the provider's own usage payload, which appears in no local file. It
