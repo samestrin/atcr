@@ -2,10 +2,12 @@ package localdebt
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -285,7 +287,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 	var changes []JustificationChange
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading localdebt dir for backfill: %w", basePathErr(err))
+		return nil, fmt.Errorf("reading localdebt dir for backfill: %w", quotedPathErr(err))
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
@@ -296,7 +298,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		// directory this pass already holds the lock on — not caller input.
 		b, rerr := os.ReadFile(path)
 		if rerr != nil {
-			return nil, fmt.Errorf("reading shard for backfill: %w", basePathErr(rerr))
+			return nil, fmt.Errorf("reading shard for backfill: %w", quotedPathErr(rerr))
 		}
 		lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 		changed := false
@@ -333,7 +335,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 			m["justification"] = rep.to
 			enc, merr := json.Marshal(m)
 			if merr != nil {
-				return nil, fmt.Errorf("re-encoding backfilled record %s: %w", id, merr)
+				return nil, reencodeErr(id, merr)
 			}
 			lines[i] = string(enc)
 			changed = true
@@ -346,7 +348,7 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		tmp, terr := os.CreateTemp(dir, "."+e.Name()+".tmp-*")
 		if terr != nil {
-			return nil, fmt.Errorf("creating temp file for backfill: %w", basePathErr(terr))
+			return nil, fmt.Errorf("creating temp file for backfill: %w", quotedPathErr(terr))
 		}
 		_, werr := tmp.WriteString(strings.Join(lines, "\n") + "\n")
 		if cerr := tmp.Close(); werr == nil {
@@ -354,17 +356,40 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 		}
 		if werr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("writing backfilled shard: %w", basePathErr(werr))
+			return nil, fmt.Errorf("writing backfilled shard: %w", quotedPathErr(werr))
 		}
 		if rnerr := os.Rename(tmp.Name(), path); rnerr != nil {
 			_ = os.Remove(tmp.Name())
-			return nil, fmt.Errorf("publishing backfilled shard: %w", basePathErr(rnerr))
+			return nil, fmt.Errorf("publishing backfilled shard: %w", quotedPathErr(rnerr))
 		}
 	}
 	return changes, nil
 }
 
-// reencodeErr is a wrong-answer compiling stub, replaced in GREEN.
+// reencodeErr wraps a json.Marshal failure with the record id ESCAPED. The id is read
+// verbatim out of a store line in a world-appendable directory, and this error reaches
+// the same terminal the backfill dry-run listing does — the surface an operator consults
+// to decide whether to let the in-place rewrite proceed. Under %s a bidi override in the
+// id reorders that report; %q escapes the format (Cf) and control runes, matching the
+// treatment the listing already gives the id.
 func reencodeErr(id string, err error) error {
-	return fmt.Errorf("re-encoding backfilled record %s: %w", id, err)
+	return fmt.Errorf("re-encoding backfilled record %q: %w", id, err)
+}
+
+// quotedPathErr is basePathErr for the wraps that surface a SHARD NAME on the operator's
+// terminal. basePathErr reduces the path to its base name for privacy — it never escapes
+// it — and os.ReadDir returns that name verbatim from a world-appendable store directory,
+// so a C0/C1/Cf rune in a shard filename rides an *os.PathError straight to the terminal.
+//
+// It layers on top of basePathErr rather than replacing it: the privacy reduction is the
+// package's SECURITY contract with 27 call sites (see RedactPathErr), and quoting all of
+// them is a wider change than the backfill command's own error paths.
+func quotedPathErr(err error) error {
+	var pe *os.PathError
+	if errors.As(basePathErr(err), &pe) {
+		clone := *pe
+		clone.Path = strconv.Quote(pe.Path)
+		return &clone
+	}
+	return err
 }
