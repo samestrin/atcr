@@ -830,3 +830,46 @@ func TestExport_EraFilterIsIndependentOfTheUserFilters(t *testing.T) {
 	assert.Equal(t, scoped.Reviewers[0].Runs, bruceWhole.Runs,
 		"and the same sample size — a filter must not change which of a reviewer's records count")
 }
+
+// ExportSelected is EXPORTED API that skips ApplyFilters entirely, and ApplyFilters is
+// the only place a non-reviewer record is dropped on the export path. A caller handing
+// it raw store records would otherwise publish an aggregate row as a reviewer row in
+// the public envelope — the aggregate sums every reviewer's findings, so it would enter
+// the leaderboard as a phantom reviewer outscoring the real ones. The sole live caller
+// passes PublishedSet output, so nothing depends on the looseness; the guard makes the
+// invariant the package's, not the caller's.
+func TestExportSelected_DropsNonReviewerRecords(t *testing.T) {
+	recs := []Record{
+		{
+			SchemaVersion: 1, RecordType: RecordTypeReviewer, RunID: "2026-06-15T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: RecordTypeAggregate, RunID: "2026-06-15T00:00:00Z-a",
+			Reviewer: "", Model: "", FindingsRaised: 99, FindingsCorroborated: 99,
+		},
+	}
+
+	data, err := ExportSelected(recs, fixedExportNow)
+	require.NoError(t, err)
+
+	var env ExportEnvelope
+	require.NoError(t, json.Unmarshal(data, &env))
+	require.Len(t, env.Reviewers, 1, "the aggregate row must not reach the envelope")
+	assert.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+	assert.Equal(t, "greta", env.Reviewers[0].Persona)
+}
+
+// A selection of nothing but non-reviewer records has nothing publishable in it, and
+// must read as the ordinary no-records error rather than an envelope carrying one
+// empty-identity row built from the aggregates.
+func TestExportSelected_OnlyNonReviewerRecordsIsNoRecords(t *testing.T) {
+	recs := []Record{
+		{
+			SchemaVersion: 1, RecordType: RecordTypeAggregate, RunID: "2026-06-15T00:00:00Z-a",
+			FindingsRaised: 99, FindingsCorroborated: 99,
+		},
+	}
+	_, err := ExportSelected(recs, fixedExportNow)
+	require.ErrorIs(t, err, ErrNoExportRecords)
+}
