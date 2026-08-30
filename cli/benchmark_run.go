@@ -175,40 +175,51 @@ func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
 	// rather than whichever the map iteration reached first.
 	names := reviewerRoster(cfg)
 	sort.Strings(names)
+	// check reports one offending identity. roster is the configured entry the operator
+	// reads; cur is the entry the defect is actually in — a fallback link is named by
+	// BOTH, or the operator cannot find the row they configured.
+	check := func(roster, cur, field, value string) error {
+		r, bad := firstNonPrintingRune(value)
+		if !bad {
+			return nil
+		}
+		via := ""
+		if cur != roster {
+			via = fmt.Sprintf(" (reached as a fallback of %q)", roster)
+		}
+		return fmt.Errorf("reviewer agent %q%s declares %s %q, which contains a non-printing rune (U+%04X); "+
+			"control and format runes are invisible or reorder text in the published document, "+
+			"so a leaderboard row can be misattributed to a model that was never measured — "+
+			"rename the %s in the reviewer registry",
+			cur, via, field, value, r, field)
+	}
+
 	for _, n := range names {
-		// seen bounds the fallback walk. registry.Validate already rejects a cycle, but
-		// this runs on a config that reached us however it reached us, and an infinite
-		// loop inside a pre-flight would be a worse failure than the one it guards.
+		// The PERSONA arm covers the ROSTER agent only, never the chain. reviewerPersona
+		// resolves cfg.Registry.Agents[a.Agent].Persona where a.Agent is always the
+		// PRIMARY slot name even when a fallback served the case — the contract
+		// reviewerKey states — so a fallback entry's own persona is never published, and
+		// its empty-persona substitute is the ROSTER name, never the chain entry's.
+		// Walking the chain here refused whole panels for strings that print nowhere.
+		persona := cfg.Registry.Agents[n].Persona
+		if persona == "" {
+			persona = n
+		}
+		if err := check(n, n, "persona", persona); err != nil {
+			return err
+		}
+
+		// The MODEL arm DOES walk the full chain: reviewerModel prefers a.FallbackModel,
+		// so a fallback's model is genuinely published when it serves a case.
+		//
+		// seen bounds the walk. registry.Validate already rejects a cycle, but this runs
+		// on a config that reached us however it reached us, and an infinite loop inside
+		// a pre-flight would be a worse failure than the one it guards.
 		seen := map[string]bool{}
 		for cur := n; cur != "" && !seen[cur]; cur = cfg.Registry.Agents[cur].Fallback {
 			seen[cur] = true
-			a := cfg.Registry.Agents[cur]
-			// reviewerPersona's own rule, applied to the value the run would publish
-			// rather than to the raw field.
-			persona := a.Persona
-			if persona == "" {
-				persona = cur
-			}
-			for _, f := range []struct{ name, value string }{
-				{"model", a.Model},
-				{"persona", persona},
-			} {
-				r, bad := firstNonPrintingRune(f.value)
-				if !bad {
-					continue
-				}
-				// A fallback link is named by BOTH agents: the operator reads the
-				// roster entry they configured, but the defect is in the entry the
-				// chain reached.
-				via := ""
-				if cur != n {
-					via = fmt.Sprintf(" (reached as a fallback of %q)", n)
-				}
-				return fmt.Errorf("reviewer agent %q%s declares %s %q, which contains a non-printing rune (U+%04X); "+
-					"control and format runes are invisible or reorder text in the published document, "+
-					"so a leaderboard row can be misattributed to a model that was never measured — "+
-					"rename the %s in the reviewer registry",
-					cur, via, f.name, f.value, r, f.name)
+			if err := check(n, cur, "model", cfg.Registry.Agents[cur].Model); err != nil {
+				return err
 			}
 		}
 	}
