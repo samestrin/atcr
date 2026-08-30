@@ -808,3 +808,42 @@ func TestRunLeaderboardExportAt_SelectionAndEnvelopeShareOneInstant(t *testing.T
 	require.Equal(t, at.Format(time.RFC3339), env.SubmittedAt,
 		"submitted_at must be the SAME instant the --since window was resolved against")
 }
+
+// benchmark export hard-rejects an identity that is empty once scrubbed; leaderboard
+// --export gained only the printability arm, so the SIBLING producer into the SAME
+// envelope still published model:"" for a record whose id the scrub deletes outright
+// (an email- or path-shaped value). The two producers must agree.
+//
+// The arm is scoped to values that are NON-EMPTY before the scrub and empty after it.
+// An identity that was already empty in the store is a different defect — a record
+// written without a model — and rejecting it here would hard-fail every export against
+// a store that already holds such records, which the live store does.
+func TestRunLeaderboardExport_RejectsIdentityThatScrubsToEmpty(t *testing.T) {
+	rec := func(reviewer, model string) scorecard.Record {
+		return scorecard.Record{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: reviewer, Model: model, FindingsRaised: 3, FindingsCorroborated: 2,
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		rec     scorecard.Record
+		wantErr string
+	}{
+		{name: "email-shaped model", rec: rec("greta", "sam@example.com"), wantErr: "model"},
+		{name: "path-shaped reviewer", rec: rec("~/models/greta", "claude-sonnet"), wantErr: "reviewer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{tc.rec}, scorecard.FilterOpts{}, "")
+			require.Error(t, err, "an identity the scrub empties would publish as \"\" and be rejected at the leaderboard")
+			require.Contains(t, err.Error(), "empty once scrubbed")
+			require.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+
+	t.Run("already-empty identity still publishes", func(t *testing.T) {
+		require.NoError(t,
+			runLeaderboardExport(exportTestCmd(), []scorecard.Record{rec("greta", "")}, scorecard.FilterOpts{}, ""),
+			"a record stored without a model predates this guard; failing it would break every export against an existing store")
+	})
+}
