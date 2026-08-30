@@ -255,6 +255,10 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 // have one, that record itself is kept — so a non-empty selection can never come out
 // empty, and ErrNoExportRecords still reports exactly what the user's own filters
 // selected.
+//
+// Only `record_type: "reviewer"` records are published. That is not a precondition on
+// the caller: this function enforces it, because it is exported and skips the
+// ApplyFilters pass that would otherwise be the rule's only home.
 func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
@@ -265,6 +269,16 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	order := make([]key, 0)
 
 	for _, r := range filtered {
+		// ApplyFilters is the only other place this is dropped on the export path, and
+		// this function deliberately skips it. Leaving the rule to the caller made an
+		// EXPORTED symbol's central invariant unenforceable from inside the package: an
+		// aggregate record sums every reviewer's findings, so publishing one would enter
+		// the board as a phantom reviewer, with an empty identity, outscoring the real
+		// rows it is the sum of. The one live caller passes PublishedSet output, so this
+		// costs nothing today and removes the way a future caller gets it wrong.
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
 		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
 		// so finalize() never re-scrubs and two records that scrub to the same
 		// identity merge into one group.
@@ -278,6 +292,13 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 			order = append(order, k)
 		}
 		a.add(r)
+	}
+
+	// Re-checked AFTER the reviewer filter above: a selection of nothing but
+	// non-reviewer records is empty of anything publishable, and must read as the
+	// ordinary no-records error rather than an envelope with zero rows.
+	if len(order) == 0 {
+		return nil, ErrNoExportRecords
 	}
 
 	rows := make([]PublicRecord, 0, len(order))
