@@ -263,12 +263,12 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err := validatePublishableRecordIdentities(selected); err != nil {
 		return err
 	}
+	// ErrNoExportRecords is the only error this call can raise now that the selection is
+	// made above: ExportSelected does not filter, so a bad --since can no longer reach
+	// it. It carries its own actionable text and main() maps it to exit 1, so it is
+	// returned as-is rather than re-wrapped.
 	data, err := scorecard.ExportSelected(selected, now)
 	if err != nil {
-		if errors.Is(err, scorecard.ErrNoExportRecords) {
-			return err
-		}
-		// A bad --since (or another runtime error) carries its own actionable text.
 		return err
 	}
 	if output == "" {
