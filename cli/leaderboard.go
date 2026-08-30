@@ -237,7 +237,14 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 	if len(records) == 0 {
 		return fmt.Errorf("no scorecard data yet; run 'atcr reconcile' to generate records")
 	}
-	data, err := scorecard.Export(records, filters, time.Now().UTC())
+	// One timestamp for both passes. It is the --since anchor as well as the envelope's
+	// submitted_at, so calling time.Now() twice could select a different record set than
+	// the one the guard below inspected.
+	now := time.Now().UTC()
+	if err := validatePublishableRecordIdentities(records, filters, now); err != nil {
+		return err
+	}
+	data, err := scorecard.Export(records, filters, now)
 	if err != nil {
 		if errors.Is(err, scorecard.ErrNoExportRecords) {
 			return err
@@ -250,6 +257,55 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 		return werr
 	}
 	return writeExportFile(output, data)
+}
+
+// validatePublishableRecordIdentities rejects an export whose published identities
+// carry a rune the public envelope cannot show intact.
+//
+// `benchmark export` asserts this invariant on its own producer
+// (validateRunResultForPublication), but leaderboard --export is the SIBLING producer
+// into the SAME envelope through the SAME scrubField, and had no guard — so
+// "no invisible rune survives into the published document" held for one producer and
+// not the other. Epic 35.16.6.2 created that divergence; before it neither checked.
+//
+// Printability is checked on the RAW identity, before the scrub, for the reason the
+// benchmark gate documents: ScrubPublicString provably leaves control (Cc) and format
+// (Cf) runes alone, so an invisible rune survives into the envelope and no other arm
+// can see it — the value is non-empty on both sides of the scrub.
+//
+// It runs on the POST-FILTER set, not on every stored record. Export filters
+// internally and publishes only the survivors, so checking the raw slice would
+// hard-fail an export whose envelope was clean — a rejection the operator could clear
+// only by deleting unrelated history. now is threaded rather than re-read so this pass
+// and Export's own select the identical records.
+//
+// A filter error is returned as-is: Export would raise the same one a moment later, and
+// reporting it here keeps a bad --since from being reported as an identity defect.
+func validatePublishableRecordIdentities(records []scorecard.Record, filters scorecard.FilterOpts, now time.Time) error {
+	filtered, err := scorecard.ApplyFilters(records, filters, now)
+	if err != nil {
+		return err
+	}
+	for _, r := range filtered {
+		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
+		// is (persona, model) there, not (reviewer, model).
+		for _, f := range []struct{ name, value string }{
+			{"model", r.Model},
+			{"reviewer", r.Reviewer},
+		} {
+			if bad, found := firstNonPrintingRune(f.value); found {
+				// run_id takes %q for the same reason the offending value does: it is
+				// read from the same world-writable store record, so it is untrusted
+				// input on a surface an operator reads in a terminal. Printing the
+				// locator raw would let the defect being reported reorder the report.
+				return fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured",
+					r.RunID, f.name, f.value, bad)
+			}
+		}
+	}
+	return nil
 }
 
 // writeExportFile atomically writes the export to path: it creates parent

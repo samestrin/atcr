@@ -669,6 +669,9 @@ func TestRunLeaderboardExport_RejectsNonPrintingIdentity(t *testing.T) {
 			// %q, not %s: rendering a bidi override raw would reorder the operator's own
 			// terminal with the very defect being reported.
 			require.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			// The run_id locator comes from the same untrusted store record, so it is
+			// escaped too — a raw one would let a crafted id reorder the report itself.
+			require.Contains(t, err.Error(), fmt.Sprintf("%q", tc.rec.RunID))
 		})
 	}
 }
