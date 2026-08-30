@@ -683,7 +683,7 @@ func TestRunLeaderboardExport_RejectsNonPrintingIdentity(t *testing.T) {
 // history.
 //
 // BOTH halves of that rule are pinned here, in one test, on one record set. The
-// no-error half alone passed with validatePublishableRecordIdentities deleted outright,
+// no-error half alone passed with selectPublishableRecordIdentities deleted outright,
 // so on its own it proved the guard was absent rather than correctly scoped: only the
 // second subtest, where the SAME offending record survives the filter, gives the
 // assertion any sensitivity to the guard existing at all.
@@ -834,35 +834,79 @@ func TestRunLeaderboardExportAt_SelectionAndEnvelopeShareOneInstant(t *testing.T
 //
 // The arm is scoped to values that are NON-EMPTY before the scrub and empty after it.
 // An identity that was already empty in the store is a different defect — a record
-// written without a model — and rejecting it here would hard-fail every export against
-// a store that already holds such records, which the live store does.
-func TestRunLeaderboardExport_RejectsIdentityThatScrubsToEmpty(t *testing.T) {
-	rec := func(reviewer, model string) scorecard.Record {
+// written without a model — and dropping it here would silently shrink every export
+// against a store that already holds such records, which the live store does.
+//
+// Each shape is DROPPED from the envelope and named on stderr rather than aborting the
+// export; the blast radius of the hard-fail is covered by
+// TestRunLeaderboardExport_SkipsIdentityThatScrubsToEmpty below.
+func TestRunLeaderboardExport_SkipsEachIdentityShapeThatScrubsToEmpty(t *testing.T) {
+	rec := func(runID, reviewer, model string) scorecard.Record {
 		return scorecard.Record{
-			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: runID,
 			Reviewer: reviewer, Model: model, FindingsRaised: 3, FindingsCorroborated: 2,
 		}
 	}
+	clean := rec("2026-08-29T00:00:00Z-z", "greta", "claude-sonnet")
 	for _, tc := range []struct {
-		name    string
-		rec     scorecard.Record
-		wantErr string
+		name       string
+		rec        scorecard.Record
+		wantField  string
+		wantOffend string
 	}{
-		{name: "email-shaped model", rec: rec("greta", "sam@example.com"), wantErr: "model"},
-		{name: "path-shaped reviewer", rec: rec("~/models/greta", "claude-sonnet"), wantErr: "reviewer"},
+		{
+			name: "email-shaped model", wantField: "model", wantOffend: "sam@example.com",
+			rec: rec("2026-08-29T00:00:00Z-a", "bruce", "sam@example.com"),
+		},
+		{
+			name: "path-shaped reviewer", wantField: "reviewer", wantOffend: "~/models/greta",
+			rec: rec("2026-08-29T00:00:00Z-b", "~/models/greta", "claude-opus"),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{tc.rec}, scorecard.FilterOpts{}, "")
-			require.Error(t, err, "an identity the scrub empties would publish as \"\" and be rejected at the leaderboard")
-			require.Contains(t, err.Error(), "empty once scrubbed")
-			require.Contains(t, err.Error(), tc.wantErr)
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			require.NoError(t,
+				runLeaderboardExport(cmd, []scorecard.Record{clean, tc.rec}, scorecard.FilterOpts{}, ""),
+				"an identity the scrub empties must be dropped, not take the clean rows down with it")
+
+			var env struct {
+				Reviewers []struct {
+					Model string `json:"model"`
+				} `json:"reviewers"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+			require.Len(t, env.Reviewers, 1, "only the clean record may publish")
+			require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+
+			report := errBuf.String()
+			require.Contains(t, report, "empty once scrubbed")
+			require.Contains(t, report, tc.wantField)
+			require.Contains(t, report, fmt.Sprintf("%q", tc.wantOffend))
+			require.Contains(t, report, fmt.Sprintf("%q", tc.rec.RunID))
 		})
 	}
 
 	t.Run("already-empty identity still publishes", func(t *testing.T) {
+		cmd := exportTestCmd()
+		var out, errBuf bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errBuf)
 		require.NoError(t,
-			runLeaderboardExport(exportTestCmd(), []scorecard.Record{rec("greta", "")}, scorecard.FilterOpts{}, ""),
+			runLeaderboardExport(cmd, []scorecard.Record{rec("2026-08-29T00:00:00Z-a", "greta", "")}, scorecard.FilterOpts{}, ""),
 			"a record stored without a model predates this guard; failing it would break every export against an existing store")
+		require.Empty(t, errBuf.String(), "an already-empty identity is not a scrub casualty and must not be reported as one")
+
+		var env struct {
+			Reviewers []struct {
+				Model string `json:"model"`
+			} `json:"reviewers"`
+		}
+		require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+		require.Len(t, env.Reviewers, 1, "the record must still publish, not be silently dropped")
 	})
 }
 

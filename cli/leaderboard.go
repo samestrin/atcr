@@ -260,7 +260,8 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	if err := validatePublishableRecordIdentities(selected); err != nil {
+	selected, err = selectPublishableRecordIdentities(cmd, selected)
+	if err != nil {
 		return err
 	}
 	// ErrNoExportRecords is the only error this call can raise now that the selection is
@@ -278,8 +279,25 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	return writeExportFile(output, data)
 }
 
-// validatePublishableRecordIdentities rejects an export whose published identities
-// carry a rune the public envelope cannot show intact.
+// selectPublishableRecordIdentities returns the subset of the selection whose published
+// identities survive the public scrub intact, and rejects the export outright when one
+// of them carries a rune the envelope cannot show.
+//
+// The two arms deliberately have different blast radii, because the shapes they catch do:
+//
+//   - A control (Cc) or format (Cf) rune is a misattribution vector and is vanishingly
+//     rare in an honestly written store, so it HARD-FAILS the whole export. Shrinking the
+//     document instead would let a crafted record quietly remove a competitor's row.
+//   - Empty ONCE SCRUBBED catches ordinary local-model id shapes — "/models/mistral-7b.gguf"
+//     (llama.cpp / LM Studio), "bedrock@us-east-1/claude", "~/models/foo". Those sit in real
+//     history, the export path forces window=0 so the window is the whole unrotated store,
+//     and hard-failing on one of them took down an export that had succeeded the day before
+//     with no escape short of hand-editing a JSONL store. Such a record is DROPPED from the
+//     envelope — publishing it as model:"" is still refused — and named on stderr so the
+//     operator can find and repair it.
+//
+// A skip is never silent, and it never empties the document unnoticed: dropping every
+// record leaves ExportSelected to raise its own ErrNoExportRecords.
 //
 // `benchmark export` asserts this invariant on its own producer
 // (validateRunResultForPublication), but leaderboard --export is the SIBLING producer
@@ -300,8 +318,10 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 // spanning the 35.16.6.5 FindingsRaised era boundary), which the earlier ApplyFilters
 // call here did reject. It also means the store is walked once on the one path that
 // deliberately reads all of it.
-func validatePublishableRecordIdentities(filtered []scorecard.Record) error {
+func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.Record) ([]scorecard.Record, error) {
+	kept := make([]scorecard.Record, 0, len(filtered))
 	for _, rec := range filtered {
+		publishable := true
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).
 		for _, f := range []struct{ name, value string }{
@@ -313,7 +333,7 @@ func validatePublishableRecordIdentities(filtered []scorecard.Record) error {
 				// read from the same world-writable store record, so it is untrusted
 				// input on a surface an operator reads in a terminal. Printing the
 				// locator raw would let the defect being reported reorder the report.
-				return fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
+				return nil, fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured — "+
 					"edit or remove that record in the scorecard store, then re-run the export",
@@ -327,18 +347,26 @@ func validatePublishableRecordIdentities(filtered []scorecard.Record) error {
 			//
 			// Scoped to a value that is NON-EMPTY before the scrub. An identity already
 			// empty in the store is a different defect — a record written without a
-			// model — and failing it here would hard-fail every export against a store
-			// that already holds such records. Widening this arm to cover them is a data
-			// decision about existing history, not an identity-printability one.
+			// model — and dropping it here would silently shrink every export against a
+			// store that already holds such records. Widening this arm to cover them is a
+			// data decision about existing history, not an identity-printability one.
 			if f.value != "" && scorecard.ScrubPublicString(f.value) == "" {
-				return fmt.Errorf("scorecard record %q has %s %q, which is empty once scrubbed for publication; "+
-					"the export would publish \"\" and be rejected at the leaderboard — "+
-					"edit or remove that record in the scorecard store, then re-run the export",
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
+						"publishing \"\" would be rejected at the leaderboard — "+
+						"edit or remove that record in the scorecard store to include it\n",
 					rec.RunID, f.name, f.value)
+				publishable = false
+				// One report per record, not one per field: the operator repairs the
+				// record, and a second line about its other identity is noise.
+				break
 			}
 		}
+		if publishable {
+			kept = append(kept, rec)
+		}
 	}
-	return nil
+	return kept, nil
 }
 
 // writeExportFile atomically writes the export to path: it creates parent
