@@ -1286,3 +1286,58 @@ func TestBuildRunResult_RejectsNonPrintingReviewerIdentity(t *testing.T) {
 		})
 	}
 }
+
+// The identity loop shared ONE remedy constant ("rename the suite in the suite
+// manifest") and one consequence across both {suite name} and {suite_version}, so a
+// bad suite_version was reported with a remedy naming the wrong field.
+//
+// Acting on that misdirection is not a harmless no-op. benchmark.ReproHashManifest
+// length-prefixes m.Suite into the hash and validateCheckpoint compares ReproHash,
+// Suite AND SuiteVersion, so renaming the suite makes the next
+// `benchmark run --checkpoint` fail with errCheckpointSuiteMismatch — discarding the
+// paid work of every completed case — and then re-raises the identical suite_version
+// error.
+func TestCheckPublishable_NamesTheOffendingIdentityFieldInItsRemedy(t *testing.T) {
+	// The suite arm's message must stay BYTE-IDENTICAL: it is the pre-existing
+	// behavior, and only the suite_version arm was ever wrong.
+	t.Run("suite version remedy names suite_version", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1.2.\u200B0", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "suite_version in the suite manifest",
+			"the remedy must name the field the operator has to edit; 'rename the suite' invalidates the checkpoint and does not fix the error")
+		assert.NotContains(t, err.Error(), "rename the suite in the suite manifest",
+			"the suite arm's remedy must not be reused for suite_version")
+	})
+
+	t.Run("suite name remedy is unchanged", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s\u200Buite", SuiteVersion: "1", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "rename the suite in the suite manifest",
+			"only the suite_version arm changes; the suite arm stays byte-identical")
+	})
+
+	// The consequence clause is threaded too, not just the remedy: it is the half that
+	// explains WHY, and "the published envelope must name the same suite the manifest
+	// does" reads as a suite-name rule when the offending field is the version.
+	t.Run("suite version consequence names suite_version", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1.0 beta@corp", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "publication scrub rewrites")
+		// The subject clause already says "declares suite_version", so asserting the
+		// string appears at all would pass without the consequence being threaded.
+		// Assert on the suite-specific wording that must NOT survive instead.
+		assert.NotContains(t, err.Error(), "must name the same suite the manifest does",
+			"the rewrite arm quotes the consequence; a suite-name explanation is wrong for a version defect")
+		assert.Contains(t, err.Error(), "must name the same suite_version the manifest does",
+			"the consequence must be threaded per field, not shared")
+	})
+}
