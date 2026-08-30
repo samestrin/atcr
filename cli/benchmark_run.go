@@ -612,16 +612,23 @@ func reviewerRoster(cfg *fanout.ReviewConfig) []string {
 // (system prompt) that can change reviewer outputs even when model stays the same.
 // An agent with no configured model or persona contributes an empty component,
 // which still distinguishes it from a later-configured one.
-// rosterSignatureOf is a RED stub — replaced in GREEN.
-func rosterSignatureOf(_ *fanout.ReviewConfig, _ []string) []string {
-	return nil
+func rosterSignature(cfg *fanout.ReviewConfig) []string {
+	return rosterSignatureOf(cfg, reviewerRoster(cfg))
 }
 
-func rosterSignature(cfg *fanout.ReviewConfig) []string {
-	names := reviewerRoster(cfg)
-	sort.Strings(names)
-	sig := make([]string, len(names))
-	for i, n := range names {
+// rosterSignatureOf builds the signature over an ARBITRARY subset of the panel, so a
+// resume can compare against the shape a previous binary recorded as well as the one
+// this binary writes. rosterSignature is it applied to the full roster; the resume
+// guard also applies it to cfg.Project.Agents alone, which is exactly what the
+// released binary wrote before this branch unioned the serial lane in.
+//
+// It sorts a COPY: cfg.Project.Agents is the live config, and sorting it in place
+// would rewrite the declared lane order for every caller downstream.
+func rosterSignatureOf(cfg *fanout.ReviewConfig, names []string) []string {
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	sig := make([]string, len(sorted))
+	for i, n := range sorted {
 		sig[i] = n + "=" + cfg.Registry.Agents[n].Model + "=" + cfg.Registry.Agents[n].Persona
 	}
 	return sig
