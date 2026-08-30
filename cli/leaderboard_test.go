@@ -12,10 +12,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/scorecard"
 )
+
+// exportTestCmd is a bare command whose stdout is discarded, so a success-path export
+// does not spray its JSON envelope across the test log. runLeaderboardExport writes
+// through cmd.OutOrStdout(), which defaults to os.Stdout when unset.
+func exportTestCmd() *cobra.Command {
+	c := &cobra.Command{}
+	c.SetOut(io.Discard)
+	return c
+}
 
 // storeLeaderboardRec writes a reviewer record at a given age (days before now)
 // under the isolated store, so leaderboard filtering can be exercised end-to-end.
@@ -620,4 +630,65 @@ func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
 			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
 	require.Contains(t, help, "pinned to",
 		"and that a board pinned to an older version needs updating")
+}
+
+// `benchmark export` hard-rejects a run-result whose reviewer identity carries a Cc/Cf
+// rune, but `leaderboard --export` is the SIBLING producer into the same public
+// envelope, through the same scrubField, with no such guard — so the invariant
+// "no invisible rune survives into the published document" held for one producer and
+// not the other. This is a divergence epic 35.16.6.2 created, not a pre-existing
+// regression: before it, neither producer checked.
+func TestRunLeaderboardExport_RejectsNonPrintingIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rec    scorecard.Record
+		offend string
+	}{
+		{
+			name: "model carrying a zero-width space",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+				Reviewer: "greta", Model: "claude-son\u200Bnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+			offend: "claude-son\u200Bnet",
+		},
+		{
+			// Reviewer is the field Export scrubs into the envelope's `persona`.
+			name: "reviewer carrying a bidi override",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+				Reviewer: "gre\u202Eta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+			offend: "gre\u202Eta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{tc.rec}, scorecard.FilterOpts{}, "")
+			require.Error(t, err, "an identity the public scrub cannot carry intact must not publish")
+			require.Contains(t, err.Error(), "non-printing rune")
+			// %q, not %s: rendering a bidi override raw would reorder the operator's own
+			// terminal with the very defect being reported.
+			require.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+		})
+	}
+}
+
+// The guard checks what would actually PUBLISH, not what the store happens to hold.
+// Export filters internally, so a pre-filter check would hard-fail an export whose
+// envelope was clean — a rejection the operator could clear only by deleting unrelated
+// history.
+func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInFilteredOutRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "gpt-5\u200B-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+	// --model selects only the clean record; the offending one never reaches the envelope.
+	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "claude-sonnet"}, "")
+	require.NoError(t, err, "a record the filters exclude never publishes, so it must not fail the export")
 }
