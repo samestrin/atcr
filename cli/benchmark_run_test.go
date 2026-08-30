@@ -1431,3 +1431,27 @@ func TestValidatePublishableReviewerRoster_TerminatesOnAFallbackCycle(t *testing
 	}
 	require.NoError(t, validatePublishableReviewerRoster(c), "a clean cycle must terminate and pass")
 }
+
+// AC4's roster guard refuses a resume whose reviewer panel changed. fanout builds the
+// serial lane from the same union rosterNames returns, and
+// validatePublishableReviewerRoster already treats a serial reviewer as a publishable
+// identity — so a signature built from Project.Agents alone compares EQUAL across a
+// changed serial lane and resumes anyway: the cases the checkpoint holds replay the old
+// serial reviewer, the rest are scored by the new one, and one run-result publishes two
+// panels as a single comparable measurement.
+func TestRosterSignature_CoversTheSerialLane(t *testing.T) {
+	cfgWith := func(serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", serialModel, "dax"})
+		c.Project.Agents = []string{"greta"}
+		c.Project.SerialAgents = []string{"dax"}
+		return c
+	}
+
+	before := rosterSignature(cfgWith("m-dax-v1"))
+	assert.Contains(t, before, "dax=m-dax-v1=dax",
+		"a serial reviewer publishes a leaderboard row, so it must be part of the identity a resume compares")
+
+	err := validateCheckpointRoster(&runCheckpoint{Roster: before}, rosterSignature(cfgWith("m-dax-v2")))
+	require.Error(t, err, "a changed serial reviewer must abort the resume, not mix two panels into one run-result")
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
