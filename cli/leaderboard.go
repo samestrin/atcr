@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -350,7 +351,15 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			// model — and dropping it here would silently shrink every export against a
 			// store that already holds such records. Widening this arm to cover them is a
 			// data decision about existing history, not an identity-printability one.
-			if f.value != "" && scorecard.ScrubPublicString(f.value) == "" {
+			//
+			// TrimSpace, not a raw `!= ""`: scrubOnce ends in
+			// strings.Join(strings.Fields(s), " "), so a whitespace-only identity (" ",
+			// or a U+00A0 the printability arm lets through) scrubs to "" and slipped
+			// past the exclusion this arm is scoped by. It is already empty to every
+			// reader of the store, and reporting it as a scrub casualty printed
+			// `model " ", which is empty once scrubbed` — a message an operator cannot
+			// act on.
+			if strings.TrimSpace(f.value) != "" && scorecard.ScrubPublicString(f.value) == "" {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
