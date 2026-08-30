@@ -1184,3 +1184,105 @@ func TestSuiteIdentity_VerifyAndExportAgree(t *testing.T) {
 	assert.Contains(t, exportErr.Error(), fmt.Sprintf("%q", badSuite))
 	assert.Empty(t, stdout)
 }
+
+// The export gate at cli/benchmark.go rejects a run-result whose reviewer identity
+// carries a Cc/Cf rune, but nothing stopped `benchmark run` from PRODUCING one: the
+// fold's scrub is ScrubPublicRecord, which provably leaves control and format runes
+// alone, and the post-scrub collision check cannot see them either — two identities
+// differing only by an invisible rune do not collide after a scrub that keeps it. So
+// the operator paid for the whole panel and received a permanently unexportable
+// artifact whose remedy lives in registry.yaml, not in the file they were handed.
+//
+// This is the CONFIGURED half, and it must fire at load, beside the suite-identity
+// pre-flight, for the same reason that one does: a rejection after the fold still
+// follows the full run.
+func TestExecuteBenchmarkRun_RejectsNonPrintingReviewerIdentityBeforeExecuting(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		agent   [3]string
+		offend  string
+		wantErr string
+	}{
+		{
+			// A pasted zero-width space in a registry model id: category Cf, and
+			// invisible in the editor the operator would inspect.
+			name:   "model carrying a zero-width space",
+			agent:  [3]string{"greta", "m-gre​ta", "greta"},
+			offend: "m-gre​ta",
+		},
+		{
+			// A soft hyphen in a persona: also Cf, also invisible.
+			name:   "persona carrying a soft hyphen",
+			agent:  [3]string{"greta", "m-greta", "gre­ta"},
+			offend: "gre­ta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// A VALID diff and a VALID manifest, so the only thing this test can fail
+			// on is the reviewer gate: an unparseable fixture would reject the run for
+			// an unrelated reason and the assertion below would pass without the gate.
+			diff := "--- a/pay.go\n+++ b/pay.go\n@@ -1,3 +1,3 @@\n func total() int {\n-\treturn 0\n+\treturn 1\n }\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"), []byte(diff), 0o600))
+			manifest := `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"case-01","diff":"case-01.diff","expected_categories":["correctness"]}]}`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+			completer := &countingCompleter{}
+			_, err := executeBenchmarkRun(context.Background(), benchCfg(tc.agent), completer, dir, time.Unix(0, 0), "")
+
+			require.Error(t, err, "a configured reviewer identity that cannot publish must be rejected at load")
+			assert.Contains(t, err.Error(), "non-printing rune")
+			// %q, not %s: printing a bidi override or a zero-width rune verbatim would
+			// corrupt the operator's own terminal with the defect being reported, and an
+			// invisible rune rendered raw tells them nothing about what to edit.
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			assert.Contains(t, err.Error(), "greta", "the diagnostic must name the AGENT, because the remedy is in the registry entry, not in any produced file")
+			assert.Zero(t, completer.calls.Load(), "the reviewer gate must fire before any reviewer is invoked — otherwise the operator still pays for the full panel")
+		})
+	}
+}
+
+// The load-time roster gate above reads the CONFIGURED registry, but only half of a
+// reviewer identity is configured: reviewerModel prefers the usage-reported model and
+// then the fallback model over cfg.Registry.Agents[...].Model, so a Cc/Cf rune
+// arriving from a provider's own usage payload never passes through the roster gate at
+// all. This is the backstop that makes an unexportable run-result unreachable rather
+// than merely unlikely.
+func TestBuildRunResult_RejectsNonPrintingReviewerIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		model   string
+		persona string
+		offend  string
+	}{
+		{
+			// The realized-model shape: a provider echoes back an id carrying a
+			// zero-width space. No registry entry contains it.
+			name:  "realized model carrying a zero-width space",
+			model: "m-gre​ta", persona: "p", offend: "m-gre​ta",
+		},
+		{
+			name:  "persona carrying a bidi override",
+			model: "m", persona: "p-‮reviewer", offend: "p-‮reviewer",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accs := map[reviewerKey]*reviewerAcc{}
+			var order []reviewerKey
+			require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+				model: tc.model, persona: tc.persona, caseID: "case-01",
+				expected: []string{"correctness"}, raised: []string{"correctness"},
+				outcome: benchmark.OutcomeFindings,
+			}))
+			m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{
+				{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+			}}
+
+			_, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+
+			require.Error(t, err, "the fold must not emit a run-result the export gate will permanently reject")
+			assert.Contains(t, err.Error(), "non-printing rune")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+		})
+	}
+}
