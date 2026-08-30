@@ -993,3 +993,49 @@ func TestRunLeaderboardExport_NonPrintingIdentityStillHardFails(t *testing.T) {
 	require.Error(t, err, "a non-printing rune must abort the export, not be skipped")
 	require.Contains(t, err.Error(), "non-printing rune")
 }
+
+// The empty-once-scrubbed arm is scoped OFF an identity that was already empty in the
+// store — a record written without a model — because dropping those would shrink every
+// export against a store that already holds them. The predicate must implement that
+// scoping on the value the reader sees as empty, not on a raw byte comparison:
+// ScrubPublicString(" ") is "" (scrubOnce ends in strings.Join(strings.Fields(s), " ")),
+// so a whitespace-only identity slipped past the exclusion and was reported as a scrub
+// casualty — under a message reading `model " ", which is empty once scrubbed`, which
+// tells the operator nothing actionable.
+func TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasualty(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		reviewer string
+		model    string
+	}{
+		{name: "space-only model", reviewer: "greta", model: " "},
+		// A no-break space is Zs, not Cc/Cf, so the printability arm lets it through;
+		// strings.Fields still treats it as whitespace, so the scrub empties it.
+		{name: "no-break-space model", reviewer: "greta", model: "\u00A0"},
+		{name: "space-only reviewer", reviewer: "  ", model: "claude-sonnet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+				Reviewer: tc.reviewer, Model: tc.model, FindingsRaised: 3, FindingsCorroborated: 2,
+			}
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{rec}, scorecard.FilterOpts{}, ""),
+				"a whitespace-only identity is already empty in the store, the case this arm excludes")
+			require.Empty(t, errBuf.String(),
+				"reporting it as a scrub casualty prints an unactionable message about a blank value")
+
+			var env struct {
+				Reviewers []struct {
+					Model string `json:"model"`
+				} `json:"reviewers"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+			require.Len(t, env.Reviewers, 1, "the record must publish, exactly as a stored-empty identity does")
+		})
+	}
+}
