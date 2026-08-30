@@ -183,11 +183,17 @@ Behavior:
   [Publishable identity](#publishable-identity).
 - A configured reviewer whose `model` or `persona` carries a control (Cc) or format
   (Cf) rune → error, also at load and also before any reviewer is invoked. The remedy
-  is in the reviewer registry, so the error names the agent. The same rule is applied
-  again to the *realized* identity when the run-result is folded, because only the
-  configured half of a reviewer identity comes from the registry — a model id echoed
-  back in a provider's usage payload, or a fallback model, never passes through the
-  load-time gate.
+  is in the reviewer registry, so the error names the agent. The gate covers every
+  identity the run can publish that is knowable at load: **both** roster lanes
+  (`agents` and `serial_agents`), each agent's transitive `fallback` chain (a fallback
+  model can serve a case in place of the primary), and the **agent name itself** where
+  it stands in for an empty `persona`.
+- The same rule is applied again to the *realized* identity when the run-result is
+  folded. That arm exists for the one source the load gate cannot see: a model id
+  echoed back in the provider's own usage payload, which appears in no local file. It
+  aborts the run rather than writing an artifact `export` would refuse permanently, so
+  its message names the provider as the place to look and warns that a checkpoint
+  holding that identity must be discarded.
 - A case whose entire roster fails to review → error (a case nothing reviewed is
   not scored as zero). Partial failures score the failed reviewers as recall 0 for
   that case.

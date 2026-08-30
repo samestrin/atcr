@@ -108,7 +108,7 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// control, and it is the rune that reorders which line appears to be named. The
 	// shard cannot take %q: that would put the line number outside the quoted name and
 	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
-	// instead, which removes what %q would have escaped.
+	// instead, which removes the terminal-controlling categories.
 	if dryRun {
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
@@ -132,6 +132,13 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 //
 // Cf is STRIPPED rather than escaped so the locator stays one token a reader can copy
 // whole; quoting it would push the line number outside the name.
+//
+// This is NOT equivalent to the %q applied to the id beside it. %q escapes everything
+// strconv.IsPrint rejects, which includes Zs runes (U+00A0, U+2000-U+200A) and Co
+// private-use runes that neither sanitizeCell nor this strip touches. What is removed
+// here is exactly the set that can drive a terminal: C0/ESC/DEL, C1, U+2028/U+2029 and
+// Cf. Stripping also means the printed locator is not guaranteed to be the literal
+// filename on disk.
 //
 // It is deliberately not a widening of sanitizeCell: `debt list` and
 // `leaderboard --table` share that helper, and Cf pass-through there is the documented

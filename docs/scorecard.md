@@ -283,8 +283,13 @@ carries a control (Cc) or format (Cf) rune is rejected before anything is writte
 The scrub is not a defense here — it provably leaves both categories alone — so an
 invisible rune (U+00AD, U+200B) or a bidi override (U+202E) would otherwise survive
 into the published envelope and misattribute a row to a model that was never
-measured. `atcr benchmark export` applies the identical rule to its own envelope; the
-two producers are deliberately symmetric.
+measured. `atcr benchmark export` applies the same control/format-rune rule to its own
+envelope, so no invisible rune reaches the board from either producer.
+
+The two producers are **not** otherwise symmetric, and this is the only shared rule.
+`benchmark export` additionally rejects an identity that is non-empty in the file but
+**empty once scrubbed** (`"admin@internal.host"` loses its email-shaped token whole);
+`leaderboard --export` does not, and still publishes such a row as `model: ""`.
 
 The check runs on the records your **filters actually select**, not on the whole
 store, so a stale record excluded by `--since` or `--model` cannot fail an export

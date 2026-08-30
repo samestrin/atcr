@@ -273,11 +273,19 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 // (Cf) runes alone, so an invisible rune survives into the envelope and no other arm
 // can see it — the value is non-empty on both sides of the scrub.
 //
-// It runs on the POST-FILTER set, not on every stored record. Export filters
-// internally and publishes only the survivors, so checking the raw slice would
-// hard-fail an export whose envelope was clean — a rejection the operator could clear
-// only by deleting unrelated history. now is threaded rather than re-read so this pass
-// and Export's own select the identical records.
+// It runs on the POST-FILTER set rather than on every stored record, so a record the
+// operator's own --since/--model excluded cannot fail an export it was never part of.
+// now is threaded rather than re-read so this pass and Export's own resolve --since
+// against the same instant.
+//
+// The filtered set is a SUPERSET of what publishes, not an exact match: Export applies
+// a further unresolvedEraRuns pass afterwards, dropping the losing half of a reviewer
+// that spans the 35.16.6.5 FindingsRaised era boundary. A record selected by the
+// filters but dropped by that era rule is still rejected here, so the guard is
+// deliberately stricter than the envelope in that one shape. Closing the gap needs one
+// shared definition of "what publishes" on the scorecard side — either an exported
+// selection helper or moving this guard inside Export after the era pass — which is a
+// change to that package's API rather than to this caller.
 //
 // A filter error is returned as-is: Export would raise the same one a moment later, and
 // reporting it here keeps a bad --since from being reported as an identity defect.
@@ -300,7 +308,8 @@ func validatePublishableRecordIdentities(records []scorecard.Record, filters sco
 				// locator raw would let the defect being reported reorder the report.
 				return fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
-					"so a leaderboard row can be misattributed to a model that was never measured",
+					"so a leaderboard row can be misattributed to a model that was never measured — "+
+					"edit or remove that record in the scorecard store, then re-run the export",
 					rec.RunID, f.name, f.value, r)
 			}
 		}
