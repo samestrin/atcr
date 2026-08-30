@@ -286,15 +286,27 @@ into the published envelope and misattribute a row to a model that was never
 measured. `atcr benchmark export` applies the same control/format-rune rule to its own
 envelope, so no invisible rune reaches the board from either producer.
 
-The two producers are **not** otherwise symmetric, and this is the only shared rule.
-`benchmark export` additionally rejects an identity that is non-empty in the file but
-**empty once scrubbed** (`"admin@internal.host"` loses its email-shaped token whole);
-`leaderboard --export` does not, and still publishes such a row as `model: ""`.
+**Identity that is empty once scrubbed → row skipped, export continues.** A record
+whose `model` or `reviewer` is non-empty in the store but scrubs away to nothing
+(`"admin@internal.host"` loses its email-shaped token whole; so do
+`"/models/mistral-7b.gguf"`, `"bedrock@us-east-1/claude"` and `"~/models/foo"`) is
+**dropped from the envelope** and named on stderr — it is never published as
+`model: ""`. It does not fail the export, because this shape occurs in ordinary
+history and `--export` reads the whole unrotated store, so one such record would
+otherwise take down an export that had succeeded the day before, clearable only by
+hand-editing a JSONL store. If every selected record is dropped, the ordinary
+no-records error is raised instead of an empty envelope.
+
+`benchmark export` applies the same rule as a **hard rejection** rather than a skip.
+The asymmetry is deliberate: it validates one just-produced run-result file, where
+the cost of failing is re-running that one command, and there is no unrelated history
+in the document to preserve.
 
 The check runs on the records your **filters actually select**, not on the whole
 store, so a stale record excluded by `--since` or `--model` cannot fail an export
-whose envelope was clean. The error names the offending record's `run_id` and quotes
-the offending value, so the row can be located and repaired in the store.
+whose envelope was clean. Both the error and the skip report name the offending
+record's `run_id` and quote the offending value, so the row can be located and
+repaired in the store.
 
 > **Suite vs production submissions.** `leaderboard --export` produces a
 > *production* submission from your local runs. The public board accepts only
