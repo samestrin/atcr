@@ -384,7 +384,21 @@ func reencodeErr(id string, err error) error {
 // It layers on top of basePathErr rather than replacing it: the privacy reduction is the
 // package's SECURITY contract with 27 call sites (see RedactPathErr), and quoting all of
 // them is a wider change than the backfill command's own error paths.
+//
+// **os.Rename raises an *os.LinkError, not an *os.PathError**, and it carries TWO paths.
+// basePathErr matches only *os.PathError, so it passes a LinkError through untouched —
+// meaning the 'publishing backfilled shard' wrap disclosed both absolute paths (the store
+// dir can contain a username; see the SECURITY note in store.go) and the shard name
+// unescaped. That wrap is on the one path this helper exists for, so the LinkError arm is
+// handled here rather than left to the caller.
 func quotedPathErr(err error) error {
+	var le *os.LinkError
+	if errors.As(err, &le) {
+		clone := *le
+		clone.Old = strconv.Quote(filepath.Base(le.Old))
+		clone.New = strconv.Quote(filepath.Base(le.New))
+		return &clone
+	}
 	var pe *os.PathError
 	if errors.As(basePathErr(err), &pe) {
 		clone := *pe
