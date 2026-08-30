@@ -363,3 +363,8 @@ func rewriteJustifications(dir string, want map[string]replacement, dryRun bool)
 	}
 	return changes, nil
 }
+
+// reencodeErr is a wrong-answer compiling stub, replaced in GREEN.
+func reencodeErr(id string, err error) error {
+	return fmt.Errorf("re-encoding backfilled record %s: %w", id, err)
+}

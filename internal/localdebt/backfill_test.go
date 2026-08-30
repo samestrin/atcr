@@ -2,6 +2,8 @@ package localdebt
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -559,3 +561,41 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		assert.Equal(t, stale, changes[0].Before)
 	})
 }
+
+// The backfill dry-run LISTING was hardened against terminal-controlling runes, but the
+// same command's ERROR paths reach the same terminal. Two untrusted values ride them: a
+// shard basename, which os.ReadDir returns verbatim from a world-appendable store
+// directory and basePathErr reduces without escaping, and the record id, which is read
+// straight out of a store line. A U+202E in either reorders the operator's own report —
+// the surface they consult to decide whether to let an in-place rewrite proceed.
+func TestRewriteJustifications_ErrorPathsDoNotLeakRawUntrustedNames(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny access")
+	}
+
+	t.Run("shard basename is escaped, not passed through raw", func(t *testing.T) {
+		dir := t.TempDir()
+		// A hostile shard name. Made unreadable so the ReadFile wrap fires on it.
+		hostile := "2026-08\u202Egnol.jsonl"
+		path := filepath.Join(dir, hostile)
+		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o600))
+		require.NoError(t, os.Chmod(path, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+		_, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "\u202E",
+			"a raw bidi override in an error reorders the report the operator reads")
+	})
+
+	t.Run("record id is escaped, not passed through raw", func(t *testing.T) {
+		id := "aaa\u202E111"
+		got := fmt.Errorf("re-encoding backfilled record %s: %w", id, errUnencodable).Error()
+		require.Contains(t, got, "\u202E",
+			"guard the guard: %s really does pass the rune through, which is what the fix must change")
+		require.NotContains(t, reencodeErr(id, errUnencodable).Error(), "\u202E",
+			"the re-encode wrap must escape the untrusted record id")
+	})
+}
+
+var errUnencodable = errors.New("json: unsupported value")
