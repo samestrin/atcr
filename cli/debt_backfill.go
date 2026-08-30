@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 
@@ -112,9 +113,10 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
 	// instead, which removes the terminal-controlling categories.
 	if dryRun {
-		// Resolved once over the whole change set: a collision is a property of the SET
-		// of shard names, so it cannot be detected one row at a time.
-		locators := locatorNames(res.Changes)
+		// Resolved once over the whole store directory: a collision is a property of the
+		// SET of shard names on disk, so it cannot be detected one row at a time — nor
+		// from the change set alone, which cannot see an unchanged colliding file.
+		locators := locatorNames(dir, res.Changes)
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
 				locators[c.Shard], c.Line, c.ID, c.Before, c.After)
@@ -183,19 +185,47 @@ func pluralLines(n int) string {
 // same token for the same file. It is appended only where a collision actually exists,
 // so the ordinary single-shard listing is unchanged.
 //
+// The collision is resolved against every shard the store DIRECTORY holds, not against
+// the change set alone. The ambiguity being removed is between the printed token and a
+// real file on disk, and the dangerous shape is exactly the one a change-set-only map
+// cannot see: a genuine 2026-08.jsonl with nothing to repair sits beside a planted
+// 2026-08<U+200B>.jsonl that carries the rewrite, the listing prints "2026-08.jsonl:1"
+// bare, and the operator approves believing their August shard is the one being
+// repaired. The listing filter matches rewriteJustifications' own walk — non-directory
+// entries ending in ".jsonl" — so the two agree on what a shard is.
+//
+// A listing error is not fatal here: the rewrite the operator is about to approve has
+// already been computed, so the dry run falls back to the change set (the pre-existing
+// behavior) rather than failing on a directory it could read moments earlier.
+//
 // Residual case, accepted rather than overlooked: a store file literally named like an
 // already-disambiguated token ("2026-08.jsonl#a1b2c3") would print the same as the
 // disambiguated form of some other file. Reaching it needs an attacker to guess a
 // SHA-256 prefix of a filename they do not control, and the outcome is the same
 // ambiguity that exists today rather than a worse one.
-func locatorNames(changes []localdebt.JustificationChange) map[string]string {
+func locatorNames(dir string, changes []localdebt.JustificationChange) map[string]string {
 	rawByToken := map[string]map[string]bool{}
-	for _, c := range changes {
-		t := sanitizeLocator(c.Shard)
+	add := func(shard string) {
+		t := sanitizeLocator(shard)
 		if rawByToken[t] == nil {
 			rawByToken[t] = map[string]bool{}
 		}
-		rawByToken[t][c.Shard] = true
+		rawByToken[t][shard] = true
+	}
+
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+				continue
+			}
+			add(e.Name())
+		}
+	}
+	// Unconditional, not an else: a changed shard must be in the map even if the
+	// listing missed it (unreadable directory, or a file removed between the rewrite
+	// pass and this one), so a change can never print without its own name considered.
+	for _, c := range changes {
+		add(c.Shard)
 	}
 
 	out := make(map[string]string, len(changes))
