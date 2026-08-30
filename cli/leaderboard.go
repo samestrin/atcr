@@ -234,13 +234,20 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 // main() to stderr so a success-path `--export | jq` never sees non-JSON on
 // stdout. time.Now().UTC() is the envelope timestamp and the --since anchor.
 func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
+	// One timestamp for the selection and the envelope, resolved HERE and threaded, so a
+	// second time.Now() cannot creep back in below. It is the --since anchor as well as
+	// submitted_at: two instants would publish a document whose submitted_at disagrees
+	// with the window its rows were selected under, and on the boundary would select a
+	// different record set than the identity guard inspected.
+	return runLeaderboardExportAt(cmd, records, filters, output, time.Now().UTC())
+}
+
+// runLeaderboardExportAt is runLeaderboardExport with the instant injected, so a test
+// can pin that the selection anchor and the envelope timestamp are the SAME one.
+func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string, now time.Time) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no scorecard data yet; run 'atcr reconcile' to generate records")
 	}
-	// One timestamp for the selection and the envelope. It is the --since anchor as well
-	// as submitted_at, so calling time.Now() twice could select a different record set
-	// than the one the guard below inspected.
-	now := time.Now().UTC()
 	// ONE selection, used by the guard and by the serializer. The export path
 	// deliberately reads ALL history (window is forced to 0 above), so selecting twice
 	// re-parsed every RunID in an unrotated store through time.Parse for nothing — and,
@@ -356,9 +363,4 @@ func writeExportFile(path string, data []byte) error {
 		return fmt.Errorf("finalizing output file: %w", err)
 	}
 	return nil
-}
-
-// runLeaderboardExportAt is a wrong-answer compiling stub, replaced in GREEN.
-func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string, _ time.Time) error {
-	return runLeaderboardExport(cmd, records, filters, output)
 }
