@@ -588,6 +588,35 @@ func TestRewriteJustifications_ErrorPathsDoNotLeakRawUntrustedNames(t *testing.T
 			"a raw bidi override in an error reorders the report the operator reads")
 	})
 
+	// The 'publishing backfilled shard' wrap is the one the ReadFile case above does
+	// NOT cover, and it is the only wrap on this path whose error is an *os.LinkError
+	// rather than an *os.PathError. basePathErr matches only *os.PathError, so
+	// quotedPathErr fell straight through to `return err` and the raw LinkError reached
+	// the terminal — carrying BOTH absolute paths (which store.go's SECURITY contract
+	// says can contain a username in ordinary operation) and the shard name unescaped.
+	//
+	// The LinkError here is produced by a REAL failing os.Rename, not hand-built, so the
+	// error shape under test is exactly the one the publish step raises.
+	t.Run("a rename failure escapes the shard name and discloses no absolute path", func(t *testing.T) {
+		dir := t.TempDir()
+		hostile := "2026-08\u202Egnol.jsonl"
+
+		raw := os.Rename(filepath.Join(dir, "absent-source"), filepath.Join(dir, hostile))
+		require.Error(t, raw)
+		var le *os.LinkError
+		require.ErrorAs(t, raw, &le, "the publish step's error shape is *os.LinkError, not *os.PathError")
+		require.Contains(t, raw.Error(), "\u202E",
+			"guard the guard: the raw LinkError really does pass the rune through, which is what the fix must change")
+		require.Contains(t, raw.Error(), dir,
+			"guard the guard: the raw LinkError really does disclose the store root")
+
+		got := quotedPathErr(raw).Error()
+		require.NotContains(t, got, "\u202E",
+			"a raw bidi override in the publish error reorders the report the operator reads")
+		require.NotContains(t, got, dir,
+			"basePathErr reduces a path to its base name for privacy; the publish wrap must not disclose the store root")
+	})
+
 	t.Run("record id is escaped, not passed through raw", func(t *testing.T) {
 		id := "aaa\u202E111"
 		got := fmt.Errorf("re-encoding backfilled record %s: %w", id, errUnencodable).Error()
