@@ -278,13 +278,12 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// of the CURRENT config, so a parallel reviewer whose model or persona drifted
 	// still mismatches, and a union-format roster with a changed serial lane is
 	// untouched by it, because a checkpoint this binary wrote carries
-	// rosterFormatUnion and never reaches here. What it forgoes for this one resume
-	// is the serial-lane half of
-	// the guard — precisely the guarantee an unstamped checkpoint was written
-	// without, so
-	// accepting it restores the old binary's contract rather than weakening the new
-	// one. Upgrading cp.Roster in place means the next save records the union form and
-	// every subsequent resume is guarded at full strength.
+	// rosterFormatUnion and never reaches here. What it forgoes for this one resume is
+	// the serial-lane half of the guard — precisely the guarantee an unstamped
+	// checkpoint was written without, so accepting it restores the old binary's
+	// contract rather than weakening the new one. Upgrading cp.Roster in place means
+	// the next save records the union form and every subsequent resume is guarded at
+	// full strength.
 	if cp.RosterFormat == "" && legacyRoster != nil && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
