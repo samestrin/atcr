@@ -286,3 +286,49 @@ func TestDebtBackfillJustifications_UnresolvedLabelDoesNotClaimTheFileIsGone(t *
 		"the review.md is present and readable at the record's own path — the label must not send the operator to restore it")
 	assert.FileExists(t, reviewPath, "premise: nothing removed the file")
 }
+
+// The listing hardened the id and left the LOCATOR beside it open. The shard half of
+// `<shard>:<line>` goes through sanitizeCell, which strips C0/ESC/DEL, C1 and
+// U+2028/U+2029 but deliberately KEEPS category Cf — so a bidi override in a shard
+// filename passes through unchanged, on the one field that literally names the line.
+// The comment eight lines above the print names "reordering WHICH line is named" as
+// the whole attack, so the mitigation has to cover the field that does the naming.
+//
+// c.Shard is e.Name() from os.ReadDir over the store directory, which the same comment
+// classifies as untrusted on its world-appendable-store premise.
+func TestDebtBackfillJustifications_DryRunStripsBidiFromTheShardLocator(t *testing.T) {
+	// A store filename carrying a right-to-left override. It still ends in .jsonl, so
+	// the backfill scan picks it up.
+	const hostileShard = "2026-08\u202E-a.jsonl"
+
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, hostileShard), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	// Premise: the listing really did reach this record, so the assertion below is
+	// about the locator rather than about a line that was never printed.
+	require.Contains(t, out, "aaaa1111", "the dry run must have listed the record")
+
+	assert.NotContains(t, out, "\u202E", "a bidi override in a shard filename must never reach the terminal raw")
+	// Stripped, not quoted: `<shard>:<line>` has to stay ONE copy-pasteable token, so
+	// the line number cannot be pushed outside a quoted name.
+	assert.Contains(t, out, "2026-08-a.jsonl:1",
+		"the locator must survive as a single token with the offending rune removed")
+}
