@@ -286,14 +286,14 @@ func validatePublishableRecordIdentities(records []scorecard.Record, filters sco
 	if err != nil {
 		return err
 	}
-	for _, r := range filtered {
+	for _, rec := range filtered {
 		// Reviewer is the field Export scrubs into the envelope's `persona`; the pair
 		// is (persona, model) there, not (reviewer, model).
 		for _, f := range []struct{ name, value string }{
-			{"model", r.Model},
-			{"reviewer", r.Reviewer},
+			{"model", rec.Model},
+			{"reviewer", rec.Reviewer},
 		} {
-			if bad, found := firstNonPrintingRune(f.value); found {
+			if r, bad := firstNonPrintingRune(f.value); bad {
 				// run_id takes %q for the same reason the offending value does: it is
 				// read from the same world-writable store record, so it is untrusted
 				// input on a surface an operator reads in a terminal. Printing the
@@ -301,7 +301,7 @@ func validatePublishableRecordIdentities(records []scorecard.Record, filters sco
 				return fmt.Errorf("scorecard record %q has %s %q, which contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured",
-					r.RunID, f.name, f.value, bad)
+					rec.RunID, f.name, f.value, r)
 			}
 		}
 	}

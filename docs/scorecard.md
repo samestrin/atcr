@@ -278,6 +278,19 @@ schema — it is a constant `"reviewer"` for reconcile records), sorted ascendin
 `submitted_at`). A no-match/empty result writes the canonical guidance to stderr
 and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
 
+**Unpublishable identity → error, exit `1`.** A record whose `model` or `reviewer`
+carries a control (Cc) or format (Cf) rune is rejected before anything is written.
+The scrub is not a defense here — it provably leaves both categories alone — so an
+invisible rune (U+00AD, U+200B) or a bidi override (U+202E) would otherwise survive
+into the published envelope and misattribute a row to a model that was never
+measured. `atcr benchmark export` applies the identical rule to its own envelope; the
+two producers are deliberately symmetric.
+
+The check runs on the records your **filters actually select**, not on the whole
+store, so a stale record excluded by `--since` or `--model` cannot fail an export
+whose envelope was clean. The error names the offending record's `run_id` and quotes
+the offending value, so the row can be located and repaired in the store.
+
 > **Suite vs production submissions.** `leaderboard --export` produces a
 > *production* submission from your local runs. The public board accepts only
 > *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
