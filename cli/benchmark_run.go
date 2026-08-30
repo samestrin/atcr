@@ -134,9 +134,11 @@ func checkPublishable(suitePath, subject, value, consequence, remedy string) err
 // the REGISTRY: the identity is a verbatim copy of the registry entry, so editing a
 // produced run-result would be the wrong action.
 func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
-	if cfg == nil || cfg.Project == nil || cfg.Registry == nil {
-		return nil
-	}
+	// No nil guard on cfg/Project/Registry, matching rosterSignature a few lines
+	// below: both are reached only from executeBenchmarkRun, which is handed a fully
+	// built config by its caller. A guard here would be unreachable by construction,
+	// so it could only be covered by a test asserting a state the CLI cannot produce.
+	//
 	// Sorted, so a panel with two offending lanes reports the same one on every run
 	// rather than whichever the map iteration reached first.
 	names := append([]string(nil), cfg.Project.Agents...)
