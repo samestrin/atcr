@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -331,4 +333,79 @@ func TestDebtBackfillJustifications_DryRunStripsBidiFromTheShardLocator(t *testi
 	// the line number cannot be pushed outside a quoted name.
 	assert.Contains(t, out, "2026-08-a.jsonl:1",
 		"the locator must survive as a single token with the offending rune removed")
+}
+
+// Stripping Cf rather than escaping it is lossy: two DIFFERENT shard filenames that
+// differ only by a format rune reduce to the same token, so the listing goes ambiguous
+// about which file the in-place rewrite would touch — on the one surface an operator
+// consults to decide whether to let it proceed. Tagging the row "(name sanitized)"
+// cannot fix that: both rows would carry the same tag and still read identically. The
+// locator has to tell the two apart.
+func TestDebtBackfillJustifications_DryRunDisambiguatesCollidingShardLocators(t *testing.T) {
+	// Both reduce to "2026-08-a.jsonl" once Cf is stripped.
+	shards := []string{"2026-08\u202E-a.jsonl", "2026-08\u200B-a.jsonl"}
+
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	for i, sh := range shards {
+		rec := fmt.Sprintf(`{"schema_version":3,"id":"aaaa111%d","run_id":"2026-08-01T00:00:00Z-multi-agent",`+
+			`"ts":"2026-08-01T00:00:00Z","severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p",`+
+			`"fix":"f","category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+			`"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`, i)
+		require.NoError(t, os.WriteFile(filepath.Join(store, sh), []byte(rec+"\n"), 0o600))
+	}
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "aaaa1110", "the dry run must have listed the first record")
+	require.Contains(t, out, "aaaa1111", "the dry run must have listed the second record")
+	assert.NotContains(t, out, "\u202E")
+	assert.NotContains(t, out, "\u200B")
+
+	locators := regexp.MustCompile(`(?m)^  (\S+):1 `).FindAllStringSubmatch(out, -1)
+	require.Len(t, locators, 2, "both shards must be listed")
+	assert.NotEqual(t, locators[0][1], locators[1][1],
+		"two distinct shard files must not render as one identical locator")
+	for _, l := range locators {
+		assert.Contains(t, l[1], "2026-08-a.jsonl",
+			"the disambiguator must extend the sanitized name, not replace it")
+	}
+}
+
+// The disambiguator is a collision remedy, not decoration: a shard whose sanitized name
+// is unique must print exactly that name, so the common listing stays clean.
+func TestDebtBackfillJustifications_DryRunDoesNotDisambiguateAUniqueLocator(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	body := "## Findings\n\nSome preamble.\n\n```\n- internal/thing.go:42 quoted example row\n\n" +
+		"- **internal/thing.go:42** the real narrative explaining the defect.\n"
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"), []byte(body), 0o600))
+
+	rec := `{"schema_version":3,"id":"aaaa1111","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "2026-08.jsonl:1 ",
+		"an unambiguous locator must print bare, with no disambiguator appended")
 }

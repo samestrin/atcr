@@ -158,3 +158,12 @@ func pluralLines(n int) string {
 	}
 	return "lines"
 }
+
+// locatorNames is a wrong-answer compiling stub, replaced in GREEN.
+func locatorNames(changes []localdebt.JustificationChange) map[string]string {
+	out := make(map[string]string, len(changes))
+	for _, c := range changes {
+		out[c.Shard] = sanitizeLocator(c.Shard)
+	}
+	return out
+}
