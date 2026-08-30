@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"unicode"
@@ -110,9 +112,12 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
 	// instead, which removes the terminal-controlling categories.
 	if dryRun {
+		// Resolved once over the whole change set: a collision is a property of the SET
+		// of shard names, so it cannot be detected one row at a time.
+		locators := locatorNames(res.Changes)
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
-				sanitizeLocator(c.Shard), c.Line, c.ID, c.Before, c.After)
+				locators[c.Shard], c.Line, c.ID, c.Before, c.After)
 		}
 	}
 	return nil
@@ -138,7 +143,10 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 // private-use runes that neither sanitizeCell nor this strip touches. What is removed
 // here is exactly the set that can drive a terminal: C0/ESC/DEL, C1, U+2028/U+2029 and
 // Cf. Stripping also means the printed locator is not guaranteed to be the literal
-// filename on disk.
+// filename on disk — and, because it is lossy, that two DIFFERENT filenames can reduce
+// to the same token. Callers rendering a SET of locators must therefore go through
+// locatorNames, which appends a per-file suffix where that collision actually happens;
+// this function alone sees one name and cannot detect it.
 //
 // It is deliberately not a widening of sanitizeCell: `debt list` and
 // `leaderboard --table` share that helper, and Cf pass-through there is the documented
@@ -159,11 +167,45 @@ func pluralLines(n int) string {
 	return "lines"
 }
 
-// locatorNames is a wrong-answer compiling stub, replaced in GREEN.
+// locatorNames maps each RAW shard name in changes to the token the dry run prints for
+// it, disambiguating names that collide once sanitizeLocator strips their Cf runes.
+//
+// The strip is lossy by design (it keeps the locator one copy-pasteable token instead
+// of quoting it), and lossy means two DIFFERENT store filenames can reduce to the same
+// string. On this surface that is not cosmetic: the listing is what an operator reads
+// to decide whether to let an in-place rewrite proceed, and two identical locators make
+// it ambiguous WHICH file would be rewritten. Marking the row "name sanitized" does not
+// help — both rows carry the same mark and still read alike; only a per-file suffix
+// tells them apart.
+//
+// The suffix is derived from the raw name, not from an index, so it is stable across
+// runs and independent of directory order — an operator comparing two dry runs sees the
+// same token for the same file. It is appended only where a collision actually exists,
+// so the ordinary single-shard listing is unchanged.
+//
+// Residual case, accepted rather than overlooked: a store file literally named like an
+// already-disambiguated token ("2026-08.jsonl#a1b2c3") would print the same as the
+// disambiguated form of some other file. Reaching it needs an attacker to guess a
+// SHA-256 prefix of a filename they do not control, and the outcome is the same
+// ambiguity that exists today rather than a worse one.
 func locatorNames(changes []localdebt.JustificationChange) map[string]string {
+	rawByToken := map[string]map[string]bool{}
+	for _, c := range changes {
+		t := sanitizeLocator(c.Shard)
+		if rawByToken[t] == nil {
+			rawByToken[t] = map[string]bool{}
+		}
+		rawByToken[t][c.Shard] = true
+	}
+
 	out := make(map[string]string, len(changes))
 	for _, c := range changes {
-		out[c.Shard] = sanitizeLocator(c.Shard)
+		t := sanitizeLocator(c.Shard)
+		if len(rawByToken[t]) > 1 {
+			sum := sha256.Sum256([]byte(c.Shard))
+			t += "#" + hex.EncodeToString(sum[:])[:6]
+		}
+		out[c.Shard] = t
 	}
 	return out
 }
