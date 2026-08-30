@@ -986,7 +986,7 @@ func TestRunLeaderboardExport_NonPrintingIdentityStillHardFails(t *testing.T) {
 		},
 		{
 			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
-			Reviewer: "bruce", Model: "gpt-5​-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+			Reviewer: "bruce", Model: "gpt-5\u200B-mini", FindingsRaised: 3, FindingsCorroborated: 1,
 		},
 	}
 	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{}, "")

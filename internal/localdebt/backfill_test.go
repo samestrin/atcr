@@ -652,16 +652,16 @@ func TestQuotedPathErr_BranchesOverTheThreeErrorShapes(t *testing.T) {
 	// The shape the 'writing backfilled shard' and 'creating temp file' wraps raise.
 	t.Run("a PathError is reduced to a quoted base name", func(t *testing.T) {
 		dir := t.TempDir()
-		hostile := "2026-08‮gnol.jsonl"
+		hostile := "2026-08\u202Egnol.jsonl"
 
 		raw := &os.PathError{Op: "write", Path: filepath.Join(dir, hostile), Err: errors.New("no space left on device")}
-		require.Contains(t, raw.Error(), "‮",
+		require.Contains(t, raw.Error(), "\u202E",
 			"guard the guard: the raw PathError really does pass the rune through")
 		require.Contains(t, raw.Error(), dir,
 			"guard the guard: the raw PathError really does disclose the store root")
 
 		got := quotedPathErr(raw).Error()
-		require.NotContains(t, got, "‮",
+		require.NotContains(t, got, "\u202E",
 			"a raw bidi override reorders the report the operator reads")
 		require.NotContains(t, got, dir,
 			"basePathErr reduces a path to its base name for privacy; the store root must not leak")
@@ -672,15 +672,15 @@ func TestQuotedPathErr_BranchesOverTheThreeErrorShapes(t *testing.T) {
 	// The shape os.Rename raises, which basePathErr alone does not match.
 	t.Run("a LinkError has both of its paths reduced and quoted", func(t *testing.T) {
 		dir := t.TempDir()
-		oldName := "‮tmp-source"
-		newName := "2026-08‮gnol.jsonl"
+		oldName := "\u202Etmp-source"
+		newName := "2026-08\u202Egnol.jsonl"
 
 		raw := os.Rename(filepath.Join(dir, oldName), filepath.Join(dir, newName))
 		var le *os.LinkError
 		require.ErrorAs(t, raw, &le)
 
 		got := quotedPathErr(raw).Error()
-		require.NotContains(t, got, "‮")
+		require.NotContains(t, got, "\u202E")
 		require.NotContains(t, got, dir)
 		require.Contains(t, got, strconv.Quote(oldName), "the source name is reduced and escaped, not dropped")
 		require.Contains(t, got, strconv.Quote(newName), "the target name is reduced and escaped, not dropped")

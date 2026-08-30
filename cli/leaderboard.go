@@ -266,9 +266,11 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 		return err
 	}
 	// ErrNoExportRecords is the only error this call can raise now that the selection is
-	// made above: ExportSelected does not filter, so a bad --since can no longer reach
-	// it. It carries its own actionable text and main() maps it to exit 1, so it is
-	// returned as-is rather than re-wrapped.
+	// made above: ExportSelected applies no --since window of its own, so a bad --since
+	// can no longer reach it. (It DOES drop any non-reviewer record it is handed — its
+	// own published-shape invariant — which can only ever produce that same error.) It
+	// carries its own actionable text and main() maps it to exit 1, so it is returned
+	// as-is rather than re-wrapped.
 	data, err := scorecard.ExportSelected(selected, now)
 	if err != nil {
 		return err
@@ -360,7 +362,7 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 			// `model " ", which is empty once scrubbed` — a message an operator cannot
 			// act on.
 			if strings.TrimSpace(f.value) != "" && scorecard.ScrubPublicString(f.value) == "" {
-				fmt.Fprintf(cmd.ErrOrStderr(),
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 					"skipping scorecard record %q: %s %q is empty once scrubbed for publication; "+
 						"publishing \"\" would be rejected at the leaderboard — "+
 						"edit or remove that record in the scorecard store to include it\n",

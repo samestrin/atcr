@@ -441,13 +441,13 @@ func TestDebtBackfillJustifications_DryRunDisambiguatesAgainstAnUnchangedShardOn
 		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
 		`"justification":"- **internal/thing.go:42** the real narrative explaining the defect.",` +
 		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}}`
-	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08​.jsonl"), []byte(rec+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08\u200B.jsonl"), []byte(rec+"\n"), 0o600))
 
 	code, out := execCmdCapture(t, "debt", "backfill-justifications",
 		"--store", store, "--review-root", reviewRoot, "--dry-run")
 	require.Equal(t, 0, code, out)
 	require.Contains(t, out, "aaaa1111", "the planted shard's record must have been listed")
-	assert.NotContains(t, out, "​")
+	assert.NotContains(t, out, "\u200B")
 
 	locators := regexp.MustCompile(`(?m)^  (\S+):1 `).FindAllStringSubmatch(out, -1)
 	require.Len(t, locators, 1, "exactly one record changes")
