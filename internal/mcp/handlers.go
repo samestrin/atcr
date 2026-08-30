@@ -284,6 +284,14 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // handleReconcile merges a review's sources into reconciled artifacts and gates
 // on fail_on. fail_on is validated before any work (AC 04-03 Edge Case 5). A
 // review with no agent results is an error, not an empty success (Edge Case 3).
+// readUnresolvedSidecar is the Tier 4 sidecar reader handleReconcile consumes.
+// It is a package var for one reason: the handler writes the sidecar (through
+// RunReconcile) immediately before reading it, so no fixture can make the real
+// read fail without also failing the write. Swapping this is the only way to
+// exercise the read-error branch. Mirrors the newTier4Index seam documented in
+// internal/reconcile/doc.go — tests that swap it must not run in parallel.
+var readUnresolvedSidecar = reconcile.ReadUnresolvedFindings
+
 func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
 	// Gate precedence parity with the CLI: explicit fail_on argument > project
 	// config > user-global registry (no embedded default). Resolved and
@@ -463,15 +471,34 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		}
 	}
 
+	// Read the sidecar back rather than reusing res.Unresolved so the field is
+	// exactly what a human would recover from disk — and so the sidecar reader
+	// has a production caller (Epic 35.16.6.5 TD: the sidecar had no read path).
+	// Best-effort like every other post-reconcile surface here: a read failure
+	// degrades to an omitted field, never a failed reconcile.
+	unresolved, uerr := readUnresolvedSidecar(dir)
+	unresolvedReadErr := ""
+	if uerr != nil {
+		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
+		// Transmit the reason too. The Warn reaches the server's own logger,
+		// which a stdio client never sees, and `Unresolved` is omitempty — so
+		// without this a failed read is byte-identical to an empty sidecar.
+		unresolvedReadErr = uerr.Error()
+	}
+
 	out := ReconcileResult{
-		ReviewID:          id,
-		Pass:              true,
-		TotalFindings:     res.Summary.TotalFindings,
-		Partial:           res.Summary.Partial,
-		FailOn:            threshold,
-		Consensus:         consensusLevel,
-		DebtPersisted:     debtPersisted,
-		DebtSkippedReason: debtSkippedReason,
+		ReviewID:            id,
+		Pass:                true,
+		TotalFindings:       res.Summary.TotalFindings,
+		Partial:             res.Summary.Partial,
+		FailOn:              threshold,
+		Consensus:           consensusLevel,
+		UnresolvedFiltered:  res.Summary.UnresolvedFiltered,
+		UnresolvedState:     res.Summary.UnresolvedState,
+		Unresolved:          unresolved,
+		UnresolvedReadError: unresolvedReadErr,
+		DebtPersisted:       debtPersisted,
+		DebtSkippedReason:   debtSkippedReason,
 	}
 	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false

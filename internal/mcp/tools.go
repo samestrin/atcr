@@ -172,13 +172,48 @@ type ReviewResult struct {
 // that case Findings carries the offending records so the client can render them
 // inline without a follow-up atcr_report call (AC 04-03 Scenario 7).
 type ReconcileResult struct {
-	ReviewID      string                  `json:"review_id"`
-	Pass          bool                    `json:"pass"`
-	TotalFindings int                     `json:"total_findings"`
-	Partial       bool                    `json:"partial"`
-	FailOn        string                  `json:"fail_on,omitempty"`
-	Consensus     string                  `json:"consensus,omitempty"`
-	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
+	ReviewID      string `json:"review_id"`
+	Pass          bool   `json:"pass"`
+	TotalFindings int    `json:"total_findings"`
+	Partial       bool   `json:"partial"`
+	FailOn        string `json:"fail_on,omitempty"`
+	Consensus     string `json:"consensus,omitempty"`
+	// UnresolvedFiltered is the Tier 4 content-resolution count: findings routed
+	// out of the primary stream into the unresolved sidecar. Not omitempty, for
+	// the same reason as DebtPersisted — 0 is the answer worth transmitting,
+	// because the field exists to explain a smaller TotalFindings.
+	UnresolvedFiltered int `json:"unresolved_filtered"`
+	// UnresolvedState is what the Tier 4 check actually DID, which the count above
+	// cannot convey: a 0 is produced by several conditions and most of them mean
+	// the check never adjudicated anything. The agentic path needs this exactly as
+	// much as the CLI does — more so, since an agent reading a bare 0 will read it
+	// as "no fabricated findings" when it may mean "never looked".
+	//
+	// NOT omitempty, for the same reason as UnresolvedFiltered above: the zero
+	// value is the answer worth transmitting. An EMPTY state means content
+	// resolution did not run at all for this reconcile, which is the ordinary
+	// case here — the MCP server operates on a review-artifact dir and passes an
+	// empty Root unless a store root resolves (see the Root comment in
+	// reconcileHandler). Omitting the key would leave a client unable to tell
+	// that from a check that ran; it is precisely the ambiguity this field
+	// exists to remove. The published Summary keeps omitempty instead, because
+	// its contract is byte-identical output for an embedder that never resolves
+	// content — a different surface with a different, equally explicit rule.
+	UnresolvedState string `json:"unresolved_state"`
+	// Unresolved carries the routed records themselves — the same records
+	// reconciled/unresolved.json persists — so a wrongly-routed finding is
+	// discoverable from the tool result without opening the sidecar by hand
+	// (Epic 35.16.6.5 TD). omitempty: an empty sidecar is the common case.
+	Unresolved []reconcile.JSONFinding `json:"unresolved,omitempty"`
+	// UnresolvedReadError says why the sidecar could not be read, mirroring
+	// DebtSkippedReason below. Without it a read failure is indistinguishable
+	// from an empty sidecar: `Unresolved` is omitempty, so a nil slice erases
+	// the key, and the warning goes only to the server logger a stdio client
+	// never sees. A client comparing a nonzero UnresolvedFiltered against a
+	// missing `unresolved` key needs to be told which of the two it is looking
+	// at. omitempty: the common case is a read that worked.
+	UnresolvedReadError string                  `json:"unresolved_read_error,omitempty"`
+	Findings            []reconcile.JSONFinding `json:"findings,omitempty"`
 	// DebtPersisted reports whether the local TD store write ran against a
 	// resolved root (individual findings may still be dropped by path
 	// validation), and DebtSkippedReason says why it did not run at all (TD

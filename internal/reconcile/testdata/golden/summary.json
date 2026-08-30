@@ -17,6 +17,7 @@
   "ambiguous_count": 1,
   "noise_count": 0,
   "consensus_filtered": 0,
+  "unresolved_filtered": 0,
   "consensus_level": "strict",
   "trust_priors_resolved": 0,
   "out_of_scope": 1,

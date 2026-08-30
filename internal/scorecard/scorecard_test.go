@@ -344,3 +344,50 @@ func TestEmit_NilDiagDefaultsToStderr(t *testing.T) {
 	}
 	require.NoError(t, Emit(in, EmitOpts{Dir: dir})) // nil Diag → os.Stderr, must not panic
 }
+
+// TestEmit_StampsRaisedIncludesUnresolvedOnACleanRun pins the era stamp at the
+// EMITTER, which is the only place it can be pinned.
+//
+// Every other era test builds Record literals by hand and sets the flag itself,
+// so the whole suite stayed green with `RaisedIncludesUnresolved: true` flipped to
+// false in Emit — verified by mutation. That matters more than an ordinary
+// coverage gap: the flag is the only discriminator between the two
+// FindingsRaised definitions, and it is `omitempty`, so dropping it does not
+// produce a wrong value, it produces an ABSENT key. unresolvedEraRuns reads absent
+// as "pre-epic", so a regressed stamp makes every new record classify as old and
+// the filter silently falls back to blending both definitions forever — the exact
+// defect the flag was added to prevent, with nothing failing.
+//
+// The run deliberately has NO UnresolvedFindings. That is the case the
+// unconditional stamp exists for: a clean run must still be distinguishable from a
+// pre-epic record, and a `len(in.UnresolvedFindings) > 0` guard would be the
+// natural wrong way to write this.
+//
+// The assertion is on the RAW JSON key rather than the decoded struct field,
+// because absence is the failure mode and a decoded bool cannot tell an absent key
+// from a present false one.
+func TestEmit_StampsRaisedIncludesUnresolvedOnACleanRun(t *testing.T) {
+	dir := t.TempDir()
+
+	in := threeReviewerInput()
+	require.Empty(t, in.UnresolvedFindings, "this fixture must be a clean run for the test to mean what it says")
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	data, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
+	require.NoError(t, err)
+
+	var reviewerLines int
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(line, &m))
+		if m["record_type"] != string(RecordTypeReviewer) {
+			continue
+		}
+		reviewerLines++
+		require.Contains(t, m, "raised_includes_unresolved",
+			"reviewer record %q omits the era key entirely; omitempty means a dropped stamp reads as a pre-epic record", m["reviewer"])
+		assert.Equal(t, true, m["raised_includes_unresolved"],
+			"every record this emitter writes uses the current denominator definition")
+	}
+	require.Equal(t, 3, reviewerLines, "all three reviewer records must be checked, not just the first")
+}

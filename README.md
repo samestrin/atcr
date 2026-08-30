@@ -122,6 +122,7 @@ Key flags:
 Environment variables:
 
 - `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. AST grouping covers Go, Python, TypeScript/JavaScript, PHP, Rust, Bash, Java, Kotlin, C/C++, and C#; any other file type falls back to line proximity. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
+- `ATCR_TIER4_INDEX_MAX_FILES` — overrides the 5000-file cap on the Tier 4 symbol index `atcr reconcile` builds when resolving findings whose cited file does not exist. A tracked tree over the cap disables Tier 4 for the run (counted by `atcr_tier4_index_unavailable_total`); set this to a positive integer to raise or lower the cap. An unparseable or non-positive value falls back to the default.
 - `ATCR_TELEMETRY` — names the **enabled** state (note the inverse direction vs. `ATCR_DISABLE_AST_GROUPING`): `ATCR_TELEMETRY=0` disables the anonymous usage ping. See [docs/telemetry.md](docs/telemetry.md).
 - `ATCR_API_KEY` — API key for `--sync-cloud` telemetry uploads; a missing or rejected key exits with code **3**.
 - `ATCR_AXI_MAX_LINES` — caps `--axi` output before truncation (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).

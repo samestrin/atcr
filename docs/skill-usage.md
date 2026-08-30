@@ -85,7 +85,7 @@ Everything lands under `.atcr/reviews/<id>/`:
 
 - `payload/` — what the reviewers saw.
 - `sources/pool/` and `sources/host/` — per-reviewer findings.
-- `reconciled/report.md` — the human report (also `findings.txt`, `findings.json`, `summary.json`, `ambiguous.json`).
+- `reconciled/report.md` — the human report (also `findings.txt`, `findings.json`, `summary.json`, `ambiguous.json`, `unresolved.json`).
 
 See [findings-format.md](findings-format.md) for the versioned findings stream contract and [providers.md](providers.md) for configuring the reviewer pool.
 

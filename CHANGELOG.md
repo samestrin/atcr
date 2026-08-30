@@ -1,3 +1,19 @@
+## [35.16.6.5] - 2026-08-28
+
+### Added
+- **Content-based resolution for findings that cite a file which does not exist (Tier 4).** Epic 5.4 added three tiers that all match on the *filename string* — an exact basename elsewhere, a same-directory typo, a case-only difference — so a real issue attributed to a file with a *dissimilar* name had no signal to match on and stayed in the report unresolved. Tier 4 searches the tracked tree's actual content for the construct the finding's prose names, and promotes a single unambiguous hit to the same suggest-only `path_suggestion` field. `file` is never rewritten: a wrong guess is worse than no guess.
+- Anchor extraction is fully deterministic and involves no model call. Backtick spans, quoted spans and call shapes are read out of the `PROBLEM` and `FIX` text; identical text always yields an identical anchor set. A summarizing pass between the raw finding and the match is exactly where a fabricated finding could be paraphrased into something that matches, so there is none.
+- **`reconciled/unresolved.json`**, a new preserved sidecar. A finding whose cited file does not exist, for which no filename-level correction was found, and whose named constructs appear nowhere in the tracked tree is routed out of the primary stream into this file — excluded from `report.md` and from the `findings.json` the skeptic pass reads, counted by the new `unresolved_filtered` summary field, and never deleted. This follows the sidecar precedent the consensus filter already set, and required no change to the verification stage: the exclusion happens upstream at emit time.
+- `unresolved_filtered` on the published `reconcile` module's `Summary`, and a new "Findings excluded from the primary stream" section in `docs/code-review-backend.md` documenting both this filter and the pre-existing consensus filter for backend callers.
+
+### Changed
+- The Tier 4 index is built lazily and at most once per run, reusing the existing shared parser host and the existing `git ls-files` candidate list. A run whose findings all cite real files never touches the AST runtime. `ATCR_DISABLE_AST_GROUPING` disables Tier 4 exactly as it disables AST clustering, degrading to the Tier 1-3 behavior rather than erroring — and, with no search performed, routing nothing to the sidecar.
+
+### Fixed
+- Several paths by which a **real** finding could have been mistaken for a fabricated one and dropped from the report. A no-match verdict now additionally requires the named construct to be absent from the raw source text, not merely from the parser's declaration index — the Go parser names only function declarations, so every Go type, interface, const and var was otherwise invisible. A verdict is also withheld when the cited file has no parser language, when the finding's name came only from the proposed `FIX` (which names code that does not exist yet, by design), when the anchor set hit its size cap, when the cited path differs from a tracked file only by case, and when any eligible file could not be read. Two counters, `atcr_tier4_index_unavailable_total` and `atcr_tier4_index_incomplete_total`, make a silently degraded search visible rather than indistinguishable from a clean run.
+
+*Shipped via /execute-epic (epic 35.16.6.5)*
+
 ## [35.16.6.4] - 2026-08-26
 
 ### Added

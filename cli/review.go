@@ -798,6 +798,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// in this count between runs is the signal. Logged (not printed) so the
 		// --axi stdout contract is untouched.
 		log.FromContext(ctx).Info("trust priors resolved", "reviewers", rec.Summary.TrustPriorsResolved)
+		// Mirrors the `atcr reconcile` line: the Tier 4 routing count must be as
+		// visible on this primary CI invocation as on the standalone command.
+		// Carries the state alongside the count, exactly as `atcr reconcile` does:
+		// a 0 is ambiguous between "ran and routed nothing" and "never ran".
+		log.FromContext(ctx).Info("tier-4 content resolution", "state", rec.Summary.UnresolvedState, "unresolved_filtered", rec.Summary.UnresolvedFiltered)
 		// Persist the inline reconcile's findings to the local TD store, mirroring
 		// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
 		// cli/review.go:747): this one-shot --fail-on/--verify/--debate/--auto-fix
