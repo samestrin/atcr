@@ -104,6 +104,61 @@ func checkPublishable(suitePath, subject, value, consequence, remedy string) err
 	return nil
 }
 
+// validatePublishableReviewerRoster rejects a run whose CONFIGURED reviewer panel
+// carries an identity the public envelope cannot publish intact.
+//
+// It is the producer-side counterpart of the reviewer-identity gate
+// validateRunResultForPublication applies at export (cli/benchmark.go). That gate is
+// correct but sits at the consumer: nothing stopped `benchmark run` from PRODUCING the
+// artifact it rejects. The fold's scrub is scorecard.ScrubPublicRecord, which provably
+// leaves control (Cc) and format (Cf) runes alone, and the post-scrub collision check
+// in buildRunResult cannot see one either — two identities differing only by an
+// invisible rune do not collide after a scrub that keeps it. So a soft hyphen (U+00AD)
+// or zero-width space (U+200B) pasted into a registry `model:` flowed all the way into
+// a finished run-result that export then refused permanently, after the whole panel had
+// been paid for, with the remedy in registry.yaml rather than in the file the operator
+// was handed.
+//
+// It runs at LOAD, beside validateSuitePublishableCaseIDs, for the identical reason
+// that one does: a rejection raised at the end of the fold still follows the full run.
+//
+// Only the printability arm belongs here. The empty-once-scrubbed and scrub-rewrites
+// arms are checked on the REALIZED identity downstream (buildRunResult's collision
+// guard and the export gate's TrimSpace arm), because the configured model is not the
+// published one — reviewerModel prefers the usage-reported and fallback models over the
+// registry — so rejecting a configured value the run would never publish would fail a
+// panel for a row it does not emit.
+//
+// The panel iterated is cfg.Project.Agents, the same set rosterSignature builds from,
+// so the gate covers exactly the lanes that would be invoked. Errors name the AGENT and
+// the REGISTRY: the identity is a verbatim copy of the registry entry, so editing a
+// produced run-result would be the wrong action.
+func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
+	if cfg == nil || cfg.Project == nil || cfg.Registry == nil {
+		return nil
+	}
+	// Sorted, so a panel with two offending lanes reports the same one on every run
+	// rather than whichever the map iteration reached first.
+	names := append([]string(nil), cfg.Project.Agents...)
+	sort.Strings(names)
+	for _, n := range names {
+		a := cfg.Registry.Agents[n]
+		for _, f := range []struct{ name, value string }{
+			{"model", a.Model},
+			{"persona", a.Persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return fmt.Errorf("reviewer agent %q declares %s %q, which contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured — "+
+					"rename the %s in the reviewer registry",
+					n, f.name, f.value, r, f.name)
+			}
+		}
+	}
+	return nil
+}
+
 // executeBenchmarkRun executes a benchmark suite end to end and returns the
 // suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
 // + validates the suite (benchmark.Load), then for each case ingests the case diff
@@ -132,6 +187,12 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	// Pre-flight, before a single reviewer runs: an id that cannot publish makes the
 	// finished run unexportable, and the export gate would only say so afterwards.
 	if err := validateSuitePublishableCaseIDs(m, suitePath); err != nil {
+		return nil, err
+	}
+	// The reviewer half of the same pre-flight, and for the same reason: an identity
+	// that cannot publish makes the finished run unexportable, and both the export gate
+	// and buildRunResult's backstop would only say so after the panel was paid for.
+	if err := validatePublishableReviewerRoster(cfg); err != nil {
 		return nil, err
 	}
 
@@ -354,6 +415,29 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	rows := make([]scoredRow, 0, len(order))
 	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {
+		// The REALIZED half of the printability rule validatePublishableReviewerRoster
+		// applies to the configured panel. Only half of a reviewer identity is
+		// configured: reviewerModel prefers the usage-reported model and then the
+		// fallback model over the registry entry, so a Cc/Cf rune arriving in a
+		// provider's own usage payload never passes through the roster gate. Without
+		// this arm the fold would still emit an artifact export rejects permanently.
+		//
+		// Checked BEFORE the scrub, like every other printability arm: ScrubPublicString
+		// provably leaves Cc and Cf alone, so the rune survives into the published
+		// envelope and neither the collision guard below nor the export gate's
+		// empty-once-scrubbed arm can see it — the value is non-empty on both sides and
+		// two identities differing only by an invisible rune do not collide.
+		for _, f := range []struct{ name, value string }{
+			{"model", k.model},
+			{"persona", k.persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				return nil, fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured",
+					f.name, f.value, r)
+			}
+		}
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
 		if prev, dup := scrubbed[id]; dup {
