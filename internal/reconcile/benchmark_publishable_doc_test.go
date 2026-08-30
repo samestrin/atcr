@@ -89,14 +89,28 @@ func TestBenchmarkDoc_PublishableIdentityRulesMatchTheCode(t *testing.T) {
 			why:    "fanout builds slots for the serial lane too, so a serial reviewer publishes a row like any other",
 		},
 		{
-			name:   "walks the transitive fallback chain",
-			inDoc:  "transitive `fallback` chain",
-			inCode: "cfg.Registry.Agents[cur].Fallback",
-			why:    "reviewerModel prefers a fallback model, so a fallback's identity is publishable",
+			// The needle is the MODEL arm's own call shape, not the bare
+			// `cfg.Registry.Agents[cur].Fallback` the walk is written with. The two arms
+			// share the file, so a chain literal is satisfied by whichever arm happens to
+			// carry it — which is how the doc came to promise a transitive PERSONA check
+			// while this test stayed green over a persona arm that never walked anything.
+			name:   "walks the transitive fallback chain for the model",
+			inDoc:  "`model` is checked along each agent's transitive `fallback` chain",
+			inCode: `check(n, cur, "model"`,
+			why:    "reviewerModel prefers a fallback model, so a fallback's model is publishable",
+		},
+		{
+			// `n, n` IS the claim: the roster agent stands as both the roster key and the
+			// checked entry, which is what "not along the chain" means in code. The model
+			// arm passes `n, cur` and cannot satisfy this.
+			name:   "checks the persona on the roster agent only",
+			inDoc:  "`persona` is checked on the roster agent only",
+			inCode: `check(n, n, "persona"`,
+			why:    "fanout reassigns the result to the primary slot name, so a fallback's own persona is never published",
 		},
 		{
 			name:   "treats the agent name as a persona when none is configured",
-			inDoc:  "stands in for an empty `persona`",
+			inDoc:  "the **agent name itself** stands in for it",
 			inCode: "persona = n",
 			why:    "reviewerPersona falls back to the agent name, making the roster key itself a published identity",
 		},
