@@ -1455,3 +1455,50 @@ func TestRosterSignature_CoversTheSerialLane(t *testing.T) {
 	require.Error(t, err, "a changed serial reviewer must abort the resume, not mix two panels into one run-result")
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
 }
+
+// The persona arm must not walk the fallback chain. reviewerPersona resolves
+// cfg.Registry.Agents[a.Agent].Persona where a.Agent is always the PRIMARY slot name
+// even when a fallback served the case (reviewerKey states this as the contract), so a
+// fallback entry's own persona is never published. Refusing the whole panel at load for
+// a rune in a value that prints nowhere costs the operator a run for nothing — and the
+// empty-persona case is worse still, because the gate then validates the CHAIN entry's
+// name, which reviewerPersona would never return either.
+func TestValidatePublishableReviewerRoster_PersonaArmDoesNotWalkTheFallbackChain(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		backupPersona string
+	}{
+		{name: "backup declares its own offending persona", backupPersona: "p-\u200Bbackup"},
+		{name: "backup declares no persona, so its name would be used", backupPersona: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := benchCfg(
+				[3]string{"greta", "m-greta", "greta"},
+				[3]string{"gre\u200Bta-backup", "m-backup", tc.backupPersona},
+			)
+			c.Project.Agents = []string{"greta"}
+			a := c.Registry.Agents["greta"]
+			a.Fallback = "gre\u200Bta-backup"
+			c.Registry.Agents["greta"] = a
+
+			require.NoError(t, validatePublishableReviewerRoster(c),
+				"no persona this chain carries can reach the published document, so none of them may refuse the panel")
+		})
+	}
+}
+
+// The model arm must keep walking the chain: reviewerModel genuinely prefers
+// a.FallbackModel, so a fallback's model IS published. Narrowing the persona arm must
+// not narrow this one with it.
+func TestValidatePublishableReviewerRoster_ModelArmStillWalksTheFallbackChain(t *testing.T) {
+	c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"greta-backup", "m-\u200Bbackup", "greta"})
+	c.Project.Agents = []string{"greta"}
+	a := c.Registry.Agents["greta"]
+	a.Fallback = "greta-backup"
+	c.Registry.Agents["greta"] = a
+
+	err := validatePublishableReviewerRoster(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model")
+	assert.Contains(t, err.Error(), "fallback of")
+}
