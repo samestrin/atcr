@@ -716,3 +716,54 @@ func TestRunLeaderboardExport_MalformedSinceStillReportsTheFilterError(t *testin
 	require.Error(t, direct)
 	require.Equal(t, direct.Error(), err.Error())
 }
+
+// The identity guard must inspect exactly what publishes. Export runs a further
+// unresolvedEraRuns pass AFTER the filters, dropping the older half of a reviewer that
+// spans the 35.16.6.5 FindingsRaised era boundary — so a record the filters select but
+// the era rule drops used to hard-fail an export whose envelope was clean. The operator
+// could clear that rejection only by deleting history the submission never carried.
+func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInEraDroppedRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			// Pre-epic half of greta's history: dropped by the era pass because the
+			// current-era record below exists for the same reviewer.
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-28T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet\u200B-old", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			RaisedIncludesUnresolved: true,
+		},
+	}
+	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{}, "")
+	require.NoError(t, err, "a record the era pass drops never publishes, so it must not fail the export")
+}
+
+// The guard and the envelope must be built from ONE selection, not two independent
+// ones: the export path deliberately reads ALL history, so a second ApplyFilters pass
+// re-parses every RunID through time.Parse over the whole unrotated store.
+func TestPublishedSet_IsTheSelectionExportPublishes(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-28T00:00:00Z-a",
+			Reviewer: "greta", Model: "m-old", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "greta", Model: "m-new", FindingsRaised: 3, FindingsCorroborated: 2,
+			RaisedIncludesUnresolved: true,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeAggregate, RunID: "2026-08-29T00:00:00Z-c",
+			Reviewer: "greta", Model: "m-agg",
+		},
+	}
+	got, err := scorecard.PublishedSet(recs, scorecard.FilterOpts{}, time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the aggregate row and the pre-era half must both be gone")
+	require.Equal(t, "m-new", got[0].Model)
+
+	_, ferr := scorecard.PublishedSet(recs, scorecard.FilterOpts{Since: "banana"}, time.Now().UTC())
+	require.Error(t, ferr, "a filter error must surface from the shared selection, not only from Export")
+}

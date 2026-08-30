@@ -422,3 +422,20 @@ var (
 	// GitHub/GitLab/Slack/AWS/bearer shapes.
 	scrubKey = regexp.MustCompile(`(?i)\b(sk[-_][a-z0-9_-]+|aiza[a-z0-9_-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
 )
+
+// PublishedSet returns exactly the records Export publishes: ApplyFilters, then the
+// unresolvedEraRuns era pass Export applies after it.
+//
+// It exists so the two producers of the SAME public envelope agree on one definition
+// of "what publishes". leaderboard --export's identity guard previously ran
+// ApplyFilters itself and inspected that superset, which had two consequences: a
+// record the era rule drops still hard-failed an export whose envelope was clean, and
+// the one path that deliberately reads ALL history walked the whole unrotated store
+// twice, re-parsing every RunID through time.Parse on each pass.
+//
+// exportedAt is the --since anchor, threaded rather than re-read so the guard and the
+// envelope resolve the window against the same instant.
+func PublishedSet(records []Record, opts FilterOpts, exportedAt time.Time) ([]Record, error) {
+	// Wrong-answer stub: replaced in GREEN.
+	return records, nil
+}
