@@ -681,6 +681,12 @@ func TestRunLeaderboardExport_RejectsNonPrintingIdentity(t *testing.T) {
 // Export filters internally, so a pre-filter check would hard-fail an export whose
 // envelope was clean — a rejection the operator could clear only by deleting unrelated
 // history.
+//
+// BOTH halves of that rule are pinned here, in one test, on one record set. The
+// no-error half alone passed with validatePublishableRecordIdentities deleted outright,
+// so on its own it proved the guard was absent rather than correctly scoped: only the
+// second subtest, where the SAME offending record survives the filter, gives the
+// assertion any sensitivity to the guard existing at all.
 func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInFilteredOutRecords(t *testing.T) {
 	recs := []scorecard.Record{
 		{
@@ -692,9 +698,21 @@ func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInFilteredOutRecords(t *
 			Reviewer: "bruce", Model: "gpt-5\u200B-mini", FindingsRaised: 3, FindingsCorroborated: 1,
 		},
 	}
-	// --model selects only the clean record; the offending one never reaches the envelope.
-	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "claude-sonnet"}, "")
-	require.NoError(t, err, "a record the filters exclude never publishes, so it must not fail the export")
+
+	t.Run("filtered out, so it must not fail the export", func(t *testing.T) {
+		// --model selects only the clean record; the offending one never reaches the envelope.
+		err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "claude-sonnet"}, "")
+		require.NoError(t, err, "a record the filters exclude never publishes, so it must not fail the export")
+	})
+
+	t.Run("survives the filter, so it must fail the export", func(t *testing.T) {
+		// A --model fragment that selects BOTH records. Same offending record, same
+		// guard: the only thing that changed is whether it publishes.
+		err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "-"}, "")
+		require.Error(t, err, "the same record must fail the export once the filters admit it")
+		require.Contains(t, err.Error(), "non-printing rune")
+		require.Contains(t, err.Error(), fmt.Sprintf("%q", "gpt-5\u200B-mini"))
+	})
 }
 
 // The identity guard runs ApplyFilters ahead of Export, so a malformed --since is now
