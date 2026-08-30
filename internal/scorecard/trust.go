@@ -127,7 +127,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
-	for _, row := range Aggregate(strictRuns(records)) {
+	for _, row := range Aggregate(unresolvedEraRuns(strictRuns(records))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -181,6 +181,90 @@ func strictRuns(records []Record) []Record {
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
 		if c, ok := reclib.NormalizeConsensus(r.ConsensusLevel); ok && c == reclib.ConsensusStrict {
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
+// unresolvedEraRuns keeps the records of ONE FindingsRaised definition, never a
+// mix of both.
+//
+// It is the second era filter on this path, and it is here for the reason
+// strictRuns is: FindingsRaised changed meaning when Epic 35.16.6.5 put the
+// Tier-4-routed findings into the denominator, and summing both meanings produces
+// a rate that measures neither. A reviewer that raised six corroborated findings
+// and four phantoms reports 0.60 under the new definition and 1.00 under the old,
+// so a blended window drifts as the old records age out, silently moving
+// trustExempt and demoteByTrust with nothing marking the boundary.
+//
+// The rule is PREFER-CURRENT, not require-current: when a reviewer holds any
+// record stamped with the current definition, only those count; when it holds
+// none, its pre-epic records are used as they always were. Both halves matter.
+// Requiring the flag would black out every existing reviewer history on upgrade —
+// the same stranding strictRuns' empty-means-strict rule exists to avoid — and a
+// pre-epic-only history is at least INTERNALLY consistent, which a blend never is.
+// The one-time step when a reviewer's first current-era record lands is the honest
+// cost of switching between two coherent measurements; it is not a drift.
+//
+// The partition is PER REVIEWER, and that is the whole subtlety. Applied to the
+// slice as a whole it asks the wrong question — "has anyone upgraded?" — so the
+// first post-upgrade run, which flags only the reviewers on that panel, dropped
+// every OTHER reviewer's records entirely. Those reviewers then left byReviewer
+// and were absent from the prior map at any minRuns, and absent is not neutral:
+// trustExempt reads a missing key as "not exempt" while demoteByTrust reads the
+// same missing key as "do not demote", so a low-trust phantom-raiser silently
+// stopped being demoted — the reverse of what putting phantoms in the denominator
+// was for. A reviewer's era is a property of its own history, so only its own
+// records may answer for it.
+//
+// Like strictRuns this is scoped to TrustPriors and NOT applied to Aggregate: the
+// `atcr scorecard` leaderboard reports what actually happened across all runs.
+//
+// Input order is preserved, and a record whose Reviewer is empty or which is not
+// a reviewer record simply forms its own group — Aggregate drops the non-reviewer
+// rows immediately after, so grouping them costs nothing and needs no special case
+// here.
+//
+// Three asymmetries are deliberate:
+//
+//   - strictRuns is NOT per reviewer, and must not be. It classifies each record
+//     independently on that record's own consensus_level, so it asks no
+//     whole-slice question and no reviewer's records can answer for another's.
+//     Only a rule that consults the SET needs a grouping key.
+//
+//   - The key is the reviewer ALONE, not (reviewer, model), because the rate this
+//     protects is per reviewer: trustPriorsSince sums a reviewer's models into one
+//     tally, so a finer key would let a current-era model and a pre-epic one blend
+//     inside that sum — the mix this exists to forbid. The cost lands on Export,
+//     which groups by (reviewer, model): a reviewer that changed models across the
+//     upgrade loses the old model's row from the leaderboard. That is narrower
+//     than the blend it buys, and it is the direction the filed fix chose.
+//
+//   - The key is strings.ToLower(Reviewer), matching trustPriorsSince's byReviewer
+//     key exactly. Export keys on scrubField(Reviewer) instead, so two identities
+//     differing only by a non-printing rune form one export group but two era
+//     groups here. Reachable only from a hand-edited store — the export path
+//     already rejects non-printing runes in an identity — and matching the
+//     consumer this filter is defined for is worth more than matching the other.
+//
+// Non-empty in, non-empty out: a reviewer with no current-era record keeps all of
+// its records, and one with a current-era record keeps at least that record. So
+// Export's ErrNoExportRecords check at the call site stays correct where it is.
+func unresolvedEraRuns(records []Record) []Record {
+	hasCurrent := make(map[string]bool, len(records))
+	for _, r := range records {
+		if r.RaisedIncludesUnresolved {
+			hasCurrent[strings.ToLower(r.Reviewer)] = true
+		}
+	}
+	kept := make([]Record, 0, len(records))
+	for _, r := range records {
+		// Keep the record when its own reviewer has no current-era record at all
+		// (the untouched pre-epic history) or when this record IS a current-era
+		// one. What is dropped is only the older half of a reviewer that spans
+		// the change — the mix, which is the one combination measuring neither.
+		if !hasCurrent[strings.ToLower(r.Reviewer)] || r.RaisedIncludesUnresolved {
 			kept = append(kept, r)
 		}
 	}

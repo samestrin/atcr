@@ -56,9 +56,9 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
-| `findings_raised` | int | always | Findings this reviewer raised. |
-| `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). |
-| `findings_solo` | int | always | `findings_raised - findings_corroborated`. |
+| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. |
+| `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
+| `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
 | `corroboration_rate` | float | always | `findings_corroborated / findings_raised` (0.0 when none raised; never NaN). |
 | `cost_usd` | float | always | Estimated cost from the per-model rate table (see [Cost is approximate](#cost-is-approximate)). |
 | `tokens_in` | int | always | Prompt tokens consumed (summed across turns for tool-using agents). |
@@ -67,6 +67,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `findings_verified` | int | conditional | Findings confirmed by the skeptic stage. Present only when verification data drove the run. |
 | `findings_refuted` | int | conditional | Findings refuted by the skeptic stage. Conditional, same as above. |
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Conditional, same as above. |
+| `raised_includes_unresolved` | bool | conditional | `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward). Omitted on records written before it, whose denominator excluded them. `TrustPriors` uses it to avoid averaging the two definitions together — see the caution below. |
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -345,10 +346,12 @@ than growing a third aggregation.
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
-  > records are computed from the **post-filter** finding set (`res.Findings`), so
-  > under `lenient` or `off` the extra surviving singletons each increment
-  > `findings_raised` without incrementing `findings_corroborated`, lowering that
-  > reviewer's corroboration rate for that run.
+  > records are computed from the **post-filter** finding set (`res.Findings`)
+  > plus the Tier-4-routed set (`res.Unresolved`, which contributes to
+  > `findings_raised` only), so under `lenient` or `off` the extra surviving
+  > singletons each increment `findings_raised` without incrementing
+  > `findings_corroborated`, lowering that reviewer's corroboration rate for that
+  > run.
   >
   > **The trust-prior feedback loop this used to create is now closed.** Every
   > record carries the level it was measured under (`consensus_level`), and
@@ -358,6 +361,14 @@ than growing a third aggregation.
   > counts as `strict` — those runs were strict by construction. This applies to
   > every surface, CLI and MCP alike, because the filter lives in `TrustPriors`
   > rather than at the emission site.
+  >
+  > **`findings_raised` also changed meaning once, and is filtered the same way.**
+  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, so a rate
+  > averaged across records from both eras measures neither. Every record written
+  > since carries `raised_includes_unresolved: true`, and `TrustPriors` prefers
+  > those: when the window holds any, only they count; when it holds none, the
+  > older records are used unchanged, so an existing history is never blacked out.
+  > What is excluded is the mix.
   >
   > Two consequences worth knowing:
   > - `minRuns` is a floor on **strict** runs. A reviewer with 15 `strict` and 10
@@ -513,6 +524,19 @@ future epic changes either schema:
   unknown/absent optional fields degrade gracefully.
 - Version negotiation for the public submission format is handled by the export
   paths, not by individual stored records.
+
+**Not every meaning change moves a version number.** Epic 35.16.6.5 changed what
+`findings_raised` COUNTS (it now includes the Tier-4-routed findings) without
+changing any field's name, type, or presence, so neither integer moved. The
+discriminator is the per-record `raised_includes_unresolved` flag instead, and
+both derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+prefer-current rule: a set holding any current-era record uses only those, a set
+holding none uses the older records unchanged. So a single submission is always
+computed under one definition, and an existing store never stops exporting.
+
+The `atcr scorecard` local leaderboard (`Aggregate`) is deliberately NOT filtered
+this way — like the consensus-level filter, it reports what actually happened
+across all runs.
 
 ### `submission_schema` is shared by two producers
 

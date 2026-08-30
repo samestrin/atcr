@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/scorecard"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -974,6 +976,65 @@ func TestReconcileHandler_ConsensusLevels(t *testing.T) {
 		})
 	}
 
+	// Wire-level (not the typed struct) so the key itself is asserted: a client
+	// sees the JSON, not the Go field. unresolved_filtered must be present even
+	// at 0 — like DebtPersisted, the zero is the answer worth transmitting,
+	// because the whole point of the field is explaining a smaller finding count.
+	t.Run("unresolved_filtered always present", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		id := consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+
+		out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{})
+
+		v, ok := out["unresolved_filtered"]
+		require.True(t, ok, "ReconcileResult must always carry unresolved_filtered")
+
+		data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "summary.json"))
+		require.NoError(t, err)
+		var s struct {
+			UnresolvedFiltered int `json:"unresolved_filtered"`
+		}
+		require.NoError(t, json.Unmarshal(data, &s))
+		assert.Equal(t, float64(s.UnresolvedFiltered), v,
+			"the result field must match the run's summary.json count")
+	})
+
+	// The count alone cannot tell "the check ran and routed nothing" from "the
+	// check never ran", and an agent reading a bare 0 will read it as the former.
+	// The state must reach the agentic path exactly as it reaches the CLI.
+	t.Run("unresolved_state accompanies the count", func(t *testing.T) {
+		isolateUserConfig(t)
+		root := t.TempDir()
+		id := consensusPanelFixture(t, root)
+		cs := connectTest(t, root, fakeCompleter{})
+
+		out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{})
+
+		state, ok := out["unresolved_state"]
+		require.True(t, ok,
+			"the key must be present even when empty: an absent key is indistinguishable from a check that ran, which is the ambiguity this field removes")
+		assert.Contains(t,
+			[]any{
+				"", // content resolution did not run: no store root resolved
+				reclib.UnresolvedStateApplied,
+				reclib.UnresolvedStateDisabled,
+				reclib.UnresolvedStateUnavailable,
+				reclib.UnresolvedStateIncomplete,
+			},
+			state, "the state must be a canonical value or empty, never a raw echo")
+
+		data, err := os.ReadFile(filepath.Join(root, ".atcr", "reviews", id, "reconciled", "summary.json"))
+		require.NoError(t, err)
+		var s struct {
+			UnresolvedState string `json:"unresolved_state"`
+		}
+		require.NoError(t, json.Unmarshal(data, &s))
+		assert.Equal(t, s.UnresolvedState, state,
+			"the result field must match the run's summary.json state")
+	})
+
 	// A case-variant is rejected by the input schema's enum — JSON Schema enums
 	// are exact-match, so the rejection fires before the handler's
 	// case-insensitive normalization can run. The MCP surface is stricter than
@@ -1146,4 +1207,85 @@ func TestReconcileHandler_LogsResolvedConsensusLevel(t *testing.T) {
 	assert.Contains(t, buf.String(), "consensus filter level resolved",
 		"the MCP reconcile path must record the level it resolved")
 	assert.Contains(t, buf.String(), "off", "the log must name the level that was in effect")
+}
+
+// TestReconcileHandler_UnresolvedSidecarSurfaced closes the Epic 35.16.6.5 TD
+// row that reconciled/unresolved.json had no read path: a finding Tier 4 routes
+// out of the primary stream must come back in the atcr_reconcile result as
+// `unresolved`, so a wrongly-routed finding is discoverable without opening
+// the sidecar file by hand.
+func TestReconcileHandler_UnresolvedSidecarSurfaced(t *testing.T) {
+	isolateUserConfig(t)
+	root, _, _ := gitRepo(t) // tracked: auth.go declaring funcs a and b
+	id := "2026-08-29_unresolved"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	// A ghost path whose PROBLEM anchor is declared nowhere in the tracked
+	// tree: Tier 4 no-match, routed to the sidecar.
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off", // keep the consensus filter from sidecar-ing the singleton first
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"], "the ghost finding must route to the sidecar")
+	routed, ok := out["unresolved"].([]any)
+	require.True(t, ok, "ReconcileResult must carry the routed records as `unresolved`")
+	require.Len(t, routed, 1)
+	rec, ok := routed[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "internal/ghost/phantom.go", rec["file"])
+}
+
+// TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced pins the read-error
+// branch of the sidecar read. Without a transmitted reason a failed read is
+// indistinguishable from an empty sidecar — `unresolved` is omitempty, so a nil
+// slice erases the key, and the Warn goes only to the server logger a stdio
+// client never sees. A client seeing unresolved_filtered > 0 and no `unresolved`
+// must be told the read failed.
+//
+// The reader is swapped rather than the file corrupted: the handler writes the
+// sidecar immediately before reading it, so any on-disk fixture that breaks the
+// read also breaks the write. Do not run this in parallel — it mutates a
+// package-level seam.
+func TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		return nil, errors.New("parsing unresolved.json: unexpected end of JSON input")
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-08-29_unresolved_readerr"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"],
+		"the reconcile itself must still succeed — the sidecar read is best-effort")
+	_, present := out["unresolved"]
+	require.False(t, present, "a failed read yields no records, so the key is omitted")
+	assert.Contains(t, out["unresolved_read_error"], "unexpected end of JSON input",
+		"the reason must ride in the result, not only in the server log")
 }

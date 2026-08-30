@@ -78,7 +78,11 @@ func TestGoldenCorpus_ByteIdentical(t *testing.T) {
 	// three JSON sidecars plus findings.txt, report.md, and summary.json (whose
 	// ambiguous_hash is rebound to the ATCR wire shape). reconciled_at is pinned
 	// via the fixed ReconciledAt, so summary.json is deterministic.
-	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON, DisagreementsJSON} {
+	//
+	// UnresolvedJSON (Epic 35.16.6.5) joins the set: it is emitted unconditionally
+	// like the other sidecars, so its empty-run bytes are part of the artifact
+	// contract and must not drift silently either.
+	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON, DisagreementsJSON, UnresolvedJSON} {
 		got, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err, "read emitted %s", name)
 

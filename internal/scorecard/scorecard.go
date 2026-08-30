@@ -74,6 +74,17 @@ type Record struct {
 	// semantics assume. Omitted when empty: a store written before 35.9.1 has no
 	// level, and every one of those runs was strict by construction.
 	ConsensusLevel string `json:"consensus_level,omitempty"`
+	// RaisedIncludesUnresolved records that FindingsRaised counts the findings the
+	// Epic 35.16.6.5 Tier 4 content check routed out of the primary stream. It is
+	// the era discriminator for that denominator, and it exists for the same
+	// reason ConsensusLevel above does: the number changed meaning, so a rate
+	// summed across both meanings measures neither.
+	//
+	// Omitted when false, which is how a record written before the epic reads.
+	// Unlike ConsensusLevel, an absent value here is NOT read as the current
+	// definition — absent genuinely means the other one — so TrustPriors excludes
+	// those records rather than blending them. See unresolvedEraRuns.
+	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
@@ -138,8 +149,25 @@ type EmitInput struct {
 	// under; it is stamped onto every emitted record (see Record.ConsensusLevel).
 	// Empty means "not recorded" and is read as strict downstream, matching a
 	// pre-35.9.1 store.
-	ConsensusLevel   string
-	VerificationPath string
+	ConsensusLevel string
+	// UnresolvedFindings holds the findings the Epic 35.16.6.5 Tier 4 content
+	// check routed OUT of the primary stream (reconcile.Result.Unresolved): their
+	// cited file does not exist and the constructs their prose names are declared
+	// nowhere in the tracked tree. They are counted in FindingsRaised and NEVER in
+	// FindingsCorroborated.
+	//
+	// They must be counted, and they must be counted this way. Routing removes
+	// them from Findings before this emitter runs, so leaving them out would
+	// delete exactly the highest-signal fabrication evidence from the denominator
+	// the corroboration rate divides by — a reviewer raising six corroborated
+	// findings and four phantoms would report 1.00 instead of 0.60, cross
+	// trustHighThreshold, and earn the consensus-filter exemption its phantoms
+	// argue against. And they are never corroborated even when two reviewers
+	// agreed on one: agreement on a construct that exists nowhere in the tree is
+	// not corroboration, and treating it as such would restore the same inflation
+	// through a narrower door.
+	UnresolvedFindings []Finding
+	VerificationPath   string
 }
 
 // Emit computes per-reviewer metrics, builds one record per reviewer plus one
@@ -182,22 +210,31 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	for _, name := range names {
 		meta := in.Reviewers[name]
 		raised, corroborated := reviewerCounts(name, in.Findings)
+		// Routed phantoms add to the denominator only — see UnresolvedFindings.
+		routedRaised, _ := reviewerCounts(name, in.UnresolvedFindings)
+		raised += routedRaised
 		rec := Record{
-			SchemaVersion:        SchemaVersion,
-			RecordType:           RecordTypeReviewer,
-			RunID:                in.RunID,
-			ConsensusLevel:       in.ConsensusLevel,
-			Reviewer:             name,
-			Model:                meta.Model,
-			Role:                 defaultRole,
-			FindingsRaised:       raised,
-			FindingsCorroborated: corroborated,
-			FindingsSolo:         raised - corroborated,
-			CorroborationRate:    ratio(corroborated, raised),
-			CostUSD:              llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
-			TokensIn:             meta.TokensIn,
-			TokensOut:            meta.TokensOut,
-			LatencyMS:            meta.LatencyMS,
+			SchemaVersion: SchemaVersion,
+			// Stamped unconditionally, not only when UnresolvedFindings is
+			// non-empty: the flag records which DEFINITION this record's
+			// denominator was computed under, and every record this emitter writes
+			// uses the current one. Stamping it only when routing happened would
+			// make an ordinary clean run indistinguishable from a pre-epic record.
+			RaisedIncludesUnresolved: true,
+			RecordType:               RecordTypeReviewer,
+			RunID:                    in.RunID,
+			ConsensusLevel:           in.ConsensusLevel,
+			Reviewer:                 name,
+			Model:                    meta.Model,
+			Role:                     defaultRole,
+			FindingsRaised:           raised,
+			FindingsCorroborated:     corroborated,
+			FindingsSolo:             raised - corroborated,
+			CorroborationRate:        ratio(corroborated, raised),
+			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
+			TokensIn:                 meta.TokensIn,
+			TokensOut:                meta.TokensOut,
+			LatencyMS:                meta.LatencyMS,
 		}
 		if hasVerification {
 			v, r := verified[name], refuted[name]

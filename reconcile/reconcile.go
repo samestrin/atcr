@@ -55,6 +55,34 @@ type Result struct {
 	Summary   Summary
 }
 
+// The canonical Summary.UnresolvedState values. See that field's doc for why a
+// bare UnresolvedFiltered count cannot stand in for them.
+const (
+	// UnresolvedStateApplied means the Tier 4 content check was IN FORCE for this
+	// run: every verdict it could reach was available to it. A 0
+	// UnresolvedFiltered here is the healthy case — nothing was judged fabricated.
+	//
+	// It does NOT assert that an index was built, and on the most common path
+	// none is: when every finding cites a file that exists, no finding is
+	// Tier-4-eligible, so the index is never constructed and not one file is read
+	// (the AC5 laziness). "In force with nothing to adjudicate" and "in force and
+	// found nothing to route" are both applied, and both are healthy.
+	UnresolvedStateApplied = "applied"
+	// UnresolvedStateDisabled means Tier 4 never ran: the AST opt-out was set, or
+	// there was no tracked file index to search (the root is not a git
+	// repository, or git was unavailable).
+	UnresolvedStateDisabled = "disabled"
+	// UnresolvedStateUnavailable means Tier 4 was in force but could not reach a
+	// usable index — over the file cap, nothing in the tracked tree readable, no
+	// root-contained file, or a parser failure that left the declaration set
+	// empty. Nothing was resolved, and no finding was routed.
+	UnresolvedStateUnavailable = "unavailable"
+	// UnresolvedStateIncomplete means the index was built but some eligible
+	// tracked file could not be read, so a region of the tree went unsearched and
+	// every no-match verdict was withheld. Resolutions were still available.
+	UnresolvedStateIncomplete = "incomplete"
+)
+
 // Summary is the run-stats record.
 type Summary struct {
 	SourcesScanned        []string       `json:"sources_scanned"`
@@ -94,6 +122,44 @@ type Summary struct {
 	// "strict with nothing to filter". Observability only — the dropped findings
 	// live in the sidecar.
 	ConsensusFiltered int `json:"consensus_filtered"`
+	// UnresolvedFiltered is the number of findings the epic-35.16.6.5 Tier 4
+	// content check routed OUT of the primary stream into the unresolved sidecar:
+	// their cited file does not exist, no filename-level tier (5.4 Tiers 1-3)
+	// produced a candidate, and the constructs their prose names are declared
+	// nowhere in the tracked tree.
+	//
+	// Like ConsensusFiltered this is observability only — the routed findings are
+	// preserved on disk, never deleted — and, like SkippedSources, it is NOT
+	// produced by the library pipeline: content resolution needs a checked-out
+	// tree and a parser, so the ATCR I/O layer computes it and stamps it here
+	// after Reconcile returns. It is therefore always 0 for a pure in-memory
+	// embedder.
+	// A caller comparing counters across a routed run should note that
+	// TotalFindings and OutOfScope describe the POST-routing set (what
+	// findings.json holds) while the merge diagnostics above —
+	// ClustersCollapsed, SeverityDisagreements, NoiseCount, PerSourceCounts,
+	// AmbiguousCount — describe the pre-routing reconcile pass, which is a
+	// record of work performed rather than a property of the surviving set.
+	UnresolvedFiltered int `json:"unresolved_filtered"`
+	// UnresolvedState records what the Tier 4 content check actually DID this
+	// run, which UnresolvedFiltered alone cannot convey. A count of 0 is produced
+	// by at least six conditions and five of them mean Tier 4 never adjudicated
+	// anything: no tracked file index, the AST opt-out set, an eligible file set
+	// over the index cap, a tracked tree with no readable file, and an incomplete
+	// index that withheld every no-match verdict. Only the sixth — the check ran
+	// and routed nothing — is a healthy run, and without this field a report
+	// cannot tell it from a silently-disabled one.
+	//
+	// It is the exact counterpart of ConsensusLevel beside ConsensusFiltered, and
+	// is stamped and rendered on the same terms: unconditionally, so the record of
+	// which configuration produced these artifacts survives in report.md.
+	//
+	// Always one of UnresolvedStateApplied / UnresolvedStateDisabled /
+	// UnresolvedStateUnavailable / UnresolvedStateIncomplete, or EMPTY. Empty
+	// means "not recorded": like UnresolvedFiltered this is stamped by the ATCR
+	// I/O layer after Reconcile returns (content resolution needs a checked-out
+	// tree and a parser), so a pure in-memory embedder always sees empty.
+	UnresolvedState string `json:"unresolved_state,omitempty"`
 	// ConsensusLevel records the level the filter actually ran at, which
 	// ConsensusFiltered alone cannot convey (0 is ambiguous between "off" and
 	// "strict with nothing to filter"). Always one of the canonical levels: an

@@ -22,6 +22,11 @@ const (
 	ReportMD      = "report.md"
 	SummaryJSON   = "summary.json"
 	AmbiguousJSON = "ambiguous.json"
+	// UnresolvedJSON is the Tier 4 content-resolution sidecar (Epic 35.16.6.5):
+	// findings whose cited file does not exist and whose described constructs are
+	// declared nowhere in the tracked tree. It is the preserve-never-delete half
+	// of routing them out of the primary stream.
+	UnresolvedJSON = "unresolved.json"
 	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
 	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
 	DisagreementsJSON = "disagreements.json"
@@ -337,6 +342,10 @@ func Emit(reconciledDir string, r Result) error {
 			return renderIndentedJSON(w, toAmbiguousWire(r.Ambiguous))
 		}},
 		{DisagreementsJSON, func(w io.Writer) error { return renderIndentedJSON(w, df) }},
+		// Written unconditionally, like ambiguous.json: a consumer can then treat
+		// an absent file as "produced before this epic" rather than having to
+		// distinguish that from "this run routed nothing".
+		{UnresolvedJSON, func(w io.Writer) error { return renderIndentedJSON(w, emptyIfNil(r.Unresolved)) }},
 	}
 	// Render every artifact first so a render error aborts before any file is
 	// published — the published set is then never partially from this run.
@@ -354,6 +363,17 @@ func Emit(reconciledDir string, r Result) error {
 		}
 	}
 	return nil
+}
+
+// emptyIfNil normalizes a nil finding slice to an empty one so the sidecar
+// renders as `[]`, never `null`. ambiguous.json already has this shape (its wire
+// conversion always allocates), and a consumer should not have to handle two
+// spellings of "this run routed nothing".
+func emptyIfNil(f []JSONFinding) []JSONFinding {
+	if f == nil {
+		return []JSONFinding{}
+	}
+	return f
 }
 
 // RenderText writes the reconciled 9-column findings.txt. The disagreement
@@ -527,6 +547,22 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// singletons routed to the ambiguous sidecar. Rendered only when nonzero so
 		// report.md stays byte-identical on the common (small-panel) path.
 		fmt.Fprintf(&b, "- Consensus filtered: %d (uncorroborated singletons routed to the ambiguous sidecar)\n", summary.ConsensusFiltered)
+	}
+	if summary.UnresolvedState != "" {
+		// Rendered UNCONDITIONALLY (unlike the count below), for the same reason
+		// Consensus level above is: a count of 0 cannot distinguish "the Tier 4
+		// content check ran and routed nothing" from "it never ran at all" — the
+		// opt-out, a missing tracked index, an over-cap or unbuildable index, and
+		// an incomplete one all produce the same 0. Guarded on non-empty only so a
+		// Summary from a pure in-memory embedder (which never runs content
+		// resolution) renders byte-identically to before.
+		fmt.Fprintf(&b, "- Unresolved check: %s\n", summary.UnresolvedState)
+	}
+	if summary.UnresolvedFiltered > 0 {
+		// Surface epic-35.16.6.5 Tier 4 routing the same way the consensus filter
+		// above surfaces its own: rendered only when nonzero, so report.md stays
+		// byte-identical on the common path where every finding cites real code.
+		fmt.Fprintf(&b, "- Unresolved findings: %d (no symbol correspondence in the tracked tree; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
 	}
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))

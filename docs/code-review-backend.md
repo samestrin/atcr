@@ -65,6 +65,7 @@ ${OUT_DIR}/
     summary.json                 # reconcile tallies
     ambiguous.json               # gray-zone clusters
     disagreements.json           # severity-conflict radar
+    unresolved.json              # findings with no symbol correspondence in the tracked tree
 ```
 
 A backend caller typically verifies these four files exist before consuming:
@@ -101,6 +102,57 @@ than ingesting atcr's pre-collapsed blob.
 - `authority_promoted` — count of findings PageRank authority promotion raised
   from MEDIUM to HIGH confidence in the run (observability for the promotion
   signal; `0` when no single-reviewer finding was promoted).
+- `unresolved_filtered` — count of findings routed OUT of the primary stream
+  into `unresolved.json` (see "Findings excluded from the primary stream"
+  below). `0` on a run where every finding cited resolvable code.
+- `unresolved_state` — what the content check actually did: `applied`,
+  `disabled`, `unavailable`, `incomplete`, or absent. Read it BEFORE reading
+  `unresolved_filtered`; see below for why a bare `0` cannot be interpreted.
+
+## Findings excluded from the primary stream
+
+`findings.txt`, `findings.json` and `report.md` do **not** necessarily contain
+every finding the reviewers produced. Two filters can route a finding into a
+sidecar instead:
+
+- **Consensus filter** → `ambiguous.json`, counted by `consensus_filtered`.
+  Uncorroborated single-reviewer findings below the confidence bar, on a panel
+  large enough for the filter to run.
+- **Content resolution** → `unresolved.json`, counted by `unresolved_filtered`.
+  Findings whose cited file does not exist, for which no filename-level
+  correction was found, and whose described constructs appear nowhere in the
+  tracked tree.
+
+Neither filter deletes anything: a routed finding is written in full to its
+sidecar. A caller that needs every finding the panel produced must read the
+sidecars alongside `findings.json`; a caller that wants only findings that
+correspond to real code can read `findings.json` alone.
+
+### Reading `unresolved_filtered`
+
+A `0` here does **not** by itself mean "no finding was fabricated". At least six
+conditions produce it, and five of them mean the check never adjudicated
+anything:
+
+| `unresolved_state` | Meaning | What a `0` count means |
+|---|---|---|
+| `applied` | The check was in force. It does not assert an index was built — when every finding cites a file that exists, none is needed. | Nothing was routed. The healthy case. |
+| `disabled` | `ATCR_DISABLE_AST_GROUPING` is set, or there was no tracked file index (the root is not a git repository, or git was unavailable). | Nothing was checked. |
+| `unavailable` | No usable index — over the file cap, nothing in the tracked tree readable, no root-contained file, or a parser failure that left the declaration set empty. | Nothing was resolved, and nothing was routed. |
+| `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. | Nothing could be routed. |
+| absent | Content resolution did not run for this reconcile (no repo root was resolved — the ordinary case on the MCP path). | Nothing was checked. |
+
+`unresolved_state` renders in `report.md` unconditionally and rides the
+`tier-4 content resolution` log line on every CLI path, so the distinction
+survives outside `summary.json`. A caller treating a `0` as a clean bill of
+health must first confirm the state is `applied`.
+
+Re-running `atcr reconcile` over the same review directory rewrites every
+`reconciled/` artifact unconditionally — including replacing a non-empty
+`unresolved.json` with `[]` when the re-run routes nothing. Before overwriting,
+the prior generation is copied to `reconciled.bak/` in full, sidecars
+included, so an overwritten sidecar is recoverable from
+`reconciled.bak/unresolved.json` until the next re-run replaces the backup.
 
 ## Behavioral notes for callers
 

@@ -236,7 +236,37 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// Stamped after merge, before Emit, so the warning rides into findings.json and
 	// the reports. No-op when opts.Root is empty.
 	jf := res.JSONFindings()
-	validateFindingPaths(ctx, jf, opts.Root)
+	unresolvedIdx, tier4State := validateFindingPaths(ctx, jf, opts.Root)
+	// Stamped UNCONDITIONALLY, unlike the count below. A 0 UnresolvedFiltered is
+	// produced by several conditions and most of them mean Tier 4 never
+	// adjudicated anything, so a report carrying only the count cannot tell a
+	// healthy run from a silently-disabled one. This is the same reasoning that
+	// makes ConsensusLevel accompany ConsensusFiltered. Empty when validation did
+	// not run at all (no root, no findings), which leaves report.md unchanged for
+	// a pure in-memory embedder.
+	res.Summary.UnresolvedState = tier4State
+	// Route findings that exhausted all four path-resolution tiers with zero
+	// symbol correspondence out of the primary stream and into unresolved.json
+	// (Epic 35.16.6.5 T4), following the epic-14.2 consensus-filter precedent:
+	// excluded from report.md and from the findings.json subset internal/verify
+	// reads, counted in the summary, and preserved on disk rather than deleted.
+	// Done here — before the remaining stamps — so symbol anchoring, narrative
+	// correlation, and fallback provenance are not spent on a phantom, and so
+	// Findings/jf stay index-aligned for internal/mcp's failingFindings walk.
+	// TotalFindings and OutOfScope are recomputed so they keep describing what
+	// findings.json actually holds. The MERGE DIAGNOSTICS — ClustersCollapsed,
+	// SeverityDisagreements, NoiseCount, PerSourceCounts, AmbiguousCount — are
+	// deliberately left describing the pre-routing set: they report what the
+	// reconcile PASS did (how many clusters it collapsed, where reviewers
+	// disagreed), which is a fact about the run and not a property of the surviving
+	// findings. Recomputing them would silently rewrite the record of work that
+	// genuinely happened. See the Summary field comments in the published module.
+	if len(unresolvedIdx) > 0 {
+		res.Findings, jf, res.Unresolved = routeUnresolved(res.Findings, jf, unresolvedIdx)
+		res.Summary.UnresolvedFiltered = len(res.Unresolved)
+		res.Summary.TotalFindings = len(res.Findings)
+		res.Summary.OutOfScope = countOutOfScope(res.Findings)
+	}
 	// Stamp a "(symbol) " anchor onto each Problem cell from the finding's
 	// enclosing named AST block (epic 18.1), reusing the same grouper (its
 	// per-run tree cache is already warm from clustering). No-op when the grouper
