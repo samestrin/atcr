@@ -1538,6 +1538,8 @@ func TestValidateCheckpointRoster_AcceptsAPreSerialLaneCheckpoint(t *testing.T) 
 
 		assert.Equal(t, rosterSignature(current), cp.Roster,
 			"the accepted checkpoint must be upgraded to the union form in memory, so the next save is guarded at full strength")
+		assert.Equal(t, rosterFormatUnion, cp.RosterFormat,
+			"and stamped, so a later resume cannot mistake the upgraded roster for another legacy one and excuse a real panel change")
 	})
 
 	t.Run("a drifted parallel lane still aborts", func(t *testing.T) {
@@ -1547,6 +1549,27 @@ func TestValidateCheckpointRoster_AcceptsAPreSerialLaneCheckpoint(t *testing.T) 
 		err := validateCheckpointRoster(&runCheckpoint{Roster: recorded},
 			rosterSignature(current), rosterSignatureOf(current, current.Project.Agents))
 		require.Error(t, err, "the compat arm must not excuse a parallel reviewer whose model changed")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+
+	// The over-admission the format stamp closes. An unstamped parallel-lane-only
+	// roster is byte-identical whether the old binary wrote it or this binary wrote it
+	// for a project whose serial lane was empty at the time. Without the stamp the
+	// compat arm would resume across a serial reviewer ADDED between runs — the AC4
+	// panel-mixing the guard exists to refuse — because that case is indistinguishable
+	// from the legacy one on disk.
+	t.Run("a stamped roster is never excused by the compat arm", func(t *testing.T) {
+		current := cfg("m-greta", "m-dax")
+		// Written by THIS binary when serial_agents was still empty, then a serial
+		// reviewer was added to the config.
+		cp := &runCheckpoint{
+			Roster:       rosterSignatureOf(current, current.Project.Agents),
+			RosterFormat: rosterFormatUnion,
+		}
+
+		err := validateCheckpointRoster(cp, rosterSignature(current),
+			rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "adding a serial reviewer mid-suite must abort — the stamp proves this roster was already the union form")
 		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
 	})
 

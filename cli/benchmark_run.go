@@ -293,7 +293,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			}
 			cp = existing
 		} else {
-			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
+			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster, RosterFormat: rosterFormatUnion}
 		}
 		done = cp.doneIndex()
 		// validateCheckpointIntegrity runs at load, before the suite is in scope, so

@@ -37,9 +37,24 @@ type runCheckpoint struct {
 	// silently — mixing stale checkpointed reviewers with freshly-executed ones.
 	// Recording the roster lets validateCheckpointRoster fail closed on drift,
 	// mirroring fanout's ErrRosterChanged precedent.
-	Roster []string         `json:"roster"`
-	Cases  []checkpointCase `json:"cases"`
+	Roster []string `json:"roster"`
+	// RosterFormat stamps which shape Roster is in. It is absent ("") on every
+	// checkpoint written before the serial lane joined the signature, and
+	// rosterFormatUnion on every one written since. Without it a legacy
+	// parallel-lane-only roster is byte-identical to a current-format roster from a
+	// project whose serial lane was simply empty, so the compatibility arm in
+	// validateCheckpointRoster could not tell "written by the old binary" from
+	// "written by this binary before a serial reviewer was added" — and would resume
+	// across that addition, which is the AC4 panel-mixing the roster guard exists to
+	// refuse. Stamping it confines the ambiguity to files that already exist.
+	RosterFormat string           `json:"roster_format,omitempty"`
+	Cases        []checkpointCase `json:"cases"`
 }
+
+// rosterFormatUnion marks a Roster built from BOTH reviewer lanes (Agents then
+// SerialAgents), the shape rosterSignature produces. It is the only value ever
+// written; the meaningful distinction is stamped versus absent.
+const rosterFormatUnion = "union"
 
 // checkpointCase is one completed case's scored outcome, keyed by its index in the
 // suite's case list (the same index the run loop iterates), so replay folds it back
@@ -262,13 +277,17 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// The arm is narrow on purpose: it matches ONLY the parallel-lane-only projection
 	// of the CURRENT config, so a parallel reviewer whose model or persona drifted
 	// still mismatches, and a union-format roster with a changed serial lane is
-	// untouched by it. What it forgoes for this one resume is the serial-lane half of
-	// the guard — precisely the guarantee the checkpoint was written without, so
+	// untouched by it, because a checkpoint this binary wrote carries
+	// rosterFormatUnion and never reaches here. What it forgoes for this one resume
+	// is the serial-lane half of
+	// the guard — precisely the guarantee an unstamped checkpoint was written
+	// without, so
 	// accepting it restores the old binary's contract rather than weakening the new
 	// one. Upgrading cp.Roster in place means the next save records the union form and
 	// every subsequent resume is guarded at full strength.
-	if legacyRoster != nil && equalStrings(recorded, sortedCopy(legacyRoster)) {
+	if cp.RosterFormat == "" && legacyRoster != nil && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
+		cp.RosterFormat = rosterFormatUnion
 		return nil
 	}
 	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
