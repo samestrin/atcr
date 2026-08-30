@@ -1207,14 +1207,14 @@ func TestExecuteBenchmarkRun_RejectsNonPrintingReviewerIdentityBeforeExecuting(t
 			// A pasted zero-width space in a registry model id: category Cf, and
 			// invisible in the editor the operator would inspect.
 			name:   "model carrying a zero-width space",
-			agent:  [3]string{"greta", "m-gre​ta", "greta"},
-			offend: "m-gre​ta",
+			agent:  [3]string{"greta", "m-gre\u200bta", "greta"},
+			offend: "m-gre\u200bta",
 		},
 		{
 			// A soft hyphen in a persona: also Cf, also invisible.
 			name:   "persona carrying a soft hyphen",
-			agent:  [3]string{"greta", "m-greta", "gre­ta"},
-			offend: "gre­ta",
+			agent:  [3]string{"greta", "m-greta", "gre\u00adta"},
+			offend: "gre\u00adta",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1259,11 +1259,11 @@ func TestBuildRunResult_RejectsNonPrintingReviewerIdentity(t *testing.T) {
 			// The realized-model shape: a provider echoes back an id carrying a
 			// zero-width space. No registry entry contains it.
 			name:  "realized model carrying a zero-width space",
-			model: "m-gre​ta", persona: "p", offend: "m-gre​ta",
+			model: "m-gre\u200bta", persona: "p", offend: "m-gre\u200bta",
 		},
 		{
 			name:  "persona carrying a bidi override",
-			model: "m", persona: "p-‮reviewer", offend: "p-‮reviewer",
+			model: "m", persona: "p-\u202ereviewer", offend: "p-\u202ereviewer",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

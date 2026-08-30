@@ -695,3 +695,24 @@ func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInFilteredOutRecords(t *
 	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "claude-sonnet"}, "")
 	require.NoError(t, err, "a record the filters exclude never publishes, so it must not fail the export")
 }
+
+// The identity guard runs ApplyFilters ahead of Export, so a malformed --since is now
+// raised from the guard rather than from Export. The operator-visible message must not
+// change because of where it is raised, and it must not be dressed up as an identity
+// defect — a bad duration is a usage error, not an unpublishable record.
+func TestRunLeaderboardExport_MalformedSinceStillReportsTheFilterError(t *testing.T) {
+	rec := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+		Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{rec}, scorecard.FilterOpts{Since: "banana"}, "")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "non-printing rune",
+		"a bad --since must not be reported as an unpublishable identity")
+
+	// Byte-identical to what Export itself would have raised for the same input:
+	// moving the parse earlier must be invisible to the operator.
+	_, direct := scorecard.ApplyFilters([]scorecard.Record{rec}, scorecard.FilterOpts{Since: "banana"}, time.Now().UTC())
+	require.Error(t, direct)
+	require.Equal(t, direct.Error(), err.Error())
+}
