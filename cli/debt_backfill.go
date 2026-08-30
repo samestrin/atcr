@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -104,15 +106,43 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// The two get different treatment on purpose. The id takes %q, which escapes the
 	// FORMAT runes (Cf) sanitizeCell deliberately keeps - a bidi override is not a C0/C1
 	// control, and it is the rune that reorders which line appears to be named. The
-	// shard takes sanitizeCell so the `<shard>:<line>` locator stays copy-pasteable;
-	// quoting it would put the line number outside the name.
+	// shard cannot take %q: that would put the line number outside the quoted name and
+	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
+	// instead, which removes what %q would have escaped.
 	if dryRun {
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
-				sanitizeCell(c.Shard), c.Line, c.ID, c.Before, c.After)
+				sanitizeLocator(c.Shard), c.Line, c.ID, c.Before, c.After)
 		}
 	}
 	return nil
+}
+
+// sanitizeLocator is sanitizeCell plus category Cf, for a field rendered UNQUOTED on
+// a terminal surface.
+//
+// sanitizeCell keeps Cf on purpose: it feeds table cells whose neighbours are quoted,
+// and a legitimate identity may carry a joiner. That trade does not hold for the
+// `<shard>:<line>` locator in the backfill dry run. The shard is a store filename from
+// os.ReadDir over a world-appendable directory, it is printed with %s so nothing
+// escapes it downstream, and it is the field that literally NAMES the line the
+// in-place rewrite would overwrite — the one the surrounding comment identifies as the
+// whole attack. A U+202E there reorders which line appears to be named, on the surface
+// an operator consults to decide whether to let the rewrite proceed.
+//
+// Cf is STRIPPED rather than escaped so the locator stays one token a reader can copy
+// whole; quoting it would push the line number outside the name.
+//
+// It is deliberately not a widening of sanitizeCell: `debt list` and
+// `leaderboard --table` share that helper, and Cf pass-through there is the documented
+// behavior, not an oversight.
+func sanitizeLocator(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, sanitizeCell(s))
 }
 
 func pluralLines(n int) string {
