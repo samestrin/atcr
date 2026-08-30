@@ -192,8 +192,13 @@ Behavior:
   folded. That arm exists for the one source the load gate cannot see: a model id
   echoed back in the provider's own usage payload, which appears in no local file. It
   aborts the run rather than writing an artifact `export` would refuse permanently, so
-  its message names the provider as the place to look and warns that a checkpoint
-  holding that identity must be discarded.
+  its message names the provider as the place to look. A checkpoint that already holds
+  the offending identity can be **repaired in place**: the recorded value is the
+  per-case `model` field in the checkpoint file, and a resume validates only the suite
+  identity (`repro_hash`, `suite`, `suite_version`) plus the roster signature — which is
+  built from the registry, not from the checkpoint — so correcting that string resumes
+  for free. Discarding the checkpoint re-pays the whole suite and is the fallback when
+  the file is otherwise unusable, not the remedy.
 - A case whose entire roster fails to review → error (a case nothing reviewed is
   not scored as zero). Partial failures score the failed reviewers as recall 0 for
   that case.

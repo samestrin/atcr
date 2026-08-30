@@ -506,14 +506,20 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 				// fire on an identity NO local file contains: a model id echoed back in
 				// a provider's usage payload. Failing here forfeits the run rather than
 				// writing an artifact export would refuse permanently, so the message
-				// has to say where to look and that a checkpoint replays into the same
-				// rejection until it is discarded.
+				// has to say where to look and what to do with the checkpoint.
+				//
+				// It names REPAIR, not discard. The offending value is the per-case
+				// `model` field the checkpoint recorded, and a resume validates only the
+				// suite identity plus rosterSignature — which reads the registry, not the
+				// checkpoint — so correcting that string resumes for free. Sending the
+				// operator to discard re-pays the whole paid suite for no reason.
 				return nil, fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
 					"control and format runes are invisible or reorder text in the published document, "+
 					"so a leaderboard row can be misattributed to a model that was never measured — "+
 					"if the reviewer registry is clean the id came from the provider's own usage report, "+
 					"so pin or repoint that model; a checkpoint holding this identity replays into the "+
-					"same rejection and must be discarded",
+					"same rejection until the recorded model is corrected in the checkpoint file "+
+					"(discarding it re-runs the whole suite)",
 					f.name, f.value, r)
 			}
 		}
