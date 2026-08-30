@@ -234,7 +234,7 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 // "agent=model" entries; they are compared as sorted sets so declaration order is
 // irrelevant. Any added, removed, or model-changed reviewer returns
 // errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
-func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
+func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) error {
 	// A checkpoint with no recorded roster (the field is absent -> nil; e.g. one
 	// written before the roster guard existed, or hand-edited) cannot prove the
 	// panel is unchanged. Fail closed rather than let sortedCopy(nil) compare equal

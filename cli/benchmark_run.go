@@ -279,6 +279,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			return nil, lerr
 		}
 		roster := rosterSignature(cfg)
+		legacyRoster := rosterSignatureOf(cfg, cfg.Project.Agents)
 		if existing != nil {
 			// Suite-identity guard (AC4): a checkpoint from a different or changed
 			// suite is rejected, never silently mixed into this run. The roster guard
@@ -287,7 +288,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
 				return nil, verr
 			}
-			if verr := validateCheckpointRoster(existing, roster); verr != nil {
+			if verr := validateCheckpointRoster(existing, roster, legacyRoster); verr != nil {
 				return nil, verr
 			}
 			cp = existing
@@ -611,6 +612,11 @@ func reviewerRoster(cfg *fanout.ReviewConfig) []string {
 // (system prompt) that can change reviewer outputs even when model stays the same.
 // An agent with no configured model or persona contributes an empty component,
 // which still distinguishes it from a later-configured one.
+// rosterSignatureOf is a RED stub — replaced in GREEN.
+func rosterSignatureOf(_ *fanout.ReviewConfig, _ []string) []string {
+	return nil
+}
+
 func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	names := reviewerRoster(cfg)
 	sort.Strings(names)

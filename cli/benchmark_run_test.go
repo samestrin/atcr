@@ -1451,7 +1451,8 @@ func TestRosterSignature_CoversTheSerialLane(t *testing.T) {
 	assert.Contains(t, before, "dax=m-dax-v1=dax",
 		"a serial reviewer publishes a leaderboard row, so it must be part of the identity a resume compares")
 
-	err := validateCheckpointRoster(&runCheckpoint{Roster: before}, rosterSignature(cfgWith("m-dax-v2")))
+	newCfg := cfgWith("m-dax-v2")
+	err := validateCheckpointRoster(&runCheckpoint{Roster: before}, rosterSignature(newCfg), rosterSignatureOf(newCfg, newCfg.Project.Agents))
 	require.Error(t, err, "a changed serial reviewer must abort the resume, not mix two panels into one run-result")
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
 }
@@ -1501,4 +1502,74 @@ func TestValidatePublishableReviewerRoster_ModelArmStillWalksTheFallbackChain(t 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 	assert.Contains(t, err.Error(), "fallback of")
+}
+
+// A checkpoint written by a SHIPPED binary records the parallel lane only: origin/main's
+// rosterSignature built its signature from cfg.Project.Agents alone. This branch unions
+// both lanes, so for any project with a non-empty serial_agents lane that existing
+// checkpoint is now short by every serial reviewer and validateCheckpointRoster reports
+// a panel change that never happened — telling the operator to discard a checkpoint that
+// holds every already-paid completed case of a suite that routinely runs past ten
+// minutes. That is the exact forfeit --checkpoint exists to prevent.
+//
+// The compat arm is deliberately narrow: it accepts a recorded roster ONLY when it
+// equals the parallel-lane-only projection of the CURRENT config. A parallel lane that
+// itself drifted still mismatches, and once accepted the roster is rewritten in the
+// union form so the very next save is guarded at full strength.
+func TestValidateCheckpointRoster_AcceptsAPreSerialLaneCheckpoint(t *testing.T) {
+	cfg := func(parallelModel, serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"greta", parallelModel, "greta"}, [3]string{"dax", serialModel, "dax"})
+		c.Project.Agents = []string{"greta"}
+		c.Project.SerialAgents = []string{"dax"}
+		return c
+	}
+
+	t.Run("legacy parallel-only roster resumes", func(t *testing.T) {
+		current := cfg("m-greta", "m-dax")
+		// Exactly what the shipped binary wrote: Project.Agents alone.
+		legacy := rosterSignatureOf(current, current.Project.Agents)
+		require.Equal(t, []string{"greta=m-greta=greta"}, legacy,
+			"the pre-change signature is the parallel lane only — that is the shape on disk")
+
+		cp := &runCheckpoint{Roster: legacy}
+		require.NoError(t,
+			validateCheckpointRoster(cp, rosterSignature(current), legacy),
+			"an unchanged panel recorded in the old format must resume, not forfeit the paid cases")
+
+		assert.Equal(t, rosterSignature(current), cp.Roster,
+			"the accepted checkpoint must be upgraded to the union form in memory, so the next save is guarded at full strength")
+	})
+
+	t.Run("a drifted parallel lane still aborts", func(t *testing.T) {
+		recorded := rosterSignatureOf(cfg("m-greta-v1", "m-dax"), []string{"greta"})
+		current := cfg("m-greta-v2", "m-dax")
+
+		err := validateCheckpointRoster(&runCheckpoint{Roster: recorded},
+			rosterSignature(current), rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "the compat arm must not excuse a parallel reviewer whose model changed")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+
+	t.Run("a union-format roster with a drifted serial lane still aborts", func(t *testing.T) {
+		recorded := rosterSignature(cfg("m-greta", "m-dax-v1"))
+		current := cfg("m-greta", "m-dax-v2")
+
+		err := validateCheckpointRoster(&runCheckpoint{Roster: recorded},
+			rosterSignature(current), rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "the AC4 serial-lane guard this branch added must survive the compat arm")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+}
+
+// rosterSignatureOf must not sort the caller's slice in place: Project.Agents is the
+// live config, and reordering it would change the declared lane order every caller
+// downstream reads.
+func TestRosterSignatureOf_DoesNotMutateItsInput(t *testing.T) {
+	c := benchCfg([3]string{"zeta", "m-z", "z"}, [3]string{"alpha", "m-a", "a"})
+	c.Project.Agents = []string{"zeta", "alpha"}
+
+	_ = rosterSignatureOf(c, c.Project.Agents)
+
+	assert.Equal(t, []string{"zeta", "alpha"}, c.Project.Agents,
+		"the signature builder sorts a copy; the configured lane order is not its to rewrite")
 }
