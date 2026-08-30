@@ -51,11 +51,30 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 	// and `benchmark run` paid for the whole reviewer panel before the rejection
 	// surfaced. Identity is checked BEFORE the cases: it names the whole document, so
 	// it is the defect to report first when both are present.
-	for _, f := range []struct{ noun, value string }{
-		{"suite name", m.Suite},
-		{"suite_version", m.SuiteVersion},
+	//
+	// consequence and remedy are carried PER FIELD rather than shared across the two.
+	// One constant pair reported a bad suite_version with "rename the suite in the
+	// suite manifest", and acting on that misdirection is not a harmless no-op:
+	// ReproHashManifest length-prefixes m.Suite into the hash and validateCheckpoint
+	// compares ReproHash, Suite AND SuiteVersion, so renaming the suite makes the next
+	// `benchmark run --checkpoint` fail with errCheckpointSuiteMismatch — discarding
+	// the paid work of every completed case — and then re-raises the identical
+	// suite_version error.
+	//
+	// Both strings are written out per field rather than interpolated from noun. The
+	// suite arm is pre-existing behavior and stays BYTE-IDENTICAL, which a
+	// "rename the "+noun form would silently break ("rename the suite name in the
+	// suite manifest"), and the verbs differ anyway: a suite is renamed, a version is
+	// changed.
+	for _, f := range []struct{ noun, value, consequence, remedy string }{
+		{"suite name", m.Suite,
+			"the published envelope must name the same suite the manifest does",
+			"rename the suite in the suite manifest"},
+		{"suite_version", m.SuiteVersion,
+			"the published envelope must name the same suite_version the manifest does",
+			"change suite_version in the suite manifest"},
 	} {
-		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, "the published envelope must name the same suite the manifest does", "rename the suite in the suite manifest"); err != nil {
+		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.consequence, f.remedy); err != nil {
 			return err
 		}
 	}
