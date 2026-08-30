@@ -865,3 +865,87 @@ func TestRunLeaderboardExport_RejectsIdentityThatScrubsToEmpty(t *testing.T) {
 			"a record stored without a model predates this guard; failing it would break every export against an existing store")
 	})
 }
+
+// An identity the scrub empties must not publish, but it must not take the whole
+// export down with it either. The shapes that scrub to empty are ordinary local-model
+// ids — "/models/mistral-7b.gguf", "bedrock@us-east-1/claude", "~/models/foo" — so one
+// such record anywhere in the store hard-failed an export that had succeeded the day
+// before, and the export path forces window=0, which makes "anywhere in the store" the
+// whole unrotated history. The offending record is dropped from the envelope and named
+// on stderr; everything else still publishes.
+func TestRunLeaderboardExport_SkipsIdentityThatScrubsToEmpty(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "/models/mistral-7b.gguf", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+
+	cmd := exportTestCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	require.NoError(t, runLeaderboardExport(cmd, recs, scorecard.FilterOpts{}, ""),
+		"one unpublishable identity must not abort an export whose other rows are clean")
+
+	var env struct {
+		Reviewers []struct {
+			Persona string `json:"persona"`
+			Model   string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1, "only the clean record may publish")
+	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+
+	// The drop is reported, not silent: an operator reading stderr can find the record.
+	report := errBuf.String()
+	require.Contains(t, report, "empty once scrubbed")
+	require.Contains(t, report, fmt.Sprintf("%q", "2026-08-29T00:00:00Z-b"))
+	require.Contains(t, report, "model")
+	require.Contains(t, report, fmt.Sprintf("%q", "/models/mistral-7b.gguf"))
+	require.NotContains(t, report, "2026-08-29T00:00:00Z-a", "a clean record must not be reported")
+}
+
+// Dropping every record leaves nothing to publish, and that must read as the existing
+// no-records error rather than an empty envelope claiming a submission with no rows.
+func TestRunLeaderboardExport_AllIdentitiesScrubToEmptyReportsNoRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "~/models/foo", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+	}
+	cmd := exportTestCmd()
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	err := runLeaderboardExport(cmd, recs, scorecard.FilterOpts{}, "")
+	require.Error(t, err, "an envelope with no reviewers must not be emitted as a successful export")
+	require.NotContains(t, err.Error(), "empty once scrubbed",
+		"the skip is reported on stderr; the error is the ordinary no-records one")
+	require.Contains(t, errBuf.String(), "empty once scrubbed")
+}
+
+// The printability arm stays a HARD failure. A control or format rune in a published
+// identity is a misattribution vector, not the ordinary local-model id shape the skip
+// arm exists for, so it must still stop the export rather than quietly shrink it.
+func TestRunLeaderboardExport_NonPrintingIdentityStillHardFails(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "gpt-5​-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{}, "")
+	require.Error(t, err, "a non-printing rune must abort the export, not be skipped")
+	require.Contains(t, err.Error(), "non-printing rune")
+}
