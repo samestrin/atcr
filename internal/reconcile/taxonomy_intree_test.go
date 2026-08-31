@@ -461,3 +461,75 @@ const CategoryLoose = "loose"
 	assert.Contains(t, err.Error(), "no comment-marked Category* blocks",
 		"the fixture declares no categories slice, so the cross-check's \"no non-empty categories slice\" error also satisfies a bare assert.Error — pin the intended error specifically")
 }
+
+// The exemption must resolve from the constant, not from a literal spelled
+// independently on each side. Change ONLY the routing value and the guard has to
+// stay satisfiable: the block walk skips the constant by NAME, so a reverse
+// cross-check that exempted a hardcoded "out-of-scope" would demand the new value
+// be declared in a comment-marked block of category.go — and the name skip strips
+// it straight back out, making the stated remedy a provable no-op whose only exit
+// is deleting the routing value from the vocabulary.
+func TestInTreeCategoryBlocks_RoutingValueChangeKeepsTheGuardSatisfiable(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOutOfScope,
+	CategoryOther,
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+
+const CategoryOutOfScope = "oos"
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.NoError(t, err,
+		"the exemption must track the value CategoryOutOfScope actually holds — pinning a literal makes a value change unsatisfiable")
+	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
+		"the renamed routing value is still excluded by name, so the partition is unchanged")
+}
+
+// The other direction of the same asymmetry. Keep the VALUE and rename the
+// CONSTANT into a comment-marked block of category.go — the cleanup the reverse
+// check's own remedy text invites. The name skip misses it (wrong name) and a
+// value-keyed exemption waves it through (right value), so out-of-scope silently
+// enters the partition and two stated invariants become false with nothing
+// failing. The guard must notice that the routing value reached the vocabulary
+// with no constant of the anchor name behind it, and say so.
+func TestInTreeCategoryBlocks_RenamedRoutingConstantIsALoudError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryScopeControl = "out-of-scope"
+	CategoryOther        = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryScopeControl,
+	CategoryOther,
+}
+`), 0o644))
+
+	got, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err,
+		"a routing value declared under another name must fail loudly, not slip into the partition")
+	assert.Contains(t, err.Error(), "CategoryOutOfScope",
+		"the error must name the anchor constant the exclusion is keyed on")
+	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
+}
