@@ -37,9 +37,24 @@ type runCheckpoint struct {
 	// silently — mixing stale checkpointed reviewers with freshly-executed ones.
 	// Recording the roster lets validateCheckpointRoster fail closed on drift,
 	// mirroring fanout's ErrRosterChanged precedent.
-	Roster []string         `json:"roster"`
-	Cases  []checkpointCase `json:"cases"`
+	Roster []string `json:"roster"`
+	// RosterFormat stamps which shape Roster is in. It is absent ("") on every
+	// checkpoint written before the serial lane joined the signature, and
+	// rosterFormatUnion on every one written since. Without it a legacy
+	// parallel-lane-only roster is byte-identical to a current-format roster from a
+	// project whose serial lane was simply empty, so the compatibility arm in
+	// validateCheckpointRoster could not tell "written by the old binary" from
+	// "written by this binary before a serial reviewer was added" — and would resume
+	// across that addition, which is the AC4 panel-mixing the roster guard exists to
+	// refuse. Stamping it confines the ambiguity to files that already exist.
+	RosterFormat string           `json:"roster_format,omitempty"`
+	Cases        []checkpointCase `json:"cases"`
 }
+
+// rosterFormatUnion marks a Roster built from BOTH reviewer lanes (Agents then
+// SerialAgents), the shape rosterSignature produces. It is the only value ever
+// written; the meaningful distinction is stamped versus absent.
+const rosterFormatUnion = "union"
 
 // checkpointCase is one completed case's scored outcome, keyed by its index in the
 // suite's case list (the same index the run loop iterates), so replay folds it back
@@ -234,7 +249,12 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 // "agent=model" entries; they are compared as sorted sets so declaration order is
 // irrelevant. Any added, removed, or model-changed reviewer returns
 // errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
-func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
+//
+// legacyRoster is the parallel-lane-only projection of the same config — the shape a
+// binary released before the serial lane joined the signature wrote to disk. Pass nil
+// (or an empty slice) to disable the compatibility arm entirely — a serial-only project
+// projects to an empty parallel lane, and an empty roster proves nothing about the panel.
+func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) error {
 	// A checkpoint with no recorded roster (the field is absent -> nil; e.g. one
 	// written before the roster guard existed, or hand-edited) cannot prove the
 	// panel is unchanged. Fail closed rather than let sortedCopy(nil) compare equal
@@ -244,11 +264,34 @@ func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
 	}
 	recorded := sortedCopy(cp.Roster)
 	current := sortedCopy(roster)
-	if !equalStrings(recorded, current) {
-		return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
-			errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
+	if equalStrings(recorded, current) {
+		return nil
 	}
-	return nil
+	// Pre-serial-lane compatibility. The released binary built this signature from
+	// cfg.Project.Agents alone, so an existing checkpoint from a project with a
+	// non-empty serial_agents lane records a roster short by every serial reviewer.
+	// Comparing it against the union this binary now builds reports a panel change
+	// that never happened — and the message sends the operator to discard a
+	// checkpoint holding every already-paid completed case, which is the forfeit
+	// --checkpoint exists to prevent.
+	//
+	// The arm is narrow on purpose: it matches ONLY the parallel-lane-only projection
+	// of the CURRENT config, so a parallel reviewer whose model or persona drifted
+	// still mismatches, and a union-format roster with a changed serial lane is
+	// untouched by it, because a checkpoint this binary wrote carries
+	// rosterFormatUnion and never reaches here. What it forgoes for this one resume is
+	// the serial-lane half of the guard — precisely the guarantee an unstamped
+	// checkpoint was written without, so accepting it restores the old binary's
+	// contract rather than weakening the new one. Upgrading cp.Roster in place means
+	// the next save records the union form and every subsequent resume is guarded at
+	// full strength.
+	if cp.RosterFormat == "" && len(legacyRoster) > 0 && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
+		cp.Roster = current
+		cp.RosterFormat = rosterFormatUnion
+		return nil
+	}
+	return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
+		errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
 }
 
 // sortedCopy returns a sorted copy of s without mutating the input.

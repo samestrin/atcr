@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/scorecard"
 )
+
+// exportTestCmd is a bare command whose stdout is discarded, so a success-path export
+// does not spray its JSON envelope across the test log. runLeaderboardExport writes
+// through cmd.OutOrStdout(), which defaults to os.Stdout when unset.
+func exportTestCmd() *cobra.Command {
+	c := &cobra.Command{}
+	c.SetOut(io.Discard)
+	return c
+}
 
 // storeLeaderboardRec writes a reviewer record at a given age (days before now)
 // under the isolated store, so leaderboard filtering can be exercised end-to-end.
@@ -620,4 +631,411 @@ func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
 			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
 	require.Contains(t, help, "pinned to",
 		"and that a board pinned to an older version needs updating")
+}
+
+// `benchmark export` hard-rejects a run-result whose reviewer identity carries a Cc/Cf
+// rune, but `leaderboard --export` is the SIBLING producer into the same public
+// envelope, through the same scrubField, with no such guard — so the invariant
+// "no invisible rune survives into the published document" held for one producer and
+// not the other. This is a divergence epic 35.16.6.2 created, not a pre-existing
+// regression: before it, neither producer checked.
+func TestRunLeaderboardExport_RejectsNonPrintingIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rec    scorecard.Record
+		offend string
+	}{
+		{
+			name: "model carrying a zero-width space",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+				Reviewer: "greta", Model: "claude-son\u200Bnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+			offend: "claude-son\u200Bnet",
+		},
+		{
+			// Reviewer is the field Export scrubs into the envelope's `persona`.
+			name: "reviewer carrying a bidi override",
+			rec: scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+				Reviewer: "gre\u202Eta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			},
+			offend: "gre\u202Eta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{tc.rec}, scorecard.FilterOpts{}, "")
+			require.Error(t, err, "an identity the public scrub cannot carry intact must not publish")
+			require.Contains(t, err.Error(), "non-printing rune")
+			// %q, not %s: rendering a bidi override raw would reorder the operator's own
+			// terminal with the very defect being reported.
+			require.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			// The run_id locator comes from the same untrusted store record, so it is
+			// escaped too — a raw one would let a crafted id reorder the report itself.
+			require.Contains(t, err.Error(), fmt.Sprintf("%q", tc.rec.RunID))
+		})
+	}
+}
+
+// The guard checks what would actually PUBLISH, not what the store happens to hold.
+// Export filters internally, so a pre-filter check would hard-fail an export whose
+// envelope was clean — a rejection the operator could clear only by deleting unrelated
+// history.
+//
+// BOTH halves of that rule are pinned here, in one test, on one record set. The
+// no-error half alone passed with selectPublishableRecordIdentities deleted outright,
+// so on its own it proved the guard was absent rather than correctly scoped: only the
+// second subtest, where the SAME offending record survives the filter, gives the
+// assertion any sensitivity to the guard existing at all.
+func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInFilteredOutRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "gpt-5\u200B-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+
+	t.Run("filtered out, so it must not fail the export", func(t *testing.T) {
+		// --model selects only the clean record; the offending one never reaches the envelope.
+		err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "claude-sonnet"}, "")
+		require.NoError(t, err, "a record the filters exclude never publishes, so it must not fail the export")
+	})
+
+	t.Run("survives the filter, so it must fail the export", func(t *testing.T) {
+		// A --model fragment that selects BOTH records. Same offending record, same
+		// guard: the only thing that changed is whether it publishes.
+		err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{Model: "-"}, "")
+		require.Error(t, err, "the same record must fail the export once the filters admit it")
+		require.Contains(t, err.Error(), "non-printing rune")
+		require.Contains(t, err.Error(), fmt.Sprintf("%q", "gpt-5\u200B-mini"))
+	})
+}
+
+// The identity guard runs ApplyFilters ahead of Export, so a malformed --since is now
+// raised from the guard rather than from Export. The operator-visible message must not
+// change because of where it is raised, and it must not be dressed up as an identity
+// defect — a bad duration is a usage error, not an unpublishable record.
+func TestRunLeaderboardExport_MalformedSinceStillReportsTheFilterError(t *testing.T) {
+	rec := scorecard.Record{
+		SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+		Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+	}
+	err := runLeaderboardExport(exportTestCmd(), []scorecard.Record{rec}, scorecard.FilterOpts{Since: "banana"}, "")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "non-printing rune",
+		"a bad --since must not be reported as an unpublishable identity")
+
+	// Byte-identical to what Export itself would have raised for the same input:
+	// moving the parse earlier must be invisible to the operator.
+	_, direct := scorecard.ApplyFilters([]scorecard.Record{rec}, scorecard.FilterOpts{Since: "banana"}, time.Now().UTC())
+	require.Error(t, direct)
+	require.Equal(t, direct.Error(), err.Error())
+}
+
+// The identity guard must inspect exactly what publishes. Export runs a further
+// unresolvedEraRuns pass AFTER the filters, dropping the older half of a reviewer that
+// spans the 35.16.6.5 FindingsRaised era boundary — so a record the filters select but
+// the era rule drops used to hard-fail an export whose envelope was clean. The operator
+// could clear that rejection only by deleting history the submission never carried.
+func TestRunLeaderboardExport_IgnoresNonPrintingIdentityInEraDroppedRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			// Pre-epic half of greta's history: dropped by the era pass because the
+			// current-era record below exists for the same reviewer.
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-28T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet\u200B-old", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+			RaisedIncludesUnresolved: true,
+		},
+	}
+	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{}, "")
+	require.NoError(t, err, "a record the era pass drops never publishes, so it must not fail the export")
+}
+
+// The guard and the envelope must be built from ONE selection, not two independent
+// ones: the export path deliberately reads ALL history, so a second ApplyFilters pass
+// re-parses every RunID through time.Parse over the whole unrotated store.
+func TestPublishedSet_IsTheSelectionExportPublishes(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-28T00:00:00Z-a",
+			Reviewer: "greta", Model: "m-old", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "greta", Model: "m-new", FindingsRaised: 3, FindingsCorroborated: 2,
+			RaisedIncludesUnresolved: true,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeAggregate, RunID: "2026-08-29T00:00:00Z-c",
+			Reviewer: "greta", Model: "m-agg",
+		},
+	}
+	got, err := scorecard.PublishedSet(recs, scorecard.FilterOpts{}, time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the aggregate row and the pre-era half must both be gone")
+	require.Equal(t, "m-new", got[0].Model)
+
+	_, ferr := scorecard.PublishedSet(recs, scorecard.FilterOpts{Since: "banana"}, time.Now().UTC())
+	require.Error(t, ferr, "a filter error must surface from the shared selection, not only from Export")
+}
+
+// The selection anchor and the envelope timestamp must be ONE instant. runLeaderboardExport
+// resolves --since through scorecard.PublishedSet and stamps submitted_at through
+// scorecard.ExportSelected; a second time.Now() in either would let the published document
+// claim a submission time that does not match the window its rows were selected under, and
+// on the --since boundary it would publish a different record set than the one the identity
+// guard inspected. Nothing pinned that sharing — reverting either argument to
+// time.Now().UTC() left the whole ./cli/ suite green.
+//
+// The injected instant is fixed and far from wall-clock now, so either mutation is caught:
+// the boundary record falls outside a real-now 1h window, and submitted_at stops matching.
+func TestRunLeaderboardExportAt_SelectionAndEnvelopeShareOneInstant(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	recs := []scorecard.Record{
+		{
+			// 12 hours inside the 1d window anchored at `at`, and ~7 months outside a
+			// window anchored at real wall-clock now.
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer,
+			RunID:    at.Add(-30*time.Minute).Format(time.RFC3339) + "-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+	}
+
+	cmd := exportTestCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runLeaderboardExportAt(cmd, recs, scorecard.FilterOpts{Since: "1d"}, "", at))
+
+	var env struct {
+		SubmittedAt string `json:"submitted_at"`
+		Reviewers   []struct {
+			Model string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1, "the record inside the injected window must publish")
+	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+	require.Equal(t, at.Format(time.RFC3339), env.SubmittedAt,
+		"submitted_at must be the SAME instant the --since window was resolved against")
+}
+
+// benchmark export hard-rejects an identity that is empty once scrubbed; leaderboard
+// --export gained only the printability arm, so the SIBLING producer into the SAME
+// envelope still published model:"" for a record whose id the scrub deletes outright
+// (an email- or path-shaped value). The two producers must agree.
+//
+// The arm is scoped to values that are NON-EMPTY before the scrub and empty after it.
+// An identity that was already empty in the store is a different defect — a record
+// written without a model — and dropping it here would silently shrink every export
+// against a store that already holds such records, which the live store does.
+//
+// Each shape is DROPPED from the envelope and named on stderr rather than aborting the
+// export; the blast radius of the hard-fail is covered by
+// TestRunLeaderboardExport_SkipsIdentityThatScrubsToEmpty below.
+func TestRunLeaderboardExport_SkipsEachIdentityShapeThatScrubsToEmpty(t *testing.T) {
+	rec := func(runID, reviewer, model string) scorecard.Record {
+		return scorecard.Record{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: runID,
+			Reviewer: reviewer, Model: model, FindingsRaised: 3, FindingsCorroborated: 2,
+		}
+	}
+	clean := rec("2026-08-29T00:00:00Z-z", "greta", "claude-sonnet")
+	for _, tc := range []struct {
+		name       string
+		rec        scorecard.Record
+		wantField  string
+		wantOffend string
+	}{
+		{
+			name: "email-shaped model", wantField: "model", wantOffend: "sam@example.com",
+			rec: rec("2026-08-29T00:00:00Z-a", "bruce", "sam@example.com"),
+		},
+		{
+			name: "path-shaped reviewer", wantField: "reviewer", wantOffend: "~/models/greta",
+			rec: rec("2026-08-29T00:00:00Z-b", "~/models/greta", "claude-opus"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			require.NoError(t,
+				runLeaderboardExport(cmd, []scorecard.Record{clean, tc.rec}, scorecard.FilterOpts{}, ""),
+				"an identity the scrub empties must be dropped, not take the clean rows down with it")
+
+			var env struct {
+				Reviewers []struct {
+					Model string `json:"model"`
+				} `json:"reviewers"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+			require.Len(t, env.Reviewers, 1, "only the clean record may publish")
+			require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+
+			report := errBuf.String()
+			require.Contains(t, report, "empty once scrubbed")
+			require.Contains(t, report, tc.wantField)
+			require.Contains(t, report, fmt.Sprintf("%q", tc.wantOffend))
+			require.Contains(t, report, fmt.Sprintf("%q", tc.rec.RunID))
+		})
+	}
+
+	t.Run("already-empty identity still publishes", func(t *testing.T) {
+		cmd := exportTestCmd()
+		var out, errBuf bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errBuf)
+		require.NoError(t,
+			runLeaderboardExport(cmd, []scorecard.Record{rec("2026-08-29T00:00:00Z-a", "greta", "")}, scorecard.FilterOpts{}, ""),
+			"a record stored without a model predates this guard; failing it would break every export against an existing store")
+		require.Empty(t, errBuf.String(), "an already-empty identity is not a scrub casualty and must not be reported as one")
+
+		var env struct {
+			Reviewers []struct {
+				Model string `json:"model"`
+			} `json:"reviewers"`
+		}
+		require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+		require.Len(t, env.Reviewers, 1, "the record must still publish, not be silently dropped")
+	})
+}
+
+// An identity the scrub empties must not publish, but it must not take the whole
+// export down with it either. The shapes that scrub to empty are ordinary local-model
+// ids — "/models/mistral-7b.gguf", "bedrock@us-east-1/claude", "~/models/foo" — so one
+// such record anywhere in the store hard-failed an export that had succeeded the day
+// before, and the export path forces window=0, which makes "anywhere in the store" the
+// whole unrotated history. The offending record is dropped from the envelope and named
+// on stderr; everything else still publishes.
+func TestRunLeaderboardExport_SkipsIdentityThatScrubsToEmpty(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "/models/mistral-7b.gguf", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+
+	cmd := exportTestCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	require.NoError(t, runLeaderboardExport(cmd, recs, scorecard.FilterOpts{}, ""),
+		"one unpublishable identity must not abort an export whose other rows are clean")
+
+	var env struct {
+		Reviewers []struct {
+			Persona string `json:"persona"`
+			Model   string `json:"model"`
+		} `json:"reviewers"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+	require.Len(t, env.Reviewers, 1, "only the clean record may publish")
+	require.Equal(t, "claude-sonnet", env.Reviewers[0].Model)
+
+	// The drop is reported, not silent: an operator reading stderr can find the record.
+	report := errBuf.String()
+	require.Contains(t, report, "empty once scrubbed")
+	require.Contains(t, report, fmt.Sprintf("%q", "2026-08-29T00:00:00Z-b"))
+	require.Contains(t, report, "model")
+	require.Contains(t, report, fmt.Sprintf("%q", "/models/mistral-7b.gguf"))
+	require.NotContains(t, report, "2026-08-29T00:00:00Z-a", "a clean record must not be reported")
+}
+
+// Dropping every record leaves nothing to publish, and that must read as the existing
+// no-records error rather than an empty envelope claiming a submission with no rows.
+func TestRunLeaderboardExport_AllIdentitiesScrubToEmptyReportsNoRecords(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "~/models/foo", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+	}
+	cmd := exportTestCmd()
+	var errBuf bytes.Buffer
+	cmd.SetErr(&errBuf)
+	err := runLeaderboardExport(cmd, recs, scorecard.FilterOpts{}, "")
+	require.Error(t, err, "an envelope with no reviewers must not be emitted as a successful export")
+	require.NotContains(t, err.Error(), "empty once scrubbed",
+		"the skip is reported on stderr; the error is the ordinary no-records one")
+	require.Contains(t, errBuf.String(), "empty once scrubbed")
+}
+
+// The printability arm stays a HARD failure. A control or format rune in a published
+// identity is a misattribution vector, not the ordinary local-model id shape the skip
+// arm exists for, so it must still stop the export rather than quietly shrink it.
+func TestRunLeaderboardExport_NonPrintingIdentityStillHardFails(t *testing.T) {
+	recs := []scorecard.Record{
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+			Reviewer: "greta", Model: "claude-sonnet", FindingsRaised: 3, FindingsCorroborated: 2,
+		},
+		{
+			SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-b",
+			Reviewer: "bruce", Model: "gpt-5\u200B-mini", FindingsRaised: 3, FindingsCorroborated: 1,
+		},
+	}
+	err := runLeaderboardExport(exportTestCmd(), recs, scorecard.FilterOpts{}, "")
+	require.Error(t, err, "a non-printing rune must abort the export, not be skipped")
+	require.Contains(t, err.Error(), "non-printing rune")
+}
+
+// The empty-once-scrubbed arm is scoped OFF an identity that was already empty in the
+// store — a record written without a model — because dropping those would shrink every
+// export against a store that already holds them. The predicate must implement that
+// scoping on the value the reader sees as empty, not on a raw byte comparison:
+// ScrubPublicString(" ") is "" (scrubOnce ends in strings.Join(strings.Fields(s), " ")),
+// so a whitespace-only identity slipped past the exclusion and was reported as a scrub
+// casualty — under a message reading `model " ", which is empty once scrubbed`, which
+// tells the operator nothing actionable.
+func TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasualty(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		reviewer string
+		model    string
+	}{
+		{name: "space-only model", reviewer: "greta", model: " "},
+		// A no-break space is Zs, not Cc/Cf, so the printability arm lets it through;
+		// strings.Fields still treats it as whitespace, so the scrub empties it.
+		{name: "no-break-space model", reviewer: "greta", model: "\u00A0"},
+		{name: "space-only reviewer", reviewer: "  ", model: "claude-sonnet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := scorecard.Record{
+				SchemaVersion: 1, RecordType: scorecard.RecordTypeReviewer, RunID: "2026-08-29T00:00:00Z-a",
+				Reviewer: tc.reviewer, Model: tc.model, FindingsRaised: 3, FindingsCorroborated: 2,
+			}
+			cmd := exportTestCmd()
+			var out, errBuf bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errBuf)
+
+			require.NoError(t, runLeaderboardExport(cmd, []scorecard.Record{rec}, scorecard.FilterOpts{}, ""),
+				"a whitespace-only identity is already empty in the store, the case this arm excludes")
+			require.Empty(t, errBuf.String(),
+				"reporting it as a scrub casualty prints an unactionable message about a blank value")
+
+			var env struct {
+				Reviewers []struct {
+					Model string `json:"model"`
+				} `json:"reviewers"`
+			}
+			require.NoError(t, json.Unmarshal(out.Bytes(), &env))
+			require.Len(t, env.Reviewers, 1, "the record must publish, exactly as a stored-empty identity does")
+		})
+	}
 }

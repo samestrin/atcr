@@ -237,28 +237,48 @@ func clampRate(f float64) float64 {
 // the envelope timestamp and as the --since window anchor, so the document is
 // fully reproducible (no hidden time.Now()).
 func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, error) {
-	filtered, err := ApplyFilters(records, opts, exportedAt)
+	filtered, err := PublishedSet(records, opts, exportedAt)
 	if err != nil {
 		return nil, err
 	}
+	return ExportSelected(filtered, exportedAt)
+}
+
+// ExportSelected anonymizes, aggregates, and serializes an already-selected set (see
+// PublishedSet). It is split out of Export so leaderboard --export can validate the
+// published identities and serialize them from ONE selection instead of computing the
+// selection twice over a store the export path deliberately reads in full.
+//
+// The empty check moved behind the era pass with this split, which is
+// behaviour-preserving: unresolvedEraRuns falls back rather than excluding — a record
+// is kept when its reviewer has no current-era record at all, and when a reviewer does
+// have one, that record itself is kept — so a non-empty selection can never come out
+// empty, and ErrNoExportRecords still reports exactly what the user's own filters
+// selected.
+//
+// Only `record_type: "reviewer"` records are published. That is not a precondition on
+// the caller: this function enforces it, because it is exported and skips the
+// ApplyFilters pass that would otherwise be the rule's only home.
+func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
 	}
-	// Keep ONE FindingsRaised definition, never a mix — the same prefer-current
-	// rule TrustPriors applies, and for the same reason: Epic 35.16.6.5 put the
-	// Tier-4-routed findings into the denominator, so corroboration_rate and
-	// findings_raised_avg computed across both eras measure neither. Unlike
-	// TrustPriors this runs AFTER ApplyFilters, so the "no records" error still
-	// reports what the user's own filters selected rather than an era they never
-	// asked about; and because the rule falls back rather than excluding, it can
-	// never empty a submission built from a pre-epic store.
-	filtered = unresolvedEraRuns(filtered)
 
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
 	order := make([]key, 0)
 
 	for _, r := range filtered {
+		// ApplyFilters is the only other place this is dropped on the export path, and
+		// this function deliberately skips it. Leaving the rule to the caller made an
+		// EXPORTED symbol's central invariant unenforceable from inside the package: an
+		// aggregate record sums every reviewer's findings, so publishing one would enter
+		// the board as a phantom reviewer, with an empty identity, outscoring the real
+		// rows it is the sum of. The one live caller passes PublishedSet output, so this
+		// costs nothing today and removes the way a future caller gets it wrong.
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
 		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
 		// so finalize() never re-scrubs and two records that scrub to the same
 		// identity merge into one group.
@@ -272,6 +292,13 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 			order = append(order, k)
 		}
 		a.add(r)
+	}
+
+	// Re-checked AFTER the reviewer filter above: a selection of nothing but
+	// non-reviewer records is empty of anything publishable, and must read as the
+	// ordinary no-records error rather than an envelope with zero rows.
+	if len(order) == 0 {
+		return nil, ErrNoExportRecords
 	}
 
 	rows := make([]PublicRecord, 0, len(order))
@@ -422,3 +449,30 @@ var (
 	// GitHub/GitLab/Slack/AWS/bearer shapes.
 	scrubKey = regexp.MustCompile(`(?i)\b(sk[-_][a-z0-9_-]+|aiza[a-z0-9_-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
 )
+
+// PublishedSet returns exactly the records Export publishes: ApplyFilters, then the
+// unresolvedEraRuns era pass Export applies after it.
+//
+// It exists so the two producers of the SAME public envelope agree on one definition
+// of "what publishes". leaderboard --export's identity guard previously ran
+// ApplyFilters itself and inspected that superset, which had two consequences: a
+// record the era rule drops still hard-failed an export whose envelope was clean, and
+// the one path that deliberately reads ALL history walked the whole unrotated store
+// twice, re-parsing every RunID through time.Parse on each pass.
+//
+// exportedAt is the --since anchor, threaded rather than re-read so the guard and the
+// envelope resolve the window against the same instant.
+func PublishedSet(records []Record, opts FilterOpts, exportedAt time.Time) ([]Record, error) {
+	filtered, err := ApplyFilters(records, opts, exportedAt)
+	if err != nil {
+		return nil, err
+	}
+	// Keep ONE FindingsRaised definition, never a mix — the same prefer-current rule
+	// TrustPriors applies, and for the same reason: Epic 35.16.6.5 put the Tier-4-routed
+	// findings into the denominator, so corroboration_rate and findings_raised_avg
+	// computed across both eras measure neither. It runs AFTER ApplyFilters so Export's
+	// "no records" error still reports what the user's own filters selected rather than
+	// an era they never asked about; and because the rule falls back rather than
+	// excluding, it can never empty a submission built from a pre-epic store.
+	return unresolvedEraRuns(filtered), nil
+}

@@ -249,8 +249,10 @@ func strictRuns(records []Record) []Record {
 //     consumer this filter is defined for is worth more than matching the other.
 //
 // Non-empty in, non-empty out: a reviewer with no current-era record keeps all of
-// its records, and one with a current-era record keeps at least that record. So
-// Export's ErrNoExportRecords check at the call site stays correct where it is.
+// its records, and one with a current-era record keeps at least that record. That is
+// what lets ExportSelected raise ErrNoExportRecords from BEHIND this pass and still
+// report exactly what the caller's own filters selected — the property PublishedSet
+// relies on when it hands an already-era-resolved slice to the serializer.
 func unresolvedEraRuns(records []Record) []Record {
 	hasCurrent := make(map[string]bool, len(records))
 	for _, r := range records {

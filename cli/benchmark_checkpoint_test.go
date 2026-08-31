@@ -162,7 +162,7 @@ func TestLoadCheckpoint_IntegrityErrors(t *testing.T) {
 // as a match (AC4 fail-closed) — sortedCopy(nil) would otherwise compare equal to
 // an empty configured roster.
 func TestValidateCheckpointRoster_NilRecordedRosterFailsClosed(t *testing.T) {
-	err := validateCheckpointRoster(&runCheckpoint{Roster: nil}, nil)
+	err := validateCheckpointRoster(&runCheckpoint{Roster: nil}, nil, nil)
 	require.ErrorIs(t, err, errCheckpointRosterMismatch)
 }
 

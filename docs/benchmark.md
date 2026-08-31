@@ -61,8 +61,8 @@ my-suite/
 
 | Field | Type | Rules |
 |-------|------|-------|
-| `suite` | string | Required, non-empty. The suite identity. |
-| `suite_version` | string | Required, non-empty. Pins reproducibility; travels with every submission. |
+| `suite` | string | Required, non-empty. The suite identity. Must also be **publishable** — see below. |
+| `suite_version` | string | Required, non-empty. Pins reproducibility; travels with every submission. Must also be **publishable** — see below. |
 | `cases` | array | Required, at least one case. |
 | `cases[].id` | string | Required, non-empty, **unique** within the suite. |
 | `cases[].diff` | string | Required. Path **relative to** the suite directory; must not be absolute or escape the directory (`..` is rejected). The file must exist. |
@@ -70,6 +70,29 @@ my-suite/
 
 `internal/benchmark.Load(suitePath)` reads, validates, and confirms every diff
 file exists — it returns an error rather than a half-valid suite.
+
+#### Publishable identity
+
+`suite` and `suite_version` are copied verbatim into the public submission envelope,
+so "non-empty" is not sufficient on its own. `verify` and `run` apply three further
+rules to each of them, and to every `cases[].id`:
+
+| Rule | Rejected because | Example |
+|------|------------------|---------|
+| No control (Cc) or format (Cf) rune | The publication scrub leaves these alone, so an invisible or text-reordering rune survives into the published document | `"standard-v1"` with a pasted zero-width space (U+200B) |
+| Must not be **empty once scrubbed** | The submission would publish `""` | `"admin@internal.host"` (an email-shaped token is removed whole) |
+| Must not be **rewritten by the scrub** | The envelope would name a different suite than the manifest does | `"acme bench@corp"`, which scrubs to `"acme"` |
+
+These are **not** `Manifest.Validate` rules, which only trim whitespace and check for
+emptiness. `"acme bench@corp"` and a trailing-space `"standard-v1 "` both satisfy
+`Validate` and both are still rejected here.
+
+The check runs at **load time** in both `verify` and `run` — before `run` invokes a
+single reviewer — because the same rules are enforced at `export`, and discovering an
+unpublishable suite after a paid panel run costs the whole run. Each message names the
+field to edit (`suite` or `suite_version`) and the **suite manifest** as the file to
+edit it in: `suite_case_ids` and the envelope identity are verbatim copies of the
+manifest, so editing a produced run-result would be the wrong action.
 
 ---
 
@@ -96,6 +119,10 @@ they are running byte-identical cases by comparing hashes.
 Behavior:
 - Missing `suite.json`, malformed JSON, a failing validation rule, or a missing
   diff file → error, non-zero exit.
+- A `suite`, `suite_version`, or `cases[].id` that is not **publishable** → error,
+  non-zero exit. These are separate from `Validate`'s rules — see
+  [Publishable identity](#publishable-identity) above. Without this, `verify` printed
+  `valid` for a manifest `export` refuses.
 - `--suite-path` is required.
 
 ---
@@ -151,6 +178,33 @@ a resumed run on a later day differs only in `generated_at`.
 
 Behavior:
 - Invalid suite (missing `suite.json`, failing validation, missing diff) → error.
+- An unpublishable `suite`, `suite_version`, or `cases[].id` → error, raised at load
+  **before any reviewer is invoked**. See
+  [Publishable identity](#publishable-identity).
+- A configured reviewer whose `model` or `persona` carries a control (Cc) or format
+  (Cf) rune → error, also at load and also before any reviewer is invoked. The remedy
+  is in the reviewer registry, so the error names the agent. The gate covers **both**
+  roster lanes (`agents` and `serial_agents`), and the two identity fields have
+  deliberately different reach:
+  - **`model` is checked along each agent's transitive `fallback` chain.** A fallback
+    model can serve a case in place of the primary, so a chain entry's model is
+    genuinely published.
+  - **`persona` is checked on the roster agent only**, never along the chain. Fanout
+    reassigns each result to the PRIMARY slot name, so a fallback entry's own persona
+    never reaches the envelope; walking the chain for it refused whole panels over
+    strings that print nowhere. Where the roster agent declares no persona,
+    the **agent name itself** stands in for it — and that name is what is checked.
+- The same rule is applied again to the *realized* identity when the run-result is
+  folded. That arm exists for the one source the load gate cannot see: a model id
+  echoed back in the provider's own usage payload, which appears in no local file. It
+  aborts the run rather than writing an artifact `export` would refuse permanently, so
+  its message names the provider as the place to look. A checkpoint that already holds
+  the offending identity can be **repaired in place**: the recorded value is the
+  per-case `model` field in the checkpoint file, and a resume validates only the suite
+  identity (`repro_hash`, `suite`, `suite_version`) plus the roster signature — which is
+  built from the registry, not from the checkpoint — so correcting that string resumes
+  for free. Discarding the checkpoint re-pays the whole suite and is the fallback when
+  the file is otherwise unusable, not the remedy.
 - A case whose entire roster fails to review → error (a case nothing reviewed is
   not scored as zero). Partial failures score the failed reviewers as recall 0 for
   that case.
@@ -541,6 +595,16 @@ Behavior:
     `atcr benchmark run` helps only for a hand-assembled file, since a real collision
     is refused by the run before any run-result is written. The rejection stands
     either way: two rows cannot share one published identity on the board.
+- A reviewer `model`/`persona` carrying a **control (Cc) or format (Cf) rune** →
+  error. The scrub is not a defense here: it provably leaves both categories alone, so
+  an invisible rune (U+00AD, U+200B) or a bidi override (U+202E) would survive into the
+  published envelope and misattribute a leaderboard row to a model that was never
+  measured. Neither can the empty-once-scrubbed rule below reach it — the value is
+  non-empty on both sides of the scrub. Hand-assembly only, but **not** for the reason
+  the next bullet gives: `atcr benchmark run` rejects such an identity outright, at
+  load for the configured roster and again at the fold for the realized one, so it
+  cannot produce a file this rule rejects. `atcr leaderboard --export` applies the same
+  rule to the records it publishes.
 - A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
   for publication** → error. The scrub is what the submission actually carries, so an
   identity that survives the file but not the scrub would publish as `""`. It removes

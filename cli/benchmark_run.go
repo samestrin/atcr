@@ -51,11 +51,30 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 	// and `benchmark run` paid for the whole reviewer panel before the rejection
 	// surfaced. Identity is checked BEFORE the cases: it names the whole document, so
 	// it is the defect to report first when both are present.
-	for _, f := range []struct{ noun, value string }{
-		{"suite name", m.Suite},
-		{"suite_version", m.SuiteVersion},
+	//
+	// consequence and remedy are carried PER FIELD rather than shared across the two.
+	// One constant pair reported a bad suite_version with "rename the suite in the
+	// suite manifest", and acting on that misdirection is not a harmless no-op:
+	// ReproHashManifest length-prefixes m.Suite into the hash and validateCheckpoint
+	// compares ReproHash, Suite AND SuiteVersion, so renaming the suite makes the next
+	// `benchmark run --checkpoint` fail with errCheckpointSuiteMismatch — discarding
+	// the paid work of every completed case — and then re-raises the identical
+	// suite_version error.
+	//
+	// Both strings are written out per field rather than interpolated from noun. The
+	// suite arm is pre-existing behavior and stays BYTE-IDENTICAL, which a
+	// "rename the "+noun form would silently break ("rename the suite name in the
+	// suite manifest"), and the verbs differ anyway: a suite is renamed, a version is
+	// changed.
+	for _, f := range []struct{ noun, value, consequence, remedy string }{
+		{"suite name", m.Suite,
+			"the published envelope must name the same suite the manifest does",
+			"rename the suite in the suite manifest"},
+		{"suite_version", m.SuiteVersion,
+			"the published envelope must name the same suite_version the manifest does",
+			"change suite_version in the suite manifest"},
 	} {
-		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, "the published envelope must name the same suite the manifest does", "rename the suite in the suite manifest"); err != nil {
+		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.consequence, f.remedy); err != nil {
 			return err
 		}
 	}
@@ -104,6 +123,109 @@ func checkPublishable(suitePath, subject, value, consequence, remedy string) err
 	return nil
 }
 
+// validatePublishableReviewerRoster rejects a run whose CONFIGURED reviewer panel
+// carries an identity the public envelope cannot publish intact.
+//
+// It is the producer-side counterpart of the reviewer-identity gate
+// validateRunResultForPublication applies at export (cli/benchmark.go). That gate is
+// correct but sits at the consumer: nothing stopped `benchmark run` from PRODUCING the
+// artifact it rejects. The fold's scrub is scorecard.ScrubPublicRecord, which provably
+// leaves control (Cc) and format (Cf) runes alone, and the post-scrub collision check
+// in buildRunResult cannot see one either — two identities differing only by an
+// invisible rune do not collide after a scrub that keeps it. So a soft hyphen (U+00AD)
+// or zero-width space (U+200B) pasted into a registry `model:` flowed all the way into
+// a finished run-result that export then refused permanently, after the whole panel had
+// been paid for, with the remedy in registry.yaml rather than in the file the operator
+// was handed.
+//
+// It runs at LOAD, beside validateSuitePublishableCaseIDs, for the identical reason
+// that one does: a rejection raised at the end of the fold still follows the full run.
+//
+// Only the printability arm belongs here. The empty-once-scrubbed and scrub-rewrites
+// arms are checked on the REALIZED identity downstream (buildRunResult's collision
+// guard and the export gate's TrimSpace arm), because the configured model is not the
+// published one — reviewerModel prefers the usage-reported and fallback models over the
+// registry — so rejecting a configured value the run would never publish would fail a
+// panel for a row it does not emit.
+//
+// The gate must cover every identity the run can actually publish, or the
+// before-payment guarantee is only apparent. Three sources feed it, and all three are
+// known at load:
+//
+//   - BOTH lanes. cfg.Project.SerialAgents is a second roster fanout builds slots for
+//     exactly as it does the parallel one (fanout.rosterNames is the union). Iterating
+//     Agents alone left every serial reviewer covered only by the fold backstop —
+//     which is to say, covered only after the panel was paid for.
+//   - The FALLBACK chain. reviewerModel prefers a.FallbackModel over the primary, and
+//     every fallback is another registry entry reachable by name, so a rune in a
+//     `-backup` agent's model is knowable here rather than hours later.
+//   - The REALIZED persona. reviewerPersona falls back to the AGENT NAME when the
+//     registry persona is empty, and a project roster entry is validated only for
+//     non-emptiness — so the agent key itself is a publishable identity.
+//
+// Errors name the AGENT and the REGISTRY: the identity is a verbatim copy of the
+// registry entry, so editing a produced run-result would be the wrong action.
+func validatePublishableReviewerRoster(cfg *fanout.ReviewConfig) error {
+	// No nil guard on cfg/Project/Registry, matching rosterSignature below: both are
+	// reached only from executeBenchmarkRun, which is handed a fully built config by
+	// its caller. A guard here would be unreachable by construction, so it could only
+	// be covered by a test asserting a state the CLI cannot produce.
+	//
+	// Sorted, so a panel with two offending lanes reports the same one on every run
+	// rather than whichever the map iteration reached first.
+	names := reviewerRoster(cfg)
+	sort.Strings(names)
+	// check reports one offending identity. roster is the configured entry the operator
+	// reads; cur is the entry the defect is actually in — a fallback link is named by
+	// BOTH, or the operator cannot find the row they configured.
+	check := func(roster, cur, field, value string) error {
+		r, bad := firstNonPrintingRune(value)
+		if !bad {
+			return nil
+		}
+		via := ""
+		if cur != roster {
+			via = fmt.Sprintf(" (reached as a fallback of %q)", roster)
+		}
+		return fmt.Errorf("reviewer agent %q%s declares %s %q, which contains a non-printing rune (U+%04X); "+
+			"control and format runes are invisible or reorder text in the published document, "+
+			"so a leaderboard row can be misattributed to a model that was never measured — "+
+			"rename the %s in the reviewer registry",
+			cur, via, field, value, r, field)
+	}
+
+	for _, n := range names {
+		// The PERSONA arm covers the ROSTER agent only, never the chain. reviewerPersona
+		// resolves cfg.Registry.Agents[a.Agent].Persona where a.Agent is always the
+		// PRIMARY slot name even when a fallback served the case — the contract
+		// reviewerKey states — so a fallback entry's own persona is never published, and
+		// its empty-persona substitute is the ROSTER name, never the chain entry's.
+		// Walking the chain here refused whole panels for strings that print nowhere.
+		persona := cfg.Registry.Agents[n].Persona
+		if persona == "" {
+			persona = n
+		}
+		if err := check(n, n, "persona", persona); err != nil {
+			return err
+		}
+
+		// The MODEL arm DOES walk the full chain: reviewerModel prefers a.FallbackModel,
+		// so a fallback's model is genuinely published when it serves a case.
+		//
+		// seen bounds the walk. registry.Validate already rejects a cycle, but this runs
+		// on a config that reached us however it reached us, and an infinite loop inside
+		// a pre-flight would be a worse failure than the one it guards.
+		seen := map[string]bool{}
+		for cur := n; cur != "" && !seen[cur]; cur = cfg.Registry.Agents[cur].Fallback {
+			seen[cur] = true
+			if err := check(n, cur, "model", cfg.Registry.Agents[cur].Model); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // executeBenchmarkRun executes a benchmark suite end to end and returns the
 // suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
 // + validates the suite (benchmark.Load), then for each case ingests the case diff
@@ -134,6 +256,12 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	if err := validateSuitePublishableCaseIDs(m, suitePath); err != nil {
 		return nil, err
 	}
+	// The reviewer half of the same pre-flight, and for the same reason: an identity
+	// that cannot publish makes the finished run unexportable, and both the export gate
+	// and buildRunResult's backstop would only say so after the panel was paid for.
+	if err := validatePublishableReviewerRoster(cfg); err != nil {
+		return nil, err
+	}
 
 	// Opt-in checkpointing (Epic 10.3): when checkpointPath is set, each scored case
 	// is persisted before the next begins so a transient failure does not forfeit the
@@ -151,6 +279,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			return nil, lerr
 		}
 		roster := rosterSignature(cfg)
+		legacyRoster := rosterSignatureOf(cfg, cfg.Project.Agents)
 		if existing != nil {
 			// Suite-identity guard (AC4): a checkpoint from a different or changed
 			// suite is rejected, never silently mixed into this run. The roster guard
@@ -159,12 +288,12 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
 				return nil, verr
 			}
-			if verr := validateCheckpointRoster(existing, roster); verr != nil {
+			if verr := validateCheckpointRoster(existing, roster, legacyRoster); verr != nil {
 				return nil, verr
 			}
 			cp = existing
 		} else {
-			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
+			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster, RosterFormat: rosterFormatUnion}
 		}
 		done = cp.doneIndex()
 		// validateCheckpointIntegrity runs at load, before the suite is in scope, so
@@ -238,7 +367,10 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		if err != nil {
 			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
 		}
-		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(cfg.Project.Agents))
+		// The reviewer count is the FULL roster, both lanes: fanout builds slots for
+		// SerialAgents exactly as it does for Agents, so counting the parallel lane
+		// alone under-reports every serial reviewer on every case.
+		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(reviewerRoster(cfg)))
 		res, err := fanout.ExecuteReview(ctx, completer, prep)
 		if err != nil {
 			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
@@ -354,6 +486,44 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	rows := make([]scoredRow, 0, len(order))
 	scrubbed := make(map[reviewerKey]reviewerKey, len(order)) // public identity -> pre-scrub key
 	for _, k := range order {
+		// The REALIZED half of the printability rule validatePublishableReviewerRoster
+		// applies to the configured panel. Only half of a reviewer identity is
+		// configured: reviewerModel prefers the usage-reported model and then the
+		// fallback model over the registry entry, so a Cc/Cf rune arriving in a
+		// provider's own usage payload never passes through the roster gate. Without
+		// this arm the fold would still emit an artifact export rejects permanently.
+		//
+		// Checked BEFORE the scrub, like every other printability arm: ScrubPublicString
+		// provably leaves Cc and Cf alone, so the rune survives into the published
+		// envelope and neither the collision guard below nor the export gate's
+		// empty-once-scrubbed arm can see it — the value is non-empty on both sides and
+		// two identities differing only by an invisible rune do not collide.
+		for _, f := range []struct{ name, value string }{
+			{"model", k.model},
+			{"persona", k.persona},
+		} {
+			if r, bad := firstNonPrintingRune(f.value); bad {
+				// The remedy is named because this arm, unlike the load-time gate, can
+				// fire on an identity NO local file contains: a model id echoed back in
+				// a provider's usage payload. Failing here forfeits the run rather than
+				// writing an artifact export would refuse permanently, so the message
+				// has to say where to look and what to do with the checkpoint.
+				//
+				// It names REPAIR, not discard. The offending value is the per-case
+				// `model` field the checkpoint recorded, and a resume validates only the
+				// suite identity plus rosterSignature — which reads the registry, not the
+				// checkpoint — so correcting that string resumes for free. Sending the
+				// operator to discard re-pays the whole paid suite for no reason.
+				return nil, fmt.Errorf("reviewer identity %s %q contains a non-printing rune (U+%04X); "+
+					"control and format runes are invisible or reorder text in the published document, "+
+					"so a leaderboard row can be misattributed to a model that was never measured — "+
+					"if the reviewer registry is clean the id came from the provider's own usage report, "+
+					"so pin or repoint that model; a checkpoint holding this identity replays into the "+
+					"same rejection until the recorded model is corrected in the checkpoint file "+
+					"(discarding it re-runs the whole suite)",
+					f.name, f.value, r)
+			}
+		}
 		s := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: k.model, Persona: k.persona})
 		id := reviewerKey{model: s.Model, persona: s.Persona}
 		if prev, dup := scrubbed[id]; dup {
@@ -418,6 +588,22 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 	}, nil
 }
 
+// reviewerRoster returns the full configured reviewer panel: the parallel lane then
+// the serial one, mirroring fanout.rosterNames, which is what actually builds the
+// slots. Every caller that means "the reviewers this run has" reads it from here, so
+// the load-time identity gate, the per-case log line, and the resume roster guard
+// cannot disagree about who is on the panel. Iterating cfg.Project.Agents alone let
+// rosterSignature compare EQUAL across a changed serial lane and resume, publishing
+// two panels as one comparable measurement — the AC4 outcome the guard exists to stop.
+//
+// The result is a fresh slice: callers sort it in place.
+func reviewerRoster(cfg *fanout.ReviewConfig) []string {
+	names := make([]string, 0, len(cfg.Project.Agents)+len(cfg.Project.SerialAgents))
+	names = append(names, cfg.Project.Agents...)
+	names = append(names, cfg.Project.SerialAgents...)
+	return names
+}
+
 // rosterSignature builds the deterministic "agent=model=persona" signature of the
 // configured reviewer panel, sorted by agent name. It uses the CONFIGURED values
 // (registry), not runtime usage-reported ones, so the same config always yields the
@@ -427,10 +613,22 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 // An agent with no configured model or persona contributes an empty component,
 // which still distinguishes it from a later-configured one.
 func rosterSignature(cfg *fanout.ReviewConfig) []string {
-	names := append([]string(nil), cfg.Project.Agents...)
-	sort.Strings(names)
-	sig := make([]string, len(names))
-	for i, n := range names {
+	return rosterSignatureOf(cfg, reviewerRoster(cfg))
+}
+
+// rosterSignatureOf builds the signature over an ARBITRARY subset of the panel, so a
+// resume can compare against the shape a previous binary recorded as well as the one
+// this binary writes. rosterSignature is it applied to the full roster; the resume
+// guard also applies it to cfg.Project.Agents alone, which is exactly what the
+// released binary wrote before this branch unioned the serial lane in.
+//
+// It sorts a COPY: cfg.Project.Agents is the live config, and sorting it in place
+// would rewrite the declared lane order for every caller downstream.
+func rosterSignatureOf(cfg *fanout.ReviewConfig, names []string) []string {
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	sig := make([]string, len(sorted))
+	for i, n := range sorted {
 		sig[i] = n + "=" + cfg.Registry.Agents[n].Model + "=" + cfg.Registry.Agents[n].Persona
 	}
 	return sig
