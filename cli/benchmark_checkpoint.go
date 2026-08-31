@@ -252,7 +252,8 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 //
 // legacyRoster is the parallel-lane-only projection of the same config — the shape a
 // binary released before the serial lane joined the signature wrote to disk. Pass nil
-// to disable the compatibility arm entirely.
+// (or an empty slice) to disable the compatibility arm entirely — a serial-only project
+// projects to an empty parallel lane, and an empty roster proves nothing about the panel.
 func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) error {
 	// A checkpoint with no recorded roster (the field is absent -> nil; e.g. one
 	// written before the roster guard existed, or hand-edited) cannot prove the
@@ -284,7 +285,7 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// contract rather than weakening the new one. Upgrading cp.Roster in place means
 	// the next save records the union form and every subsequent resume is guarded at
 	// full strength.
-	if cp.RosterFormat == "" && legacyRoster != nil && equalStrings(recorded, sortedCopy(legacyRoster)) {
+	if cp.RosterFormat == "" && len(legacyRoster) > 0 && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
 		return nil
