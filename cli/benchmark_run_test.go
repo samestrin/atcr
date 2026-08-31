@@ -1596,3 +1596,35 @@ func TestRosterSignatureOf_DoesNotMutateItsInput(t *testing.T) {
 	assert.Equal(t, []string{"zeta", "alpha"}, c.Project.Agents,
 		"the signature builder sorts a copy; the configured lane order is not its to rewrite")
 }
+
+// A serial-only project (agents: [], serial_agents: [...]) is a supported config —
+// internal/registry/project.go rejects only BOTH lanes empty. For such a project the
+// parallel-lane-only projection is an EMPTY slice, and rosterSignatureOf returns
+// make([]string, 0), which is non-nil. The compat arm's `legacyRoster != nil` test is
+// therefore always true, and sortedCopy of an empty slice is nil, so the arm's
+// equalStrings(nil, nil) comparison is vacuous: a checkpoint recording `"roster": []`
+// (which decodes to a non-nil zero-length slice and so clears the fail-closed
+// cp.Roster == nil guard) resumes against ANY serial panel — any reviewers, any
+// models, any personas. That is precisely the AC4 panel-mixing the guard exists to
+// refuse.
+func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T) {
+	serialOnly := func(serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"dax", serialModel, "dax"}, [3]string{"greta", "m-greta", "greta"})
+		c.Project.Agents = nil
+		c.Project.SerialAgents = []string{"dax", "greta"}
+		return c
+	}
+
+	current := serialOnly("m-dax")
+	legacy := rosterSignatureOf(current, current.Project.Agents)
+	require.NotNil(t, legacy, "the parallel-lane projection of a serial-only project is empty but NOT nil — that is what makes the arm's nil test vacuous")
+	require.Empty(t, legacy)
+
+	// What the shipped binary wrote for a serial-only project, as it round-trips
+	// through JSON: an empty array, not a missing field.
+	cp := &runCheckpoint{Roster: []string{}}
+
+	err := validateCheckpointRoster(cp, rosterSignature(current), legacy)
+	require.Error(t, err, "an empty recorded roster proves nothing about the panel; excusing it resumes across any serial reviewer set")
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
