@@ -509,8 +509,8 @@ func TestLocatorNames_FallsBackToTheChangeSetWhenTheListingFails(t *testing.T) {
 	// stripped — the collision the disambiguator exists to resolve. Both are in the
 	// change set, so the fallback is the only thing that can see either of them.
 	changes := []localdebt.JustificationChange{
-		{ID: "aaaa1110", Shard: "2026-08‮-a.jsonl", Line: 1},
-		{ID: "aaaa1111", Shard: "2026-08​-a.jsonl", Line: 1},
+		{ID: "aaaa1110", Shard: "2026-08\u202e-a.jsonl", Line: 1},
+		{ID: "aaaa1111", Shard: "2026-08\u200b-a.jsonl", Line: 1},
 	}
 
 	names := locatorNames(gone, changes)
