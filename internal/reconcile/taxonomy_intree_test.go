@@ -533,3 +533,54 @@ var categories = []string{
 		"the error must name the anchor constant the exclusion is keyed on")
 	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
 }
+
+// inTreeCategoryBlocks is documented as reading one file, but its cross-check
+// delegates to a reader that walks the whole directory. Every fault that reader
+// can raise — an unparseable sibling, a missing or empty `categories` slice, an
+// element no Category* constant declares — would otherwise reach the consumer
+// looking exactly like a category.go block fault, inside a doc-table test whose
+// red name blames the doc. Wrap it so the origin is readable at the call site.
+func TestInTreeCategoryBlocks_CategoriesSliceFaultIsDistinguishable(t *testing.T) {
+	const wrap = "read the categories slice for the block cross-check"
+
+	t.Run("missing categories slice", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+`), 0o644))
+
+		_, err := inTreeCategoryBlocks(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), wrap,
+			"a categories-slice fault must announce itself as one, not as a category.go block fault")
+		assert.Contains(t, err.Error(), "no non-empty `categories` slice declared in",
+			"the wrap must preserve the underlying fault, not replace it")
+	})
+
+	t.Run("unparseable sibling file", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+}
+`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.go"), []byte("package reconcile\n\nthis is not go\n"), 0o644))
+
+		_, err := inTreeCategoryBlocks(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), wrap,
+			"a sibling file this function never claims to read must not surface as a category.go fault")
+		assert.Contains(t, err.Error(), "parse broken.go",
+			"the wrap must preserve the underlying fault, not replace it")
+	})
+}
