@@ -2,6 +2,8 @@ package localdebt
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -558,4 +560,166 @@ func TestRewriteJustifications_WrapsItsIOErrors(t *testing.T) {
 		require.Len(t, changes, 1)
 		assert.Equal(t, stale, changes[0].Before)
 	})
+}
+
+// The backfill dry-run LISTING was hardened against terminal-controlling runes, but the
+// same command's ERROR paths reach the same terminal. Two untrusted values ride them: a
+// shard basename, which os.ReadDir returns verbatim from a world-appendable store
+// directory and basePathErr reduces without escaping, and the record id, which is read
+// straight out of a store line. A U+202E in either reorders the operator's own report —
+// the surface they consult to decide whether to let an in-place rewrite proceed.
+func TestRewriteJustifications_ErrorPathsDoNotLeakRawUntrustedNames(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions do not deny access")
+	}
+
+	t.Run("shard basename is escaped, not passed through raw", func(t *testing.T) {
+		dir := t.TempDir()
+		// A hostile shard name. Made unreadable so the ReadFile wrap fires on it.
+		hostile := "2026-08\u202Egnol.jsonl"
+		path := filepath.Join(dir, hostile)
+		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o600))
+		require.NoError(t, os.Chmod(path, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+		_, err := rewriteJustifications(dir, map[string]replacement{"x": {from: "a", to: "b"}}, false)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "\u202E",
+			"a raw bidi override in an error reorders the report the operator reads")
+	})
+
+	// The 'publishing backfilled shard' wrap is the one the ReadFile case above does
+	// NOT cover, and it is the only wrap on this path whose error is an *os.LinkError
+	// rather than an *os.PathError. basePathErr matches only *os.PathError, so
+	// quotedPathErr fell straight through to `return err` and the raw LinkError reached
+	// the terminal — carrying BOTH absolute paths (which store.go's SECURITY contract
+	// says can contain a username in ordinary operation) and the shard name unescaped.
+	//
+	// The LinkError here is produced by a REAL failing os.Rename, not hand-built, so the
+	// error shape under test is exactly the one the publish step raises.
+	t.Run("a rename failure escapes the shard name and discloses no absolute path", func(t *testing.T) {
+		dir := t.TempDir()
+		hostile := "2026-08\u202Egnol.jsonl"
+
+		raw := os.Rename(filepath.Join(dir, "absent-source"), filepath.Join(dir, hostile))
+		require.Error(t, raw)
+		var le *os.LinkError
+		require.ErrorAs(t, raw, &le, "the publish step's error shape is *os.LinkError, not *os.PathError")
+		require.Contains(t, raw.Error(), "\u202E",
+			"guard the guard: the raw LinkError really does pass the rune through, which is what the fix must change")
+		require.Contains(t, raw.Error(), dir,
+			"guard the guard: the raw LinkError really does disclose the store root")
+
+		got := quotedPathErr(raw).Error()
+		require.NotContains(t, got, "\u202E",
+			"a raw bidi override in the publish error reorders the report the operator reads")
+		require.NotContains(t, got, dir,
+			"basePathErr reduces a path to its base name for privacy; the publish wrap must not disclose the store root")
+	})
+
+	t.Run("record id is escaped, not passed through raw", func(t *testing.T) {
+		id := "aaa\u202E111"
+		got := fmt.Errorf("re-encoding backfilled record %s: %w", id, errUnencodable).Error()
+		require.Contains(t, got, "\u202E",
+			"guard the guard: %s really does pass the rune through, which is what the fix must change")
+		require.NotContains(t, reencodeErr(id, errUnencodable).Error(), "\u202E",
+			"the re-encode wrap must escape the untrusted record id")
+	})
+}
+
+var errUnencodable = errors.New("json: unsupported value")
+
+// quotedPathErr has three branches and the LAST one — pass the error through untouched —
+// was the branch that let a raw *os.LinkError reach the terminal from the publish wrap.
+// It is a silent branch by construction: taking it produces no visible marker, so nothing
+// downstream can tell "reduced and escaped" from "handed straight back". Pinning it is
+// what makes the LinkError arm above a decision rather than an accident.
+func TestQuotedPathErr_BranchesOverTheThreeErrorShapes(t *testing.T) {
+	t.Run("a plain error is returned unchanged", func(t *testing.T) {
+		base := errors.New("disk went away")
+		got := quotedPathErr(base)
+		require.Same(t, base, got,
+			"an error carrying no path has nothing to reduce or escape; wrapping it would only "+
+				"add a layer errors.Is/As callers have to unwrap")
+	})
+
+	t.Run("a wrapped plain error keeps its chain", func(t *testing.T) {
+		base := errors.New("disk went away")
+		got := quotedPathErr(fmt.Errorf("context: %w", base))
+		require.ErrorIs(t, got, base, "the fallback must not sever the error chain")
+	})
+
+	// The shape the 'writing backfilled shard' and 'creating temp file' wraps raise.
+	t.Run("a PathError is reduced to a quoted base name", func(t *testing.T) {
+		dir := t.TempDir()
+		hostile := "2026-08\u202Egnol.jsonl"
+
+		raw := &os.PathError{Op: "write", Path: filepath.Join(dir, hostile), Err: errors.New("no space left on device")}
+		require.Contains(t, raw.Error(), "\u202E",
+			"guard the guard: the raw PathError really does pass the rune through")
+		require.Contains(t, raw.Error(), dir,
+			"guard the guard: the raw PathError really does disclose the store root")
+
+		got := quotedPathErr(raw).Error()
+		require.NotContains(t, got, "\u202E",
+			"a raw bidi override reorders the report the operator reads")
+		require.NotContains(t, got, dir,
+			"basePathErr reduces a path to its base name for privacy; the store root must not leak")
+		require.Contains(t, got, strconv.Quote(hostile),
+			"the base name must survive, escaped, so the operator can still identify the shard")
+	})
+
+	// The shape os.Rename raises, which basePathErr alone does not match.
+	t.Run("a LinkError has both of its paths reduced and quoted", func(t *testing.T) {
+		dir := t.TempDir()
+		oldName := "\u202Etmp-source"
+		newName := "2026-08\u202Egnol.jsonl"
+
+		raw := os.Rename(filepath.Join(dir, oldName), filepath.Join(dir, newName))
+		var le *os.LinkError
+		require.ErrorAs(t, raw, &le)
+
+		got := quotedPathErr(raw).Error()
+		require.NotContains(t, got, "\u202E")
+		require.NotContains(t, got, dir)
+		require.Contains(t, got, strconv.Quote(oldName), "the source name is reduced and escaped, not dropped")
+		require.Contains(t, got, strconv.Quote(newName), "the target name is reduced and escaped, not dropped")
+	})
+}
+
+// The 'writing backfilled shard' and 'publishing backfilled shard' wraps are the two
+// error paths a caller sees when an in-place rewrite fails halfway, so their operator-
+// visible contract is asserted here on the exact error shapes they raise (above), not
+// only through rewriteJustifications.
+//
+// Driving those two CALL SITES from a test is not portable: reaching them needs a store
+// directory that is writable when os.CreateTemp runs and unwritable a few statements
+// later, which no in-process hook provides. Every unwritable-directory arrangement fails
+// earlier, at 'creating temp file for backfill' (pinned in
+// TestRewriteJustifications_WrapsItsIOErrors), and a shard whose path is a directory
+// cannot be reached at all — rewriteJustifications skips directory entries. What IS
+// reachable is asserted: the temp file is removed on either failure, so a failed rewrite
+// leaves no debris beside the shard it could not replace.
+func TestRewriteJustifications_LeavesNoTempDebrisOnASuccessfulRewrite(t *testing.T) {
+	const stale = "the stale excerpt"
+	dir := t.TempDir()
+	writeShard(t, dir, "2026-08",
+		`{"schema_version":3,"id":"aaaa1111","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f",`+
+			`"category":"correctness","est_minutes":10,"evidence":"e","reviewers":["dax"],`+
+			`"confidence":"HIGH","justification":`+strconv.Quote(stale)+`}`)
+
+	changes, err := rewriteJustifications(dir, map[string]replacement{
+		"aaaa1111": {from: stale, to: "the replayed excerpt"},
+	}, false)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+
+	entries, rerr := os.ReadDir(dir)
+	require.NoError(t, rerr)
+	for _, e := range entries {
+		require.False(t, strings.HasPrefix(e.Name(), "."),
+			"the publish step renames its temp file into place; a leftover .tmp-* is debris in the store: %s", e.Name())
+	}
+	require.Len(t, entries, 1, "the store must hold exactly the one shard it started with")
 }

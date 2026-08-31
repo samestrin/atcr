@@ -1,3 +1,19 @@
+## [35.16.6.6] - 2026-08-29
+
+### Added
+- **Producer-side publication gates for reviewer identity.** Epic 35.16.6.2 taught `atcr benchmark export` to reject a reviewer identity the public scrub cannot carry intact, but nothing stopped `atcr benchmark run` from *producing* one: the fold's scrub provably leaves control (Cc) and format (Cf) runes alone, so a soft hyphen (U+00AD) or zero-width space (U+200B) pasted into a registry `model:` reached a finished run-result that export then refused permanently — after the whole reviewer panel had been paid for. `benchmark run` now rejects such an identity **at load, before any reviewer is invoked**, across both roster lanes (`agents` and `serial_agents`), each agent's transitive `fallback` chain, and the agent name itself where it stands in for an empty `persona`. A second check at the fold catches the one source the load gate cannot see — a model id echoed back in the provider's own usage payload.
+- **`atcr leaderboard --export` applies the same control/format-rune rule.** It is the sibling producer into the same public envelope through the same scrub, so the "no invisible rune reaches the board" invariant now holds for both. The check runs on the records your filters actually select, so a stale record excluded by `--since` or `--model` cannot fail an export it was never part of.
+
+### Changed
+- **Each suite identity field now names itself in its own rejection message.** A bad `suite_version` was reported with "rename the suite in the suite manifest" — an action that does not fix the error and additionally invalidates any existing `--checkpoint`, discarding the paid work of every completed case. The `suite` and case-id messages are unchanged.
+- **`atcr debt backfill-justifications --dry-run` strips format runes from the `<shard>:<line>` locator.** The record id beside it was already escaped, but the shard — the field that literally names the line an in-place rewrite would overwrite — passed a bidi override straight through to the terminal. The rune is stripped rather than escaped so the locator stays one copy-pasteable token.
+
+### Fixed
+- `docs/benchmark.md` documented the pre-35.16.6.2 rules: the suite manifest field table listed only "Required, non-empty" for `suite`/`suite_version`, and the export section's "hand-assembly only" bullet gave a reason that does not hold for the printability rule. Both are corrected, and the three publishable-identity rules are now stated in full.
+- `docs/scorecard.md` now documents the `leaderboard --export` identity rejection, and states plainly which rules the two producers do and do not share.
+
+*Shipped via /execute-epic (epic 35.16.6.6)*
+
 ## [35.16.6.5] - 2026-08-28
 
 ### Added

@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -104,15 +109,57 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// The two get different treatment on purpose. The id takes %q, which escapes the
 	// FORMAT runes (Cf) sanitizeCell deliberately keeps - a bidi override is not a C0/C1
 	// control, and it is the rune that reorders which line appears to be named. The
-	// shard takes sanitizeCell so the `<shard>:<line>` locator stays copy-pasteable;
-	// quoting it would put the line number outside the name.
+	// shard cannot take %q: that would put the line number outside the quoted name and
+	// break `<shard>:<line>` as one copy-pasteable token. It takes sanitizeLocator
+	// instead, which removes the terminal-controlling categories.
 	if dryRun {
+		// Resolved once over the whole store directory: a collision is a property of the
+		// SET of shard names on disk, so it cannot be detected one row at a time — nor
+		// from the change set alone, which cannot see an unchanged colliding file.
+		locators := locatorNames(dir, res.Changes)
 		for _, c := range res.Changes {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s:%d %q\n    before: %q\n    after:  %q\n",
-				sanitizeCell(c.Shard), c.Line, c.ID, c.Before, c.After)
+				locators[c.Shard], c.Line, c.ID, c.Before, c.After)
 		}
 	}
 	return nil
+}
+
+// sanitizeLocator is sanitizeCell plus category Cf, for a field rendered UNQUOTED on
+// a terminal surface.
+//
+// sanitizeCell keeps Cf on purpose: it feeds table cells whose neighbours are quoted,
+// and a legitimate identity may carry a joiner. That trade does not hold for the
+// `<shard>:<line>` locator in the backfill dry run. The shard is a store filename from
+// os.ReadDir over a world-appendable directory, it is printed with %s so nothing
+// escapes it downstream, and it is the field that literally NAMES the line the
+// in-place rewrite would overwrite — the one the surrounding comment identifies as the
+// whole attack. A U+202E there reorders which line appears to be named, on the surface
+// an operator consults to decide whether to let the rewrite proceed.
+//
+// Cf is STRIPPED rather than escaped so the locator stays one token a reader can copy
+// whole; quoting it would push the line number outside the name.
+//
+// This is NOT equivalent to the %q applied to the id beside it. %q escapes everything
+// strconv.IsPrint rejects, which includes Zs runes (U+00A0, U+2000-U+200A) and Co
+// private-use runes that neither sanitizeCell nor this strip touches. What is removed
+// here is exactly the set that can drive a terminal: C0/ESC/DEL, C1, U+2028/U+2029 and
+// Cf. Stripping also means the printed locator is not guaranteed to be the literal
+// filename on disk — and, because it is lossy, that two DIFFERENT filenames can reduce
+// to the same token. Callers rendering a SET of locators must therefore go through
+// locatorNames, which appends a per-file suffix where that collision actually happens;
+// this function alone sees one name and cannot detect it.
+//
+// It is deliberately not a widening of sanitizeCell: `debt list` and
+// `leaderboard --table` share that helper, and Cf pass-through there is the documented
+// behavior, not an oversight.
+func sanitizeLocator(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, sanitizeCell(s))
 }
 
 func pluralLines(n int) string {
@@ -120,4 +167,75 @@ func pluralLines(n int) string {
 		return "line"
 	}
 	return "lines"
+}
+
+// locatorNames maps each RAW shard name in changes to the token the dry run prints for
+// it, disambiguating names that collide once sanitizeLocator strips their Cf runes.
+//
+// The strip is lossy by design (it keeps the locator one copy-pasteable token instead
+// of quoting it), and lossy means two DIFFERENT store filenames can reduce to the same
+// string. On this surface that is not cosmetic: the listing is what an operator reads
+// to decide whether to let an in-place rewrite proceed, and two identical locators make
+// it ambiguous WHICH file would be rewritten. Marking the row "name sanitized" does not
+// help — both rows carry the same mark and still read alike; only a per-file suffix
+// tells them apart.
+//
+// The suffix is derived from the raw name, not from an index, so it is stable across
+// runs and independent of directory order — an operator comparing two dry runs sees the
+// same token for the same file. It is appended only where a collision actually exists,
+// so the ordinary single-shard listing is unchanged.
+//
+// The collision is resolved against every shard the store DIRECTORY holds, not against
+// the change set alone. The ambiguity being removed is between the printed token and a
+// real file on disk, and the dangerous shape is exactly the one a change-set-only map
+// cannot see: a genuine 2026-08.jsonl with nothing to repair sits beside a planted
+// 2026-08<U+200B>.jsonl that carries the rewrite, the listing prints "2026-08.jsonl:1"
+// bare, and the operator approves believing their August shard is the one being
+// repaired. The listing filter matches rewriteJustifications' own walk — non-directory
+// entries ending in ".jsonl" — so the two agree on what a shard is.
+//
+// A listing error is not fatal here: the rewrite the operator is about to approve has
+// already been computed, so the dry run falls back to the change set (the pre-existing
+// behavior) rather than failing on a directory it could read moments earlier.
+//
+// Residual case, accepted rather than overlooked: a store file literally named like an
+// already-disambiguated token ("2026-08.jsonl#a1b2c3") would print the same as the
+// disambiguated form of some other file. Reaching it needs an attacker to guess a
+// SHA-256 prefix of a filename they do not control, and the outcome is the same
+// ambiguity that exists today rather than a worse one.
+func locatorNames(dir string, changes []localdebt.JustificationChange) map[string]string {
+	rawByToken := map[string]map[string]bool{}
+	add := func(shard string) {
+		t := sanitizeLocator(shard)
+		if rawByToken[t] == nil {
+			rawByToken[t] = map[string]bool{}
+		}
+		rawByToken[t][shard] = true
+	}
+
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+				continue
+			}
+			add(e.Name())
+		}
+	}
+	// Unconditional, not an else: a changed shard must be in the map even if the
+	// listing missed it (unreadable directory, or a file removed between the rewrite
+	// pass and this one), so a change can never print without its own name considered.
+	for _, c := range changes {
+		add(c.Shard)
+	}
+
+	out := make(map[string]string, len(changes))
+	for _, c := range changes {
+		t := sanitizeLocator(c.Shard)
+		if len(rawByToken[t]) > 1 {
+			sum := sha256.Sum256([]byte(c.Shard))
+			t += "#" + hex.EncodeToString(sum[:])[:6]
+		}
+		out[c.Shard] = t
+	}
+	return out
 }

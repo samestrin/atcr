@@ -1184,3 +1184,447 @@ func TestSuiteIdentity_VerifyAndExportAgree(t *testing.T) {
 	assert.Contains(t, exportErr.Error(), fmt.Sprintf("%q", badSuite))
 	assert.Empty(t, stdout)
 }
+
+// The export gate at cli/benchmark.go rejects a run-result whose reviewer identity
+// carries a Cc/Cf rune, but nothing stopped `benchmark run` from PRODUCING one: the
+// fold's scrub is ScrubPublicRecord, which provably leaves control and format runes
+// alone, and the post-scrub collision check cannot see them either — two identities
+// differing only by an invisible rune do not collide after a scrub that keeps it. So
+// the operator paid for the whole panel and received a permanently unexportable
+// artifact whose remedy lives in registry.yaml, not in the file they were handed.
+//
+// This is the CONFIGURED half, and it must fire at load, beside the suite-identity
+// pre-flight, for the same reason that one does: a rejection after the fold still
+// follows the full run.
+func TestExecuteBenchmarkRun_RejectsNonPrintingReviewerIdentityBeforeExecuting(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		agent   [3]string
+		offend  string
+		wantErr string
+	}{
+		{
+			// A pasted zero-width space in a registry model id: category Cf, and
+			// invisible in the editor the operator would inspect.
+			name:   "model carrying a zero-width space",
+			agent:  [3]string{"greta", "m-gre\u200bta", "greta"},
+			offend: "m-gre\u200bta",
+		},
+		{
+			// A soft hyphen in a persona: also Cf, also invisible.
+			name:   "persona carrying a soft hyphen",
+			agent:  [3]string{"greta", "m-greta", "gre\u00adta"},
+			offend: "gre\u00adta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// A VALID diff and a VALID manifest, so the only thing this test can fail
+			// on is the reviewer gate: an unparseable fixture would reject the run for
+			// an unrelated reason and the assertion below would pass without the gate.
+			diff := "--- a/pay.go\n+++ b/pay.go\n@@ -1,3 +1,3 @@\n func total() int {\n-\treturn 0\n+\treturn 1\n }\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"), []byte(diff), 0o600))
+			manifest := `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"case-01","diff":"case-01.diff","expected_categories":["correctness"]}]}`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+			completer := &countingCompleter{}
+			_, err := executeBenchmarkRun(context.Background(), benchCfg(tc.agent), completer, dir, time.Unix(0, 0), "")
+
+			require.Error(t, err, "a configured reviewer identity that cannot publish must be rejected at load")
+			assert.Contains(t, err.Error(), "non-printing rune")
+			// %q, not %s: printing a bidi override or a zero-width rune verbatim would
+			// corrupt the operator's own terminal with the defect being reported, and an
+			// invisible rune rendered raw tells them nothing about what to edit.
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			assert.Contains(t, err.Error(), "greta", "the diagnostic must name the AGENT, because the remedy is in the registry entry, not in any produced file")
+			assert.Zero(t, completer.calls.Load(), "the reviewer gate must fire before any reviewer is invoked — otherwise the operator still pays for the full panel")
+		})
+	}
+}
+
+// The load-time roster gate above reads the CONFIGURED registry, but only half of a
+// reviewer identity is configured: reviewerModel prefers the usage-reported model and
+// then the fallback model over cfg.Registry.Agents[...].Model, so a Cc/Cf rune
+// arriving from a provider's own usage payload never passes through the roster gate at
+// all. This is the backstop that makes an unexportable run-result unreachable rather
+// than merely unlikely.
+func TestBuildRunResult_RejectsNonPrintingReviewerIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		model   string
+		persona string
+		offend  string
+	}{
+		{
+			// The realized-model shape: a provider echoes back an id carrying a
+			// zero-width space. No registry entry contains it.
+			name:  "realized model carrying a zero-width space",
+			model: "m-gre\u200bta", persona: "p", offend: "m-gre\u200bta",
+		},
+		{
+			name:  "persona carrying a bidi override",
+			model: "m", persona: "p-\u202ereviewer", offend: "p-\u202ereviewer",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			accs := map[reviewerKey]*reviewerAcc{}
+			var order []reviewerKey
+			require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+				model: tc.model, persona: tc.persona, caseID: "case-01",
+				expected: []string{"correctness"}, raised: []string{"correctness"},
+				outcome: benchmark.OutcomeFindings,
+			}))
+			m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{
+				{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+			}}
+
+			_, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+
+			require.Error(t, err, "the fold must not emit a run-result the export gate will permanently reject")
+			assert.Contains(t, err.Error(), "non-printing rune")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+		})
+	}
+}
+
+// The identity loop shared ONE remedy constant ("rename the suite in the suite
+// manifest") and one consequence across both {suite name} and {suite_version}, so a
+// bad suite_version was reported with a remedy naming the wrong field.
+//
+// Acting on that misdirection is not a harmless no-op. benchmark.ReproHashManifest
+// length-prefixes m.Suite into the hash and validateCheckpoint compares ReproHash,
+// Suite AND SuiteVersion, so renaming the suite makes the next
+// `benchmark run --checkpoint` fail with errCheckpointSuiteMismatch — discarding the
+// paid work of every completed case — and then re-raises the identical suite_version
+// error.
+func TestCheckPublishable_NamesTheOffendingIdentityFieldInItsRemedy(t *testing.T) {
+	// The suite arm's message must stay BYTE-IDENTICAL: it is the pre-existing
+	// behavior, and only the suite_version arm was ever wrong.
+	t.Run("suite version remedy names suite_version", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1.2.\u200B0", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "suite_version in the suite manifest",
+			"the remedy must name the field the operator has to edit; 'rename the suite' invalidates the checkpoint and does not fix the error")
+		assert.NotContains(t, err.Error(), "rename the suite in the suite manifest",
+			"the suite arm's remedy must not be reused for suite_version")
+	})
+
+	t.Run("suite name remedy is unchanged", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s\u200Buite", SuiteVersion: "1", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "rename the suite in the suite manifest",
+			"only the suite_version arm changes; the suite arm stays byte-identical")
+	})
+
+	// The consequence clause is threaded too, not just the remedy: it is the half that
+	// explains WHY, and "the published envelope must name the same suite the manifest
+	// does" reads as a suite-name rule when the offending field is the version.
+	t.Run("suite version consequence names suite_version", func(t *testing.T) {
+		m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1.0 beta@corp", Cases: []benchmark.Case{
+			{ID: "case-01", ExpectedCategories: []string{"correctness"}},
+		}}
+		err := validateSuitePublishableCaseIDs(m, "suite.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "publication scrub rewrites")
+		// The subject clause already says "declares suite_version", so asserting the
+		// string appears at all would pass without the consequence being threaded.
+		// Assert on the suite-specific wording that must NOT survive instead.
+		assert.NotContains(t, err.Error(), "must name the same suite the manifest does",
+			"the rewrite arm quotes the consequence; a suite-name explanation is wrong for a version defect")
+		assert.Contains(t, err.Error(), "must name the same suite_version the manifest does",
+			"the consequence must be threaded per field, not shared")
+	})
+}
+
+// The load-time gate has to cover every identity the run can PUBLISH, not just the
+// obvious field on the obvious lane. Each case below reaches the published identity by
+// a route the first version of the gate missed, and each must still fail before the
+// panel is invoked — a rejection that lands at the fold instead is a rejection the
+// operator paid for.
+func TestExecuteBenchmarkRun_ReviewerGateCoversEveryPublishableIdentitySource(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cfg      func() *fanout.ReviewConfig
+		offend   string
+		wantsVia bool
+	}{
+		{
+			// fanout builds slots for cfg.Project.SerialAgents exactly as it does for
+			// the parallel lane (its own rosterNames is the union of the two), so a
+			// serial reviewer publishes a leaderboard row like any other.
+			name: "serial lane",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", "m-\u200Bdax", "dax"})
+				c.Project.Agents = []string{"greta"}
+				c.Project.SerialAgents = []string{"dax"}
+				return c
+			},
+			offend: "m-\u200Bdax",
+		},
+		{
+			// reviewerModel prefers a.FallbackModel over the primary, and the fallback
+			// is just another registry entry reachable by name — so its identity is
+			// fully knowable at load.
+			name: "fallback chain",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"greta-backup", "m-\u200Bbackup", "greta"})
+				c.Project.Agents = []string{"greta"}
+				a := c.Registry.Agents["greta"]
+				a.Fallback = "greta-backup"
+				c.Registry.Agents["greta"] = a
+				return c
+			},
+			offend:   "m-\u200Bbackup",
+			wantsVia: true,
+		},
+		{
+			// reviewerPersona falls back to the AGENT NAME when the registry persona is
+			// empty, so the roster key itself becomes a published identity — and a
+			// project roster entry is validated only for non-emptiness.
+			name: "agent name used as the persona",
+			cfg: func() *fanout.ReviewConfig {
+				c := benchCfg([3]string{"gre\u200Bta", "m-greta", ""})
+				return c
+			},
+			offend: "gre\u200Bta",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			diff := "--- a/pay.go\n+++ b/pay.go\n@@ -1,3 +1,3 @@\n func total() int {\n-\treturn 0\n+\treturn 1\n }\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"), []byte(diff), 0o600))
+			manifest := `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"case-01","diff":"case-01.diff","expected_categories":["correctness"]}]}`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
+
+			completer := &countingCompleter{}
+			_, err := executeBenchmarkRun(context.Background(), tc.cfg(), completer, dir, time.Unix(0, 0), "")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "non-printing rune")
+			assert.Contains(t, err.Error(), fmt.Sprintf("%q", tc.offend))
+			if tc.wantsVia {
+				assert.Contains(t, err.Error(), "fallback of",
+					"a defect in a fallback entry must name the roster agent that reaches it, or the operator cannot find the row they configured")
+			}
+			assert.Zero(t, completer.calls.Load(),
+				"every publishable-identity source must be rejected BEFORE the panel runs, not at the fold")
+		})
+	}
+}
+
+// A fallback chain that loops must not hang the pre-flight. registry.Validate rejects a
+// cycle, but this gate runs on whatever config reached it, and an infinite loop inside
+// a guard is a worse failure than the defect it guards against.
+func TestValidatePublishableReviewerRoster_TerminatesOnAFallbackCycle(t *testing.T) {
+	c := benchCfg([3]string{"a", "m-a", "p-a"}, [3]string{"b", "m-b", "p-b"})
+	c.Project.Agents = []string{"a"}
+	for name, to := range map[string]string{"a": "b", "b": "a"} {
+		ac := c.Registry.Agents[name]
+		ac.Fallback = to
+		c.Registry.Agents[name] = ac
+	}
+	require.NoError(t, validatePublishableReviewerRoster(c), "a clean cycle must terminate and pass")
+}
+
+// AC4's roster guard refuses a resume whose reviewer panel changed. fanout builds the
+// serial lane from the same union rosterNames returns, and
+// validatePublishableReviewerRoster already treats a serial reviewer as a publishable
+// identity — so a signature built from Project.Agents alone compares EQUAL across a
+// changed serial lane and resumes anyway: the cases the checkpoint holds replay the old
+// serial reviewer, the rest are scored by the new one, and one run-result publishes two
+// panels as a single comparable measurement.
+func TestRosterSignature_CoversTheSerialLane(t *testing.T) {
+	cfgWith := func(serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"dax", serialModel, "dax"})
+		c.Project.Agents = []string{"greta"}
+		c.Project.SerialAgents = []string{"dax"}
+		return c
+	}
+
+	before := rosterSignature(cfgWith("m-dax-v1"))
+	assert.Contains(t, before, "dax=m-dax-v1=dax",
+		"a serial reviewer publishes a leaderboard row, so it must be part of the identity a resume compares")
+
+	newCfg := cfgWith("m-dax-v2")
+	err := validateCheckpointRoster(&runCheckpoint{Roster: before}, rosterSignature(newCfg), rosterSignatureOf(newCfg, newCfg.Project.Agents))
+	require.Error(t, err, "a changed serial reviewer must abort the resume, not mix two panels into one run-result")
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
+
+// The persona arm must not walk the fallback chain. reviewerPersona resolves
+// cfg.Registry.Agents[a.Agent].Persona where a.Agent is always the PRIMARY slot name
+// even when a fallback served the case (reviewerKey states this as the contract), so a
+// fallback entry's own persona is never published. Refusing the whole panel at load for
+// a rune in a value that prints nowhere costs the operator a run for nothing — and the
+// empty-persona case is worse still, because the gate then validates the CHAIN entry's
+// name, which reviewerPersona would never return either.
+func TestValidatePublishableReviewerRoster_PersonaArmDoesNotWalkTheFallbackChain(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		backupPersona string
+	}{
+		{name: "backup declares its own offending persona", backupPersona: "p-\u200Bbackup"},
+		{name: "backup declares no persona, so its name would be used", backupPersona: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := benchCfg(
+				[3]string{"greta", "m-greta", "greta"},
+				[3]string{"gre\u200Bta-backup", "m-backup", tc.backupPersona},
+			)
+			c.Project.Agents = []string{"greta"}
+			a := c.Registry.Agents["greta"]
+			a.Fallback = "gre\u200Bta-backup"
+			c.Registry.Agents["greta"] = a
+
+			require.NoError(t, validatePublishableReviewerRoster(c),
+				"no persona this chain carries can reach the published document, so none of them may refuse the panel")
+		})
+	}
+}
+
+// The model arm must keep walking the chain: reviewerModel genuinely prefers
+// a.FallbackModel, so a fallback's model IS published. Narrowing the persona arm must
+// not narrow this one with it.
+func TestValidatePublishableReviewerRoster_ModelArmStillWalksTheFallbackChain(t *testing.T) {
+	c := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"greta-backup", "m-\u200Bbackup", "greta"})
+	c.Project.Agents = []string{"greta"}
+	a := c.Registry.Agents["greta"]
+	a.Fallback = "greta-backup"
+	c.Registry.Agents["greta"] = a
+
+	err := validatePublishableReviewerRoster(c)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model")
+	assert.Contains(t, err.Error(), "fallback of")
+}
+
+// A checkpoint written by a SHIPPED binary records the parallel lane only: origin/main's
+// rosterSignature built its signature from cfg.Project.Agents alone. This branch unions
+// both lanes, so for any project with a non-empty serial_agents lane that existing
+// checkpoint is now short by every serial reviewer and validateCheckpointRoster reports
+// a panel change that never happened — telling the operator to discard a checkpoint that
+// holds every already-paid completed case of a suite that routinely runs past ten
+// minutes. That is the exact forfeit --checkpoint exists to prevent.
+//
+// The compat arm is deliberately narrow: it accepts a recorded roster ONLY when it
+// equals the parallel-lane-only projection of the CURRENT config. A parallel lane that
+// itself drifted still mismatches, and once accepted the roster is rewritten in the
+// union form so the very next save is guarded at full strength.
+func TestValidateCheckpointRoster_AcceptsAPreSerialLaneCheckpoint(t *testing.T) {
+	cfg := func(parallelModel, serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"greta", parallelModel, "greta"}, [3]string{"dax", serialModel, "dax"})
+		c.Project.Agents = []string{"greta"}
+		c.Project.SerialAgents = []string{"dax"}
+		return c
+	}
+
+	t.Run("legacy parallel-only roster resumes", func(t *testing.T) {
+		current := cfg("m-greta", "m-dax")
+		// Exactly what the shipped binary wrote: Project.Agents alone.
+		legacy := rosterSignatureOf(current, current.Project.Agents)
+		require.Equal(t, []string{"greta=m-greta=greta"}, legacy,
+			"the pre-change signature is the parallel lane only — that is the shape on disk")
+
+		cp := &runCheckpoint{Roster: legacy}
+		require.NoError(t,
+			validateCheckpointRoster(cp, rosterSignature(current), legacy),
+			"an unchanged panel recorded in the old format must resume, not forfeit the paid cases")
+
+		assert.Equal(t, rosterSignature(current), cp.Roster,
+			"the accepted checkpoint must be upgraded to the union form in memory, so the next save is guarded at full strength")
+		assert.Equal(t, rosterFormatUnion, cp.RosterFormat,
+			"and stamped, so a later resume cannot mistake the upgraded roster for another legacy one and excuse a real panel change")
+	})
+
+	t.Run("a drifted parallel lane still aborts", func(t *testing.T) {
+		recorded := rosterSignatureOf(cfg("m-greta-v1", "m-dax"), []string{"greta"})
+		current := cfg("m-greta-v2", "m-dax")
+
+		err := validateCheckpointRoster(&runCheckpoint{Roster: recorded},
+			rosterSignature(current), rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "the compat arm must not excuse a parallel reviewer whose model changed")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+
+	// The over-admission the format stamp closes. An unstamped parallel-lane-only
+	// roster is byte-identical whether the old binary wrote it or this binary wrote it
+	// for a project whose serial lane was empty at the time. Without the stamp the
+	// compat arm would resume across a serial reviewer ADDED between runs — the AC4
+	// panel-mixing the guard exists to refuse — because that case is indistinguishable
+	// from the legacy one on disk.
+	t.Run("a stamped roster is never excused by the compat arm", func(t *testing.T) {
+		current := cfg("m-greta", "m-dax")
+		// Written by THIS binary when serial_agents was still empty, then a serial
+		// reviewer was added to the config.
+		cp := &runCheckpoint{
+			Roster:       rosterSignatureOf(current, current.Project.Agents),
+			RosterFormat: rosterFormatUnion,
+		}
+
+		err := validateCheckpointRoster(cp, rosterSignature(current),
+			rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "adding a serial reviewer mid-suite must abort — the stamp proves this roster was already the union form")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+
+	t.Run("a union-format roster with a drifted serial lane still aborts", func(t *testing.T) {
+		recorded := rosterSignature(cfg("m-greta", "m-dax-v1"))
+		current := cfg("m-greta", "m-dax-v2")
+
+		err := validateCheckpointRoster(&runCheckpoint{Roster: recorded},
+			rosterSignature(current), rosterSignatureOf(current, current.Project.Agents))
+		require.Error(t, err, "the AC4 serial-lane guard this branch added must survive the compat arm")
+		assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+	})
+}
+
+// rosterSignatureOf must not sort the caller's slice in place: Project.Agents is the
+// live config, and reordering it would change the declared lane order every caller
+// downstream reads.
+func TestRosterSignatureOf_DoesNotMutateItsInput(t *testing.T) {
+	c := benchCfg([3]string{"zeta", "m-z", "z"}, [3]string{"alpha", "m-a", "a"})
+	c.Project.Agents = []string{"zeta", "alpha"}
+
+	_ = rosterSignatureOf(c, c.Project.Agents)
+
+	assert.Equal(t, []string{"zeta", "alpha"}, c.Project.Agents,
+		"the signature builder sorts a copy; the configured lane order is not its to rewrite")
+}
+
+// A serial-only project (agents: [], serial_agents: [...]) is a supported config —
+// internal/registry/project.go rejects only BOTH lanes empty. For such a project the
+// parallel-lane-only projection is an EMPTY slice, and rosterSignatureOf returns
+// make([]string, 0), which is non-nil. The compat arm's `legacyRoster != nil` test is
+// therefore always true, and sortedCopy of an empty slice is nil, so the arm's
+// equalStrings(nil, nil) comparison is vacuous: a checkpoint recording `"roster": []`
+// (which decodes to a non-nil zero-length slice and so clears the fail-closed
+// cp.Roster == nil guard) resumes against ANY serial panel — any reviewers, any
+// models, any personas. That is precisely the AC4 panel-mixing the guard exists to
+// refuse.
+func TestValidateCheckpointRoster_EmptyRecordedRosterIsNeverExcused(t *testing.T) {
+	serialOnly := func(serialModel string) *fanout.ReviewConfig {
+		c := benchCfg([3]string{"dax", serialModel, "dax"}, [3]string{"greta", "m-greta", "greta"})
+		c.Project.Agents = nil
+		c.Project.SerialAgents = []string{"dax", "greta"}
+		return c
+	}
+
+	current := serialOnly("m-dax")
+	legacy := rosterSignatureOf(current, current.Project.Agents)
+	require.NotNil(t, legacy, "the parallel-lane projection of a serial-only project is empty but NOT nil — that is what makes the arm's nil test vacuous")
+	require.Empty(t, legacy)
+
+	// What the shipped binary wrote for a serial-only project, as it round-trips
+	// through JSON: an empty array, not a missing field.
+	cp := &runCheckpoint{Roster: []string{}}
+
+	err := validateCheckpointRoster(cp, rosterSignature(current), legacy)
+	require.Error(t, err, "an empty recorded roster proves nothing about the panel; excusing it resumes across any serial reviewer set")
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch)
+}

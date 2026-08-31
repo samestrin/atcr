@@ -278,6 +278,39 @@ schema — it is a constant `"reviewer"` for reconcile records), sorted ascendin
 `submitted_at`). A no-match/empty result writes the canonical guidance to stderr
 and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
 
+**Unpublishable identity → error, exit `1`.** A record whose `model` or `reviewer`
+carries a control (Cc) or format (Cf) rune is rejected before anything is written.
+The scrub is not a defense here — it provably leaves both categories alone — so an
+invisible rune (U+00AD, U+200B) or a bidi override (U+202E) would otherwise survive
+into the published envelope and misattribute a row to a model that was never
+measured. `atcr benchmark export` applies the same control/format-rune rule to its own
+envelope, so no invisible rune reaches the board from either producer.
+
+**Identity that is empty once scrubbed → row skipped, export continues.** A record
+whose `model` or `reviewer` is non-blank in the store but scrubs away to nothing
+(`"admin@internal.host"` loses its email-shaped token whole; so do
+`"/models/mistral-7b.gguf"`, `"bedrock@us-east-1/claude"` and `"~/models/foo"`) is
+**dropped from the envelope** and named on stderr — it is never published as
+`model: ""`. It does not fail the export, because this shape occurs in ordinary
+history and `--export` reads the whole unrotated store, so one such record would
+otherwise take down an export that had succeeded the day before, clearable only by
+hand-editing a JSONL store. If every selected record is dropped, the ordinary
+no-records error is raised instead of an empty envelope. An identity that is already
+empty — or whitespace-only, which is the same thing to every reader of the store — is
+a record written without a model, not a scrub casualty: it is left alone and still
+publishes.
+
+`benchmark export` applies the same rule as a **hard rejection** rather than a skip.
+The asymmetry is deliberate: it validates one just-produced run-result file, where
+the cost of failing is re-running that one command, and there is no unrelated history
+in the document to preserve.
+
+The check runs on the records your **filters actually select**, not on the whole
+store, so a stale record excluded by `--since` or `--model` cannot fail an export
+whose envelope was clean. Both the error and the skip report name the offending
+record's `run_id` and quote the offending value, so the row can be located and
+repaired in the store.
+
 > **Suite vs production submissions.** `leaderboard --export` produces a
 > *production* submission from your local runs. The public board accepts only
 > *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
