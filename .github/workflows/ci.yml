@@ -105,12 +105,15 @@ jobs:
         # tests to run"), and a package with no _test.go files at all prints
         # "[no test files]" instead — a different string, so a check written
         # against the first one passes the second straight through. A positive
-        # "--- PASS:"/"--- SKIP:" assertion on the test's own name covers both,
-        # and any future third way, without needing to name any of them.
+        # "--- PASS:"/"--- SKIP:" assertion on the test's own name covers both
+        # without naming either. The pattern is anchored and closed with " (":
+        # -run is an unanchored regex and grep matches substrings, so an
+        # unanchored check would accept a rename to ...MatchesInTreeV2, which is
+        # a rename this step exists to catch.
         run: |
           out=$(go test ./internal/reconcile/ -run TestReconcileModule_ReleasedVocabularyMatchesInTree -v -count=1 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
-          if ! echo "$out" | grep -q -- "--- PASS: TestReconcileModule_ReleasedVocabularyMatchesInTree\|--- SKIP: TestReconcileModule_ReleasedVocabularyMatchesInTree"; then
+          if ! echo "$out" | grep -qE -- "^ *--- (PASS|SKIP): TestReconcileModule_ReleasedVocabularyMatchesInTree \("; then
             echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed, moved, or its package stripped of tests?"
             exit 1
           fi

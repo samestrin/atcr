@@ -30,16 +30,33 @@ import (
 // constant of the anchor name behind it, inTreeCategoryBlocks reports that as an
 // error instead of absorbing it.
 //
-// This pair is also where the exemption RULE lives, stated once: the value
-// declared by CategoryOutOfScope is the only member of the vocabulary permitted
-// to sit outside a comment-marked block of category.go. Every other Category*
-// constant that reaches the `categories` slice must be declared in one,
-// whichever file it lives in. A Category* constant the slice never lists is not
-// part of the vocabulary and is not the block guard's business.
+// outOfScopeConstValue IS a second, hand-maintained literal — saying otherwise
+// would be the same lie this epic removes. What keeps it honest is not a comment
+// but a test: TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule asserts
+// that the constant named outOfScopeConstName in the real module actually holds
+// outOfScopeConstValue, so changing reconcile/merge.go's value without updating
+// this pair reds the suite instead of quietly disarming the tripwire.
+//
+// This pair is the one place the exemption RULE is stated: the constant named
+// CategoryOutOfScope is the only member of the vocabulary permitted to sit
+// outside a comment-marked block of category.go SPECIFICALLY — a comment-marked
+// block in any other file does not count, because inTreeCategoryBlocks builds
+// its partition from category.go alone. Every other Category* constant that
+// reaches the `categories` slice must be declared in a block there. A Category*
+// constant the slice never lists is not part of the vocabulary and is not the
+// block guard's business. Every other mention of this rule in this file points
+// back here rather than restating it.
 const (
 	outOfScopeConstName  = "CategoryOutOfScope"
 	outOfScopeConstValue = "out-of-scope"
 )
+
+// categoriesSliceWrap prefixes every inTreeCategoryDecls fault that surfaces out
+// of inTreeCategoryBlocks, whose own documented job is reading one file. It is a
+// named constant because the message is asserted from two test files and quoted
+// in a third as failure context, and a reworded literal in one copy would turn
+// the others into lies with a green suite.
+const categoriesSliceWrap = "read the categories slice for the block cross-check"
 
 // categoryElem is one element of the `categories` slice: the Category* constant
 // that names it (empty for a bare string-literal element) alongside the value it
@@ -87,9 +104,9 @@ func inTreeCategories(dir string) ([]string, error) {
 // each element's constant name preserved alongside its value.
 //
 // inTreeCategories discards the names because the doc table compares values.
-// inTreeCategoryBlocks needs them: its exclusion is keyed on a constant's
-// identity, not on the string that constant currently holds, and it cannot
-// resolve that identity from a slice of bare values.
+// inTreeCategoryBlocks needs them: both its exclusion and its rename tripwire
+// are keyed on a constant's identity, not on the string that constant currently
+// holds, and neither can resolve that identity from a slice of bare values.
 func inTreeCategoryDecls(dir string) (map[string]string, []categoryElem, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -202,13 +219,11 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 // block structure, and walking the whole directory let a cosmetic refactor of
 // merge.go (parenthesizing its const, the style it already uses for Sev*/Conf*)
 // move the partition and fail the guard with a message naming category.go.
-// The constant named CategoryOutOfScope is excluded by NAME, wherever and
-// however it is declared — it is a routing value whose Group cell is pinned
-// separately. Both halves of that exemption resolve from that one constant: the
-// walk below skips the name, and the slice cross-check exempts the value the
-// same constant holds. Declaring the routing value under a different name is not
-// silently followed; it is an error, because the walk would otherwise fold the
-// value into the partition with nothing failing. See outOfScopeConstName.
+// The constant named CategoryOutOfScope is excluded by NAME on both sides — the
+// walk below skips that name, and the slice cross-check exempts the element that
+// carries it — so a change to the value it holds is followed automatically and a
+// rename is an error rather than a silent fold. outOfScopeConstName states the
+// rule and why it is the only exemption; this docstring does not restate it.
 func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filepath.Join(dir, "category.go"), nil, parser.ParseComments)
@@ -269,32 +284,31 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	// function walks the const blocks — so a constant that reaches a block but
 	// never the slice leaves them mutually unsatisfiable, both blaming the doc
 	// table. Fail here instead, naming the slice as the side at fault.
-	declared, vocabulary, err := inTreeCategoryDecls(dir)
+	_, vocabulary, err := inTreeCategoryDecls(dir)
 	if err != nil {
 		// inTreeCategoryDecls walks the whole directory, so its faults — an
 		// unparseable sibling file, a missing or empty `categories` slice, an
 		// element no Category* constant declares — would otherwise reach the
 		// caller indistinguishable from a category.go block fault, out of a
 		// function documented as reading one file.
-		return nil, fmt.Errorf("read the categories slice for the block cross-check: %w", err)
+		return nil, fmt.Errorf("%s: %w", categoriesSliceWrap, err)
 	}
 
-	// Resolve the exemption from the anchor constant rather than from a literal.
-	// exempt is the value CategoryOutOfScope actually holds, so changing that
-	// value leaves the guard satisfiable; anchored is false when no constant of
-	// that name exists at all, which most synthetic fixtures are.
-	exempt, anchored := declared[outOfScopeConstName]
-	if !anchored {
-		for _, elem := range vocabulary {
-			if elem.value != outOfScopeConstValue {
-				continue
-			}
-			under := elem.name
-			if under == "" {
-				under = "a bare string literal"
-			}
-			return nil, fmt.Errorf("the routing value %q is listed in the categories slice of %s as %s, but no constant named %s declares it — the block partition excludes that value by anchor NAME, so keeping the value under another name would fold it into the partition with nothing failing; restore the name, or re-anchor outOfScopeConstName in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName)
+	// The rename tripwire (see outOfScopeConstName). The exemption below is keyed
+	// on the anchor NAME, so the routing value reaching the slice under any other
+	// name — or as a bare literal — would be excluded from the partition by
+	// nothing and folded in silently. Fire before that can happen. Keying the
+	// tripwire on the name too means a stale alias of the anchor does not disarm
+	// it, which gating on the anchor's mere presence would have allowed.
+	for _, elem := range vocabulary {
+		if elem.value != outOfScopeConstValue || elem.name == outOfScopeConstName {
+			continue
 		}
+		under, remedy := elem.name, fmt.Sprintf("restore the name %s", outOfScopeConstName)
+		if under == "" {
+			under, remedy = "a bare string literal", fmt.Sprintf("replace the literal with the %s constant", outOfScopeConstName)
+		}
+		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so leaving it under another name would fold it into the partition with nothing failing; %s, or re-anchor outOfScopeConstName in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy)
 	}
 
 	inSlice := make(map[string]bool, len(vocabulary))
@@ -312,9 +326,9 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	// The reverse direction: a slice member that reaches no block never gets its
 	// Group cell checked, because this function is the block authority and it
 	// reads category.go alone while inTreeCategoryDecls walks the whole
-	// directory. The value CategoryOutOfScope holds is exempt — it is a routing
-	// value declared outside category.go (merge.go) by design, and its Group
-	// cell is pinned separately.
+	// directory. The constant named by outOfScopeConstName is exempt — see there
+	// for the rule and why it is the only one — and its Group cell is pinned
+	// separately.
 	inBlock := make(map[string]bool, len(out))
 	for _, b := range out {
 		for _, value := range b {
@@ -322,11 +336,11 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 		}
 	}
 	for _, elem := range vocabulary {
-		if anchored && elem.value == exempt {
+		if elem.name == outOfScopeConstName {
 			continue
 		}
 		if !inBlock[elem.value] {
-			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it there inside a PARENTHESIZED const block opened by a leading comment (an unparenthesized `const CategoryX = ...` carries its comment on the declaration rather than the spec, so it opens no block), or remove it from the slice; the value declared by %s is the only exemption", elem.value, dir, outOfScopeConstName)
+			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it there inside a PARENTHESIZED const block opened by a leading comment (the walk descends into parenthesized const blocks only, so an unparenthesized `const CategoryX = ...` opens no block however it is commented), or remove it from the slice; %s is the only exemption, and only in category.go", elem.value, dir, outOfScopeConstName)
 		}
 	}
 	return out, nil

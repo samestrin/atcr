@@ -543,7 +543,7 @@ var categories = []string{
 // looking exactly like a category.go block fault, inside a doc-table test whose
 // red name blames the doc. Wrap it so the origin is readable at the call site.
 func TestInTreeCategoryBlocks_CategoriesSliceFaultIsDistinguishable(t *testing.T) {
-	const wrap = "read the categories slice for the block cross-check"
+	wrap := categoriesSliceWrap
 
 	t.Run("missing categories slice", func(t *testing.T) {
 		dir := t.TempDir()
@@ -590,10 +590,9 @@ var categories = []string{
 // The remedy an error names has to be a remedy. "Declare it in a block there"
 // is not one for a constant already declared IN category.go but unparenthesized
 // and listed in the slice: it IS declared there, and the block walk still skips
-// it, because an unparenthesized `const CategoryX = "..."` carries its leading
-// comment on the GenDecl rather than the ValueSpec and so opens no block. Name
-// the requirement that actually clears the error, and state the one exemption
-// the rule allows, so a maintainer does not go looking for a second one.
+// it, because the walk descends into parenthesized const blocks only. Name the
+// requirement that actually clears the error, and state the one exemption the
+// rule allows, so a maintainer does not go looking for a second one.
 func TestInTreeCategoryBlocks_UnparenthesizedSliceMemberNamesTheRealRequirement(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
@@ -621,6 +620,26 @@ var categories = []string{
 	assert.Contains(t, err.Error(), "late", "the error must name the member at fault")
 	assert.Contains(t, err.Error(), "PARENTHESIZED const block opened by a leading comment",
 		"the remedy must name the syntax that actually clears the error — moving an unparenthesized const into category.go changes nothing, it is already there")
-	assert.Contains(t, err.Error(), "the value declared by CategoryOutOfScope is the only exemption",
+	assert.Contains(t, err.Error(), "CategoryOutOfScope is the only exemption, and only in category.go",
 		"the error must state the rule for constants that sit outside a block, so the single exemption is not read as a general licence")
+}
+
+// outOfScopeConstValue is a hand-maintained literal, and the rename tripwire is
+// the only thing standing between a renamed routing constant and a silent fold
+// into the partition. Nothing in the parser ties that literal to
+// reconcile/merge.go, so a value change there would disarm the tripwire while
+// every other guard stayed green — the tripwire would simply stop matching
+// anything. Pin the pair against the real module so that change reds the suite
+// and names the file to edit instead.
+func TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule(t *testing.T) {
+	declared, _, err := inTreeCategoryDecls(inTreeReconcileDir)
+	require.NoError(t, err)
+
+	value, ok := declared[outOfScopeConstName]
+	require.True(t, ok,
+		"%s declares no constant named %s — the block exclusion and the rename tripwire are both anchored on that name",
+		inTreeReconcileDir, outOfScopeConstName)
+	assert.Equal(t, outOfScopeConstValue, value,
+		"%s now holds %q, so the outOfScopeConstValue literal in taxonomy_intree_helpers_test.go matches nothing and the rename tripwire is disarmed — update it to the new value",
+		outOfScopeConstName, value)
 }

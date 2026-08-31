@@ -119,11 +119,11 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > [CATEGORY vocabulary](findings-format.md#category-vocabulary) — note that this
 > table tracks the *in-tree* `reconcile` source, so it can briefly lead the
 > released module `{{.ScopeRule}}` actually renders during a release window (the
-> boundary is stated there, in the "separate published module" paragraph). Do **not**
-> restate or narrow that list inside your own
-> prompt — a persona-local list is exactly the drift the injection exists to
-> prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
-> as written and let `{{.ScopeRule}}` carry the enumeration.
+> boundary is stated in the "separate published module" paragraph). Do **not**
+> restate or narrow that list inside your own prompt — a persona-local list is
+> exactly the drift the injection exists to prevent, and it goes stale the moment
+> the vocabulary changes. Keep the Rules line as written and let
+> `{{.ScopeRule}}` carry the enumeration.
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
