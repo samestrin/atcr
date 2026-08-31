@@ -119,8 +119,7 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > [CATEGORY vocabulary](findings-format.md#category-vocabulary) — note that this
 > table tracks the *in-tree* `reconcile` source, so it can briefly lead the
 > released module `{{.ScopeRule}}` actually renders during a release window (the
-> boundary stated in the "separate published module" paragraph of
-> [CATEGORY vocabulary](findings-format.md#category-vocabulary)). Do **not**
+> boundary is stated there, in the "separate published module" paragraph). Do **not**
 > restate or narrow that list inside your own
 > prompt — a persona-local list is exactly the drift the injection exists to
 > prevent, and it goes stale the moment the vocabulary changes. Keep the Rules line
