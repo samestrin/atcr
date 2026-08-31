@@ -98,14 +98,20 @@ jobs:
         # Re-run just that test verbosely and annotate when the skip fires, so a
         # lagging go.mod pin is visible on the run instead of silent. The lag is
         # an expected release-window state, so this warns rather than fails.
-        # If the test is renamed or moved, the -run pattern matches nothing and
-        # `go test` still exits 0 ("no tests to run") — fail the step on that
-        # instead of silently disarming the annotation.
+        # The step is only worth anything if that test actually ran, so assert
+        # that it did rather than enumerating the ways it might not have.
+        # `go test` exits 0 for BOTH ways it can silently disarm: a renamed or
+        # moved test makes the -run pattern match nothing ("testing: warning: no
+        # tests to run"), and a package with no _test.go files at all prints
+        # "[no test files]" instead — a different string, so a check written
+        # against the first one passes the second straight through. A positive
+        # "--- PASS:"/"--- SKIP:" assertion on the test's own name covers both,
+        # and any future third way, without needing to name any of them.
         run: |
           out=$(go test ./internal/reconcile/ -run TestReconcileModule_ReleasedVocabularyMatchesInTree -v -count=1 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
-          if echo "$out" | grep -q "no tests to run"; then
-            echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed or moved?"
+          if ! echo "$out" | grep -q -- "--- PASS: TestReconcileModule_ReleasedVocabularyMatchesInTree\|--- SKIP: TestReconcileModule_ReleasedVocabularyMatchesInTree"; then
+            echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed, moved, or its package stripped of tests?"
             exit 1
           fi
           if echo "$out" | grep -q "in-tree reconcile vocabulary is ahead"; then
