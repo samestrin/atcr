@@ -459,7 +459,7 @@ const CategoryLoose = "loose"
 	_, err := inTreeCategoryBlocks(dir)
 	assert.Error(t, err, "constants outside any comment-marked block must not read as a partition")
 	assert.Contains(t, err.Error(), "no comment-marked Category* blocks",
-		"the fixture declares no categories slice, so the cross-check's \"no non-empty categories slice\" error also satisfies a bare assert.Error — pin the intended error specifically")
+		"this fixture cannot reach the cross-check — the block-emptiness guard returns first — so the assertion is not disambiguating two live paths; it pins the intended message against a future reordering that would let the cross-check answer first instead")
 }
 
 // The exemption must resolve from the constant, not from a literal spelled
@@ -583,4 +583,42 @@ var categories = []string{
 		assert.Contains(t, err.Error(), "parse broken.go",
 			"the wrap must preserve the underlying fault, not replace it")
 	})
+}
+
+// The remedy an error names has to be a remedy. "Declare it in a block there"
+// is not one for a constant already declared IN category.go but unparenthesized
+// and listed in the slice: it IS declared there, and the block walk still skips
+// it, because an unparenthesized `const CategoryX = "..."` carries its leading
+// comment on the GenDecl rather than the ValueSpec and so opens no block. Name
+// the requirement that actually clears the error, and state the one exemption
+// the rule allows, so a maintainer does not go looking for a second one.
+func TestInTreeCategoryBlocks_UnparenthesizedSliceMemberNamesTheRealRequirement(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+// Late addition.
+const CategoryLate = "late"
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryLate,
+	CategoryOther,
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "a slice member that opens no block must be an error")
+	assert.Contains(t, err.Error(), "late", "the error must name the member at fault")
+	assert.Contains(t, err.Error(), "PARENTHESIZED const block opened by a leading comment",
+		"the remedy must name the syntax that actually clears the error — moving an unparenthesized const into category.go changes nothing, it is already there")
+	assert.Contains(t, err.Error(), "the value declared by CategoryOutOfScope is the only exemption",
+		"the error must state the rule for constants that sit outside a block, so the single exemption is not read as a general licence")
 }
