@@ -496,7 +496,7 @@ const CategoryOutOfScope = "oos"
 	require.NoError(t, err,
 		"the exemption must track the value CategoryOutOfScope actually holds — pinning a literal makes a value change unsatisfiable")
 	assert.Equal(t, [][]string{{"correctness"}, {"other"}}, got,
-		"the renamed routing value is still excluded by name, so the partition is unchanged")
+		"the constant is still excluded by name, so changing its value leaves the partition unchanged")
 }
 
 // The other direction of the same asymmetry. Keep the VALUE and rename the
@@ -531,6 +531,8 @@ var categories = []string{
 		"a routing value declared under another name must fail loudly, not slip into the partition")
 	assert.Contains(t, err.Error(), "CategoryOutOfScope",
 		"the error must name the anchor constant the exclusion is keyed on")
+	assert.Contains(t, err.Error(), "CategoryScopeControl",
+		"the error must also name the constant that did declare the routing value, or the maintainer has to go find it")
 	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
 }
 

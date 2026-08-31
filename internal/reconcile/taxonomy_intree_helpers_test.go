@@ -33,7 +33,9 @@ import (
 // This pair is also where the exemption RULE lives, stated once: the value
 // declared by CategoryOutOfScope is the only member of the vocabulary permitted
 // to sit outside a comment-marked block of category.go. Every other Category*
-// constant must be declared in one, whichever file it lives in.
+// constant that reaches the `categories` slice must be declared in one,
+// whichever file it lives in. A Category* constant the slice never lists is not
+// part of the vocabulary and is not the block guard's business.
 const (
 	outOfScopeConstName  = "CategoryOutOfScope"
 	outOfScopeConstValue = "out-of-scope"
@@ -263,7 +265,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	}
 
 	// Cross-check the partition against the categories slice. The two doc guards
-	// read different authorities — inTreeCategories resolves the slice, this
+	// read different authorities — inTreeCategoryDecls resolves the slice, this
 	// function walks the const blocks — so a constant that reaches a block but
 	// never the slice leaves them mutually unsatisfiable, both blaming the doc
 	// table. Fail here instead, naming the slice as the side at fault.
@@ -287,7 +289,11 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 			if elem.value != outOfScopeConstValue {
 				continue
 			}
-			return nil, fmt.Errorf("the routing value %q is listed in the categories slice of %s but no constant named %s declares it — the block partition excludes that value by anchor name, so a rename keeping the value would fold it into the partition with nothing failing; restore the name or re-anchor outOfScopeConstName", outOfScopeConstValue, dir, outOfScopeConstName)
+			under := elem.name
+			if under == "" {
+				under = "a bare string literal"
+			}
+			return nil, fmt.Errorf("the routing value %q is listed in the categories slice of %s as %s, but no constant named %s declares it — the block partition excludes that value by anchor NAME, so keeping the value under another name would fold it into the partition with nothing failing; restore the name, or re-anchor outOfScopeConstName in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName)
 		}
 	}
 
