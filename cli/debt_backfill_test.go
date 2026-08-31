@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -484,4 +485,42 @@ func TestDebtBackfillJustifications_DryRunLeavesAUniqueLocatorBareAlongsideOther
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "2026-08.jsonl:1 ",
 		"an unambiguous locator must print bare even when the store holds other shards")
+}
+
+// The listing is the disambiguator's PRIMARY source, but it is allowed to fail: the
+// rewrite the operator is about to approve has already been computed, so a store
+// directory that became unreadable between the rewrite pass and this one must degrade
+// to the change set rather than abort. That fallback loop is unconditional on purpose —
+// a changed shard must be in the collision map even when os.ReadDir supplied nothing —
+// and every other test in this file hands locatorNames a readable directory, so the
+// listing always covers the change set and the fallback never carries the result.
+//
+// Without it, a dry run against an unreadable store prints a changed shard's locator
+// bare with NO collision considered at all, reintroducing exactly the misattribution
+// the disambiguator exists to prevent, on the one surface an operator approves an
+// in-place rewrite from.
+func TestLocatorNames_FallsBackToTheChangeSetWhenTheListingFails(t *testing.T) {
+	// A directory that does not exist: os.ReadDir returns an error and the listing
+	// contributes nothing. An unreadable-but-present directory (chmod 0500) behaves
+	// identically here and is skipped because root ignores the mode bit in CI.
+	gone := filepath.Join(t.TempDir(), "no-such-store")
+
+	// Two DIFFERENT shard files whose names reduce to the same token once Cf is
+	// stripped — the collision the disambiguator exists to resolve. Both are in the
+	// change set, so the fallback is the only thing that can see either of them.
+	changes := []localdebt.JustificationChange{
+		{ID: "aaaa1110", Shard: "2026-08‮-a.jsonl", Line: 1},
+		{ID: "aaaa1111", Shard: "2026-08​-a.jsonl", Line: 1},
+	}
+
+	names := locatorNames(gone, changes)
+
+	require.Len(t, names, 2, "every changed shard must get a printable locator")
+	for _, c := range changes {
+		assert.Regexp(t, `^2026-08-a\.jsonl#[0-9a-f]{6}$`, names[c.Shard],
+			"with the listing gone the change set alone must still expose the collision, "+
+				"so the locator carries its disambiguating suffix")
+	}
+	assert.NotEqual(t, names[changes[0].Shard], names[changes[1].Shard],
+		"two distinct shard files must never render as one identical locator")
 }
