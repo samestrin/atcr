@@ -113,6 +113,12 @@ func inTreeCategories(dir string) ([]string, error) {
 // inTreeCategoryBlocks needs them: both its exclusion and its rename tripwire
 // are keyed on a constant's identity, not on the string that constant currently
 // holds, and neither can resolve that identity from a slice of bare values.
+//
+// The declared map — the first return value — has exactly one consumer:
+// TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule, which resolves
+// outOfScopeConstName against the real module through it rather than re-walking
+// the directory a second time. Both in-file readers (inTreeCategories and
+// inTreeCategoryBlocks) discard it.
 func inTreeCategoryDecls(dir string) (map[string]string, []categoryElem, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
