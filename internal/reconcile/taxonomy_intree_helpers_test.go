@@ -328,7 +328,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 		if under == "" {
 			under, remedy = "a bare string literal", fmt.Sprintf("replace the literal with the %s constant", outOfScopeConstName)
 		}
-		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so leaving it under another name would fold it into the partition with nothing failing; %s, or re-anchor outOfScopeConstName in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy)
+		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so leaving it under another name would fold it into the partition with nothing failing; %s, or re-anchor %s in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy, outOfScopeConstName)
 	}
 
 	// The forward cross-check is keyed on constant IDENTITY, not value: an alias
