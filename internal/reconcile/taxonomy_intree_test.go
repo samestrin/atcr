@@ -652,6 +652,13 @@ var categories = []string{
 func TestInTreeCategoryBlocks_CategoriesSliceFaultIsDistinguishable(t *testing.T) {
 	wrap := categoriesSliceWrap
 
+	// Pin the literal wording itself. Both subtests assert Contains(err, wrap)
+	// against an error built from the same symbol, which is true for ANY wording:
+	// rewriting the constant to "x" would keep everything green while the message
+	// stopped being diagnostic — trading the wording pin for a tautology.
+	require.Equal(t, "read the categories slice for the block cross-check", wrap,
+		"the wrap's wording is part of the contract with the failure-context quote in findings_format_taxonomy_test.go")
+
 	t.Run("missing categories slice", func(t *testing.T) {
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
