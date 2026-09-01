@@ -156,6 +156,9 @@ func inTreeCategoryDecls(dir string) (map[string]string, []categoryElem, error) 
 							continue
 						}
 						if value, ok := stringLiteral(vs.Values[i]); ok {
+							if _, dup := declared[ident.Name]; dup {
+								return nil, nil, fmt.Errorf("%s declared twice in %s", ident.Name, dir)
+							}
 							declared[ident.Name] = value
 						}
 					}
