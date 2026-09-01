@@ -22,18 +22,20 @@ import (
 // then strips it straight back out, leaving no vocabulary content that satisfies
 // both halves at once.
 //
-// outOfScopeConstValue is NOT a second authority. It is the tripwire that keeps
-// the two halves from drifting apart in the other direction: renaming the
+// outOfScopeConstValue is NOT a second authority — the exemption resolves from
+// the anchor NAME alone, and no value literal grants it. It is the tripwire that
+// keeps the two halves from drifting apart in the other direction: renaming the
 // constant while keeping its value would otherwise slip the routing value into
 // the partition silently, because the name skip misses it and the resolved
 // exemption no longer exists. When the value reaches the vocabulary with no
 // constant of the anchor name behind it, inTreeCategoryBlocks reports that as an
 // error instead of absorbing it.
 //
-// outOfScopeConstValue IS a second, hand-maintained literal — saying otherwise
-// would be the same lie this epic removes. What keeps it honest is not a comment
-// but a test: TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule asserts
-// that the constant named outOfScopeConstName in the real module actually holds
+// It is nonetheless a second, hand-maintained literal, even though it is not a
+// second authority: its sole job is the rename tripwire, never exemption. What
+// keeps it honest is not a comment but a test:
+// TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule asserts that the
+// constant named outOfScopeConstName in the real module actually holds
 // outOfScopeConstValue, so changing reconcile/merge.go's value without updating
 // this pair reds the suite instead of quietly disarming the tripwire.
 //
