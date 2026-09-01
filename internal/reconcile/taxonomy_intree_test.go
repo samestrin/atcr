@@ -599,6 +599,10 @@ var categories = []string{
 		"the error must name the anchor constant the exclusion is keyed on")
 	assert.Contains(t, err.Error(), "CategoryScopeControl",
 		"the error must also name the constant that did declare the routing value, or the maintainer has to go find it")
+	assert.Contains(t, err.Error(), "not as CategoryOutOfScope",
+		"pin the structural claim that the value reached the slice NOT as the anchor — dropping the clause while keeping both names would otherwise pass")
+	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
+		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
 	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
 
 	// The tripwire has two arms — a named alias and a bare string literal — and
