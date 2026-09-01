@@ -371,7 +371,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 			continue
 		}
 		if !inBlock[elem.value] {
-			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it there inside a PARENTHESIZED const block opened by a leading comment (the walk descends into parenthesized const blocks only, so an unparenthesized `const CategoryX = ...` opens no block however it is commented), or remove it from the slice; %s is the only exemption, and only in category.go", elem.value, dir, outOfScopeConstName)
+			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it there inside a PARENTHESIZED const block opened by a leading comment (the walk descends into parenthesized const blocks only, so an unparenthesized `const CategoryX = ...` opens no block however it is commented), or remove it from the slice; %s is the only exemption, and blocks in other files do not count (the partition is built from category.go alone)", elem.value, dir, outOfScopeConstName)
 		}
 	}
 
