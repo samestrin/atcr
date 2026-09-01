@@ -45,8 +45,12 @@ import (
 // block in any other file does not count, because inTreeCategoryBlocks builds
 // its partition from category.go alone. Every other Category* constant that
 // reaches the `categories` slice must be declared in a block there. A Category*
-// constant the slice never lists is not part of the vocabulary and is not the
-// block guard's business. Every other mention of this rule in this file points
+// constant that reaches a comment-marked block of category.go while the slice
+// never lists it IS the block guard's business: the forward cross-check fails
+// it as "absent from the categories slice" — unless another slice member,
+// declared under a different name, happens to hold the same value, which the
+// value-keyed check cannot distinguish (a known gap in inTreeCategoryBlocks).
+// Every other mention of this rule in this file points
 // back here rather than restating it.
 const (
 	outOfScopeConstName  = "CategoryOutOfScope"
