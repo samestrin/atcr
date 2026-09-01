@@ -397,6 +397,45 @@ var categories = []string{
 		"the error must name the categories slice as the side at fault")
 }
 
+// The forward cross-check is keyed on constant IDENTITY: a block member declared
+// under a name the categories slice never lists must be an error even when its
+// VALUE collides with a listed member's. Otherwise a second constant holding the
+// routing value folds into the partition with nothing failing — the walk's name
+// skip misses it (wrong name), the tripwire never sees it (not in the slice),
+// and a value-keyed check passes it on the listed member's value. Verified
+// against the real module in a detached worktree: adding CategoryScopeControl =
+// "out-of-scope" to a marked block of reconcile/category.go turned the control
+// block into [out-of-scope other] with the entire internal/reconcile suite green.
+func TestInTreeCategoryBlocks_ValueCollidingAliasIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryScopeControl = "out-of-scope"
+	CategoryOther        = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	CategoryOutOfScope,
+	CategoryOther,
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+
+const CategoryOutOfScope = "out-of-scope"
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "an alias holding a listed value under an unlisted name must error, not fold into the partition silently")
+	assert.Contains(t, err.Error(), "CategoryScopeControl",
+		"the error must name the alias constant, or the maintainer has to find it")
+}
+
 // An UNPARENTHESIZED `const CategoryX = "..."` carries its leading comment on
 // GenDecl.Doc, not on the ValueSpec — so vs.Doc is nil, no new block opens, and
 // without an Lparen guard the constant is folded into the LAST parenthesized
