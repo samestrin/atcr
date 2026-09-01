@@ -717,8 +717,8 @@ var categories = []string{
 	assert.Contains(t, err.Error(), "late", "the error must name the member at fault")
 	assert.Contains(t, err.Error(), "PARENTHESIZED const block opened by a leading comment",
 		"the remedy must name the syntax that actually clears the error — moving an unparenthesized const into category.go changes nothing, it is already there")
-	assert.Contains(t, err.Error(), "CategoryOutOfScope is the only exemption, and only in category.go",
-		"the error must state the rule for constants that sit outside a block, so the single exemption is not read as a general licence")
+	assert.Contains(t, err.Error(), "CategoryOutOfScope is the only exemption, and blocks in other files do not count",
+		"the error must state the rule for constants that sit outside a block, with the two qualifications separable: which constant is exempt, and that the partition is built from category.go alone")
 }
 
 // outOfScopeConstValue is a hand-maintained literal, and the rename tripwire is
