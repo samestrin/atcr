@@ -520,7 +520,9 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 				// The remedy is named because this arm, unlike the load-time gate, can
 				// fire on an identity NO local file contains: a model id echoed back in
 				// a provider's usage payload. Failing here forfeits the run rather than
-				// writing an artifact export would refuse permanently, so the message
+				// writing an artifact export refuses until the identity is corrected in
+				// it — the refusal is not permanent, but the repair is a hand-edit to a
+				// file the run produced, discovered only at export time — so the message
 				// has to say where to look and what to do with the checkpoint.
 				//
 				// It names REPAIR, not discard. The offending value is the per-case
