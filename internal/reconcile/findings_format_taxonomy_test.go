@@ -456,3 +456,30 @@ func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
 		}
 	}
 }
+
+// The epic's Risks table mitigates "T1 option (ii) changes what inTreeCategoryBlocks
+// returns for the real module" with "Assert the real-module partition is
+// byte-identical before and after (6 blocks: ...)". The structural pin above
+// (require.Greater(t, len(blocks), 1)) is deliberately weak — it only keeps the
+// guard from going vacuous — so without this test the mitigation was prose with
+// nothing behind it: a mutation of reconcile/category.go that moved a category
+// between blocks left the whole suite green. Pin the partition itself: the exact
+// 6-block shape the real module declares today, members in declared order.
+// A block added, removed, split, merged, or reordered reds here.
+func TestFindingsFormatDoc_RealModulePartitionIsPinned(t *testing.T) {
+	blocks, err := inTreeCategoryBlocks(inTreeReconcileDir)
+	require.NoError(t, err,
+		"this is a partition pin, but inTreeCategoryBlocks fails for reasons that are not the pin's: a category.go block fault, or — wrapped in %q — a fault in the categories slice that inTreeCategoryDecls read",
+		categoriesSliceWrap)
+
+	assert.Equal(t, [][]string{
+		{"correctness", "logic", "security", "secret", "performance", "concurrency", "race", "error-handling", "state", "invariant", "type"},
+		{"api-contract", "contract", "validation", "input-validation"},
+		{"resource-leak", "leak", "dependency", "configuration"},
+		{"coupling", "complexity", "bloat", "duplication", "extensibility", "maintainability", "naming", "style"},
+		{"observability", "testing", "docs"},
+		{"other"},
+	}, blocks,
+		"the real module's block partition moved — if category.go's restructure is intended, update this pin and the %q Group column together; if it is not, restore the block boundaries",
+		taxonomyHeading)
+}
