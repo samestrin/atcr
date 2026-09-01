@@ -600,6 +600,37 @@ var categories = []string{
 	assert.Contains(t, err.Error(), "CategoryScopeControl",
 		"the error must also name the constant that did declare the routing value, or the maintainer has to go find it")
 	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
+
+	// The tripwire has two arms — a named alias and a bare string literal — and
+	// only the named arm was exercised above. A bare literal is the one form that
+	// leaves NO constant to rename back, so its remedy text matters most; pin
+	// both the diagnosis ("a bare string literal") and the remedy.
+	t.Run("bare string literal arm", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+
+	// Control values.
+	CategoryOther = "other"
+)
+
+var categories = []string{
+	CategoryCorrectness,
+	"out-of-scope",
+	CategoryOther,
+}
+`), 0o644))
+
+		_, err := inTreeCategoryBlocks(dir)
+		require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
+		assert.Contains(t, err.Error(), "a bare string literal",
+			"the error must name the form the value arrived in")
+		assert.Contains(t, err.Error(), "replace the literal with the CategoryOutOfScope constant",
+			"the remedy must name the one edit that clears the error")
+	})
 }
 
 // inTreeCategoryBlocks is documented as reading one file, but its cross-check
