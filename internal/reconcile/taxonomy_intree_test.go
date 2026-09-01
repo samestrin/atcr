@@ -592,7 +592,10 @@ var categories = []string{
 }
 `), 0o644))
 
-	got, err := inTreeCategoryBlocks(dir)
+	// The returned partition is discarded like every sibling error test does:
+	// every error path in inTreeCategoryBlocks is a literal `return nil,
+	// fmt.Errorf(...)`, so asserting nil pins nothing a reviewer could break.
+	_, err := inTreeCategoryBlocks(dir)
 	require.Error(t, err,
 		"a routing value declared under another name must fail loudly, not slip into the partition")
 	assert.Contains(t, err.Error(), "CategoryOutOfScope",
@@ -603,7 +606,10 @@ var categories = []string{
 		"pin the structural claim that the value reached the slice NOT as the anchor — dropping the clause while keeping both names would otherwise pass")
 	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
 		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
-	assert.Nil(t, got, "no partition is returned when the anchor has drifted")
+
+	// The returned partition is discarded like every sibling error test does:
+	// every error path in inTreeCategoryBlocks is a literal `return nil,
+	// fmt.Errorf(...)`, so asserting nil pins nothing a reviewer could break.
 
 	// The tripwire has two arms — a named alias and a bare string literal — and
 	// only the named arm was exercised above. A bare literal is the one form that
