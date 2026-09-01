@@ -104,16 +104,21 @@ jobs:
         # moved test makes the -run pattern match nothing ("testing: warning: no
         # tests to run"), and a package with no _test.go files at all prints
         # "[no test files]" instead — a different string, so a check written
-        # against the first one passes the second straight through. A positive
-        # "--- PASS:"/"--- SKIP:" assertion on the test's own name covers both
-        # without naming either. The pattern is anchored and closed with " (":
-        # -run is an unanchored regex and grep matches substrings, so an
-        # unanchored check would accept a rename to ...MatchesInTreeV2, which is
-        # a rename this step exists to catch.
+        # against the first one passes the second straight through. Asserting a
+        # pass/skip Action for the test's own name covers both without naming
+        # either. That assertion reads -json, not the -v text: Test and Action
+        # are machine-readable fields, so the guard no longer turns on the exact
+        # spacing of `--- PASS: <name> (` the way a grep over human output did.
+        # Both the -run pattern and the jq Test comparison are exact, so a
+        # rename to ...MatchesInTreeV2 still disarms nothing silently — it
+        # yields no matching Action and fails the step, which is the rename this
+        # step exists to catch. The human output is reconstructed from the same
+        # stream for the log, so the step still reads like a verbose test run.
         run: |
-          out=$(go test ./internal/reconcile/ -run TestReconcileModule_ReleasedVocabularyMatchesInTree -v -count=1 2>&1) || { echo "$out"; exit 1; }
-          echo "$out"
-          if ! echo "$out" | grep -qE -- "^ *--- (PASS|SKIP): TestReconcileModule_ReleasedVocabularyMatchesInTree \("; then
+          out=$(go test ./internal/reconcile/ -run '^TestReconcileModule_ReleasedVocabularyMatchesInTree$' -v -json -count=1 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | jq -j 'select(.Action=="output") | .Output'
+          action=$(echo "$out" | jq -r 'select(.Test=="TestReconcileModule_ReleasedVocabularyMatchesInTree") | .Action' | grep -E '^(pass|skip)$' | head -1)
+          if [ -z "$action" ]; then
             echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed, moved, or its package stripped of tests?"
             exit 1
           fi
