@@ -46,10 +46,12 @@ import (
 // its partition from category.go alone. Every other Category* constant that
 // reaches the `categories` slice must be declared in a block there. A Category*
 // constant that reaches a comment-marked block of category.go while the slice
-// never lists it IS the block guard's business: the forward cross-check fails
-// it as "absent from the categories slice" — unless another slice member,
-// declared under a different name, happens to hold the same value, which the
-// value-keyed check cannot distinguish (a known gap in inTreeCategoryBlocks).
+// never lists it IS the block guard's business: the forward cross-check is
+// keyed on constant identity, so it fails a member the slice lists under no
+// name — whether its value is unlisted ("absent from the categories slice") or
+// collides with a listed member's value (an unlisted alias holding a listed
+// value would fold silently under a value-keyed check, which is why identity
+// is what is keyed).
 // Every other mention of this rule in this file points
 // back here rather than restating it.
 const (
@@ -246,7 +248,10 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 		return nil, fmt.Errorf("parse category.go: %w", err)
 	}
 
-	var blocks [][]string
+	// Block members carry their constant NAME alongside the value: the forward
+	// cross-check below is keyed on identity, because a value-keyed check cannot
+	// tell a listed member from an unlisted alias holding the same string.
+	var blocks [][]categoryElem
 
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
@@ -276,7 +281,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 					continue
 				}
 				if value, ok := stringLiteral(vs.Values[i]); ok {
-					blocks[len(blocks)-1] = append(blocks[len(blocks)-1], value)
+					blocks[len(blocks)-1] = append(blocks[len(blocks)-1], categoryElem{name: ident.Name, value: value})
 				}
 			}
 		}
@@ -284,7 +289,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 
 	// Drop blocks a comment opened that hold no category (a note between
 	// groups), so an empty run never reaches a caller as a real block.
-	out := make([][]string, 0, len(blocks))
+	out := make([][]categoryElem, 0, len(blocks))
 	for _, b := range blocks {
 		if len(b) > 0 {
 			out = append(out, b)
@@ -326,15 +331,26 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so leaving it under another name would fold it into the partition with nothing failing; %s, or re-anchor outOfScopeConstName in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy)
 	}
 
-	inSlice := make(map[string]bool, len(vocabulary))
+	// The forward cross-check is keyed on constant IDENTITY, not value: an alias
+	// holding a listed value under a name the slice never lists would otherwise
+	// fold into the partition with nothing failing — the walk's name skip misses
+	// it, the tripwire above never sees it (it is not in the slice), and a
+	// value-keyed check passes it on the listed member's value.
+	listedByName := make(map[string]bool, len(vocabulary))
+	listedByValue := make(map[string]bool, len(vocabulary))
 	for _, elem := range vocabulary {
-		inSlice[elem.value] = true
+		listedByName[elem.name] = true
+		listedByValue[elem.value] = true
 	}
 	for _, b := range out {
-		for _, value := range b {
-			if !inSlice[value] {
-				return nil, fmt.Errorf("%q is declared in a comment-marked block of %s but absent from the categories slice", value, dir)
+		for _, member := range b {
+			if listedByName[member.name] {
+				continue
 			}
+			if listedByValue[member.value] {
+				return nil, fmt.Errorf("%s declares the value %q in a comment-marked block of %s, but the categories slice lists that value under a different constant — a block member must be listed under its own name, or the name-keyed exclusion folds it in silently", member.name, member.value, dir)
+			}
+			return nil, fmt.Errorf("%q is declared in a comment-marked block of %s but absent from the categories slice", member.value, dir)
 		}
 	}
 
@@ -346,8 +362,8 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	// separately.
 	inBlock := make(map[string]bool, len(out))
 	for _, b := range out {
-		for _, value := range b {
-			inBlock[value] = true
+		for _, member := range b {
+			inBlock[member.value] = true
 		}
 	}
 	for _, elem := range vocabulary {
@@ -358,5 +374,16 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 			return nil, fmt.Errorf("%q is listed in the categories slice of %s but appears in no comment-marked block of category.go — declare it there inside a PARENTHESIZED const block opened by a leading comment (the walk descends into parenthesized const blocks only, so an unparenthesized `const CategoryX = ...` opens no block however it is commented), or remove it from the slice; %s is the only exemption, and only in category.go", elem.value, dir, outOfScopeConstName)
 		}
 	}
-	return out, nil
+
+	// The caller wants values only; the names rode along for the identity-keyed
+	// cross-check above.
+	partition := make([][]string, 0, len(out))
+	for _, b := range out {
+		values := make([]string, 0, len(b))
+		for _, member := range b {
+			values = append(values, member.value)
+		}
+		partition = append(partition, values)
+	}
+	return partition, nil
 }
