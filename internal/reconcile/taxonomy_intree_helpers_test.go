@@ -59,9 +59,9 @@ const (
 
 // categoriesSliceWrap prefixes every inTreeCategoryDecls fault that surfaces out
 // of inTreeCategoryBlocks, whose own documented job is reading one file. It is a
-// named constant because the message is asserted from two test files and quoted
-// in a third as failure context, and a reworded literal in one copy would turn
-// the others into lies with a green suite.
+// named constant because the message is asserted in taxonomy_intree_test.go and
+// quoted in findings_format_taxonomy_test.go as failure context, and a reworded
+// literal in one copy would turn the others into lies with a green suite.
 const categoriesSliceWrap = "read the categories slice for the block cross-check"
 
 // categoryElem is one element of the `categories` slice: the Category* constant
