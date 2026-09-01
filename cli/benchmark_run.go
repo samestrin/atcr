@@ -19,8 +19,9 @@ import (
 	"github.com/samestrin/atcr/internal/stream"
 )
 
-// validateSuitePublishableCaseIDs rejects a suite whose case ids cannot survive
-// publication intact, BEFORE any reviewer is invoked.
+// validateSuitePublishableCaseIDs rejects a suite whose case ids — or whose published
+// suite identity, m.Suite and m.SuiteVersion — cannot survive publication intact,
+// BEFORE any reviewer is invoked.
 //
 // buildRunResult copies m.Cases[i].ID into SuiteCaseIDs verbatim, and submission
 // schema 2 PUBLISHES that array — so validateScrubbedCaseIDs (cli/benchmark_coverage.go)
@@ -28,7 +29,11 @@ import (
 // check that runs at `benchmark export`, i.e. after the whole panel has already been
 // paid for: a legitimate importer-built suite is then permanently unexportable and
 // the operator only learns so hours later. This applies the identical rule at load
-// time, where the remedy costs nothing.
+// time, where the remedy costs nothing. The suite identity is gated at load for the
+// same reason: BuildSubmission publishes m.Suite and m.SuiteVersion scrubbed by the
+// same pass, and validateSuiteIdentityForPublication (cli/benchmark_coverage.go)
+// hard-rejects the identity arms at export. The name survives from when the function
+// covered case ids only; the identity arm's details are documented in the body.
 //
 // It is the case-id counterpart of the post-scrub reviewer-IDENTITY collision check
 // in buildRunResult, and lives here rather than there for the same reason that check
@@ -40,9 +45,9 @@ import (
 // reachable diagnostic of its own — the reasoning documented on
 // validateScrubbedCaseIDs. Verbatim-duplicate raw ids belong to manifest validation.
 //
-// Errors name the PRE-scrub id and the SUITE MANIFEST: the scrubbed value is empty
-// or rewritten by construction, and suite_case_ids is a verbatim copy of the
-// manifest, so editing a run-result would be the wrong action.
+// Errors name the PRE-scrub value and the SUITE MANIFEST: the scrubbed value is empty
+// or rewritten by construction, and suite_case_ids and the envelope identity are
+// verbatim copies of the manifest, so editing a run-result would be the wrong action.
 func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) error {
 	// The suite IDENTITY is published scrubbed by the same BuildSubmission pass that
 	// publishes the ids, and validateSuiteIdentityForPublication hard-rejects all three
@@ -66,20 +71,25 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 	// "rename the "+noun form would silently break ("rename the suite name in the
 	// suite manifest"), and the verbs differ anyway: a suite is renamed, a version is
 	// changed.
-	for _, f := range []struct{ noun, value, consequence, remedy string }{
-		{"suite name", m.Suite,
+	// published names the PUBLISHED field for the empty arm, which must tell the
+	// operator which field goes empty — the manifest-side noun does not: a case id
+	// publishes inside suite_case_ids rather than as "a case", and the identity
+	// publishes in the envelope. Like consequence and remedy it is written out per
+	// field rather than interpolated from noun.
+	for _, f := range []struct{ noun, published, value, consequence, remedy string }{
+		{"suite name", "the envelope's suite name", m.Suite,
 			"the published envelope must name the same suite the manifest does",
 			"rename the suite in the suite manifest"},
-		{"suite_version", m.SuiteVersion,
+		{"suite_version", "the envelope's suite_version", m.SuiteVersion,
 			"the published envelope must name the same suite_version the manifest does",
 			"change suite_version in the suite manifest"},
 	} {
-		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.consequence, f.remedy); err != nil {
+		if err := checkPublishable(suitePath, "declares "+f.noun, f.value, f.published, f.consequence, f.remedy); err != nil {
 			return err
 		}
 	}
 	for _, c := range m.Cases {
-		if err := checkPublishable(suitePath, "declares case", c.ID, "the published suite_case_ids must name the same cases as the manifest", "rename the case in the suite manifest"); err != nil {
+		if err := checkPublishable(suitePath, "declares case", c.ID, "suite_case_ids", "the published suite_case_ids must name the same cases as the manifest", "rename the case in the suite manifest"); err != nil {
 			return err
 		}
 	}
@@ -90,17 +100,21 @@ func validateSuitePublishableCaseIDs(m *benchmark.Manifest, suitePath string) er
 // identity now share: a value must carry no control or format rune, must not scrub
 // away, and must not be rewritten by the scrub.
 //
-// One helper rather than two copies is what makes "verify, run and export agree on
-// what a publishable suite is" a property of the code rather than of two edits staying
-// in sync. Arm ORDER matters and is fixed here: printability first (the defect a
-// reader cannot see), then empty (the sharper diagnostic for a value that scrubs away),
-// then rewrite.
+// One helper rather than two copies is what makes "verify and run agree on what a
+// publishable suite is" a property of the code rather than of two edits staying in
+// sync. EXPORT IS NOT ON THIS PATH: validateSuiteIdentityForPublication
+// (cli/benchmark_coverage.go) applies its own independent three-arm copy to the
+// run-result values at export, so the load-time gate and the export gate remain two
+// copies that must be kept in step — this helper deduplicates only the load side.
+// Arm ORDER matters and is fixed here: printability first (the defect a
+// reader cannot see), then empty (the sharper diagnostic for a value that scrubs away,
+// naming the published field that goes empty), then rewrite.
 //
 // Every message names the PRE-scrub value under %q - the published value is empty or
 // rewritten by construction, so it identifies no line to edit - and ends with remedy,
 // which names the MANIFEST: suite_case_ids and the envelope identity are verbatim
 // copies of it, so editing a run-result would be the wrong action.
-func checkPublishable(suitePath, subject, value, consequence, remedy string) error {
+func checkPublishable(suitePath, subject, value, published, consequence, remedy string) error {
 	if r, bad := firstNonPrintingRune(value); bad {
 		return fmt.Errorf("suite %s %s %q, which contains a non-printing rune (U+%04X); "+
 			"control and format runes are invisible or reorder text in the published document, "+
@@ -110,9 +124,9 @@ func checkPublishable(suitePath, subject, value, consequence, remedy string) err
 	s := scorecard.ScrubPublicString(value)
 	if s == "" {
 		return fmt.Errorf("suite %s %s %q, which is empty once scrubbed for publication; "+
-			"the run would publish \"\" and be rejected at export, "+
+			"the run would publish \"\" in %s and be rejected at export, "+
 			"so %s",
-			suitePath, subject, value, remedy)
+			suitePath, subject, value, published, remedy)
 	}
 	if s != value {
 		return fmt.Errorf("suite %s %s %q, which the publication scrub rewrites to %q; "+

@@ -103,8 +103,9 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// same reason. Printing them under %s let an ANSI CSI or a bidi override through to
 	// the terminal on the one surface an operator consults to decide whether to let the
 	// in-place rewrite proceed - where reordering WHICH line is named is the whole
-	// attack. The sibling listing `atcr debt list` already strips them (cli/debt.go ->
-	// cell -> sanitizeCell).
+	// attack. The sibling listing `atcr debt list` already strips the ANSI CSI / C0 / C1
+	// half of that (cli/debt.go -> cell -> sanitizeCell); it shares the Cf gap, passing a
+	// bidi override through unchanged exactly as recorded in the next paragraph.
 	//
 	// The two get different treatment on purpose. The id takes %q, which escapes the
 	// FORMAT runes (Cf) sanitizeCell deliberately keeps - a bidi override is not a C0/C1
