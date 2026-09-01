@@ -175,6 +175,33 @@ var categories = []string{
 	assert.Error(t, err, "an element that is neither an identifier nor a string literal must be an error")
 }
 
+// A Category* name declared in TWO files of the directory cannot be resolved to
+// one value: inTreeCategoryDecls never type-checks what it reads, so the declared
+// map would silently last-wins, with os.ReadDir order deciding the winner — and
+// the anchor-pair pin that reads the map would report the losing declaration's
+// value. The real module cannot hit this (duplicate consts in one package do not
+// compile), but this helper does not run the compiler, so it must say so itself
+// rather than resolve the ambiguity silently.
+func TestInTreeCategoryDecls_DuplicateConstNameIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+
+const CategoryCorrectness = "oos"
+`), 0o644))
+
+	_, _, err := inTreeCategoryDecls(dir)
+	require.Error(t, err, "a Category* name declared in two files must be an error, not a silent last-wins")
+	assert.Contains(t, err.Error(), "CategoryCorrectness",
+		"the error must name the doubly-declared constant")
+}
+
 // The partition must follow the comment-marked blocks, in declared order, and
 // must not invent a block for a constant that carries no leading comment.
 // A comment that opens a run of non-Category* constants (a note between groups)
