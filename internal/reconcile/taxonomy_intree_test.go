@@ -631,6 +631,12 @@ var categories = []string{
 // every other guard stayed green — the tripwire would simply stop matching
 // anything. Pin the pair against the real module so that change reds the suite
 // and names the file to edit instead.
+//
+// The anchor docstring in taxonomy_intree_helpers_test.go names THIS test by
+// name as what keeps outOfScopeConstValue honest, and nothing enforces that
+// cross-reference — so renaming or deleting this test would leave that comment
+// asserting a guarantee that no longer exists, with a green suite. If you rename
+// this test, update the anchor docstring's reference in the same change.
 func TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule(t *testing.T) {
 	declared, _, err := inTreeCategoryDecls(inTreeReconcileDir)
 	require.NoError(t, err)
