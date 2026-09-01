@@ -417,9 +417,10 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 // `naming` out of "Structure and design", or merging two blocks in the doc that
 // the constant keeps apart, fails here.
 //
-// out-of-scope is absent from the partition by construction — it is declared in
-// merge.go outside any block — and its Group cell is pinned as a routing value by
-// the test below instead.
+// out-of-scope is absent from the partition because inTreeCategoryBlocks excludes
+// that constant by NAME wherever it is declared — not because of where merge.go
+// happens to declare it. Its Group cell is pinned as a routing value by
+// TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues above instead.
 func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
 	group := map[string]string{}
 	for _, row := range taxonomyTableRows(taxonomySectionLines(t)) {
