@@ -611,10 +611,6 @@ var categories = []string{
 	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
 		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
 
-	// The returned partition is discarded like every sibling error test does:
-	// every error path in inTreeCategoryBlocks is a literal `return nil,
-	// fmt.Errorf(...)`, so asserting nil pins nothing a reviewer could break.
-
 	// The tripwire has two arms — a named alias and a bare string literal — and
 	// only the named arm was exercised above. A bare literal is the one form that
 	// leaves NO constant to rename back, so its remedy text matters most; pin
