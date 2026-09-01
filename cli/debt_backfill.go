@@ -181,10 +181,13 @@ func pluralLines(n int) string {
 // help — both rows carry the same mark and still read alike; only a per-file suffix
 // tells them apart.
 //
-// The suffix is derived from the raw name, not from an index, so it is stable across
-// runs and independent of directory order — an operator comparing two dry runs sees the
-// same token for the same file. It is appended only where a collision actually exists,
-// so the ordinary single-shard listing is unchanged.
+// The suffix is derived from the raw name, not from an index, so the DERIVATION is
+// stable across runs and independent of directory order. The token itself is not:
+// the suffix is appended only where a collision actually exists, so whether a file
+// prints bare or suffixed varies with whether its colliding sibling is present in
+// the store listing (or the change-set fallback) on that run — an operator comparing
+// two dry runs can see the same file print bare in one and suffixed in the other.
+// The ordinary single-shard listing is unchanged: no collision, no suffix.
 //
 // The collision is resolved against every shard the store DIRECTORY holds, not against
 // the change set alone. The ambiguity being removed is between the printed token and a

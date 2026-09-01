@@ -252,9 +252,15 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 // The empty check moved behind the era pass with this split, which is
 // behaviour-preserving: unresolvedEraRuns falls back rather than excluding — a record
 // is kept when its reviewer has no current-era record at all, and when a reviewer does
-// have one, that record itself is kept — so a non-empty selection can never come out
-// empty, and ErrNoExportRecords still reports exactly what the user's own filters
-// selected.
+// have one, that record itself is kept — so within THIS function a non-empty selection
+// can never come out empty. ErrNoExportRecords therefore reports that nothing
+// publishable remained — which is no longer guaranteed to be exactly what the user's
+// own filters selected: a caller can shrink a non-empty selection to empty between
+// PublishedSet and this call. The leaderboard export does exactly that, skipping
+// records whose published identity is empty once scrubbed
+// (selectPublishableRecordIdentities, cli/leaderboard.go), so a user whose filters
+// matched every record can still see the sentinel; the per-record skip lines on
+// stderr precede it, so the outcome is discoverable.
 //
 // Only `record_type: "reviewer"` records are published. That is not a precondition on
 // the caller: this function enforces it, because it is exported and skips the

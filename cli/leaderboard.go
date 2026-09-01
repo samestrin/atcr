@@ -342,11 +342,18 @@ func selectPublishableRecordIdentities(cmd *cobra.Command, filtered []scorecard.
 					"edit or remove that record in the scorecard store, then re-run the export",
 					rec.RunID, f.name, f.value, r)
 			}
-			// Empty ONCE SCRUBBED, the arm `benchmark export` already applies through
-			// checkPublishable. Without it the two sibling producers into the SAME
-			// envelope disagreed: benchmark hard-rejected an identity the scrub deletes
-			// outright (an email- or path-shaped id), while leaderboard published it as
-			// model:"".
+			// Empty ONCE SCRUBBED — this closes the empty-once-scrubbed arm of the
+			// predicate `benchmark export` already applies to its producer side. Without
+			// it the two sibling producers into the SAME envelope disagreed on that arm:
+			// benchmark hard-rejected an identity the scrub deletes outright (an email- or
+			// path-shaped id), while leaderboard published it as model:"".
+			//
+			// The scrub-REWRITES arm deliberately stays asymmetric. checkPublishable
+			// rejects a value the scrub would change, because the envelope must name the
+			// same suite the manifest does; the leaderboard has no manifest to match —
+			// the scrub IS its anonymization, so a record whose identity scrubs to a
+			// different string is published under the scrubbed form by design. Aligning
+			// that arm would end the anonymization, not close a divergence.
 			//
 			// Scoped to a value that is NON-EMPTY before the scrub. An identity already
 			// empty in the store is a different defect — a record written without a
