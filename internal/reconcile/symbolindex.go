@@ -893,7 +893,7 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 // others omit a record a later run can re-produce, while the scorecard writes a
 // wrong charge that stands, and nothing reads unresolved.json back into it.
 //
-// UnresolvedReasonDocShield (emit.go) exists for the durable consumer: it is
+// reclib.UnresolvedReasonDocShield exists for the durable consumer: it is
 // stamped in validateFindingPaths, never in resolve, and the scorecard reads it
 // to decide what it may charge.
 var docExts = map[string]struct{}{

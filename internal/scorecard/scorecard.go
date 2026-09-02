@@ -15,7 +15,7 @@ import (
 	"sort"
 
 	"github.com/samestrin/atcr/internal/llmclient"
-	"github.com/samestrin/atcr/internal/reconcile"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // SchemaVersion is the scorecard record schema version. It is emitted as an
@@ -63,7 +63,7 @@ type Record struct {
 	// FindingsDocShielded counts the routed findings this record's denominator
 	// deliberately did NOT charge: those the Tier 4 check routed because their
 	// subject was named only in a documentation-extension file (see
-	// reconcile.UnresolvedReasonDocShield).
+	// reclib.UnresolvedReasonDocShield).
 	//
 	// It exists so the carve-out can never be silent. The exemption is driven by
 	// the reviewer's own PROBLEM text — a reviewer who anchors a fabricated
@@ -264,7 +264,7 @@ type EmitInput struct {
 	// FindingsCorroborated — with one carve-out, below.
 	//
 	// THE CARVE-OUT: a record whose UnresolvedReason is
-	// reconcile.UnresolvedReasonDocShield is NOT counted in FindingsRaised. Its
+	// reclib.UnresolvedReasonDocShield is NOT counted in FindingsRaised. Its
 	// subject WAS named in the tree, in a file the doc-extension heuristic
 	// classified as prose, so being routed is not by itself fabrication evidence.
 	// Every other consumer of a routed record recovers from a heuristic misfire by
@@ -352,7 +352,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	chargeableUnresolved := make([]Finding, 0, len(in.UnresolvedFindings))
 	docShielded := make([]Finding, 0)
 	for _, u := range in.UnresolvedFindings {
-		if u.UnresolvedReason == reconcile.UnresolvedReasonDocShield {
+		if u.UnresolvedReason == reclib.UnresolvedReasonDocShield {
 			docShielded = append(docShielded, u)
 			continue
 		}

@@ -11,7 +11,7 @@ import (
 
 // TestDocShield_PublishedDocsMatchTheCode pins the serialized Tier 4 vocabulary
 // against the two docs that teach it. The literal "doc_shield"
-// (UnresolvedReasonDocShield, emit.go) is hard-coded in BOTH
+// (UnresolvedReasonDocShield, reconcile/reconcile.go) is hard-coded in BOTH
 // docs/code-review-backend.md and docs/scorecard.md, and the unresolved_state
 // truth table in docs/code-review-backend.md enumerates the four published
 // UnresolvedState* constants — none of it compiled against the code, so a rename
@@ -46,8 +46,8 @@ func TestDocShield_PublishedDocsMatchTheCode(t *testing.T) {
 		"docs/code-review-backend.md": string(backend),
 		"docs/scorecard.md":           string(scorecardDoc),
 	} {
-		if !strings.Contains(doc, UnresolvedReasonDocShield) {
-			t.Errorf("%s is missing the %q literal (UnresolvedReasonDocShield, emit.go)", name, UnresolvedReasonDocShield)
+		if !strings.Contains(doc, reclib.UnresolvedReasonDocShield) {
+			t.Errorf("%s is missing the %q literal (reclib.UnresolvedReasonDocShield)", name, reclib.UnresolvedReasonDocShield)
 		}
 	}
 }

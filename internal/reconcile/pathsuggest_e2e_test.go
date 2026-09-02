@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -271,7 +272,7 @@ func TestRunReconcile_DocShieldReasonEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, res.Unresolved, 1, "a subject declared nowhere in source is routed")
-	assert.Equal(t, UnresolvedReasonDocShield, res.Unresolved[0].UnresolvedReason,
+	assert.Equal(t, reclib.UnresolvedReasonDocShield, res.Unresolved[0].UnresolvedReason,
 		"the subject IS in the tree, in the changelog: the routing rests on the doc-extension heuristic and must say so")
 
 	// The reason rides the persisted sidecar, which is what the scorecard bridge
@@ -279,5 +280,5 @@ func TestRunReconcile_DocShieldReasonEndToEnd(t *testing.T) {
 	sidecar, err := ReadUnresolvedFindings(reviewDir)
 	require.NoError(t, err)
 	require.Len(t, sidecar, 1)
-	assert.Equal(t, UnresolvedReasonDocShield, sidecar[0].UnresolvedReason)
+	assert.Equal(t, reclib.UnresolvedReasonDocShield, sidecar[0].UnresolvedReason)
 }

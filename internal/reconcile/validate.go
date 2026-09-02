@@ -144,7 +144,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				// heuristic, so the scorecard must not durably charge it. Every
 				// other consumer of a routed record can recover from a misfire by
 				// reading unresolved.json; the scorecard cannot.
-				findings[i].UnresolvedReason = UnresolvedReasonDocShield
+				findings[i].UnresolvedReason = reclib.UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
 			// The finding named more constructs than the anchor cap admits, so the

@@ -99,6 +99,22 @@ const (
 	UnresolvedStateIncomplete = "incomplete"
 )
 
+// UnresolvedReasonDocShield marks a finding routed because its PROBLEM anchors
+// were named ONLY in a documentation-extension file. That routing rests on a
+// heuristic — an extension is not a reliable proxy for "cannot declare", which
+// is the whole of the .mdx correction — so the finding is preserved in
+// unresolved.json like any other routed record but is NOT charged to the
+// reviewer's scorecard denominator. Nothing reads unresolved.json back into the
+// scorecard, so that charge is the one consequence of a misfire that cannot be
+// undone later.
+//
+// It lives in the PUBLISHED module beside the UnresolvedState constants because
+// it belongs to the same serialized vocabulary: "doc_shield" is a wire value in
+// reconciled/unresolved.json, documented as a public artifact field in
+// docs/code-review-backend.md, so an external consumer can reference it
+// symbolically rather than hard-coding the string.
+const UnresolvedReasonDocShield = "doc_shield"
+
 // Summary is the run-stats record.
 type Summary struct {
 	SourcesScanned        []string       `json:"sources_scanned"`
