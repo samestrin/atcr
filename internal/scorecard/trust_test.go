@@ -867,6 +867,41 @@ func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 		got := unresolvedEraRuns([]Record{mk("2026-09-02T00:00:00Z-x1", RaisedDenominatorCurrent+1)})
 		assert.Empty(t, got)
 	})
+
+	// The FIRST loop's exclusion, isolated. Both loops carry the same
+	// above-current test, and every case above is satisfied by the second one
+	// alone — deleting the first loop's copy leaves them all green.
+	//
+	// What only the first loop decides is what `newest` becomes. Without its
+	// exclusion, raisedDenominatorOf CLAMPS the above-current record to
+	// RaisedDenominatorCurrent, so newest[reviewer] reads 3 and the second loop
+	// then drops every pre-epic record of that reviewer for being an older era.
+	// One garbage line would delete the reviewer's whole real history — precisely
+	// the outcome the guard's own comment says exclusion prevents.
+	t.Run("an above-current record does not delete the reviewer's pre-epic history", func(t *testing.T) {
+		preEpic := func(runID string) Record {
+			return Record{
+				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+				RunID: runID, Reviewer: "bruce", Model: "m",
+				// No era markers at all: definition 1 (pre-epic).
+				FindingsRaised: 2, FindingsCorroborated: 1,
+			}
+		}
+		in := []Record{
+			mk("2026-09-02T00:00:00Z-alien", RaisedDenominatorCurrent+1),
+			preEpic("2026-08-01T00:00:00Z-p1"),
+			preEpic("2026-08-02T00:00:00Z-p2"),
+			preEpic("2026-08-03T00:00:00Z-p3"),
+		}
+
+		got := unresolvedEraRuns(in)
+
+		require.Len(t, got, 3, "all three pre-epic records must survive — the above-current record must not define this reviewer's newest era")
+		for _, r := range got {
+			assert.Equal(t, raisedDenominatorPreEpic, raisedDenominatorOf(r),
+				"only pre-epic records may survive: %s", r.RunID)
+		}
+	})
 }
 
 // TestTrustPriors_ShieldedCountsDiscountTheRate pins the trust-side answer to the
