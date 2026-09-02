@@ -188,18 +188,6 @@ type symbolIndex struct {
 
 // resolve applies the Tier 4 decision procedure to one finding's anchors.
 //
-// Each anchor is scored independently and the PRECISE ones win: an anchor
-// declared in exactly one file localizes the finding, while an anchor declared
-// in many (Close, Run, New) is too common to localize and is ignored as long as
-// some other anchor is precise. Only if no anchor is precise does the outcome
-// fall back to the coarse signal — matched-somewhere is inconclusive, matched
-// nowhere is a no-match.
-//
-// Disagreement between two precise anchors is inconclusive, not a coin flip: a
-// wrong Tier 4 guess that suggests the wrong file is worse than no suggestion
-// (the suggest-never-auto-correct constraint inherited from 5.4).
-// resolve applies the Tier 4 decision procedure to one finding's anchors.
-//
 // primary holds the PROBLEM anchors and secondary the FIX anchors. Both may
 // produce a resolution, but ONLY primary may produce a no-match: a FIX names the
 // construct the reviewer wants created, so its absence from the tree is expected
