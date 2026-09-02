@@ -24,11 +24,15 @@ type FilterOpts struct {
 // valid only when HasCostPerCorroborated is true (a group with zero corroborated
 // findings has no defined cost-per-corroborated and renders as a dash).
 type LeaderboardRow struct {
-	Reviewer               string
-	Model                  string
-	Runs                   int
-	FindingsRaised         int
-	FindingsCorroborated   int
+	Reviewer             string
+	Model                string
+	Runs                 int
+	FindingsRaised       int
+	FindingsCorroborated int
+	// FindingsDocShielded sums the doc-shield carve-out counts. The leaderboard
+	// does not render it; TrustPriors reads it to keep shielded routings inside
+	// the trust rate's denominator.
+	FindingsDocShielded    int
 	CorroborationRate      float64
 	TotalCostUSD           float64
 	CostPerCorroborated    float64
@@ -118,6 +122,7 @@ func Aggregate(records []Record) []LeaderboardRow {
 		row.Runs++
 		row.FindingsRaised += r.FindingsRaised
 		row.FindingsCorroborated += r.FindingsCorroborated
+		row.FindingsDocShielded += r.FindingsDocShielded
 		row.TotalCostUSD += r.CostUSD
 		totalLatency[k] += r.LatencyMS
 	}

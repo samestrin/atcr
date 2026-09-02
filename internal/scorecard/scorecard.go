@@ -70,7 +70,10 @@ type Record struct {
 	// finding on any identifier that appears in a tracked README or CHANGELOG
 	// escapes the phantom charge — so a rate of 1.00 with a nonzero count here
 	// means something very different from a rate of 1.00 without one. Recording
-	// it lets a store, and TrustPriors, tell those apart. Omitted when zero.
+	// it lets a store tell those apart, and TrustPriors DOES tell them apart:
+	// shielded counts join the trust rate's denominator (trustPriorsSince), so
+	// the shield discounts the prior even though it escapes the scorecard
+	// charge. Omitted when zero.
 	FindingsDocShielded int     `json:"findings_doc_shielded,omitempty"`
 	CorroborationRate   float64 `json:"corroboration_rate"`
 	CostUSD             float64 `json:"cost_usd"`

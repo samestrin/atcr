@@ -125,7 +125,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		return map[string]float64{}, nil
 	}
 
-	type tally struct{ runs, corroborated, raised int }
+	type tally struct{ runs, corroborated, raised, shielded int }
 	byReviewer := map[string]*tally{}
 	for _, row := range Aggregate(unresolvedEraRuns(strictRuns(records))) {
 		key := strings.ToLower(row.Reviewer)
@@ -137,6 +137,14 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		t.runs += row.Runs
 		t.corroborated += row.FindingsCorroborated
 		t.raised += row.FindingsRaised
+		// The doc-shield carve-out keeps routed-on-a-heuristic findings out of
+		// the SCORECARD denominator, but it must not launder them out of the
+		// TRUST denominator too: a reviewer (or a board gamer anchoring phantoms
+		// on doc-named tokens) would otherwise inflate a prior by routing
+		// fabrications through the shield. Shielded counts join the denominator
+		// here — the one place a misfire is safe to charge, because a wrong
+		// prior only re-weights future filtering, it does not publish a number.
+		t.shielded += row.FindingsDocShielded
 	}
 
 	rates := make(map[string]float64, len(byReviewer))
@@ -144,7 +152,7 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		if minRuns > 0 && t.runs < minRuns {
 			continue
 		}
-		rates[name] = ratio(t.corroborated, t.raised)
+		rates[name] = ratio(t.corroborated, t.raised+t.shielded)
 	}
 	return rates, nil
 }
