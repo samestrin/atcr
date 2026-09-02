@@ -10,11 +10,6 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
-// unresolvedReasonDocShield is a local stand-in for the published
-// reconcile.UnresolvedReasonDocShield while the go.mod pin lags the in-tree
-// declaration. RED stub — deliberately wrong until the fix lands.
-const unresolvedReasonDocShield = ""
-
 // tier4Resolver is the Tier 4 lookup capability validateFindingPaths consumes
 // (Epic 35.16.6.5 T3): given a finding's extracted anchors, report whether the
 // construct it describes lives in exactly one tracked file, in several, or
@@ -154,7 +149,7 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				// heuristic, so the scorecard must not durably charge it. Every
 				// other consumer of a routed record can recover from a misfire by
 				// reading unresolved.json; the scorecard cannot.
-				findings[i].UnresolvedReason = reclib.UnresolvedReasonDocShield
+				findings[i].UnresolvedReason = UnresolvedReasonDocShield
 			}
 		case outcome == tier4NoMatch:
 			// The finding named more constructs than the anchor cap admits, so the

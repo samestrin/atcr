@@ -46,8 +46,8 @@ func TestDocShield_PublishedDocsMatchTheCode(t *testing.T) {
 		"docs/code-review-backend.md": string(backend),
 		"docs/scorecard.md":           string(scorecardDoc),
 	} {
-		if !strings.Contains(doc, reclib.UnresolvedReasonDocShield) {
-			t.Errorf("%s is missing the %q literal (reclib.UnresolvedReasonDocShield)", name, reclib.UnresolvedReasonDocShield)
+		if !strings.Contains(doc, UnresolvedReasonDocShield) {
+			t.Errorf("%s is missing the %q literal (UnresolvedReasonDocShield)", name, UnresolvedReasonDocShield)
 		}
 	}
 }

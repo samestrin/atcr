@@ -471,7 +471,7 @@ func TestJSONFinding_ClusterIDOmittedWhenEmpty(t *testing.T) {
 // `reason`) must be a loud failure here, not a silent schema break. Also pins
 // the empty-value omission — an unrouted finding carries no key at all.
 func TestJSONFinding_UnresolvedReasonWireKey(t *testing.T) {
-	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM", UnresolvedReason: reclib.UnresolvedReasonDocShield}
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM", UnresolvedReason: UnresolvedReasonDocShield}
 	data, err := json.Marshal(f)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"unresolved_reason":"doc_shield"`,

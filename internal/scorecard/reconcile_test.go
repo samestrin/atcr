@@ -7,7 +7,6 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
-	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -193,7 +192,7 @@ func TestEmitForReconcile_DocShieldRoutingIsNotCharged(t *testing.T) {
 			// Named only in a documentation file: routed on the heuristic, so it
 			// stays in the sidecar but must not reach the denominator.
 			{File: "guide.go", Line: 9, Problem: "Callout is unsafe", Reviewers: []string{"bruce"},
-				UnresolvedReason: reclib.UnresolvedReasonDocShield},
+				UnresolvedReason: reconcile.UnresolvedReasonDocShield},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}
@@ -245,7 +244,7 @@ func TestEmitForReconcile_DocShieldOnlyReviewerStillRecorded(t *testing.T) {
 		},
 		Unresolved: []reconcile.JSONFinding{
 			{File: "guide.go", Line: 9, Problem: "Callout is unsafe", Reviewers: []string{"bruce"},
-				UnresolvedReason: reclib.UnresolvedReasonDocShield},
+				UnresolvedReason: reconcile.UnresolvedReasonDocShield},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}

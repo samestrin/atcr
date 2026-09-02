@@ -28,7 +28,7 @@ const reclibModulePath = "github.com/samestrin/atcr/reconcile"
 const repoRootFromHere = "../.."
 
 // docShieldConstName is the name the reconcile module declares the doc-shield
-// routing reason under. unresolvedReasonDocShield (validate.go) is a local copy
+// routing reason under. UnresolvedReasonDocShield (lib.go) is a local copy
 // held while the pin lags behind the in-tree declaration, and the copy is only
 // safe while the two agree — that is what TestDocShieldLocalCopy_MatchesInTree
 // enforces.
@@ -78,7 +78,7 @@ func TestReleasedReconcileModule_ProvidesEverySymbolTheRootModuleReferences(t *t
 
 // TestDocShieldLocalCopy_MatchesInTree keeps the local stand-in honest.
 //
-// unresolvedReasonDocShield exists only because the pin lags; it is a duplicate
+// UnresolvedReasonDocShield exists only because the pin lags; it is a duplicate
 // of a value the published module owns, and "doc_shield" is a WIRE value — it is
 // written into reconciled/unresolved.json and documented as a public artifact
 // field. A silent divergence between the copy and the declaration would emit a
@@ -86,8 +86,8 @@ func TestReleasedReconcileModule_ProvidesEverySymbolTheRootModuleReferences(t *t
 // was introduced to fix.
 func TestDocShieldLocalCopy_MatchesInTree(t *testing.T) {
 	inTree := stringConstValue(t, filepath.Join(repoRootFromHere, "reconcile"), docShieldConstName)
-	assert.Equal(t, inTree, unresolvedReasonDocShield,
-		"unresolvedReasonDocShield must equal reconcile.%s. When the go.mod pin catches up, delete the local copy and use reclib.%s directly.",
+	assert.Equal(t, inTree, UnresolvedReasonDocShield,
+		"UnresolvedReasonDocShield must equal reconcile.%s. When the go.mod pin catches up, delete the local copy and use reclib.%s directly.",
 		docShieldConstName, docShieldConstName)
 }
 

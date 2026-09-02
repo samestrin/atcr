@@ -143,7 +143,7 @@ func TestTier4_DocShieldRoutingIsStampedWithItsReason(t *testing.T) {
 		unresolved, _ := validateFindingPaths(context.Background(), findings, root)
 
 		require.Equal(t, []int{0}, unresolved, "the routing itself is unchanged")
-		assert.Equal(t, reclib.UnresolvedReasonDocShield, findings[0].UnresolvedReason,
+		assert.Equal(t, UnresolvedReasonDocShield, findings[0].UnresolvedReason,
 			"a routing that rests on the doc-extension heuristic must say so")
 	})
 
