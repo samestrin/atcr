@@ -501,8 +501,10 @@ func TestDebtBackfillJustifications_DryRunLeavesAUniqueLocatorBareAlongsideOther
 // in-place rewrite from.
 func TestLocatorNames_FallsBackToTheChangeSetWhenTheListingFails(t *testing.T) {
 	// A directory that does not exist: os.ReadDir returns an error and the listing
-	// contributes nothing. An unreadable-but-present directory (chmod 0500) behaves
-	// identically here and is skipped because root ignores the mode bit in CI.
+	// contributes nothing. An unreadable-but-present directory (chmod 0500) would
+	// behave identically here; the nonexistent path is preferred because it produces
+	// the same os.ReadDir error deterministically on every platform and under every
+	// user, and needs no permission setup or cleanup.
 	gone := filepath.Join(t.TempDir(), "no-such-store")
 
 	// Two DIFFERENT shard files whose names reduce to the same token once Cf is

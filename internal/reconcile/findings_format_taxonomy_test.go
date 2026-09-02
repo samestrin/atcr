@@ -417,9 +417,10 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 // `naming` out of "Structure and design", or merging two blocks in the doc that
 // the constant keeps apart, fails here.
 //
-// out-of-scope is absent from the partition by construction — it is declared in
-// merge.go outside any block — and its Group cell is pinned as a routing value by
-// the test below instead.
+// out-of-scope is absent from the partition because inTreeCategoryBlocks excludes
+// that constant by NAME wherever it is declared — not because of where merge.go
+// happens to declare it. Its Group cell is pinned as a routing value by
+// TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues above instead.
 func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
 	group := map[string]string{}
 	for _, row := range taxonomyTableRows(taxonomySectionLines(t)) {
@@ -429,7 +430,7 @@ func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
 
 	blocks, err := inTreeCategoryBlocks(inTreeReconcileDir)
 	require.NoError(t, err,
-		"this is a doc-table test, but inTreeCategoryBlocks fails for reasons that are not the doc table's: a category.go block fault, or — wrapped in %q — a fault in the categories slice that inTreeCategoryDecls read. Read the wrapped error before editing %s",
+		"this is a doc-table test, but inTreeCategoryBlocks fails for reasons that are not the doc table's. Read the error text before editing %s: it names the file, and usually the constant, at fault — a category.go block fault, or — wrapped in %q — a fault in the categories slice that inTreeCategoryDecls read, are the common shapes but not the only ones",
 		categoriesSliceWrap, findingsFormatDoc)
 	require.Greater(t, len(blocks), 1, "a single block would make this guard vacuous")
 
@@ -469,7 +470,7 @@ func TestFindingsFormatDoc_GroupColumnFollowsDeclaredBlocks(t *testing.T) {
 func TestFindingsFormatDoc_RealModulePartitionIsPinned(t *testing.T) {
 	blocks, err := inTreeCategoryBlocks(inTreeReconcileDir)
 	require.NoError(t, err,
-		"this is a partition pin, but inTreeCategoryBlocks fails for reasons that are not the pin's: a category.go block fault, or — wrapped in %q — a fault in the categories slice that inTreeCategoryDecls read",
+		"this is a partition pin, but inTreeCategoryBlocks fails for reasons that are not the pin's. Read the error text first — it names the file, and usually the constant, at fault: a category.go block fault, or — wrapped in %q — a fault in the categories slice that inTreeCategoryDecls read, are the common shapes but not the only ones",
 		categoriesSliceWrap)
 
 	assert.Equal(t, [][]string{

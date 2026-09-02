@@ -232,10 +232,15 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 // between blocks, or a block split or merged, then fails the guard, while the
 // wording of either side stays free.
 //
-// Only category.go is read: the table's Group column restates that one file's
-// block structure, and walking the whole directory let a cosmetic refactor of
-// merge.go (parenthesizing its const, the style it already uses for Sev*/Conf*)
-// move the partition and fail the guard with a message naming category.go.
+// The PARTITION is built from category.go alone: the table's Group column restates
+// that one file's block structure, and building the blocks from the whole directory
+// would let a cosmetic refactor of merge.go (parenthesizing its const, the style it
+// already uses for Sev*/Conf*) move the partition and fail the guard with a message
+// naming category.go. Built-from is narrower than READS: the closing cross-check
+// resolves the categories slice through inTreeCategoryDecls — the walk behind
+// inTreeCategories — which reads every non-test .go file in dir, so a sibling file's
+// fault (an unparseable merge.go, a slice element no Category* constant declares)
+// surfaces from this function too, wrapped in categoriesSliceWrap.
 // The constant named CategoryOutOfScope is excluded by NAME on both sides — the
 // walk below skips that name, and the slice cross-check exempts the element that
 // carries it — so a change to the value it holds is followed automatically and a
@@ -316,8 +321,11 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 
 	// The rename tripwire (see outOfScopeConstName). The exemption below is keyed
 	// on the anchor NAME, so the routing value reaching the slice under any other
-	// name — or as a bare literal — would be excluded from the partition by
-	// nothing and folded in silently. Fire before that can happen. Keying the
+	// name — or as a bare literal — defeats that exclusion. What happens without
+	// this error depends on where the value is declared: in a comment-marked block
+	// of category.go it folds into the partition with nothing failing; elsewhere it
+	// surfaces through a different cross-check's message instead, one that does not
+	// name the rename as the fault. Fire before either can happen. Keying the
 	// tripwire on the name too means a stale alias of the anchor does not disarm
 	// it, which gating on the anchor's mere presence would have allowed.
 	for _, elem := range vocabulary {
@@ -328,7 +336,7 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 		if under == "" {
 			under, remedy = "a bare string literal", fmt.Sprintf("replace the literal with the %s constant", outOfScopeConstName)
 		}
-		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so leaving it under another name would fold it into the partition with nothing failing; %s, or re-anchor %s in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy, outOfScopeConstName)
+		return nil, fmt.Errorf("the routing value %q reaches the categories slice of %s as %s, not as %s — the block partition excludes that value by anchor NAME, so a renamed constant declared in a comment-marked block of category.go would fold into the partition with nothing failing; %s, or re-anchor %s in this helper", outOfScopeConstValue, dir, under, outOfScopeConstName, remedy, outOfScopeConstName)
 	}
 
 	// The forward cross-check is keyed on constant IDENTITY, not value: an alias
