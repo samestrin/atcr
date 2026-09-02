@@ -1477,3 +1477,43 @@ func TestSymbolIndex_OnePresenceMap(t *testing.T) {
 		"symbolIndex must carry exactly one presence map (origin-tagged), not one per source class")
 	assert.NotNil(t, tp, "symbolIndex must exist")
 }
+
+// TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted pins the quantifier the
+// doc-shield carve-out rests on: EVERY anchor must be accounted for in the tree
+// before the shield may explain the routing.
+//
+// The shield exempts a finding from the scorecard's FindingsRaised denominator
+// (scorecard.go, the UnresolvedReasonDocShield carve-out). Answering on the FIRST
+// doc-only anchor let a finding that also names genuinely invented constructs buy
+// its whole exemption with one token that happened to survive in a changelog —
+// the normal fate of a symbol a release removed. The record it produced was
+// NEUTRAL rather than rate-depressing, so it still counted as a run toward the
+// trust floor on a thinner base of real measurements.
+//
+// The doc token set is built with the LOOSE filter (isIdentifierShaped over raw
+// prose bytes) while anchors come from the STRICT one, so an ordinary English
+// word in any tracked .md can be that one token. Requiring every anchor closes
+// the gap without touching either filter.
+func TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux", "phantomWidget"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "neither anchor is declared in source")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"the single-anchor doc-only case is unchanged")
+	assert.False(t, lz.namedInDocs([]string{"quantumFlux", "phantomWidget"}),
+		"phantomWidget is in neither set — it was invented, so the doc mention of its "+
+			"co-anchor explains only part of the finding and must not shield the whole of it")
+	assert.False(t, lz.namedInDocs([]string{"phantomWidget", "quantumFlux"}),
+		"the verdict must not depend on which anchor is examined first")
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux", "DialPeer"}),
+		"a co-anchor declared in SOURCE was not invented, so it does not defeat the shield")
+}
