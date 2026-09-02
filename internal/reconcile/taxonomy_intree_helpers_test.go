@@ -116,11 +116,12 @@ func inTreeCategories(dir string) ([]string, error) {
 // are keyed on a constant's identity, not on the string that constant currently
 // holds, and neither can resolve that identity from a slice of bare values.
 //
-// The declared map — the first return value — has exactly one consumer:
-// TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule, which resolves
-// outOfScopeConstName against the real module through it rather than re-walking
-// the directory a second time. Both in-file readers (inTreeCategories and
-// inTreeCategoryBlocks) discard it.
+// The declared map — the first return value — is the name-keyed half of the
+// read: TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule resolves
+// outOfScopeConstName through it rather than re-walking the directory a second
+// time, and inTreeRoutingValues resolves both routing values through it so the
+// taxonomy doc guards key routing identity on the in-tree module instead of the
+// ambient reclib constants.
 func inTreeCategoryDecls(dir string) (map[string]string, []categoryElem, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
