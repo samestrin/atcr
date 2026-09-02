@@ -108,45 +108,62 @@ func symbolIndexFileCap() int {
 // order-stable without re-sorting.
 type symbolIndex struct {
 	byName map[string][]string
-	// presentInSource is `present` minus the documentation and markup files, and
-	// it is what the NO-MATCH test consults.
+	// presentInSource holds every identifier-shaped token seen in the RAW SOURCE
+	// TEXT of the indexed files — not just the ones the parser named — with the
+	// documentation and markup files left out. Both of resolve's presence checks
+	// consult it.
 	//
-	// The read set was widened to every text file so unparsed LANGUAGES (Ruby,
-	// Swift, Terraform, proto) stay searchable. That also pulled README,
-	// CHANGELOG and docs/ prose in, and English prose is full of camelCase and
-	// snake_case tokens that pass isIdentifierShaped — so a construct DELETED
-	// from the code but still named in a changelog scored "present" and its
+	// Why raw text and not byName alone: the declaration index is only as complete
+	// as the parser's naming rules, and those vary sharply by language. The
+	// embedded go.wasm parser, for instance, names *ast.FuncDecl and nothing else
+	// — so every Go type, interface, const and var is absent from byName while
+	// being plainly present in the tree. Left unguarded, a perfectly real finding
+	// ("`FileIndex` is not concurrency-safe") resolves to "declared nowhere" and is
+	// routed out of the report as fabricated. That failure is Go-specific, silent,
+	// and would fire on atcr's own reviews. So the two directions are held to
+	// different standards: a RESOLUTION needs a byName hit (a declaration site is
+	// what PathSuggestion points at), while a NO-MATCH additionally requires the
+	// anchor to be absent from the source text entirely, by any parser's reckoning.
+	//
+	// Why documentation is left out: the read set was widened to every text file so
+	// unparsed LANGUAGES (Ruby, Swift, Terraform, proto) stay searchable. That also
+	// pulled README, CHANGELOG and docs/ prose in, and English prose is full of
+	// camelCase and snake_case tokens that pass isIdentifierShaped — so a construct
+	// DELETED from the code but still named in a changelog scored "present" and its
 	// finding came back inconclusive. The detector lost sensitivity while still
-	// reporting state=applied.
+	// reporting state=applied. A construct is declared in source, never in prose.
 	//
-	// A construct is declared in source, never in prose. `present` stays wide for
-	// the primaryMatched gate in resolve, where a broader set only ever KEEPS a
-	// finding in the primary stream (the safe direction); the no-match test, which
-	// routes a finding OUT, reads this narrower one.
+	// Why BOTH reads and not only the no-match one: the primaryMatched gate in
+	// resolve looks like a keep-gate — a wider set there only ever keeps a finding
+	// in the primary stream — but its effect is a route-gate. Matching it lets a
+	// FIX-derived anchor localize the finding to a file, which validate.go stamps
+	// as a confident PathSuggestion. Read against a doc-inclusive set, a subject
+	// named only in a changelog licensed a suggestion the very next branch would
+	// have called absent. Prose must not license a path any more than it may
+	// suppress a no-match.
+	//
+	// The accepted trade-off, stated in full: a subject that appears only in
+	// documentation, with an unambiguous FIX anchor, no longer gets a suggestion
+	// AND no longer stays in the primary report — it falls through to the no-match
+	// branch below and is sidecar-routed. That is not a new severity, it is the
+	// existing contract made consistent: the same anchor already routed whenever
+	// the FIX failed to localize, which is what
+	// TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins. Reading a wider set
+	// here made the verdict depend on whether a FIX happened to name a locatable
+	// collaborator, which is not evidence about the subject at all.
+	//
+	// The softer ending was considered and rejected: keep a separate
+	// documentation-token set, gate on presentInSource, and downgrade a doc-only
+	// anchor to tier4Inconclusive so the finding keeps its place in the report and
+	// only loses the fabricated path. It contradicts the guard above — a construct
+	// named only in prose is declared nowhere in source, and that is a no-match by
+	// this epic's definition, not a "could not check".
 	presentInSource map[string]struct{}
 	// parserLoadFailed records that at least one language's parser could not be
 	// obtained during the build, so every file of that language lost its
 	// DECLARATIONS. Paired with an empty byName it means the resolution half of
 	// Tier 4 is dead — see state().
 	parserLoadFailed bool
-	// present holds every identifier-shaped token seen in the RAW SOURCE TEXT of
-	// the indexed files, not just the ones the parser named. It exists solely to
-	// make the no-match verdict safe.
-	//
-	// The declaration index is only as complete as the parser's naming rules, and
-	// those vary sharply by language. The embedded go.wasm parser, for instance,
-	// names *ast.FuncDecl and nothing else — so every Go type, interface, const
-	// and var is absent from byName while being plainly present in the tree. Left
-	// unguarded, a perfectly real finding ("`FileIndex` is not concurrency-safe")
-	// resolves to "declared nowhere" and is routed out of the report as
-	// fabricated. That failure is Go-specific, silent, and would fire on atcr's
-	// own reviews.
-	//
-	// So the two directions are held to different standards: a RESOLUTION needs a
-	// byName hit (a declaration site is what PathSuggestion points at), while a
-	// NO-MATCH additionally requires the anchor to be absent from present — absent
-	// from the source text entirely, by any parser's reckoning.
-	present map[string]struct{}
 	// complete reports that every eligible tracked file was actually read. When
 	// false, some region of the tree was never searched, so "not found" is
 	// unproven and no-match downgrades to inconclusive — the same reasoning the
@@ -196,9 +213,14 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 	// with no primary anchor present anywhere in the tree, a FIX-derived hit
 	// would render "did you mean X?" for a finding whose subject is fabricated
 	// — the exact verdict inversion the no-match direction exists to catch.
+	//
+	// "Present" here means presentInSource, the same set the no-match shield at
+	// the bottom of this function reads. Documentation prose is not evidence a
+	// construct exists, so it may not license a suggestion any more than it may
+	// suppress a no-match.
 	primaryMatched := false
 	for _, a := range primary {
-		if _, seen := x.present[a]; seen || len(x.byName[a]) > 0 {
+		if _, seen := x.presentInSource[a]; seen || len(x.byName[a]) > 0 {
 			primaryMatched = true
 			break
 		}
@@ -334,7 +356,8 @@ func (lz *lazySymbolIndex) state() string {
 // it nil when Tier 4 cannot run for this repo.
 //
 // Eligibility is "does not escape root" — nothing more. EVERY contained tracked
-// file is read and token-scanned into `present`; the parser language
+// file is read, and every one that is not a documentation extension (isDocExt)
+// is token-scanned into `presentInSource`; the parser language
 // (astgroup.LanguageForExt) gates only byName, the declaration half. Filtering
 // eligibility by parser language instead is what once made whole languages
 // invisible to the no-match verdict (see eligiblePaths).
@@ -369,7 +392,6 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	}
 
 	sites := make(map[string]map[string]struct{})
-	present := make(map[string]struct{})
 	presentInSource := make(map[string]struct{})
 	parsers := make(map[string]astgroup.Parser)
 	parserFailed := make(map[string]bool)
@@ -387,9 +409,9 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		}
 		// Read BEFORE parsing, and harvest the raw token set from the bytes
 		// regardless of whether a parser is available or the parse succeeds. That
-		// ordering is what keeps `present` complete when `byName` is not: a file
-		// whose language has no working parser still proves which identifiers exist
-		// in the tree, which is all the no-match verdict needs from it.
+		// ordering is what keeps `presentInSource` complete when `byName` is not: a
+		// file whose language has no working parser still proves which identifiers
+		// exist in the tree, which is all the no-match verdict needs from it.
 		abs, ok := containedIndexPath(lz.root, rel)
 		if !ok {
 			complete = false // symlink escaping root: refuse to read, and admit the hole
@@ -422,7 +444,6 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			continue
 		}
 		readFiles++
-		collectSourceIdentifiers(src, present)
 		if !isDocExt(strings.ToLower(path.Ext(rel))) {
 			collectSourceIdentifiers(src, presentInSource)
 		}
@@ -489,7 +510,6 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	}
 	lz.idx = &symbolIndex{
 		byName:           byName,
-		present:          present,
 		presentInSource:  presentInSource,
 		parserLoadFailed: len(parserFailed) > 0,
 		complete:         complete,
@@ -534,8 +554,9 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 // It deliberately does NOT filter by parser language. astgroup.LanguageForExt
 // covers only go/py/ts-js/php/rust/bash/java/kotlin/c-cpp/csharp, so filtering
 // here made Ruby, Swift, Scala, Elixir, SQL, Terraform, proto, YAML and Markdown
-// structurally invisible to `present` while `complete` stayed true — the largest
-// hole the incomplete-index downgrade could have, and the one it never saw. A
+// structurally invisible to `presentInSource` while `complete` stayed true — the
+// largest hole the incomplete-index downgrade could have, and the one it never
+// saw. A
 // finding whose construct genuinely lives in a .rb file, cited against a
 // non-existent .go path, then reached tier4NoMatch and was routed out of
 // findings.json as fabricated.
@@ -569,8 +590,8 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 //
 // KNOWN GAP, in the unsafe direction, and it is the same one isBinaryContent
 // carries: a genuine SOURCE file over the cap (a generated or minified bundle)
-// is skipped, so its identifiers never reach `present` and a finding about one
-// of them could reach a no-match verdict. `complete` deliberately stays true —
+// is skipped, so its identifiers never reach `presentInSource` and a finding about
+// one of them could reach a no-match verdict. `complete` deliberately stays true —
 // clearing it would let one large artifact withhold every verdict for the whole
 // repo, which is the failure the non-regular-file skip above exists to prevent.
 // Widen this by RAISING the cap, never by clearing `complete` here.
@@ -586,8 +607,9 @@ const binarySniffBytes = 8000
 //
 // Tracked binaries must not be token-scanned. This repository alone carries
 // ~31MB of embedded .wasm parser plugins, so scanning them would dominate the
-// index build cost, and their byte noise would inflate `present` with tokens no
-// reviewer ever named — weakening the very set the no-match verdict depends on.
+// index build cost, and their byte noise would inflate `presentInSource` with
+// tokens no reviewer ever named — weakening the very set the no-match verdict
+// depends on.
 //
 // Skipping one is NOT a hole in the search, so it does not clear `complete`: a
 // source construct is declared in source text, never in a compiled blob. That
@@ -596,8 +618,8 @@ const binarySniffBytes = 8000
 //
 // KNOWN GAP, in the unsafe direction: a UTF-16/UTF-32 encoded SOURCE file
 // carries NULs and is classified binary here, so its identifiers never reach
-// `present` and a finding about one of them could reach a no-match verdict. The
-// exposure is small — git itself treats such a blob as binary, and toolchains
+// `presentInSource` and a finding about one of them could reach a no-match
+// verdict. The exposure is small — git treats such a blob as binary, and toolchains
 // normalize to UTF-8 — but it is real. Widen this by DECODING those encodings,
 // never by dropping the NUL test: without it the ~31MB of embedded .wasm in this
 // repo alone would be scanned on every build.

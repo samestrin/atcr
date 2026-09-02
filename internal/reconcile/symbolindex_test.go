@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -608,8 +609,8 @@ func TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable(t *testing.T) {
 
 // TestSymbolIndex_NonParserOnlyTreeIsStillSearchable pins the counterpart the
 // test above used to contradict: a tracked tree of only non-parser-language
-// files is a perfectly searchable tree. Its raw tokens feed `present`, so the
-// index is available (no unavailable counter), a construct named in it is real
+// files is a perfectly searchable tree. Its raw tokens feed `presentInSource`, so
+// the index is available (no unavailable counter), a construct named in it is real
 // code, and only an anchor absent from all of it is a no-match.
 func TestSymbolIndex_NonParserOnlyTreeIsStillSearchable(t *testing.T) {
 	root := t.TempDir()
@@ -631,17 +632,19 @@ func TestSymbolIndex_NonParserOnlyTreeIsStillSearchable(t *testing.T) {
 	assert.Equal(t, tier4NoMatch, outcome, "the tree was searched, and the anchor is genuinely absent")
 }
 
-// TestSymbolIndex_UnparsedLanguageStillFeedsPresent pins the polyglot hole:
-// eligiblePaths used to drop every tracked file whose extension has no parser
-// language BEFORE the index was built, so Ruby, Swift, Scala, Elixir, SQL,
-// Terraform, YAML and Markdown were structurally invisible to `present` while
+// TestSymbolIndex_UnparsedLanguageStillFeedsPresentInSource pins the polyglot
+// hole: eligiblePaths used to drop every tracked file whose extension has no
+// parser language BEFORE the index was built, so Ruby, Swift, Scala, Elixir, SQL,
+// Terraform and YAML were structurally invisible to the raw-token set while
 // `complete` stayed true. A finding whose construct genuinely lives in one of
 // those files, but whose citation names a non-existent parser-language path, then
 // reached tier4NoMatch and was routed out of findings.json as fabricated.
 //
-// Every tracked file now feeds the raw-token scan; only byName keeps the parser
-// filter.
-func TestSymbolIndex_UnparsedLanguageStillFeedsPresent(t *testing.T) {
+// Every tracked NON-DOCUMENTATION file now feeds the raw-token scan; only byName
+// keeps the parser filter. Documentation is excluded on purpose and by a
+// different rule (isDocExt) — prose names constructs it does not declare, which
+// is what TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins.
+func TestSymbolIndex_UnparsedLanguageStillFeedsPresentInSource(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "config.rb"),
@@ -669,8 +672,8 @@ func TestSymbolIndex_UnparsedLanguageStillFeedsPresent(t *testing.T) {
 // TestSymbolIndex_BinaryFileSkippedWithoutHole pins the bound on the scan above.
 // Tracked binaries (this repo carries ~31MB of embedded .wasm parser plugins)
 // must not be token-scanned: the cost is real and their byte noise would inflate
-// `present` with tokens that no reviewer ever named. Skipping one is NOT a hole
-// either — no source construct is declared in a binary — so `complete` stays
+// `presentInSource` with tokens that no reviewer ever named. Skipping one is NOT
+// a hole either — no source construct is declared in a binary — so `complete` stays
 // true and the no-match verdict remains available.
 func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
 	root := t.TempDir()
@@ -685,7 +688,7 @@ func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
 
 	_, outcome := lz.resolve(context.Background(), []string{"embeddedBinaryToken"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome,
-		"a binary's byte noise must not enter `present`, and skipping it must not withhold the verdict")
+		"a binary's byte noise must not enter `presentInSource`, and skipping it must not withhold the verdict")
 
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome)
@@ -855,7 +858,7 @@ func TestContainedIndexPath_ExitCoverage(t *testing.T) {
 // first binarySniffBytes are inspected, so a NUL past that window is not seen.
 // That is the deliberate trade — an unbounded scan of every tracked file is the
 // cost this cap exists to avoid — and the miss is in the SAFE direction: the file
-// is token-scanned, which over-collects into `present` and can only withhold a
+// is token-scanned, which over-collects into `presentInSource` and can only withhold a
 // no-match verdict, never manufacture one.
 func TestIsBinaryContent_SniffWindow(t *testing.T) {
 	assert.False(t, isBinaryContent([]byte("package net\n\nfunc DialPeer() {}\n")),
@@ -897,7 +900,7 @@ func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 
 	_, outcome := lz.resolve(context.Background(), []string{"oversizeDatasetToken"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome,
-		"an over-cap file must not enter `present`, and skipping it must not withhold the verdict")
+		"an over-cap file must not enter `presentInSource`, and skipping it must not withhold the verdict")
 
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome, "the rest of the tree must still resolve")
@@ -907,12 +910,14 @@ func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 // TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins that documentation prose
 // cannot stand in for a declaration.
 //
-// The read set was widened to every text file so unparsed LANGUAGES stay
-// searchable, which also pulled README/CHANGELOG/docs prose into `present`.
-// Those files carry camelCase and snake_case tokens that pass isIdentifierShaped,
-// so a construct DELETED from the code but still named in a changelog scored
-// "present" and the finding came back inconclusive instead of routed — the
-// no-match detector losing sensitivity while still reporting state=applied.
+// The read set was once widened to every text file so unparsed LANGUAGES stayed
+// searchable, which also pulled README/CHANGELOG/docs prose into the raw-token
+// set. Those files carry camelCase and snake_case tokens that pass
+// isIdentifierShaped, so a construct DELETED from the code but still named in a
+// changelog scored "present" and the finding came back inconclusive instead of
+// routed — the no-match detector losing sensitivity while still reporting
+// state=applied. isDocExt now keeps documentation out of presentInSource, and
+// this test is the guard on that.
 func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
@@ -936,6 +941,94 @@ func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
 	_, outcome = lz2.resolve(context.Background(), []string{"ruby_only_helper"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome,
 		"a construct that genuinely lives in an unparsed language must still be shielded from no-match")
+}
+
+// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion pins the other half of
+// the presence asymmetry: prose may not LICENSE a suggestion either.
+//
+// The no-match shield reads presentInSource, so a construct named only in a
+// changelog is correctly called absent there. The primaryMatched gate in
+// resolve read the wide `present`, so the very same anchor satisfied it, let
+// locate(secondary) run, and stamped a confident PathSuggestion (validate.go:133)
+// for a subject the next branch would have called absent. Both reads have to
+// consult the same set.
+func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
+	newIndex := func(t *testing.T, root string, tracked ...string) *lazySymbolIndex {
+		t.Helper()
+		var calls int32
+		lz := newLazySymbolIndex(root, tracked)
+		lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("SessionPool", 12))}, &calls)
+		return lz
+	}
+
+	// Every docExts entry, not only .md: the gate must read the same set the
+	// shield does for all of them, and .txt is the entry the docExts doc block
+	// itself calls "the one uncomfortable entry".
+	for _, doc := range []string{"NOTES.md", "NOTES.markdown", "NOTES.mdx", "NOTES.rst", "NOTES.txt", "NOTES.adoc"} {
+		t.Run("subject named only in "+path.Ext(doc)+" licenses nothing", func(t *testing.T) {
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, doc),
+				[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+			writeTracked(t, root, "internal/session/pool.go")
+
+			lz := newIndex(t, root, doc, "internal/session/pool.go")
+			got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"SessionPool"})
+
+			assert.Equal(t, tier4NoMatch, outcome,
+				"a subject that exists only in prose was searched for and not found: that is a no-match")
+			assert.Empty(t, got,
+				"no PathSuggestion may be stamped for a subject the source-presence shield calls absent")
+		})
+	}
+
+	t.Run("an incomplete index withholds the no-match instead of routing", func(t *testing.T) {
+		// The narrowed gate must not turn an unproven search into a routed
+		// finding: a hole in the tree means "could not check", never "checked and
+		// found nothing". The tracked-but-absent file is what makes complete false.
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+			[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "CHANGELOG.md", "internal/session/pool.go", "internal/gone/deleted.go")
+		got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Inconclusive, outcome,
+			"a search with a hole in it cannot ground a no-match, however the gate reads")
+		assert.Empty(t, got)
+	})
+
+	t.Run("subject in real source still licenses the suggestion", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+			[]byte("def ruby_only_helper\nend\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "lib/helper.rb", "internal/session/pool.go")
+		got, outcome := lz.resolve(context.Background(), []string{"ruby_only_helper"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Resolved, outcome,
+			"narrowing the gate must not stop a real construct in an unparsed language from localizing")
+		assert.Equal(t, "internal/session/pool.go", got)
+	})
+
+	t.Run("subject in both prose and source still licenses the suggestion", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+			[]byte("## 2.0.0\n\n- Reworked `ruby_only_helper`.\n"), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+			[]byte("def ruby_only_helper\nend\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "CHANGELOG.md", "lib/helper.rb", "internal/session/pool.go")
+		got, outcome := lz.resolve(context.Background(), []string{"ruby_only_helper"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Resolved, outcome,
+			"prose naming a construct that also exists in source must not subtract from its presence")
+		assert.Equal(t, "internal/session/pool.go", got)
+	})
 }
 
 // TestSymbolIndex_StateUnavailableWhenEveryParserFailed pins state() against the
