@@ -653,8 +653,9 @@ func collectSourceIdentifiers(src []byte, out map[string]uint8, flag uint8) {
 // collectExportedIdentifiers adds the identifier-shaped tokens on EXPORT lines of
 // src to out, and nothing else. A line qualifies when it begins with `export`
 // followed by an ESM form (`default`, `const`, `let`, `var`, `function`,
-// `class`, `async`, `{`, `*`), is indented at most 3 spaces, and is not inside a
-// fenced code block.
+// `class`, `async`, the TypeScript declaration keywords `type`, `interface`,
+// `enum`, `declare`, `abstract`, or `{` / `*`), is indented at most 3 spaces, and
+// is not inside a fenced code block.
 //
 // This is the declaration half of an exportDeclaringExts file, and the whole
 // reason it is narrow is that the source bit of present is read by the primaryMatched gate
@@ -720,7 +721,9 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 
 // isESMExportBody reports whether body — the text following the `export` keyword
 // — begins an ESM export form: a declaration keyword, a brace list, or a star
-// re-export.
+// re-export. The keyword set spans JavaScript AND the TypeScript declarations MDX
+// carries, since an `export type Foo` line declares Foo just as `export const`
+// declares its binding.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -728,7 +731,18 @@ func isESMExportBody(body []byte) bool {
 	if body[0] == '{' || body[0] == '*' {
 		return true
 	}
-	for _, kw := range []string{"default", "const", "let", "var", "function", "class", "async"} {
+	// The JavaScript forms plus the TypeScript declaration forms MDX carries.
+	// `type`, `interface`, `enum`, `declare` and `abstract` all declare a name a
+	// finding can be anchored on, so omitting them left the doc's own declaration
+	// out of presentInSource and made the finding eligible for a doc_shield
+	// carve-out the declaration disproves.
+	//
+	// Every one of these is also an ordinary English word, which is what the
+	// suffix test below is for: the keyword counts only when the next byte is
+	// whitespace, `{`, `*`, or end of line, so `types of findings` and
+	// `declares nothing` stay prose.
+	for _, kw := range []string{"default", "const", "let", "var", "function", "class", "async",
+		"type", "interface", "enum", "declare", "abstract"} {
 		if rest, ok := bytes.CutPrefix(body, []byte(kw)); ok &&
 			(len(rest) == 0 || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '{' || rest[0] == '*') {
 			return true
