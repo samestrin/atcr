@@ -217,6 +217,14 @@ func TestEmitForReconcile_DocShieldRoutingIsNotCharged(t *testing.T) {
 	greta := findReviewer(recs, "greta")
 	require.NotNil(t, greta)
 	assert.Equal(t, 0, greta.FindingsDocShielded, "greta was granted no exemption")
+
+	// The aggregate record must sum the carve-out counter too: docs/scorecard.md
+	// promises findings_* sum across reviewers, and a board reading the aggregate
+	// alongside a reviewer row would otherwise see an exemption the total hides.
+	agg := recs[len(recs)-1]
+	require.Equal(t, RecordTypeAggregate, agg.RecordType)
+	assert.Equal(t, 1, agg.FindingsDocShielded,
+		"the aggregate sums the reviewer rows' shielded counts (scorecard.go agg.FindingsDocShielded += ...)")
 }
 
 // TestEmitForReconcile_DocShieldOnlyReviewerStillRecorded pins that excluding a
