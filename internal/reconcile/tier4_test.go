@@ -37,13 +37,22 @@ func (f *fakeTier4) state() string {
 // namedInDocs satisfies tier4Resolver. A scripted resolver has no index, so it
 // reports the ordinary case (a no-match means the anchor is nowhere at all)
 // unless a test scripts docNamed.
+//
+// It mirrors the production quantifier rather than answering on the first
+// docNamed hit: *lazySymbolIndex grants the shield only when EVERY anchor is
+// accounted for in the tree, so an anchor a test left out of docNamed stands for
+// one named nowhere and denies the answer. A fake that said "any" would let a
+// multi-anchor wiring test pass against behaviour production does not have.
 func (f *fakeTier4) namedInDocs(anchors []string) bool {
+	if len(anchors) == 0 {
+		return false
+	}
 	for _, a := range anchors {
-		if f.docNamed[a] {
-			return true
+		if !f.docNamed[a] {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (f *fakeTier4) resolve(_ context.Context, primary, secondary []string) (string, tier4Outcome) {
