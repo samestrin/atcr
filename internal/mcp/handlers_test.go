@@ -1372,6 +1372,8 @@ func TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite(t *testing.
 	assert.Len(t, reported, 1)
 	assert.Empty(t, out["unresolved_read_error"],
 		"nothing failed to read; reporting an error here would be a second wrong answer")
+	assert.NotEmpty(t, out["unresolved_stale"],
+		"but the divergence IS signalled on its own field: the persisted sidecar (0 records) no longer matches this run's routing (1)")
 	assert.Equal(t, int32(1), sidecarReads.Load(),
 		"the sidecar is still read once, for the read-error channel — the records just no longer come from it")
 }

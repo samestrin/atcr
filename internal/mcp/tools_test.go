@@ -252,6 +252,8 @@ func TestDescReconcile_DocumentsUnresolvedFields(t *testing.T) {
 		"descReconcile must name the per-record reason field the sprint added")
 	assert.Contains(t, descReconcile, "doc_shield",
 		"descReconcile must name the doc_shield reason value or a client cannot interpret it")
+	assert.Contains(t, descReconcile, "unresolved_stale",
+		"descReconcile must name the field that signals a sidecar rewritten by a concurrent run")
 }
 
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
