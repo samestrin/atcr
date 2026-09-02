@@ -1429,3 +1429,52 @@ func TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced(t *testing.T) {
 	assert.Contains(t, out["unresolved_read_error"], "unexpected end of JSON input",
 		"the reason must ride in the result, not only in the server log")
 }
+
+// TestReconcileHandler_UnresolvedStaleDetectsASameCountRewrite closes the gap
+// between what unresolved_stale PROMISES and what it detected.
+//
+// tools.go documents the field as reporting that the persisted sidecar "no longer
+// matches the records THIS run routed". A length comparison cannot support that
+// claim: a concurrent atcr_reconcile that routes the same NUMBER of DIFFERENT
+// findings leaves the field empty, so a client concluding "empty means the
+// on-disk artifact equals what I was handed" is wrong — which is the entire
+// question this field exists to answer.
+//
+// The seam stands in for the racing writer, as in the AC5 test above. Do not run
+// in parallel — it mutates a package-level seam.
+func TestReconcileHandler_UnresolvedStaleDetectsASameCountRewrite(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	// One record, exactly as many as this run routes, but a different finding —
+	// precisely what a concurrent run on a different diff leaves behind.
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		return []reconcile.JSONFinding{{
+			Severity: "HIGH", File: "internal/other/elsewhere.go", Line: 42,
+			Problem: "a different finding entirely", Reviewers: []string{"greta"},
+		}}, nil
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_same_count"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"])
+	assert.Empty(t, out["unresolved_read_error"], "nothing failed to read")
+	assert.NotEmpty(t, out["unresolved_stale"],
+		"the counts agree but the CONTENT does not: a length check reports nothing here, and the field's contract is about the records")
+}
