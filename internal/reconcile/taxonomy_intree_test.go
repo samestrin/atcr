@@ -498,23 +498,31 @@ const (
 
 var categories = []string{
 	CategoryCorrectness,
-	CategoryStray,
 	CategoryOutOfScope,
+	CategoryStray,
 	CategoryOther,
 }
 `), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(fmt.Sprintf(`package reconcile
 
-const CategoryOutOfScope = "out-of-scope"
+const CategoryOutOfScope = %q
 const CategoryStray = "stray"
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
+	// CategoryOutOfScope is listed BEFORE CategoryStray, and neither reaches a
+	// block. The loop reports the first unexempted member it meets, so the
+	// exemption is the only reason the error names stray rather than the routing
+	// value. With the two the other way round, deleting the exemption outright
+	// left this test green: it reported on stray either way and pinned nothing.
 	_, err := inTreeCategoryBlocks(dir)
 	require.Error(t, err, "a slice member that appears in no comment-marked block must be an error, not a silently unpinned Group cell")
-	assert.Contains(t, err.Error(), "stray",
-		"the error must name the member that no block declares")
-	assert.NotContains(t, err.Error(), "out-of-scope",
-		"out-of-scope is exempt: it is a routing value declared outside category.go by design")
+	assert.Contains(t, err.Error(), `"stray" is listed in the categories slice`,
+		"the error must name the member that no block declares as its SUBJECT — a bare Contains on the value also matches it inside an unrelated clause")
+	assert.NotContains(t, err.Error(), fmt.Sprintf("%q is listed in the categories slice", outOfScopeConstValue),
+		"out-of-scope is exempt: it is a routing value declared outside category.go by design. "+
+			"Assert on the subject clause, not on the value anywhere in the message — the message also "+
+			"names the exemption in its remedy, so a bare NotContains passed only because Contains is "+
+			"case-sensitive and the remedy spells the CONSTANT, not the value")
 }
 
 // Same contract as its sibling: a directory that marks no block must be an
