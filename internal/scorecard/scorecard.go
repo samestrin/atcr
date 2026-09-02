@@ -139,6 +139,12 @@ const (
 	// RaisedDenominatorCurrent is the definition every record this package writes
 	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
 	// the era filters separate the old records from the new ones automatically.
+	//
+	// RESERVED RANGE: production eras live in 1..99. RaisedDenominatorBenchmarkSuite
+	// (100) shares this one un-namespaced int domain on the frozen public key, so a
+	// future era bump must check the gap rather than assume it — an era that
+	// reached 100 would be indistinguishable from a benchmark-suite row on the
+	// board.
 	RaisedDenominatorCurrent = 3
 )
 
