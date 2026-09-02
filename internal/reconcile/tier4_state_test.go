@@ -3,12 +3,15 @@ package reconcile
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/metrics"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,4 +215,85 @@ func TestUnresolvedState_AppliedWithoutBuildingAnIndex(t *testing.T) {
 	assert.Equal(t, reclib.UnresolvedStateApplied, res.Summary.UnresolvedState,
 		"the check was in force with nothing to adjudicate — that is applied, not disabled")
 	assert.Zero(t, res.Summary.UnresolvedFiltered)
+}
+
+// TestUnresolvedState_IncompleteOutranksUnavailable pins the case order in
+// state(), where two conditions can hold at once and only one of them is true.
+//
+// When every parser failed AND a region of the tree went unread, the
+// parser-failure case used to answer first and report "unavailable". But
+// !complete withholds every NO-MATCH verdict, so nothing is routed and nothing
+// could be — resolutions still occur, since the locate branches run before the
+// completeness gate — and build already incremented
+// tier4IncompleteMetric for that same run. An operator correlating
+// atcr_tier4_index_incomplete_total against unresolved_state per docs/metrics.md
+// would conclude the incomplete counter had misfired: the metric-vs-report
+// disagreement the parser-failure case was added to REMOVE, reproduced in the
+// opposite direction.
+//
+// "Incomplete" is also the more useful answer. Unavailable says the index could
+// not be reached; incomplete says the search had a hole. When both are true the
+// hole is what withheld the verdicts, and it is the one an operator can act on.
+func TestUnresolvedState_IncompleteOutranksUnavailable(t *testing.T) {
+	t.Run("both conditions hold", func(t *testing.T) {
+		lz := &lazySymbolIndex{idx: &symbolIndex{
+			byName:           map[string][]string{},
+			parserLoadFailed: true,
+			complete:         false,
+		}}
+		assert.Equal(t, reclib.UnresolvedStateIncomplete, lz.state(),
+			"a search with a hole in it is incomplete, whatever else also failed")
+	})
+
+	// "parser failure alone is still unavailable" is deliberately NOT repeated
+	// here: TestSymbolIndex_StateUnavailableWhenEveryParserFailed already pins it
+	// through a real build, which a literal cannot.
+
+	t.Run("a hole alone is still incomplete", func(t *testing.T) {
+		lz := &lazySymbolIndex{idx: &symbolIndex{
+			byName:   map[string][]string{"DialPeer": {"internal/net/pool.go"}},
+			complete: false,
+		}}
+		assert.Equal(t, reclib.UnresolvedStateIncomplete, lz.state())
+	})
+
+	// The literals above pin the SWITCH. This one pins that the combination they
+	// describe is reachable from a real build at all, and that the state agrees
+	// with the counters that build increments — which is the entire reason the
+	// order matters. A tracked-but-absent file makes complete false; a parser
+	// factory that always fails makes parserLoadFailed true and leaves byName
+	// empty.
+	t.Run("reachable from a real build, and agrees with both counters", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"),
+			[]byte("package net\n\nfunc DialPeer(addr string) error { return nil }\n"), 0o644))
+
+		lz := newLazySymbolIndex(root, []string{"internal/net/pool.go", "internal/net/deleted.go"})
+		lz.newParser = func(string) (astgroup.Parser, error) { return nil, errors.New("wasm load failed") }
+
+		beforeUnavailable := metrics.Counter(tier4UnavailableMetric).Value()
+		beforeIncomplete := metrics.Counter(tier4IncompleteMetric).Value()
+		_, _ = lz.resolve(context.Background(), []string{"DialPeer"}, nil)
+
+		require.NotNil(t, lz.idx, "an index was built: this is not the no-index case")
+		require.True(t, lz.idx.parserLoadFailed)
+		require.Empty(t, lz.idx.byName, "every parser failed, so nothing was declared")
+		require.False(t, lz.idx.complete, "a tracked-but-absent file is a hole in the search")
+
+		assert.Equal(t, reclib.UnresolvedStateIncomplete, lz.state(),
+			"the hole is what withheld the verdicts, so that is what the state must name")
+		assert.Equal(t, beforeIncomplete+1, metrics.Counter(tier4IncompleteMetric).Value(),
+			"the state must not contradict the counter the same run incremented")
+		assert.Equal(t, beforeUnavailable+1, metrics.Counter(tier4UnavailableMetric).Value(),
+			"both degradations happened and both are counted; only the state has to pick one")
+	})
+
+	t.Run("neither is applied", func(t *testing.T) {
+		lz := &lazySymbolIndex{idx: &symbolIndex{
+			byName:   map[string][]string{"DialPeer": {"internal/net/pool.go"}},
+			complete: true,
+		}}
+		assert.Equal(t, reclib.UnresolvedStateApplied, lz.state())
+	})
 }

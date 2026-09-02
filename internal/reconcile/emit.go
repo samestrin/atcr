@@ -571,8 +571,11 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// Rendered UNCONDITIONALLY (unlike the count below), for the same reason
 		// Consensus level above is: a count of 0 cannot distinguish "the Tier 4
 		// content check ran and routed nothing" from "it never ran at all" — the
-		// opt-out, a missing tracked index, an over-cap or unbuildable index, and
-		// an incomplete one all produce the same 0. Guarded on non-empty only so a
+		// opt-out, a missing tracked index, an over-cap index, and an incomplete
+		// one all produce the same 0. (An index whose parser failed is the
+		// exception: it WAS built and can route, so its 0 means "checked and
+		// routed nothing" even though the state reads unavailable.) Guarded on
+		// non-empty only so a
 		// Summary from a pure in-memory embedder (which never runs content
 		// resolution) renders byte-identically to before.
 		fmt.Fprintf(&b, "- Unresolved check: %s\n", summary.UnresolvedState)

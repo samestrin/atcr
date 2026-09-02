@@ -75,11 +75,27 @@ const (
 	// UnresolvedStateUnavailable means Tier 4 was in force but could not reach a
 	// usable index — over the file cap, nothing in the tracked tree readable, no
 	// root-contained file, or a parser failure that left the declaration set
-	// empty. Nothing was resolved, and no finding was routed.
+	// empty. Nothing was resolved: with no declarations there is no file to point
+	// a suggestion at.
+	//
+	// It does NOT mean nothing was routed. In the parser-failure case an index
+	// WAS built, so the raw-token search still ran and findings naming constructs
+	// absent from the tree are still routed to the sidecar. A nonzero routed
+	// count alongside this state is expected, not a contradiction. Only the
+	// no-index cases route nothing, and they are not distinguishable from this
+	// value alone.
 	UnresolvedStateUnavailable = "unavailable"
 	// UnresolvedStateIncomplete means the index was built but some eligible
 	// tracked file could not be read, so a region of the tree went unsearched and
-	// every no-match verdict was withheld. Resolutions were still available.
+	// every no-match verdict was withheld. No finding was routed under this
+	// state, and none could be.
+	//
+	// Resolutions were still available — the resolution branches run before the
+	// completeness gate — UNLESS the same run also lost its declaration set to a
+	// parser failure. That combination reports incomplete rather than
+	// unavailable, because the unread region is what withheld the verdicts and is
+	// the condition an operator can act on; it also increments BOTH the
+	// unavailable and the incomplete counter.
 	UnresolvedStateIncomplete = "incomplete"
 )
 

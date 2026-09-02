@@ -107,7 +107,9 @@ than ingesting atcr's pre-collapsed blob.
   below). `0` on a run where every finding cited resolvable code.
 - `unresolved_state` — what the content check actually did: `applied`,
   `disabled`, `unavailable`, `incomplete`, or absent. Read it BEFORE reading
-  `unresolved_filtered`; see below for why a bare `0` cannot be interpreted.
+  `unresolved_filtered`; see below for why a bare `0` cannot be interpreted. The
+  state qualifies a `0`; it does not cap the count. `unavailable` in particular
+  is compatible with a nonzero count — see its row below.
 
 ## Findings excluded from the primary stream
 
@@ -142,15 +144,19 @@ plus one optional field:
 ### Reading `unresolved_filtered`
 
 A `0` here does **not** by itself mean "no finding was fabricated". At least six
-conditions produce it, and five of them mean the check never adjudicated
-anything:
+conditions produce it, and most of them mean the check never adjudicated
+anything. `unavailable` is the one state that does not resolve the question at
+all: it covers both "no index was built", which adjudicates nothing, and a
+parser failure that left the declaration set empty, where an index WAS built and
+the raw-token search still ran. A `0` under `unavailable` could be either, and a
+nonzero count under it is perfectly ordinary.
 
 | `unresolved_state` | Meaning | What a `0` count means |
 |---|---|---|
 | `applied` | The check was in force. It does not assert an index was built — when every finding cites a file that exists, none is needed. | Nothing was routed. The healthy case. |
 | `disabled` | `ATCR_DISABLE_AST_GROUPING` is set, or there was no tracked file index (the root is not a git repository, or git was unavailable). | Nothing was checked. |
-| `unavailable` | No usable index — over the file cap, nothing in the tracked tree readable, no root-contained file, or a parser failure that left the declaration set empty. | Nothing was resolved, and nothing was routed. |
-| `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. | Nothing could be routed. |
+| `unavailable` | No usable **declaration set** — either no index at all (over the file cap, nothing in the tracked tree readable, no root-contained file), or an index whose parser failed and left the declaration set empty. | Ambiguous, and the only row that is. With no index, nothing could be routed. With a failed parser, an index WAS built and the raw-token search ran, so a `0` means "checked and routed nothing" — and a NONZERO count under this state is expected, not a contradiction. |
+| `incomplete` | The index was built but a region of the tree went unsearched, so every no-match verdict was withheld. Outranks `unavailable`: a run that both lost its parsers and went unread reports `incomplete`, because the unread region is what withheld the verdicts. Resolutions are unaffected by a hole, but that particular run has no declarations to resolve against either. | Nothing could be routed. |
 | absent | Content resolution did not run for this reconcile (no repo root was resolved — the ordinary case on the MCP path). | Nothing was checked. |
 
 `unresolved_state` renders in `report.md` unconditionally and rides the

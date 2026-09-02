@@ -354,14 +354,30 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 // the raw-token scan searched it in full and the no-match verdict is available,
 // so that run is applied, not unavailable. And a parser failure alone, in a tree
 // where other languages parsed fine, leaves a genuinely working index.
+//
+// !complete is checked BEFORE that conjunction because both can hold at once and
+// only one of them is then true. !complete withholds every NO-MATCH verdict, so
+// nothing was routed and nothing could be — resolutions are unaffected, since
+// the locate branches run before the completeness gate — and build has already
+// incremented tier4IncompleteMetric for the same run. Answering "unavailable"
+// there tells an operator correlating atcr_tier4_index_incomplete_total against
+// unresolved_state (docs/metrics.md) that the incomplete counter misfired: the
+// same metric-vs-report disagreement the parser-failure case exists to remove,
+// in the opposite direction. It is also the more actionable answer — "the search
+// had a hole" names something to fix, "no index" does not.
+//
+// That run increments BOTH counters (unavailable at the parser-load site,
+// incomplete here), which is correct: two distinct degradations happened. Only
+// the state has to pick one, and it picks the one that explains the withheld
+// verdicts.
 func (lz *lazySymbolIndex) state() string {
 	switch {
 	case lz == nil || lz.idx == nil:
 		return reclib.UnresolvedStateUnavailable
-	case lz.idx.parserLoadFailed && len(lz.idx.byName) == 0:
-		return reclib.UnresolvedStateUnavailable
 	case !lz.idx.complete:
 		return reclib.UnresolvedStateIncomplete
+	case lz.idx.parserLoadFailed && len(lz.idx.byName) == 0:
+		return reclib.UnresolvedStateUnavailable
 	default:
 		return reclib.UnresolvedStateApplied
 	}
