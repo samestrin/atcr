@@ -173,14 +173,11 @@ const RaisedDenominatorBenchmarkSuite = 100
 // preceded it. Never returns 0: a record always belongs to some era, and treating
 // "unmarked" as its own class would strand every pre-existing store.
 func raisedDenominatorOf(r Record) int {
-	// Clamped, not trusted. The store is a plain JSONL file a user can edit, and
-	// every other number ingested from it is clamped on the way in. An
-	// out-of-range version would otherwise win the max in unresolvedEraRuns and
-	// silently discard that reviewer's genuine current-era records in favour of
-	// the garbage one — a corrupt line quietly deleting real history from the
-	// window. Out of range reads as the current definition, which is the
-	// conservative answer: it keeps the record in the newest cohort rather than
-	// letting it define a cohort of its own.
+	// Clamped, not trusted — but the clamp is now only a backstop for callers
+	// that BYPASS the era pass: unresolvedEraRuns excludes above-current records
+	// outright, so this branch fires only for a direct Aggregate/ExportSelected
+	// consumer that skipped it. For those, an out-of-range value still reads as
+	// the current definition rather than defining a cohort of its own.
 	if r.RaisedDenominator > RaisedDenominatorCurrent {
 		return RaisedDenominatorCurrent
 	}

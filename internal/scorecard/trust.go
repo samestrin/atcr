@@ -275,6 +275,17 @@ func unresolvedEraRuns(records []Record) []Record {
 		if r.RecordType != RecordTypeReviewer {
 			continue
 		}
+		if r.RaisedDenominator > RaisedDenominatorCurrent {
+			// Above-current means this binary does not implement the definition
+			// the record was computed under — a legitimate record from a NEWER
+			// atcr, a benchmark-suite value, or a corrupt hand-edit are
+			// indistinguishable here, and all three are EXCLUDED from the era
+			// window rather than clamped into the current cohort and blended.
+			// Exclusion preserves the clamp's protective intent (a garbage line
+			// cannot delete the reviewer's real history) without re-labelling a
+			// future era as the current one.
+			continue
+		}
 		k := strings.ToLower(r.Reviewer)
 		if d := raisedDenominatorOf(r); d > newest[k] {
 			newest[k] = d
@@ -285,6 +296,9 @@ func unresolvedEraRuns(records []Record) []Record {
 		if r.RecordType != RecordTypeReviewer {
 			kept = append(kept, r) // aggregates pass through untouched
 			continue
+		}
+		if r.RaisedDenominator > RaisedDenominatorCurrent {
+			continue // above-current: excluded, per the first loop
 		}
 		// Keep the record when it is computed under the newest definition its own
 		// reviewer has. A reviewer with only pre-epic history keeps all of it
