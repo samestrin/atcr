@@ -244,6 +244,14 @@ func TestDescReconcile_DocumentsUnresolvedFields(t *testing.T) {
 		assert.Contains(t, descReconcile, state,
 			"descReconcile must name the %s state, or a client cannot interpret a zero count", state)
 	}
+	// Each routed record carries unresolved_reason; its doc_shield value says the
+	// routing came from the documentation-extension heuristic rather than a genuine
+	// absence. A client that cannot read that distinction cannot tell a phantom
+	// charge from a shielded one.
+	assert.Contains(t, descReconcile, "unresolved_reason",
+		"descReconcile must name the per-record reason field the sprint added")
+	assert.Contains(t, descReconcile, "doc_shield",
+		"descReconcile must name the doc_shield reason value or a client cannot interpret it")
 }
 
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
