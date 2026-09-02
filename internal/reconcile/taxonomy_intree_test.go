@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -578,14 +579,19 @@ const CategoryOutOfScope = "oos"
 // with no constant of the anchor name behind it, and say so.
 func TestInTreeCategoryBlocks_RenamedRoutingConstantIsALoudError(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+	// The routing value is interpolated, never spelled out. A hardcoded literal
+	// here would red this test the moment reconcile/merge.go's value changed —
+	// and TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule tells the
+	// maintainer that change costs ONE edit (outOfScopeConstValue). Both fixtures
+	// in this test track the constant so that promise stays true.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
 
 const (
 	// Defect classes.
 	CategoryCorrectness = "correctness"
 
 	// Control values.
-	CategoryScopeControl = "out-of-scope"
+	CategoryScopeControl = %q
 	CategoryOther        = "other"
 )
 
@@ -594,7 +600,7 @@ var categories = []string{
 	CategoryScopeControl,
 	CategoryOther,
 }
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
 	// The returned partition is discarded like every sibling error test does:
 	// every error path in inTreeCategoryBlocks is a literal `return nil,
@@ -617,7 +623,7 @@ var categories = []string{
 	// both the diagnosis ("a bare string literal") and the remedy.
 	t.Run("bare string literal arm", func(t *testing.T) {
 		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
 
 const (
 	// Defect classes.
@@ -629,10 +635,10 @@ const (
 
 var categories = []string{
 	CategoryCorrectness,
-	"out-of-scope",
+	%q,
 	CategoryOther,
 }
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
 		_, err := inTreeCategoryBlocks(dir)
 		require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
