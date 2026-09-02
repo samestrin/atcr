@@ -176,11 +176,14 @@ const RaisedDenominatorBenchmarkSuite = 100
 // preceded it. Never returns 0: a record always belongs to some era, and treating
 // "unmarked" as its own class would strand every pre-existing store.
 func raisedDenominatorOf(r Record) int {
-	// Clamped, not trusted — but the clamp is now only a backstop for callers
-	// that BYPASS the era pass: unresolvedEraRuns excludes above-current records
-	// outright, so this branch fires only for a direct Aggregate/ExportSelected
-	// consumer that skipped it. For those, an out-of-range value still reads as
-	// the current definition rather than defining a cohort of its own.
+	// Clamped, not trusted — but the clamp is now only a backstop. Both callers
+	// exclude above-current records before asking (unresolvedEraRuns' two loops,
+	// and reviewerAcc.add behind ExportSelected's own era pass), so no in-tree
+	// path reaches this branch; it holds the contract for a future caller that
+	// asks directly. For those, an out-of-range value still reads as the current
+	// definition rather than defining a cohort of its own.
+	// Pinned by TestRaisedDenominatorOf_ClampsAboveCurrent, which is the only
+	// thing that can fail when the branch is deleted.
 	if r.RaisedDenominator > RaisedDenominatorCurrent {
 		return RaisedDenominatorCurrent
 	}

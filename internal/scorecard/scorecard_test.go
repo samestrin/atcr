@@ -411,3 +411,36 @@ func TestEmit_StampsRaisedIncludesUnresolvedOnACleanRun(t *testing.T) {
 	}
 	require.Equal(t, 3, reviewerLines, "all three reviewer records must be checked, not just the first")
 }
+
+// TestRaisedDenominatorOf_ClampsAboveCurrent pins the one branch of
+// raisedDenominatorOf that no in-tree caller can reach.
+//
+// Both callers — unresolvedEraRuns' two loops and reviewerAcc.add via
+// ExportSelected — exclude above-current records BEFORE asking, so the clamp is
+// a backstop for a future or embedding caller that asks directly. That makes it
+// unreachable through the package's own paths and therefore untestable through
+// them: deleting the branch leaves every other test green, which is exactly why
+// its contract has to be asserted here rather than inferred from a caller.
+//
+// The contract is "reads as the CURRENT definition", not "defines a cohort of
+// its own": an unrecognised denominator that returned itself would form a
+// singleton era and silently split a reviewer's window.
+func TestRaisedDenominatorOf_ClampsAboveCurrent(t *testing.T) {
+	for name, denom := range map[string]int{
+		"newer binary (current+1)":    RaisedDenominatorCurrent + 1,
+		"benchmark-suite value (100)": RaisedDenominatorBenchmarkSuite,
+		"corrupt hand-edit (999)":     999,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, RaisedDenominatorCurrent,
+				raisedDenominatorOf(Record{RaisedDenominator: denom}),
+				"an above-current denominator must read as the current definition, not as itself")
+		})
+	}
+
+	// The clamp must not swallow the recognised values beneath it.
+	assert.Equal(t, RaisedDenominatorCurrent, raisedDenominatorOf(Record{RaisedDenominator: RaisedDenominatorCurrent}))
+	assert.Equal(t, raisedDenominatorAllRouted, raisedDenominatorOf(Record{RaisedDenominator: raisedDenominatorAllRouted}))
+	assert.Equal(t, raisedDenominatorAllRouted, raisedDenominatorOf(Record{RaisedIncludesUnresolved: true}))
+	assert.Equal(t, raisedDenominatorPreEpic, raisedDenominatorOf(Record{}))
+}
