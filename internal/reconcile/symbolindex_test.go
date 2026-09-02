@@ -1182,7 +1182,7 @@ func TestSymbolIndex_MDXDeclarationIsSourceNotProse(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "guide.mdx"),
-		[]byte("import {Note} from './ui'\n\nexport function Callout() { return null }\n\nThe `quantumFlux` helper was removed in 2.0.\n\n```jsx\nexport const fencedOnlyExport = 1\n```\n"), 0o644))
+		[]byte("import {Note} from './ui'\n\nexport function Callout() { return null }\n\nexport {NamedReExport} from './x'\n\nThe `quantumFlux` helper was removed in 2.0.\n\nexported_retryHandle is gone\n\nexports.quantumFlux = 1\n\n```jsx\nexport const fencedOnlyExport = 1\n```\n"), 0o644))
 	writeTracked(t, root, "internal/net/pool.go")
 
 	var calls int32
@@ -1215,6 +1215,24 @@ func TestSymbolIndex_MDXDeclarationIsSourceNotProse(t *testing.T) {
 	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome,
 		"widening the source set must not blunt the verdict for a genuinely absent construct")
+
+	// The word-boundary guard: a line that merely STARTS WITH the letters "export"
+	// (`exported ...`, `exports.foo = ...`) is prose, not a declaration. Deleting
+	// the guard admits both tokens into presentInSource — suppressing the no-match
+	// AND licensing a suggestion.
+	for _, tok := range []string{"exported_retryHandle", "quantumFlux"} {
+		got, outcome := lz.resolve(context.Background(), []string{tok}, []string{"DialPeer"})
+		assert.Equal(t, tier4NoMatch, outcome,
+			"%s appears only on a line that starts with the letters export — that is not an export declaration", tok)
+		assert.Empty(t, got, "%s must not license a PathSuggestion from prose", tok)
+	}
+
+	// The `{` allowance is pinned positively: `export {NamedReExport} from './x'`
+	// IS a declaration, so the token reaches presentInSource and shields the
+	// no-match.
+	_, outcome = lz.resolve(context.Background(), []string{"NamedReExport"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a brace re-export declares — deleting the { allowance would misroute a real construct")
 }
 
 // TestSymbolIndex_NamedInDocsExplainsTheRouting pins the index half of the
