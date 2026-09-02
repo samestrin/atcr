@@ -1498,7 +1498,9 @@ func TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
 		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
-	writeTracked(t, root, "internal/net/pool.go")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"),
+		[]byte("package net\n\nfunc DialPeer() error { return nil }\n"), 0o644))
 
 	var calls int32
 	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "internal/net/pool.go"})

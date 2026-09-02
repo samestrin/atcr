@@ -376,21 +376,48 @@ func (lz *lazySymbolIndex) state() string {
 	}
 }
 
-// namedInDocs reports whether any of anchors was named in a documentation or
-// markup file (docExts) and nowhere in source.
+// namedInDocs reports whether the doc-extension heuristic explains the routing of
+// a finding with these anchors: at least one was named in a documentation or
+// markup file (docExts) and nowhere in source, and EVERY OTHER anchor is
+// accounted for somewhere in the tree.
 //
 // It is meaningful only AFTER resolve has returned tier4NoMatch for the same
 // anchors — at that point the source bit is already known not to be set for them, so
 // a hit here means the doc-extension shield is what routed the finding, not an
 // absence from the tree. Like state(), it never triggers a build: an index that
 // was never built has adjudicated nothing, so there is no routing to explain.
+//
+// Why every anchor and not the first doc-only one: a true answer exempts the
+// finding from the scorecard's FindingsRaised denominator (the
+// UnresolvedReasonDocShield carve-out in internal/scorecard). Answering on the
+// FIRST doc-only anchor sold that whole exemption for one token — and the doc set
+// is built with the LOOSE filter (collectSourceIdentifiers/isIdentifierShaped over
+// raw prose bytes) while anchors come from the STRICT one, so any ordinary
+// identifier-shaped word in any tracked .md qualifies, as does the normal fate of
+// a symbol a release removed. A finding citing five invented constructs escaped
+// its entire charge if one of them lingered in a CHANGELOG. Worse than losing the
+// charge: the record became NEUTRAL rather than rate-depressing, so it still
+// counted as a run toward DefaultTrustMinRuns and could carry a reviewer over the
+// trustExempt floor on a thinner base of real measurements.
+//
+// An anchor absent from BOTH sets was invented, and no doc mention of a co-anchor
+// explains it, so it denies the shield outright.
 func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
 	if lz == nil || lz.idx == nil {
 		return false
 	}
+	shielded := false
 	for _, a := range anchors {
 		flags := lz.idx.present[a]
+		if flags == 0 {
+			// Named nowhere in the tree — neither prose nor source. This anchor is
+			// the fabrication the denominator exists to charge, so the finding
+			// cannot be shielded no matter what its co-anchors show.
+			return false
+		}
 		if flags&presenceDocs == 0 {
+			// Source-only: accounted for, but it is not what the doc heuristic
+			// routed. It neither earns nor denies the shield.
 			continue
 		}
 		// A token can be in BOTH sets — named in a changelog AND declared in
@@ -405,10 +432,10 @@ func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
 		// now — in particular it does not narrow which findings earn the
 		// scorecard exemption.
 		if flags&presenceSource == 0 {
-			return true
+			shielded = true
 		}
 	}
-	return false
+	return shielded
 }
 
 // build parses every eligible tracked file once and populates lz.idx, or leaves
