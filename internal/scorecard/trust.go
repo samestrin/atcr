@@ -266,6 +266,15 @@ func unresolvedEraRuns(records []Record) []Record {
 	// denominators a bool cannot express which two are being blended.
 	newest := make(map[string]int, len(records))
 	for _, r := range records {
+		// Only reviewer records hold a per-reviewer era. An aggregate record is
+		// stamped RaisedDenominator = Current under the EMPTY reviewer name, so
+		// without this skip it defines the newest era for every empty-name
+		// reviewer record that shares the key — and whether those survive then
+		// depends on whether the caller dropped aggregates BEFORE this pass
+		// (PublishedSet's ApplyFilters does; trustPriorsSince does not).
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
 		k := strings.ToLower(r.Reviewer)
 		if d := raisedDenominatorOf(r); d > newest[k] {
 			newest[k] = d
@@ -273,6 +282,10 @@ func unresolvedEraRuns(records []Record) []Record {
 	}
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
+		if r.RecordType != RecordTypeReviewer {
+			kept = append(kept, r) // aggregates pass through untouched
+			continue
+		}
 		// Keep the record when it is computed under the newest definition its own
 		// reviewer has. A reviewer with only pre-epic history keeps all of it
 		// (its newest IS pre-epic), which is what stops an upgrade from blacking
