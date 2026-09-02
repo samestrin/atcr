@@ -99,9 +99,27 @@ type ExportEnvelope struct {
 // PublicRecords without bias, so aggregation works from raw records and the
 // public row is computed once at the end. persona/model are scrubbed at ingestion
 // (the single anonymization point), so finalize() never re-scrubs.
+//
+// Records are bucketed by era (the byEra map), not summed flat: the era pass keys
+// on strings.ToLower(Reviewer) while this accumulator keys on the scrubbed
+// (persona, model) pair, so two identities differing only by a non-printing rune
+// form ONE group here but TWO era groups there. When such a group ends up
+// holding two definitions, finalize() computes from the newest era's bucket
+// alone — a blended sum stamped with one label is the defect raised_denominator
+// exists to prevent, and the era pass cannot catch it at this key.
 type reviewerAcc struct {
-	persona         string
-	model           string
+	persona string
+	model   string
+	// raisedDenominator is the newest FindingsRaised definition seen in this
+	// group; it rides onto the public row so a board can tell two submitters'
+	// numbers apart when they were computed under different rules, and it selects
+	// the bucket finalize() reads.
+	raisedDenominator int
+	byEra             map[int]*eraAcc
+}
+
+// eraAcc holds one definition's worth of raw sums inside a reviewerAcc group.
+type eraAcc struct {
 	runs            int
 	raisedTotal     int
 	corroborated    int
@@ -111,66 +129,63 @@ type reviewerAcc struct {
 	refuted         int
 	storedRates     []float64
 	hasVerification bool
-	// raisedDenominator is the newest FindingsRaised definition seen in this
-	// group; it rides onto the public row so a board can tell two submitters'
-	// numbers apart when they were computed under different rules.
-	raisedDenominator int
 }
 
 func (a *reviewerAcc) add(r Record) {
-	a.runs++
-	// The era of the group is the era of its records. unresolvedEraRuns has
-	// already reduced each reviewer to a single definition before Export
-	// aggregates, so every record reaching one accumulator agrees.
-	//
-	// max only picks the LABEL. It does not protect the numbers: raisedTotal,
-	// corroborated, costTotal and latencies below are summed unconditionally, with
-	// no era filtering of their own. A caller of the exported ExportSelected that
-	// skips the era pass would therefore blend two definitions' raw counts and get
-	// them stamped with the newer label — an averaged number presented as a pure
-	// one, which is the defect this field exists to prevent. Running
-	// unresolvedEraRuns first is the caller's contract, enforced by convention
-	// rather than structurally; max is a floor under a mislabel, not a fix for it.
-	if d := raisedDenominatorOf(r); d > a.raisedDenominator {
+	d := raisedDenominatorOf(r)
+	if d > a.raisedDenominator {
 		a.raisedDenominator = d
 	}
-	a.raisedTotal += clampNonNeg(r.FindingsRaised)
-	a.corroborated += clampNonNeg(r.FindingsCorroborated)
-	a.costTotal = clampNonNegF(a.costTotal + clampNonNegF(r.CostUSD))
-	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
+	if a.byEra == nil {
+		a.byEra = make(map[int]*eraAcc)
+	}
+	e := a.byEra[d]
+	if e == nil {
+		e = &eraAcc{}
+		a.byEra[d] = e
+	}
+	e.runs++
+	e.raisedTotal += clampNonNeg(r.FindingsRaised)
+	e.corroborated += clampNonNeg(r.FindingsCorroborated)
+	e.costTotal = clampNonNegF(e.costTotal + clampNonNegF(r.CostUSD))
+	e.latencies = append(e.latencies, clampNonNeg64(r.LatencyMS))
 	// Any verification pointer present marks the group as verified; the counts
 	// sum only over the runs that actually carried verification data.
 	if r.FindingsVerified != nil {
-		a.verified += clampNonNeg(*r.FindingsVerified)
-		a.hasVerification = true
+		e.verified += clampNonNeg(*r.FindingsVerified)
+		e.hasVerification = true
 	}
 	if r.FindingsRefuted != nil {
-		a.refuted += clampNonNeg(*r.FindingsRefuted)
-		a.hasVerification = true
+		e.refuted += clampNonNeg(*r.FindingsRefuted)
+		e.hasVerification = true
 	}
 	if r.SurvivedSkepticRate != nil {
-		a.storedRates = append(a.storedRates, clampRate(*r.SurvivedSkepticRate))
-		a.hasVerification = true
+		e.storedRates = append(e.storedRates, clampRate(*r.SurvivedSkepticRate))
+		e.hasVerification = true
 	}
 }
 
 func (a *reviewerAcc) finalize() PublicRecord {
+	e := a.byEra[a.raisedDenominator]
+	if e == nil {
+		e = &eraAcc{} // unreachable through add(); keeps a zero-value acc safe
+	}
 	pr := PublicRecord{
 		Model:             a.model,
 		Persona:           a.persona,
-		Runs:              a.runs,
-		FindingsRaisedAvg: avgPerRun(a.raisedTotal, a.runs),
-		CorroborationRate: clampRate(ratio(a.corroborated, a.raisedTotal)),
-		LatencyP50MS:      medianInt64(a.latencies),
+		Runs:              e.runs,
+		FindingsRaisedAvg: avgPerRun(e.raisedTotal, e.runs),
+		CorroborationRate: clampRate(ratio(e.corroborated, e.raisedTotal)),
+		LatencyP50MS:      medianInt64(e.latencies),
 		RaisedDenominator: a.raisedDenominator,
 	}
-	pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated)
+	pr.CostPerCorroboratedFindingUSD = costPer(e.costTotal, e.corroborated)
 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
 	// records that some verification pointer was present; a degenerate record can
 	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
 	// in which case there is no rate to report and the key must stay absent — a 0.0
 	// here would be indistinguishable from a genuine all-refuted rate.
-	if a.hasVerification && (a.verified+a.refuted > 0 || len(a.storedRates) > 0) {
+	if e.hasVerification && (e.verified+e.refuted > 0 || len(e.storedRates) > 0) {
 		// Count-based aggregation (verified/(verified+refuted)) is authoritative
 		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
 		// average of per-run rates). Only when NO counts survive in the group (a
@@ -179,14 +194,14 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
 		// public value.
 		var rate float64
-		if a.verified+a.refuted > 0 {
-			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
+		if e.verified+e.refuted > 0 {
+			rate = clampRate(ratio(e.verified, e.verified+e.refuted))
 		} else {
 			sum := 0.0
-			for _, v := range a.storedRates {
+			for _, v := range e.storedRates {
 				sum += v
 			}
-			rate = clampRate(sum / float64(len(a.storedRates)))
+			rate = clampRate(sum / float64(len(e.storedRates)))
 		}
 		pr.SurvivedSkepticRate = &rate
 	}
