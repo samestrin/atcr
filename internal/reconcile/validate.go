@@ -10,6 +10,11 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
+// unresolvedReasonDocShield is a local stand-in for the published
+// reconcile.UnresolvedReasonDocShield while the go.mod pin lags the in-tree
+// declaration. RED stub — deliberately wrong until the fix lands.
+const unresolvedReasonDocShield = ""
+
 // tier4Resolver is the Tier 4 lookup capability validateFindingPaths consumes
 // (Epic 35.16.6.5 T3): given a finding's extracted anchors, report whether the
 // construct it describes lives in exactly one tracked file, in several, or
