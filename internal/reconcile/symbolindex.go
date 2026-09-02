@@ -159,6 +159,21 @@ type symbolIndex struct {
 	// named only in prose is declared nowhere in source, and that is a no-match by
 	// this epic's definition, not a "could not check".
 	presentInSource map[string]struct{}
+	// presentInDocs holds EVERY identifier-shaped token seen in a docExts file,
+	// source-overlapping ones included. It is not the complement of
+	// presentInSource and does not try to be: a token named in a changelog and
+	// declared in a .go file is in both maps, and for .mdx an export-line token is
+	// in both by construction. The doc-ONLY property is produced by the
+	// intersection in namedInDocs, not by this field.
+	//
+	// It exists for one purpose and is deliberately not consulted by any verdict:
+	// after resolve has already reached its no-match, namedInDocs reports whether
+	// the anchor was at least NAMED in prose. That distinguishes "the reviewer
+	// invented this construct" from "the doc-extension heuristic classified the
+	// only file that mentions it", and only the first is fair to charge to a
+	// reviewer's scorecard denominator. Reading it in resolve instead would
+	// re-open the prose-suppression hole the parent epic closed.
+	presentInDocs map[string]struct{}
 	// parserLoadFailed records that at least one language's parser could not be
 	// obtained during the build, so every file of that language lost its
 	// DECLARATIONS. Paired with an empty byName it means the resolution half of
@@ -352,6 +367,40 @@ func (lz *lazySymbolIndex) state() string {
 	}
 }
 
+// namedInDocs reports whether any of anchors was named in a documentation or
+// markup file (docExts) and nowhere in source.
+//
+// It is meaningful only AFTER resolve has returned tier4NoMatch for the same
+// anchors — at that point presentInSource is already known not to hold them, so
+// a hit here means the doc-extension shield is what routed the finding, not an
+// absence from the tree. Like state(), it never triggers a build: an index that
+// was never built has adjudicated nothing, so there is no routing to explain.
+func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
+	if lz == nil || lz.idx == nil {
+		return false
+	}
+	for _, a := range anchors {
+		if _, inDocs := lz.idx.presentInDocs[a]; !inDocs {
+			continue
+		}
+		// A token can be in BOTH sets — named in a changelog AND declared in
+		// source. Only the doc-ONLY case explains a routing.
+		//
+		// At the single call site today this branch is unreachable: it runs only
+		// after resolve returned tier4NoMatch, which already proved no primary
+		// anchor is in presentInSource. It is kept deliberately anyway, because
+		// the answer decides what a reviewer is CHARGED, and a future caller in
+		// another position must not get a wrong doc_shield stamp by inheriting a
+		// precondition it does not enforce. It narrows nothing that is reachable
+		// now — in particular it does not narrow which findings earn the
+		// scorecard exemption.
+		if _, inSource := lz.idx.presentInSource[a]; !inSource {
+			return true
+		}
+	}
+	return false
+}
+
 // build parses every eligible tracked file once and populates lz.idx, or leaves
 // it nil when Tier 4 cannot run for this repo.
 //
@@ -393,6 +442,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 
 	sites := make(map[string]map[string]struct{})
 	presentInSource := make(map[string]struct{})
+	presentInDocs := make(map[string]struct{})
 	parsers := make(map[string]astgroup.Parser)
 	parserFailed := make(map[string]bool)
 	readFiles := 0
@@ -444,7 +494,13 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			continue
 		}
 		readFiles++
-		if !isDocExt(strings.ToLower(path.Ext(rel))) {
+		ext := strings.ToLower(path.Ext(rel))
+		if isDocExt(ext) {
+			collectSourceIdentifiers(src, presentInDocs)
+			if declaresByExport(ext) {
+				collectExportedIdentifiers(src, presentInSource)
+			}
+		} else {
 			collectSourceIdentifiers(src, presentInSource)
 		}
 
@@ -511,6 +567,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	lz.idx = &symbolIndex{
 		byName:           byName,
 		presentInSource:  presentInSource,
+		presentInDocs:    presentInDocs,
 		parserLoadFailed: len(parserFailed) > 0,
 		complete:         complete,
 	}
@@ -544,6 +601,48 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 			}
 			start = -1
 		}
+	}
+}
+
+// collectExportedIdentifiers adds the identifier-shaped tokens on EXPORT lines of
+// src to out, and nothing else. A line qualifies when its first non-whitespace
+// word is exactly `export` and it is not inside a fenced code block.
+//
+// This is the declaration half of an exportDeclaringExts file, and the whole
+// reason it is narrow is that presentInSource is read by the primaryMatched gate
+// as well as the no-match shield: a token admitted here can LICENSE a confident
+// PathSuggestion, not merely withhold a routing. Prose must not reach it.
+//
+// Two deliberate deviations from MDX's own ESM rule, in opposite directions:
+//
+//   - WIDER: the check tolerates leading whitespace, while MDX requires column 0.
+//     An indented export inside a list item is admitted. Accepted — the token is
+//     still export-shaped, and requiring column 0 would silently drop
+//     declarations from otherwise ordinary pages.
+//   - NARROWER: lines inside a ``` or ~~~ fence are skipped. A docs page showing
+//     `export const metadata = {...}` inside a jsx fence is illustrating code,
+//     not declaring it, and admitting that token would hand a code EXAMPLE the
+//     licensing power this function exists to withhold from prose.
+//
+// It over-collects WITHIN a qualifying line — `export function Callout({title})`
+// contributes `title` as well as `Callout`. Accepted: everything on an export
+// line is declaration-adjacent, and the alternative is parsing JSX here.
+func collectExportedIdentifiers(src []byte, out map[string]struct{}) {
+	inFence := false
+	for _, line := range bytes.Split(src, []byte("\n")) {
+		trimmed := bytes.TrimRight(bytes.TrimLeft(line, " \t"), "\r")
+		if bytes.HasPrefix(trimmed, []byte("```")) || bytes.HasPrefix(trimmed, []byte("~~~")) {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !bytes.HasPrefix(trimmed, []byte("export")) {
+			continue
+		}
+		rest := trimmed[len("export"):]
+		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '{' {
+			continue // `exported`, `exports.foo` — not an export declaration
+		}
+		collectSourceIdentifiers(rest, out)
 	}
 }
 
@@ -679,16 +778,77 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 // entry announcing a REMOVAL is the exact case — so admitting it to the no-match
 // test suppresses the verdict for constructs that are genuinely gone.
 //
-// Keep this list to formats that are prose by definition. A config or data format
-// (.yaml, .json, .sql, .tf) legitimately DECLARES names, so it belongs in the
-// source set even though no parser reads it.
+// The test for membership is whether the format can DECLARE, not what it is
+// usually used for. A config or data format (.yaml, .json, .sql, .tf)
+// legitimately declares names, so it belongs in the source set even though no
+// parser reads it. Each entry below was re-weighed against that test:
 //
-// `.txt` is the one uncomfortable entry: a data manifest can wear it
-// (requirements.txt names real packages). It is kept because the overwhelming
-// majority of tracked .txt is prose, and the cost of the rare miss is one
-// finding routed to a preserved sidecar rather than deleted.
+//   - `.mdx` is here, but it is the entry that fails the test in BOTH
+//     directions, so it gets a second rule of its own. MDX is prose and
+//     executable JS in one file: `export function Callout() {}` declares Callout
+//     as surely as a .ts file would, while the paragraph beside it names
+//     constructs it does not declare. Keeping the whole file out lost the
+//     declarations, which is what routed findings about real components out of
+//     the report. Letting the whole file in would have handed prose the
+//     licensing power the shield exists to deny — an anchor mentioned in an MDX
+//     paragraph would satisfy the primaryMatched gate and stamp a confident
+//     PathSuggestion. So the file is split: see declaresByExport.
+//   - `.adoc` and `.rst` stay. Both are markup with no execution semantics; an
+//     identifier in either is a REFERENCE to a construct declared elsewhere
+//     (an autodoc directive, a literal block), never the declaration itself.
+//   - `.txt` stays, and is still the uncomfortable entry: a data manifest can
+//     wear it (requirements.txt names real packages). It is kept because the
+//     overwhelming majority of tracked .txt is prose, and because a package name
+//     is not the kind of identifier a finding anchors on. The miss it admits is
+//     rare and one-sided.
+//
+// The cost of a wrong KEEP here is not "one finding routed to a preserved
+// sidecar rather than deleted". The sidecar does preserve the record, but every
+// terminal consumer reads the POST-routing set, so the finding is gone from all
+// of them. At least:
+//
+//   - the gate exit code (cli/reconcile.go), so a routed finding cannot fail a
+//     run;
+//   - report.md's findings list (emit.go), the human-read artifact;
+//   - the skeptic pipeline (internal/verify/emit_findings.go), so a routed
+//     finding is never verified;
+//   - the CI surfaces (internal/ghaction inline comments, internal/report SARIF);
+//   - the local debt store (internal/localdebt.PersistForReconcile), a durable
+//     on-disk backlog the routed finding never enters;
+//   - the durable scorecard (internal/scorecard), where the routed record is
+//     charged to the reviewer's denominator and never corroborated.
+//
+// The list is illustrative, not exhaustive — anything reading findings.json
+// inherits the routing. The scorecard is the one that cannot be undone: the
+// others omit a record a later run can re-produce, while the scorecard writes a
+// wrong charge that stands, and nothing reads unresolved.json back into it.
+//
+// UnresolvedReasonDocShield (emit.go) exists for the durable consumer: it is
+// stamped in validateFindingPaths, never in resolve, and the scorecard reads it
+// to decide what it may charge.
 var docExts = map[string]struct{}{
 	".md": {}, ".markdown": {}, ".mdx": {}, ".rst": {}, ".txt": {}, ".adoc": {},
+}
+
+// exportDeclaringExts are the docExts entries that can nonetheless DECLARE, and
+// whose declarations are recognizable by an `export` at the head of a line. For
+// these the file is split rather than classified: the export lines are harvested
+// into presentInSource, everything else into presentInDocs.
+//
+// `.mdx` is the whole membership. The rule is deliberately syntactic and narrow
+// — a line-leading `export`, which is the only form MDX's own compiler treats as
+// an ESM declaration block — because the cost of being wrong here is asymmetric.
+// Missing a declaration routes a real finding out of the report, which the
+// sidecar preserves and the doc-shield reason keeps off the reviewer's
+// denominator. Admitting a prose token instead lets prose license a confident
+// PathSuggestion, which nothing downstream can undo.
+var exportDeclaringExts = map[string]struct{}{".mdx": {}}
+
+// declaresByExport reports whether ext (lowercased, leading dot included) is a
+// documentation extension whose export lines declare.
+func declaresByExport(ext string) bool {
+	_, ok := exportDeclaringExts[ext]
+	return ok
 }
 
 // isDocExt reports whether ext (lowercased, leading dot included) is prose.

@@ -238,3 +238,46 @@ func TestRunReconcile_Tier4DisabledEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, unresolved)
 }
+
+// TestRunReconcile_DocShieldReasonEndToEnd joins the two halves the unit tests
+// pin separately: the real lazySymbolIndex decides the routing, and the reason it
+// stamps has to be computed from the SAME anchors that decided it.
+//
+// Both halves are green in isolation with a scripted resolver on one side and a
+// direct namedInDocs call on the other, so a mismatch between the anchor set
+// resolve judged and the set namedInDocs was asked about would never show up.
+// This drives one finding through RunReconcile against a real git repo whose only
+// mention of the subject is a CHANGELOG line, and reads the reason off the
+// sidecar record.
+func TestRunReconcile_DocShieldReasonEndToEnd(t *testing.T) {
+	root := gitRepoWithFiles(t, "internal/auth/validate.go", "CHANGELOG.md")
+	// gitRepoWithFiles writes placeholder content; the index reads from disk, so
+	// overwrite with the content this test is actually about. Tracked-ness comes
+	// from git ls-files and is unaffected.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "auth", "validate.go"),
+		[]byte("package auth\n\nfunc Validate() error { return nil }\n"), 0o644))
+
+	reviewDir := t.TempDir()
+	sources := filepath.Join(reviewDir, "sources")
+	writeFindings(t, sources, "greta/findings.txt",
+		"HIGH|internal/tokens/renewal.go:12|`quantumFlux` never checks the expiry|compare the issued-at claim first|security|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, res.Unresolved, 1, "a subject declared nowhere in source is routed")
+	assert.Equal(t, UnresolvedReasonDocShield, res.Unresolved[0].UnresolvedReason,
+		"the subject IS in the tree, in the changelog: the routing rests on the doc-extension heuristic and must say so")
+
+	// The reason rides the persisted sidecar, which is what the scorecard bridge
+	// and any later reader actually see.
+	sidecar, err := ReadUnresolvedFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, sidecar, 1)
+	assert.Equal(t, UnresolvedReasonDocShield, sidecar[0].UnresolvedReason)
+}

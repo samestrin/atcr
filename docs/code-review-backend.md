@@ -128,6 +128,17 @@ sidecar. A caller that needs every finding the panel produced must read the
 sidecars alongside `findings.json`; a caller that wants only findings that
 correspond to real code can read `findings.json` alone.
 
+Each record in `unresolved.json` has the same shape as a `findings.json` record,
+plus one optional field:
+
+- `unresolved_reason` — why the content check routed this finding. Absent means
+  the ordinary case: the constructs its prose names appear nowhere in the tracked
+  tree. `"doc_shield"` means they DO appear, but only in a file classified as
+  documentation by its extension (`.md`, `.markdown`, `.mdx` prose, `.rst`,
+  `.txt`, `.adoc`). That routing rests on a heuristic, so the finding is
+  preserved here like any other but is not charged to the reviewer's scorecard
+  denominator — see `findings_doc_shielded` in [scorecard.md](scorecard.md).
+
 ### Reading `unresolved_filtered`
 
 A `0` here does **not** by itself mean "no finding was fabricated". At least six

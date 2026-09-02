@@ -366,6 +366,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 	downstreamOnly := map[string]bool{
 		"FixWarning": true, "ClusterMerged": true, "ClusterID": true,
 		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
+		// UnresolvedReason is stamped by validateFindingPaths on the same pass, and
+		// only onto records the Tier 4 check routes — the library Merged has no
+		// notion of routing at all — so it is downstream-only for the same reason.
+		"UnresolvedReason": true,
 		// EvidenceExec is stamped by the repro write-back (Epic 11.0), never by reconcile.
 		"EvidenceExec": true,
 		// Justification/SourceReport are stamped by stampJustifications (Epic 18.2)

@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // SchemaVersion is the scorecard record schema version. It is emitted as an
@@ -50,20 +51,32 @@ const defaultRole = "reviewer"
 // reconciled/verification.json drove the run (AC 01-03) — a nil pointer omits
 // the key entirely, while a pointer to 0 still serializes (0 is a valid value).
 type Record struct {
-	SchemaVersion        int     `json:"schema_version"`
-	RecordType           string  `json:"record_type"`
-	RunID                string  `json:"run_id"`
-	Reviewer             string  `json:"reviewer"`
-	Model                string  `json:"model"`
-	Role                 string  `json:"role"`
-	FindingsRaised       int     `json:"findings_raised"`
-	FindingsCorroborated int     `json:"findings_corroborated"`
-	FindingsSolo         int     `json:"findings_solo"`
-	CorroborationRate    float64 `json:"corroboration_rate"`
-	CostUSD              float64 `json:"cost_usd"`
-	TokensIn             int     `json:"tokens_in"`
-	TokensOut            int     `json:"tokens_out"`
-	LatencyMS            int64   `json:"latency_ms"`
+	SchemaVersion        int    `json:"schema_version"`
+	RecordType           string `json:"record_type"`
+	RunID                string `json:"run_id"`
+	Reviewer             string `json:"reviewer"`
+	Model                string `json:"model"`
+	Role                 string `json:"role"`
+	FindingsRaised       int    `json:"findings_raised"`
+	FindingsCorroborated int    `json:"findings_corroborated"`
+	FindingsSolo         int    `json:"findings_solo"`
+	// FindingsDocShielded counts the routed findings this record's denominator
+	// deliberately did NOT charge: those the Tier 4 check routed because their
+	// subject was named only in a documentation-extension file (see
+	// reconcile.UnresolvedReasonDocShield).
+	//
+	// It exists so the carve-out can never be silent. The exemption is driven by
+	// the reviewer's own PROBLEM text — a reviewer who anchors a fabricated
+	// finding on any identifier that appears in a tracked README or CHANGELOG
+	// escapes the phantom charge — so a rate of 1.00 with a nonzero count here
+	// means something very different from a rate of 1.00 without one. Recording
+	// it lets a store, and TrustPriors, tell those apart. Omitted when zero.
+	FindingsDocShielded int     `json:"findings_doc_shielded,omitempty"`
+	CorroborationRate   float64 `json:"corroboration_rate"`
+	CostUSD             float64 `json:"cost_usd"`
+	TokensIn            int     `json:"tokens_in"`
+	TokensOut           int     `json:"tokens_out"`
+	LatencyMS           int64   `json:"latency_ms"`
 
 	// ConsensusLevel is the reconcile consensus level this run's counts were
 	// measured under (epic 35.9.1). It matters because FindingsRaised and
@@ -84,6 +97,14 @@ type Record struct {
 	// Unlike ConsensusLevel, an absent value here is NOT read as the current
 	// definition — absent genuinely means the other one — so TrustPriors excludes
 	// those records rather than blending them. See unresolvedEraRuns.
+	//
+	// KNOWN LIMITATION: the flag is a bool, and the denominator has now changed
+	// meaning TWICE — Epic 35.16.6.8 removed the doc-shielded routings from it.
+	// Both eras stamp true, so unresolvedEraRuns cannot separate them. Where the
+	// carve-out fired, FindingsDocShielded below is nonzero and the eras ARE
+	// distinguishable; where it did not fire, the two definitions yield the same
+	// number and the blend is harmless. Versioning this properly belongs with the
+	// era carrier work, not here.
 	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
@@ -99,6 +120,11 @@ type Finding struct {
 	Line      int
 	Problem   string
 	Reviewers []string
+	// UnresolvedReason is set only on records in EmitInput.UnresolvedFindings and
+	// carries the Tier 4 routing reason verbatim from
+	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
+	// the anchors appear nowhere in the tracked tree.
+	UnresolvedReason string
 }
 
 // ReviewerMeta carries the per-reviewer identity/usage sourced from the fan-out's
@@ -154,7 +180,17 @@ type EmitInput struct {
 	// check routed OUT of the primary stream (reconcile.Result.Unresolved): their
 	// cited file does not exist and the constructs their prose names are declared
 	// nowhere in the tracked tree. They are counted in FindingsRaised and NEVER in
-	// FindingsCorroborated.
+	// FindingsCorroborated — with one carve-out, below.
+	//
+	// THE CARVE-OUT: a record whose UnresolvedReason is
+	// reconcile.UnresolvedReasonDocShield is NOT counted in FindingsRaised. Its
+	// subject WAS named in the tree, in a file the doc-extension heuristic
+	// classified as prose, so being routed is not by itself fabrication evidence.
+	// Every other consumer of a routed record recovers from a heuristic misfire by
+	// reading unresolved.json back; this store never does, so a wrong charge here
+	// stands for the 180-day window. Those records are counted separately in
+	// Record.FindingsDocShielded, and their reviewers are still registered — see
+	// the filter in Emit.
 	//
 	// They must be counted, and they must be counted this way. Routing removes
 	// them from Findings before this emitter runs, so leaving them out would
@@ -207,12 +243,39 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	agg.ConsensusLevel = in.ConsensusLevel
 	var aggVerified, aggRefuted int
 
+	// A routed finding is charged to its reviewer's denominator because being
+	// routed IS the fabrication evidence. That holds only where the routing
+	// itself is evidence. A doc-shield routing is not: it says the subject was
+	// named in the tree, in a file classified as prose by its EXTENSION — a
+	// heuristic, and the one this sprint had to correct for .mdx. Every other
+	// consumer recovers from a misfire by reading unresolved.json back; the
+	// scorecard never reads it back, so a wrong charge here is permanent and
+	// moves trustExempt/demoteByTrust on unrelated runs for 180 days.
+	//
+	// Excluded from the COUNT, not from the input: EmitForReconcile registers
+	// every routed record's reviewers into in.Reviewers before calling here (see
+	// reconcile.go), so a reviewer whose every finding was doc-shield-routed still
+	// gets a record rather than vanishing. Emit itself iterates in.Reviewers only,
+	// so a direct caller that supplies UnresolvedFindings without populating
+	// Reviewers gets no record for them — that is the caller's contract, not a
+	// guarantee this filter makes.
+	chargeableUnresolved := make([]Finding, 0, len(in.UnresolvedFindings))
+	docShielded := make([]Finding, 0)
+	for _, u := range in.UnresolvedFindings {
+		if u.UnresolvedReason == reconcile.UnresolvedReasonDocShield {
+			docShielded = append(docShielded, u)
+			continue
+		}
+		chargeableUnresolved = append(chargeableUnresolved, u)
+	}
+
 	for _, name := range names {
 		meta := in.Reviewers[name]
 		raised, corroborated := reviewerCounts(name, in.Findings)
 		// Routed phantoms add to the denominator only — see UnresolvedFindings.
-		routedRaised, _ := reviewerCounts(name, in.UnresolvedFindings)
+		routedRaised, _ := reviewerCounts(name, chargeableUnresolved)
 		raised += routedRaised
+		shielded, _ := reviewerCounts(name, docShielded)
 		rec := Record{
 			SchemaVersion: SchemaVersion,
 			// Stamped unconditionally, not only when UnresolvedFindings is
@@ -230,6 +293,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsRaised:           raised,
 			FindingsCorroborated:     corroborated,
 			FindingsSolo:             raised - corroborated,
+			FindingsDocShielded:      shielded,
 			CorroborationRate:        ratio(corroborated, raised),
 			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:                 meta.TokensIn,
@@ -247,6 +311,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 
 		agg.FindingsRaised += rec.FindingsRaised
+		agg.FindingsDocShielded += rec.FindingsDocShielded
 		agg.FindingsCorroborated += rec.FindingsCorroborated
 		agg.FindingsSolo += rec.FindingsSolo
 		agg.CostUSD += rec.CostUSD

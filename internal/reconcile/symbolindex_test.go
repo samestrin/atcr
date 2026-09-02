@@ -1031,6 +1031,99 @@ func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
 	})
 }
 
+// TestSymbolIndex_MDXDeclarationIsSourceNotProse pins AC2: a documentation
+// EXTENSION is not the same thing as prose.
+//
+// MDX is executable JS — `export function Callout() {}` in docs/guide.mdx
+// genuinely DECLARES Callout — but .mdx was classified by name alongside .md, so
+// its tokens were kept out of presentInSource. A finding naming such a construct,
+// cited against a path that does not exist, reached tier4NoMatch and was routed
+// out of the primary report: out of the gate exit code, out of report.md, out of
+// the skeptic pipeline's findings.json, and durably charged to the reviewer as a
+// phantom. The construct was real the whole time.
+//
+// The file is SPLIT rather than reclassified: its export lines feed
+// presentInSource, everything else in it feeds only presentInDocs. A blanket
+// re-admission would not have been safe — presentInSource is read by the
+// primaryMatched gate as well as the no-match shield, so an extra token there
+// also licenses a confident PathSuggestion, which is the failure
+// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion forbids.
+func TestSymbolIndex_MDXDeclarationIsSourceNotProse(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "guide.mdx"),
+		[]byte("import {Note} from './ui'\n\nexport function Callout() { return null }\n\nThe `quantumFlux` helper was removed in 2.0.\n\n```jsx\nexport const fencedOnlyExport = 1\n```\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"docs/guide.mdx", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"Callout"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a construct an MDX file declares is real code that Tier 4 cannot localize, not a phantom")
+
+	// The prose in the SAME file gets none of that credit. This is the half a
+	// blanket "drop .mdx from docExts" would have lost: an anchor mentioned in an
+	// MDX paragraph would have satisfied primaryMatched and licensed a confident
+	// PathSuggestion off the FIX anchor — the exact inversion
+	// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion forbids.
+	got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"DialPeer"})
+	assert.Equal(t, tier4NoMatch, outcome,
+		"a construct named only in MDX PROSE is named in prose, whatever the file also declares")
+	assert.Empty(t, got, "MDX prose must not license a path suggestion")
+
+	// A code EXAMPLE in a fence is illustrating an export, not declaring one, and
+	// must get none of the declaration credit either — otherwise any docs page
+	// showing `export const metadata = ...` would license suggestions for it.
+	_, outcome = lz.resolve(context.Background(), []string{"fencedOnlyExport"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"an export inside a fenced code block is a code sample, not a declaration")
+
+	// The shield itself is unchanged: a name that appears nowhere at all in the
+	// tree is still a no-match, MDX or no MDX.
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"widening the source set must not blunt the verdict for a genuinely absent construct")
+}
+
+// TestSymbolIndex_NamedInDocsExplainsTheRouting pins the index half of the
+// durable-accounting fix: presentInDocs must hold what isDocExt kept out of
+// presentInSource, and nothing else.
+//
+// namedInDocs is asked only after resolve has already returned a no-match, so a
+// true answer means "the doc-extension heuristic is what routed this", not "the
+// construct exists". It must never influence a verdict — that is the
+// prose-suppression hole the parent epic closed.
+func TestSymbolIndex_NamedInDocsExplainsTheRouting(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"+
+			"- Reworked `ruby_only_helper`, which still exists.\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+		[]byte("def ruby_only_helper\nend\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "lib/helper.rb", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	assert.False(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"asking must not build the index — an index that adjudicated nothing explains nothing")
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "the verdict is unchanged by the explanation")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"the subject IS in the tree, in a file classified as prose by its extension")
+	assert.False(t, lz.namedInDocs([]string{"ruby_only_helper"}),
+		"a construct named in the changelog AND declared in source is not doc-shielded: "+
+			"the doc mention explains nothing, because the source one already keeps it out of no-match")
+	assert.False(t, lz.namedInDocs([]string{"NotAnywhereInThisTree"}),
+		"a genuinely absent construct has no doc-shield excuse")
+}
+
 // TestSymbolIndex_StateUnavailableWhenEveryParserFailed pins state() against the
 // metric it must agree with.
 //

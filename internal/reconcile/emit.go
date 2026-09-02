@@ -90,6 +90,15 @@ type JSONFinding struct {
 	// Consumers and the report layer key display off path_warning.
 	PathValid   bool   `json:"path_valid,omitempty"`
 	PathWarning string `json:"path_warning,omitempty"`
+	// UnresolvedReason records WHY the Tier 4 content check routed this finding
+	// to the sidecar, for the one consumer that cannot recover from a wrong
+	// routing. It is set only on routed records and is omitempty, so a finding
+	// that stayed in the primary stream — and every pre-35.16.6.8 findings.json —
+	// serializes byte-identically.
+	//
+	// An empty value on a routed record means the ordinary no-match: the anchors
+	// appear nowhere in the tracked tree. See UnresolvedReasonDocShield.
+	UnresolvedReason string `json:"unresolved_reason,omitempty"`
 	// PathSuggestion is the candidate-index correction for a hallucinated path
 	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
 	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
@@ -180,6 +189,16 @@ type JSONFinding struct {
 	// nil (omitempty) when no narrative matched, keeping output byte-identical.
 	SourceReport *SourceReport `json:"source_report,omitempty"`
 }
+
+// UnresolvedReasonDocShield marks a finding routed because its PROBLEM anchors
+// were named ONLY in a documentation-extension file (see docExts). That routing
+// rests on a heuristic — an extension is not a reliable proxy for "cannot
+// declare", which is the whole of the .mdx correction — so it is preserved in
+// unresolved.json like any other routed record but is NOT charged to the
+// reviewer's scorecard denominator. Nothing reads unresolved.json back into the
+// scorecard, so that charge is the one consequence of a misfire that cannot be
+// undone later.
+const UnresolvedReasonDocShield = "doc_shield"
 
 // SourceReport is the back-reference (Epic 18.2) from a reconciled finding to the
 // review.md narrative section its Justification was extracted from. Path is
