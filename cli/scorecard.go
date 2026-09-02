@@ -167,12 +167,25 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 			break
 		}
 	}
+	// RAISED excludes doc-shield-routed findings, so this column is the only place
+	// this table says how many there were. Conditional, like the verification
+	// columns above: a run with nothing shielded renders unchanged.
+	hasShielded := false
+	for _, r := range byRev {
+		if r.FindingsDocShielded > 0 {
+			hasShielded = true
+			break
+		}
+	}
 
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
 	header := "REVIEWER\tMODEL\tRAISED\tCORROBORATED\tSOLO\tCORR%\tCOST\tLATENCY"
 	if hasVer {
 		header += "\tVERIFIED\tREFUTED\tSURV%"
+	}
+	if hasShielded {
+		header += "\tDOC-SHIELDED"
 	}
 	_, _ = fmt.Fprintln(tw, header)
 	for _, n := range names {
@@ -195,6 +208,9 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 			} else {
 				row += "\t-\t-\t-"
 			}
+		}
+		if hasShielded {
+			row += fmt.Sprintf("\t%d", r.FindingsDocShielded)
 		}
 		_, _ = fmt.Fprintln(tw, row)
 	}

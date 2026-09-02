@@ -573,7 +573,22 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// Surface epic-35.16.6.5 Tier 4 routing the same way the consensus filter
 		// above surfaces its own: rendered only when nonzero, so report.md stays
 		// byte-identical on the common path where every finding cites real code.
-		fmt.Fprintf(&b, "- Unresolved findings: %d (no symbol correspondence in the tracked tree; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		//
+		// The two routed shapes are NOT the same claim and must not share one
+		// sentence. A doc-shielded record's subject IS in the tracked tree —
+		// namedInDocs proved it — just only in a file isDocExt classified as
+		// prose. Telling the reader it had "no symbol correspondence" points them
+		// at the opposite conclusion from the evidence, and the finding it
+		// describes may be entirely real.
+		switch {
+		case docShielded == 0:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (no symbol correspondence in the tracked tree; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		case docShielded >= summary.UnresolvedFiltered:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (named only in documentation, not in tracked source; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		default:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (%d with no symbol correspondence in the tracked tree, %d named only in documentation; routed to %s)\n",
+				summary.UnresolvedFiltered, summary.UnresolvedFiltered-docShielded, docShielded, UnresolvedJSON)
+		}
 	}
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
@@ -737,7 +752,10 @@ func joinOrNone(names []string) string {
 
 // countDocShielded counts the routed records the doc-extension heuristic
 // explains: their subject IS named in the tracked tree, only in a file isDocExt
-// classified as prose. RED stub — the count is not yet rendered.
+// classified as prose. Summary carries no split of its own — the field lives in
+// the PUBLISHED reconcile module and cannot gain one until the go.mod pin moves
+// — so the count is derived here from the routed records and threaded into the
+// renderer.
 func countDocShielded(unresolved []JSONFinding) int {
 	n := 0
 	for _, f := range unresolved {

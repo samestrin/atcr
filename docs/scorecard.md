@@ -141,7 +141,13 @@ atcr scorecard ./.atcr/reviews/abc123
 ```
 
 Columns: `REVIEWER  MODEL  RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY`,
-plus `VERIFIED  REFUTED  SURV%` when any record carries verification data.
+plus `VERIFIED  REFUTED  SURV%` when any record carries verification data, plus
+`DOC-SHIELDED` when any record has a nonzero doc-shield count.
+
+`RAISED` does not count doc-shield-routed findings, so `DOC-SHIELDED` is the only
+place this table reports them. It appears only when some record has one, and every
+row then shows a number (`0`, not a dash — the reviewer has a measurement and it is
+zero). See [Doc-shielded routings](#doc-shielded-routings).
 
 Behavior:
 - No records for the run → message + exit `1`.
@@ -175,8 +181,29 @@ Flags:
 | `--export` | off | Emit anonymized public JSON instead of the table (see below). |
 | `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |
 
-Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`.
+Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`,
+plus `DOC-SHIELDED` when any group has a nonzero doc-shield count.
 `COST/CORR` renders as `-` for a group with zero corroborated findings.
+
+### Doc-shielded routings
+
+A finding whose subject is named ONLY in a documentation-extension file is routed
+to `unresolved.json` like any other unresolved finding, but is NOT charged to the
+reviewer's `RAISED` denominator: the routing rests on a filename-extension
+heuristic, and a scorecard charge is the one consequence of a misfire nothing can
+undo later.
+
+That carve-out makes two different reviewers render identically without the
+`DOC-SHIELDED` column — `RAISED 6 / CORROBORATED 6 / CORR 100%` is the same row a
+reviewer with 10 raised and 4 shielded produces. The shield does NOT apply to the
+trust prior (`atcr personas list --scores`), which counts shielded findings in its
+denominator precisely so a reviewer cannot launder phantoms by anchoring them on
+doc-named tokens. So the two surfaces can legitimately disagree — a 100% row beside
+a 0.60 prior — and `DOC-SHIELDED` is what makes that difference readable.
+
+`report.md` reports the same split: its `Unresolved findings:` line counts the two
+shapes separately, because "no symbol correspondence in the tracked tree" is false
+for a doc-shielded record — its subject IS in the tree.
 
 Behavior:
 - Empty store (no data at all) → friendly message, exit `0`.

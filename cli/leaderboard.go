@@ -222,18 +222,42 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 // and trust must never blend two raised_denominator definitions. Do not "fix"
 // the asymmetry by wrapping this call.
 func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
+	// RAISED stopped counting doc-shield-routed findings (epic 35.16.6.5), so
+	// without this column a row reading RAISED 6 / CORR 100% is indistinguishable
+	// from one that raised 10 with 4 shielded — and the shielded count is what
+	// `personas list --scores` acts on, so a demotion becomes unexplainable from
+	// this table. Conditional, on the SOLO/VERIFIED precedent in renderScorecard:
+	// a store with nothing shielded prints exactly the table it printed before.
+	hasShielded := false
+	for _, r := range rows {
+		if r.FindingsDocShielded > 0 {
+			hasShielded = true
+			break
+		}
+	}
+
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "REVIEWER\tMODEL\tRUNS\tRAISED\tCORROBORATED\tCORR%\tCOST\tCOST/CORR\tLATENCY")
+	header := "REVIEWER\tMODEL\tRUNS\tRAISED\tCORROBORATED\tCORR%\tCOST\tCOST/CORR\tLATENCY"
+	if hasShielded {
+		header += "\tDOC-SHIELDED"
+	}
+	_, _ = fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		costPerCorr := "-"
 		if r.HasCostPerCorroborated {
 			costPerCorr = fmt.Sprintf("$%.4f", r.CostPerCorroborated)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%s\t%dms\n",
+		row := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%s\t%dms",
 			sanitizeCell(r.Reviewer), sanitizeCell(r.Model), r.Runs,
 			r.FindingsRaised, r.FindingsCorroborated, formatPercent(r.CorroborationRate),
 			r.TotalCostUSD, costPerCorr, r.AvgLatencyMS)
+		if hasShielded {
+			// A literal 0 rather than a dash: this reviewer HAS a measurement and
+			// it is zero, which is a different statement from "not applicable".
+			row += fmt.Sprintf("\t%d", r.FindingsDocShielded)
+		}
+		_, _ = fmt.Fprintln(tw, row)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
