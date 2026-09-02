@@ -616,14 +616,23 @@ var categories = []string{
 		"pin the structural claim that the value reached the slice NOT as the anchor — dropping the clause while keeping both names would otherwise pass")
 	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
 		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
+}
 
-	// The tripwire has two arms — a named alias and a bare string literal — and
-	// only the named arm was exercised above. A bare literal is the one form that
-	// leaves NO constant to rename back, so its remedy text matters most; pin
-	// both the diagnosis ("a bare string literal") and the remedy.
-	t.Run("bare string literal arm", func(t *testing.T) {
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
+// The tripwire's second arm: the routing value reaches the slice as a bare
+// string literal. It is the one form that leaves NO constant to rename back, so
+// its remedy text matters most; pin both the diagnosis ("a bare string literal")
+// and the remedy.
+//
+// This is a SIBLING of TestInTreeCategoryBlocks_RenamedRoutingConstantIsALoudError,
+// not a subtest of it. As a nested t.Run it sat after that test's require.Error,
+// and require calls FailNow — runtime.Goexit — so a regression in the named-alias
+// arm skipped this arm entirely: no `=== RUN` line, no failure, coverage of the
+// bare-literal arm silently gone under exactly the condition the pin exists to
+// catch. Keep the two arms as siblings so neither one's failure can suppress the
+// other's execution.
+func TestInTreeCategoryBlocks_BareRoutingLiteralIsALoudError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
 
 const (
 	// Defect classes.
@@ -640,13 +649,12 @@ var categories = []string{
 }
 `, outOfScopeConstValue)), 0o644))
 
-		_, err := inTreeCategoryBlocks(dir)
-		require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
-		assert.Contains(t, err.Error(), "a bare string literal",
-			"the error must name the form the value arrived in")
-		assert.Contains(t, err.Error(), "replace the literal with the CategoryOutOfScope constant",
-			"the remedy must name the one edit that clears the error")
-	})
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
+	assert.Contains(t, err.Error(), "a bare string literal",
+		"the error must name the form the value arrived in")
+	assert.Contains(t, err.Error(), "replace the literal with the CategoryOutOfScope constant",
+		"the remedy must name the one edit that clears the error")
 }
 
 // inTreeCategoryBlocks is documented as reading one file, but its cross-check
