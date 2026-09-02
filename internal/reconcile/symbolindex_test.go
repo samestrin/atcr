@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -1457,4 +1458,24 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
+// ONE presence map keyed by token with a per-token origin flag, not parallel
+// presentInSource/presentInDocs maps that each hold every identifier-shaped token
+// of their half of the tree (roughly doubling index memory for the doc-shield
+// explanation path). Behaviour — which verdict reads which origin — is pinned by
+// the verdict tests above; this guards the structure they read.
+func TestSymbolIndex_OnePresenceMap(t *testing.T) {
+	tp := reflect.TypeOf(symbolIndex{})
+	presenceMaps := 0
+	for i := 0; i < tp.NumField(); i++ {
+		f := tp.Field(i)
+		if f.Type.Kind() == reflect.Map && f.Name != "byName" {
+			presenceMaps++
+		}
+	}
+	assert.Equal(t, 1, presenceMaps,
+		"symbolIndex must carry exactly one presence map (origin-tagged), not one per source class")
+	assert.NotNil(t, tp, "symbolIndex must exist")
 }
