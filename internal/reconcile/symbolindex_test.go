@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1064,9 +1064,17 @@ func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
 
 	// Every docExts entry, not only .md: the gate must read the same set the
 	// shield does for all of them, and .txt is the entry the docExts doc block
-	// itself calls "the one uncomfortable entry".
-	for _, doc := range []string{"NOTES.md", "NOTES.markdown", "NOTES.mdx", "NOTES.rst", "NOTES.txt", "NOTES.adoc"} {
-		t.Run("subject named only in "+path.Ext(doc)+" licenses nothing", func(t *testing.T) {
+	// itself calls "the one uncomfortable entry". Ranging the map directly —
+	// rather than a hardcoded literal list — is what makes the claim true: a
+	// seventh entry added to docExts is covered here automatically.
+	exts := make([]string, 0, len(docExts))
+	for ext := range docExts {
+		exts = append(exts, ext)
+	}
+	sort.Strings(exts)
+	for _, ext := range exts {
+		doc := "NOTES" + ext
+		t.Run("subject named only in "+ext+" licenses nothing", func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, doc),
 				[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
