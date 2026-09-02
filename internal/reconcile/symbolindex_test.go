@@ -1429,6 +1429,16 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 			wantAbsent: []string{"fencedInner", "stillFenced"},
 		},
 		{
+			// Path 2's sibling, and the one the ESM-form check actually answers.
+			// The existing "Before shipping, export ..." case never reaches
+			// isESMExportBody at all — its line does not START with `export`, so
+			// the HasPrefix test rejects it first. Only a sentence whose FIRST word
+			// is the verb exercises the reject arm the godoc credits to this test.
+			name:       "english sentence whose first word is the verb export",
+			src:        "export your apiKey before running the seedScript\n",
+			wantAbsent: []string{"apiKey", "seedScript"},
+		},
+		{
 			name:        "column-0 ESM export declares",
 			src:         "export function Callout() { return null }\n",
 			wantPresent: []string{"Callout"},
@@ -1456,6 +1466,46 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIsESMExportBody_RejectPaths pins the two arms of isESMExportBody that
+// answer "no", tested directly because neither is observable through
+// collectExportedIdentifiers.
+//
+// The empty-body guard is the clearer case: an empty body produces no tokens
+// whether it is admitted or rejected, so an out-map assertion cannot tell the two
+// apart. What the guard actually buys is that `body[0]` on the next line does not
+// panic on a line that is nothing but `export` and trailing whitespace. Asserting
+// the false directly catches both mutations — flipping the return, and deleting
+// the guard (which panics).
+//
+// The trailing return is the fall-through every non-ESM body reaches. It is the
+// arm that stops an English sentence's tokens from landing in presentInSource,
+// where a token can LICENSE a confident PathSuggestion rather than merely
+// withhold a routing.
+func TestIsESMExportBody_RejectPaths(t *testing.T) {
+	t.Run("empty body is not an export form", func(t *testing.T) {
+		assert.False(t, isESMExportBody(nil), "a nil body declares nothing")
+		assert.False(t, isESMExportBody([]byte("")), "`export` followed by only whitespace declares nothing")
+	})
+
+	t.Run("prose body falls through to the reject", func(t *testing.T) {
+		for _, body := range []string{
+			"your apiKey before running",
+			"the seedScript once",
+			"exports.foo = 1",
+			"defaults to five",   // a keyword PREFIX is not the keyword
+			"classicMode = true", // ditto
+		} {
+			assert.False(t, isESMExportBody([]byte(body)), "%q is prose, not an ESM export form", body)
+		}
+	})
+
+	t.Run("real ESM forms are still admitted", func(t *testing.T) {
+		for _, body := range []string{"{Named} from './x'", "* from './x'", "const a = 1", "default fn", "function f()", "class C {}", "async function f()", "let a", "var a"} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real ESM export form", body)
+		}
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
