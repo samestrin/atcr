@@ -58,7 +58,7 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
 | `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. |
 | `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
-| `findings_doc_shielded` | int | conditional | Routed findings this record deliberately did NOT charge to `findings_raised`, because the Tier 4 check routed them on the documentation-extension heuristic (`unresolved_reason: doc_shield`) rather than on a genuine absence. Omitted when zero. Read it alongside `corroboration_rate`: the exemption is driven by the reviewer's own finding text, so a rate of 1.00 with a nonzero count here is not the same claim as a rate of 1.00 without one. |
+| `findings_doc_shielded` | int | conditional | Routed findings this record deliberately did NOT charge to `findings_raised`, because the Tier 4 check routed them on the documentation-extension heuristic (`unresolved_reason: doc_shield`) rather than on a genuine absence. Omitted when zero. Read it alongside `corroboration_rate`: the exemption is driven by the reviewer's own finding text, so a rate of 1.00 with a nonzero count here is not the same claim as a rate of 1.00 without one. Likewise, a rate of 0.00 alongside a nonzero count here is the zero-denominator case (every finding was shielded), not a corroboration failure. Note the trust prior does NOT extend the carve-out: shielded counts join the trust rate's denominator. |
 | `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
 | `corroboration_rate` | float | always | `findings_corroborated / findings_raised` (0.0 when none raised; never NaN). |
 | `cost_usd` | float | always | Estimated cost from the per-model rate table (see [Cost is approximate](#cost-is-approximate)). |
@@ -625,15 +625,25 @@ Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
 `--allow-partial-coverage` is now self-describing to a consumer instead of being
 indistinguishable from a full one.
 
-**The production envelope gained nothing.** Under version 2,
-`leaderboard --export` emits the same key set it emitted under version 1:
-
-- No field of `ExportEnvelope` or `PublicRecord` was renamed, retyped, or removed.
-- No field was added to either type.
-- The only change on the production path is the integer in `submission_schema`.
+**The production envelope gained nothing at the bump itself.** Under version 2,
+`leaderboard --export` initially emitted the same key set it emitted under
+version 1 — no field of `ExportEnvelope` or `PublicRecord` was renamed, retyped,
+or removed, and the only change on the production path was the integer in
+`submission_schema`. (Epic 35.16.6.8 later added `raised_denominator` to
+`PublicRecord` under the same version — see the policy below.)
 
 So a version-2 production submission differs from a version-1 one in exactly one
 byte-range: the version number. The bump is **additive-only** on the producer side.
+
+#### Versioning policy — additive never bumps
+
+`submission_schema` is bumped **only for breaking changes**: a field renamed,
+retyped, or removed, or a semantic shift a consumer cannot ignore. Additive
+field additions — `suite_case_ids`/`reviewer_coverage` on the benchmark
+envelope, `raised_denominator` on every reviewer row — **never** bump it. That
+is why version 2 denotes more than one wire shape, and that is by design: the
+board contract is that consumers tolerate unknown keys. (Verifying the board
+actually does so is the open hand-off below — it is not claimed settled here.)
 
 #### Consumer-side coordination — an open item, not a verified one
 

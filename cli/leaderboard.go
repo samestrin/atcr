@@ -214,6 +214,13 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 // per corroborated finding renders as a dash for a group with zero corroborated
 // findings (undefined). The table is buffered and written once so a flush error
 // cannot emit a half table; the single write's error is propagated.
+//
+// The table deliberately aggregates RAW history: it calls scorecard.Aggregate
+// without the unresolvedEraRuns era pass that PublishedSet and TrustPriors
+// apply. That is product intent, documented in docs/scorecard.md — the local
+// leaderboard "reports what actually happened across all runs", while export
+// and trust must never blend two raised_denominator definitions. Do not "fix"
+// the asymmetry by wrapping this call.
 func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)

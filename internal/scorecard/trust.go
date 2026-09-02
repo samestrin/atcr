@@ -54,6 +54,19 @@ const DefaultTrustMinRuns = 20
 // while any reviewer is active, so a fallback keyed on emptiness would never
 // fire for a single dormant reviewer.
 //
+// KNOWN LIMITATION (accepted): the prefer-newest era pass (unresolvedEraRuns)
+// drops a reviewer's whole pre-upgrade window the moment its first record under
+// a newer raised_denominator lands. That reviewer then holds only its
+// post-upgrade runs inside the window and falls under DefaultTrustMinRuns until
+// enough new-era runs accumulate — a priors blackout that silently disables
+// trustExempt and demoteByTrust for it in the meantime. The cost is transient
+// and bounded (it only fires in the weeks after a denominator bump, a rare
+// event), and eras differ only where the carve-out fired, so blending them for
+// a reviewer the carve-out never touched would be safe — but proving that
+// per-reviewer equivalence is a special case inside logic deliberately built
+// around "prefer-newest, never blend", and the complexity is not worth the
+// bounded gap. Accepted as an upgrade cost.
+//
 // Narrowing this value requires redoing the min-runs measurement above
 // (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
 // against its own literal, so it can only catch a deliberate narrowing — it
@@ -84,6 +97,11 @@ const defaultTrustWindow = 180 * 24 * time.Hour
 // "measured zero" (a reviewer that cleared the floor but has never raised a
 // finding still appears, at rate 0.0, via ratio()'s zero-denominator case).
 // minRuns <= 0 applies no floor.
+//
+// The rates returned are already era-resolved: trustPriorsSince runs the
+// prefer-newest raised_denominator pass (unresolvedEraRuns) before aggregating,
+// so a caller receives one definition's numbers per reviewer and never needs to
+// reason about the era split itself.
 //
 // A missing, unreadable, or partially readable store (a mid-enumeration IO
 // failure on one month file) yields an empty map and a nil error — this is a

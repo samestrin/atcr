@@ -263,6 +263,8 @@ func TestEmitForReconcile_DocShieldOnlyReviewerStillRecorded(t *testing.T) {
 		"nothing chargeable was raised, but the reviewer is on the board")
 	assert.Equal(t, 1, bruce.FindingsDocShielded,
 		"a reviewer whose whole run was exempted must not look like a reviewer who raised nothing")
+	assert.Equal(t, 0.0, bruce.CorroborationRate,
+		"0.00 alongside a nonzero shield count is a zero denominator, not a corroboration failure (docs/scorecard.md)")
 }
 
 // TestEmitForReconcile_RoutedOnlyReviewerStillRecorded pins the companion hole:
