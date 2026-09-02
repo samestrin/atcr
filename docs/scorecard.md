@@ -399,7 +399,7 @@ than growing a third aggregation.
   > every surface, CLI and MCP alike, because the filter lives in `TrustPriors`
   > rather than at the emission site.
   >
-  > **`findings_raised` also changed meaning once, and is filtered the same way.**
+  > **`findings_raised` has changed meaning twice, and is filtered the same way.**
   > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, and Epic
   > 35.16.6.8 took the doc-shielded ones back out, so `findings_raised` has three
   > definitions and a rate averaged across two of them measures neither. Every
