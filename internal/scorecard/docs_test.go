@@ -60,7 +60,7 @@ func TestDocs_ScorecardMdRaisedDenominator(t *testing.T) {
 	if !strings.Contains(doc, "| `raised_denominator` | int | conditional |") {
 		t.Errorf("record-field table is missing the raised_denominator row that Record.RaisedDenominator (scorecard.go) writes")
 	}
-	if !strings.Contains(doc, "superseded") {
+	if !strings.Contains(doc, "Superseded but retained") {
 		t.Errorf("raised_includes_unresolved row must be described as superseded-but-retained now that raised_denominator carries the era")
 	}
 }
