@@ -132,7 +132,7 @@ func TestUnresolvedState_RenderedUnconditionally(t *testing.T) {
 		reclib.UnresolvedStateIncomplete,
 	} {
 		var b bytes.Buffer
-		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedState: state}, nil, DisagreementsFile{}))
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedState: state}, nil, DisagreementsFile{}, 0))
 		assert.Contains(t, b.String(), "- Unresolved check: "+state,
 			"state %q must render even with a zero count", state)
 	}
@@ -140,7 +140,7 @@ func TestUnresolvedState_RenderedUnconditionally(t *testing.T) {
 	// An unstamped Summary (a pure in-memory embedder) renders nothing, keeping
 	// report.md byte-identical for callers that never run content resolution.
 	var unstamped bytes.Buffer
-	require.NoError(t, renderMarkdown(&unstamped, Summary{}, nil, DisagreementsFile{}))
+	require.NoError(t, renderMarkdown(&unstamped, Summary{}, nil, DisagreementsFile{}, 0))
 	assert.NotContains(t, unstamped.String(), "Unresolved check:")
 }
 

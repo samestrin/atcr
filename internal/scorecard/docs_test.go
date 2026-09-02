@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestDocs_ScorecardMdExists asserts the user-facing reference doc
@@ -103,4 +105,26 @@ func TestDocs_PublicEnvelopeRaisedDenominator(t *testing.T) {
 	if !strings.Contains(string(bm), `"raised_denominator": 100`) {
 		t.Errorf("docs/benchmark.md sample submission is missing raised_denominator: 100 (benchmark rows stamp RaisedDenominatorBenchmarkSuite)")
 	}
+}
+
+// TestDocs_ScorecardMdDocumentsDocShieldedColumn keeps the two rendered column
+// lists in docs/scorecard.md honest about the conditional DOC-SHIELDED column.
+//
+// The column exists because Record.FindingsRaised stopped counting doc-shielded
+// routings, so a reader of either table cannot otherwise tell a clean 100% from
+// one with shielded findings behind it. A doc that omits the column teaches the
+// old, now-ambiguous reading.
+func TestDocs_ScorecardMdDocumentsDocShieldedColumn(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "scorecard.md"))
+	if err != nil {
+		t.Fatalf("read docs/scorecard.md: %v", err)
+	}
+	doc := string(data)
+
+	assert.Contains(t, doc, "RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY",
+		"the `atcr scorecard` base column list must stay documented verbatim")
+	assert.Contains(t, doc, "RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY",
+		"the `atcr leaderboard` base column list must stay documented verbatim")
+	assert.GreaterOrEqual(t, strings.Count(doc, "DOC-SHIELDED"), 2,
+		"both column lists must document the conditional DOC-SHIELDED column, not just one")
 }

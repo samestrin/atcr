@@ -158,13 +158,50 @@ func TestReadUnresolvedFindings_MissingIsEmpty(t *testing.T) {
 // render-only-when-nonzero guard, mirroring the "Consensus filtered: N" line.
 func TestRenderMarkdown_UnresolvedLine(t *testing.T) {
 	var withCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}))
+	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
 	assert.Contains(t, withCount.String(),
 		"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
 
 	var withoutCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}))
+	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}, 0))
 	assert.NotContains(t, withoutCount.String(), "Unresolved findings:")
+}
+
+// TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent closes the wording
+// defect the doc-shield carve-out left behind.
+//
+// "no symbol correspondence in the tracked tree" is FALSE for a doc-shielded
+// record: namedInDocs just proved the subject IS in the tree, in a file isDocExt
+// classified as prose. Reporting the two shapes under one count tells an operator
+// the finding named nothing real when it named something the extension heuristic
+// declined to treat as a declaration — the opposite conclusion, and the one that
+// gets a real finding discarded.
+func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
+	t.Run("all shielded: the absent-from-the-tree claim must not be made", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 2}, nil, DisagreementsFile{}, 2))
+		out := b.String()
+		assert.Contains(t, out, "named only in documentation")
+		assert.NotContains(t, out, "no symbol correspondence in the tracked tree; routed",
+			"every routed finding here WAS named in the tree")
+	})
+
+	t.Run("mixed: both shapes are counted separately", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 5}, nil, DisagreementsFile{}, 2))
+		out := b.String()
+		assert.Contains(t, out, "- Unresolved findings: 5")
+		assert.Contains(t, out, "3 with no symbol correspondence in the tracked tree",
+			"the split must name the count for each shape, not just the total")
+		assert.Contains(t, out, "2 named only in documentation")
+	})
+
+	t.Run("none shielded: the line is unchanged", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
+		assert.Contains(t, b.String(),
+			"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
+	})
 }
 
 // TestRunReconcile_UnresolvedRecountsOutOfScope covers the post-routing

@@ -341,7 +341,7 @@ func Emit(reconciledDir string, r Result) error {
 	}{
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
-		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df) }},
+		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved)) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error {
 			if len(r.ambiguousBytes) > 0 {
@@ -508,7 +508,7 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 // redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
 	jf := r.JSONFindings()
-	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous))
+	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved))
 }
 
 // renderMarkdown is the internal implementation. It renders from the path-stamped
@@ -516,7 +516,7 @@ func RenderMarkdown(w io.Writer, r Result) error {
 // fields, Phase 2 Clarification Q1) and accepts a pre-built DisagreementsFile so
 // Emit can build the radar once and share it between report.md and
 // disagreements.json without a second O(n log n) sort pass.
-func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile) error {
+func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile, docShielded int) error {
 	inScope := make([]JSONFinding, 0, len(findings))
 	var outOfScope []JSONFinding
 	for _, m := range findings {
@@ -733,4 +733,17 @@ func joinOrNone(names []string) string {
 		out += ", " + n
 	}
 	return out
+}
+
+// countDocShielded counts the routed records the doc-extension heuristic
+// explains: their subject IS named in the tracked tree, only in a file isDocExt
+// classified as prose. RED stub — the count is not yet rendered.
+func countDocShielded(unresolved []JSONFinding) int {
+	n := 0
+	for _, f := range unresolved {
+		if f.UnresolvedReason == UnresolvedReasonDocShield {
+			n++
+		}
+	}
+	return n
 }
