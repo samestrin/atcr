@@ -465,6 +465,24 @@ func TestJSONFinding_ClusterIDOmittedWhenEmpty(t *testing.T) {
 	assert.NotContains(t, string(data), "cluster_id", "empty cluster_id must be omitted")
 }
 
+// TestJSONFinding_UnresolvedReasonWireKey pins the JSON wire key
+// `unresolved_reason`: the routed record's reason rides the sidecar a consumer
+// reads to tell a phantom charge from a doc_shield, so renaming the tag (e.g. to
+// `reason`) must be a loud failure here, not a silent schema break. Also pins
+// the empty-value omission — an unrouted finding carries no key at all.
+func TestJSONFinding_UnresolvedReasonWireKey(t *testing.T) {
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM", UnresolvedReason: UnresolvedReasonDocShield}
+	data, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"unresolved_reason":"doc_shield"`,
+		"the wire key and the doc_shield literal are the published contract (docs/code-review-backend.md)")
+
+	empty := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
+	data, err = json.Marshal(empty)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "unresolved_reason", "empty reason must be omitted")
+}
+
 // TestJSONFinding_ClusterIDRoundTrips: a findings.json record carrying a
 // cluster_id parses into the struct and re-marshals intact (Epic 6.2 AC1) — the
 // id rides alongside cluster_merged on an inline-merged survivor.
