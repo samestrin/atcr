@@ -108,10 +108,13 @@ func symbolIndexFileCap() int {
 // order-stable without re-sorting.
 type symbolIndex struct {
 	byName map[string][]string
-	// presentInSource holds every identifier-shaped token seen in the RAW SOURCE
-	// TEXT of the indexed files — not just the ones the parser named — with the
-	// documentation and markup files left out. Both of resolve's presence checks
-	// consult it.
+	// present holds every identifier-shaped token seen in the RAW TEXT of the
+	// indexed files — not just the ones the parser named — tagged by ORIGIN
+	// (presenceSource / presenceDocs) rather than split across two maps: a token
+	// named in a changelog and declared in a .go file carries both bits, and for
+	// .mdx an export-line token carries both by construction. One map is also
+	// half the memory of the pair it replaced. Both of resolve's presence checks
+	// read the source bit; the docs bit is read only by namedInDocs.
 	//
 	// Why raw text and not byName alone: the declaration index is only as complete
 	// as the parser's naming rules, and those vary sharply by language. The
@@ -125,13 +128,14 @@ type symbolIndex struct {
 	// what PathSuggestion points at), while a NO-MATCH additionally requires the
 	// anchor to be absent from the source text entirely, by any parser's reckoning.
 	//
-	// Why documentation is left out: the read set was widened to every text file so
-	// unparsed LANGUAGES (Ruby, Swift, Terraform, proto) stay searchable. That also
-	// pulled README, CHANGELOG and docs/ prose in, and English prose is full of
-	// camelCase and snake_case tokens that pass isIdentifierShaped — so a construct
-	// DELETED from the code but still named in a changelog scored "present" and its
-	// finding came back inconclusive. The detector lost sensitivity while still
-	// reporting state=applied. A construct is declared in source, never in prose.
+	// Why documentation carries no source bit: the read set was widened to every
+	// text file so unparsed LANGUAGES (Ruby, Swift, Terraform, proto) stay
+	// searchable. That also pulled README, CHANGELOG and docs/ prose in, and
+	// English prose is full of camelCase and snake_case tokens that pass
+	// isIdentifierShaped — so a construct DELETED from the code but still named
+	// in a changelog scored "present" and its finding came back inconclusive. The
+	// detector lost sensitivity while still reporting state=applied. A construct
+	// is declared in source, never in prose.
 	//
 	// Why BOTH reads and not only the no-match one: the primaryMatched gate in
 	// resolve looks like a keep-gate — a wider set there only ever keeps a finding
@@ -152,28 +156,21 @@ type symbolIndex struct {
 	// here made the verdict depend on whether a FIX happened to name a locatable
 	// collaborator, which is not evidence about the subject at all.
 	//
-	// The softer ending was considered and rejected: keep a separate
-	// documentation-token set, gate on presentInSource, and downgrade a doc-only
-	// anchor to tier4Inconclusive so the finding keeps its place in the report and
-	// only loses the fabricated path. It contradicts the guard above — a construct
-	// named only in prose is declared nowhere in source, and that is a no-match by
-	// this epic's definition, not a "could not check".
-	presentInSource map[string]struct{}
-	// presentInDocs holds EVERY identifier-shaped token seen in a docExts file,
-	// source-overlapping ones included. It is not the complement of
-	// presentInSource and does not try to be: a token named in a changelog and
-	// declared in a .go file is in both maps, and for .mdx an export-line token is
-	// in both by construction. The doc-ONLY property is produced by the
-	// intersection in namedInDocs, not by this field.
+	// The softer ending was considered and rejected: gate on the source bit and
+	// downgrade a doc-only anchor to tier4Inconclusive so the finding keeps its
+	// place in the report and only loses the fabricated path. It contradicts the
+	// guard above — a construct named only in prose is declared nowhere in
+	// source, and that is a no-match by this epic's definition, not a "could not
+	// check".
 	//
-	// It exists for one purpose and is deliberately not consulted by any verdict:
+	// The docs bit exists for one purpose and is never consulted by a verdict:
 	// after resolve has already reached its no-match, namedInDocs reports whether
 	// the anchor was at least NAMED in prose. That distinguishes "the reviewer
 	// invented this construct" from "the doc-extension heuristic classified the
 	// only file that mentions it", and only the first is fair to charge to a
 	// reviewer's scorecard denominator. Reading it in resolve instead would
 	// re-open the prose-suppression hole the parent epic closed.
-	presentInDocs map[string]struct{}
+	present map[string]uint8
 	// parserLoadFailed records that at least one language's parser could not be
 	// obtained during the build, so every file of that language lost its
 	// DECLARATIONS. Paired with an empty byName it means the resolution half of
@@ -185,6 +182,14 @@ type symbolIndex struct {
 	// file-cap branch applies, reached through a different door.
 	complete bool
 }
+
+// Presence origin bits for symbolIndex.present: where in the tree a token was
+// seen. A token may carry both (named in a changelog AND declared in source);
+// the doc-ONLY case is what namedInDocs reports.
+const (
+	presenceSource uint8 = 1 << iota
+	presenceDocs
+)
 
 // resolve applies the Tier 4 decision procedure to one finding's anchors.
 //
@@ -217,13 +222,13 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 	// would render "did you mean X?" for a finding whose subject is fabricated
 	// — the exact verdict inversion the no-match direction exists to catch.
 	//
-	// "Present" here means presentInSource, the same set the no-match shield at
+	// "Present" here means the presenceSource bit of present, the same set the no-match shield at
 	// the bottom of this function reads. Documentation prose is not evidence a
 	// construct exists, so it may not license a suggestion any more than it may
 	// suppress a no-match.
 	primaryMatched := false
 	for _, a := range primary {
-		if _, seen := x.presentInSource[a]; seen || len(x.byName[a]) > 0 {
+		if x.present[a]&presenceSource != 0 || len(x.byName[a]) > 0 {
 			primaryMatched = true
 			break
 		}
@@ -242,11 +247,11 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 		return "", tier4Inconclusive // the search had holes: "not found" is unproven
 	}
 	for _, a := range primary {
-		if _, seen := x.presentInSource[a]; seen {
+		if x.present[a]&presenceSource != 0 {
 			// Named somewhere in the SOURCE text even though the parser did not
 			// declare it (a Go type, a const, a struct field). Real code, just not
 			// localizable — never a phantom. Documentation is deliberately not
-			// consulted here; see presentInSource.
+			// consulted here; see present.
 			return "", tier4Inconclusive
 		}
 		if len(x.byName[a]) > 0 {
@@ -375,7 +380,7 @@ func (lz *lazySymbolIndex) state() string {
 // markup file (docExts) and nowhere in source.
 //
 // It is meaningful only AFTER resolve has returned tier4NoMatch for the same
-// anchors — at that point presentInSource is already known not to hold them, so
+// anchors — at that point the source bit is already known not to be set for them, so
 // a hit here means the doc-extension shield is what routed the finding, not an
 // absence from the tree. Like state(), it never triggers a build: an index that
 // was never built has adjudicated nothing, so there is no routing to explain.
@@ -384,7 +389,8 @@ func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
 		return false
 	}
 	for _, a := range anchors {
-		if _, inDocs := lz.idx.presentInDocs[a]; !inDocs {
+		flags := lz.idx.present[a]
+		if flags&presenceDocs == 0 {
 			continue
 		}
 		// A token can be in BOTH sets — named in a changelog AND declared in
@@ -392,13 +398,13 @@ func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
 		//
 		// At the single call site today this branch is unreachable: it runs only
 		// after resolve returned tier4NoMatch, which already proved no primary
-		// anchor is in presentInSource. It is kept deliberately anyway, because
+		// anchor carries the source bit. It is kept deliberately anyway, because
 		// the answer decides what a reviewer is CHARGED, and a future caller in
 		// another position must not get a wrong doc_shield stamp by inheriting a
 		// precondition it does not enforce. It narrows nothing that is reachable
 		// now — in particular it does not narrow which findings earn the
 		// scorecard exemption.
-		if _, inSource := lz.idx.presentInSource[a]; !inSource {
+		if flags&presenceSource == 0 {
 			return true
 		}
 	}
@@ -410,7 +416,7 @@ func (lz *lazySymbolIndex) namedInDocs(anchors []string) bool {
 //
 // Eligibility is "does not escape root" — nothing more. EVERY contained tracked
 // file is read, and every one that is not a documentation extension (isDocExt)
-// is token-scanned into `presentInSource`; the parser language
+// is token-scanned into `present` with the source bit; the parser language
 // (astgroup.LanguageForExt) gates only byName, the declaration half. Filtering
 // eligibility by parser language instead is what once made whole languages
 // invisible to the no-match verdict (see eligiblePaths).
@@ -445,8 +451,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	}
 
 	sites := make(map[string]map[string]struct{})
-	presentInSource := make(map[string]struct{})
-	presentInDocs := make(map[string]struct{})
+	present := make(map[string]uint8)
 	parsers := make(map[string]astgroup.Parser)
 	parserFailed := make(map[string]bool)
 	readFiles := 0
@@ -463,7 +468,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		}
 		// Read BEFORE parsing, and harvest the raw token set from the bytes
 		// regardless of whether a parser is available or the parse succeeds. That
-		// ordering is what keeps `presentInSource` complete when `byName` is not: a
+		// ordering is what keeps the source bit of `present` complete when `byName` is not: a
 		// file whose language has no working parser still proves which identifiers
 		// exist in the tree, which is all the no-match verdict needs from it.
 		abs, ok := containedIndexPath(lz.root, rel)
@@ -511,12 +516,12 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 		readFiles++
 		ext := strings.ToLower(path.Ext(rel))
 		if isDocExt(ext) {
-			collectSourceIdentifiers(src, presentInDocs)
+			collectSourceIdentifiers(src, present, presenceDocs)
 			if declaresByExport(ext) {
-				collectExportedIdentifiers(src, presentInSource)
+				collectExportedIdentifiers(src, present)
 			}
 		} else {
-			collectSourceIdentifiers(src, presentInSource)
+			collectSourceIdentifiers(src, present, presenceSource)
 		}
 
 		lang := astgroup.LanguageForExt(strings.ToLower(path.Ext(rel)))
@@ -581,8 +586,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 	}
 	lz.idx = &symbolIndex{
 		byName:           byName,
-		presentInSource:  presentInSource,
-		presentInDocs:    presentInDocs,
+		present:          present,
 		parserLoadFailed: len(parserFailed) > 0,
 		complete:         complete,
 	}
@@ -597,7 +601,7 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 // appearing in a comment or a string literal still proves the finding's subject
 // is not a total phantom, and the only consequence of a false positive is a
 // finding kept in the primary report.
-func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
+func collectSourceIdentifiers(src []byte, out map[string]uint8, flag uint8) {
 	start := -1
 	for i := 0; i <= len(src); i++ {
 		var b byte
@@ -612,7 +616,7 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 			start = i
 		case !isWord && start >= 0:
 			if tok := string(src[start:i]); isIdentifierShaped(tok) {
-				out[tok] = struct{}{}
+				out[tok] |= flag
 			}
 			start = -1
 		}
@@ -626,7 +630,7 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 // fenced code block.
 //
 // This is the declaration half of an exportDeclaringExts file, and the whole
-// reason it is narrow is that presentInSource is read by the primaryMatched gate
+// reason it is narrow is that the source bit of present is read by the primaryMatched gate
 // as well as the no-match shield: a token admitted here can LICENSE a confident
 // PathSuggestion, not merely withhold a routing. Prose must not reach it.
 //
@@ -647,7 +651,7 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 // It over-collects WITHIN a qualifying line — `export function Callout({title})`
 // contributes `title` as well as `Callout`. Accepted: everything on an export
 // line is declaration-adjacent, and the alternative is parsing JSX here.
-func collectExportedIdentifiers(src []byte, out map[string]struct{}) {
+func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 	var fence []byte // the delimiter that opened the current fence ("```" or "~~~"); nil outside one
 	for _, line := range bytes.Split(src, []byte("\n")) {
 		trimmed := bytes.TrimRight(line, "\r")
@@ -682,7 +686,7 @@ func collectExportedIdentifiers(src []byte, out map[string]struct{}) {
 		// English sentence ("export your apiKey before ...") must not contribute
 		// its tokens.
 		if body := bytes.TrimLeft(rest, " \t"); isESMExportBody(body) {
-			collectSourceIdentifiers(body, out)
+			collectSourceIdentifiers(body, out, presenceSource)
 		}
 	}
 }
@@ -713,7 +717,7 @@ func isESMExportBody(body []byte) bool {
 // It deliberately does NOT filter by parser language. astgroup.LanguageForExt
 // covers only go/py/ts-js/php/rust/bash/java/kotlin/c-cpp/csharp, so filtering
 // here made Ruby, Swift, Scala, Elixir, SQL, Terraform, proto, YAML and Markdown
-// structurally invisible to `presentInSource` while `complete` stayed true — the
+// structurally invisible to the source bit of `present` while `complete` stayed true — the
 // largest hole the incomplete-index downgrade could have, and the one it never
 // saw. A finding whose construct genuinely lives in a .rb file, cited against a
 // non-existent .go path, then reached tier4NoMatch and was routed out of
@@ -748,7 +752,7 @@ func (lz *lazySymbolIndex) eligiblePaths() []string {
 //
 // KNOWN GAP, in the unsafe direction, and it is the same one isBinaryContent
 // carries: a genuine SOURCE file over the cap (a generated or minified bundle)
-// is skipped, so its identifiers never reach `presentInSource` and a finding about
+// is skipped, so its identifiers never reach the source bit of `present` and a finding about
 // one of them could reach a no-match verdict. `complete` deliberately stays true —
 // clearing it would let one large artifact withhold every verdict for the whole
 // repo, which is the failure the non-regular-file skip above exists to prevent.
@@ -765,7 +769,7 @@ const binarySniffBytes = 8000
 //
 // Tracked binaries must not be token-scanned. This repository alone carries
 // ~31MB of embedded .wasm parser plugins, so scanning them would dominate the
-// index build cost, and their byte noise would inflate `presentInSource` with
+// index build cost, and their byte noise would inflate the source side of `present` with
 // tokens no reviewer ever named — weakening the very set the no-match verdict
 // depends on.
 //
@@ -776,7 +780,7 @@ const binarySniffBytes = 8000
 //
 // KNOWN GAP, in the unsafe direction: a UTF-16/UTF-32 encoded SOURCE file
 // carries NULs and is classified binary here, so its identifiers never reach
-// `presentInSource` and a finding about one of them could reach a no-match
+// the source bit of `present` and a finding about one of them could reach a no-match
 // verdict. The exposure is small — git treats such a blob as binary, and toolchains
 // normalize to UTF-8 — but it is real. Widen this by DECODING those encodings,
 // never by dropping the NUL test: without it the ~31MB of embedded .wasm in this
@@ -844,7 +848,7 @@ func readIndexSource(abs string) (src []byte, skip bool, err error) {
 }
 
 // docExts are the documentation and markup extensions whose tokens are kept out
-// of presentInSource. Prose names constructs it does not declare — a changelog
+// of present. Prose names constructs it does not declare — a changelog
 // entry announcing a REMOVAL is the exact case — so admitting it to the no-match
 // test suppresses the verdict for constructs that are genuinely gone.
 //
@@ -903,7 +907,7 @@ var docExts = map[string]struct{}{
 // exportDeclaringExts are the docExts entries that can nonetheless DECLARE, and
 // whose declarations are recognizable by an `export` at the head of a line. For
 // these the file is split rather than classified: the export lines are harvested
-// into presentInSource, everything else into presentInDocs.
+// into the source bit of present, everything else into the docs bit.
 //
 // `.mdx` is the whole membership. The rule is deliberately syntactic and narrow
 // — a line-leading `export`, which is the only form MDX's own compiler treats as

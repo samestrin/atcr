@@ -1446,15 +1446,13 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := make(map[string]struct{})
+			out := make(map[string]uint8)
 			collectExportedIdentifiers([]byte(c.src), out)
 			for _, tok := range c.wantAbsent {
-				_, seen := out[tok]
-				assert.False(t, seen, "%s reached presentInSource from prose or a sample — it can license a confident PathSuggestion", tok)
+				assert.Zero(t, out[tok]&presenceSource, "%s reached the source side of present from prose or a sample — it can license a confident PathSuggestion", tok)
 			}
 			for _, tok := range c.wantPresent {
-				_, seen := out[tok]
-				assert.True(t, seen, "%s is a real declaration and must reach presentInSource", tok)
+				assert.NotZero(t, out[tok]&presenceSource, "%s is a real declaration and must carry the source bit", tok)
 			}
 		})
 	}
