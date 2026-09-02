@@ -27,7 +27,7 @@ var ErrNoExportRecords = errors.New("no records match the export filters")
 // records are inside the window and the filters selected them. The store was
 // written by a newer atcr, and the fix is to upgrade this binary (or export from
 // the one that wrote it), not to change the query.
-var ErrNoCurrentEraRecords = errors.New("no records remain after the raised_denominator era filter: every selected record was written under a newer definition than this atcr implements — upgrade atcr, or export with the version that wrote the store")
+var ErrNoCurrentEraRecords = errors.New("no records remain after the raised_denominator era filter: every selected record carries a raised_denominator this atcr does not implement — upgrade atcr (or export with the version that wrote the store); a hand-edited or benchmark-stamped denominator reads the same way")
 
 // SubmissionSchema is the version of the PUBLIC leaderboard submission format
 // (Epic 10.0). It is intentionally decoupled from the on-disk store's
