@@ -784,3 +784,45 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 	assert.InDelta(t, 0.2, priors["carol"], 0.0001,
 		"carol holds no current-era record, so its own pre-epic history is used unchanged")
 }
+
+// TestUnresolvedEraRuns_SkipsAggregateRecords pins the record-class gate on the
+// era pass. Emit stamps the aggregate record with RaisedDenominator = Current,
+// and the aggregate's Reviewer is empty — so without a skip it participates in
+// the newest-per-reviewer computation under the "" key, and every reviewer
+// record with an empty name (era 1, unflagged) shares that key and reads as
+// OLDER than the aggregate. trustPriorsSince feeds strictRuns straight into
+// unresolvedEraRuns (PublishedSet's ApplyFilters has already dropped aggregates
+// on the other call site), so the two call sites disagreed about when aggregate
+// records are removed — pass order decided whether an empty-name reviewer's
+// history survived.
+func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
+	agg := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeAggregate,
+		RunID: "2026-09-02T00:00:00Z-agg",
+		// The aggregate is stamped with the CURRENT definition at emit time.
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           9,
+	}
+	emptyNameEra1 := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID: "2026-09-02T00:00:00Z-anon", Reviewer: "", Model: "m",
+		FindingsRaised: 2, // no era markers: definition 1
+	}
+
+	got := unresolvedEraRuns([]Record{agg, emptyNameEra1})
+
+	var sawReviewer, sawAggregate bool
+	for _, r := range got {
+		switch r.RecordType {
+		case RecordTypeReviewer:
+			sawReviewer = true
+		case RecordTypeAggregate:
+			sawAggregate = true
+		}
+	}
+	assert.True(t, sawReviewer,
+		"the empty-name era-1 reviewer record must survive: the aggregate is not a reviewer and must not define its newest era")
+	assert.True(t, sawAggregate,
+		"the aggregate record passes through untouched — the era pass is a reviewer-record concern")
+}
