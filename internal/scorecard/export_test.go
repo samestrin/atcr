@@ -984,6 +984,42 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 		assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 1e-9,
 			"the rate is computed from the era-3 record alone (1/4), not the blend (10/14)")
 	})
+
+	// The subtest above does NOT discriminate the era pass: reviewerAcc buckets
+	// by era inside finalize(), so era 2 and era 3 are already separated with or
+	// without `filtered = unresolvedEraRuns(filtered)`. Deleting that line leaves
+	// it green.
+	//
+	// What only the era pass does is EXCLUDE an above-current record. byEra keys
+	// on raisedDenominatorOf, which CLAMPS an above-current denominator to
+	// RaisedDenominatorCurrent — so without the pass the alien record lands in the
+	// current-era bucket and is blended into the published row, under the current
+	// label. That is the averaged-number-presented-as-pure defect raised_denominator
+	// exists to prevent, and this is the assertion that fails when the line goes.
+	t.Run("ExportSelected's era pass excludes an above-current record byEra would clamp into the current cohort", func(t *testing.T) {
+		current := exportRec("bruce", "claude-sonnet-4-6", 1)
+		current.RaisedIncludesUnresolved = true
+		current.RaisedDenominator = RaisedDenominatorCurrent
+		current.FindingsRaised = 4
+		current.FindingsCorroborated = 1
+
+		alien := exportRec("bruce", "claude-sonnet-4-6", 2)
+		alien.RaisedIncludesUnresolved = true
+		alien.RaisedDenominator = RaisedDenominatorCurrent + 1 // a NEWER atcr wrote this
+		alien.FindingsRaised = 10
+		alien.FindingsCorroborated = 9
+
+		out, err := ExportSelected([]Record{current, alien}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"the above-current record must be excluded before aggregation, not clamped into the current cohort")
+		assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 1e-9,
+			"the rate is the current-era record alone (1/4), not the blend with the alien record (10/14)")
+		assert.InDelta(t, 4.0, env.Reviewers[0].FindingsRaisedAvg, 1e-9,
+			"the average is over the surviving run only")
+	})
 }
 
 // TestReviewerAcc_DropsOlderEraRecords pins the defensive layer beneath the era
