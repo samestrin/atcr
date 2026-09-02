@@ -91,7 +91,12 @@ than ingesting atcr's pre-collapsed blob.
 
 ## summary.json fields
 
-`reconciled/summary.json` carries the fields a caller usually surfaces:
+`reconciled/summary.json` carries the fields a caller usually surfaces. It is not
+a complete diagnostic record: `unresolved_read_error` (see the MCP
+`atcr_reconcile` result) reports that the persisted `unresolved.json` could not be
+parsed, and it is **result-only** — `reconcile.Summary` has no counterpart, and
+nothing writes that reason to disk, so it cannot be recovered from
+`summary.json` after the fact.
 
 - `total_findings` — reconciled finding count.
 - `sources_scanned` / `per_source_counts` — which sources contributed and how

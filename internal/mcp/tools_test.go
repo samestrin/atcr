@@ -217,6 +217,35 @@ func TestDescReconcile_DocumentsPersistenceArgs(t *testing.T) {
 		"descReconcile must name the persistence opt-out")
 }
 
+// TestDescReconcile_DocumentsUnresolvedFields covers Epic 35.16.6.8 AC6.
+//
+// descReconcile closed with an enumeration of diagnostic fields that named only
+// debt_persisted / debt_skipped_reason. A client model reading a closed list
+// concludes those are the only failure-reason channels the result carries, so the
+// four Tier 4 fields — including unresolved_read_error, the one that says a
+// diagnostic could not be recovered at all — were invisible to it. The tool
+// description is the contract a client actually reads; a per-property jsonschema
+// description is weaker signal.
+func TestDescReconcile_DocumentsUnresolvedFields(t *testing.T) {
+	for _, field := range []string{
+		"unresolved_filtered",
+		"unresolved_state",
+		"unresolved_read_error",
+	} {
+		assert.Contains(t, descReconcile, field,
+			"descReconcile must name the %s result field", field)
+	}
+	// The bare `unresolved` field needs its own assertion: it is a substring of
+	// all three names above, so deleting it while leaving them intact would slip
+	// past a plain Contains — and it is the field carrying the actual records.
+	assert.Contains(t, descReconcile, "unresolved (the routed records)",
+		"descReconcile must name the field that carries the routed records themselves")
+	for _, state := range []string{"applied", "disabled", "unavailable", "incomplete"} {
+		assert.Contains(t, descReconcile, state,
+			"descReconcile must name the %s state, or a client cannot interpret a zero count", state)
+	}
+}
+
 // TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
 // registrations are no-ops and do not overwrite the first failure (fail-fast: the
 // first error is the one NewServer surfaces).

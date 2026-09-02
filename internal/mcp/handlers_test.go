@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1245,12 +1246,125 @@ func TestReconcileHandler_UnresolvedSidecarSurfaced(t *testing.T) {
 	assert.Equal(t, "internal/ghost/phantom.go", rec["file"])
 }
 
+// TestReconcileHandler_UnresolvedMatchesPersistedSidecar is the equality pin that
+// makes the switch below safe to make.
+//
+// `unresolved` used to be re-read from reconciled/unresolved.json; it is now
+// taken from res.Unresolved, the same records the run just routed. The two are
+// the same set on every ordinary run — the sidecar is written FROM res.Unresolved
+// moments earlier — and this asserts exactly that, so the switch is provably a
+// change of SOURCE and not of content. It must pass both before and after.
+func TestReconcileHandler_UnresolvedMatchesPersistedSidecar(t *testing.T) {
+	isolateUserConfig(t)
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_equality"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"], "the fixture must actually route something")
+	reported, ok := out["unresolved"].([]any)
+	require.True(t, ok, "the routed record must be reported")
+	require.Len(t, reported, 1)
+
+	onDisk, err := reconcile.ReadUnresolvedFindings(dir)
+	require.NoError(t, err)
+	require.Len(t, onDisk, 1, "the sidecar must hold the same one record")
+
+	got := reported[0].(map[string]any)
+	assert.Equal(t, onDisk[0].File, got["file"], "reported and persisted must name the same finding")
+	assert.Equal(t, onDisk[0].Problem, got["problem"])
+	assert.Empty(t, out["unresolved_read_error"], "nothing failed to read on an ordinary run")
+}
+
+// TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite pins AC5.
+//
+// Nothing serializes two atcr_reconcile calls on the same review directory. A
+// second call atomically rewrites unresolved.json — to [] when it routes nothing
+// — and it can land between this call's reconcile and its result assembly. While
+// `unresolved` was re-read from disk, that produced a result reporting
+// unresolved_filtered > 0, no `unresolved`, and no unresolved_read_error: a third
+// producer of a combination the field's own contract tells clients it can
+// distinguish.
+//
+// The seam stands in for the racing writer, which is the only way to place the
+// rewrite inside the window deterministically. Reporting from res.Unresolved
+// closes the window: the records are already in hand and no longer depend on what
+// disk says a moment later.
+//
+// What this pins, precisely: the handler no longer DERIVES `unresolved` from the
+// sidecar. It is the regression guard for exactly that line — restoring the old
+// `unresolved, uerr := readUnresolvedSidecar(dir)` turns it red, because the seam
+// then supplies the records and returns none. It also asserts the seam is still
+// invoked, so the read-error channel stays reachable; without that, the test
+// could not tell "records no longer come from the sidecar" from "the sidecar is
+// no longer read at all", and those are different contracts.
+func TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	var sidecarReads atomic.Int32
+	// Exactly what a concurrent `atcr reconcile` that routes nothing leaves
+	// behind: a readable, valid, EMPTY sidecar. Not an error — an error would be
+	// reported, and it is the silent case that is the defect.
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		sidecarReads.Add(1)
+		return nil, nil
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_rewrite"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"],
+		"the count comes from this run's own summary and is unaffected by the rewrite")
+	reported, ok := out["unresolved"].([]any)
+	require.True(t, ok,
+		"a racing rewrite must not erase the records THIS run routed — they are already in hand")
+	assert.Len(t, reported, 1)
+	assert.Empty(t, out["unresolved_read_error"],
+		"nothing failed to read; reporting an error here would be a second wrong answer")
+	assert.Equal(t, int32(1), sidecarReads.Load(),
+		"the sidecar is still read once, for the read-error channel — the records just no longer come from it")
+}
+
 // TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced pins the read-error
-// branch of the sidecar read. Without a transmitted reason a failed read is
-// indistinguishable from an empty sidecar — `unresolved` is omitempty, so a nil
-// slice erases the key, and the Warn goes only to the server logger a stdio
-// client never sees. A client seeing unresolved_filtered > 0 and no `unresolved`
-// must be told the read failed.
+// branch of the sidecar read: a client must be told when the PERSISTED sidecar
+// could not be parsed, because the Warn goes only to the server logger a stdio
+// client never sees.
+//
+// INTENDED CHANGE (Epic 35.16.6.8 T4): this test used to also assert that a
+// failed read yields no `unresolved` key. That coupling is gone. `unresolved` is
+// now reported from res.Unresolved, so an unreadable sidecar no longer erases
+// the records this run routed — the client gets the records AND the reason the
+// on-disk copy is unreadable. Strictly more information, and the assertion is
+// inverted here on purpose rather than deleted.
 //
 // The reader is swapped rather than the file corrupted: the handler writes the
 // sidecar immediately before reading it, so any on-disk fixture that breaks the
@@ -1284,8 +1398,10 @@ func TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced(t *testing.T) {
 
 	require.Equal(t, float64(1), out["unresolved_filtered"],
 		"the reconcile itself must still succeed — the sidecar read is best-effort")
-	_, present := out["unresolved"]
-	require.False(t, present, "a failed read yields no records, so the key is omitted")
+	reported, present := out["unresolved"].([]any)
+	require.True(t, present,
+		"an unreadable sidecar must no longer cost the client the records this run routed")
+	assert.Len(t, reported, 1)
 	assert.Contains(t, out["unresolved_read_error"], "unexpected end of JSON input",
 		"the reason must ride in the result, not only in the server log")
 }

@@ -285,11 +285,21 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // on fail_on. fail_on is validated before any work (AC 04-03 Edge Case 5). A
 // review with no agent results is an error, not an empty success (Edge Case 3).
 // readUnresolvedSidecar is the Tier 4 sidecar reader handleReconcile consumes.
-// It is a package var for one reason: the handler writes the sidecar (through
-// RunReconcile) immediately before reading it, so no fixture can make the real
-// read fail without also failing the write. Swapping this is the only way to
-// exercise the read-error branch. Mirrors the newTier4Index seam documented in
-// internal/reconcile/doc.go — tests that swap it must not run in parallel.
+//
+// It no longer sources the `unresolved` field — that comes from res.Unresolved,
+// so a concurrent rewrite cannot erase this run's own records. Its remaining
+// production caller reads the sidecar purely to report whether the PERSISTED
+// artifact is readable, via UnresolvedReadError. See handleReconcile for why
+// that is a narrower job than it sounds.
+//
+// It stays a package var for two reasons. The handler writes the sidecar
+// (through RunReconcile) immediately before reading it, so no on-disk fixture
+// can make the real read fail without also failing the write — swapping this is
+// the only way to reach the read-error branch at all. And swapping it is how a
+// test stands in for a racing writer, to prove the handler no longer depends on
+// what the sidecar says by the time the result is assembled. Mirrors the
+// newTier4Index seam documented in internal/reconcile/doc.go — tests that swap
+// it must not run in parallel.
 var readUnresolvedSidecar = reconcile.ReadUnresolvedFindings
 
 func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
@@ -471,18 +481,36 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		}
 	}
 
-	// Read the sidecar back rather than reusing res.Unresolved so the field is
-	// exactly what a human would recover from disk — and so the sidecar reader
-	// has a production caller (Epic 35.16.6.5 TD: the sidecar had no read path).
-	// Best-effort like every other post-reconcile surface here: a read failure
-	// degrades to an omitted field, never a failed reconcile.
-	unresolved, uerr := readUnresolvedSidecar(dir)
+	// `unresolved` is reported from res.Unresolved — the records THIS run routed,
+	// already in hand — not from a re-read of reconciled/unresolved.json.
+	//
+	// The re-read was there so the field would be "exactly what a human would
+	// recover from disk". Nothing serializes two atcr_reconcile calls on the same
+	// review directory, so a second call could atomically rewrite the sidecar to
+	// [] between this run's reconcile and this line. That produced a result
+	// carrying unresolved_filtered > 0, no `unresolved`, and no read error — a
+	// combination UnresolvedReadError's own contract promises a client can
+	// distinguish. Reporting from memory closes that window: the count and the
+	// records now come from the same run.
+	//
+	// The sidecar is still read, but ONLY to report whether the persisted artifact
+	// is readable, and that is a NARROWER job than it sounds — narrower than the
+	// race above, and unrelated to it. Emit publishes unresolved.json through
+	// atomicfs.WriteFileAtomic, so a racing atcr_reconcile can only ever leave a
+	// valid file behind, never a torn one. UnresolvedReadError therefore fires
+	// only on corruption from outside atcr: a disk fault, a lost permission, a
+	// third-party writer. That failure mode predates this change and is not what
+	// the switch above fixed; it is still worth reporting, because the artifact a
+	// human or a later tool opens is the one on disk.
+	//
+	// Best-effort like every other post-reconcile surface here: it never fails
+	// the reconcile.
+	unresolved := res.Unresolved
 	unresolvedReadErr := ""
-	if uerr != nil {
+	if _, uerr := readUnresolvedSidecar(dir); uerr != nil {
 		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
-		// Transmit the reason too. The Warn reaches the server's own logger,
-		// which a stdio client never sees, and `Unresolved` is omitempty — so
-		// without this a failed read is byte-identical to an empty sidecar.
+		// Transmit the reason too: the Warn reaches the server's own logger, which
+		// a stdio client never sees.
 		unresolvedReadErr = uerr.Error()
 	}
 
