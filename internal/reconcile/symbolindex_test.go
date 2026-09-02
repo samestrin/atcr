@@ -1076,8 +1076,21 @@ func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
 		doc := "NOTES" + ext
 		t.Run("subject named only in "+ext+" licenses nothing", func(t *testing.T) {
 			root := t.TempDir()
+			// The export-leading line pins exportDeclaringExts membership in the
+			// WIDENING direction: if this extension were ever added (or
+			// declaresByExport widened to isDocExt), its export lines would feed
+			// presentInSource and shieldedOnlyExport would license a suggestion —
+			// exactly the prose-licensing failure the split exists to prevent.
+			// .mdx legitimately declares by export, so it is exempt here. The guard
+			// keys on the EXTENSION, not on declaresByExport — keying on the
+			// function under test would let a widening mutation exempt the very
+			// fixture that is supposed to catch it.
+			content := "## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"
+			if ext != ".mdx" {
+				content += "\nexport const shieldedOnlyExport = 1\n"
+			}
 			require.NoError(t, os.WriteFile(filepath.Join(root, doc),
-				[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+				[]byte(content), 0o644))
 			writeTracked(t, root, "internal/session/pool.go")
 
 			lz := newIndex(t, root, doc, "internal/session/pool.go")
@@ -1087,6 +1100,14 @@ func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
 				"a subject that exists only in prose was searched for and not found: that is a no-match")
 			assert.Empty(t, got,
 				"no PathSuggestion may be stamped for a subject the source-presence shield calls absent")
+
+			if ext != ".mdx" {
+				got, outcome = lz.resolve(context.Background(), []string{"shieldedOnlyExport"}, []string{"SessionPool"})
+				assert.Equal(t, tier4NoMatch, outcome,
+					"an export-leading line in a %s file is prose, not a declaration — only exportDeclaringExts split", ext)
+				assert.Empty(t, got,
+					"a prose export line must not license a PathSuggestion either")
+			}
 		})
 	}
 
