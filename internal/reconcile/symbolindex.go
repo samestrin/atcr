@@ -620,45 +620,90 @@ func collectSourceIdentifiers(src []byte, out map[string]struct{}) {
 }
 
 // collectExportedIdentifiers adds the identifier-shaped tokens on EXPORT lines of
-// src to out, and nothing else. A line qualifies when its first non-whitespace
-// word is exactly `export` and it is not inside a fenced code block.
+// src to out, and nothing else. A line qualifies when it begins with `export`
+// followed by an ESM form (`default`, `const`, `let`, `var`, `function`,
+// `class`, `async`, `{`, `*`), is indented at most 3 spaces, and is not inside a
+// fenced code block.
 //
 // This is the declaration half of an exportDeclaringExts file, and the whole
 // reason it is narrow is that presentInSource is read by the primaryMatched gate
 // as well as the no-match shield: a token admitted here can LICENSE a confident
 // PathSuggestion, not merely withhold a routing. Prose must not reach it.
 //
-// Two deliberate deviations from MDX's own ESM rule, in opposite directions:
+// Three prose paths are explicitly closed, each verified by
+// TestCollectExportedIdentifiers_ProseCannotLicenseTokens:
 //
-//   - WIDER: the check tolerates leading whitespace, while MDX requires column 0.
-//     An indented export inside a list item is admitted. Accepted — the token is
-//     still export-shaped, and requiring column 0 would silently drop
-//     declarations from otherwise ordinary pages.
-//   - NARROWER: lines inside a ``` or ~~~ fence are skipped. A docs page showing
-//     `export const metadata = {...}` inside a jsx fence is illustrating code,
-//     not declaring it, and admitting that token would hand a code EXAMPLE the
-//     licensing power this function exists to withhold from prose.
+//   - A 4-space (or tab) indented line is a Markdown CODE BLOCK, invisible to the
+//     fence check — so indentation beyond 3 spaces skips the line outright.
+//   - An English sentence can begin with the verb "export", so the word must be
+//     followed by an ESM form, not merely by whitespace.
+//   - A fence is closed only by the SAME delimiter that opened it — a `~~~` line
+//     inside a ```-opened fence is content, not a closer.
+//
+// One deliberate deviation from MDX's own ESM rule survives: up to 3 leading
+// spaces are tolerated (MDX requires column 0), so an export inside a list item
+// is still admitted.
 //
 // It over-collects WITHIN a qualifying line — `export function Callout({title})`
 // contributes `title` as well as `Callout`. Accepted: everything on an export
 // line is declaration-adjacent, and the alternative is parsing JSX here.
 func collectExportedIdentifiers(src []byte, out map[string]struct{}) {
-	inFence := false
+	var fence []byte // the delimiter that opened the current fence ("```" or "~~~"); nil outside one
 	for _, line := range bytes.Split(src, []byte("\n")) {
-		trimmed := bytes.TrimRight(bytes.TrimLeft(line, " \t"), "\r")
-		if bytes.HasPrefix(trimmed, []byte("```")) || bytes.HasPrefix(trimmed, []byte("~~~")) {
-			inFence = !inFence
+		trimmed := bytes.TrimRight(line, "\r")
+		left := bytes.TrimLeft(trimmed, " \t")
+		if bytes.HasPrefix(left, []byte("```")) || bytes.HasPrefix(left, []byte("~~~")) {
+			marker := left[:3]
+			switch {
+			case fence == nil:
+				fence = marker // open; only the same delimiter closes it
+			case bytes.Equal(marker, fence):
+				fence = nil
+			}
 			continue
 		}
-		if inFence || !bytes.HasPrefix(trimmed, []byte("export")) {
+		if fence != nil {
 			continue
 		}
-		rest := trimmed[len("export"):]
-		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '{' {
+		// A line indented 4+ spaces (or led by a tab) is an indented code block in
+		// Markdown, which the fence check cannot see — skip it before the TrimLeft
+		// below hides the indentation.
+		if indent := len(trimmed) - len(left); indent > 3 || (indent > 0 && trimmed[0] == '\t') {
+			continue
+		}
+		if !bytes.HasPrefix(left, []byte("export")) {
+			continue
+		}
+		rest := left[len("export"):]
+		if len(rest) == 0 || (rest[0] != ' ' && rest[0] != '\t') {
 			continue // `exported`, `exports.foo` — not an export declaration
 		}
-		collectSourceIdentifiers(rest, out)
+		// The word must be followed by an ESM form, not merely by whitespace: an
+		// English sentence ("export your apiKey before ...") must not contribute
+		// its tokens.
+		if body := bytes.TrimLeft(rest, " \t"); isESMExportBody(body) {
+			collectSourceIdentifiers(body, out)
+		}
 	}
+}
+
+// isESMExportBody reports whether body — the text following the `export` keyword
+// — begins an ESM export form: a declaration keyword, a brace list, or a star
+// re-export.
+func isESMExportBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	if body[0] == '{' || body[0] == '*' {
+		return true
+	}
+	for _, kw := range []string{"default", "const", "let", "var", "function", "class", "async"} {
+		if rest, ok := bytes.CutPrefix(body, []byte(kw)); ok &&
+			(len(rest) == 0 || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '{' || rest[0] == '*') {
+			return true
+		}
+	}
+	return false
 }
 
 // eligiblePaths filters the tracked set to root-contained files, preserving a
