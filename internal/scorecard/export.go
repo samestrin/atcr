@@ -17,6 +17,9 @@ import (
 // user-facing guidance (AC 04-04); callers write no output on this path.
 var ErrNoExportRecords = errors.New("no records match the export filters")
 
+// ErrNoCurrentEraRecords is a RED stub — no detection is wired yet.
+var ErrNoCurrentEraRecords = errors.New("stub")
+
 // SubmissionSchema is the version of the PUBLIC leaderboard submission format
 // (Epic 10.0). It is intentionally decoupled from the on-disk store's
 // SchemaVersion: the local record format and the public submission format evolve

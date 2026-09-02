@@ -1057,3 +1057,54 @@ func TestReviewerAcc_DropsOlderEraRecords(t *testing.T) {
 		assert.InDelta(t, 0.25, pr.CorroborationRate, 1e-9, "rate from the newest era only (1/4), not the blend (10/14)")
 	}
 }
+
+// TestEraPass_EmptyingASelectionIsItsOwnError pins the diagnosis for the one way
+// the era pass CAN empty a non-empty selection: every selected reviewer record
+// was written under a definition this binary does not implement.
+//
+// Reported as ErrNoExportRecords ("no records match the export filters"), that
+// state tells an operator to widen --since — advice that cannot work, because the
+// records ARE in the window and the filters DID match them. The cause is the
+// store, not the query, so it needs its own error.
+func TestEraPass_EmptyingASelectionIsItsOwnError(t *testing.T) {
+	alien := func(runID string) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", 1)
+		r.RunID = runID
+		r.RaisedIncludesUnresolved = true
+		r.RaisedDenominator = RaisedDenominatorCurrent + 1
+		return r
+	}
+	records := []Record{alien("2026-09-02T00:00:00Z-a1"), alien("2026-09-01T00:00:00Z-a2")}
+
+	t.Run("PublishedSet", func(t *testing.T) {
+		got, err := PublishedSet(records, FilterOpts{Since: "all"}, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoCurrentEraRecords,
+			"a selection the FILTERS matched but the ERA PASS emptied must not read as a filter miss")
+		assert.Empty(t, got)
+		assert.NotErrorIs(t, err, ErrNoExportRecords,
+			"the two states call for opposite operator actions and must not be conflated")
+	})
+
+	t.Run("ExportSelected", func(t *testing.T) {
+		_, err := ExportSelected(records, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoCurrentEraRecords)
+		assert.NotErrorIs(t, err, ErrNoExportRecords)
+	})
+
+	t.Run("an empty input is still the ordinary no-records error", func(t *testing.T) {
+		_, err := ExportSelected(nil, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoExportRecords,
+			"nothing selected at all is a filter outcome, not an era outcome")
+		assert.NotErrorIs(t, err, ErrNoCurrentEraRecords)
+	})
+
+	t.Run("a survivable selection is unaffected", func(t *testing.T) {
+		ok := exportRec("bruce", "claude-sonnet-4-6", 1)
+		ok.RaisedIncludesUnresolved = true
+		ok.RaisedDenominator = RaisedDenominatorCurrent
+		out, err := ExportSelected(append([]Record{ok}, records...), fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+	})
+}
