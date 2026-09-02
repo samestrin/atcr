@@ -90,12 +90,11 @@ const (
 	// every no-match verdict was withheld. No finding was routed under this
 	// state, and none could be.
 	//
-	// Resolutions were still available — the resolution branches run before the
-	// completeness gate — UNLESS the same run also lost its declaration set to a
-	// parser failure. That combination reports incomplete rather than
-	// unavailable, because the unread region is what withheld the verdicts and is
-	// the condition an operator can act on; it also increments BOTH the
-	// unavailable and the incomplete counter.
+	// Incomplete outranks unavailable: a run that both went unread in part and
+	// lost its declaration set reports incomplete, because the unread region is
+	// what withheld the verdicts. (In atcr's own producer that combination also
+	// increments both index-health counters — see docs/metrics.md; that is
+	// atcr-internal instrumentation, not a property of this value.)
 	UnresolvedStateIncomplete = "incomplete"
 )
 
