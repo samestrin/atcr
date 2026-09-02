@@ -198,9 +198,15 @@ func strictRuns(records []Record) []Record {
 // so a blended window drifts as the old records age out, silently moving
 // trustExempt and demoteByTrust with nothing marking the boundary.
 //
-// The rule is PREFER-CURRENT, not require-current: when a reviewer holds any
-// record stamped with the current definition, only those count; when it holds
-// none, its pre-epic records are used as they always were. Both halves matter.
+// The rule is PREFER-NEWEST, not require-current: a reviewer's records are kept
+// at the newest definition that reviewer actually has, whatever that is. When it
+// holds any record under the current definition, only those count; when it holds
+// none, its older records are used as they always were. Both halves matter.
+//
+// Newest rather than "has the current flag" because FindingsRaised has now
+// changed meaning TWICE — Epic 35.16.6.8 took the doc-shielded routings back out
+// — so the question has three answers and a bool cannot say which two a window
+// is blending. See RaisedDenominator.
 // Requiring the flag would black out every existing reviewer history on upgrade —
 // the same stranding strictRuns' empty-means-strict rule exists to avoid — and a
 // pre-epic-only history is at least INTERNALLY consistent, which a blend never is.
@@ -254,19 +260,26 @@ func strictRuns(records []Record) []Record {
 // report exactly what the caller's own filters selected — the property PublishedSet
 // relies on when it hands an already-era-resolved slice to the serializer.
 func unresolvedEraRuns(records []Record) []Record {
-	hasCurrent := make(map[string]bool, len(records))
+	// The NEWEST definition each reviewer has any record under. Prefer-current
+	// generalizes to prefer-newest once there are more than two definitions: the
+	// rule was never "has the flag", it was "do not blend", and with three
+	// denominators a bool cannot express which two are being blended.
+	newest := make(map[string]int, len(records))
 	for _, r := range records {
-		if r.RaisedIncludesUnresolved {
-			hasCurrent[strings.ToLower(r.Reviewer)] = true
+		k := strings.ToLower(r.Reviewer)
+		if d := raisedDenominatorOf(r); d > newest[k] {
+			newest[k] = d
 		}
 	}
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
-		// Keep the record when its own reviewer has no current-era record at all
-		// (the untouched pre-epic history) or when this record IS a current-era
-		// one. What is dropped is only the older half of a reviewer that spans
-		// the change — the mix, which is the one combination measuring neither.
-		if !hasCurrent[strings.ToLower(r.Reviewer)] || r.RaisedIncludesUnresolved {
+		// Keep the record when it is computed under the newest definition its own
+		// reviewer has. A reviewer with only pre-epic history keeps all of it
+		// (its newest IS pre-epic), which is what stops an upgrade from blacking
+		// out an existing store. What is dropped is only the older half of a
+		// reviewer that spans a change — the mix, which is the one combination
+		// measuring neither.
+		if raisedDenominatorOf(r) == newest[strings.ToLower(r.Reviewer)] {
 			kept = append(kept, r)
 		}
 	}

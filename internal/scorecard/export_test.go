@@ -744,10 +744,15 @@ func TestExport_PreUnresolvedOnlyStoreStillExports(t *testing.T) {
 // The era partition was applied to the whole record slice at once, so ONE
 // reviewer carrying a current-era record truncated the public submission to that
 // reviewer alone. A store with eleven reviewers and a hundred runs each published
-// one reviewer at runs:1, and nothing in ExportEnvelope marks the truncation — no
-// record count, no era field, and submission_schema does not move — so a board
-// consumer reads the missing reviewers as never used, indistinguishable from a
-// submitter that genuinely never ran them.
+// one reviewer at runs:1, and nothing in ExportEnvelope marked the truncation — no
+// record count, and submission_schema does not move — so a board consumer read the
+// missing reviewers as never used, indistinguishable from a submitter that
+// genuinely never ran them.
+//
+// Epic 35.16.6.8 added raised_denominator to each public row, which is NOT a fix
+// for this: it says which definition produced a row's numbers, not that rows are
+// missing. The partition still has to be per-reviewer, and this test is still what
+// holds it that way.
 //
 // Export is a SEPARATE consumer from TrustPriors and needs its own guard: the two
 // share the helper today, and a future change that re-widens the partition for one
@@ -872,4 +877,81 @@ func TestExportSelected_OnlyNonReviewerRecordsIsNoRecords(t *testing.T) {
 	}
 	_, err := ExportSelected(recs, fixedExportNow)
 	require.ErrorIs(t, err, ErrNoExportRecords)
+}
+
+// TestExport_CarriesTheRaisedDenominator pins the cross-submitter half of the era
+// problem, which the per-store prefer-newest rule does not touch.
+//
+// unresolvedEraRuns guarantees a single submission is computed under ONE
+// definition. It says nothing about two submissions: submitter A on an old atcr
+// publishes bruce at 1.00, submitter B on a new one publishes bruce at 0.60, both
+// stamped submission_schema 2, and the board ranks them against each other. The
+// envelope has to say which rule produced the number.
+func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
+	t.Run("current-era records publish the current definition", func(t *testing.T) {
+		rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+		rec.RaisedDenominator = RaisedDenominatorCurrent
+		rec.RaisedIncludesUnresolved = true
+
+		out, err := Export([]Record{rec}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
+	})
+
+	t.Run("a pre-epic store still publishes, labelled as what it is", func(t *testing.T) {
+		// The key is NOT omitempty, so this row says "definition 1" out loud
+		// rather than staying silent — silence is the ambiguity being removed.
+		out, err := Export([]Record{exportRec("greta", "gpt-5", 1)},
+			FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].RaisedDenominator,
+			"an unmarked record is the pre-epic definition, and the envelope must say so")
+		assert.Contains(t, string(out), `"raised_denominator"`,
+			"the key is never omitted: a submission that will not say which rule it used is the defect")
+	})
+
+	t.Run("a corrupt version cannot delete a reviewer's real history", func(t *testing.T) {
+		// The store is a plain JSONL file a user can edit. An out-of-range version
+		// would otherwise win prefer-newest outright and become that reviewer's
+		// only cohort — one bad line silently discarding every genuine record.
+		// Clamping makes it join the current cohort instead of defining its own.
+		good := exportRec("bruce", "claude-sonnet-4-6", 1)
+		good.RaisedIncludesUnresolved = true
+		good.RaisedDenominator = RaisedDenominatorCurrent
+		corrupt := exportRec("bruce", "claude-sonnet-4-6", 1)
+		corrupt.RaisedIncludesUnresolved = true
+		corrupt.RaisedDenominator = 999
+
+		out, err := Export([]Record{good, corrupt}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 2, env.Reviewers[0].Runs,
+			"the good record must survive: a garbage version must not out-rank it")
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator,
+			"and the published era must stay in range, never the corrupt value")
+	})
+
+	t.Run("the two 'included' eras are separable, which a bool could not do", func(t *testing.T) {
+		// Both of these stamp RaisedIncludesUnresolved=true. Before the
+		// denominator version existed they were indistinguishable, so a window
+		// holding both blended two definitions while reporting one.
+		older := exportRec("bruce", "claude-sonnet-4-6", 1)
+		older.RaisedIncludesUnresolved = true // era 2: every routed finding charged
+		newer := exportRec("bruce", "claude-sonnet-4-6", 1)
+		newer.RaisedIncludesUnresolved = true
+		newer.RaisedDenominator = RaisedDenominatorCurrent // era 3: doc-shielded carved out
+
+		out, err := Export([]Record{older, newer}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"prefer-newest must drop the older definition's run rather than average across both")
+	})
 }

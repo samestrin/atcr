@@ -397,12 +397,19 @@ than growing a third aggregation.
   > rather than at the emission site.
   >
   > **`findings_raised` also changed meaning once, and is filtered the same way.**
-  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, so a rate
-  > averaged across records from both eras measures neither. Every record written
-  > since carries `raised_includes_unresolved: true`, and `TrustPriors` prefers
-  > those: when the window holds any, only they count; when it holds none, the
-  > older records are used unchanged, so an existing history is never blacked out.
-  > What is excluded is the mix.
+  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, and Epic
+  > 35.16.6.8 took the doc-shielded ones back out, so `findings_raised` has three
+  > definitions and a rate averaged across two of them measures neither. Every
+  > record written since 35.16.6.8 carries `raised_denominator: 3`; records from
+  > 35.16.6.5 carry `raised_includes_unresolved: true` and no version, which reads
+  > as definition 2; anything older is definition 1.
+  >
+  > `TrustPriors` prefers the NEWEST definition each reviewer actually has: when a
+  > reviewer's window holds records under more than one, only the newest count;
+  > when it holds only old ones, they are used unchanged. So an existing history is
+  > never blacked out — **per reviewer**. A reviewer that has run since the change
+  > loses its older records from the window, which is the point: what is excluded
+  > is the mix, not the history.
   >
   > Two consequences worth knowing:
   > - `minRuns` is a floor on **strict** runs. A reviewer with 15 `strict` and 10
@@ -560,13 +567,34 @@ future epic changes either schema:
   paths, not by individual stored records.
 
 **Not every meaning change moves a version number.** Epic 35.16.6.5 changed what
-`findings_raised` COUNTS (it now includes the Tier-4-routed findings) without
-changing any field's name, type, or presence, so neither integer moved. The
-discriminator is the per-record `raised_includes_unresolved` flag instead, and
-both derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
-prefer-current rule: a set holding any current-era record uses only those, a set
-holding none uses the older records unchanged. So a single submission is always
-computed under one definition, and an existing store never stops exporting.
+`findings_raised` COUNTS (it now includes the Tier-4-routed findings), and Epic
+35.16.6.8 changed it again (the doc-shielded routings came back out), neither time
+renaming, retyping, or removing a field — so neither integer moved. The
+discriminator is the per-record `raised_denominator` version instead, and both
+derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+prefer-newest rule: a reviewer's records are kept at the newest definition that
+reviewer has. So a single submission is always computed under one definition, and
+an existing store never stops exporting.
+
+That is enough within one store and not enough between two. Two submitters running
+different atcr versions publish rates computed under different rules, both stamped
+the same `submission_schema`, and the board ranks them against each other. So each
+public reviewer row also carries `raised_denominator` — additively, on
+`scorecard.PublicRecord`, the type both the production and benchmark envelopes
+share.
+
+Sharing the type puts the KEY on both producers; it does not populate it. Each
+producer stamps its own value, and the two are not on the same scale:
+
+| Producer | `raised_denominator` | What the row's `corroboration_rate` means |
+|---|---|---|
+| `leaderboard --export` | `1`, `2` or `3` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
+| `benchmark export` | `100` (`RaisedDenominatorBenchmarkSuite`) | category **recall** against the suite's planted defects |
+
+The gap between `3` and `100` is deliberate. A benchmark row is not a production
+row under an older rule — it is a different quantity, and the two must never be
+ordered against each other. The envelope's `source` field already separates the
+producers; this makes each row self-describing as well.
 
 The `atcr scorecard` local leaderboard (`Aggregate`) is deliberately NOT filtered
 this way — like the consensus-level filter, it reports what actually happened

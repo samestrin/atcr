@@ -132,6 +132,18 @@ func TestEmit_AggregateRecord(t *testing.T) {
 	for _, r := range recs[:len(recs)-1] {
 		assert.Equal(t, RecordTypeReviewer, r.RecordType)
 	}
+
+	// The aggregate's denominator is the SUM of per-reviewer denominators, every
+	// one of which includes the Tier-4-routed findings. Leaving the era flag off
+	// the aggregate labelled it pre-epic while it carried post-epic numbers —
+	// permanently misclassifying every aggregate line for any external analysis,
+	// or for any future widening of the era rule. The flag must describe the
+	// number on the same record.
+	assert.True(t, agg.RaisedIncludesUnresolved,
+		"the aggregate sums denominators that include routed findings, so it belongs to the same era they do")
+	assert.Equal(t, RaisedDenominatorCurrent, agg.RaisedDenominator,
+		"and it must say WHICH of those definitions, not just that routed findings are in there somewhere")
+	assert.Equal(t, SchemaVersion, agg.SchemaVersion)
 }
 
 func TestEmit_NoScorecardFlag(t *testing.T) {
@@ -388,6 +400,14 @@ func TestEmit_StampsRaisedIncludesUnresolvedOnACleanRun(t *testing.T) {
 			"reviewer record %q omits the era key entirely; omitempty means a dropped stamp reads as a pre-epic record", m["reviewer"])
 		assert.Equal(t, true, m["raised_includes_unresolved"],
 			"every record this emitter writes uses the current denominator definition")
+		// The version, at the JSON level, for the same reason: RaisedDenominator is
+		// omitempty, so a dropped stamp does not fail to compile or fail a struct
+		// assertion — it silently omits the key, and an absent version reads as the
+		// PREVIOUS definition. Only a check on the emitted bytes catches that.
+		require.Contains(t, m, "raised_denominator",
+			"reviewer record %q omits the denominator version; omitempty makes a dropped stamp read as the older era", m["reviewer"])
+		assert.EqualValues(t, RaisedDenominatorCurrent, m["raised_denominator"],
+			"and it must be the current definition, not merely present")
 	}
 	require.Equal(t, 3, reviewerLines, "all three reviewer records must be checked, not just the first")
 }

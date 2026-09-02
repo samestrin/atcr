@@ -98,18 +98,93 @@ type Record struct {
 	// definition — absent genuinely means the other one — so TrustPriors excludes
 	// those records rather than blending them. See unresolvedEraRuns.
 	//
-	// KNOWN LIMITATION: the flag is a bool, and the denominator has now changed
-	// meaning TWICE — Epic 35.16.6.8 removed the doc-shielded routings from it.
-	// Both eras stamp true, so unresolvedEraRuns cannot separate them. Where the
-	// carve-out fired, FindingsDocShielded below is nonzero and the eras ARE
-	// distinguishable; where it did not fire, the two definitions yield the same
-	// number and the blend is harmless. Versioning this properly belongs with the
-	// era carrier work, not here.
+	// It is a BOOL, and the denominator has now changed meaning twice, so it can
+	// no longer carry the era on its own — see RaisedDenominator below, which is
+	// what a new reader should use. This field stays because existing readers and
+	// stores depend on it, and because "true" is still exactly right about the one
+	// thing it claims: routed findings are in the denominator.
 	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
+	// RaisedDenominator identifies WHICH definition of FindingsRaised this record
+	// was computed under. It supersedes RaisedIncludesUnresolved, which is a bool
+	// against a question that turned out to have more than two answers.
+	//
+	// See RaisedDenominatorCurrent for the values. An absent field means the
+	// record predates this discriminator, and its era is then read from
+	// RaisedIncludesUnresolved: true is denominator 2, absent is 1. That fallback
+	// is what lets an existing store keep working rather than being blacked out.
+	//
+	// omitempty: a zero is not a version, and a record written before this field
+	// existed must serialize as it always did.
+	RaisedDenominator int `json:"raised_denominator,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
+}
+
+// Denominator definitions for Record.FindingsRaised. Each value is a distinct
+// rule for what counts, and a rate averaged across two of them measures neither
+// — which is the whole reason the number is versioned rather than described.
+//
+//   - 1: routed findings are EXCLUDED. Everything written before Epic
+//     35.16.6.5. Never stamped; it is what an absent discriminator means.
+//   - 2: routed findings are INCLUDED (Epic 35.16.6.5). Stamped as
+//     RaisedIncludesUnresolved=true, before RaisedDenominator existed.
+//   - 3: routed findings are included EXCEPT those routed by the
+//     documentation-extension heuristic (Epic 35.16.6.8). Those are counted in
+//     FindingsDocShielded instead. This is the current definition.
+const (
+	raisedDenominatorPreEpic   = 1
+	raisedDenominatorAllRouted = 2
+	// RaisedDenominatorCurrent is the definition every record this package writes
+	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
+	// the era filters separate the old records from the new ones automatically.
+	RaisedDenominatorCurrent = 3
+)
+
+// RaisedDenominatorBenchmarkSuite marks a public row scored by the BENCHMARK
+// SUITE rather than by a production reconcile. It is a different axis, not a
+// newer era, and the numeric gap is there to make that obvious: never compare it
+// ordinally with the values above.
+//
+// A benchmark row's numbers are not the production ones under an older rule —
+// they are different quantities. benchmark.scoreOne puts CATEGORY RECALL in
+// corroboration_rate and mean findings-per-case in findings_raised_avg; nothing
+// there is routed, corroborated, or reconciled at all. Both producers publish
+// onto the same board through the same frozen PublicRecord, so without this the
+// board would be averaging recall against corroboration and calling the result
+// one number.
+//
+// This is stamped rather than left absent because an absent value on a public row
+// is the exact silence raised_denominator exists to remove. The envelope's own
+// `source` field already separates the two producers; this makes each ROW
+// self-describing too, which is what a board consumer reading the reviewers array
+// actually has in hand.
+const RaisedDenominatorBenchmarkSuite = 100
+
+// raisedDenominatorOf reports which definition r's FindingsRaised was computed
+// under, reading the modern field when present and falling back to the bool that
+// preceded it. Never returns 0: a record always belongs to some era, and treating
+// "unmarked" as its own class would strand every pre-existing store.
+func raisedDenominatorOf(r Record) int {
+	// Clamped, not trusted. The store is a plain JSONL file a user can edit, and
+	// every other number ingested from it is clamped on the way in. An
+	// out-of-range version would otherwise win the max in unresolvedEraRuns and
+	// silently discard that reviewer's genuine current-era records in favour of
+	// the garbage one — a corrupt line quietly deleting real history from the
+	// window. Out of range reads as the current definition, which is the
+	// conservative answer: it keeps the record in the newest cohort rather than
+	// letting it define a cohort of its own.
+	if r.RaisedDenominator > RaisedDenominatorCurrent {
+		return RaisedDenominatorCurrent
+	}
+	if r.RaisedDenominator > 0 {
+		return r.RaisedDenominator
+	}
+	if r.RaisedIncludesUnresolved {
+		return raisedDenominatorAllRouted
+	}
+	return raisedDenominatorPreEpic
 }
 
 // Finding is the minimal per-finding input the emitter needs to compute
@@ -241,6 +316,15 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	agg.RecordType = RecordTypeAggregate
 	agg.RunID = in.RunID
 	agg.ConsensusLevel = in.ConsensusLevel
+	// Stamped for the same reason, and by the same rule, as the per-reviewer
+	// records below: the flag describes the DENOMINATOR on the record carrying
+	// it, and agg.FindingsRaised is the sum of per-reviewer denominators, every
+	// one of which was computed under the current definition. Omitting it
+	// labelled every aggregate line pre-epic while it carried post-epic numbers.
+	// Latent today — ApplyFilters and Aggregate both drop RecordTypeAggregate —
+	// but the JSONL is read by things this package does not control.
+	agg.RaisedIncludesUnresolved = true
+	agg.RaisedDenominator = RaisedDenominatorCurrent
 	var aggVerified, aggRefuted int
 
 	// A routed finding is charged to its reviewer's denominator because being
@@ -284,6 +368,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// uses the current one. Stamping it only when routing happened would
 			// make an ordinary clean run indistinguishable from a pre-epic record.
 			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
 			RecordType:               RecordTypeReviewer,
 			RunID:                    in.RunID,
 			ConsensusLevel:           in.ConsensusLevel,

@@ -36,12 +36,18 @@ func newLeaderboardCmd() *cobra.Command {
 	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
 	// The version is named here, not only in the docs, because the bump was made for
-	// a BENCHMARK-side change (coverage in the suite envelope) while this envelope
-	// gained no fields — and board acceptance of the new number is an unverified
-	// coordination item. A production submitter reads this help and nothing else, so
-	// omitting it would leave the one group affected by the risk uninformed. The
-	// number is formatted from the constant so one bump updates every surface.
-	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d; its field set is unchanged from 1, but a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
+	// a BENCHMARK-side change (coverage in the suite envelope) and board acceptance
+	// of the new number is an unverified coordination item. A production submitter
+	// reads this help and nothing else, so omitting it would leave the one group
+	// affected by the risk uninformed. The number is formatted from the constant so
+	// one bump updates every surface.
+	//
+	// The field set is NO LONGER unchanged from version 1: epic 35.16.6.8 added
+	// raised_denominator to each reviewer row, additively. That is stated here
+	// rather than left to the docs for the same reason the version number is — the
+	// consumer who has to accept the new key is the board this submitter publishes
+	// to, and this help is the only notice the submitter reads.
+	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d and each reviewer row carries raised_denominator (which definition of findings-raised produced its rate); a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
 	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	return cmd
 }

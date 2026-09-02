@@ -28,11 +28,15 @@ var ErrNoExportRecords = errors.New("no records match the export filters")
 // benchmark side, which gained suite_case_ids/reviewer_coverage in epic 35.16.6.2.
 //
 // The bump is ADDITIVE on both producers: no field of ExportEnvelope or
-// PublicRecord was renamed, retyped, or removed, and ExportEnvelope's key set is
-// byte-for-byte what version 1 emitted. A version-2 production submission
-// therefore differs from a version-1 one only in this integer. See the
-// "Schema versioning" section of docs/scorecard.md for the consumer-side
-// coordination note.
+// PublicRecord has ever been renamed, retyped, or removed.
+//
+// It is NOT true that a version-2 submission differs from a version-1 one only in
+// this integer — that held when the bump landed and stopped holding in epic
+// 35.16.6.8, which added raised_denominator to PublicRecord. The constant did not
+// move for it, deliberately: the addition is additive, and moving the version
+// would make every board pinned to 2 reject every new submission — an outage
+// where the defect is a legibility gap. See the "Schema versioning" section of
+// docs/scorecard.md for the consumer-side coordination note.
 const SubmissionSchema = 2
 
 // PublicRecord is one aggregated reviewer row of the public submission schema,
@@ -53,6 +57,28 @@ type PublicRecord struct {
 	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
 	CostPerCorroboratedFindingUSD *float64 `json:"cost_per_corroborated_finding_usd,omitempty"`
 	LatencyP50MS                  int64    `json:"latency_p50_ms"`
+	// RaisedDenominator says which definition of "findings raised" produced this
+	// row's FindingsRaisedAvg and CorroborationRate. See RaisedDenominatorCurrent
+	// for the values.
+	//
+	// WHY IT IS ON THE RECORD AND NOT THE ENVELOPE: this is the one type the two
+	// public producers actually share. ExportEnvelope and benchmark.Submission are
+	// separate structs that happen to stamp the same SubmissionSchema constant, so
+	// a field added to the envelope reaches one producer only; a field added here
+	// reaches both, which is the point — a benchmark submission and a production
+	// submission are ranked on the same board and must be comparable on the same
+	// terms. It is also where the field belongs semantically: the era describes
+	// how THESE numbers were computed.
+	//
+	// WHY NOT submission_schema: the rate's meaning changed while no field was
+	// renamed, retyped, or removed. Moving the schema version would make every
+	// board pinned to the current one reject every new submission — an outage
+	// where the actual defect is a legibility gap. Additive-only, per the rule the
+	// schema-2 bump established.
+	//
+	// Not omitempty: a submission that does not say which definition it used is
+	// exactly the ambiguity this exists to remove, so the key is always present.
+	RaisedDenominator int `json:"raised_denominator"`
 }
 
 // ExportEnvelope is the top-level public submission document (Epic 10.0 spec).
@@ -85,10 +111,29 @@ type reviewerAcc struct {
 	refuted         int
 	storedRates     []float64
 	hasVerification bool
+	// raisedDenominator is the newest FindingsRaised definition seen in this
+	// group; it rides onto the public row so a board can tell two submitters'
+	// numbers apart when they were computed under different rules.
+	raisedDenominator int
 }
 
 func (a *reviewerAcc) add(r Record) {
 	a.runs++
+	// The era of the group is the era of its records. unresolvedEraRuns has
+	// already reduced each reviewer to a single definition before Export
+	// aggregates, so every record reaching one accumulator agrees.
+	//
+	// max only picks the LABEL. It does not protect the numbers: raisedTotal,
+	// corroborated, costTotal and latencies below are summed unconditionally, with
+	// no era filtering of their own. A caller of the exported ExportSelected that
+	// skips the era pass would therefore blend two definitions' raw counts and get
+	// them stamped with the newer label — an averaged number presented as a pure
+	// one, which is the defect this field exists to prevent. Running
+	// unresolvedEraRuns first is the caller's contract, enforced by convention
+	// rather than structurally; max is a floor under a mislabel, not a fix for it.
+	if d := raisedDenominatorOf(r); d > a.raisedDenominator {
+		a.raisedDenominator = d
+	}
 	a.raisedTotal += clampNonNeg(r.FindingsRaised)
 	a.corroborated += clampNonNeg(r.FindingsCorroborated)
 	a.costTotal = clampNonNegF(a.costTotal + clampNonNegF(r.CostUSD))
@@ -117,6 +162,7 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		FindingsRaisedAvg: avgPerRun(a.raisedTotal, a.runs),
 		CorroborationRate: clampRate(ratio(a.corroborated, a.raisedTotal)),
 		LatencyP50MS:      medianInt64(a.latencies),
+		RaisedDenominator: a.raisedDenominator,
 	}
 	pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated)
 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
