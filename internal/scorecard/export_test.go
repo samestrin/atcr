@@ -1108,3 +1108,42 @@ func TestEraPass_EmptyingASelectionIsItsOwnError(t *testing.T) {
 		require.Len(t, env.Reviewers, 1)
 	})
 }
+
+// TestReviewerAcc_FinalizeSurvivesAnEraMissFromByEra pins the defensive branch in
+// finalize() that no production path can reach.
+//
+// add() writes byEra[d] and raises raisedDenominator to that same d on every
+// record, so through add() the bucket is always present. The branch therefore
+// only fires for a reviewerAcc constructed some other way — a zero value, or a
+// future caller that sets raisedDenominator without a matching bucket — and
+// without it that construction dereferences a nil *eraAcc and panics.
+//
+// Testing it requires exactly the synthetic construction the branch exists for.
+// The alternative the TD row offered was deleting it and documenting the zero
+// value as a precondition; the branch is kept because finalize() is called from
+// an exported path (ExportSelected) and a panic there is a worse failure than a
+// zero row.
+func TestReviewerAcc_FinalizeSurvivesAnEraMissFromByEra(t *testing.T) {
+	t.Run("zero value", func(t *testing.T) {
+		var a reviewerAcc
+		var pr PublicRecord
+		require.NotPanics(t, func() { pr = a.finalize() })
+		assert.Equal(t, 0, pr.Runs, "no data means an empty row, not a panic")
+		assert.Nil(t, pr.CostPerCorroboratedFindingUSD, "an undefined metric stays absent")
+	})
+
+	t.Run("raisedDenominator names an era byEra does not hold", func(t *testing.T) {
+		a := reviewerAcc{
+			persona:           "bruce",
+			model:             "m",
+			raisedDenominator: RaisedDenominatorCurrent,
+			byEra:             map[int]*eraAcc{raisedDenominatorPreEpic: {runs: 3, raisedTotal: 9, corroborated: 3}},
+		}
+		var pr PublicRecord
+		require.NotPanics(t, func() { pr = a.finalize() })
+		assert.Equal(t, 0, pr.Runs,
+			"the row reports the named era, which holds nothing — it must not silently fall back to the other era's sums")
+		assert.Equal(t, RaisedDenominatorCurrent, pr.RaisedDenominator)
+		assert.Equal(t, "bruce", pr.Persona)
+	})
+}
