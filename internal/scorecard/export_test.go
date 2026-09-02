@@ -918,7 +918,11 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 		// The store is a plain JSONL file a user can edit. An out-of-range version
 		// would otherwise win prefer-newest outright and become that reviewer's
 		// only cohort — one bad line silently discarding every genuine record.
-		// Clamping makes it join the current cohort instead of defining its own.
+		// EXCLUSION keeps the intent without the clamp's defect: the garbage line
+		// is dropped from the era window entirely instead of being re-labelled
+		// current and blended — the same answer for a corrupt 999 and for a
+		// legitimate record written by a newer binary under a definition this one
+		// does not implement.
 		good := exportRec("bruce", "claude-sonnet-4-6", 1)
 		good.RaisedIncludesUnresolved = true
 		good.RaisedDenominator = RaisedDenominatorCurrent
@@ -930,10 +934,10 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 		require.NoError(t, err)
 		env := parseEnvelope(t, out)
 		require.Len(t, env.Reviewers, 1)
-		assert.Equal(t, 2, env.Reviewers[0].Runs,
-			"the good record must survive: a garbage version must not out-rank it")
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"the corrupt record is excluded from the era window, so only the good record's run is counted")
 		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator,
-			"and the published era must stay in range, never the corrupt value")
+			"and the published era is the genuine current definition, never the corrupt value")
 	})
 
 	t.Run("the two 'included' eras are separable, which a bool could not do", func(t *testing.T) {

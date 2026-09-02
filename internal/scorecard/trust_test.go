@@ -826,3 +826,45 @@ func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
 	assert.True(t, sawAggregate,
 		"the aggregate record passes through untouched — the era pass is a reviewer-record concern")
 }
+
+// TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators pins the drop-and-exclude
+// rule for records stamped with a denominator this binary does not know: a
+// LEGITIMATE record written by a newer atcr (denominator 4), a corrupt hand-edit
+// (999), and a benchmark-suite value (100) are all EXCLUDED from the era window
+// rather than clamped into the current cohort and blended. The clamp's
+// protective intent survives — a garbage line still cannot delete the reviewer's
+// real history — but exclusion no longer re-labels a future era as the current
+// one.
+func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
+	mk := func(runID string, denom int) Record {
+		return Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: runID, Reviewer: "bruce", Model: "m",
+			RaisedIncludesUnresolved: true, RaisedDenominator: denom,
+			FindingsRaised: 2, FindingsCorroborated: 1,
+		}
+	}
+	current := mk("2026-09-02T00:00:00Z-cur", RaisedDenominatorCurrent)
+
+	for name, alien := range map[string]Record{
+		"newer-binary record (denominator 4)": mk("2026-09-02T00:00:00Z-n4", RaisedDenominatorCurrent+1),
+		"corrupt hand-edit (999)":             mk("2026-09-02T00:00:00Z-c9", 999),
+		"benchmark-suite value (100)":         mk("2026-09-02T00:00:00Z-bm", RaisedDenominatorBenchmarkSuite),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := unresolvedEraRuns([]Record{current, alien})
+			require.Len(t, got, 1, "the above-current record must be excluded, not blended into the current cohort")
+			assert.Equal(t, RaisedDenominatorCurrent, got[0].RaisedDenominator,
+				"the genuine current-era record survives untouched")
+		})
+	}
+
+	// A reviewer with ONLY above-current records keeps none of them in the era
+	// window — an older binary must not blend numbers computed under a rule it
+	// does not implement. (It also must not relabel them current: the clamp is
+	// gone for this class.)
+	t.Run("only-above-current reviewer yields nothing", func(t *testing.T) {
+		got := unresolvedEraRuns([]Record{mk("2026-09-02T00:00:00Z-x1", RaisedDenominatorCurrent+1)})
+		assert.Empty(t, got)
+	})
+}
