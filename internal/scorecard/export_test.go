@@ -985,3 +985,39 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 			"the rate is computed from the era-3 record alone (1/4), not the blend (10/14)")
 	})
 }
+
+// TestReviewerAcc_DropsOlderEraRecords pins the defensive layer beneath the era
+// pass: unresolvedEraRuns keys on strings.ToLower(Reviewer) while ExportSelected
+// groups on the SCRUBBED (persona, model) pair, so two identities differing only
+// by a non-printing rune form one accumulator but two era groups. When that
+// happens the accumulator must not blend: the older era's records are dropped,
+// in either arrival order, and the published row is computed from the newest
+// definition alone.
+func TestReviewerAcc_DropsOlderEraRecords(t *testing.T) {
+	mk := func(denom int, raised, corro int) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", 1)
+		r.FindingsRaised = raised
+		r.FindingsCorroborated = corro
+		if denom >= 2 {
+			r.RaisedIncludesUnresolved = true
+		}
+		if denom >= 3 {
+			r.RaisedDenominator = RaisedDenominatorCurrent
+		}
+		return r
+	}
+	era2 := mk(2, 10, 9)
+	era3 := mk(3, 4, 1)
+
+	for _, order := range [][]Record{{era2, era3}, {era3, era2}} {
+		a := &reviewerAcc{persona: "bruce", model: "claude-sonnet-4-6"}
+		for _, r := range order {
+			a.add(r)
+		}
+		pr := a.finalize()
+		assert.Equal(t, 1, pr.Runs, "the older era's record is dropped, not blended")
+		assert.Equal(t, RaisedDenominatorCurrent, pr.RaisedDenominator)
+		assert.InDelta(t, 4.0, pr.FindingsRaisedAvg, 1e-9, "raised total from the newest era only")
+		assert.InDelta(t, 0.25, pr.CorroborationRate, 1e-9, "rate from the newest era only (1/4), not the blend (10/14)")
+	}
+}
