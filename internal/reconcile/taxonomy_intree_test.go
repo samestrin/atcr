@@ -777,3 +777,65 @@ func TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule(t *testing.T) {
 		"%s now holds %q, so the outOfScopeConstValue literal in taxonomy_intree_helpers_test.go matches nothing and the rename tripwire is disarmed — update it to the new value",
 		outOfScopeConstName, value)
 }
+
+// The forward cross-check's collision branch fires in two structurally different
+// situations, and until this test only one of them was described.
+//
+// It reports "the categories slice lists that value under a different constant",
+// but it also fires when the slice lists the value as a BARE STRING LITERAL —
+// where there is no other constant to find, so the remedy sends the maintainer
+// hunting for something that does not exist. A bare literal is a legitimate way
+// to list a member (TestInTreeCategories_BareStringLiteralElementIsAMember), so
+// this combination is one a maintainer can reach by an ordinary edit.
+//
+// The message must split the way the rename tripwire already does: name the form
+// the value arrived in, and name the edit that clears it.
+func TestInTreeCategoryBlocks_BareLiteralCollisionNamesTheRealEdit(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	"correctness",
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "a block member the slice lists only as a bare literal must still fail: the name-keyed exclusion would fold it in silently")
+	assert.Contains(t, err.Error(), "a bare string literal",
+		"the error must name the form the value arrived in, not claim a second constant exists")
+	assert.Contains(t, err.Error(), "replace the literal with the CategoryCorrectness constant",
+		"the remedy must name the one edit that clears the error — promoting the literal to the block member's own name")
+	assert.NotContains(t, err.Error(), "under a different constant",
+		"there is no different constant here; that wording belongs to the genuinely-aliased case")
+}
+
+// The other half of the same split: when the colliding value really IS listed
+// under another named constant, the original wording is correct and must stay.
+func TestInTreeCategoryBlocks_AliasedCollisionStillNamesTheAlias(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+const CategoryAlias = "correctness"
+
+var categories = []string{
+	CategoryAlias,
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "under a different constant",
+		"a genuinely aliased value keeps the original diagnosis")
+	assert.NotContains(t, err.Error(), "a bare string literal",
+		"the bare-literal wording must not leak into the aliased case")
+}
