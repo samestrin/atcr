@@ -575,9 +575,8 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// one all produce the same 0. (An index whose parser failed is the
 		// exception: it WAS built and can route, so its 0 means "checked and
 		// routed nothing" even though the state reads unavailable.) Guarded on
-		// non-empty only so a
-		// Summary from a pure in-memory embedder (which never runs content
-		// resolution) renders byte-identically to before.
+		// non-empty only so a Summary from a pure in-memory embedder (which never
+		// runs content resolution) renders byte-identically to before.
 		fmt.Fprintf(&b, "- Unresolved check: %s\n", summary.UnresolvedState)
 	}
 	if summary.UnresolvedFiltered > 0 {

@@ -682,8 +682,7 @@ func collectExportedIdentifiers(src []byte, out map[string]struct{}) {
 // here made Ruby, Swift, Scala, Elixir, SQL, Terraform, proto, YAML and Markdown
 // structurally invisible to `presentInSource` while `complete` stayed true — the
 // largest hole the incomplete-index downgrade could have, and the one it never
-// saw. A
-// finding whose construct genuinely lives in a .rb file, cited against a
+// saw. A finding whose construct genuinely lives in a .rb file, cited against a
 // non-existent .go path, then reached tier4NoMatch and was routed out of
 // findings.json as fabricated.
 //
