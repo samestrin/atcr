@@ -868,3 +868,33 @@ func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+// TestTrustPriors_ShieldedCountsDiscountTheRate pins the trust-side answer to the
+// doc-shield carve-out: a reviewer can route fabrications through the
+// documentation-extension heuristic so they escape FindingsRaised, but they must
+// NOT escape the trust prior. The shielded count joins the trust rate's
+// denominator — the scorecard/board rate keeps the carve-out, the trust rate
+// does not. Without this, a reviewer (or a board gamer) inflates their prior by
+// anchoring phantoms on doc-named tokens.
+func TestTrustPriors_ShieldedCountsDiscountTheRate(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-09-01T00:00:00Z-sh%02d", i),
+			Reviewer: "gamer", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
+			FindingsRaised:           2,
+			FindingsCorroborated:     2, // everything chargeable corroborated
+			FindingsDocShielded:      2, // but two more routed through the doc shield
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "gamer")
+	assert.InDelta(t, 0.5, priors["gamer"], 0.0001,
+		"2 corroborated out of 2 raised + 2 shielded: the shield does not launder phantoms into a clean 1.00 prior")
+}
