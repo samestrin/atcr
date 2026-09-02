@@ -507,11 +507,21 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// the reconcile.
 	unresolved := res.Unresolved
 	unresolvedReadErr := ""
-	if _, uerr := readUnresolvedSidecar(dir); uerr != nil {
+	unresolvedStale := ""
+	if persisted, uerr := readUnresolvedSidecar(dir); uerr != nil {
 		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
 		// Transmit the reason too: the Warn reaches the server's own logger, which
 		// a stdio client never sees.
 		unresolvedReadErr = uerr.Error()
+	} else if len(persisted) != len(unresolved) {
+		// A valid read whose content disagrees with this run's routing means a
+		// concurrent atcr_reconcile rewrote the sidecar in between (atomicfs makes
+		// a torn file impossible). Signal it on its own field — never through
+		// unresolved_read_error, whose contract is that nothing failed to READ.
+		e.logger().Warn("unresolved sidecar rewritten by a concurrent run",
+			"persisted", len(persisted), "reported", len(unresolved))
+		unresolvedStale = fmt.Sprintf("sidecar was rewritten by a concurrent run (persisted %d, this run routed %d)",
+			len(persisted), len(unresolved))
 	}
 
 	out := ReconcileResult{
@@ -525,6 +535,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		UnresolvedState:     res.Summary.UnresolvedState,
 		Unresolved:          unresolved,
 		UnresolvedReadError: unresolvedReadErr,
+		UnresolvedStale:     unresolvedStale,
 		DebtPersisted:       debtPersisted,
 		DebtSkippedReason:   debtSkippedReason,
 	}

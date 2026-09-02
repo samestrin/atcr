@@ -225,8 +225,19 @@ type ReconcileResult struct {
 	// published atomically, so a racing run leaves a valid file. This reports
 	// corruption from outside atcr — a disk fault, a lost permission, a
 	// third-party writer. omitempty: the common case is a read that worked.
-	UnresolvedReadError string                  `json:"unresolved_read_error,omitempty"`
-	Findings            []reconcile.JSONFinding `json:"findings,omitempty"`
+	UnresolvedReadError string `json:"unresolved_read_error,omitempty"`
+	// UnresolvedStale reports that the persisted unresolved.json no longer
+	// matches the records THIS run routed: the sidecar read SUCCEEDED but holds a
+	// different count, which means a concurrent atcr_reconcile on the same review
+	// directory rewrote it between this run's reconcile and the result assembly.
+	// Unresolved itself is unaffected — it is reported from memory. This is
+	// deliberately NOT UnresolvedReadError: nothing failed to read, and that
+	// field's contract (pinned by
+	// TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite) is that it
+	// stays empty in exactly this race. omitempty: the common case is no racing
+	// writer.
+	UnresolvedStale string                  `json:"unresolved_stale,omitempty"`
+	Findings        []reconcile.JSONFinding `json:"findings,omitempty"`
 	// DebtPersisted reports whether the local TD store write ran against a
 	// resolved root (individual findings may still be dropped by path
 	// validation), and DebtSkippedReason says why it did not run at all (TD
@@ -295,7 +306,7 @@ const (
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
 		"Reconciled findings are also appended to the reviewed repo's local TD store; the root is the repo argument, else the root recorded in the review manifest — there is no working-directory fallback, so a review whose manifest records no root persists nothing unless repo is given. " +
 		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings), consensus (strict|lenient|off; default strict), repo (ABSOLUTE path to the reviewed repo root; required when the review manifest records no root), no_local_debt (skip the store write for this run). " +
-		"The result reports the outcome of that write as debt_persisted / debt_skipped_reason, and the outcome of the Tier 4 content check as unresolved_filtered, unresolved_state (applied|disabled|unavailable|incomplete — read it before the count, which is not self-interpreting), unresolved (the routed records), each record carrying unresolved_reason (doc_shield means the routing came from the documentation-extension heuristic, not a genuine absence), and unresolved_read_error (the persisted sidecar was unreadable; unresolved is unaffected)."
+		"The result reports the outcome of that write as debt_persisted / debt_skipped_reason, and the outcome of the Tier 4 content check as unresolved_filtered, unresolved_state (applied|disabled|unavailable|incomplete — read it before the count, which is not self-interpreting), unresolved (the routed records), each record carrying unresolved_reason (doc_shield means the routing came from the documentation-extension heuristic, not a genuine absence), unresolved_read_error (the persisted sidecar was unreadable; unresolved is unaffected), and unresolved_stale (the persisted sidecar was rewritten by a concurrent run; unresolved is unaffected)."
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."
