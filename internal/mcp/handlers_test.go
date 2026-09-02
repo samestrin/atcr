@@ -1260,11 +1260,12 @@ func TestReconcileHandler_UnresolvedMatchesPersistedSidecar(t *testing.T) {
 	id := "2026-09-02_unresolved_equality"
 	dir := filepath.Join(root, ".atcr", "reviews", id)
 	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
-		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta\n"+
+			"LOW|internal/ghost/wraith.go:20|`spectralLock` never releases on timeout|defer the unlock in `spectralLock`|concurrency|5|ev|greta")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
 		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
-		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":2}`), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
 	cs := connectTest(t, root, fakeCompleter{})
@@ -1274,18 +1275,39 @@ func TestReconcileHandler_UnresolvedMatchesPersistedSidecar(t *testing.T) {
 		"repo":      root,
 	})
 
-	require.Equal(t, float64(1), out["unresolved_filtered"], "the fixture must actually route something")
+	require.Equal(t, float64(2), out["unresolved_filtered"], "the fixture must actually route something")
 	reported, ok := out["unresolved"].([]any)
 	require.True(t, ok, "the routed record must be reported")
-	require.Len(t, reported, 1)
+	require.Len(t, reported, 2)
 
 	onDisk, err := reconcile.ReadUnresolvedFindings(dir)
 	require.NoError(t, err)
-	require.Len(t, onDisk, 1, "the sidecar must hold the same one record")
+	require.Len(t, onDisk, 2, "the sidecar must hold the same two records")
 
-	got := reported[0].(map[string]any)
-	assert.Equal(t, onDisk[0].File, got["file"], "reported and persisted must name the same finding")
-	assert.Equal(t, onDisk[0].Problem, got["problem"])
+	// Field-for-field equality, not a two-field sample: the switch from re-reading
+	// the sidecar to reporting res.Unresolved is provably content-preserving only
+	// if EVERY field survives — severity, reviewers, unresolved_reason included.
+	// Round-tripping the persisted record through JSON normalizes both sides to
+	// the wire shape the client actually sees.
+	for i := range onDisk {
+		wantJSON, err := json.Marshal(onDisk[i])
+		require.NoError(t, err)
+		var want map[string]any
+		require.NoError(t, json.Unmarshal(wantJSON, &want))
+		got, ok := reported[i].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, want, got, "reported record %d must equal the persisted one field-for-field", i)
+	}
+
+	// Self-proof that the comparison above discriminates: dropping one field from
+	// the persisted side must turn it red.
+	var tampered map[string]any
+	droppedJSON, err := json.Marshal(onDisk[0])
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(droppedJSON, &tampered))
+	delete(tampered, "severity")
+	assert.NotEqual(t, tampered, reported[0], "a dropped field must be detected — else the equality pin asserts nothing")
+
 	assert.Empty(t, out["unresolved_read_error"], "nothing failed to read on an ordinary run")
 }
 
