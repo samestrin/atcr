@@ -54,18 +54,17 @@ const DefaultTrustMinRuns = 20
 // while any reviewer is active, so a fallback keyed on emptiness would never
 // fire for a single dormant reviewer.
 //
-// KNOWN LIMITATION (accepted): the prefer-newest era pass (unresolvedEraRuns)
-// drops a reviewer's whole pre-upgrade window the moment its first record under
-// a newer raised_denominator lands. That reviewer then holds only its
-// post-upgrade runs inside the window and falls under DefaultTrustMinRuns until
-// enough new-era runs accumulate — a priors blackout that silently disables
-// trustExempt and demoteByTrust for it in the meantime. The cost is transient
-// and bounded (it only fires in the weeks after a denominator bump, a rare
-// event), and eras differ only where the carve-out fired, so blending them for
-// a reviewer the carve-out never touched would be safe — but proving that
-// per-reviewer equivalence is a special case inside logic deliberately built
-// around "prefer-newest, never blend", and the complexity is not worth the
-// bounded gap. Accepted as an upgrade cost.
+// The prefer-newest era pass (unresolvedEraRuns) drops a reviewer's whole
+// pre-upgrade window the moment its first record under a newer
+// raised_denominator lands, which would put the reviewer under
+// DefaultTrustMinRuns and silently disable trustExempt and demoteByTrust for it.
+// For the 2-to-3 bump that blackout bought nothing — the two eras partition the
+// same finding set, so the trust rate is identical either way — and
+// mergeRoutedEras now normalises era 3 to era 2 before the pass, removing it. A
+// FUTURE denominator bump that genuinely changes the measured set would
+// reintroduce the blackout for its own window, and the same question (are the
+// two eras arithmetically equivalent for THIS denominator?) has to be answered
+// again before extending mergeRoutedEras to it.
 //
 // Narrowing this value requires redoing the min-runs measurement above
 // (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
@@ -143,9 +142,13 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		return map[string]float64{}, nil
 	}
 
-	type tally struct{ runs, corroborated, raised, shielded int }
+	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
-	for _, row := range Aggregate(unresolvedEraRuns(strictRuns(records))) {
+	// mergeRoutedEras runs BEFORE the prefer-newest pass so eras 2 and 3 arrive as
+	// one era and are never split against each other. It also folds the shielded
+	// count into FindingsRaised, which is what makes a plain t.raised the full
+	// trust denominator below.
+	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(strictRuns(records)))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -155,14 +158,6 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		t.runs += row.Runs
 		t.corroborated += row.FindingsCorroborated
 		t.raised += row.FindingsRaised
-		// The doc-shield carve-out keeps routed-on-a-heuristic findings out of
-		// the SCORECARD denominator, but it must not launder them out of the
-		// TRUST denominator too: a reviewer (or a board gamer anchoring phantoms
-		// on doc-named tokens) would otherwise inflate a prior by routing
-		// fabrications through the shield. Shielded counts join the denominator
-		// here — the one place a misfire is safe to charge, because a wrong
-		// prior only re-weights future filtering, it does not publish a number.
-		t.shielded += row.FindingsDocShielded
 	}
 
 	rates := make(map[string]float64, len(byReviewer))
@@ -170,9 +165,50 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		if minRuns > 0 && t.runs < minRuns {
 			continue
 		}
-		rates[name] = ratio(t.corroborated, t.raised+t.shielded)
+		rates[name] = ratio(t.corroborated, t.raised)
 	}
 	return rates, nil
+}
+
+// mergeRoutedEras rewrites each era-3 record into its exact era-2 equivalent, so
+// the prefer-newest pass sees ONE routed era instead of two and a reviewer keeps
+// its pre-upgrade window the day its first era-3 record lands.
+//
+// The rewrite is lossless for the trust rate because the two eras partition the
+// SAME finding set. scorecard.go splits in.UnresolvedFindings disjointly into
+// chargeable and doc-shielded, so an era-3 record's FindingsRaised +
+// FindingsDocShielded is exactly what era 2 reported as FindingsRaised, and
+// FindingsCorroborated is untouched by the carve-out. Folding the shielded count
+// back in also preserves the anti-gaming property the trust denominator has
+// always had: a reviewer cannot launder phantoms out of its prior by anchoring
+// them on doc-named tokens, because the shield never reaches this denominator.
+//
+// Era 1 is deliberately NOT merged. It EXCLUDES routed findings from
+// FindingsRaised rather than partitioning them, so its denominator covers a
+// smaller finding set and blending it in would compare two different quantities —
+// the split the prefer-newest pass exists to enforce.
+//
+// Records ABOVE the current definition are left alone: they are computed under a
+// rule this binary does not implement, and normalising one would smuggle it past
+// unresolvedEraRuns' exclusion. The test is on the RAW field for that reason —
+// raisedDenominatorOf would clamp an above-current value to the current one and
+// admit exactly the record that must not be admitted.
+//
+// The input slice is never mutated: callers hand in records read from the store
+// and must not see them rewritten underneath.
+func mergeRoutedEras(records []Record) []Record {
+	out := make([]Record, len(records))
+	copy(out, records)
+	for i := range out {
+		if out[i].RecordType != RecordTypeReviewer || out[i].RaisedDenominator != RaisedDenominatorCurrent {
+			continue
+		}
+		out[i].FindingsRaised += out[i].FindingsDocShielded
+		out[i].FindingsDocShielded = 0
+		out[i].RaisedDenominator = raisedDenominatorAllRouted
+		out[i].RaisedIncludesUnresolved = true
+	}
+	return out
 }
 
 // strictRuns keeps only the records measured under the strict consensus level —
