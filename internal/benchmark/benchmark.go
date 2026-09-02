@@ -484,6 +484,12 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
 	for i, rev := range rr.Reviewers {
 		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+		// raised_denominator is a producer-identity stamp, not producer data: a
+		// benchmark row's rate is category recall, so the benchmark-suite
+		// denominator is stamped here on every row — an externally supplied
+		// run-result can omit the key (publishing 0, an undefined era) or claim
+		// a production era it never earned.
+		scrubbed[i].RaisedDenominator = scorecard.RaisedDenominatorBenchmarkSuite
 		// Deep-copy the pointer metrics: a PublicRecord struct copy aliases them,
 		// so mutating the submission would rewrite the caller's RunResult — the
 		// same non-mutation rule the string slices below follow.
