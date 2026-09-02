@@ -1272,6 +1272,34 @@ func TestSymbolIndex_NamedInDocsExplainsTheRouting(t *testing.T) {
 		"a genuinely absent construct has no doc-shield excuse")
 }
 
+// TestSymbolIndex_NamedInDocsCoversMDXProse pins the presentInDocs half of the
+// .mdx split — the one extension the split was built for. An MDX file's PROSE
+// tokens feed presentInDocs only, so a subject named in an MDX paragraph and
+// nowhere in source is doc-shielded exactly like a changelog mention; its export
+// lines feed BOTH maps, so a declared construct is not. Restructuring build's
+// else-branch (mdx prose skipped from presentInDocs) leaves the first assertion
+// red while the rest of the package stays green — and silently charges the
+// reviewer's denominator instead.
+func TestSymbolIndex_NamedInDocsCoversMDXProse(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "guide.mdx"),
+		[]byte("export function Callout() { return null }\n\nThe `quantumFlux` helper was removed in 2.0.\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"docs/guide.mdx", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "an MDX-prose-only subject is searched for and not found in source")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"an MDX paragraph is prose: the subject is named in docs and nowhere in source")
+	assert.False(t, lz.namedInDocs([]string{"Callout"}),
+		"Callout is declared on an export line, so it is in BOTH maps — not doc-only, no shield")
+}
+
 // TestSymbolIndex_StateUnavailableWhenEveryParserFailed pins state() against the
 // metric it must agree with.
 //
