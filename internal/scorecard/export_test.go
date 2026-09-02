@@ -954,4 +954,24 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 		assert.Equal(t, 1, env.Reviewers[0].Runs,
 			"prefer-newest must drop the older definition's run rather than average across both")
 	})
+
+	t.Run("ExportSelected with no era pass still floors the label at the newest definition", func(t *testing.T) {
+		// ExportSelected is exported precisely so an embedder can aggregate a slice
+		// WITHOUT the era pass — every other subtest here goes through Export,
+		// which runs unresolvedEraRuns first. The accumulator's max (export.go) is
+		// then the only guard the public row has: a blended aggregate must at
+		// least be LABELLED with the newest definition it contains.
+		era2 := exportRec("bruce", "claude-sonnet-4-6", 1)
+		era2.RaisedIncludesUnresolved = true // denominator 2 via the bool fallback
+		era3 := exportRec("bruce", "claude-sonnet-4-6", 1)
+		era3.RaisedIncludesUnresolved = true
+		era3.RaisedDenominator = RaisedDenominatorCurrent
+
+		out, err := ExportSelected([]Record{era2, era3}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator,
+			"max is a floor under a mislabel: a mixed-era aggregate must wear the newest definition it contains")
+	})
 }
