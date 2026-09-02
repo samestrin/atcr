@@ -1453,6 +1453,25 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 			src:         "export {NamedReExport} from './x'\n",
 			wantPresent: []string{"NamedReExport"},
 		},
+		{
+			// The .mdx fixture the TD row asks for: an MDX page's TypeScript
+			// declarations must reach presentInSource, or a finding anchored on
+			// one becomes eligible for a doc_shield carve-out the page's own
+			// declaration disproves.
+			name: "mdx TypeScript declarations declare",
+			src: "# Guide\n\n" +
+				"export type CalloutKind = 'note' | 'warn'\n" +
+				"export interface CalloutProps {}\n" +
+				"export enum CalloutTone {}\n" +
+				"export declare const calloutDefault: CalloutProps\n" +
+				"export abstract class CalloutBase {}\n",
+			wantPresent: []string{"CalloutKind", "CalloutProps", "CalloutTone", "calloutDefault", "CalloutBase"},
+		},
+		{
+			name:       "prose beginning with one of the TypeScript keywords declares nothing",
+			src:        "export types of finding are documented at reportEndpoint\n",
+			wantAbsent: []string{"reportEndpoint"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1504,6 +1523,38 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	t.Run("real ESM forms are still admitted", func(t *testing.T) {
 		for _, body := range []string{"{Named} from './x'", "* from './x'", "const a = 1", "default fn", "function f()", "class C {}", "async function f()", "let a", "var a"} {
 			assert.True(t, isESMExportBody([]byte(body)), "%q is a real ESM export form", body)
+		}
+	})
+
+	// The surface this guard actually runs over is MDX, and MDX carries
+	// TypeScript. `export type Foo = ...` at column 0 of an .mdx file IS a
+	// declaration, so a keyword list built from the JavaScript forms alone leaves
+	// Foo out of presentInSource — and a finding anchored on Foo then becomes
+	// eligible for the doc_shield carve-out it should not get, because the doc
+	// genuinely declares it.
+	t.Run("TypeScript declaration forms are ESM export forms too", func(t *testing.T) {
+		for _, body := range []string{
+			"type Foo = string",
+			"interface Bar {}",
+			"enum Color {}",
+			"declare const x: number",
+			"abstract class Base {}",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a TypeScript export declaration", body)
+		}
+	})
+
+	// Each new keyword is also a real English word, so the prefix rule that
+	// protects `defaults`/`classicMode` has to protect these too.
+	t.Run("prose that merely starts with a new keyword is still rejected", func(t *testing.T) {
+		for _, body := range []string{
+			"types of findings are listed below",
+			"interfaces you should implement",
+			"enumerate the results first",
+			"declares nothing by itself",
+			"abstractions leak here",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)), "%q is prose, not an export declaration", body)
 		}
 	})
 }
