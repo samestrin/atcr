@@ -316,6 +316,16 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 		return nil, ErrNoExportRecords
 	}
 
+	// The era pass is structural HERE, not the caller's contract: an embedder
+	// calling this exported function with a mixed-era slice would otherwise
+	// publish blended counts stamped with the newest label — an averaged number
+	// presented as a pure one, the defect raised_denominator exists to prevent.
+	// Mirroring PublishedSet, the pass separates each reviewer's eras
+	// prefer-newest and excludes above-current records outright. It falls back
+	// rather than emptying a pre-epic store, so this cannot turn a publishable
+	// selection into no rows.
+	filtered = unresolvedEraRuns(filtered)
+
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
 	order := make([]key, 0)
