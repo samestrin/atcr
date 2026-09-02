@@ -141,8 +141,9 @@ plus one optional field:
 - `unresolved_reason` — why the content check routed this finding. Absent means
   the ordinary case: the constructs its prose names appear nowhere in the tracked
   tree. `"doc_shield"` means they DO appear, but only in a file classified as
-  documentation by its extension (`.md`, `.markdown`, `.mdx` prose, `.rst`,
-  `.txt`, `.adoc`). That routing rests on a heuristic, so the finding is
+  documentation by its extension (`.md`, `.markdown`, `.rst`, `.txt`, `.adoc`,
+  and the non-export prose of `.mdx` — an MDX file's `export` lines DO declare and
+  are treated as source). That routing rests on a heuristic, so the finding is
   preserved here like any other but is not charged to the reviewer's scorecard
   denominator — see `findings_doc_shielded` in [scorecard.md](scorecard.md).
 
