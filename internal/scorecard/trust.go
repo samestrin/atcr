@@ -280,11 +280,17 @@ func strictRuns(records []Record) []Record {
 //     already rejects non-printing runes in an identity — and matching the
 //     consumer this filter is defined for is worth more than matching the other.
 //
-// Non-empty in, non-empty out: a reviewer with no current-era record keeps all of
-// its records, and one with a current-era record keeps at least that record. That is
-// what lets ExportSelected raise ErrNoExportRecords from BEHIND this pass and still
-// report exactly what the caller's own filters selected — the property PublishedSet
-// relies on when it hands an already-era-resolved slice to the serializer.
+// Non-empty in, non-empty out — with ONE exception. A reviewer with no current-era
+// record keeps all of its records, and one with a current-era record keeps at least
+// that record, so no era this pass RECOGNISES can be emptied. Records ABOVE the
+// current definition are excluded outright by both loops, so an input made entirely
+// of those returns nothing.
+//
+// That exception is why the callers behind this pass cannot report an empty result
+// as a filter miss: PublishedSet and ExportSelected each detect it and raise
+// ErrNoCurrentEraRecords instead of ErrNoExportRecords, because "your store was
+// written by a newer atcr" and "your filters matched nothing" call for opposite
+// operator actions.
 func unresolvedEraRuns(records []Record) []Record {
 	// The NEWEST definition each reviewer has any record under. Prefer-current
 	// generalizes to prefer-newest once there are more than two definitions: the

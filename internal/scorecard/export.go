@@ -17,8 +17,17 @@ import (
 // user-facing guidance (AC 04-04); callers write no output on this path.
 var ErrNoExportRecords = errors.New("no records match the export filters")
 
-// ErrNoCurrentEraRecords is a RED stub — no detection is wired yet.
-var ErrNoCurrentEraRecords = errors.New("stub")
+// ErrNoCurrentEraRecords is returned when the caller's filters DID match records
+// but every one of them was written under a raised_denominator this binary does
+// not implement, so the era pass excluded them all.
+//
+// It is separate from ErrNoExportRecords because the two states call for opposite
+// operator actions. "No records match the export filters" tells the operator to
+// widen --since or drop --model/--persona; here that advice cannot work — the
+// records are inside the window and the filters selected them. The store was
+// written by a newer atcr, and the fix is to upgrade this binary (or export from
+// the one that wrote it), not to change the query.
+var ErrNoCurrentEraRecords = errors.New("no records remain after the raised_denominator era filter: every selected record was written under a newer definition than this atcr implements — upgrade atcr, or export with the version that wrote the store")
 
 // SubmissionSchema is the version of the PUBLIC leaderboard submission format
 // (Epic 10.0). It is intentionally decoupled from the on-disk store's
@@ -313,18 +322,22 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 // published identities and serialize them from ONE selection instead of computing the
 // selection twice over a store the export path deliberately reads in full.
 //
-// The empty check moved behind the era pass with this split, which is
-// behaviour-preserving: unresolvedEraRuns falls back rather than excluding — a record
-// is kept when its reviewer has no current-era record at all, and when a reviewer does
-// have one, that record itself is kept — so within THIS function a non-empty selection
-// can never come out empty. ErrNoExportRecords therefore reports that nothing
-// publishable remained — which is no longer guaranteed to be exactly what the user's
-// own filters selected: a caller can shrink a non-empty selection to empty between
-// PublishedSet and this call. The leaderboard export does exactly that, skipping
-// records whose published identity is empty once scrubbed
-// (selectPublishableRecordIdentities, cli/leaderboard.go), so a user whose filters
-// matched every record can still see the sentinel; the per-record skip lines on
-// stderr precede it, so the outcome is discoverable.
+// The empty check moved behind the era pass with this split. unresolvedEraRuns
+// falls back rather than excluding for every era it KNOWS — a record is kept when
+// its reviewer has no current-era record at all, and when a reviewer does have
+// one, that record itself is kept — so a pre-epic or mixed-era selection can never
+// come out empty here. The one exception is a selection made ENTIRELY of records
+// ABOVE the current definition, which the pass excludes outright; that case raises
+// ErrNoCurrentEraRecords, not ErrNoExportRecords, because the operator action it
+// calls for (upgrade atcr) is the opposite of widening a filter.
+//
+// ErrNoExportRecords therefore reports that nothing publishable remained — which is
+// not guaranteed to be exactly what the user's own filters selected: a caller can
+// shrink a non-empty selection to empty between PublishedSet and this call. The
+// leaderboard export does exactly that, skipping records whose published identity is
+// empty once scrubbed (selectPublishableRecordIdentities, cli/leaderboard.go), so a
+// user whose filters matched every record can still see the sentinel; the per-record
+// skip lines on stderr precede it, so the outcome is discoverable.
 //
 // Only `record_type: "reviewer"` records are published. That is not a precondition on
 // the caller: this function enforces it, because it is exported and skips the
@@ -342,7 +355,14 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	// prefer-newest and excludes above-current records outright. It falls back
 	// rather than emptying a pre-epic store, so this cannot turn a publishable
 	// selection into no rows.
-	filtered = unresolvedEraRuns(filtered)
+	kept := unresolvedEraRuns(filtered)
+	if len(kept) == 0 {
+		// Non-empty in, empty out: every record was above the current definition.
+		// Reporting the filter error here would tell an embedder to widen a window
+		// this function does not even apply.
+		return nil, ErrNoCurrentEraRecords
+	}
+	filtered = kept
 
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
@@ -552,7 +572,15 @@ func PublishedSet(records []Record, opts FilterOpts, exportedAt time.Time) ([]Re
 	// findings into the denominator, so corroboration_rate and findings_raised_avg
 	// computed across both eras measure neither. It runs AFTER ApplyFilters so Export's
 	// "no records" error still reports what the user's own filters selected rather than
-	// an era they never asked about; and because the rule falls back rather than
-	// excluding, it can never empty a submission built from a pre-epic store.
-	return unresolvedEraRuns(filtered), nil
+	// an era they never asked about.
+	//
+	// The pass falls back rather than excluding for every era it KNOWS, so a pre-epic
+	// store can never be emptied. It does exclude outright in one case — a record above
+	// the current definition — and a selection made entirely of those comes out empty.
+	// That is not a filter miss, so it is not reported as one.
+	kept := unresolvedEraRuns(filtered)
+	if len(kept) == 0 && len(filtered) > 0 {
+		return nil, ErrNoCurrentEraRecords
+	}
+	return kept, nil
 }

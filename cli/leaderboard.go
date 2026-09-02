@@ -278,12 +278,14 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	// ErrNoExportRecords is the only error this call can raise now that the selection is
-	// made above: ExportSelected applies no --since window of its own, so a bad --since
-	// can no longer reach it. (It DOES drop any non-reviewer record it is handed — its
-	// own published-shape invariant — which can only ever produce that same error.) It
-	// carries its own actionable text and main() maps it to exit 1, so it is returned
-	// as-is rather than re-wrapped.
+	// Only two errors can reach here now that the selection is made above:
+	// ErrNoExportRecords and ErrNoCurrentEraRecords. ExportSelected applies no --since
+	// window of its own, so a bad --since can no longer reach it. (It DOES drop any
+	// non-reviewer record it is handed — its own published-shape invariant — which
+	// produces ErrNoExportRecords; a selection left empty by the era pass produces
+	// ErrNoCurrentEraRecords, which names the store rather than the filters.) Both
+	// carry their own actionable text and main() maps them to exit 1, so they are
+	// returned as-is rather than re-wrapped.
 	data, err := scorecard.ExportSelected(selected, now)
 	if err != nil {
 		return err
