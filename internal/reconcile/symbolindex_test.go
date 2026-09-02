@@ -1316,3 +1316,70 @@ func TestReadIndexSource_BeyondTheSniffWindow(t *testing.T) {
 		assert.False(t, skip, "a read failure must not masquerade as a binary skip")
 	})
 }
+
+// TestCollectExportedIdentifiers_ProseCannotLicenseTokens pins the three prose
+// paths that defeat the narrowness collectExportedIdentifiers claims — every
+// admitted token lands in presentInSource, which the primaryMatched gate reads,
+// so prose must not reach it:
+//
+//  1. a 4-space-indented Markdown code block is not protected by the fence
+//     check at all (TrimLeft strips the indentation before the fence test);
+//  2. an ordinary English sentence beginning with the lowercase verb "export"
+//     contributes every identifier-shaped token on the line;
+//  3. a ~~~ line inside a ```-opened fence flips the inFence bool and the
+//     remainder of that real code block is harvested.
+//
+// Real ESM export forms must keep flowing through.
+func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
+	cases := []struct {
+		name        string
+		src         string
+		wantAbsent  []string
+		wantPresent []string
+	}{
+		{
+			name:       "indented 4-space shell sample is a code block, not a declaration",
+			src:        "Set the cap first.\n\n    export ATCR_TIER4_INDEX_MAX_FILES=5000\n",
+			wantAbsent: []string{"ATCR_TIER4_INDEX_MAX_FILES"},
+		},
+		{
+			name:       "english sentence opening with the verb export",
+			src:        "Before shipping, export your apiKey and call the remoteEndpoint once.\n",
+			wantAbsent: []string{"apiKey", "remoteEndpoint"},
+		},
+		{
+			name:       "tilde line inside a backtick fence does not close it",
+			src:        "```\n~~~\nexport const fencedInner = 1\n~~~\nexport const stillFenced = 2\n```\n",
+			wantAbsent: []string{"fencedInner", "stillFenced"},
+		},
+		{
+			name:        "column-0 ESM export declares",
+			src:         "export function Callout() { return null }\n",
+			wantPresent: []string{"Callout"},
+		},
+		{
+			name:        "export up to 3 leading spaces (list item) still declares",
+			src:         "   export const listItemExport = 1\n",
+			wantPresent: []string{"listItemExport"},
+		},
+		{
+			name:        "export brace re-export declares",
+			src:         "export {NamedReExport} from './x'\n",
+			wantPresent: []string{"NamedReExport"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := make(map[string]struct{})
+			collectExportedIdentifiers([]byte(c.src), out)
+			for _, tok := range c.wantAbsent {
+				_, seen := out[tok]
+				assert.False(t, seen, "%s reached presentInSource from prose or a sample — it can license a confident PathSuggestion", tok)
+			}
+			for _, tok := range c.wantPresent {
+				_, seen := out[tok]
+				assert.True(t, seen, "%s is a real declaration and must reach presentInSource", tok)
+			}
+		})
+	}
+}
