@@ -250,7 +250,8 @@ echoed** (they would leak query parameters about your local dataset):
       "corroboration_rate": 0.5625,
       "survived_skeptic_rate": 0.8333,
       "cost_per_corroborated_finding_usd": 0.0059,
-      "latency_p50_ms": 9100
+      "latency_p50_ms": 9100,
+      "raised_denominator": 3
     }
   ]
 }
@@ -273,6 +274,7 @@ echoed** (they would leak query parameters about your local dataset):
 | `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
 | `cost_per_corroborated_finding_usd` | float | **omitempty** | Total cost ÷ corroborated findings. **Omitted entirely** when there are zero corroborated findings (the metric is undefined — this is what distinguishes a paid-but-ineffective reviewer from a genuinely free one); present as `0.0` only when corroborated findings exist AND the reviewer's cost was genuinely zero. Never Inf/NaN when present. |
 | `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
+| `raised_denominator` | int | always | Which definition of "findings raised" produced this row's `findings_raised_avg` and `corroboration_rate` (`1`/`2`/`3` for production eras, `100` for a benchmark-suite row — a different axis, never compared ordinally). **Not omitempty:** a submission that does not say which definition it used is exactly the ambiguity the field exists to remove, so the key is always present. |
 
 Reviewers are aggregated by `(persona, model)` (role is dropped from the public
 schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
@@ -477,7 +479,8 @@ the surface, the less can leak.
 - Per reviewer: `model`, `persona`, `runs`, `findings_raised_avg`,
   `corroboration_rate`, `survived_skeptic_rate` (omitted when no verification ran),
   `cost_per_corroborated_finding_usd` (omitted when zero corroborated findings),
-  `latency_p50_ms`
+  `latency_p50_ms`, `raised_denominator` (a schema discriminator — it says which
+  `findings_raised` definition produced the row and carries no run content)
 
 **Stripped / never exported:**
 

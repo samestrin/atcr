@@ -334,7 +334,8 @@ and PR they name (see [`docs/scorecard.md`](scorecard.md)):
       "findings_raised_avg": 10.5,
       "corroboration_rate": 0.6,
       "cost_per_corroborated_finding_usd": 0.006,
-      "latency_p50_ms": 8900
+      "latency_p50_ms": 8900,
+      "raised_denominator": 100
     }
   ],
   "suite_case_ids": ["case-01-nil-deref", "case-02-sql-injection"],
