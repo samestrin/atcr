@@ -933,3 +933,97 @@ func TestTrustPriors_ShieldedCountsDiscountTheRate(t *testing.T) {
 	assert.InDelta(t, 0.5, priors["gamer"], 0.0001,
 		"2 corroborated out of 2 raised + 2 shielded: the shield does not launder phantoms into a clean 1.00 prior")
 }
+
+// TestTrustPriors_RoutedErasAreOneWindow pins the removal of the priors blackout
+// between raised_denominator 2 and 3.
+//
+// The two eras are ARITHMETICALLY equivalent for the trust rate: an era-3 record
+// partitions the same finding set into FindingsRaised + FindingsDocShielded that
+// an era-2 record put entirely into FindingsRaised (scorecard.go partitions
+// in.UnresolvedFindings disjointly), and FindingsCorroborated is unchanged. The
+// trust denominator counts both halves, so normalising era 3 back to era 2 before
+// the prefer-newest pass changes no rate — it only stops the pass from discarding
+// a reviewer's whole pre-upgrade window the day its first era-3 record lands.
+//
+// That window is what keeps the reviewer above DefaultTrustMinRuns, and below the
+// floor it drops OUT of the map, where consensus.go reads its absence as "not
+// exempt" and "do not demote".
+func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
+	dir := t.TempDir()
+
+	// Era 2 (RaisedIncludesUnresolved, no denominator field): the bulk of the
+	// window. On its own this is DefaultTrustMinRuns-1 runs — under the floor.
+	for i := 0; i < DefaultTrustMinRuns-1; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-era2-%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4,
+			FindingsCorroborated:     2,
+		}))
+	}
+	// Era 3: a single post-upgrade run, with the doc-shield split populated.
+	// 3 chargeable + 1 shielded is the same finding set an era-2 record would
+	// have reported as FindingsRaised: 4.
+	require.NoError(t, Append(dir, Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID:    "2026-08-20T00:00:00Z-era3-00",
+		Reviewer: "bruce", Model: "m",
+		ConsensusLevel:           reclib.ConsensusStrict,
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           3,
+		FindingsCorroborated:     2,
+		FindingsDocShielded:      1,
+	}))
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	require.Contains(t, priors, "bruce",
+		"one era-3 run must not black out the era-2 window: the two eras measure the same quantity, so the reviewer stays above the min-runs floor")
+	assert.InDelta(t, 0.5, priors["bruce"], 0.0001,
+		"every run is 2 corroborated out of a 4-finding denominator, in both eras")
+}
+
+// TestTrustPriors_PreEpicStillSplitsFromRoutedEras is the other side of the
+// normalisation: era 1 is NOT arithmetically equivalent to eras 2 and 3. It
+// excludes routed findings from FindingsRaised entirely rather than partitioning
+// them, so blending it in would compare a rate over one finding set against a rate
+// over a larger one. It must keep splitting exactly as before.
+func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
+	dir := t.TempDir()
+
+	// A flattering pre-epic half...
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-07-01T00:00:00Z-pre%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       4,
+			FindingsCorroborated: 4, // rate 1.00 if it were blended in
+		}))
+	}
+	// ...and an era-3 half that is the only thing the priors may measure.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
+			FindingsRaised:           4,
+			FindingsCorroborated:     1,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 0.25, priors["bruce"], 0.0001,
+		"the pre-epic half must stay excluded — 0.625 would be the blend, 1.00 the pre-epic half alone")
+}
