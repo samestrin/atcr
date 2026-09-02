@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -875,27 +876,68 @@ func TestIsBinaryContent_SniffWindow(t *testing.T) {
 		"a NUL past the sniff window is not seen — bounded on purpose, and safe: the file is merely scanned")
 }
 
-// TestSymbolIndex_OversizeFileSkippedWithoutHole pins the single-file read cap.
+// TestSymbolIndex_OversizeFileSkippedWithoutHole pins the single-file read cap,
+// in both of the halves it actually has.
 //
 // The index build reads EVERY contained tracked file, so one checked-in artifact
 // — a dataset, a dump, a model weight — is otherwise pulled into memory whole on
 // every build. Skipping it is not a hole for the same reason a binary is not: a
 // reviewer does not name a source construct inside a multi-megabyte blob, so the
 // no-match verdict stays available.
+//
+// The VERDICT half above is not enough on its own, and the open-count half below
+// is why. readIndexSource refuses an over-cap file anyway, through its
+// sniff-window read and io.LimitReader race guard, so deleting the build-side
+// Lstat skip changes no verdict and every assertion here would still pass — a
+// guard nothing can distinguish from its absence. What the skip actually buys is
+// never OPENING the file: up to maxSourceFileBytes of read avoided per over-cap
+// file, on a loop that walks the whole tracked tree. An open count is the only
+// observable form of that, so the openIndexSource seam is swapped here to take
+// one. That is also why this test must not call t.Parallel.
+//
+// The fixture is a .go file, not the .txt it used to be: .txt is a docExt, so
+// its tokens never reach presentInSource whether the cap skips it or not, and
+// the no-match assertion below would have held for a reason that has nothing to
+// do with the cap.
 func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o755))
-	// Text (no NUL, so the binary sniff does not catch it) and over the cap.
+	// Text (no NUL, so the binary sniff does not catch it either) and over the cap
+	// by one byte — the boundary itself must not be skipped, only what exceeds it.
 	huge := make([]byte, maxSourceFileBytes+1)
 	for i := range huge {
 		huge[i] = 'a'
 	}
-	copy(huge, []byte("oversizeDatasetToken\n"))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "dump.txt"), huge, 0o644))
+	copy(huge, []byte("package data\n\nvar oversizeDatasetToken = 1\n"))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "dump.go"), huge, 0o644))
 	writeTracked(t, root, "internal/net/pool.go")
 
+	// Keyed by suffix, not by the absolute path this test built: containedIndexPath
+	// resolves symlinks, and a macOS t.TempDir() lives under /var -> /private/var.
+	var mu sync.Mutex
+	opens := map[string]int{}
+	prevOpen := openIndexSource
+	openIndexSource = func(abs string) (*os.File, error) {
+		mu.Lock()
+		opens[filepath.ToSlash(abs)]++
+		mu.Unlock()
+		return prevOpen(abs)
+	}
+	t.Cleanup(func() { openIndexSource = prevOpen })
+	countFor := func(relsuffix string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		total := 0
+		for abs, n := range opens {
+			if strings.HasSuffix(abs, relsuffix) {
+				total += n
+			}
+		}
+		return total
+	}
+
 	var calls int32
-	lz := newLazySymbolIndex(root, []string{"data/dump.txt", "internal/net/pool.go"})
+	lz := newLazySymbolIndex(root, []string{"data/dump.go", "internal/net/pool.go"})
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
 	_, outcome := lz.resolve(context.Background(), []string{"oversizeDatasetToken"}, nil)
@@ -905,6 +947,65 @@ func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome, "the rest of the tree must still resolve")
 	assert.Equal(t, "internal/net/pool.go", got)
+
+	mu.Lock()
+	distinct := len(opens)
+	mu.Unlock()
+	require.Equal(t, 1, distinct,
+		"exactly one path may be opened; asserting the SET keeps the suffix matching below unambiguous")
+	assert.Zero(t, countFor("data/dump.go"),
+		"an over-cap file must be skipped on its Lstat size, never opened: the skip is a read the build does not pay")
+	assert.Equal(t, 1, countFor("internal/net/pool.go"),
+		"the seam must be wired, and each eligible file read exactly once per build")
+}
+
+// TestSymbolIndex_AtCapSizeFileIsStillRead is the boundary companion that makes
+// the over-cap assertion above mean what it says, mirroring the pairing the
+// file-COUNT cap already has (TestSymbolIndex_FileCapDisablesTier4 at cap+1,
+// TestSymbolIndex_JustUnderFileCapStillResolves at cap).
+//
+// Without it, only maxSourceFileBytes+1 is pinned, and mutating the comparison
+// from `>` to `>=` would skip a file exactly AT the cap with nothing to catch it
+// — a guard drifting by one byte, which is the same class of undetectable guard
+// AC8 exists to remove. The cap is the largest size that is still read.
+//
+// Swaps the openIndexSource seam, so it must not call t.Parallel.
+func TestSymbolIndex_AtCapSizeFileIsStillRead(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o755))
+	atCap := make([]byte, maxSourceFileBytes)
+	for i := range atCap {
+		atCap[i] = 'a'
+	}
+	copy(atCap, []byte("package data\n\nvar atCapDatasetToken = 1\n"))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "edge.go"), atCap, 0o644))
+
+	var mu sync.Mutex
+	opens := 0
+	prevOpen := openIndexSource
+	openIndexSource = func(abs string) (*os.File, error) {
+		if strings.HasSuffix(filepath.ToSlash(abs), "data/edge.go") {
+			mu.Lock()
+			opens++
+			mu.Unlock()
+		}
+		return prevOpen(abs)
+	}
+	t.Cleanup(func() { openIndexSource = prevOpen })
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"data/edge.go"})
+	lz.newParser = newStubFactory(fileTree{}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"atCapDatasetToken"}, nil)
+
+	mu.Lock()
+	got := opens
+	mu.Unlock()
+	assert.Equal(t, 1, got,
+		"a file exactly AT the cap is within it and must still be opened and read")
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"its tokens reached presentInSource, so the construct is real code the index could not localize")
 }
 
 // TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins that documentation prose

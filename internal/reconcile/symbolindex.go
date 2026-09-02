@@ -497,7 +497,18 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 				continue
 			}
 			if fi.Size() > maxSourceFileBytes {
-				continue // over-cap artifact: skipped, not a hole. See maxSourceFileBytes.
+				// Over-cap artifact: skipped, not a hole. See maxSourceFileBytes.
+				//
+				// This is a PERF guard, not a correctness one: readIndexSource
+				// refuses the same file anyway, after its sniff-window read and
+				// through its io.LimitReader race guard. What this branch buys is
+				// never opening the file at all — up to maxSourceFileBytes of read
+				// avoided per over-cap file, on a loop that walks the whole tracked
+				// tree. Because it changes no verdict, only an open COUNT can tell
+				// it from its own absence; TestSymbolIndex_OversizeFileSkippedWithoutHole
+				// is what pins it, through the openIndexSource seam — at the cap
+				// boundary too, so the comparison itself cannot drift.
+				continue
 			}
 		}
 		src, skip, err := readIndexSource(abs)
@@ -757,8 +768,19 @@ func isBinaryContent(src []byte) bool {
 // skip reports "this is not source text" (the binary verdict), which the caller
 // treats as a resolution limit rather than a search hole; err reports a genuine
 // read failure, which is a hole.
+// openIndexSource is the file-open seam readIndexSource uses. It is a package
+// var so a test can COUNT opens, which is the only way to observe the build-side
+// over-cap skip: that skip is perf-only — readIndexSource's own cap-race guard
+// refuses the same file a moment later — so without an open counter, disabling
+// the skip is indistinguishable from keeping it and the guard survives mutation.
+//
+// Because tests swap and restore this var, no test that swaps it may call
+// t.Parallel. Same rule as newTier4Index in validate.go, and the same
+// precedent as readUnresolvedSidecar in internal/mcp.
+var openIndexSource = os.Open
+
 func readIndexSource(abs string) (src []byte, skip bool, err error) {
-	f, err := os.Open(abs)
+	f, err := openIndexSource(abs)
 	if err != nil {
 		return nil, false, err
 	}
