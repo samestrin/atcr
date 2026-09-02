@@ -13,11 +13,15 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
-// BackfillResult reports one backfill pass. The four non-Scanned counters partition
-// the scanned set, and the three that are not Rewritten each mean something the
-// operator may want to act on separately — a pruned review tree (Unresolved), a repo
-// holding several reviews that anchor the same finding (Ambiguous), or a store that
-// is already settled (Unchanged).
+// BackfillResult reports one backfill pass. Four non-Scanned counters — Rewritten,
+// Unchanged, Unresolved, Ambiguous — partition the scanned set. SkippedSettled sits
+// OUTSIDE that partition: a settled record is suppressed before Scanned++ runs, so the
+// printed "N scanned ... M skipped" does not mean the skipped are among the scanned
+// (10 ids with 4 settled print "6 scanned ... 4 skipped", and the four partition
+// counters sum to 6, not 10). The three partition counters that are not Rewritten
+// each mean something the operator may want to act on separately — a pruned review
+// tree (Unresolved), a repo holding several reviews that anchor the same finding
+// (Ambiguous), or a replayed excerpt that was byte-identical (Unchanged).
 type BackfillResult struct {
 	Scanned   int // effective records carrying both a source_report path and a justification
 	Rewritten int // replayed excerpt differed from the stored one and was written

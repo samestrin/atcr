@@ -240,11 +240,15 @@ var categories = []string{
 		"each comment-marked run of constants is one block, in declared order — a comment-opened run with no Category* member drops to nothing")
 }
 
-// A Category* const that opens a parenthesized const block BEFORE any leading
-// comment belongs to no block. The len(blocks) == 0 guard is what keeps it out
-// of the partition; the sibling NoMarkedBlocksIsAnError fixture cannot pin it
-// because its non-parenthesized const is rejected earlier. This fixture's loose
-// const IS parenthesized, so only the guard stands between it and the partition.
+// A Category* const declared BEFORE any leading comment belongs to no block. What
+// keeps it out depends on the declaration's shape, and the two sibling fixtures pin
+// different guards: NoMarkedBlocksIsAnError's const is unparenthesized, so the
+// walk's parenthesized-blocks-only filter rejects the whole decl before any spec is
+// visited, and that fixture pins the terminal no-blocks error instead. This
+// fixture's decl IS parenthesized, so its leading spec reaches the spec loop —
+// where the len(blocks) == 0 guard is the only thing standing between it and the
+// partition: a doc comment on that first spec would otherwise have opened a block
+// and folded the loose constant in.
 func TestInTreeCategoryBlocks_LeadingSpecWithoutCommentIsNotABlock(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
@@ -606,10 +610,6 @@ var categories = []string{
 		"pin the structural claim that the value reached the slice NOT as the anchor — dropping the clause while keeping both names would otherwise pass")
 	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
 		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
-
-	// The returned partition is discarded like every sibling error test does:
-	// every error path in inTreeCategoryBlocks is a literal `return nil,
-	// fmt.Errorf(...)`, so asserting nil pins nothing a reviewer could break.
 
 	// The tripwire has two arms — a named alias and a bare string literal — and
 	// only the named arm was exercised above. A bare literal is the one form that

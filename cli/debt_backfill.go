@@ -103,8 +103,9 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// same reason. Printing them under %s let an ANSI CSI or a bidi override through to
 	// the terminal on the one surface an operator consults to decide whether to let the
 	// in-place rewrite proceed - where reordering WHICH line is named is the whole
-	// attack. The sibling listing `atcr debt list` already strips them (cli/debt.go ->
-	// cell -> sanitizeCell).
+	// attack. The sibling listing `atcr debt list` already strips the ANSI CSI / C0 / C1
+	// half of that (cli/debt.go -> cell -> sanitizeCell); it shares the Cf gap, passing a
+	// bidi override through unchanged exactly as recorded in the next paragraph.
 	//
 	// The two get different treatment on purpose. The id takes %q, which escapes the
 	// FORMAT runes (Cf) sanitizeCell deliberately keeps - a bidi override is not a C0/C1
@@ -180,10 +181,13 @@ func pluralLines(n int) string {
 // help — both rows carry the same mark and still read alike; only a per-file suffix
 // tells them apart.
 //
-// The suffix is derived from the raw name, not from an index, so it is stable across
-// runs and independent of directory order — an operator comparing two dry runs sees the
-// same token for the same file. It is appended only where a collision actually exists,
-// so the ordinary single-shard listing is unchanged.
+// The suffix is derived from the raw name, not from an index, so the DERIVATION is
+// stable across runs and independent of directory order. The token itself is not:
+// the suffix is appended only where a collision actually exists, so whether a file
+// prints bare or suffixed varies with whether its colliding sibling is present in
+// the store listing (or the change-set fallback) on that run — an operator comparing
+// two dry runs can see the same file print bare in one and suffixed in the other.
+// The ordinary single-shard listing is unchanged: no collision, no suffix.
 //
 // The collision is resolved against every shard the store DIRECTORY holds, not against
 // the change set alone. The ambiguity being removed is between the printed token and a

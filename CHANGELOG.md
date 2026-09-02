@@ -1,3 +1,12 @@
+## [Technical Debt] - 2026-09-01
+
+### Fixed
+- Corrected stale submission-envelope prose describing `checkPublishable`, the suite/case-id validators, and backfill counters so the comments match the code they document.
+- Corrected three stale comments in the taxonomy partition tests that misstated which file drives the partition and where sibling-file faults surface.
+- Corrected the rename-tripwire error message and its accompanying comment to state the actual two-arm condition, and removed an orphaned duplicate comment.
+- Corrected checkpoint/export prose across debt backfill, benchmark checkpoint, export, and leaderboard code to describe actual behavior instead of stale rationale.
+- Removed a "refused permanently" over-claim from the fold guard comment — export's refusal is temporary until the identity is corrected.
+
 ## [35.16.6.7] - 2026-08-31
 
 ### Fixed

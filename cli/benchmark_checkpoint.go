@@ -283,8 +283,11 @@ func validateCheckpointRoster(cp *runCheckpoint, roster, legacyRoster []string) 
 	// the serial-lane half of the guard — precisely the guarantee an unstamped
 	// checkpoint was written without, so accepting it restores the old binary's
 	// contract rather than weakening the new one. Upgrading cp.Roster in place means
-	// the next save records the union form and every subsequent resume is guarded at
-	// full strength.
+	// the next checkpoint WRITE records the union form — but a write happens only
+	// when a case actually executes (saveCheckpoint runs after each scored case), so
+	// a resume that replays every already-completed case, or aborts before the first
+	// one, returns without saving: the legacy form stays on disk and this arm
+	// re-fires on each such resume.
 	if cp.RosterFormat == "" && len(legacyRoster) > 0 && len(recorded) > 0 && equalStrings(recorded, sortedCopy(legacyRoster)) {
 		cp.Roster = current
 		cp.RosterFormat = rosterFormatUnion
