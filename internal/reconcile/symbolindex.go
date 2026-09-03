@@ -741,12 +741,23 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // modifiers rather than binding keywords — the name belongs to the form they
 // precede (`async function f`, `abstract class C`), so they recurse instead. That
 // also makes them strictly narrower than the old flat list: `export async
-// operations are queued` now recurses into prose and is rejected.
+// operations are queued` now recurses into prose and is rejected. Recursing is
+// also why `namespace`, `module` and `global` are listed: the old flat list
+// admitted `declare namespace N {}` on the strength of `declare` alone, and the
+// recursion only preserves that if the inner form is recognised too.
 //
 // `default` stays permissive: `export default <expression>` has no name of its
 // own, so the grammar rule has nothing to test. That leaves its pre-existing prose
 // hole (`export default behavior is documented below`) open, deliberately — it is
 // not this function's to widen or narrow here.
+//
+// WHAT THIS STILL ADMITS, stated rather than glossed over: the grammar test reads
+// the punctuation after the name, so prose that happens to place a declaration
+// punctuator right after its second word still passes — `export type definitions:
+// see the guide`, `export interface changes (see below)`. That is a much rarer
+// sentence than the bare `keyword + words` shape this replaced, and the residual
+// misfire is in the conservative direction: an extra source presence withholds a
+// routing, leaving a suspect finding visible in the report rather than hiding it.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -762,8 +773,18 @@ func isESMExportBody(body []byte) bool {
 			return isESMExportBody(rest)
 		}
 	}
-	for _, kw := range []string{"const", "let", "var", "function", "class",
-		"type", "interface", "enum"} {
+	// `const enum E {}` is ONE TypeScript form, not `const` binding a name `enum`.
+	// It is the only two-word binding keyword, so it is spelled out rather than
+	// handled by a general "the name is itself a keyword" rule — that rule would
+	// also reject `export const type = 1`, a variable legitimately named `type`.
+	if rest, ok := cutExportKeyword(body, "const"); ok {
+		if inner, ok := cutExportKeyword(rest, "enum"); ok {
+			return declaresName(inner)
+		}
+		return declaresName(rest)
+	}
+	for _, kw := range []string{"let", "var", "function", "class",
+		"type", "interface", "enum", "namespace", "module", "global"} {
 		if rest, ok := cutExportKeyword(body, kw); ok {
 			return declaresName(rest)
 		}
@@ -791,13 +812,17 @@ func cutExportKeyword(body []byte, kw string) ([]byte, bool) {
 //
 // The accepted shapes are exactly the ones a declaration can take:
 //
-//	a = 1 · a · a; · f() · f<T>(x) · *gen() · C {} · C extends B {} · {a, b} = o · [a] = o
+//	a = 1 · a · a; · f() · f<T>(x) · *gen() · C {} · C extends B {}
+//	{a, b} = o · [a] = o · 'react' {}
 //
 // and the rejected shape is the one prose always takes — NAME followed by another
 // bare word (`values are frozen`, `changes affect PublicThing`).
 func declaresName(rest []byte) bool {
-	// A destructuring pattern declares its bindings without a leading name.
-	if len(rest) > 0 && (rest[0] == '{' || rest[0] == '[') {
+	// Two forms name something that is not a bare identifier: a destructuring
+	// pattern (`const { a, b } = obj`) declares its bindings without a leading
+	// name, and an ambient module declaration names a string (`declare module
+	// 'react' {}`).
+	if len(rest) > 0 && (rest[0] == '{' || rest[0] == '[' || rest[0] == '\'' || rest[0] == '"') {
 		return true
 	}
 	// `function* gen()` — the generator star sits between keyword and name.

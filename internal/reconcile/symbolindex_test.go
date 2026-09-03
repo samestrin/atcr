@@ -1583,6 +1583,9 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"enum members must be unique across ColorSet",
 			"let us assume RetryPolicy is configured",
 			"var names are legacy in OldModule",
+			"namespace collisions are common in BigApp",
+			"module boundaries are enforced by BuildTool",
+			"global state is shared across MyWorker",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q is an English sentence, not a declaration — admitting it lets doc prose license a source presence", body)
@@ -1615,6 +1618,16 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"abstract class Base {}",
 			"const { a, b } = obj",
 			"const [a, b] = arr",
+			// TypeScript forms the modifier recursion must not lose. `const enum`
+			// is one keyword pair, not `const` binding a name `enum`; and the old
+			// flat list took `declare namespace` on the strength of `declare`
+			// alone, so recursing only preserves it if the inner form is known.
+			"const enum Direction {}",
+			"declare namespace N {}",
+			"declare module 'x' {}",
+			"declare global {}",
+			"namespace N {}",
+			"type { Foo } from './x'",
 			"default fn",
 			"{Named} from './x'",
 			"* from './x'",
