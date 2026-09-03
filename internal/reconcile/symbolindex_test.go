@@ -1768,6 +1768,16 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"global 'state' is shared",
 			// An unterminated quote is not a declaration either.
 			"module 'unterminated {}",
+			// The adversarial sweep found the same colon hole at five keywords
+			// the finding did not name — a predicate fixed only where it was
+			// pointed. None of these can carry a `name:` type annotation either:
+			// a type alias is `type T = X`, and an interface, class, enum or
+			// function puts `{` or `(` where the colon is.
+			"type definitions: see the guide",
+			"interface changes: see below",
+			"enum members: Red, Green, Blue",
+			"class hierarchy: see the diagram",
+			"function signatures: documented below",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q is prose — admitting it lets a doc sentence license a confident PathSuggestion", body)
@@ -1789,7 +1799,15 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"let y: string",
 			"var z: boolean",
 			"declare const w: T",
+			// The colon closes for every OTHER keyword, so these prove the
+			// tightening cost nothing: each puts `{`, `(` or `=` where the
+			// annotation would have been.
 			"function f(): void",
+			"function f<T>(x: T): T",
+			"class C { x: number }",
+			"type T = { a: string }",
+			"interface I { a: b }",
+			"enum E { A = 1 }",
 		} {
 			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
 		}

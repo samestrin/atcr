@@ -754,11 +754,21 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 //
 // WHAT THIS STILL ADMITS, stated rather than glossed over: the grammar test reads
 // the punctuation after the name, so prose that happens to place a declaration
-// punctuator right after its second word still passes — `export type definitions:
-// see the guide`, `export interface changes (see below)`. That is a much rarer
-// sentence than the bare `keyword + words` shape this replaced, and the residual
-// misfire is in the conservative direction: an extra source presence withholds a
-// routing, leaving a suspect finding visible in the report rather than hiding it.
+// punctuator right after its second word still passes — `export interface changes
+// (see below)`, `export type T, and the others`. That is a much rarer sentence
+// than the bare `keyword + words` shape this replaced, but it is NOT harmless,
+// and calling it conservative would be wrong: an extra source presence does not
+// merely withhold a routing. It also unlocks resolve's primaryMatched gate, which
+// licenses a confident PathSuggestion nothing downstream can undo — the very
+// thing collectExportedIdentifiers and exportDeclaringExts both warn about in
+// their own docstrings. The keyword set must not be widened on the belief that an
+// over-admission is the safe direction. It is the dangerous one.
+//
+// Which punctuator each keyword admits is therefore part of the keyword table
+// (declShape) rather than one shared set: the colon belongs to a variable
+// binding and to nothing else, and the quoted name belongs to `module` and to
+// nothing else. `export type definitions: see the guide` and `export global
+// state: shared across MyWorker` are rejected for that reason.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -794,11 +804,11 @@ func isESMExportBody(body []byte) bool {
 	}{
 		{"let", declTypeAnnotation},
 		{"var", declTypeAnnotation},
-		{"function", declTypeAnnotation},
-		{"class", declTypeAnnotation},
-		{"type", declTypeAnnotation},
-		{"interface", declTypeAnnotation},
-		{"enum", declTypeAnnotation},
+		{"function", 0},
+		{"class", 0},
+		{"type", 0},
+		{"interface", 0},
+		{"enum", 0},
 		{"namespace", 0},
 		{"module", declQuotedName},
 		{"global", 0},
@@ -836,7 +846,16 @@ const (
 	// 'react' {}`. Only `module` takes one.
 	declQuotedName declShape = 1 << iota
 	// declTypeAnnotation admits a `:` immediately after the name — `const x:
-	// number`. A namespace, module or global never carries one.
+	// number`. ONLY a variable binding takes one, so only `const`, `let` and
+	// `var` carry this.
+	//
+	// The other keywords look like they should and do not: a type alias is
+	// `type T = X` and never `type T: X`; an interface, class or enum puts `{`
+	// there; a function puts `(`, and its return annotation comes after the
+	// parameter list. Granting them the colon bought nothing and let five more
+	// English sentences through — `export type definitions: see the guide`,
+	// `export class hierarchy: see the diagram` — each of which harvests its
+	// whole line into presentInSource.
 	declTypeAnnotation
 )
 
