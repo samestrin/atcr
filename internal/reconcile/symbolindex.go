@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
@@ -830,8 +831,12 @@ func declaresName(rest []byte) bool {
 		rest = bytes.TrimLeft(rest[1:], " \t")
 	}
 	n := 0
-	for n < len(rest) && isDeclNameByte(rest[n], n) {
-		n++
+	for n < len(rest) {
+		r, size := utf8.DecodeRune(rest[n:])
+		if !isDeclNameRune(r, n == 0) {
+			break
+		}
+		n += size
 	}
 	if n == 0 {
 		return false // no name at all
@@ -849,33 +854,44 @@ func declaresName(rest []byte) bool {
 	return bytes.HasPrefix(after, []byte("extends ")) || bytes.HasPrefix(after, []byte("implements "))
 }
 
-// isDeclNameByte reports whether c can appear at index i of a declared name.
+// isDeclNameRune reports whether r can appear in a declared name, given whether
+// it is the name's FIRST rune.
 //
-// Every byte of a multi-byte rune counts, because JavaScript and TypeScript both
-// take the full Unicode identifier set and an .mdx page written for a
-// non-English audience uses it (`export const café`, `export let 日本語`). Ending
-// the name at the first non-ASCII byte does NOT hand the decision to the
-// punctuation test below — that test would then read the rune's own lead byte as
-// the character after the name, which is never a declaration punctuator, so
-// every such declaration is rejected outright. Admitting the byte here is what
-// lets the grammar rule actually run on a Unicode name.
+// Non-ASCII is decided by Unicode CATEGORY, not by "is it a byte >= 0x80". Both
+// halves of that matter and they pull in opposite directions:
 //
-// The class is deliberately whole-byte rather than rune-aware: any byte >= 0x80
-// belongs either to a multi-byte identifier rune or to a multi-byte PUNCTUATION
-// rune (an em-dash, a curly quote), and the two are separated by what FOLLOWS
-// the name, not by the byte class. `export type — see the guide` still scans the
-// em-dash as a name and is still rejected, because `see` is a bare word.
-// TestIsESMExportBody_RejectPaths pins both directions.
-func isDeclNameByte(c byte, i int) bool {
+//   - JavaScript and TypeScript take the full Unicode identifier set, and an .mdx
+//     page written for a non-English audience uses it (`export const café`,
+//     `export let 日本語`). An ASCII-only class ends the name at the rune's lead
+//     byte, which the punctuation test below then reads as the character AFTER
+//     the name — never a declaration punctuator, so every such declaration was
+//     rejected outright.
+//   - A byte >= 0x80 is just as likely to begin a PUNCTUATION rune: an em-dash,
+//     a curly quote, an ellipsis. Admitting those as name bytes would let
+//     `export type “Foo”: the widget` scan the quoted phrase as a name and reach
+//     the `:` arm — prose licensing a source presence, which is the whole failure
+//     this grammar rule exists to prevent.
+//
+// A letter, digit or combining mark is an identifier rune; everything else in
+// the non-ASCII range ends the name and hands the verdict to the punctuation
+// test, which is what the ASCII class always claimed to do.
+//
+// An invalid UTF-8 byte decodes to RuneError, which is in none of those
+// categories, so it ends the name — the conservative direction, and the same
+// answer the ASCII-only class gave.
+//
+// TestIsESMExportBody_RejectPaths pins both directions: the Unicode declarations
+// that must be admitted, and the typographic-punctuation prose that must not be.
+func isDeclNameRune(r rune, first bool) bool {
 	switch {
-	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_', c == '$':
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_', r == '$':
 		return true
-	case c >= 0x80:
-		return true // any byte of a non-ASCII rune
-	case c >= '0' && c <= '9':
-		return i > 0 // a name never starts with a digit
+	case r >= '0' && r <= '9':
+		return !first // a name never starts with a digit
+	case r < utf8.RuneSelf:
+		return false // every other ASCII byte is punctuation or space
 	}
-	return false
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }
 
 // eligiblePaths filters the tracked set to root-contained files, preserving a
