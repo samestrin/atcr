@@ -973,9 +973,10 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 //     the `:` arm — prose licensing a source presence, which is the whole failure
 //     this grammar rule exists to prevent.
 //
-// A letter, digit or combining mark is an identifier rune; everything else in
-// the non-ASCII range ends the name and hands the verdict to the punctuation
-// test, which is what the ASCII class always claimed to do.
+// A letter is an identifier rune anywhere in the name, and a digit or combining
+// mark is one anywhere EXCEPT the first position; everything else in the
+// non-ASCII range ends the name and hands the verdict to the punctuation test,
+// which is what the ASCII class always claimed to do.
 //
 // The leading-rune rule is a property of the NAME, not of the alphabet it is
 // written in, so the category arm honours `first` exactly as the ASCII arm does:
