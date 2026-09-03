@@ -1062,6 +1062,36 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 			"era 2's own discriminator: a reader falling back to the bool must reach the same era as one reading the int")
 	})
 
+	t.Run("the rewritten record stays internally consistent", func(t *testing.T) {
+		// The fold moves FindingsRaised, so the two fields DERIVED from it stop
+		// agreeing with it unless they move too. Nothing in trustPriorsSince reads
+		// either one today, but the value is a Record — a type whose other
+		// consumers (cli/scorecard.go's SOLO and CORR% columns, Aggregate's
+		// per-record sum) do read them, so a self-contradicting Record is a trap
+		// laid for the next caller rather than a harmless omission.
+		//
+		// The recomputed values are exactly what era 2 reported: a doc-shielded
+		// finding was routed, so it is uncorroborated by construction and belongs
+		// in solo — the same disjoint partition the fold's equivalence rests on.
+		in := []Record{{
+			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RaisedDenominator:    RaisedDenominatorCurrent,
+			FindingsRaised:       3,
+			FindingsCorroborated: 2,
+			FindingsSolo:         1,
+			CorroborationRate:    2.0 / 3.0,
+			FindingsDocShielded:  1,
+		}}
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		require.Equal(t, 4, got[0].FindingsRaised)
+		assert.Equal(t, 2, got[0].FindingsSolo,
+			"solo is raised minus corroborated, and the folded-in shielded finding was routed, so it is solo")
+		assert.InDelta(t, 0.5, got[0].CorroborationRate, 0.0001,
+			"2 of 4 under the merged denominator — the stale 0.667 describes a denominator this record no longer has")
+	})
+
 	t.Run("an above-current record is left alone", func(t *testing.T) {
 		in := []Record{{
 			RecordType: RecordTypeReviewer, Reviewer: "bruce",
