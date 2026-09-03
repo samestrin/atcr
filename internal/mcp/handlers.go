@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -513,14 +515,20 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// Transmit the reason too: the Warn reaches the server's own logger, which
 		// a stdio client never sees.
 		unresolvedReadErr = uerr.Error()
-	} else if len(persisted) != len(unresolved) {
+	} else if unresolvedDigest(persisted) != unresolvedDigest(unresolved) {
 		// A valid read whose content disagrees with this run's routing means a
 		// concurrent atcr_reconcile rewrote the sidecar in between (atomicfs makes
 		// a torn file impossible). Signal it on its own field — never through
 		// unresolved_read_error, whose contract is that nothing failed to READ.
+		//
+		// CONTENT, not length: a racing run that routes the same NUMBER of
+		// different findings is the case a length check misses, and the field's
+		// contract is that an empty value means the on-disk artifact equals what
+		// the client was handed. The counts are still reported because they are
+		// the useful half of the message when they do differ.
 		e.logger().Warn("unresolved sidecar rewritten by a concurrent run",
 			"persisted", len(persisted), "reported", len(unresolved))
-		unresolvedStale = fmt.Sprintf("sidecar was rewritten by a concurrent run (persisted %d, this run routed %d)",
+		unresolvedStale = fmt.Sprintf("sidecar was rewritten by a concurrent run (persisted %d record(s), this run routed %d)",
 			len(persisted), len(unresolved))
 	}
 
@@ -909,4 +917,26 @@ func parseOptionalSeverity(s string) (string, error) {
 		return "", nil
 	}
 	return reconcile.ParseSeverity(s)
+}
+
+// unresolvedDigest fingerprints a routed record set so unresolved_stale can
+// compare CONTENT rather than length.
+//
+// The fields are the routing identity — where the finding points, how it was
+// graded, what it says, and why Tier 4 routed it. That is enough to tell one
+// run's routing from another's, and it deliberately excludes the fields a
+// JSON round-trip does not reproduce exactly, so the persisted copy of an
+// UNCHANGED sidecar always digests equal to the in-memory records it was written
+// from. A false "stale" would be worse than the missed same-count rewrite this
+// replaces: it would tell every client its artifact was raced when nothing was.
+//
+// Order matters, and should: the sidecar preserves this run's routing order, so
+// a reordering is a rewrite.
+func unresolvedDigest(findings []reconcile.JSONFinding) string {
+	h := sha256.New()
+	for _, f := range findings {
+		fmt.Fprintf(h, "%s\x00%d\x00%s\x00%s\x00%s\x00",
+			f.File, f.Line, f.Severity, f.Problem, f.UnresolvedReason)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

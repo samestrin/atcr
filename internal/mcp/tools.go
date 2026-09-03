@@ -227,9 +227,13 @@ type ReconcileResult struct {
 	// third-party writer. omitempty: the common case is a read that worked.
 	UnresolvedReadError string `json:"unresolved_read_error,omitempty"`
 	// UnresolvedStale reports that the persisted unresolved.json no longer
-	// matches the records THIS run routed: the sidecar read SUCCEEDED but holds a
-	// different count, which means a concurrent atcr_reconcile on the same review
+	// matches the records THIS run routed: the sidecar read SUCCEEDED but its
+	// CONTENT differs, which means a concurrent atcr_reconcile on the same review
 	// directory rewrote it between this run's reconcile and the result assembly.
+	// The comparison is a digest over each record's routing identity (file, line,
+	// severity, problem, unresolved_reason), not a count — a racing run that
+	// routes the same NUMBER of different findings is a rewrite, and an empty
+	// value here means the on-disk artifact holds what the client was handed.
 	// Unresolved itself is unaffected — it is reported from memory. This is
 	// deliberately NOT UnresolvedReadError: nothing failed to read, and that
 	// field's contract (pinned by

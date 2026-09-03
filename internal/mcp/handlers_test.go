@@ -1478,3 +1478,52 @@ func TestReconcileHandler_UnresolvedStaleDetectsASameCountRewrite(t *testing.T) 
 	assert.NotEmpty(t, out["unresolved_stale"],
 		"the counts agree but the CONTENT does not: a length check reports nothing here, and the field's contract is about the records")
 }
+
+// TestUnresolvedDigest_SurvivesTheJSONRoundTrip is the false-positive guard on
+// the content comparison behind unresolved_stale.
+//
+// The persisted side of that comparison has been through json.Marshal and
+// json.Unmarshal; the reported side has not. If any digested field failed to
+// round-trip, EVERY reconcile would report a rewrite that never happened — a
+// louder and more misleading defect than the same-count rewrite the digest was
+// introduced to catch. An unchanged sidecar must digest equal to the records it
+// was written from.
+func TestUnresolvedDigest_SurvivesTheJSONRoundTrip(t *testing.T) {
+	inMemory := []reconcile.JSONFinding{
+		{
+			Severity: "HIGH", File: "internal/ghost/phantom.go", Line: 9,
+			Problem: "(quantumFlux) leaks a handle on every retry", Fix: "close it",
+			Category: "correctness", EstMinutes: 10, Evidence: "ev",
+			Reviewers: []string{"greta", "bruce"}, Confidence: "MEDIUM",
+			PathWarning: "no such file", UnresolvedReason: reconcile.UnresolvedReasonDocShield,
+		},
+		{
+			Severity: "LOW", File: "docs/guide.md", Line: 1,
+			Problem: "second record, so ordering is exercised too", Reviewers: []string{"greta"},
+		},
+	}
+
+	data, err := json.Marshal(inMemory)
+	require.NoError(t, err)
+	var persisted []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal(data, &persisted))
+
+	assert.Equal(t, unresolvedDigest(inMemory), unresolvedDigest(persisted),
+		"an unchanged sidecar must not read as rewritten")
+
+	t.Run("a reordering IS a rewrite", func(t *testing.T) {
+		swapped := []reconcile.JSONFinding{persisted[1], persisted[0]}
+		assert.NotEqual(t, unresolvedDigest(inMemory), unresolvedDigest(swapped))
+	})
+
+	t.Run("a same-count content change IS a rewrite", func(t *testing.T) {
+		changed := append([]reconcile.JSONFinding(nil), persisted...)
+		changed[0].Line = 10
+		assert.NotEqual(t, unresolvedDigest(inMemory), unresolvedDigest(changed))
+	})
+
+	t.Run("empty and nil digest alike", func(t *testing.T) {
+		assert.Equal(t, unresolvedDigest(nil), unresolvedDigest([]reconcile.JSONFinding{}),
+			"a sidecar written as [] and one read back as nil are the same routing")
+	})
+}
