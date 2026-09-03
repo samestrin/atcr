@@ -764,6 +764,29 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // their own docstrings. The keyword set must not be widened on the belief that an
 // over-admission is the safe direction. It is the dangerous one.
 //
+// That residual is NOT limited to ASCII sentences. isDeclNameRune decides a name
+// rune by Unicode category, so the second word can be written in any script and
+// the same punctuation test admits it. Measured on this function:
+//
+//	export module データ設定, see MyWidget for details   →  admitted
+//	  collectExportedIdentifiers harvests
+//	  map[MyWidget:1 details:1 for:1 module:1 see:1 データ設定:1]
+//
+// Latin-script variants behave identically — `export namespace Größe (siehe
+// MyWidget)` harvests map[Größe:1 MyWidget:1 namespace:1 siehe:1]. In both, the
+// fabricated MyWidget lands in presentInSource on the strength of a sentence.
+//
+// The alphabet was widened KNOWINGLY, and the trade is worth stating so the next
+// reader does not narrow it back on a false premise. An ASCII-only name class
+// ended the name at a non-ASCII rune's lead byte, so every genuine Unicode
+// declaration — `export const café`, `export let 日本語` — was rejected outright.
+// Recovering those real declarations is what admits the non-ASCII prose sentence
+// alongside them. The ASCII form of this same residual already shipped before the
+// widening (`export interface changes (see below)` is admitted both before and
+// after), so the widening extended an accepted residual's reach; it did not
+// create a new defect class. Narrowing the residual is a design change to the
+// grammar rule, not a correction to the alphabet.
+//
 // Which punctuator each keyword admits is therefore part of the keyword table
 // (declShape) rather than one shared set: the colon belongs to a variable
 // binding and to nothing else, and the quoted name belongs to `module` and to
