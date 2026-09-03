@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/debate"
@@ -932,16 +933,49 @@ func parseOptionalSeverity(s string) (string, error) {
 //
 // Order matters, and should: the sidecar preserves this run's routing order, so
 // a reordering is a rewrite.
+//
+// Every string field goes through jsonRoundTripString, which is what makes
+// "digests equal" mean "same routing" rather than "same routing AND every field
+// was already valid UTF-8". One invalid byte anywhere in File, Severity, Problem
+// or the reason would otherwise make the two sides disagree forever, reporting a
+// concurrent rewrite to every client on every run of that review dir.
 func unresolvedDigest(findings []reconcile.JSONFinding) string {
 	h := sha256.New()
 	for _, f := range findings {
 		// hash.Hash.Write never returns an error.
 		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00%s\x00%s\x00",
-			f.File, f.Line, f.Severity, f.Problem, f.UnresolvedReason)
+			jsonRoundTripString(f.File), f.Line, jsonRoundTripString(f.Severity),
+			jsonRoundTripString(f.Problem), jsonRoundTripString(f.UnresolvedReason))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// jsonRoundTripString is a wrong-answer stub so the RED test compiles; the GREEN
-// commit replaces it with encoding/json's actual replacement rule.
-func jsonRoundTripString(s string) string { return s }
+// jsonRoundTripString returns s as it reads AFTER the JSON round trip the sidecar
+// makes: encoding/json replaces every invalid UTF-8 byte with U+FFFD on the way
+// out, and that is the only transform a string field does not survive intact
+// (the HTML and U+2028/U+2029 escapes are escapes in the JSON TEXT — decoding
+// restores the original runes).
+//
+// One U+FFFD per invalid BYTE, matching encoding/json exactly.
+// strings.ToValidUTF8 collapses a RUN of invalid bytes into a single
+// replacement, so it does NOT agree with the artifact and cannot be used here.
+// TestJSONRoundTripString_MatchesEncodingJSON pins this against the real
+// encoder so the reimplementation cannot drift from it.
+func jsonRoundTripString(s string) string {
+	if utf8.ValidString(s) {
+		return s // the overwhelmingly common path — no allocation
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(utf8.RuneError)
+			i++
+			continue
+		}
+		b.WriteString(s[i : i+size])
+		i += size
+	}
+	return b.String()
+}
