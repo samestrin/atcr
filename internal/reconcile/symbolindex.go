@@ -720,10 +720,33 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 }
 
 // isESMExportBody reports whether body — the text following the `export` keyword
-// — begins an ESM export form: a declaration keyword, a brace list, or a star
-// re-export. The keyword set spans JavaScript AND the TypeScript declarations MDX
-// carries, since an `export type Foo` line declares Foo just as `export const`
-// declares its binding.
+// — begins an ESM export form: a declaration, a brace list, or a star re-export.
+// The keyword set spans JavaScript AND the TypeScript declarations MDX carries,
+// since an `export type Foo` line declares Foo just as `export const` declares
+// its binding.
+//
+// A KEYWORD IS NOT ENOUGH. Every one of these words is also ordinary English, and
+// a word-boundary test alone only rejects prose whose first word merely STARTS
+// with a keyword (`types of findings`, `declares nothing`). It admits prose whose
+// first word IS the keyword — `export type definitions for MyWidget are generated
+// at build time` is a sentence an .mdx page can genuinely contain, and admitting
+// it puts MyWidget into presentInSource, where a fabricated anchor on MyWidget
+// reads as "named in the source" and licenses a confident PathSuggestion.
+//
+// So a declaration is recognised by its GRAMMAR, not by its first word:
+//
+//	binding keyword + NAME + one of `= < ( { : ; ,` / end of line / extends / implements
+//
+// which is what declaresName below checks. `async`, `declare` and `abstract` are
+// modifiers rather than binding keywords — the name belongs to the form they
+// precede (`async function f`, `abstract class C`), so they recurse instead. That
+// also makes them strictly narrower than the old flat list: `export async
+// operations are queued` now recurses into prose and is rejected.
+//
+// `default` stays permissive: `export default <expression>` has no name of its
+// own, so the grammar rule has nothing to test. That leaves its pre-existing prose
+// hole (`export default behavior is documented below`) open, deliberately — it is
+// not this function's to widen or narrow here.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -731,22 +754,86 @@ func isESMExportBody(body []byte) bool {
 	if body[0] == '{' || body[0] == '*' {
 		return true
 	}
-	// The JavaScript forms plus the TypeScript declaration forms MDX carries.
-	// `type`, `interface`, `enum`, `declare` and `abstract` all declare a name a
-	// finding can be anchored on, so omitting them left the doc's own declaration
-	// out of presentInSource and made the finding eligible for a doc_shield
-	// carve-out the declaration disproves.
-	//
-	// Every one of these is also an ordinary English word, which is what the
-	// suffix test below is for: the keyword counts only when the next byte is
-	// whitespace, `{`, `*`, or end of line, so `types of findings` and
-	// `declares nothing` stay prose.
-	for _, kw := range []string{"default", "const", "let", "var", "function", "class", "async",
-		"type", "interface", "enum", "declare", "abstract"} {
-		if rest, ok := bytes.CutPrefix(body, []byte(kw)); ok &&
-			(len(rest) == 0 || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '{' || rest[0] == '*') {
-			return true
+	if _, ok := cutExportKeyword(body, "default"); ok {
+		return true
+	}
+	for _, kw := range []string{"async", "declare", "abstract"} {
+		if rest, ok := cutExportKeyword(body, kw); ok {
+			return isESMExportBody(rest)
 		}
+	}
+	for _, kw := range []string{"const", "let", "var", "function", "class",
+		"type", "interface", "enum"} {
+		if rest, ok := cutExportKeyword(body, kw); ok {
+			return declaresName(rest)
+		}
+	}
+	return false
+}
+
+// cutExportKeyword returns the text after kw, leading blanks trimmed, when body
+// begins with kw as a WHOLE word. The next byte must be whitespace, `{`, `*`, or
+// end of line — the prefix rule that keeps `defaults`/`classicMode` out.
+func cutExportKeyword(body []byte, kw string) ([]byte, bool) {
+	rest, ok := bytes.CutPrefix(body, []byte(kw))
+	if !ok {
+		return nil, false
+	}
+	if len(rest) != 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '{' && rest[0] != '*' {
+		return nil, false
+	}
+	return bytes.TrimLeft(rest, " \t"), true
+}
+
+// declaresName reports whether rest — the text after a binding keyword — is that
+// keyword's declared name followed by the grammar's own punctuation, rather than
+// the next word of an English sentence.
+//
+// The accepted shapes are exactly the ones a declaration can take:
+//
+//	a = 1 · a · a; · f() · f<T>(x) · *gen() · C {} · C extends B {} · {a, b} = o · [a] = o
+//
+// and the rejected shape is the one prose always takes — NAME followed by another
+// bare word (`values are frozen`, `changes affect PublicThing`).
+func declaresName(rest []byte) bool {
+	// A destructuring pattern declares its bindings without a leading name.
+	if len(rest) > 0 && (rest[0] == '{' || rest[0] == '[') {
+		return true
+	}
+	// `function* gen()` — the generator star sits between keyword and name.
+	if len(rest) > 0 && rest[0] == '*' {
+		rest = bytes.TrimLeft(rest[1:], " \t")
+	}
+	n := 0
+	for n < len(rest) && isDeclNameByte(rest[n], n) {
+		n++
+	}
+	if n == 0 {
+		return false // no name at all
+	}
+	after := bytes.TrimLeft(rest[n:], " \t")
+	if len(after) == 0 {
+		return true // `export let a`
+	}
+	switch after[0] {
+	case '=', '<', '(', '{', ':', ';', ',':
+		return true
+	}
+	// A heritage clause is the one place a declaration's name IS followed by a
+	// bare word: `class C extends Base {`, `interface I implements J {`.
+	return bytes.HasPrefix(after, []byte("extends ")) || bytes.HasPrefix(after, []byte("implements "))
+}
+
+// isDeclNameByte reports whether c can appear at index i of a declared name.
+// ASCII-only on purpose: a non-ASCII byte simply ends the name, and the
+// punctuation test that follows then decides — so a Unicode identifier is judged
+// by the same grammar rather than by this byte class.
+func isDeclNameByte(c byte, i int) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_', c == '$':
+		return true
+	case c >= '0' && c <= '9':
+		return i > 0 // a name never starts with a digit
 	}
 	return false
 }
