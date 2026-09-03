@@ -388,8 +388,11 @@ type Submission struct {
 	// COVERAGE IS CARRIED HERE AS OF submission_schema 2 (epic 35.16.6.2); the
 	// constant is shared with the production `leaderboard --export` envelope, so
 	// the bump versioned both — see "Schema versioning" in docs/scorecard.md.
-	// Coverage still does NOT live on scorecard.PublicRecord, so the production
-	// export's key set is unchanged.
+	// Coverage still does NOT live on scorecard.PublicRecord, so it reaches this
+	// envelope only. (PublicRecord did gain raised_denominator in epic 35.16.6.8.
+	// Sharing the type puts that KEY on these rows; it does not fill it — scoreOne
+	// stamps RaisedDenominatorBenchmarkSuite explicitly, because a benchmark row's
+	// rate is category recall and must not claim the production definition.)
 	//
 	// NIL POLICY — one rule for the whole envelope, stated here and not restated
 	// per function: where the JSON layer can distinguish absent from empty, that
@@ -481,6 +484,12 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
 	for i, rev := range rr.Reviewers {
 		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+		// raised_denominator is a producer-identity stamp, not producer data: a
+		// benchmark row's rate is category recall, so the benchmark-suite
+		// denominator is stamped here on every row — an externally supplied
+		// run-result can omit the key (publishing 0, an undefined era) or claim
+		// a production era it never earned.
+		scrubbed[i].RaisedDenominator = scorecard.RaisedDenominatorBenchmarkSuite
 		// Deep-copy the pointer metrics: a PublicRecord struct copy aliases them,
 		// so mutating the submission would rewrite the caller's RunResult — the
 		// same non-mutation rule the string slices below follow.

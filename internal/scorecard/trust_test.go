@@ -784,3 +784,407 @@ func TestTrustPriors_PerReviewerPreferCurrentStillExcludesTheMix(t *testing.T) {
 	assert.InDelta(t, 0.2, priors["carol"], 0.0001,
 		"carol holds no current-era record, so its own pre-epic history is used unchanged")
 }
+
+// TestUnresolvedEraRuns_SkipsAggregateRecords pins the record-class gate on the
+// era pass. Emit stamps the aggregate record with RaisedDenominator = Current,
+// and the aggregate's Reviewer is empty — so without a skip it participates in
+// the newest-per-reviewer computation under the "" key, and every reviewer
+// record with an empty name (era 1, unflagged) shares that key and reads as
+// OLDER than the aggregate. trustPriorsSince feeds strictRuns straight into
+// unresolvedEraRuns (PublishedSet's ApplyFilters has already dropped aggregates
+// on the other call site), so the two call sites disagreed about when aggregate
+// records are removed — pass order decided whether an empty-name reviewer's
+// history survived.
+func TestUnresolvedEraRuns_SkipsAggregateRecords(t *testing.T) {
+	agg := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeAggregate,
+		RunID: "2026-09-02T00:00:00Z-agg",
+		// The aggregate is stamped with the CURRENT definition at emit time.
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           9,
+	}
+	emptyNameEra1 := Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID: "2026-09-02T00:00:00Z-anon", Reviewer: "", Model: "m",
+		FindingsRaised: 2, // no era markers: definition 1
+	}
+
+	got := unresolvedEraRuns([]Record{agg, emptyNameEra1})
+
+	var sawReviewer, sawAggregate bool
+	for _, r := range got {
+		switch r.RecordType {
+		case RecordTypeReviewer:
+			sawReviewer = true
+		case RecordTypeAggregate:
+			sawAggregate = true
+		}
+	}
+	assert.True(t, sawReviewer,
+		"the empty-name era-1 reviewer record must survive: the aggregate is not a reviewer and must not define its newest era")
+	assert.True(t, sawAggregate,
+		"the aggregate record passes through untouched — the era pass is a reviewer-record concern")
+}
+
+// TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators pins the drop-and-exclude
+// rule for records stamped with a denominator this binary does not know: a
+// LEGITIMATE record written by a newer atcr (denominator 4), a corrupt hand-edit
+// (999), and a benchmark-suite value (100) are all EXCLUDED from the era window
+// rather than clamped into the current cohort and blended. The clamp's
+// protective intent survives — a garbage line still cannot delete the reviewer's
+// real history — but exclusion no longer re-labels a future era as the current
+// one.
+func TestUnresolvedEraRuns_ExcludesAboveCurrentDenominators(t *testing.T) {
+	mk := func(runID string, denom int) Record {
+		return Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID: runID, Reviewer: "bruce", Model: "m",
+			RaisedIncludesUnresolved: true, RaisedDenominator: denom,
+			FindingsRaised: 2, FindingsCorroborated: 1,
+		}
+	}
+	current := mk("2026-09-02T00:00:00Z-cur", RaisedDenominatorCurrent)
+
+	for name, alien := range map[string]Record{
+		"newer-binary record (denominator 4)": mk("2026-09-02T00:00:00Z-n4", RaisedDenominatorCurrent+1),
+		"corrupt hand-edit (999)":             mk("2026-09-02T00:00:00Z-c9", 999),
+		"benchmark-suite value (100)":         mk("2026-09-02T00:00:00Z-bm", RaisedDenominatorBenchmarkSuite),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := unresolvedEraRuns([]Record{current, alien})
+			require.Len(t, got, 1, "the above-current record must be excluded, not blended into the current cohort")
+			assert.Equal(t, RaisedDenominatorCurrent, got[0].RaisedDenominator,
+				"the genuine current-era record survives untouched")
+		})
+	}
+
+	// A reviewer with ONLY above-current records keeps none of them in the era
+	// window — an older binary must not blend numbers computed under a rule it
+	// does not implement. (It also must not relabel them current: the clamp is
+	// gone for this class.)
+	t.Run("only-above-current reviewer yields nothing", func(t *testing.T) {
+		got := unresolvedEraRuns([]Record{mk("2026-09-02T00:00:00Z-x1", RaisedDenominatorCurrent+1)})
+		assert.Empty(t, got)
+	})
+
+	// The FIRST loop's exclusion, isolated. Both loops carry the same
+	// above-current test, and every case above is satisfied by the second one
+	// alone — deleting the first loop's copy leaves them all green.
+	//
+	// What only the first loop decides is what `newest` becomes. Without its
+	// exclusion, raisedDenominatorOf CLAMPS the above-current record to
+	// RaisedDenominatorCurrent, so newest[reviewer] reads 3 and the second loop
+	// then drops every pre-epic record of that reviewer for being an older era.
+	// One garbage line would delete the reviewer's whole real history — precisely
+	// the outcome the guard's own comment says exclusion prevents.
+	t.Run("an above-current record does not delete the reviewer's pre-epic history", func(t *testing.T) {
+		preEpic := func(runID string) Record {
+			return Record{
+				SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+				RunID: runID, Reviewer: "bruce", Model: "m",
+				// No era markers at all: definition 1 (pre-epic).
+				FindingsRaised: 2, FindingsCorroborated: 1,
+			}
+		}
+		in := []Record{
+			mk("2026-09-02T00:00:00Z-alien", RaisedDenominatorCurrent+1),
+			preEpic("2026-08-01T00:00:00Z-p1"),
+			preEpic("2026-08-02T00:00:00Z-p2"),
+			preEpic("2026-08-03T00:00:00Z-p3"),
+		}
+
+		got := unresolvedEraRuns(in)
+
+		require.Len(t, got, 3, "all three pre-epic records must survive — the above-current record must not define this reviewer's newest era")
+		for _, r := range got {
+			assert.Equal(t, raisedDenominatorPreEpic, raisedDenominatorOf(r),
+				"only pre-epic records may survive: %s", r.RunID)
+		}
+	})
+}
+
+// TestTrustPriors_ShieldedCountsDiscountTheRate pins the trust-side answer to the
+// doc-shield carve-out: a reviewer can route fabrications through the
+// documentation-extension heuristic so they escape FindingsRaised, but they must
+// NOT escape the trust prior. The shielded count joins the trust rate's
+// denominator — the scorecard/board rate keeps the carve-out, the trust rate
+// does not. Without this, a reviewer (or a board gamer) inflates their prior by
+// anchoring phantoms on doc-named tokens.
+func TestTrustPriors_ShieldedCountsDiscountTheRate(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-09-01T00:00:00Z-sh%02d", i),
+			Reviewer: "gamer", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
+			FindingsRaised:           2,
+			FindingsCorroborated:     2, // everything chargeable corroborated
+			FindingsDocShielded:      2, // but two more routed through the doc shield
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "gamer")
+	assert.InDelta(t, 0.5, priors["gamer"], 0.0001,
+		"2 corroborated out of 2 raised + 2 shielded: the shield does not launder phantoms into a clean 1.00 prior")
+}
+
+// TestTrustPriors_RoutedErasAreOneWindow pins the removal of the priors blackout
+// between raised_denominator 2 and 3.
+//
+// The two eras are ARITHMETICALLY equivalent for the trust rate: an era-3 record
+// partitions the same finding set into FindingsRaised + FindingsDocShielded that
+// an era-2 record put entirely into FindingsRaised (scorecard.go partitions
+// in.UnresolvedFindings disjointly), and FindingsCorroborated is unchanged. The
+// trust denominator counts both halves, so normalising era 3 back to era 2 before
+// the prefer-newest pass changes no rate — it only stops the pass from discarding
+// a reviewer's whole pre-upgrade window the day its first era-3 record lands.
+//
+// That window is what keeps the reviewer above DefaultTrustMinRuns, and below the
+// floor it drops OUT of the map, where consensus.go reads its absence as "not
+// exempt" and "do not demote".
+func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
+	dir := t.TempDir()
+
+	// Era 2 (RaisedIncludesUnresolved, no denominator field): the bulk of the
+	// window. On its own this is DefaultTrustMinRuns-1 runs — under the floor.
+	for i := 0; i < DefaultTrustMinRuns-1; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-era2-%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			FindingsRaised:           4,
+			FindingsCorroborated:     2,
+		}))
+	}
+	// Era 3: a single post-upgrade run, with the doc-shield split populated.
+	// 3 chargeable + 1 shielded is the same finding set an era-2 record would
+	// have reported as FindingsRaised: 4.
+	require.NoError(t, Append(dir, Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID:    "2026-08-20T00:00:00Z-era3-00",
+		Reviewer: "bruce", Model: "m",
+		ConsensusLevel:           reclib.ConsensusStrict,
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent,
+		FindingsRaised:           3,
+		FindingsCorroborated:     2,
+		FindingsDocShielded:      1,
+	}))
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	require.Contains(t, priors, "bruce",
+		"one era-3 run must not black out the era-2 window: the two eras measure the same quantity, so the reviewer stays above the min-runs floor")
+	assert.InDelta(t, 0.5, priors["bruce"], 0.0001,
+		"every run is 2 corroborated out of a 4-finding denominator, in both eras")
+}
+
+// TestTrustPriors_PreEpicStillSplitsFromRoutedEras is the other side of the
+// normalisation: era 1 is NOT arithmetically equivalent to eras 2 and 3. It
+// excludes routed findings from FindingsRaised entirely rather than partitioning
+// them, so blending it in would compare a rate over one finding set against a rate
+// over a larger one. It must keep splitting exactly as before.
+func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
+	dir := t.TempDir()
+
+	// A flattering pre-epic half...
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-07-01T00:00:00Z-pre%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:       reclib.ConsensusStrict,
+			FindingsRaised:       4,
+			FindingsCorroborated: 4, // rate 1.00 if it were blended in
+		}))
+	}
+	// ...and an era-3 half that is the only thing the priors may measure.
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
+			FindingsRaised:           4,
+			FindingsCorroborated:     1,
+		}))
+	}
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 0.25, priors["bruce"], 0.0001,
+		"the pre-epic half must stay excluded — 0.625 would be the blend, 1.00 the pre-epic half alone")
+}
+
+// TestMergeRoutedEras_PinsEveryElementOfItsGuard covers the four things
+// mergeRoutedEras does that only its docstring asserted.
+//
+// Only the fold (FindingsRaised += FindingsDocShielded) was pinned when the
+// function landed. Every other element survived mutation with the whole suite
+// green: the above-current exclusion, the non-reviewer skip, the defensive copy,
+// and the two bookkeeping writes. This test kills each mutation.
+//
+// The above-current arm is the one that matters. Relaxing `!=` to `<` normalises
+// a record from a NEWER atcr into era 2, which then walks straight past
+// unresolvedEraRuns' above-current exclusion and into the trust window — the
+// exact smuggling the docstring says must not happen. The consequence is pinned
+// end-to-end in TestTrustPriors_AboveCurrentRecordsNeverReachThePrior below.
+func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
+	t.Run("a current-era reviewer record is rewritten whole", func(t *testing.T) {
+		in := []Record{{
+			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RaisedDenominator:   RaisedDenominatorCurrent,
+			FindingsRaised:      3,
+			FindingsDocShielded: 1,
+		}}
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		assert.Equal(t, 4, got[0].FindingsRaised,
+			"the shielded count folds in — that is what makes a plain t.raised the full trust denominator")
+		assert.Equal(t, 0, got[0].FindingsDocShielded,
+			"zeroed, so nothing downstream can charge the same finding twice")
+		assert.Equal(t, raisedDenominatorAllRouted, got[0].RaisedDenominator,
+			"the record now IS an era-2 record and must say so")
+		assert.True(t, got[0].RaisedIncludesUnresolved,
+			"era 2's own discriminator: a reader falling back to the bool must reach the same era as one reading the int")
+	})
+
+	t.Run("the rewritten record stays internally consistent", func(t *testing.T) {
+		// The fold moves FindingsRaised, so the two fields DERIVED from it stop
+		// agreeing with it unless they move too. Nothing in trustPriorsSince reads
+		// either one today, but the value is a Record — a type whose other
+		// consumers (cli/scorecard.go's SOLO and CORR% columns, Aggregate's
+		// per-record sum) do read them, so a self-contradicting Record is a trap
+		// laid for the next caller rather than a harmless omission.
+		//
+		// The recomputed values are exactly what era 2 reported: a doc-shielded
+		// finding was routed, so it is uncorroborated by construction and belongs
+		// in solo — the same disjoint partition the fold's equivalence rests on.
+		in := []Record{{
+			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RaisedDenominator:    RaisedDenominatorCurrent,
+			FindingsRaised:       3,
+			FindingsCorroborated: 2,
+			FindingsSolo:         1,
+			CorroborationRate:    2.0 / 3.0,
+			FindingsDocShielded:  1,
+		}}
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		require.Equal(t, 4, got[0].FindingsRaised)
+		assert.Equal(t, 2, got[0].FindingsSolo,
+			"solo is raised minus corroborated, and the folded-in shielded finding was routed, so it is solo")
+		assert.InDelta(t, 0.5, got[0].CorroborationRate, 0.0001,
+			"2 of 4 under the merged denominator — the stale 0.667 describes a denominator this record no longer has")
+	})
+
+	t.Run("an above-current record is left alone", func(t *testing.T) {
+		in := []Record{{
+			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RaisedDenominator:   RaisedDenominatorCurrent + 1,
+			FindingsRaised:      7,
+			FindingsDocShielded: 2,
+		}}
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		assert.Equal(t, RaisedDenominatorCurrent+1, got[0].RaisedDenominator,
+			"normalising this would smuggle a definition this binary does not implement past unresolvedEraRuns' exclusion")
+		assert.Equal(t, 7, got[0].FindingsRaised, "no fold: the equivalence is unproven for this era")
+		assert.Equal(t, 2, got[0].FindingsDocShielded)
+	})
+
+	t.Run("a non-reviewer record is left alone", func(t *testing.T) {
+		// An aggregate record is stamped RaisedDenominator = Current under the
+		// EMPTY reviewer name, so it matches the era half of the guard and is
+		// excluded by the record-type half alone.
+		in := []Record{{
+			RecordType:          RecordTypeAggregate,
+			RaisedDenominator:   RaisedDenominatorCurrent,
+			FindingsRaised:      9,
+			FindingsDocShielded: 3,
+		}}
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, got[0].RaisedDenominator)
+		assert.Equal(t, 9, got[0].FindingsRaised)
+		assert.Equal(t, 3, got[0].FindingsDocShielded)
+	})
+
+	t.Run("the caller's slice is never mutated", func(t *testing.T) {
+		in := []Record{{
+			RecordType: RecordTypeReviewer, Reviewer: "bruce",
+			RaisedDenominator:   RaisedDenominatorCurrent,
+			FindingsRaised:      3,
+			FindingsDocShielded: 1,
+		}}
+		want := in[0]
+
+		got := mergeRoutedEras(in)
+
+		require.Len(t, got, 1)
+		require.Equal(t, 4, got[0].FindingsRaised, "the copy really was rewritten")
+		assert.Equal(t, want, in[0],
+			"callers hand in records read from the store and must not see them rewritten underneath")
+	})
+}
+
+// TestTrustPriors_AboveCurrentRecordsNeverReachThePrior is the consequence half
+// of the guard above, measured where it is actually paid.
+//
+// mergeRoutedEras runs BEFORE unresolvedEraRuns, so it is the last place an
+// above-current record can be re-labelled into an era the exclusion no longer
+// recognises. With the guard relaxed the record below is normalised to era 2 and
+// joins the window, dragging the prior from 0.500 to 0.357 — and a wrong prior
+// re-weights demoteByTrust and trustExempt on every later run, which is how real
+// findings get filtered out of report.md.
+func TestTrustPriors_AboveCurrentRecordsNeverReachThePrior(t *testing.T) {
+	dir := t.TempDir()
+
+	for i := 0; i < DefaultTrustMinRuns; i++ {
+		require.NoError(t, Append(dir, Record{
+			SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+			RunID:    fmt.Sprintf("2026-08-01T00:00:00Z-cur%02d", i),
+			Reviewer: "bruce", Model: "m",
+			ConsensusLevel:           reclib.ConsensusStrict,
+			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
+			FindingsRaised:           10,
+			FindingsCorroborated:     5,
+		}))
+	}
+	// One record from a NEWER atcr, under a definition this binary does not
+	// implement. A hand-edit or a benchmark-stamped denominator reads the same.
+	require.NoError(t, Append(dir, Record{
+		SchemaVersion: SchemaVersion, RecordType: RecordTypeReviewer,
+		RunID:    "2026-08-20T00:00:00Z-future",
+		Reviewer: "bruce", Model: "m",
+		ConsensusLevel:           reclib.ConsensusStrict,
+		RaisedIncludesUnresolved: true,
+		RaisedDenominator:        RaisedDenominatorCurrent + 1,
+		FindingsRaised:           100,
+		FindingsCorroborated:     0,
+	}))
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+
+	require.Contains(t, priors, "bruce")
+	assert.InDelta(t, 0.5, priors["bruce"], 0.0001,
+		"the above-current record must be excluded outright — 0.357 is what its 100 raised buys if it is normalised into era 2")
+}

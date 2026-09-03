@@ -79,6 +79,9 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			Line:      u.Line,
 			Problem:   u.Problem,
 			Reviewers: u.Reviewers,
+			// Carried, not interpreted here: Emit decides which reasons are
+			// chargeable, so the two entry points cannot disagree about it.
+			UnresolvedReason: u.UnresolvedReason,
 		})
 		for _, rev := range u.Reviewers {
 			if rev == "" {

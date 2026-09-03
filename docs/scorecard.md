@@ -56,8 +56,9 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
-| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. |
+| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. |
 | `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
+| `findings_doc_shielded` | int | conditional | Routed findings this record deliberately did NOT charge to `findings_raised`, because the Tier 4 check routed them on the documentation-extension heuristic (`unresolved_reason: doc_shield`) rather than on a genuine absence. Omitted when zero. Read it alongside `corroboration_rate`: the exemption is driven by the reviewer's own finding text, so a rate of 1.00 with a nonzero count here is not the same claim as a rate of 1.00 without one. Likewise, a rate of 0.00 alongside a nonzero count here is the zero-denominator case (every finding was shielded), not a corroboration failure. Note the trust prior does NOT extend the carve-out: shielded counts join the trust rate's denominator. |
 | `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
 | `corroboration_rate` | float | always | `findings_corroborated / findings_raised` (0.0 when none raised; never NaN). |
 | `cost_usd` | float | always | Estimated cost from the per-model rate table (see [Cost is approximate](#cost-is-approximate)). |
@@ -67,7 +68,8 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
 | `findings_verified` | int | conditional | Findings confirmed by the skeptic stage. Present only when verification data drove the run. |
 | `findings_refuted` | int | conditional | Findings refuted by the skeptic stage. Conditional, same as above. |
 | `survived_skeptic_rate` | float | conditional | `findings_verified / (findings_verified + findings_refuted)`. Conditional, same as above. |
-| `raised_includes_unresolved` | bool | conditional | `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward). Omitted on records written before it, whose denominator excluded them. `TrustPriors` uses it to avoid averaging the two definitions together — see the caution below. |
+| `raised_includes_unresolved` | bool | conditional | Superseded but retained. `true` when `findings_raised` counts the Tier-4-routed findings (every record written from Epic 35.16.6.5 onward); omitted on records written before it. The denominator has since changed meaning a second time (the 35.16.6.8 `doc_shield` carve-out), which a bool cannot express — `raised_denominator` below is the era discriminator a new reader should use. This field stays because existing readers and stores depend on it, and because `true` is still exactly right about the one thing it claims: routed findings are in the denominator. |
+| `raised_denominator` | int | conditional | Which definition of `findings_raised` produced this record: `1` = routed findings excluded (everything before 35.16.6.5; never stamped — it is what an absent discriminator means), `2` = routed findings included (35.16.6.5, stamped as `raised_includes_unresolved: true` before this field existed), `3` = routed findings included EXCEPT the doc-shielded ones (35.16.6.8, the current definition; those are counted in `findings_doc_shielded`). Omitted on records that predate the discriminator — their era is read from `raised_includes_unresolved` instead. `TrustPriors` splits eras on this value (see `unresolvedEraRuns`), so a rate is never averaged across two definitions. |
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -139,7 +141,13 @@ atcr scorecard ./.atcr/reviews/abc123
 ```
 
 Columns: `REVIEWER  MODEL  RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY`,
-plus `VERIFIED  REFUTED  SURV%` when any record carries verification data.
+plus `VERIFIED  REFUTED  SURV%` when any record carries verification data, plus
+`DOC-SHIELDED` when any record has a nonzero doc-shield count.
+
+`RAISED` does not count doc-shield-routed findings, so `DOC-SHIELDED` is the only
+place this table reports them. It appears only when some record has one, and every
+row then shows a number (`0`, not a dash — the reviewer has a measurement and it is
+zero). See [Doc-shielded routings](#doc-shielded-routings).
 
 Behavior:
 - No records for the run → message + exit `1`.
@@ -173,8 +181,29 @@ Flags:
 | `--export` | off | Emit anonymized public JSON instead of the table (see below). |
 | `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |
 
-Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`.
+Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`,
+plus `DOC-SHIELDED` when any group has a nonzero doc-shield count.
 `COST/CORR` renders as `-` for a group with zero corroborated findings.
+
+### Doc-shielded routings
+
+A finding whose subject is named ONLY in a documentation-extension file is routed
+to `unresolved.json` like any other unresolved finding, but is NOT charged to the
+reviewer's `RAISED` denominator: the routing rests on a filename-extension
+heuristic, and a scorecard charge is the one consequence of a misfire nothing can
+undo later.
+
+That carve-out makes two different reviewers render identically without the
+`DOC-SHIELDED` column — `RAISED 6 / CORROBORATED 6 / CORR 100%` is the same row a
+reviewer with 10 raised and 4 shielded produces. The shield does NOT apply to the
+trust prior (`atcr personas list --scores`), which counts shielded findings in its
+denominator precisely so a reviewer cannot launder phantoms by anchoring them on
+doc-named tokens. So the two surfaces can legitimately disagree — a 100% row beside
+a 0.60 prior — and `DOC-SHIELDED` is what makes that difference readable.
+
+`report.md` reports the same split: its `Unresolved findings:` line counts the two
+shapes separately, because "no symbol correspondence in the tracked tree" is false
+for a doc-shielded record — its subject IS in the tree.
 
 Behavior:
 - Empty store (no data at all) → friendly message, exit `0`.
@@ -248,7 +277,8 @@ echoed** (they would leak query parameters about your local dataset):
       "corroboration_rate": 0.5625,
       "survived_skeptic_rate": 0.8333,
       "cost_per_corroborated_finding_usd": 0.0059,
-      "latency_p50_ms": 9100
+      "latency_p50_ms": 9100,
+      "raised_denominator": 3
     }
   ]
 }
@@ -271,6 +301,7 @@ echoed** (they would leak query parameters about your local dataset):
 | `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
 | `cost_per_corroborated_finding_usd` | float | **omitempty** | Total cost ÷ corroborated findings. **Omitted entirely** when there are zero corroborated findings (the metric is undefined — this is what distinguishes a paid-but-ineffective reviewer from a genuinely free one); present as `0.0` only when corroborated findings exist AND the reviewer's cost was genuinely zero. Never Inf/NaN when present. |
 | `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
+| `raised_denominator` | int | always | Which definition of "findings raised" produced this row's `findings_raised_avg` and `corroboration_rate` (`1`/`2`/`3` for production eras, `100` for a benchmark-suite row — a different axis, never compared ordinally). **Not omitempty:** a submission that does not say which definition it used is exactly the ambiguity the field exists to remove, so the key is always present. |
 
 Reviewers are aggregated by `(persona, model)` (role is dropped from the public
 schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
@@ -395,13 +426,20 @@ than growing a third aggregation.
   > every surface, CLI and MCP alike, because the filter lives in `TrustPriors`
   > rather than at the emission site.
   >
-  > **`findings_raised` also changed meaning once, and is filtered the same way.**
-  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, so a rate
-  > averaged across records from both eras measures neither. Every record written
-  > since carries `raised_includes_unresolved: true`, and `TrustPriors` prefers
-  > those: when the window holds any, only they count; when it holds none, the
-  > older records are used unchanged, so an existing history is never blacked out.
-  > What is excluded is the mix.
+  > **`findings_raised` has changed meaning twice, and is filtered the same way.**
+  > Epic 35.16.6.5 put the Tier-4-routed findings into the denominator, and Epic
+  > 35.16.6.8 took the doc-shielded ones back out, so `findings_raised` has three
+  > definitions and a rate averaged across two of them measures neither. Every
+  > record written since 35.16.6.8 carries `raised_denominator: 3`; records from
+  > 35.16.6.5 carry `raised_includes_unresolved: true` and no version, which reads
+  > as definition 2; anything older is definition 1.
+  >
+  > `TrustPriors` prefers the NEWEST definition each reviewer actually has: when a
+  > reviewer's window holds records under more than one, only the newest count;
+  > when it holds only old ones, they are used unchanged. So an existing history is
+  > never blacked out — **per reviewer**. A reviewer that has run since the change
+  > loses its older records from the window, which is the point: what is excluded
+  > is the mix, not the history.
   >
   > Two consequences worth knowing:
   > - `minRuns` is a floor on **strict** runs. A reviewer with 15 `strict` and 10
@@ -468,7 +506,8 @@ the surface, the less can leak.
 - Per reviewer: `model`, `persona`, `runs`, `findings_raised_avg`,
   `corroboration_rate`, `survived_skeptic_rate` (omitted when no verification ran),
   `cost_per_corroborated_finding_usd` (omitted when zero corroborated findings),
-  `latency_p50_ms`
+  `latency_p50_ms`, `raised_denominator` (a schema discriminator — it says which
+  `findings_raised` definition produced the row and carries no run content)
 
 **Stripped / never exported:**
 
@@ -559,13 +598,34 @@ future epic changes either schema:
   paths, not by individual stored records.
 
 **Not every meaning change moves a version number.** Epic 35.16.6.5 changed what
-`findings_raised` COUNTS (it now includes the Tier-4-routed findings) without
-changing any field's name, type, or presence, so neither integer moved. The
-discriminator is the per-record `raised_includes_unresolved` flag instead, and
-both derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
-prefer-current rule: a set holding any current-era record uses only those, a set
-holding none uses the older records unchanged. So a single submission is always
-computed under one definition, and an existing store never stops exporting.
+`findings_raised` COUNTS (it now includes the Tier-4-routed findings), and Epic
+35.16.6.8 changed it again (the doc-shielded routings came back out), neither time
+renaming, retyping, or removing a field — so neither integer moved. The
+discriminator is the per-record `raised_denominator` version instead, and both
+derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+prefer-newest rule: a reviewer's records are kept at the newest definition that
+reviewer has. So a single submission is always computed under one definition, and
+an existing store never stops exporting.
+
+That is enough within one store and not enough between two. Two submitters running
+different atcr versions publish rates computed under different rules, both stamped
+the same `submission_schema`, and the board ranks them against each other. So each
+public reviewer row also carries `raised_denominator` — additively, on
+`scorecard.PublicRecord`, the type both the production and benchmark envelopes
+share.
+
+Sharing the type puts the KEY on both producers; it does not populate it. Each
+producer stamps its own value, and the two are not on the same scale:
+
+| Producer | `raised_denominator` | What the row's `corroboration_rate` means |
+|---|---|---|
+| `leaderboard --export` | `1`, `2` or `3` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
+| `benchmark export` | `100` (`RaisedDenominatorBenchmarkSuite`) | category **recall** against the suite's planted defects |
+
+The gap between `3` and `100` is deliberate. A benchmark row is not a production
+row under an older rule — it is a different quantity, and the two must never be
+ordered against each other. The envelope's `source` field already separates the
+producers; this makes each row self-describing as well.
 
 The `atcr scorecard` local leaderboard (`Aggregate`) is deliberately NOT filtered
 this way — like the consensus-level filter, it reports what actually happened
@@ -592,15 +652,25 @@ Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
 `--allow-partial-coverage` is now self-describing to a consumer instead of being
 indistinguishable from a full one.
 
-**The production envelope gained nothing.** Under version 2,
-`leaderboard --export` emits the same key set it emitted under version 1:
-
-- No field of `ExportEnvelope` or `PublicRecord` was renamed, retyped, or removed.
-- No field was added to either type.
-- The only change on the production path is the integer in `submission_schema`.
+**The production envelope gained nothing at the bump itself.** Under version 2,
+`leaderboard --export` initially emitted the same key set it emitted under
+version 1 — no field of `ExportEnvelope` or `PublicRecord` was renamed, retyped,
+or removed, and the only change on the production path was the integer in
+`submission_schema`. (Epic 35.16.6.8 later added `raised_denominator` to
+`PublicRecord` under the same version — see the policy below.)
 
 So a version-2 production submission differs from a version-1 one in exactly one
 byte-range: the version number. The bump is **additive-only** on the producer side.
+
+#### Versioning policy — additive never bumps
+
+`submission_schema` is bumped **only for breaking changes**: a field renamed,
+retyped, or removed, or a semantic shift a consumer cannot ignore. Additive
+field additions — `suite_case_ids`/`reviewer_coverage` on the benchmark
+envelope, `raised_denominator` on every reviewer row — **never** bump it. That
+is why version 2 denotes more than one wire shape, and that is by design: the
+board contract is that consumers tolerate unknown keys. (Verifying the board
+actually does so is the open hand-off below — it is not claimed settled here.)
 
 #### Consumer-side coordination — an open item, not a verified one
 

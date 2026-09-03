@@ -366,6 +366,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 	downstreamOnly := map[string]bool{
 		"FixWarning": true, "ClusterMerged": true, "ClusterID": true,
 		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
+		// UnresolvedReason is stamped by validateFindingPaths on the same pass, and
+		// only onto records the Tier 4 check routes — the library Merged has no
+		// notion of routing at all — so it is downstream-only for the same reason.
+		"UnresolvedReason": true,
 		// EvidenceExec is stamped by the repro write-back (Epic 11.0), never by reconcile.
 		"EvidenceExec": true,
 		// Justification/SourceReport are stamped by stampJustifications (Epic 18.2)
@@ -459,6 +463,24 @@ func TestJSONFinding_ClusterIDOmittedWhenEmpty(t *testing.T) {
 	data, err := json.Marshal(f)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "cluster_id", "empty cluster_id must be omitted")
+}
+
+// TestJSONFinding_UnresolvedReasonWireKey pins the JSON wire key
+// `unresolved_reason`: the routed record's reason rides the sidecar a consumer
+// reads to tell a phantom charge from a doc_shield, so renaming the tag (e.g. to
+// `reason`) must be a loud failure here, not a silent schema break. Also pins
+// the empty-value omission — an unrouted finding carries no key at all.
+func TestJSONFinding_UnresolvedReasonWireKey(t *testing.T) {
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM", UnresolvedReason: UnresolvedReasonDocShield}
+	data, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"unresolved_reason":"doc_shield"`,
+		"the wire key and the doc_shield literal are the published contract (docs/code-review-backend.md)")
+
+	empty := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
+	data, err = json.Marshal(empty)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "unresolved_reason", "empty reason must be omitted")
 }
 
 // TestJSONFinding_ClusterIDRoundTrips: a findings.json record carrying a

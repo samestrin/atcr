@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -497,23 +498,31 @@ const (
 
 var categories = []string{
 	CategoryCorrectness,
-	CategoryStray,
 	CategoryOutOfScope,
+	CategoryStray,
 	CategoryOther,
 }
 `), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(`package reconcile
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "merge.go"), []byte(fmt.Sprintf(`package reconcile
 
-const CategoryOutOfScope = "out-of-scope"
+const CategoryOutOfScope = %q
 const CategoryStray = "stray"
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
+	// CategoryOutOfScope is listed BEFORE CategoryStray, and neither reaches a
+	// block. The loop reports the first unexempted member it meets, so the
+	// exemption is the only reason the error names stray rather than the routing
+	// value. With the two the other way round, deleting the exemption outright
+	// left this test green: it reported on stray either way and pinned nothing.
 	_, err := inTreeCategoryBlocks(dir)
 	require.Error(t, err, "a slice member that appears in no comment-marked block must be an error, not a silently unpinned Group cell")
-	assert.Contains(t, err.Error(), "stray",
-		"the error must name the member that no block declares")
-	assert.NotContains(t, err.Error(), "out-of-scope",
-		"out-of-scope is exempt: it is a routing value declared outside category.go by design")
+	assert.Contains(t, err.Error(), `"stray" is listed in the categories slice`,
+		"the error must name the member that no block declares as its SUBJECT — a bare Contains on the value also matches it inside an unrelated clause")
+	assert.NotContains(t, err.Error(), fmt.Sprintf("%q is listed in the categories slice", outOfScopeConstValue),
+		"out-of-scope is exempt: it is a routing value declared outside category.go by design. "+
+			"Assert on the subject clause, not on the value anywhere in the message — the message also "+
+			"names the exemption in its remedy, so a bare NotContains passed only because Contains is "+
+			"case-sensitive and the remedy spells the CONSTANT, not the value")
 }
 
 // Same contract as its sibling: a directory that marks no block must be an
@@ -578,14 +587,19 @@ const CategoryOutOfScope = "oos"
 // with no constant of the anchor name behind it, and say so.
 func TestInTreeCategoryBlocks_RenamedRoutingConstantIsALoudError(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+	// The routing value is interpolated, never spelled out. A hardcoded literal
+	// here would red this test the moment reconcile/merge.go's value changed —
+	// and TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule tells the
+	// maintainer that change costs ONE edit (outOfScopeConstValue). Both fixtures
+	// in this test track the constant so that promise stays true.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
 
 const (
 	// Defect classes.
 	CategoryCorrectness = "correctness"
 
 	// Control values.
-	CategoryScopeControl = "out-of-scope"
+	CategoryScopeControl = %q
 	CategoryOther        = "other"
 )
 
@@ -594,7 +608,7 @@ var categories = []string{
 	CategoryScopeControl,
 	CategoryOther,
 }
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
 	// The returned partition is discarded like every sibling error test does:
 	// every error path in inTreeCategoryBlocks is a literal `return nil,
@@ -610,14 +624,23 @@ var categories = []string{
 		"pin the structural claim that the value reached the slice NOT as the anchor — dropping the clause while keeping both names would otherwise pass")
 	assert.Contains(t, err.Error(), "restore the name CategoryOutOfScope",
 		"pin the remedy the message promises — a reworded remedy would leave the error loud but directionless")
+}
 
-	// The tripwire has two arms — a named alias and a bare string literal — and
-	// only the named arm was exercised above. A bare literal is the one form that
-	// leaves NO constant to rename back, so its remedy text matters most; pin
-	// both the diagnosis ("a bare string literal") and the remedy.
-	t.Run("bare string literal arm", func(t *testing.T) {
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+// The tripwire's second arm: the routing value reaches the slice as a bare
+// string literal. It is the one form that leaves NO constant to rename back, so
+// its remedy text matters most; pin both the diagnosis ("a bare string literal")
+// and the remedy.
+//
+// This is a SIBLING of TestInTreeCategoryBlocks_RenamedRoutingConstantIsALoudError,
+// not a subtest of it. As a nested t.Run it sat after that test's require.Error,
+// and require calls FailNow — runtime.Goexit — so a regression in the named-alias
+// arm skipped this arm entirely: no `=== RUN` line, no failure, coverage of the
+// bare-literal arm silently gone under exactly the condition the pin exists to
+// catch. Keep the two arms as siblings so neither one's failure can suppress the
+// other's execution.
+func TestInTreeCategoryBlocks_BareRoutingLiteralIsALoudError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(fmt.Sprintf(`package reconcile
 
 const (
 	// Defect classes.
@@ -629,18 +652,17 @@ const (
 
 var categories = []string{
 	CategoryCorrectness,
-	"out-of-scope",
+	%q,
 	CategoryOther,
 }
-`), 0o644))
+`, outOfScopeConstValue)), 0o644))
 
-		_, err := inTreeCategoryBlocks(dir)
-		require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
-		assert.Contains(t, err.Error(), "a bare string literal",
-			"the error must name the form the value arrived in")
-		assert.Contains(t, err.Error(), "replace the literal with the CategoryOutOfScope constant",
-			"the remedy must name the one edit that clears the error")
-	})
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "the routing value reaching the slice as a bare literal must fail loudly")
+	assert.Contains(t, err.Error(), "a bare string literal",
+		"the error must name the form the value arrived in")
+	assert.Contains(t, err.Error(), "replace the literal with the CategoryOutOfScope constant",
+		"the remedy must name the one edit that clears the error")
 }
 
 // inTreeCategoryBlocks is documented as reading one file, but its cross-check
@@ -762,4 +784,66 @@ func TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule(t *testing.T) {
 	assert.Equal(t, outOfScopeConstValue, value,
 		"%s now holds %q, so the outOfScopeConstValue literal in taxonomy_intree_helpers_test.go matches nothing and the rename tripwire is disarmed — update it to the new value",
 		outOfScopeConstName, value)
+}
+
+// The forward cross-check's collision branch fires in two structurally different
+// situations, and until this test only one of them was described.
+//
+// It reports "the categories slice lists that value under a different constant",
+// but it also fires when the slice lists the value as a BARE STRING LITERAL —
+// where there is no other constant to find, so the remedy sends the maintainer
+// hunting for something that does not exist. A bare literal is a legitimate way
+// to list a member (TestInTreeCategories_BareStringLiteralElementIsAMember), so
+// this combination is one a maintainer can reach by an ordinary edit.
+//
+// The message must split the way the rename tripwire already does: name the form
+// the value arrived in, and name the edit that clears it.
+func TestInTreeCategoryBlocks_BareLiteralCollisionNamesTheRealEdit(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+var categories = []string{
+	"correctness",
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err, "a block member the slice lists only as a bare literal must still fail: the name-keyed exclusion would fold it in silently")
+	assert.Contains(t, err.Error(), "a bare string literal",
+		"the error must name the form the value arrived in, not claim a second constant exists")
+	assert.Contains(t, err.Error(), "replace the literal with the CategoryCorrectness constant",
+		"the remedy must name the one edit that clears the error — promoting the literal to the block member's own name")
+	assert.NotContains(t, err.Error(), "under a different constant",
+		"there is no different constant here; that wording belongs to the genuinely-aliased case")
+}
+
+// The other half of the same split: when the colliding value really IS listed
+// under another named constant, the original wording is correct and must stay.
+func TestInTreeCategoryBlocks_AliasedCollisionStillNamesTheAlias(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "category.go"), []byte(`package reconcile
+
+const (
+	// Defect classes.
+	CategoryCorrectness = "correctness"
+)
+
+const CategoryAlias = "correctness"
+
+var categories = []string{
+	CategoryAlias,
+}
+`), 0o644))
+
+	_, err := inTreeCategoryBlocks(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "under a different constant",
+		"a genuinely aliased value keeps the original diagnosis")
+	assert.NotContains(t, err.Error(), "a bare string literal",
+		"the bare-literal wording must not leak into the aliased case")
 }

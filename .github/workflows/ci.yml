@@ -117,7 +117,7 @@ jobs:
         run: |
           out=$(go test ./internal/reconcile/ -run '^TestReconcileModule_ReleasedVocabularyMatchesInTree$' -v -json -count=1 2>&1) || { echo "$out"; exit 1; }
           echo "$out" | jq -j 'select(.Action=="output") | .Output'
-          action=$(echo "$out" | jq -r 'select(.Test=="TestReconcileModule_ReleasedVocabularyMatchesInTree") | .Action' | grep -E '^(pass|skip)$' | head -1)
+          action=$(echo "$out" | jq -r 'select(.Test=="TestReconcileModule_ReleasedVocabularyMatchesInTree") | .Action' | grep -E '^(pass|skip)$' | head -1 || true)
           if [ -z "$action" ]; then
             echo "release-lag guard did not run — was TestReconcileModule_ReleasedVocabularyMatchesInTree renamed, moved, or its package stripped of tests?"
             exit 1

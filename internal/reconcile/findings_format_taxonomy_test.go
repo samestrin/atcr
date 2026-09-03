@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -353,9 +354,29 @@ func inTreeVocabulary(t *testing.T) []string {
 // table below asserts against independently.
 func TestInTreeVocabulary_ResolvesTheRealReconcileModule(t *testing.T) {
 	got := inTreeVocabulary(t)
+	outOfScope, other := inTreeRoutingValues(t)
 
-	assert.Contains(t, got, reclib.CategoryOutOfScope)
-	assert.Contains(t, got, reclib.CategoryOther)
+	assert.Contains(t, got, outOfScope)
+	assert.Contains(t, got, other)
+}
+
+// inTreeRoutingValues resolves the routing values (out-of-scope, other) out of
+// the in-tree reconcile module BY CONSTANT NAME — the same in-tree source
+// TestFindingsFormatDoc_TaxonomyTableTracksCategories reads the vocabulary from.
+// Keying on reclib.CategoryOutOfScope / reclib.CategoryOther instead would key
+// routing identity on the AMBIENT module (the released go.mod pin under
+// GOWORK=off), which deadlocks the guard set across a routing-value change:
+// the table guard would demand the new value's row while the routing guards
+// demanded the old one's.
+func inTreeRoutingValues(t *testing.T) (outOfScope, other string) {
+	t.Helper()
+	declared, _, err := inTreeCategoryDecls(inTreeReconcileDir)
+	require.NoError(t, err, "the routing-value guards cannot run without the in-tree declarations at %s", inTreeReconcileDir)
+	outOfScope, ok := declared[outOfScopeConstName]
+	require.True(t, ok, "%s must be declared in %s — the rename tripwire depends on that name", outOfScopeConstName, inTreeReconcileDir)
+	other, ok = declared["CategoryOther"]
+	require.True(t, ok, "CategoryOther must be declared in %s — the routing-value guards key on that name", inTreeReconcileDir)
+	return outOfScope, other
 }
 
 // The doc tracks the in-tree vocabulary, so a member added here is documented
@@ -385,8 +406,9 @@ func TestReconcileModule_ReleasedVocabularyMatchesInTree(t *testing.T) {
 // routing values.
 func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 	rows := taxonomyTableRows(taxonomySectionLines(t))
+	outOfScope, other := inTreeRoutingValues(t)
 
-	for _, routing := range []string{reclib.CategoryOutOfScope, reclib.CategoryOther} {
+	for _, routing := range []string{outOfScope, other} {
 		found := false
 		for _, row := range rows {
 			if row.name != routing {
@@ -403,7 +425,7 @@ func TestFindingsFormatDoc_TaxonomyTableMarksRoutingValues(t *testing.T) {
 	// routing rows. A table in which every Group cell reads "Routing value" passes
 	// the loop above — this walk is what fails it.
 	for _, row := range rows {
-		isRouting := row.name == reclib.CategoryOutOfScope || row.name == reclib.CategoryOther
+		isRouting := row.name == outOfScope || row.name == other
 		assert.Equal(t, isRouting, strings.Contains(row.cells[2], taxonomyRoutingMarker),
 			"the Group cell of the %q row in %s must contain %q if and only if the category is a routing value", row.name, findingsFormatDoc, taxonomyRoutingMarker)
 	}
@@ -483,4 +505,36 @@ func TestFindingsFormatDoc_RealModulePartitionIsPinned(t *testing.T) {
 	}, blocks,
 		"the real module's block partition moved — if category.go's restructure is intended, update this pin and the %q Group column together; if it is not, restore the block boundaries",
 		taxonomyHeading)
+}
+
+// TestInTreeRoutingValues_TrackAValueChange pins the property the routing-value
+// guards were re-keyed for: a CategoryOutOfScope VALUE change must leave the
+// whole guard set satisfiable, which requires the resolution to follow the
+// in-tree declaration, not the ambient reclib constant. The mechanism is
+// exercised directly: a copy of the module with the constant's value rewritten
+// must resolve to the NEW value by name. (Under the old ambient keying the
+// guards would still have read "out-of-scope" while the vocabulary guard read
+// "oos" — the release-window deadlock the file's header says was removed.)
+func TestInTreeRoutingValues_TrackAValueChange(t *testing.T) {
+	entries, err := os.ReadDir(inTreeReconcileDir)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(inTreeReconcileDir, name))
+		require.NoError(t, err)
+		// Rewrite only the constant declaration's value, the way a real value
+		// change would land.
+		data = []byte(strings.Replace(string(data),
+			`CategoryOutOfScope = "out-of-scope"`, `CategoryOutOfScope = "oos"`, 1))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o644))
+	}
+
+	declared, _, err := inTreeCategoryDecls(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "oos", declared[outOfScopeConstName],
+		"name-keyed resolution must follow the in-tree value wherever it moves")
 }

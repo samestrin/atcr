@@ -158,13 +158,82 @@ func TestReadUnresolvedFindings_MissingIsEmpty(t *testing.T) {
 // render-only-when-nonzero guard, mirroring the "Consensus filtered: N" line.
 func TestRenderMarkdown_UnresolvedLine(t *testing.T) {
 	var withCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}))
+	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
 	assert.Contains(t, withCount.String(),
 		"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
 
 	var withoutCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}))
+	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}, 0))
 	assert.NotContains(t, withoutCount.String(), "Unresolved findings:")
+}
+
+// TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent closes the wording
+// defect the doc-shield carve-out left behind.
+//
+// "no symbol correspondence in the tracked tree" is FALSE for a doc-shielded
+// record: namedInDocs just proved the subject IS in the tree, in a file isDocExt
+// classified as prose. Reporting the two shapes under one count tells an operator
+// the finding named nothing real when it named something the extension heuristic
+// declined to treat as a declaration — the opposite conclusion, and the one that
+// gets a real finding discarded.
+func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
+	t.Run("all shielded: the absent-from-the-tree claim must not be made", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 2}, nil, DisagreementsFile{}, 2))
+		out := b.String()
+		assert.Contains(t, out, "named only in documentation")
+		assert.NotContains(t, out, "no symbol correspondence in the tracked tree; routed",
+			"every routed finding here WAS named in the tree")
+	})
+
+	t.Run("mixed: both shapes are counted separately", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 5}, nil, DisagreementsFile{}, 2))
+		out := b.String()
+		assert.Contains(t, out, "- Unresolved findings: 5")
+		assert.Contains(t, out, "3 with no symbol correspondence in the tracked tree",
+			"the split must name the count for each shape, not just the total")
+		assert.Contains(t, out, "2 named only in documentation")
+	})
+
+	t.Run("none shielded: the line is unchanged", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
+		assert.Contains(t, b.String(),
+			"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
+	})
+}
+
+// TestRenderMarkdown_DerivesTheShieldedCountFromTheRecords covers the ONE step
+// the test above cannot reach: countDocShielded itself.
+//
+// That test calls renderMarkdown directly and hands it the shielded count as an
+// int literal, so the derivation is never exercised — replacing the reason
+// comparison in countDocShielded with a predicate that matches every routed
+// record leaves the whole package green. This test goes in through the exported
+// RenderMarkdown, which derives the count from Result.Unresolved, so the wrong
+// records produce the wrong sentence and the assertion fails.
+//
+// The set is deliberately MIXED. An all-shielded or none-shielded fixture cannot
+// discriminate: both are reproduced by a filter that matches everything and by
+// one that matches nothing respectively.
+func TestRenderMarkdown_DerivesTheShieldedCountFromTheRecords(t *testing.T) {
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, Result{
+		Summary: Summary{UnresolvedFiltered: 3},
+		Unresolved: []JSONFinding{
+			// Named only in documentation — the carve-out's own shape.
+			{Severity: "HIGH", File: "docs/guide.md", Line: 1, Problem: "`DocOnlyThing` leaks",
+				UnresolvedReason: UnresolvedReasonDocShield},
+			// No symbol correspondence anywhere: no reason stamped.
+			{Severity: "HIGH", File: "internal/ghost/a.go", Line: 2, Problem: "`PhantomOne` leaks"},
+			{Severity: "LOW", File: "internal/ghost/b.go", Line: 3, Problem: "`PhantomTwo` leaks"},
+		},
+	}))
+
+	assert.Contains(t, b.String(),
+		"- Unresolved findings: 3 (2 with no symbol correspondence in the tracked tree, 1 named only in documentation; routed to unresolved.json)",
+		"the split must be derived from each record's UnresolvedReason, not from the total")
 }
 
 // TestRunReconcile_UnresolvedRecountsOutOfScope covers the post-routing

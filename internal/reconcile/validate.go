@@ -16,6 +16,15 @@ import (
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
 	resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome)
+	// namedInDocs reports whether the doc-extension heuristic explains a no-match
+	// over these anchors: at least one was named in a documentation file and
+	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
+	// tree. One anchor absent from both sets was invented, and denies the answer
+	// for the whole set — the shield waives a scorecard charge, so it may not be
+	// bought with a single surviving changelog mention. It explains a no-match
+	// after the fact — it never influences the verdict — and, like state, must not
+	// trigger a build.
+	namedInDocs(anchors []string) bool
 	// state reports what the index build achieved, for Summary.UnresolvedState.
 	// It is only meaningful after resolve has forced the build, and asking must
 	// never trigger one — the AC5 laziness is part of this contract.
@@ -133,6 +142,15 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			findings[i].PathSuggestion = suggestion
 		case outcome == tier4NoMatch && !problemTruncated:
 			unresolved = append(unresolved, i)
+			if tier4.namedInDocs(problemAnchors) {
+				// The subject IS named in the tree, just only in a file isDocExt
+				// classified as prose. The routing stands — a construct is declared
+				// in source, never in prose — but it rests on an extension
+				// heuristic, so the scorecard must not durably charge it. Every
+				// other consumer of a routed record can recover from a misfire by
+				// reading unresolved.json; the scorecard cannot.
+				findings[i].UnresolvedReason = UnresolvedReasonDocShield
+			}
 		case outcome == tier4NoMatch:
 			// The finding named more constructs than the anchor cap admits, so the
 			// set searched was a PREFIX of what it actually named — and the one

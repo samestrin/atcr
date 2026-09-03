@@ -36,12 +36,18 @@ func newLeaderboardCmd() *cobra.Command {
 	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
 	// The version is named here, not only in the docs, because the bump was made for
-	// a BENCHMARK-side change (coverage in the suite envelope) while this envelope
-	// gained no fields — and board acceptance of the new number is an unverified
-	// coordination item. A production submitter reads this help and nothing else, so
-	// omitting it would leave the one group affected by the risk uninformed. The
-	// number is formatted from the constant so one bump updates every surface.
-	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d; its field set is unchanged from 1, but a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
+	// a BENCHMARK-side change (coverage in the suite envelope) and board acceptance
+	// of the new number is an unverified coordination item. A production submitter
+	// reads this help and nothing else, so omitting it would leave the one group
+	// affected by the risk uninformed. The number is formatted from the constant so
+	// one bump updates every surface.
+	//
+	// The field set is NO LONGER unchanged from version 1: epic 35.16.6.8 added
+	// raised_denominator to each reviewer row, additively. That is stated here
+	// rather than left to the docs for the same reason the version number is — the
+	// consumer who has to accept the new key is the board this submitter publishes
+	// to, and this help is the only notice the submitter reads.
+	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d and each reviewer row carries raised_denominator (which definition of findings-raised produced its rate); a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
 	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	return cmd
 }
@@ -208,19 +214,50 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 // per corroborated finding renders as a dash for a group with zero corroborated
 // findings (undefined). The table is buffered and written once so a flush error
 // cannot emit a half table; the single write's error is propagated.
+//
+// The table deliberately aggregates RAW history: it calls scorecard.Aggregate
+// without the unresolvedEraRuns era pass that PublishedSet and TrustPriors
+// apply. That is product intent, documented in docs/scorecard.md — the local
+// leaderboard "reports what actually happened across all runs", while export
+// and trust must never blend two raised_denominator definitions. Do not "fix"
+// the asymmetry by wrapping this call.
 func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
+	// RAISED stopped counting doc-shield-routed findings (epic 35.16.6.5), so
+	// without this column a row reading RAISED 6 / CORR 100% is indistinguishable
+	// from one that raised 10 with 4 shielded — and the shielded count is what
+	// `personas list --scores` acts on, so a demotion becomes unexplainable from
+	// this table. Conditional, on the SOLO/VERIFIED precedent in renderScorecard:
+	// a store with nothing shielded prints exactly the table it printed before.
+	hasShielded := false
+	for _, r := range rows {
+		if r.FindingsDocShielded > 0 {
+			hasShielded = true
+			break
+		}
+	}
+
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "REVIEWER\tMODEL\tRUNS\tRAISED\tCORROBORATED\tCORR%\tCOST\tCOST/CORR\tLATENCY")
+	header := "REVIEWER\tMODEL\tRUNS\tRAISED\tCORROBORATED\tCORR%\tCOST\tCOST/CORR\tLATENCY"
+	if hasShielded {
+		header += "\tDOC-SHIELDED"
+	}
+	_, _ = fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		costPerCorr := "-"
 		if r.HasCostPerCorroborated {
 			costPerCorr = fmt.Sprintf("$%.4f", r.CostPerCorroborated)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%s\t%dms\n",
+		row := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%s\t%dms",
 			sanitizeCell(r.Reviewer), sanitizeCell(r.Model), r.Runs,
 			r.FindingsRaised, r.FindingsCorroborated, formatPercent(r.CorroborationRate),
 			r.TotalCostUSD, costPerCorr, r.AvgLatencyMS)
+		if hasShielded {
+			// A literal 0 rather than a dash: this reviewer HAS a measurement and
+			// it is zero, which is a different statement from "not applicable".
+			row += fmt.Sprintf("\t%d", r.FindingsDocShielded)
+		}
+		_, _ = fmt.Fprintln(tw, row)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -265,12 +302,14 @@ func runLeaderboardExportAt(cmd *cobra.Command, records []scorecard.Record, filt
 	if err != nil {
 		return err
 	}
-	// ErrNoExportRecords is the only error this call can raise now that the selection is
-	// made above: ExportSelected applies no --since window of its own, so a bad --since
-	// can no longer reach it. (It DOES drop any non-reviewer record it is handed — its
-	// own published-shape invariant — which can only ever produce that same error.) It
-	// carries its own actionable text and main() maps it to exit 1, so it is returned
-	// as-is rather than re-wrapped.
+	// Only two errors can reach here now that the selection is made above:
+	// ErrNoExportRecords and ErrNoCurrentEraRecords. ExportSelected applies no --since
+	// window of its own, so a bad --since can no longer reach it. (It DOES drop any
+	// non-reviewer record it is handed — its own published-shape invariant — which
+	// produces ErrNoExportRecords; a selection left empty by the era pass produces
+	// ErrNoCurrentEraRecords, which names the store rather than the filters.) Both
+	// carry their own actionable text and main() maps them to exit 1, so they are
+	// returned as-is rather than re-wrapped.
 	data, err := scorecard.ExportSelected(selected, now)
 	if err != nil {
 		return err

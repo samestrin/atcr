@@ -462,6 +462,34 @@ func TestBuildSubmission_ReScrubsReviewerPII(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-3", sub.Reviewers[0].Model, "email PII must be scrubbed from model")
 }
 
+// raised_denominator is a producer-identity stamp, not producer data: a benchmark
+// row's rate is category recall, so every exported reviewer row carries
+// RaisedDenominatorBenchmarkSuite regardless of what the (hand-suppliable)
+// run-result claims. An absent key (pre-sprint atcr, hand-written file) must not
+// publish 0 — an undefined era — and a claimed production era (1/2/3) must not
+// survive projection either.
+func TestBuildSubmission_StampsBenchmarkRaisedDenominator(t *testing.T) {
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{
+			{Persona: "brad", Model: "llm-large", Runs: 1},                        // key absent → 0
+			{Persona: "bruce", Model: "llm-small", Runs: 1, RaisedDenominator: 3}, // wrong era
+		},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Reviewers, 2)
+	for _, r := range sub.Reviewers {
+		assert.Equal(t, scorecard.RaisedDenominatorBenchmarkSuite, r.RaisedDenominator,
+			"every exported benchmark row is stamped with the benchmark-suite denominator, not the producer's claim")
+	}
+	// The stamp is a projection rule: the caller's RunResult is not mutated.
+	assert.Equal(t, 3, rr.Reviewers[1].RaisedDenominator, "BuildSubmission must not mutate its input")
+}
+
 // The suite envelope stamps the SHARED constant, and this pins both halves of that
 // statement: the literal version, and the fact that it is sourced from
 // scorecard.SubmissionSchema rather than a benchmark-local copy.

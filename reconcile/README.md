@@ -196,11 +196,15 @@ result safely.
   stamps it after `Reconcile` returns, and it is always `0` for a pure
   in-memory embedder.
 - **Unresolved state — `Summary.UnresolvedState`.** The count above is not
-  self-interpreting: a `0` is produced by at least six conditions and five of
+  self-interpreting: a `0` is produced by at least six conditions and most of
   them mean Tier 4 never adjudicated anything (no tracked file index, the AST
   opt-out, an eligible set over the index cap, a tracked tree with nothing
-  readable, an incomplete index that withheld every no-match verdict). Only the
-  sixth — the check ran and routed nothing — is a healthy run. `UnresolvedState`
+  readable, an incomplete index that withheld every no-match verdict). Only one
+  — the check ran and routed nothing — is a healthy run. `unavailable` is the
+  ambiguous one: it covers both "no index at all", which adjudicates nothing, and
+  a parser failure that left the declaration set empty, where an index WAS built
+  and the raw-token search still ran. So `unavailable` is compatible with a
+  NONZERO count, and a `0` under it cannot be read either way. `UnresolvedState`
   (`unresolved_state` in `summary.json`) is the discriminator, exactly as
   `ConsensusLevel` is for `ConsensusFiltered`, and is one of `applied`,
   `disabled`, `unavailable`, `incomplete`, or empty. `applied` asserts the check

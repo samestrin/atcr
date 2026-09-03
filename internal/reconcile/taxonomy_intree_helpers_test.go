@@ -116,11 +116,12 @@ func inTreeCategories(dir string) ([]string, error) {
 // are keyed on a constant's identity, not on the string that constant currently
 // holds, and neither can resolve that identity from a slice of bare values.
 //
-// The declared map — the first return value — has exactly one consumer:
-// TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule, which resolves
-// outOfScopeConstName against the real module through it rather than re-walking
-// the directory a second time. Both in-file readers (inTreeCategories and
-// inTreeCategoryBlocks) discard it.
+// The declared map — the first return value — is the name-keyed half of the
+// read: TestInTreeCategoryBlocks_AnchorPairMatchesTheRealModule resolves
+// outOfScopeConstName through it rather than re-walking the directory a second
+// time, and inTreeRoutingValues resolves both routing values through it so the
+// taxonomy doc guards key routing identity on the in-tree module instead of the
+// ambient reclib constants.
 func inTreeCategoryDecls(dir string) (map[string]string, []categoryElem, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -346,9 +347,22 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 	// value-keyed check passes it on the listed member's value.
 	listedByName := make(map[string]bool, len(vocabulary))
 	listedByValue := make(map[string]bool, len(vocabulary))
+	// A value can reach the slice under a name or as a bare literal, and the two
+	// need DIFFERENT remedies. Recording which of the two happened is what keeps
+	// the collision message below honest: a bare literal leaves no second constant
+	// to find, so "listed under a different constant" would send the maintainer
+	// hunting for something that does not exist — and a bare literal is a
+	// legitimate way to list a member (see
+	// TestInTreeCategories_BareStringLiteralElementIsAMember), so this is a state
+	// an ordinary edit reaches. The rename tripwire above already splits its
+	// message the same way; this is the same split at the forward check.
+	namedByValue := make(map[string]bool, len(vocabulary))
 	for _, elem := range vocabulary {
 		listedByName[elem.name] = true
 		listedByValue[elem.value] = true
+		if elem.name != "" {
+			namedByValue[elem.value] = true
+		}
 	}
 	for _, b := range out {
 		for _, member := range b {
@@ -356,6 +370,9 @@ func inTreeCategoryBlocks(dir string) ([][]string, error) {
 				continue
 			}
 			if listedByValue[member.value] {
+				if !namedByValue[member.value] {
+					return nil, fmt.Errorf("%s declares the value %q in a comment-marked block of %s, but the categories slice lists that value as a bare string literal — a block member must be listed under its own name, or the name-keyed exclusion folds it in silently; replace the literal with the %s constant", member.name, member.value, dir, member.name)
+				}
 				return nil, fmt.Errorf("%s declares the value %q in a comment-marked block of %s, but the categories slice lists that value under a different constant — a block member must be listed under its own name, or the name-keyed exclusion folds it in silently", member.name, member.value, dir)
 			}
 			return nil, fmt.Errorf("%q is declared in a comment-marked block of %s but absent from the categories slice", member.value, dir)

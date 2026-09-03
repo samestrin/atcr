@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/debate"
@@ -285,11 +288,21 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // on fail_on. fail_on is validated before any work (AC 04-03 Edge Case 5). A
 // review with no agent results is an error, not an empty success (Edge Case 3).
 // readUnresolvedSidecar is the Tier 4 sidecar reader handleReconcile consumes.
-// It is a package var for one reason: the handler writes the sidecar (through
-// RunReconcile) immediately before reading it, so no fixture can make the real
-// read fail without also failing the write. Swapping this is the only way to
-// exercise the read-error branch. Mirrors the newTier4Index seam documented in
-// internal/reconcile/doc.go — tests that swap it must not run in parallel.
+//
+// It no longer sources the `unresolved` field — that comes from res.Unresolved,
+// so a concurrent rewrite cannot erase this run's own records. Its remaining
+// production caller reads the sidecar purely to report whether the PERSISTED
+// artifact is readable, via UnresolvedReadError. See handleReconcile for why
+// that is a narrower job than it sounds.
+//
+// It stays a package var for two reasons. The handler writes the sidecar
+// (through RunReconcile) immediately before reading it, so no on-disk fixture
+// can make the real read fail without also failing the write — swapping this is
+// the only way to reach the read-error branch at all. And swapping it is how a
+// test stands in for a racing writer, to prove the handler no longer depends on
+// what the sidecar says by the time the result is assembled. Mirrors the
+// newTier4Index seam documented in internal/reconcile/doc.go — tests that swap
+// it must not run in parallel.
 var readUnresolvedSidecar = reconcile.ReadUnresolvedFindings
 
 func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
@@ -471,19 +484,53 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		}
 	}
 
-	// Read the sidecar back rather than reusing res.Unresolved so the field is
-	// exactly what a human would recover from disk — and so the sidecar reader
-	// has a production caller (Epic 35.16.6.5 TD: the sidecar had no read path).
-	// Best-effort like every other post-reconcile surface here: a read failure
-	// degrades to an omitted field, never a failed reconcile.
-	unresolved, uerr := readUnresolvedSidecar(dir)
+	// `unresolved` is reported from res.Unresolved — the records THIS run routed,
+	// already in hand — not from a re-read of reconciled/unresolved.json.
+	//
+	// The re-read was there so the field would be "exactly what a human would
+	// recover from disk". Nothing serializes two atcr_reconcile calls on the same
+	// review directory, so a second call could atomically rewrite the sidecar to
+	// [] between this run's reconcile and this line. That produced a result
+	// carrying unresolved_filtered > 0, no `unresolved`, and no read error — a
+	// combination UnresolvedReadError's own contract promises a client can
+	// distinguish. Reporting from memory closes that window: the count and the
+	// records now come from the same run.
+	//
+	// The sidecar is still read, but ONLY to report whether the persisted artifact
+	// is readable, and that is a NARROWER job than it sounds — narrower than the
+	// race above, and unrelated to it. Emit publishes unresolved.json through
+	// atomicfs.WriteFileAtomic, so a racing atcr_reconcile can only ever leave a
+	// valid file behind, never a torn one. UnresolvedReadError therefore fires
+	// only on corruption from outside atcr: a disk fault, a lost permission, a
+	// third-party writer. That failure mode predates this change and is not what
+	// the switch above fixed; it is still worth reporting, because the artifact a
+	// human or a later tool opens is the one on disk.
+	//
+	// Best-effort like every other post-reconcile surface here: it never fails
+	// the reconcile.
+	unresolved := res.Unresolved
 	unresolvedReadErr := ""
-	if uerr != nil {
+	unresolvedStale := ""
+	if persisted, uerr := readUnresolvedSidecar(dir); uerr != nil {
 		e.logger().Warn("unresolved sidecar unreadable", "detail", uerr.Error())
-		// Transmit the reason too. The Warn reaches the server's own logger,
-		// which a stdio client never sees, and `Unresolved` is omitempty — so
-		// without this a failed read is byte-identical to an empty sidecar.
+		// Transmit the reason too: the Warn reaches the server's own logger, which
+		// a stdio client never sees.
 		unresolvedReadErr = uerr.Error()
+	} else if unresolvedDigest(persisted) != unresolvedDigest(unresolved) {
+		// A valid read whose content disagrees with this run's routing means a
+		// concurrent atcr_reconcile rewrote the sidecar in between (atomicfs makes
+		// a torn file impossible). Signal it on its own field — never through
+		// unresolved_read_error, whose contract is that nothing failed to READ.
+		//
+		// CONTENT, not length: a racing run that routes the same NUMBER of
+		// different findings is the case a length check misses, and the field's
+		// contract is that an empty value means the on-disk artifact equals what
+		// the client was handed. The counts are still reported because they are
+		// the useful half of the message when they do differ.
+		e.logger().Warn("unresolved sidecar rewritten by a concurrent run",
+			"persisted", len(persisted), "reported", len(unresolved))
+		unresolvedStale = fmt.Sprintf("sidecar was rewritten by a concurrent run (persisted %d record(s), this run routed %d)",
+			len(persisted), len(unresolved))
 	}
 
 	out := ReconcileResult{
@@ -497,6 +544,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		UnresolvedState:     res.Summary.UnresolvedState,
 		Unresolved:          unresolved,
 		UnresolvedReadError: unresolvedReadErr,
+		UnresolvedStale:     unresolvedStale,
 		DebtPersisted:       debtPersisted,
 		DebtSkippedReason:   debtSkippedReason,
 	}
@@ -870,4 +918,64 @@ func parseOptionalSeverity(s string) (string, error) {
 		return "", nil
 	}
 	return reconcile.ParseSeverity(s)
+}
+
+// unresolvedDigest fingerprints a routed record set so unresolved_stale can
+// compare CONTENT rather than length.
+//
+// The fields are the routing identity — where the finding points, how it was
+// graded, what it says, and why Tier 4 routed it. That is enough to tell one
+// run's routing from another's, and it deliberately excludes the fields a
+// JSON round-trip does not reproduce exactly, so the persisted copy of an
+// UNCHANGED sidecar always digests equal to the in-memory records it was written
+// from. A false "stale" would be worse than the missed same-count rewrite this
+// replaces: it would tell every client its artifact was raced when nothing was.
+//
+// Order matters, and should: the sidecar preserves this run's routing order, so
+// a reordering is a rewrite.
+//
+// Every string field goes through jsonRoundTripString, which is what makes
+// "digests equal" mean "same routing" rather than "same routing AND every field
+// was already valid UTF-8". One invalid byte anywhere in File, Severity, Problem
+// or the reason would otherwise make the two sides disagree forever, reporting a
+// concurrent rewrite to every client on every run of that review dir.
+func unresolvedDigest(findings []reconcile.JSONFinding) string {
+	h := sha256.New()
+	for _, f := range findings {
+		// hash.Hash.Write never returns an error.
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00%s\x00%s\x00",
+			jsonRoundTripString(f.File), f.Line, jsonRoundTripString(f.Severity),
+			jsonRoundTripString(f.Problem), jsonRoundTripString(f.UnresolvedReason))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// jsonRoundTripString returns s as it reads AFTER the JSON round trip the sidecar
+// makes: encoding/json replaces every invalid UTF-8 byte with U+FFFD on the way
+// out, and that is the only transform a string field does not survive intact
+// (the HTML and U+2028/U+2029 escapes are escapes in the JSON TEXT — decoding
+// restores the original runes).
+//
+// One U+FFFD per invalid BYTE, matching encoding/json exactly.
+// strings.ToValidUTF8 collapses a RUN of invalid bytes into a single
+// replacement, so it does NOT agree with the artifact and cannot be used here.
+// TestJSONRoundTripString_MatchesEncodingJSON pins this against the real
+// encoder so the reimplementation cannot drift from it.
+func jsonRoundTripString(s string) string {
+	if utf8.ValidString(s) {
+		return s // the overwhelmingly common path — no allocation
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(utf8.RuneError)
+			i++
+			continue
+		}
+		b.WriteString(s[i : i+size])
+		i += size
+	}
+	return b.String()
 }

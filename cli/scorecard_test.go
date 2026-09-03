@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -195,4 +197,33 @@ func TestFormatPercent_ClampsOutOfRange(t *testing.T) {
 	require.Equal(t, "100%", formatPercent(1.0), "upper boundary unchanged")
 	require.Equal(t, "0%", formatPercent(0.0), "lower boundary unchanged")
 	require.Equal(t, "58%", formatPercent(0.58), "in-range rate rounds normally")
+}
+
+// TestRenderScorecard_ShowsDocShieldedOnlyWhenNonzero is the per-run twin of the
+// leaderboard column: the same carve-out hides the same quantity here, and this
+// table is the one an operator reads immediately after a review.
+func TestRenderScorecard_ShowsDocShieldedOnlyWhenNonzero(t *testing.T) {
+	base := scorecard.Record{
+		SchemaVersion: scorecard.SchemaVersion, RecordType: scorecard.RecordTypeReviewer,
+		RunID: "2026-09-02T00:00:00Z-a", Reviewer: "bruce", Model: "m",
+		FindingsRaised: 6, FindingsCorroborated: 6, FindingsSolo: 0, CorroborationRate: 1,
+	}
+
+	t.Run("absent when every record is zero", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, renderScorecard(&buf, []scorecard.Record{base}))
+		assert.NotContains(t, buf.String(), "DOC-SHIELDED")
+	})
+
+	t.Run("present with the count when any record is nonzero", func(t *testing.T) {
+		shielded := base
+		shielded.Reviewer = "greta"
+		shielded.FindingsDocShielded = 4
+		var buf bytes.Buffer
+		require.NoError(t, renderScorecard(&buf, []scorecard.Record{base, shielded}))
+		out := buf.String()
+		require.Contains(t, out, "DOC-SHIELDED")
+		assert.Regexp(t, `(?m)^greta\b.*\s4\s*$`, out, "greta's row must carry its shielded count")
+		assert.Regexp(t, `(?m)^bruce\b.*\s0\s*$`, out, "bruce shows 0 rather than a blank")
+	})
 }

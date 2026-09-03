@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"github.com/samestrin/atcr/internal/scorecard"
 	"math"
 	"testing"
 
@@ -239,4 +240,41 @@ func TestScore_CostDenominatorCountsFindingsNotDistinctCategories(t *testing.T) 
 		"relabelling across the family must not change the denominator")
 	assert.InDelta(t, sixOfOne[0].FindingsRaisedAvg, sixOfSix[0].FindingsRaisedAvg, 1e-9,
 		"findings_raised_avg rises in lockstep either way — the counter-signal to label spam")
+}
+
+// TestScore_RowsDeclareTheBenchmarkDenominator pins the half of the shared-type
+// contract that sharing the type does NOT give you.
+//
+// scorecard.PublicRecord is shared byte-for-byte with production
+// `leaderboard --export`, so a field added there appears on benchmark rows too —
+// but scoreOne builds the struct literally and reaches none of the production
+// export's accumulation, so an added field arrives ZERO unless this producer
+// stamps it. raised_denominator is not omitempty, so a zero would publish an
+// undefined era onto the same public board the production submissions land on.
+//
+// The value must be the benchmark one, not the production current: the numbers
+// on these rows are different quantities (corroboration_rate carries category
+// recall here), so claiming the production definition would be a false claim a
+// board would rank on.
+func TestScore_RowsDeclareTheBenchmarkDenominator(t *testing.T) {
+	got := Score([]ReviewerScore{
+		{
+			Model:   "claude-sonnet-4-6",
+			Persona: "bruce",
+			Cases: []CaseScore{
+				{Expected: []string{"correctness"}, Raised: []string{"correctness"}},
+			},
+		},
+		// A reviewer with no cases returns early from scoreOne — the era must be
+		// stamped before that return, not after the metrics are computed.
+		{Model: "gpt-5", Persona: "greta"},
+	})
+
+	require.Len(t, got, 2)
+	for _, r := range got {
+		assert.Equal(t, scorecard.RaisedDenominatorBenchmarkSuite, r.RaisedDenominator,
+			"every benchmark row must declare the rule that produced it, %s/%s included", r.Model, r.Persona)
+		assert.NotEqual(t, scorecard.RaisedDenominatorCurrent, r.RaisedDenominator,
+			"a benchmark row must not claim the production denominator: its rate is recall, not corroboration")
+	}
 }

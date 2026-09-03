@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -1038,4 +1039,44 @@ func TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasua
 			require.Len(t, env.Reviewers, 1, "the record must publish, exactly as a stored-empty identity does")
 		})
 	}
+}
+
+// TestRenderLeaderboard_ShowsDocShieldedOnlyWhenNonzero closes the surface gap the
+// doc-shield carve-out opened.
+//
+// Record.FindingsRaised stopped counting doc-shield-routed findings, so a row
+// reading RAISED 6 / CORROBORATED 6 / CORR 100% is byte-identical to a reviewer
+// that raised 10 and had 4 shielded. The shielded count is what
+// `personas list --scores` acts on (it stays in the trust denominator), so an
+// operator reading only this table cannot explain a demotion.
+//
+// The column is conditional, matching the SOLO/VERIFIED precedent in
+// renderScorecard and the nonzero-only rendering report.md already uses: a store
+// with nothing shielded prints exactly the table it printed before.
+func TestRenderLeaderboard_ShowsDocShieldedOnlyWhenNonzero(t *testing.T) {
+	base := scorecard.LeaderboardRow{
+		Reviewer: "bruce", Model: "m", Runs: 2,
+		FindingsRaised: 6, FindingsCorroborated: 6, CorroborationRate: 1,
+	}
+
+	t.Run("absent when every row is zero", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, renderLeaderboard(&buf, []scorecard.LeaderboardRow{base}))
+		assert.NotContains(t, buf.String(), "DOC-SHIELDED",
+			"a store with nothing shielded must render the table unchanged")
+	})
+
+	t.Run("present with the count when any row is nonzero", func(t *testing.T) {
+		shielded := base
+		shielded.FindingsDocShielded = 4
+		var buf bytes.Buffer
+		require.NoError(t, renderLeaderboard(&buf, []scorecard.LeaderboardRow{base, shielded}))
+		out := buf.String()
+		require.Contains(t, out, "DOC-SHIELDED", "the column must appear once any row carries a shielded count")
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		require.Len(t, lines, 3, "header plus two rows")
+		assert.Regexp(t, `\s4\s*$`, lines[2], "the shielded row must end with its count")
+		assert.Regexp(t, `\s0\s*$`, lines[1], "a row with none shows 0, not a blank the reader must interpret")
+	})
 }

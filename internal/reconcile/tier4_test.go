@@ -17,6 +17,7 @@ import (
 type fakeTier4 struct {
 	byAnchor map[string]string // anchor -> resolved file
 	inconc   map[string]bool   // anchor -> report inconclusive
+	docNamed map[string]bool   // anchor -> named only in a documentation file
 	calls    int
 	// buildState is what state() reports. Zero value means "applied": a scripted
 	// resolver always answers, which is what a fully-in-force index looks like.
@@ -31,6 +32,27 @@ func (f *fakeTier4) state() string {
 		return f.buildState
 	}
 	return reclib.UnresolvedStateApplied
+}
+
+// namedInDocs satisfies tier4Resolver. A scripted resolver has no index, so it
+// reports the ordinary case (a no-match means the anchor is nowhere at all)
+// unless a test scripts docNamed.
+//
+// It mirrors the production quantifier rather than answering on the first
+// docNamed hit: *lazySymbolIndex grants the shield only when EVERY anchor is
+// accounted for in the tree, so an anchor a test left out of docNamed stands for
+// one named nowhere and denies the answer. A fake that said "any" would let a
+// multi-anchor wiring test pass against behaviour production does not have.
+func (f *fakeTier4) namedInDocs(anchors []string) bool {
+	if len(anchors) == 0 {
+		return false
+	}
+	for _, a := range anchors {
+		if !f.docNamed[a] {
+			return false
+		}
+	}
+	return true
 }
 
 func (f *fakeTier4) resolve(_ context.Context, primary, secondary []string) (string, tier4Outcome) {
@@ -94,6 +116,53 @@ func TestTier4_PromotesDissimilarFilename(t *testing.T) {
 	assert.Equal(t, "internal/tokens/renewal.go", findings[0].File, "AC7 of 5.4 still holds: File is never rewritten")
 	assert.Empty(t, unresolved, "a resolved finding is never sidecar-routed")
 	assert.Equal(t, 1, *built)
+}
+
+// TestTier4_DocShieldRoutingIsStampedWithItsReason pins the wiring half of the
+// durable-accounting fix: a finding routed because its subject was named ONLY in
+// a documentation file must carry that reason on the record, and an ordinary
+// no-match must not.
+//
+// The reason exists for the scorecard alone. Routing is correct in both cases —
+// a construct is declared in source, never in prose — but only the second is
+// evidence the reviewer invented something, and only the second may be charged
+// to a denominator nothing ever reads back.
+func TestTier4_DocShieldRoutingIsStampedWithItsReason(t *testing.T) {
+	root := tier4Repo(t, "internal/auth/session.go", "CHANGELOG.md")
+
+	t.Run("named only in documentation", func(t *testing.T) {
+		fake := &fakeTier4{docNamed: map[string]bool{"quantumFlux": true}}
+		withFakeTier4(t, fake)
+
+		findings := []JSONFinding{{
+			File:    "internal/tokens/renewal.go",
+			Line:    31,
+			Problem: "`quantumFlux` never checks the expiry before reissuing",
+			Fix:     "compare against the issued-at claim first",
+		}}
+		unresolved, _ := validateFindingPaths(context.Background(), findings, root)
+
+		require.Equal(t, []int{0}, unresolved, "the routing itself is unchanged")
+		assert.Equal(t, UnresolvedReasonDocShield, findings[0].UnresolvedReason,
+			"a routing that rests on the doc-extension heuristic must say so")
+	})
+
+	t.Run("named nowhere at all", func(t *testing.T) {
+		fake := &fakeTier4{}
+		withFakeTier4(t, fake)
+
+		findings := []JSONFinding{{
+			File:    "internal/tokens/renewal.go",
+			Line:    31,
+			Problem: "`quantumFlux` never checks the expiry before reissuing",
+			Fix:     "compare against the issued-at claim first",
+		}}
+		unresolved, _ := validateFindingPaths(context.Background(), findings, root)
+
+		require.Equal(t, []int{0}, unresolved)
+		assert.Empty(t, findings[0].UnresolvedReason,
+			"a true no-match carries no reason: it is the ordinary case, and it IS chargeable")
+	})
 }
 
 // TestTier4_NoMatchIsSidecarEligible is AC3's input condition: all four tiers
