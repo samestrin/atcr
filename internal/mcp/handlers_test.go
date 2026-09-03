@@ -1527,3 +1527,68 @@ func TestUnresolvedDigest_SurvivesTheJSONRoundTrip(t *testing.T) {
 			"a sidecar written as [] and one read back as nil are the same routing")
 	})
 }
+
+// TestUnresolvedDigest_InvalidUTF8SurvivesTheRoundTrip closes the one field
+// transform the round-trip test above cannot see, because all its fixtures are
+// valid UTF-8.
+//
+// encoding/json replaces every INVALID UTF-8 BYTE with U+FFFD on the way out, and
+// nothing on the routing path sanitises beforehand (no utf8.Valid / ToValidUTF8
+// call exists in internal/stream, internal/reconcile, or reconcile). So a routed
+// record carrying an invalid byte in File, Severity or Problem digests one way in
+// memory and another on disk, and unresolved_stale fires as a FALSE POSITIVE on
+// every reconcile for that review dir — telling each client its artifact was
+// raced when nothing raced it. That is the LOUDER failure the digest was
+// introduced to avoid, not the quieter one it replaced.
+//
+// The two-consecutive-bytes case is the one that constrains the fix: json emits
+// ONE U+FFFD per invalid BYTE, so anything that collapses a RUN of them
+// (strings.ToValidUTF8 does exactly that) still disagrees with the artifact.
+func TestUnresolvedDigest_InvalidUTF8SurvivesTheRoundTrip(t *testing.T) {
+	for name, bad := range map[string]string{
+		"one invalid byte":        "internal/gh\xffost/a.go",
+		"two consecutive":         "internal/gh\xff\xfeost/a.go",
+		"invalid at end":          "internal/ghost/a.go\xff",
+		"truncated multi-byte":    "internal/gh\xe2\x82ost/a.go",
+		"lone surrogate encoding": "internal/gh\xed\xa0\x80ost/a.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			inMemory := []reconcile.JSONFinding{{
+				Severity: "HIGH", File: bad, Line: 9,
+				Problem: "`quantumFlux` " + bad, UnresolvedReason: bad,
+			}}
+
+			data, err := json.Marshal(inMemory)
+			require.NoError(t, err)
+			var persisted []reconcile.JSONFinding
+			require.NoError(t, json.Unmarshal(data, &persisted))
+			require.NotEqual(t, inMemory[0].File, persisted[0].File,
+				"the premise: json really does rewrite this field, so the digest has to account for it")
+
+			assert.Equal(t, unresolvedDigest(inMemory), unresolvedDigest(persisted),
+				"an unchanged sidecar must not read as rewritten just because a field held an invalid byte")
+		})
+	}
+}
+
+// TestJSONRoundTripString_MatchesEncodingJSON is the anti-drift pin on the
+// sanitiser. jsonRoundTripString reimplements encoding/json's replacement rule
+// rather than calling it, so this asserts the reimplementation against the real
+// thing for every shape that exercises the rule — including the valid strings it
+// must leave untouched.
+func TestJSONRoundTripString_MatchesEncodingJSON(t *testing.T) {
+	for _, s := range []string{
+		"", "plain ascii", "unicode é ✓ 世界",
+		"\xff", "a\xffb", "a\xff\xfeb", "\xff\xff\xff", "trailing\xff",
+		"\xe2\x82", "\xed\xa0\x80", "\xf0\x9f\x98", "\xc0\x80",
+		"mixed é\xffworld\xe2\x82ok",
+	} {
+		data, err := json.Marshal(s)
+		require.NoError(t, err)
+		var back string
+		require.NoError(t, json.Unmarshal(data, &back))
+
+		assert.Equal(t, back, jsonRoundTripString(s),
+			"jsonRoundTripString must reproduce encoding/json exactly for %q", s)
+	}
+}

@@ -941,3 +941,7 @@ func unresolvedDigest(findings []reconcile.JSONFinding) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// jsonRoundTripString is a wrong-answer stub so the RED test compiles; the GREEN
+// commit replaces it with encoding/json's actual replacement rule.
+func jsonRoundTripString(s string) string { return s }
