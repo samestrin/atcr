@@ -139,6 +139,13 @@ type Record struct {
 const (
 	raisedDenominatorPreEpic   = 1
 	raisedDenominatorAllRouted = 2
+	// raisedDenominatorRoutedExShield names era 3 in its own right, so code that
+	// means "era 3" can say so without saying "whatever is current". The two are
+	// equal today and must not be assumed to stay equal: mergeRoutedEras folds
+	// era 3 into era 2 on a proof that holds for THAT PAIR ONLY, so it keys on
+	// this name. Keyed on RaisedDenominatorCurrent instead, a bump to 4 would
+	// silently re-point the fold at an era whose equivalence nobody proved.
+	raisedDenominatorRoutedExShield = 3
 	// RaisedDenominatorCurrent is the definition every record this package writes
 	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
 	// the era filters separate the old records from the new ones automatically.
@@ -148,7 +155,7 @@ const (
 	// future era bump must check the gap rather than assume it — an era that
 	// reached 100 would be indistinguishable from a benchmark-suite row on the
 	// board.
-	RaisedDenominatorCurrent = 3
+	RaisedDenominatorCurrent = raisedDenominatorRoutedExShield
 )
 
 // RaisedDenominatorBenchmarkSuite marks a public row scored by the BENCHMARK

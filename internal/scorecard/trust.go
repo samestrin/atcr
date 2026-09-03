@@ -194,13 +194,23 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 // raisedDenominatorOf would clamp an above-current value to the current one and
 // admit exactly the record that must not be admitted.
 //
+// The source era is raisedDenominatorRoutedExShield — era 3 BY NAME, never
+// RaisedDenominatorCurrent. The equivalence argued above is a proof about the
+// 2-to-3 pair; keyed on "whatever is current" it would silently re-point at a
+// future era 4 the moment the constant moved, asserting an equivalence nobody
+// established. A bump must come back here and prove the new pair.
+//
 // The input slice is never mutated: callers hand in records read from the store
 // and must not see them rewritten underneath.
+//
+// TestMergeRoutedEras_PinsEveryElementOfItsGuard kills a mutation of each element
+// below; TestTrustPriors_AboveCurrentRecordsNeverReachThePrior pins the
+// consequence of the era arm on the prior itself.
 func mergeRoutedEras(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
 	for i := range out {
-		if out[i].RecordType != RecordTypeReviewer || out[i].RaisedDenominator != RaisedDenominatorCurrent {
+		if out[i].RecordType != RecordTypeReviewer || out[i].RaisedDenominator != raisedDenominatorRoutedExShield {
 			continue
 		}
 		out[i].FindingsRaised += out[i].FindingsDocShielded
