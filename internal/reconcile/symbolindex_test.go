@@ -1670,6 +1670,68 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 				"%q declares a name — dropping it hides a real symbol from presentInSource", body)
 		}
 	})
+
+	// declaresName's "no name at all" reject path, pinned by mutation rather than
+	// by coverage alone. It and isDeclNameRune's leading-digit clause were the ONLY
+	// added lines of the grammar rewrite that no test executed, and BOTH survived
+	// deletion with the whole package green — `if n == 0 { return true }` and
+	// `return !first` → `return true` each left `go test ./internal/reconcile/`
+	// passing.
+	//
+	// They are not decoration. Between them they are the entire defence against
+	// prose whose second token is typographic punctuation or a digit, and every
+	// line below is a sentence an .mdx page can genuinely carry. Admitting one
+	// harvests EVERY token on it into presentInSource, where — per
+	// collectExportedIdentifiers and exportDeclaringExts — a prose token can
+	// license a confident PathSuggestion that nothing downstream can undo.
+	//
+	// Each case is chosen so exactly one mutant flips it:
+	//   n == 0 → true      : the first group (no name is ever scanned)
+	//   !first → true      : the second group (a digit becomes a legal first rune,
+	//                        and the punctuator right after it then says "yes")
+	t.Run("a keyword followed by punctuation declares no name", func(t *testing.T) {
+		for _, body := range []string{
+			"type — see the guide",        // em-dash
+			"const – note the dash",       // en-dash
+			"class “Widget” is styled",    // curly double quotes
+			"interface … described below", // ellipsis
+			"type ‘Foo’ is exported",      // curly single quotes
+			"function ✓ verified",         // symbol
+			"type (see the appendix) is described",
+			"enum = the enumeration concept",
+			"namespace / module boundaries",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q names nothing — admitting it lets prose license a source presence", body)
+		}
+	})
+
+	t.Run("a digit cannot start a declared name", func(t *testing.T) {
+		// The punctuator AFTER the digit is what makes these discriminating: with
+		// the leading-digit clause relaxed, `2` scans as the name and the `=` then
+		// satisfies the grammar. Prose whose digit is followed by a bare word is
+		// rejected either way and would prove nothing.
+		for _, body := range []string{
+			"type 2 = deprecated",
+			"enum 2 = the second kind",
+			"const 3 = three",
+			"interface 4 : the fourth",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q starts with a digit, so it declares no name", body)
+		}
+		// The other half of the same clause: a digit that is NOT first is a
+		// perfectly ordinary name rune, and rejecting it would lose real symbols.
+		for _, body := range []string{
+			"const a2 = 1",
+			"let x1",
+			"class Base64 {}",
+			"type UTF8 = string",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)),
+				"%q declares a name containing a digit", body)
+		}
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
