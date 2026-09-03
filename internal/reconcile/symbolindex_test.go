@@ -1812,6 +1812,56 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
 		}
 	})
+
+	// The quoted-name arm belongs to `module` and to nothing else, and the gate
+	// that says so — `shape&declQuotedName == 0` in declaresName — was an added
+	// restriction that no test executed: deleting it left the whole package
+	// green while nine bodies flipped from rejected to accepted.
+	//
+	// The quoted fixtures in the subtest above cannot pin it. `namespace
+	// 'quoted' is not a module` and `global 'state' is shared` are rejected by
+	// followsDeclaredName's bare-word arm whether the gate is present or not,
+	// so they kill no mutant. Each body here puts a DECLARATION punctuator
+	// immediately after the closing quote, which leaves the gate as the only
+	// thing still saying no — and a quoted PHRASE is exactly the prose shape
+	// that would otherwise harvest its whole line into presentInSource.
+	t.Run("a quoted name belongs to module and to nothing else", func(t *testing.T) {
+		for _, body := range []string{
+			"namespace 'foo' {}",
+			"type 'Foo' = string",
+			"interface 'I' {}",
+			"class 'C' {}",
+			"global 'g' {}",
+			"enum 'E' {}",
+			"function 'f'()",
+			"let 'x' = 1",
+			"var 'y' = 2",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q quotes a name after a non-module keyword — only an ambient module names a string", body)
+		}
+		// The other direction, or the gate would be free to reject everything:
+		// the one keyword that DOES carry a quoted name must keep carrying it.
+		for _, body := range []string{
+			"module 'react' {}",
+			"module \"react\" {}",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is an ambient module declaration", body)
+		}
+	})
+
+	// `const enum` is ONE keyword pair, and the pair binds no variable, so it
+	// takes no type annotation — `const enum E: number` is not a TypeScript
+	// form. Passing declTypeAnnotation to its declaresName call instead of 0
+	// also left the package green, so the 0 was untested; with the annotation
+	// admitted, that sentence-shaped body reaches the `:` arm and licenses a
+	// source presence.
+	t.Run("const enum takes no type annotation", func(t *testing.T) {
+		assert.False(t, isESMExportBody([]byte("const enum E: number")),
+			"`const enum E: number` binds no variable, so the colon is prose punctuation")
+		assert.True(t, isESMExportBody([]byte("const enum Direction {}")),
+			"`const enum Direction {}` is the real form and must survive")
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
