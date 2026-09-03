@@ -1858,9 +1858,20 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	// also left the package green, so the 0 was untested; with the annotation
 	// admitted, that sentence-shaped body reaches the `:` arm and licenses a
 	// source presence.
-	t.Run("const enum takes no type annotation", func(t *testing.T) {
-		assert.False(t, isESMExportBody([]byte("const enum E: number")),
-			"`const enum E: number` binds no variable, so the colon is prose punctuation")
+	// The shape argument is a VALUE, not a checklist, so it is pinned as one.
+	// Asserting only the colon left the sibling bit free: swapping the 0 for
+	// declQuotedName kept the package green, and with that bit set
+	// `const enum 'PHRASE' {` reaches followsDeclaredName's `{` arm and harvests
+	// its whole line into presentInSource. One body per extra shape closes the
+	// argument to every non-zero value rather than to the mutants someone
+	// happened to enumerate.
+	t.Run("const enum takes no type annotation and no quoted name", func(t *testing.T) {
+		for _, body := range []string{
+			"const enum E: number", // declTypeAnnotation — the pair binds no variable
+			"const enum 'E' {}",    // declQuotedName — only an ambient module names a string
+		} {
+			assert.Falsef(t, isESMExportBody([]byte(body)), "%q is not a `const enum` form — its shape argument is 0", body)
+		}
 		assert.True(t, isESMExportBody([]byte("const enum Direction {}")),
 			"`const enum Direction {}` is the real form and must survive")
 	})
