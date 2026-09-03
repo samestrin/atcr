@@ -780,14 +780,31 @@ func isESMExportBody(body []byte) bool {
 	// also reject `export const type = 1`, a variable legitimately named `type`.
 	if rest, ok := cutExportKeyword(body, "const"); ok {
 		if inner, ok := cutExportKeyword(rest, "enum"); ok {
-			return declaresName(inner)
+			return declaresName(inner, 0)
 		}
-		return declaresName(rest)
+		return declaresName(rest, declTypeAnnotation)
 	}
-	for _, kw := range []string{"let", "var", "function", "class",
-		"type", "interface", "enum", "namespace", "module", "global"} {
-		if rest, ok := cutExportKeyword(body, kw); ok {
-			return declaresName(rest)
+	// The shape column is the point, not the keyword list. `namespace`, `module`
+	// and `global` are ordinary English nouns, so a sentence beginning with one
+	// reaches declaresName the same way a declaration does — and is then told
+	// apart only by which name forms that keyword can actually carry.
+	for _, kw := range []struct {
+		word  string
+		shape declShape
+	}{
+		{"let", declTypeAnnotation},
+		{"var", declTypeAnnotation},
+		{"function", declTypeAnnotation},
+		{"class", declTypeAnnotation},
+		{"type", declTypeAnnotation},
+		{"interface", declTypeAnnotation},
+		{"enum", declTypeAnnotation},
+		{"namespace", 0},
+		{"module", declQuotedName},
+		{"global", 0},
+	} {
+		if rest, ok := cutExportKeyword(body, kw.word); ok {
+			return declaresName(rest, kw.shape)
 		}
 	}
 	return false
@@ -807,6 +824,22 @@ func cutExportKeyword(body []byte, kw string) ([]byte, bool) {
 	return bytes.TrimLeft(rest, " \t"), true
 }
 
+// declShape says which name forms a particular binding keyword admits, beyond a
+// bare identifier and a destructuring pattern. Both members exist because the
+// keyword that does NOT admit the form is where prose gets in: every one of
+// `namespace`, `module` and `global` is an ordinary English noun, and a sentence
+// built on one is followed by exactly the punctuation a declaration would use.
+type declShape uint8
+
+const (
+	// declQuotedName admits a quoted ambient-module name — `declare module
+	// 'react' {}`. Only `module` takes one.
+	declQuotedName declShape = 1 << iota
+	// declTypeAnnotation admits a `:` immediately after the name — `const x:
+	// number`. A namespace, module or global never carries one.
+	declTypeAnnotation
+)
+
 // declaresName reports whether rest — the text after a binding keyword — is that
 // keyword's declared name followed by the grammar's own punctuation, rather than
 // the next word of an English sentence.
@@ -818,13 +851,26 @@ func cutExportKeyword(body []byte, kw string) ([]byte, bool) {
 //
 // and the rejected shape is the one prose always takes — NAME followed by another
 // bare word (`values are frozen`, `changes affect PublicThing`).
-func declaresName(rest []byte) bool {
-	// Two forms name something that is not a bare identifier: a destructuring
-	// pattern (`const { a, b } = obj`) declares its bindings without a leading
-	// name, and an ambient module declaration names a string (`declare module
-	// 'react' {}`).
-	if len(rest) > 0 && (rest[0] == '{' || rest[0] == '[' || rest[0] == '\'' || rest[0] == '"') {
+func declaresName(rest []byte, shape declShape) bool {
+	// A destructuring pattern declares its bindings without a leading name:
+	// `const { a, b } = obj`, `const [a] = arr`.
+	if len(rest) > 0 && (rest[0] == '{' || rest[0] == '[') {
 		return true
+	}
+	// An ambient module names a STRING rather than an identifier. Only `module`
+	// takes one, and the quoted name still has to be followed by the grammar's
+	// own punctuation — that is what separates the declaration
+	// `declare module 'react' {}` from the sentence
+	// `export module 'quantumFlux' is discussed below`.
+	if len(rest) > 0 && (rest[0] == '\'' || rest[0] == '"') {
+		if shape&declQuotedName == 0 {
+			return false
+		}
+		end := bytes.IndexByte(rest[1:], rest[0])
+		if end < 0 {
+			return false // unterminated quote — not a declaration
+		}
+		return followsDeclaredName(rest[end+2:], shape)
 	}
 	// `function* gen()` — the generator star sits between keyword and name.
 	if len(rest) > 0 && rest[0] == '*' {
@@ -841,13 +887,26 @@ func declaresName(rest []byte) bool {
 	if n == 0 {
 		return false // no name at all
 	}
-	after := bytes.TrimLeft(rest[n:], " \t")
+	return followsDeclaredName(rest[n:], shape)
+}
+
+// followsDeclaredName reports whether after — the text following a declared name
+// — is the grammar's own punctuation rather than the next word of an English
+// sentence.
+func followsDeclaredName(after []byte, shape declShape) bool {
+	after = bytes.TrimLeft(after, " \t")
 	if len(after) == 0 {
 		return true // `export let a`
 	}
 	switch after[0] {
-	case '=', '<', '(', '{', ':', ';', ',':
+	case '=', '<', '(', '{', ';', ',':
 		return true
+	case ':':
+		// A colon right after the name is a TYPE ANNOTATION (`const x: number`).
+		// A namespace, module or global never carries one, so for those a colon
+		// is ordinary prose punctuation — which is exactly the shape an English
+		// sentence takes: `export global state: shared across MyWorker`.
+		return shape&declTypeAnnotation != 0
 	}
 	// A heritage clause is the one place a declaration's name IS followed by a
 	// bare word: `class C extends Base {`, `interface I implements J {`.
