@@ -89,10 +89,23 @@ func modelPersonaLess(aModel, aPersona, bModel, bPersona string) bool {
 // scoreOne computes the public metrics for a single reviewer before scrubbing.
 func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	pr := scorecard.PublicRecord{
-		Model:        r.Model,
-		Persona:      r.Persona,
-		Runs:         len(r.Cases),
-		LatencyP50MS: r.LatencyP50MS,
+		Model:   r.Model,
+		Persona: r.Persona,
+		Runs:    len(r.Cases),
+		// Stamped explicitly, and NOT with the production era. PublicRecord is
+		// shared with `leaderboard --export`, but sharing the TYPE does not
+		// populate the field — a struct literal here reaches none of the
+		// production export's accumulation, so without this every benchmark row
+		// would publish `raised_denominator: 0`, an undefined era, onto the same
+		// public board.
+		//
+		// The value is the benchmark one because the numbers below are not the
+		// production quantities: corroboration_rate carries CATEGORY RECALL here
+		// and findings_raised_avg is mean findings per case. Claiming the current
+		// production definition would be false, and it is the claim a board would
+		// act on. See scorecard.RaisedDenominatorBenchmarkSuite.
+		RaisedDenominator: scorecard.RaisedDenominatorBenchmarkSuite,
+		LatencyP50MS:      r.LatencyP50MS,
 	}
 	if len(r.Cases) == 0 {
 		return pr

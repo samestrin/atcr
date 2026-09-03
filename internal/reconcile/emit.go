@@ -90,6 +90,15 @@ type JSONFinding struct {
 	// Consumers and the report layer key display off path_warning.
 	PathValid   bool   `json:"path_valid,omitempty"`
 	PathWarning string `json:"path_warning,omitempty"`
+	// UnresolvedReason records WHY the Tier 4 content check routed this finding
+	// to the sidecar, for the one consumer that cannot recover from a wrong
+	// routing. It is set only on routed records and is omitempty, so a finding
+	// that stayed in the primary stream — and every pre-35.16.6.8 findings.json —
+	// serializes byte-identically.
+	//
+	// An empty value on a routed record means the ordinary no-match: the anchors
+	// appear nowhere in the tracked tree. See reclib.UnresolvedReasonDocShield.
+	UnresolvedReason string `json:"unresolved_reason,omitempty"`
 	// PathSuggestion is the candidate-index correction for a hallucinated path
 	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
 	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
@@ -332,7 +341,7 @@ func Emit(reconciledDir string, r Result) error {
 	}{
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
-		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df) }},
+		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved)) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error {
 			if len(r.ambiguousBytes) > 0 {
@@ -499,7 +508,7 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 // redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
 	jf := r.JSONFindings()
-	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous))
+	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved))
 }
 
 // renderMarkdown is the internal implementation. It renders from the path-stamped
@@ -507,7 +516,7 @@ func RenderMarkdown(w io.Writer, r Result) error {
 // fields, Phase 2 Clarification Q1) and accepts a pre-built DisagreementsFile so
 // Emit can build the radar once and share it between report.md and
 // disagreements.json without a second O(n log n) sort pass.
-func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile) error {
+func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile, docShielded int) error {
 	inScope := make([]JSONFinding, 0, len(findings))
 	var outOfScope []JSONFinding
 	for _, m := range findings {
@@ -552,17 +561,34 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 		// Rendered UNCONDITIONALLY (unlike the count below), for the same reason
 		// Consensus level above is: a count of 0 cannot distinguish "the Tier 4
 		// content check ran and routed nothing" from "it never ran at all" — the
-		// opt-out, a missing tracked index, an over-cap or unbuildable index, and
-		// an incomplete one all produce the same 0. Guarded on non-empty only so a
-		// Summary from a pure in-memory embedder (which never runs content
-		// resolution) renders byte-identically to before.
+		// opt-out, a missing tracked index, an over-cap index, and an incomplete
+		// one all produce the same 0. (An index whose parser failed is the
+		// exception: it WAS built and can route, so its 0 means "checked and
+		// routed nothing" even though the state reads unavailable.) Guarded on
+		// non-empty only so a Summary from a pure in-memory embedder (which never
+		// runs content resolution) renders byte-identically to before.
 		fmt.Fprintf(&b, "- Unresolved check: %s\n", summary.UnresolvedState)
 	}
 	if summary.UnresolvedFiltered > 0 {
 		// Surface epic-35.16.6.5 Tier 4 routing the same way the consensus filter
 		// above surfaces its own: rendered only when nonzero, so report.md stays
 		// byte-identical on the common path where every finding cites real code.
-		fmt.Fprintf(&b, "- Unresolved findings: %d (no symbol correspondence in the tracked tree; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		//
+		// The two routed shapes are NOT the same claim and must not share one
+		// sentence. A doc-shielded record's subject IS in the tracked tree —
+		// namedInDocs proved it — just only in a file isDocExt classified as
+		// prose. Telling the reader it had "no symbol correspondence" points them
+		// at the opposite conclusion from the evidence, and the finding it
+		// describes may be entirely real.
+		switch {
+		case docShielded == 0:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (no symbol correspondence in the tracked tree; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		case docShielded >= summary.UnresolvedFiltered:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (named only in documentation, not in tracked source; routed to %s)\n", summary.UnresolvedFiltered, UnresolvedJSON)
+		default:
+			fmt.Fprintf(&b, "- Unresolved findings: %d (%d with no symbol correspondence in the tracked tree, %d named only in documentation; routed to %s)\n",
+				summary.UnresolvedFiltered, summary.UnresolvedFiltered-docShielded, docShielded, UnresolvedJSON)
+		}
 	}
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
@@ -722,4 +748,20 @@ func joinOrNone(names []string) string {
 		out += ", " + n
 	}
 	return out
+}
+
+// countDocShielded counts the routed records the doc-extension heuristic
+// explains: their subject IS named in the tracked tree, only in a file isDocExt
+// classified as prose. Summary carries no split of its own — the field lives in
+// the PUBLISHED reconcile module and cannot gain one until the go.mod pin moves
+// — so the count is derived here from the routed records and threaded into the
+// renderer.
+func countDocShielded(unresolved []JSONFinding) int {
+	n := 0
+	for _, f := range unresolved {
+		if f.UnresolvedReason == UnresolvedReasonDocShield {
+			n++
+		}
+	}
+	return n
 }

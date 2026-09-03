@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // SchemaVersion is the scorecard record schema version. It is emitted as an
@@ -50,20 +51,35 @@ const defaultRole = "reviewer"
 // reconciled/verification.json drove the run (AC 01-03) — a nil pointer omits
 // the key entirely, while a pointer to 0 still serializes (0 is a valid value).
 type Record struct {
-	SchemaVersion        int     `json:"schema_version"`
-	RecordType           string  `json:"record_type"`
-	RunID                string  `json:"run_id"`
-	Reviewer             string  `json:"reviewer"`
-	Model                string  `json:"model"`
-	Role                 string  `json:"role"`
-	FindingsRaised       int     `json:"findings_raised"`
-	FindingsCorroborated int     `json:"findings_corroborated"`
-	FindingsSolo         int     `json:"findings_solo"`
-	CorroborationRate    float64 `json:"corroboration_rate"`
-	CostUSD              float64 `json:"cost_usd"`
-	TokensIn             int     `json:"tokens_in"`
-	TokensOut            int     `json:"tokens_out"`
-	LatencyMS            int64   `json:"latency_ms"`
+	SchemaVersion        int    `json:"schema_version"`
+	RecordType           string `json:"record_type"`
+	RunID                string `json:"run_id"`
+	Reviewer             string `json:"reviewer"`
+	Model                string `json:"model"`
+	Role                 string `json:"role"`
+	FindingsRaised       int    `json:"findings_raised"`
+	FindingsCorroborated int    `json:"findings_corroborated"`
+	FindingsSolo         int    `json:"findings_solo"`
+	// FindingsDocShielded counts the routed findings this record's denominator
+	// deliberately did NOT charge: those the Tier 4 check routed because their
+	// subject was named only in a documentation-extension file (see
+	// reconcile.UnresolvedReasonDocShield).
+	//
+	// It exists so the carve-out can never be silent. The exemption is driven by
+	// the reviewer's own PROBLEM text — a reviewer who anchors a fabricated
+	// finding on any identifier that appears in a tracked README or CHANGELOG
+	// escapes the phantom charge — so a rate of 1.00 with a nonzero count here
+	// means something very different from a rate of 1.00 without one. Recording
+	// it lets a store tell those apart, and TrustPriors DOES tell them apart:
+	// shielded counts join the trust rate's denominator (trustPriorsSince), so
+	// the shield discounts the prior even though it escapes the scorecard
+	// charge. Omitted when zero.
+	FindingsDocShielded int     `json:"findings_doc_shielded,omitempty"`
+	CorroborationRate   float64 `json:"corroboration_rate"`
+	CostUSD             float64 `json:"cost_usd"`
+	TokensIn            int     `json:"tokens_in"`
+	TokensOut           int     `json:"tokens_out"`
+	LatencyMS           int64   `json:"latency_ms"`
 
 	// ConsensusLevel is the reconcile consensus level this run's counts were
 	// measured under (epic 35.9.1). It matters because FindingsRaised and
@@ -84,11 +100,107 @@ type Record struct {
 	// Unlike ConsensusLevel, an absent value here is NOT read as the current
 	// definition — absent genuinely means the other one — so TrustPriors excludes
 	// those records rather than blending them. See unresolvedEraRuns.
+	//
+	// It is a BOOL, and the denominator has now changed meaning twice, so it can
+	// no longer carry the era on its own — see RaisedDenominator below, which is
+	// what a new reader should use. This field stays because existing readers and
+	// stores depend on it, and because "true" is still exactly right about the one
+	// thing it claims: routed findings are in the denominator.
 	RaisedIncludesUnresolved bool `json:"raised_includes_unresolved,omitempty"`
+	// RaisedDenominator identifies WHICH definition of FindingsRaised this record
+	// was computed under. It supersedes RaisedIncludesUnresolved, which is a bool
+	// against a question that turned out to have more than two answers.
+	//
+	// See RaisedDenominatorCurrent for the values. An absent field means the
+	// record predates this discriminator, and its era is then read from
+	// RaisedIncludesUnresolved: true is denominator 2, absent is 1. That fallback
+	// is what lets an existing store keep working rather than being blacked out.
+	//
+	// omitempty: a zero is not a version, and a record written before this field
+	// existed must serialize as it always did.
+	RaisedDenominator int `json:"raised_denominator,omitempty"`
 
 	FindingsVerified    *int     `json:"findings_verified,omitempty"`
 	FindingsRefuted     *int     `json:"findings_refuted,omitempty"`
 	SurvivedSkepticRate *float64 `json:"survived_skeptic_rate,omitempty"`
+}
+
+// Denominator definitions for Record.FindingsRaised. Each value is a distinct
+// rule for what counts, and a rate averaged across two of them measures neither
+// — which is the whole reason the number is versioned rather than described.
+//
+//   - 1: routed findings are EXCLUDED. Everything written before Epic
+//     35.16.6.5. Never stamped; it is what an absent discriminator means.
+//   - 2: routed findings are INCLUDED (Epic 35.16.6.5). Stamped as
+//     RaisedIncludesUnresolved=true, before RaisedDenominator existed.
+//   - 3: routed findings are included EXCEPT those routed by the
+//     documentation-extension heuristic (Epic 35.16.6.8). Those are counted in
+//     FindingsDocShielded instead. This is the current definition.
+const (
+	raisedDenominatorPreEpic   = 1
+	raisedDenominatorAllRouted = 2
+	// raisedDenominatorRoutedExShield names era 3 in its own right, so code that
+	// means "era 3" can say so without saying "whatever is current". The two are
+	// equal today and must not be assumed to stay equal: mergeRoutedEras folds
+	// era 3 into era 2 on a proof that holds for THAT PAIR ONLY, so it keys on
+	// this name. Keyed on RaisedDenominatorCurrent instead, a bump to 4 would
+	// silently re-point the fold at an era whose equivalence nobody proved.
+	raisedDenominatorRoutedExShield = 3
+	// RaisedDenominatorCurrent is the definition every record this package writes
+	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
+	// the era filters separate the old records from the new ones automatically.
+	//
+	// RESERVED RANGE: production eras live in 1..99. RaisedDenominatorBenchmarkSuite
+	// (100) shares this one un-namespaced int domain on the frozen public key, so a
+	// future era bump must check the gap rather than assume it — an era that
+	// reached 100 would be indistinguishable from a benchmark-suite row on the
+	// board.
+	RaisedDenominatorCurrent = raisedDenominatorRoutedExShield
+)
+
+// RaisedDenominatorBenchmarkSuite marks a public row scored by the BENCHMARK
+// SUITE rather than by a production reconcile. It is a different axis, not a
+// newer era, and the numeric gap is there to make that obvious: never compare it
+// ordinally with the values above.
+//
+// A benchmark row's numbers are not the production ones under an older rule —
+// they are different quantities. benchmark.scoreOne puts CATEGORY RECALL in
+// corroboration_rate and mean findings-per-case in findings_raised_avg; nothing
+// there is routed, corroborated, or reconciled at all. Both producers publish
+// onto the same board through the same frozen PublicRecord, so without this the
+// board would be averaging recall against corroboration and calling the result
+// one number.
+//
+// This is stamped rather than left absent because an absent value on a public row
+// is the exact silence raised_denominator exists to remove. The envelope's own
+// `source` field already separates the two producers; this makes each ROW
+// self-describing too, which is what a board consumer reading the reviewers array
+// actually has in hand.
+const RaisedDenominatorBenchmarkSuite = 100
+
+// raisedDenominatorOf reports which definition r's FindingsRaised was computed
+// under, reading the modern field when present and falling back to the bool that
+// preceded it. Never returns 0: a record always belongs to some era, and treating
+// "unmarked" as its own class would strand every pre-existing store.
+func raisedDenominatorOf(r Record) int {
+	// Clamped, not trusted — but the clamp is now only a backstop. Both callers
+	// exclude above-current records before asking (unresolvedEraRuns' two loops,
+	// and reviewerAcc.add behind ExportSelected's own era pass), so no in-tree
+	// path reaches this branch; it holds the contract for a future caller that
+	// asks directly. For those, an out-of-range value still reads as the current
+	// definition rather than defining a cohort of its own.
+	// Pinned by TestRaisedDenominatorOf_ClampsAboveCurrent, which is the only
+	// thing that can fail when the branch is deleted.
+	if r.RaisedDenominator > RaisedDenominatorCurrent {
+		return RaisedDenominatorCurrent
+	}
+	if r.RaisedDenominator > 0 {
+		return r.RaisedDenominator
+	}
+	if r.RaisedIncludesUnresolved {
+		return raisedDenominatorAllRouted
+	}
+	return raisedDenominatorPreEpic
 }
 
 // Finding is the minimal per-finding input the emitter needs to compute
@@ -99,6 +211,11 @@ type Finding struct {
 	Line      int
 	Problem   string
 	Reviewers []string
+	// UnresolvedReason is set only on records in EmitInput.UnresolvedFindings and
+	// carries the Tier 4 routing reason verbatim from
+	// reconcile.JSONFinding.UnresolvedReason. Empty means the ordinary no-match:
+	// the anchors appear nowhere in the tracked tree.
+	UnresolvedReason string
 }
 
 // ReviewerMeta carries the per-reviewer identity/usage sourced from the fan-out's
@@ -154,7 +271,17 @@ type EmitInput struct {
 	// check routed OUT of the primary stream (reconcile.Result.Unresolved): their
 	// cited file does not exist and the constructs their prose names are declared
 	// nowhere in the tracked tree. They are counted in FindingsRaised and NEVER in
-	// FindingsCorroborated.
+	// FindingsCorroborated — with one carve-out, below.
+	//
+	// THE CARVE-OUT: a record whose UnresolvedReason is
+	// reconcile.UnresolvedReasonDocShield is NOT counted in FindingsRaised. Its
+	// subject WAS named in the tree, in a file the doc-extension heuristic
+	// classified as prose, so being routed is not by itself fabrication evidence.
+	// Every other consumer of a routed record recovers from a heuristic misfire by
+	// reading unresolved.json back; this store never does, so a wrong charge here
+	// stands for the 180-day window. Those records are counted separately in
+	// Record.FindingsDocShielded, and their reviewers are still registered — see
+	// the filter in Emit.
 	//
 	// They must be counted, and they must be counted this way. Routing removes
 	// them from Findings before this emitter runs, so leaving them out would
@@ -205,14 +332,50 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	agg.RecordType = RecordTypeAggregate
 	agg.RunID = in.RunID
 	agg.ConsensusLevel = in.ConsensusLevel
+	// Stamped for the same reason, and by the same rule, as the per-reviewer
+	// records below: the flag describes the DENOMINATOR on the record carrying
+	// it, and agg.FindingsRaised is the sum of per-reviewer denominators, every
+	// one of which was computed under the current definition. Omitting it
+	// labelled every aggregate line pre-epic while it carried post-epic numbers.
+	// Latent today — ApplyFilters and Aggregate both drop RecordTypeAggregate —
+	// but the JSONL is read by things this package does not control.
+	agg.RaisedIncludesUnresolved = true
+	agg.RaisedDenominator = RaisedDenominatorCurrent
 	var aggVerified, aggRefuted int
+
+	// A routed finding is charged to its reviewer's denominator because being
+	// routed IS the fabrication evidence. That holds only where the routing
+	// itself is evidence. A doc-shield routing is not: it says the subject was
+	// named in the tree, in a file classified as prose by its EXTENSION — a
+	// heuristic, and the one this sprint had to correct for .mdx. Every other
+	// consumer recovers from a misfire by reading unresolved.json back; the
+	// scorecard never reads it back, so a wrong charge here is permanent and
+	// moves trustExempt/demoteByTrust on unrelated runs for 180 days.
+	//
+	// Excluded from the COUNT, not from the input: EmitForReconcile registers
+	// every routed record's reviewers into in.Reviewers before calling here (see
+	// reconcile.go), so a reviewer whose every finding was doc-shield-routed still
+	// gets a record rather than vanishing. Emit itself iterates in.Reviewers only,
+	// so a direct caller that supplies UnresolvedFindings without populating
+	// Reviewers gets no record for them — that is the caller's contract, not a
+	// guarantee this filter makes.
+	chargeableUnresolved := make([]Finding, 0, len(in.UnresolvedFindings))
+	docShielded := make([]Finding, 0)
+	for _, u := range in.UnresolvedFindings {
+		if u.UnresolvedReason == reconcile.UnresolvedReasonDocShield {
+			docShielded = append(docShielded, u)
+			continue
+		}
+		chargeableUnresolved = append(chargeableUnresolved, u)
+	}
 
 	for _, name := range names {
 		meta := in.Reviewers[name]
 		raised, corroborated := reviewerCounts(name, in.Findings)
 		// Routed phantoms add to the denominator only — see UnresolvedFindings.
-		routedRaised, _ := reviewerCounts(name, in.UnresolvedFindings)
+		routedRaised, _ := reviewerCounts(name, chargeableUnresolved)
 		raised += routedRaised
+		shielded, _ := reviewerCounts(name, docShielded)
 		rec := Record{
 			SchemaVersion: SchemaVersion,
 			// Stamped unconditionally, not only when UnresolvedFindings is
@@ -221,6 +384,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// uses the current one. Stamping it only when routing happened would
 			// make an ordinary clean run indistinguishable from a pre-epic record.
 			RaisedIncludesUnresolved: true,
+			RaisedDenominator:        RaisedDenominatorCurrent,
 			RecordType:               RecordTypeReviewer,
 			RunID:                    in.RunID,
 			ConsensusLevel:           in.ConsensusLevel,
@@ -230,6 +394,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			FindingsRaised:           raised,
 			FindingsCorroborated:     corroborated,
 			FindingsSolo:             raised - corroborated,
+			FindingsDocShielded:      shielded,
 			CorroborationRate:        ratio(corroborated, raised),
 			CostUSD:                  llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
 			TokensIn:                 meta.TokensIn,
@@ -247,6 +412,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 
 		agg.FindingsRaised += rec.FindingsRaised
+		agg.FindingsDocShielded += rec.FindingsDocShielded
 		agg.FindingsCorroborated += rec.FindingsCorroborated
 		agg.FindingsSolo += rec.FindingsSolo
 		agg.CostUSD += rec.CostUSD

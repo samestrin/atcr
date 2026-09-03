@@ -802,10 +802,18 @@ func TestBuildSubmission_DoesNotPublishPerReviewerVocabulary(t *testing.T) {
 }
 
 // AC1, frozen-schema half. scorecard.PublicRecord is the schema shared byte-for-byte
-// between `benchmark export` and production `leaderboard --export`; this epic adds a
-// per-reviewer diagnostic and must not have reached for that type to carry it. The key
-// set is enumerated literally so ANY addition — not just this epic's — fails here and
-// has to be a deliberate edit.
+// between `benchmark export` and production `leaderboard --export`; epic 35.16.6.2
+// adds a per-reviewer diagnostic and must not have reached for that type to carry it.
+// The key set is enumerated literally so ANY addition — not just that epic's — fails
+// here and has to be a deliberate edit.
+//
+// DELIBERATE EDIT, epic 35.16.6.8: raised_denominator was added. It is not a
+// diagnostic; it says which definition of "findings raised" produced this row's
+// rate, and without it two submitters computing the rate under different rules are
+// ranked against each other on the same board. It is on this type precisely BECAUSE
+// the type is shared — a field on either envelope struct would reach one producer
+// only, and a benchmark submission and a production submission land on the same
+// board. This test firing is what proved the inheritance rather than assuming it.
 //
 // The enumeration is derived from the TYPE's json tags, not from a marshalled
 // instance: a new field tagged omitempty and left at its zero value by a hand-built
@@ -831,6 +839,7 @@ func TestPublicRecord_JSONKeySetIsUnchangedByThisEpic(t *testing.T) {
 		"latency_p50_ms",
 		"model",
 		"persona",
+		"raised_denominator",
 		"runs",
 		"survived_skeptic_rate",
 	}, keys, "the frozen public reviewer schema gained or lost a column")

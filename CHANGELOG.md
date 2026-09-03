@@ -1,3 +1,17 @@
+## [35.16.6.8] - 2026-09-02
+
+### Fixed
+- Fixed a Tier-4 content-check gap where a finding named only in a documentation file (e.g. `CHANGELOG.md`) could still receive a confident path suggestion, even though the shield that judges presence had already been narrowed to exclude doc-only mentions.
+- Fixed misclassification of `.mdx`/`.adoc`/`.rst`/`.txt` files in the Tier-4 index: a genuine code declaration inside a `.mdx` export block is now recognized, instead of being routed out as a phantom finding and durably charged against the reviewer's corroboration rate.
+- Fixed the index `state()` ordering so a run that both lost its parser and its declaration set now reports `incomplete` rather than the misleading `unavailable`, and corrected the published contract wording for all three affected surfaces.
+- Fixed a race window in the MCP `atcr_reconcile` tool where a concurrent reconcile run could rewrite the on-disk unresolved-findings sidecar mid-request, and documented the diagnostic fields the tool now reports.
+- Fixed scorecard era tracking so every emitted record (reviewer and aggregate) carries a consistent era classification, closing a gap where corroboration rates could silently blend pre- and post-epic denominator definitions.
+
+### Changed
+- Documented the `unresolved_reason` field (including `doc_shield`) and the `unresolved` state semantics across `docs/code-review-backend.md`, `docs/scorecard.md`, `docs/benchmark.md`, and the published `reconcile/` module's godoc.
+
+*Shipped via /execute-sprint (sprint 35.16.6.8)*
+
 ## [Technical Debt] - 2026-09-01
 
 ### Fixed
@@ -11,7 +25,7 @@
 
 ### Fixed
 - **The `out-of-scope` exemption in the CATEGORY doc-drift guard now resolves from the constant, not from two literals that could disagree.** The guard that keeps `docs/findings-format.md`'s Group column honest against `reconcile/category.go` wrote the same exemption twice in two vocabularies — once by constant NAME in the block walk, once by string VALUE in the slice cross-check — and neither side resolved the actual constant, so the two halves could drift in both directions. Changing only `CategoryOutOfScope`'s value made the guard unsatisfiable, with an error whose stated remedy was a provable no-op; changing only its name opened a silent hole that let `out-of-scope` enter the partition while two documented invariants quietly became false. Both sides are now keyed on the constant's identity, and the routing value reaching the vocabulary under any other name is a loud error naming the constant that supplied it. The published `reconcile` module is untouched, and the partition it yields is byte-identical.
-- **The release-lag CI step asserts that its test actually ran.** It previously grepped for `no tests to run`, which covers a renamed or moved test but not a package stripped of its test files — `go test` prints `[no test files]` there and exits 0, so the annotation disarmed itself silently. The step now requires an anchored `--- PASS:`/`--- SKIP:` line for the test's own name, which covers both cases and does not accept a rename that merely keeps the old name as a prefix.
+- **The release-lag CI step asserts that its test actually ran.** It previously grepped for `no tests to run`, which covers a renamed or moved test but not a package stripped of its test files — `go test` prints `[no test files]` there and exits 0, so the annotation disarmed itself silently. The step now reads `go test -json` and requires a pass or skip Action for the test's exact name, which covers both cases and does not accept a rename that merely keeps the old name as a prefix.
 - **A `categories` slice fault no longer masquerades as a `category.go` block fault.** The whole-directory read is wrapped, so an unparseable sibling file or a missing slice is distinguishable at the doc-table assertion that surfaces it.
 
 ### Changed

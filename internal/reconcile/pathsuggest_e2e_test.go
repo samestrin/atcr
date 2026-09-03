@@ -238,3 +238,85 @@ func TestRunReconcile_Tier4DisabledEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, unresolved)
 }
+
+// TestRunReconcile_DocShieldReasonEndToEnd joins the two halves the unit tests
+// pin separately: the real lazySymbolIndex decides the routing, and the reason it
+// stamps has to be computed from the SAME anchors that decided it.
+//
+// Both halves are green in isolation with a scripted resolver on one side and a
+// direct namedInDocs call on the other, so a mismatch between the anchor set
+// resolve judged and the set namedInDocs was asked about would never show up.
+// This drives one finding through RunReconcile against a real git repo whose only
+// mention of the subject is a CHANGELOG line, and reads the reason off the
+// sidecar record.
+func TestRunReconcile_DocShieldReasonEndToEnd(t *testing.T) {
+	root := gitRepoWithFiles(t, "internal/auth/validate.go", "CHANGELOG.md")
+	// gitRepoWithFiles writes placeholder content; the index reads from disk, so
+	// overwrite with the content this test is actually about. Tracked-ness comes
+	// from git ls-files and is unaffected.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "auth", "validate.go"),
+		[]byte("package auth\n\nfunc Validate() error { return nil }\n"), 0o644))
+
+	reviewDir := t.TempDir()
+	sources := filepath.Join(reviewDir, "sources")
+	writeFindings(t, sources, "greta/findings.txt",
+		"HIGH|internal/tokens/renewal.go:12|`quantumFlux` never checks the expiry|compare the issued-at claim first|security|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, res.Unresolved, 1, "a subject declared nowhere in source is routed")
+	assert.Equal(t, UnresolvedReasonDocShield, res.Unresolved[0].UnresolvedReason,
+		"the subject IS in the tree, in the changelog: the routing rests on the doc-extension heuristic and must say so")
+
+	// The reason rides the persisted sidecar, which is what the scorecard bridge
+	// and any later reader actually see.
+	sidecar, err := ReadUnresolvedFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, sidecar, 1)
+	assert.Equal(t, UnresolvedReasonDocShield, sidecar[0].UnresolvedReason)
+}
+
+// TestRunReconcile_DocShieldDeniedWhenAnAnchorIsInvented is the negative half of
+// TestRunReconcile_DocShieldReasonEndToEnd, driven through the same real index.
+//
+// A finding that names two constructs — one surviving only in a CHANGELOG line,
+// one nowhere in the tree — is still ROUTED (neither is declared in source), but
+// the doc-extension heuristic explains only half of it. The other half is an
+// invented construct, which is exactly what the scorecard's FindingsRaised
+// denominator exists to charge. Stamping doc_shield here would exempt the whole
+// finding on the strength of one token that a release happened to leave in a
+// changelog, so the reason must stay EMPTY and the record stay chargeable.
+func TestRunReconcile_DocShieldDeniedWhenAnAnchorIsInvented(t *testing.T) {
+	root := gitRepoWithFiles(t, "internal/auth/validate.go", "CHANGELOG.md")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "auth", "validate.go"),
+		[]byte("package auth\n\nfunc Validate() error { return nil }\n"), 0o644))
+
+	reviewDir := t.TempDir()
+	sources := filepath.Join(reviewDir, "sources")
+	writeFindings(t, sources, "greta/findings.txt",
+		"HIGH|internal/tokens/renewal.go:12|`quantumFlux` hands `phantomWidget` an expired claim|compare the issued-at claim first|security|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, res.Unresolved, 1, "neither construct is declared in source, so the finding is routed")
+	assert.Empty(t, res.Unresolved[0].UnresolvedReason,
+		"`phantomWidget` is in neither the source nor the doc set: the finding invented a construct "+
+			"and must be charged, not shielded by its co-anchor's changelog mention")
+
+	sidecar, err := ReadUnresolvedFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, sidecar, 1)
+	assert.Empty(t, sidecar[0].UnresolvedReason, "the persisted record is what the scorecard bridge reads")
+}

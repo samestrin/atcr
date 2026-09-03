@@ -75,13 +75,44 @@ const (
 	// UnresolvedStateUnavailable means Tier 4 was in force but could not reach a
 	// usable index — over the file cap, nothing in the tracked tree readable, no
 	// root-contained file, or a parser failure that left the declaration set
-	// empty. Nothing was resolved, and no finding was routed.
+	// empty. Nothing was resolved: with no declarations there is no file to point
+	// a suggestion at.
+	//
+	// It does NOT mean nothing was routed. In the parser-failure case an index
+	// WAS built, so the raw-token search still ran and findings naming constructs
+	// absent from the tree are still routed to the sidecar. A nonzero routed
+	// count alongside this state is expected, not a contradiction. Only the
+	// no-index cases route nothing, and they are not distinguishable from this
+	// value alone.
 	UnresolvedStateUnavailable = "unavailable"
 	// UnresolvedStateIncomplete means the index was built but some eligible
 	// tracked file could not be read, so a region of the tree went unsearched and
-	// every no-match verdict was withheld. Resolutions were still available.
+	// every no-match verdict was withheld. No finding was routed under this
+	// state, and none could be.
+	//
+	// Incomplete outranks unavailable: a run that both went unread in part and
+	// lost its declaration set reports incomplete, because the unread region is
+	// what withheld the verdicts. (In atcr's own producer that combination also
+	// increments both index-health counters — see docs/metrics.md; that is
+	// atcr-internal instrumentation, not a property of this value.)
 	UnresolvedStateIncomplete = "incomplete"
 )
+
+// UnresolvedReasonDocShield marks a finding routed because its PROBLEM anchors
+// were named ONLY in a documentation-extension file. That routing rests on a
+// heuristic — an extension is not a reliable proxy for "cannot declare", which
+// is the whole of the .mdx correction — so the finding is preserved in
+// unresolved.json like any other routed record but is NOT charged to the
+// reviewer's scorecard denominator. Nothing reads unresolved.json back into the
+// scorecard, so that charge is the one consequence of a misfire that cannot be
+// undone later.
+//
+// It lives in the PUBLISHED module beside the UnresolvedState constants because
+// it belongs to the same serialized vocabulary: "doc_shield" is a wire value in
+// reconciled/unresolved.json, documented as a public artifact field in
+// docs/code-review-backend.md, so an external consumer can reference it
+// symbolically rather than hard-coding the string.
+const UnresolvedReasonDocShield = "doc_shield"
 
 // Summary is the run-stats record.
 type Summary struct {

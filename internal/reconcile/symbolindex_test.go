@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -608,8 +611,8 @@ func TestSymbolIndex_ZeroEligibleFilesIncrementsUnavailable(t *testing.T) {
 
 // TestSymbolIndex_NonParserOnlyTreeIsStillSearchable pins the counterpart the
 // test above used to contradict: a tracked tree of only non-parser-language
-// files is a perfectly searchable tree. Its raw tokens feed `present`, so the
-// index is available (no unavailable counter), a construct named in it is real
+// files is a perfectly searchable tree. Its raw tokens feed `presentInSource`, so
+// the index is available (no unavailable counter), a construct named in it is real
 // code, and only an anchor absent from all of it is a no-match.
 func TestSymbolIndex_NonParserOnlyTreeIsStillSearchable(t *testing.T) {
 	root := t.TempDir()
@@ -631,17 +634,19 @@ func TestSymbolIndex_NonParserOnlyTreeIsStillSearchable(t *testing.T) {
 	assert.Equal(t, tier4NoMatch, outcome, "the tree was searched, and the anchor is genuinely absent")
 }
 
-// TestSymbolIndex_UnparsedLanguageStillFeedsPresent pins the polyglot hole:
-// eligiblePaths used to drop every tracked file whose extension has no parser
-// language BEFORE the index was built, so Ruby, Swift, Scala, Elixir, SQL,
-// Terraform, YAML and Markdown were structurally invisible to `present` while
+// TestSymbolIndex_UnparsedLanguageStillFeedsPresentInSource pins the polyglot
+// hole: eligiblePaths used to drop every tracked file whose extension has no
+// parser language BEFORE the index was built, so Ruby, Swift, Scala, Elixir, SQL,
+// Terraform and YAML were structurally invisible to the raw-token set while
 // `complete` stayed true. A finding whose construct genuinely lives in one of
 // those files, but whose citation names a non-existent parser-language path, then
 // reached tier4NoMatch and was routed out of findings.json as fabricated.
 //
-// Every tracked file now feeds the raw-token scan; only byName keeps the parser
-// filter.
-func TestSymbolIndex_UnparsedLanguageStillFeedsPresent(t *testing.T) {
+// Every tracked NON-DOCUMENTATION file now feeds the raw-token scan; only byName
+// keeps the parser filter. Documentation is excluded on purpose and by a
+// different rule (isDocExt) — prose names constructs it does not declare, which
+// is what TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins.
+func TestSymbolIndex_UnparsedLanguageStillFeedsPresentInSource(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "config.rb"),
@@ -669,8 +674,8 @@ func TestSymbolIndex_UnparsedLanguageStillFeedsPresent(t *testing.T) {
 // TestSymbolIndex_BinaryFileSkippedWithoutHole pins the bound on the scan above.
 // Tracked binaries (this repo carries ~31MB of embedded .wasm parser plugins)
 // must not be token-scanned: the cost is real and their byte noise would inflate
-// `present` with tokens that no reviewer ever named. Skipping one is NOT a hole
-// either — no source construct is declared in a binary — so `complete` stays
+// `presentInSource` with tokens that no reviewer ever named. Skipping one is NOT
+// a hole either — no source construct is declared in a binary — so `complete` stays
 // true and the no-match verdict remains available.
 func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
 	root := t.TempDir()
@@ -685,7 +690,7 @@ func TestSymbolIndex_BinaryFileSkippedWithoutHole(t *testing.T) {
 
 	_, outcome := lz.resolve(context.Background(), []string{"embeddedBinaryToken"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome,
-		"a binary's byte noise must not enter `present`, and skipping it must not withhold the verdict")
+		"a binary's byte noise must not enter `presentInSource`, and skipping it must not withhold the verdict")
 
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome)
@@ -855,7 +860,7 @@ func TestContainedIndexPath_ExitCoverage(t *testing.T) {
 // first binarySniffBytes are inspected, so a NUL past that window is not seen.
 // That is the deliberate trade — an unbounded scan of every tracked file is the
 // cost this cap exists to avoid — and the miss is in the SAFE direction: the file
-// is token-scanned, which over-collects into `present` and can only withhold a
+// is token-scanned, which over-collects into `presentInSource` and can only withhold a
 // no-match verdict, never manufacture one.
 func TestIsBinaryContent_SniffWindow(t *testing.T) {
 	assert.False(t, isBinaryContent([]byte("package net\n\nfunc DialPeer() {}\n")),
@@ -872,47 +877,149 @@ func TestIsBinaryContent_SniffWindow(t *testing.T) {
 		"a NUL past the sniff window is not seen — bounded on purpose, and safe: the file is merely scanned")
 }
 
-// TestSymbolIndex_OversizeFileSkippedWithoutHole pins the single-file read cap.
+// TestSymbolIndex_OversizeFileSkippedWithoutHole pins the single-file read cap,
+// in both of the halves it actually has.
 //
 // The index build reads EVERY contained tracked file, so one checked-in artifact
 // — a dataset, a dump, a model weight — is otherwise pulled into memory whole on
 // every build. Skipping it is not a hole for the same reason a binary is not: a
 // reviewer does not name a source construct inside a multi-megabyte blob, so the
 // no-match verdict stays available.
+//
+// The VERDICT half above is not enough on its own, and the open-count half below
+// is why. readIndexSource refuses an over-cap file anyway, through its
+// sniff-window read and io.LimitReader race guard, so deleting the build-side
+// Lstat skip changes no verdict and every assertion here would still pass — a
+// guard nothing can distinguish from its absence. What the skip actually buys is
+// never OPENING the file: up to maxSourceFileBytes of read avoided per over-cap
+// file, on a loop that walks the whole tracked tree. An open count is the only
+// observable form of that, so the openIndexSource seam is swapped here to take
+// one. That is also why this test must not call t.Parallel.
+//
+// The fixture is a .go file, not the .txt it used to be: .txt is a docExt, so
+// its tokens never reach presentInSource whether the cap skips it or not, and
+// the no-match assertion below would have held for a reason that has nothing to
+// do with the cap.
 func TestSymbolIndex_OversizeFileSkippedWithoutHole(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o755))
-	// Text (no NUL, so the binary sniff does not catch it) and over the cap.
+	// Text (no NUL, so the binary sniff does not catch it either) and over the cap
+	// by one byte — the boundary itself must not be skipped, only what exceeds it.
 	huge := make([]byte, maxSourceFileBytes+1)
 	for i := range huge {
 		huge[i] = 'a'
 	}
-	copy(huge, []byte("oversizeDatasetToken\n"))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "dump.txt"), huge, 0o644))
+	copy(huge, []byte("package data\n\nvar oversizeDatasetToken = 1\n"))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "dump.go"), huge, 0o644))
 	writeTracked(t, root, "internal/net/pool.go")
 
+	// Keyed by suffix, not by the absolute path this test built: containedIndexPath
+	// resolves symlinks, and a macOS t.TempDir() lives under /var -> /private/var.
+	var mu sync.Mutex
+	opens := map[string]int{}
+	prevOpen := openIndexSource
+	openIndexSource = func(abs string) (*os.File, error) {
+		mu.Lock()
+		opens[filepath.ToSlash(abs)]++
+		mu.Unlock()
+		return prevOpen(abs)
+	}
+	t.Cleanup(func() { openIndexSource = prevOpen })
+	countFor := func(relsuffix string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		total := 0
+		for abs, n := range opens {
+			if strings.HasSuffix(abs, relsuffix) {
+				total += n
+			}
+		}
+		return total
+	}
+
 	var calls int32
-	lz := newLazySymbolIndex(root, []string{"data/dump.txt", "internal/net/pool.go"})
+	lz := newLazySymbolIndex(root, []string{"data/dump.go", "internal/net/pool.go"})
 	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
 
 	_, outcome := lz.resolve(context.Background(), []string{"oversizeDatasetToken"}, nil)
 	assert.Equal(t, tier4NoMatch, outcome,
-		"an over-cap file must not enter `present`, and skipping it must not withhold the verdict")
+		"an over-cap file must not enter `presentInSource`, and skipping it must not withhold the verdict")
 
 	got, outcome := lz.resolve(context.Background(), []string{"DialPeer"}, nil)
 	assert.Equal(t, tier4Resolved, outcome, "the rest of the tree must still resolve")
 	assert.Equal(t, "internal/net/pool.go", got)
+
+	mu.Lock()
+	distinct := len(opens)
+	mu.Unlock()
+	require.Equal(t, 1, distinct,
+		"exactly one path may be opened; asserting the SET keeps the suffix matching below unambiguous")
+	assert.Zero(t, countFor("data/dump.go"),
+		"an over-cap file must be skipped on its Lstat size, never opened: the skip is a read the build does not pay")
+	assert.Equal(t, 1, countFor("internal/net/pool.go"),
+		"the seam must be wired, and each eligible file read exactly once per build")
+}
+
+// TestSymbolIndex_AtCapSizeFileIsStillRead is the boundary companion that makes
+// the over-cap assertion above mean what it says, mirroring the pairing the
+// file-COUNT cap already has (TestSymbolIndex_FileCapDisablesTier4 at cap+1,
+// TestSymbolIndex_JustUnderFileCapStillResolves at cap).
+//
+// Without it, only maxSourceFileBytes+1 is pinned, and mutating the comparison
+// from `>` to `>=` would skip a file exactly AT the cap with nothing to catch it
+// — a guard drifting by one byte, which is the same class of undetectable guard
+// AC8 exists to remove. The cap is the largest size that is still read.
+//
+// Swaps the openIndexSource seam, so it must not call t.Parallel.
+func TestSymbolIndex_AtCapSizeFileIsStillRead(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "data"), 0o755))
+	atCap := make([]byte, maxSourceFileBytes)
+	for i := range atCap {
+		atCap[i] = 'a'
+	}
+	copy(atCap, []byte("package data\n\nvar atCapDatasetToken = 1\n"))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "data", "edge.go"), atCap, 0o644))
+
+	var mu sync.Mutex
+	opens := 0
+	prevOpen := openIndexSource
+	openIndexSource = func(abs string) (*os.File, error) {
+		if strings.HasSuffix(filepath.ToSlash(abs), "data/edge.go") {
+			mu.Lock()
+			opens++
+			mu.Unlock()
+		}
+		return prevOpen(abs)
+	}
+	t.Cleanup(func() { openIndexSource = prevOpen })
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"data/edge.go"})
+	lz.newParser = newStubFactory(fileTree{}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"atCapDatasetToken"}, nil)
+
+	mu.Lock()
+	got := opens
+	mu.Unlock()
+	assert.Equal(t, 1, got,
+		"a file exactly AT the cap is within it and must still be opened and read")
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"its tokens reached presentInSource, so the construct is real code the index could not localize")
 }
 
 // TestSymbolIndex_DocProseDoesNotSuppressNoMatch pins that documentation prose
 // cannot stand in for a declaration.
 //
-// The read set was widened to every text file so unparsed LANGUAGES stay
-// searchable, which also pulled README/CHANGELOG/docs prose into `present`.
-// Those files carry camelCase and snake_case tokens that pass isIdentifierShaped,
-// so a construct DELETED from the code but still named in a changelog scored
-// "present" and the finding came back inconclusive instead of routed — the
-// no-match detector losing sensitivity while still reporting state=applied.
+// The read set was once widened to every text file so unparsed LANGUAGES stayed
+// searchable, which also pulled README/CHANGELOG/docs prose into the raw-token
+// set. Those files carry camelCase and snake_case tokens that pass
+// isIdentifierShaped, so a construct DELETED from the code but still named in a
+// changelog scored "present" and the finding came back inconclusive instead of
+// routed — the no-match detector losing sensitivity while still reporting
+// state=applied. isDocExt now keeps documentation out of presentInSource, and
+// this test is the guard on that.
 func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
@@ -936,6 +1043,262 @@ func TestSymbolIndex_DocProseDoesNotSuppressNoMatch(t *testing.T) {
 	_, outcome = lz2.resolve(context.Background(), []string{"ruby_only_helper"}, nil)
 	assert.Equal(t, tier4Inconclusive, outcome,
 		"a construct that genuinely lives in an unparsed language must still be shielded from no-match")
+}
+
+// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion pins the other half of
+// the presence asymmetry: prose may not LICENSE a suggestion either.
+//
+// The no-match shield reads presentInSource, so a construct named only in a
+// changelog is correctly called absent there. The primaryMatched gate in
+// resolve read the wide `present`, so the very same anchor satisfied it, let
+// locate(secondary) run, and stamped a confident PathSuggestion (validate.go:133)
+// for a subject the next branch would have called absent. Both reads have to
+// consult the same set.
+func TestSymbolIndex_DocProseDoesNotLicensePathSuggestion(t *testing.T) {
+	newIndex := func(t *testing.T, root string, tracked ...string) *lazySymbolIndex {
+		t.Helper()
+		var calls int32
+		lz := newLazySymbolIndex(root, tracked)
+		lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("SessionPool", 12))}, &calls)
+		return lz
+	}
+
+	// Every docExts entry, not only .md: the gate must read the same set the
+	// shield does for all of them, and .txt is the entry the docExts doc block
+	// itself calls "the one uncomfortable entry". Ranging the map directly —
+	// rather than a hardcoded literal list — is what makes the claim true: a
+	// seventh entry added to docExts is covered here automatically.
+	exts := make([]string, 0, len(docExts))
+	for ext := range docExts {
+		exts = append(exts, ext)
+	}
+	sort.Strings(exts)
+	for _, ext := range exts {
+		doc := "NOTES" + ext
+		t.Run("subject named only in "+ext+" licenses nothing", func(t *testing.T) {
+			root := t.TempDir()
+			// The export-leading line pins exportDeclaringExts membership in the
+			// WIDENING direction: if this extension were ever added (or
+			// declaresByExport widened to isDocExt), its export lines would feed
+			// presentInSource and shieldedOnlyExport would license a suggestion —
+			// exactly the prose-licensing failure the split exists to prevent.
+			// .mdx legitimately declares by export, so it is exempt here. The guard
+			// keys on the EXTENSION, not on declaresByExport — keying on the
+			// function under test would let a widening mutation exempt the very
+			// fixture that is supposed to catch it.
+			content := "## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"
+			if ext != ".mdx" {
+				content += "\nexport const shieldedOnlyExport = 1\n"
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(root, doc),
+				[]byte(content), 0o644))
+			writeTracked(t, root, "internal/session/pool.go")
+
+			lz := newIndex(t, root, doc, "internal/session/pool.go")
+			got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"SessionPool"})
+
+			assert.Equal(t, tier4NoMatch, outcome,
+				"a subject that exists only in prose was searched for and not found: that is a no-match")
+			assert.Empty(t, got,
+				"no PathSuggestion may be stamped for a subject the source-presence shield calls absent")
+
+			if ext != ".mdx" {
+				got, outcome = lz.resolve(context.Background(), []string{"shieldedOnlyExport"}, []string{"SessionPool"})
+				assert.Equal(t, tier4NoMatch, outcome,
+					"an export-leading line in a %s file is prose, not a declaration — only exportDeclaringExts split", ext)
+				assert.Empty(t, got,
+					"a prose export line must not license a PathSuggestion either")
+			}
+		})
+	}
+
+	t.Run("an incomplete index withholds the no-match instead of routing", func(t *testing.T) {
+		// The narrowed gate must not turn an unproven search into a routed
+		// finding: a hole in the tree means "could not check", never "checked and
+		// found nothing". The tracked-but-absent file is what makes complete false.
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+			[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "CHANGELOG.md", "internal/session/pool.go", "internal/gone/deleted.go")
+		got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Inconclusive, outcome,
+			"a search with a hole in it cannot ground a no-match, however the gate reads")
+		assert.Empty(t, got)
+	})
+
+	t.Run("subject in real source still licenses the suggestion", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+			[]byte("def ruby_only_helper\nend\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "lib/helper.rb", "internal/session/pool.go")
+		got, outcome := lz.resolve(context.Background(), []string{"ruby_only_helper"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Resolved, outcome,
+			"narrowing the gate must not stop a real construct in an unparsed language from localizing")
+		assert.Equal(t, "internal/session/pool.go", got)
+	})
+
+	t.Run("subject in both prose and source still licenses the suggestion", func(t *testing.T) {
+		root := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+			[]byte("## 2.0.0\n\n- Reworked `ruby_only_helper`.\n"), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+			[]byte("def ruby_only_helper\nend\n"), 0o644))
+		writeTracked(t, root, "internal/session/pool.go")
+
+		lz := newIndex(t, root, "CHANGELOG.md", "lib/helper.rb", "internal/session/pool.go")
+		got, outcome := lz.resolve(context.Background(), []string{"ruby_only_helper"}, []string{"SessionPool"})
+
+		assert.Equal(t, tier4Resolved, outcome,
+			"prose naming a construct that also exists in source must not subtract from its presence")
+		assert.Equal(t, "internal/session/pool.go", got)
+	})
+}
+
+// TestSymbolIndex_MDXDeclarationIsSourceNotProse pins AC2: a documentation
+// EXTENSION is not the same thing as prose.
+//
+// MDX is executable JS — `export function Callout() {}` in docs/guide.mdx
+// genuinely DECLARES Callout — but .mdx was classified by name alongside .md, so
+// its tokens were kept out of presentInSource. A finding naming such a construct,
+// cited against a path that does not exist, reached tier4NoMatch and was routed
+// out of the primary report: out of the gate exit code, out of report.md, out of
+// the skeptic pipeline's findings.json, and durably charged to the reviewer as a
+// phantom. The construct was real the whole time.
+//
+// The file is SPLIT rather than reclassified: its export lines feed
+// presentInSource, everything else in it feeds only presentInDocs. A blanket
+// re-admission would not have been safe — presentInSource is read by the
+// primaryMatched gate as well as the no-match shield, so an extra token there
+// also licenses a confident PathSuggestion, which is the failure
+// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion forbids.
+func TestSymbolIndex_MDXDeclarationIsSourceNotProse(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "guide.mdx"),
+		[]byte("import {Note} from './ui'\n\nexport function Callout() { return null }\n\nexport {NamedReExport} from './x'\n\nThe `quantumFlux` helper was removed in 2.0.\n\nexported_retryHandle is gone\n\nexports.quantumFlux = 1\n\n```jsx\nexport const fencedOnlyExport = 1\n```\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"docs/guide.mdx", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"Callout"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a construct an MDX file declares is real code that Tier 4 cannot localize, not a phantom")
+
+	// The prose in the SAME file gets none of that credit. This is the half a
+	// blanket "drop .mdx from docExts" would have lost: an anchor mentioned in an
+	// MDX paragraph would have satisfied primaryMatched and licensed a confident
+	// PathSuggestion off the FIX anchor — the exact inversion
+	// TestSymbolIndex_DocProseDoesNotLicensePathSuggestion forbids.
+	got, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, []string{"DialPeer"})
+	assert.Equal(t, tier4NoMatch, outcome,
+		"a construct named only in MDX PROSE is named in prose, whatever the file also declares")
+	assert.Empty(t, got, "MDX prose must not license a path suggestion")
+
+	// A code EXAMPLE in a fence is illustrating an export, not declaring one, and
+	// must get none of the declaration credit either — otherwise any docs page
+	// showing `export const metadata = ...` would license suggestions for it.
+	_, outcome = lz.resolve(context.Background(), []string{"fencedOnlyExport"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"an export inside a fenced code block is a code sample, not a declaration")
+
+	// The shield itself is unchanged: a name that appears nowhere at all in the
+	// tree is still a no-match, MDX or no MDX.
+	_, outcome = lz.resolve(context.Background(), []string{"NotAnywhereInThisTree"}, nil)
+	assert.Equal(t, tier4NoMatch, outcome,
+		"widening the source set must not blunt the verdict for a genuinely absent construct")
+
+	// The word-boundary guard: a line that merely STARTS WITH the letters "export"
+	// (`exported ...`, `exports.foo = ...`) is prose, not a declaration. Deleting
+	// the guard admits both tokens into presentInSource — suppressing the no-match
+	// AND licensing a suggestion.
+	for _, tok := range []string{"exported_retryHandle", "quantumFlux"} {
+		got, outcome := lz.resolve(context.Background(), []string{tok}, []string{"DialPeer"})
+		assert.Equal(t, tier4NoMatch, outcome,
+			"%s appears only on a line that starts with the letters export — that is not an export declaration", tok)
+		assert.Empty(t, got, "%s must not license a PathSuggestion from prose", tok)
+	}
+
+	// The `{` allowance is pinned positively: `export {NamedReExport} from './x'`
+	// IS a declaration, so the token reaches presentInSource and shields the
+	// no-match.
+	_, outcome = lz.resolve(context.Background(), []string{"NamedReExport"}, nil)
+	assert.Equal(t, tier4Inconclusive, outcome,
+		"a brace re-export declares — deleting the { allowance would misroute a real construct")
+}
+
+// TestSymbolIndex_NamedInDocsExplainsTheRouting pins the index half of the
+// durable-accounting fix: presentInDocs must hold what isDocExt kept out of
+// presentInSource, and nothing else.
+//
+// namedInDocs is asked only after resolve has already returned a no-match, so a
+// true answer means "the doc-extension heuristic is what routed this", not "the
+// construct exists". It must never influence a verdict — that is the
+// prose-suppression hole the parent epic closed.
+func TestSymbolIndex_NamedInDocsExplainsTheRouting(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"+
+			"- Reworked `ruby_only_helper`, which still exists.\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "lib", "helper.rb"),
+		[]byte("def ruby_only_helper\nend\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "lib/helper.rb", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	assert.False(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"asking must not build the index — an index that adjudicated nothing explains nothing")
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "the verdict is unchanged by the explanation")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"the subject IS in the tree, in a file classified as prose by its extension")
+	assert.False(t, lz.namedInDocs([]string{"ruby_only_helper"}),
+		"a construct named in the changelog AND declared in source is not doc-shielded: "+
+			"the doc mention explains nothing, because the source one already keeps it out of no-match")
+	assert.False(t, lz.namedInDocs([]string{"NotAnywhereInThisTree"}),
+		"a genuinely absent construct has no doc-shield excuse")
+}
+
+// TestSymbolIndex_NamedInDocsCoversMDXProse pins the presentInDocs half of the
+// .mdx split — the one extension the split was built for. An MDX file's PROSE
+// tokens feed presentInDocs only, so a subject named in an MDX paragraph and
+// nowhere in source is doc-shielded exactly like a changelog mention; its export
+// lines feed BOTH maps, so a declared construct is not. Restructuring build's
+// else-branch (mdx prose skipped from presentInDocs) leaves the first assertion
+// red while the rest of the package stays green — and silently charges the
+// reviewer's denominator instead.
+func TestSymbolIndex_NamedInDocsCoversMDXProse(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docs", "guide.mdx"),
+		[]byte("export function Callout() { return null }\n\nThe `quantumFlux` helper was removed in 2.0.\n"), 0o644))
+	writeTracked(t, root, "internal/net/pool.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"docs/guide.mdx", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "an MDX-prose-only subject is searched for and not found in source")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"an MDX paragraph is prose: the subject is named in docs and nowhere in source")
+	assert.False(t, lz.namedInDocs([]string{"Callout"}),
+		"Callout is declared on an export line, so it is in BOTH maps — not doc-only, no shield")
 }
 
 // TestSymbolIndex_StateUnavailableWhenEveryParserFailed pins state() against the
@@ -1028,4 +1391,537 @@ func TestReadIndexSource_BeyondTheSniffWindow(t *testing.T) {
 		require.Error(t, err)
 		assert.False(t, skip, "a read failure must not masquerade as a binary skip")
 	})
+}
+
+// TestCollectExportedIdentifiers_ProseCannotLicenseTokens pins the three prose
+// paths that defeat the narrowness collectExportedIdentifiers claims — every
+// admitted token lands in presentInSource, which the primaryMatched gate reads,
+// so prose must not reach it:
+//
+//  1. a 4-space-indented Markdown code block is not protected by the fence
+//     check at all (TrimLeft strips the indentation before the fence test);
+//  2. an ordinary English sentence beginning with the lowercase verb "export"
+//     contributes every identifier-shaped token on the line;
+//  3. a ~~~ line inside a ```-opened fence flips the inFence bool and the
+//     remainder of that real code block is harvested.
+//
+// Real ESM export forms must keep flowing through.
+func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
+	cases := []struct {
+		name        string
+		src         string
+		wantAbsent  []string
+		wantPresent []string
+	}{
+		{
+			name:       "indented 4-space shell sample is a code block, not a declaration",
+			src:        "Set the cap first.\n\n    export ATCR_TIER4_INDEX_MAX_FILES=5000\n",
+			wantAbsent: []string{"ATCR_TIER4_INDEX_MAX_FILES"},
+		},
+		{
+			name:       "english sentence opening with the verb export",
+			src:        "Before shipping, export your apiKey and call the remoteEndpoint once.\n",
+			wantAbsent: []string{"apiKey", "remoteEndpoint"},
+		},
+		{
+			name:       "tilde line inside a backtick fence does not close it",
+			src:        "```\n~~~\nexport const fencedInner = 1\n~~~\nexport const stillFenced = 2\n```\n",
+			wantAbsent: []string{"fencedInner", "stillFenced"},
+		},
+		{
+			// Path 2's sibling, and the one the ESM-form check actually answers.
+			// The existing "Before shipping, export ..." case never reaches
+			// isESMExportBody at all — its line does not START with `export`, so
+			// the HasPrefix test rejects it first. Only a sentence whose FIRST word
+			// is the verb exercises the reject arm the godoc credits to this test.
+			name:       "english sentence whose first word is the verb export",
+			src:        "export your apiKey before running the seedScript\n",
+			wantAbsent: []string{"apiKey", "seedScript"},
+		},
+		{
+			name:        "column-0 ESM export declares",
+			src:         "export function Callout() { return null }\n",
+			wantPresent: []string{"Callout"},
+		},
+		{
+			name:        "export up to 3 leading spaces (list item) still declares",
+			src:         "   export const listItemExport = 1\n",
+			wantPresent: []string{"listItemExport"},
+		},
+		{
+			name:        "export brace re-export declares",
+			src:         "export {NamedReExport} from './x'\n",
+			wantPresent: []string{"NamedReExport"},
+		},
+		{
+			// The .mdx fixture the TD row asks for: an MDX page's TypeScript
+			// declarations must reach presentInSource, or a finding anchored on
+			// one becomes eligible for a doc_shield carve-out the page's own
+			// declaration disproves.
+			name: "mdx TypeScript declarations declare",
+			src: "# Guide\n\n" +
+				"export type CalloutKind = 'note' | 'warn'\n" +
+				"export interface CalloutProps {}\n" +
+				"export enum CalloutTone {}\n" +
+				"export declare const calloutDefault: CalloutProps\n" +
+				"export abstract class CalloutBase {}\n",
+			wantPresent: []string{"CalloutKind", "CalloutProps", "CalloutTone", "calloutDefault", "CalloutBase"},
+		},
+		{
+			name:       "prose beginning with one of the TypeScript keywords declares nothing",
+			src:        "export types of finding are documented at reportEndpoint\n",
+			wantAbsent: []string{"reportEndpoint"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := make(map[string]uint8)
+			collectExportedIdentifiers([]byte(c.src), out)
+			for _, tok := range c.wantAbsent {
+				assert.Zero(t, out[tok]&presenceSource, "%s reached the source side of present from prose or a sample — it can license a confident PathSuggestion", tok)
+			}
+			for _, tok := range c.wantPresent {
+				assert.NotZero(t, out[tok]&presenceSource, "%s is a real declaration and must carry the source bit", tok)
+			}
+		})
+	}
+}
+
+// TestIsESMExportBody_RejectPaths pins the two arms of isESMExportBody that
+// answer "no", tested directly because neither is observable through
+// collectExportedIdentifiers.
+//
+// The empty-body guard is the clearer case: an empty body produces no tokens
+// whether it is admitted or rejected, so an out-map assertion cannot tell the two
+// apart. What the guard actually buys is that `body[0]` on the next line does not
+// panic on a line that is nothing but `export` and trailing whitespace. Asserting
+// the false directly catches both mutations — flipping the return, and deleting
+// the guard (which panics).
+//
+// The trailing return is the fall-through every non-ESM body reaches. It is the
+// arm that stops an English sentence's tokens from landing in presentInSource,
+// where a token can LICENSE a confident PathSuggestion rather than merely
+// withhold a routing.
+func TestIsESMExportBody_RejectPaths(t *testing.T) {
+	t.Run("empty body is not an export form", func(t *testing.T) {
+		assert.False(t, isESMExportBody(nil), "a nil body declares nothing")
+		assert.False(t, isESMExportBody([]byte("")), "`export` followed by only whitespace declares nothing")
+	})
+
+	t.Run("prose body falls through to the reject", func(t *testing.T) {
+		for _, body := range []string{
+			"your apiKey before running",
+			"the seedScript once",
+			"exports.foo = 1",
+			"defaults to five",   // a keyword PREFIX is not the keyword
+			"classicMode = true", // ditto
+		} {
+			assert.False(t, isESMExportBody([]byte(body)), "%q is prose, not an ESM export form", body)
+		}
+	})
+
+	t.Run("real ESM forms are still admitted", func(t *testing.T) {
+		for _, body := range []string{"{Named} from './x'", "* from './x'", "const a = 1", "default fn", "function f()", "class C {}", "async function f()", "let a", "var a"} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real ESM export form", body)
+		}
+	})
+
+	// The surface this guard actually runs over is MDX, and MDX carries
+	// TypeScript. `export type Foo = ...` at column 0 of an .mdx file IS a
+	// declaration, so a keyword list built from the JavaScript forms alone leaves
+	// Foo out of presentInSource — and a finding anchored on Foo then becomes
+	// eligible for the doc_shield carve-out it should not get, because the doc
+	// genuinely declares it.
+	t.Run("TypeScript declaration forms are ESM export forms too", func(t *testing.T) {
+		for _, body := range []string{
+			"type Foo = string",
+			"interface Bar {}",
+			"enum Color {}",
+			"declare const x: number",
+			"abstract class Base {}",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a TypeScript export declaration", body)
+		}
+	})
+
+	// Each new keyword is also a real English word, so the prefix rule that
+	// protects `defaults`/`classicMode` has to protect these too.
+	t.Run("prose that merely starts with a new keyword is still rejected", func(t *testing.T) {
+		for _, body := range []string{
+			"types of findings are listed below",
+			"interfaces you should implement",
+			"enumerate the results first",
+			"declares nothing by itself",
+			"abstractions leak here",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)), "%q is prose, not an export declaration", body)
+		}
+	})
+
+	// The prefix rule above only protects prose whose FIRST word merely STARTS
+	// with a keyword (`types`, `declares`). It does nothing for prose whose first
+	// word IS the keyword, because the boundary test admits a keyword followed by
+	// a space — and every one of these words is an ordinary English word that is
+	// normally followed by a space. `export type definitions for MyWidget are
+	// generated at build time` is a sentence a real .mdx page can contain, and it
+	// put MyWidget into presentInSource, where a fabricated anchor on MyWidget
+	// reads as "named in the source" (symbolindex.go tier4Inconclusive) and
+	// licenses a confident PathSuggestion via primaryMatched.
+	//
+	// A declaration is not "keyword + words". It is keyword + a NAME, then the
+	// grammar's own punctuation: `= < ( { : ; ,`, end of line, or an
+	// `extends`/`implements` clause. Prose almost never reaches that shape.
+	t.Run("keyword followed by an English sentence is not a declaration", func(t *testing.T) {
+		for _, body := range []string{
+			"type definitions for MyWidget are generated at build time",
+			"interface changes affect PublicThing downstream",
+			"declare your intent before touching SecretHelper",
+			"abstract concepts like QuantumFlux are not real",
+			"const values are frozen once exported",
+			"class names should be PascalCase in MyModule",
+			"function calls are cheap in HotPath",
+			"enum members must be unique across ColorSet",
+			"let us assume RetryPolicy is configured",
+			"var names are legacy in OldModule",
+			"namespace collisions are common in BigApp",
+			"module boundaries are enforced by BuildTool",
+			"global state is shared across MyWorker",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q is an English sentence, not a declaration — admitting it lets doc prose license a source presence", body)
+		}
+	})
+
+	// The tightening must not cost a single real form. These are the shapes the
+	// keyword+NAME+punctuation rule has to keep admitting, including the ones
+	// whose name is NOT the next token (`declare`/`abstract` are modifiers) and
+	// the ones with no punctuation at all (`let a`).
+	t.Run("every real declaration shape survives the tightening", func(t *testing.T) {
+		for _, body := range []string{
+			"const a = 1",
+			"let a",
+			"var a;",
+			"function f()",
+			"function f<T>(x: T)",
+			"function* gen()",
+			"async function f()",
+			"class C {}",
+			"class C extends Base {}",
+			"class C implements Iface {}",
+			"type T = string",
+			"type T<A> = A[]",
+			"interface I {}",
+			"interface I extends J {}",
+			"enum Color {}",
+			"declare const x: number",
+			"declare function f(): void",
+			"abstract class Base {}",
+			"const { a, b } = obj",
+			"const [a, b] = arr",
+			// TypeScript forms the modifier recursion must not lose. `const enum`
+			// is one keyword pair, not `const` binding a name `enum`; and the old
+			// flat list took `declare namespace` on the strength of `declare`
+			// alone, so recursing only preserves it if the inner form is known.
+			"const enum Direction {}",
+			"declare namespace N {}",
+			"declare module 'x' {}",
+			"declare global {}",
+			"namespace N {}",
+			"type { Foo } from './x'",
+			"default fn",
+			"{Named} from './x'",
+			"* from './x'",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
+		}
+	})
+
+	// A declared name is not required to be ASCII. JavaScript and TypeScript both
+	// take the full Unicode identifier set, and an .mdx page written for a
+	// non-English audience uses it — `export const café`, `export let 日本語`.
+	//
+	// These are the shapes the grammar rule silently dropped, and the drop runs in
+	// the DANGEROUS direction: a real declaration missing from presentInSource
+	// leaves a finding anchored on that name eligible for the doc_shield carve-out
+	// its own declaration disproves (namedInDocs, symbolindex.go), so the finding
+	// is routed out of findings.json, out of the gate exit code, and out of
+	// report.md — and trust.go still charges it to the reviewer.
+	//
+	// The name scan must therefore run PAST a non-ASCII byte and let the
+	// punctuation test decide, which is what isDeclNameByte's docstring always
+	// claimed and what this subtest pins.
+	t.Run("a non-ASCII declared name is still a declaration", func(t *testing.T) {
+		for _, body := range []string{
+			"const café = 1",
+			"let 日本語 = 1",
+			"var Ünicode;",
+			"function ünwrap()",
+			"class Ωmega {}",
+			"type Ünion = string",
+			"interface Ílink extends J {}",
+			"enum Café {}",
+			"const café",
+			// The name is only PARTLY non-ASCII — the scan must not stop at the
+			// first multi-byte rune and read the ASCII remainder as a second word.
+			"const caféMenu = () => 1",
+			"const 日本Language = 1",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)),
+				"%q declares a name — dropping it hides a real symbol from presentInSource", body)
+		}
+	})
+
+	// declaresName's "no name at all" reject path, pinned by mutation rather than
+	// by coverage alone. It and isDeclNameRune's leading-digit clause were the ONLY
+	// added lines of the grammar rewrite that no test executed, and BOTH survived
+	// deletion with the whole package green — `if n == 0 { return true }` and
+	// `return !first` → `return true` each left `go test ./internal/reconcile/`
+	// passing.
+	//
+	// They are not decoration. Between them they are the entire defence against
+	// prose whose second token is typographic punctuation or a digit, and every
+	// line below is a sentence an .mdx page can genuinely carry. Admitting one
+	// harvests EVERY token on it into presentInSource, where — per
+	// collectExportedIdentifiers and exportDeclaringExts — a prose token can
+	// license a confident PathSuggestion that nothing downstream can undo.
+	//
+	// Each case is chosen so exactly one mutant flips it:
+	//   n == 0 → true      : the first group (no name is ever scanned)
+	//   !first → true      : the second group (a digit becomes a legal first rune,
+	//                        and the punctuator right after it then says "yes")
+	t.Run("a keyword followed by punctuation declares no name", func(t *testing.T) {
+		for _, body := range []string{
+			"type — see the guide",        // em-dash
+			"const – note the dash",       // en-dash
+			"class “Widget” is styled",    // curly double quotes
+			"interface … described below", // ellipsis
+			"type ‘Foo’ is exported",      // curly single quotes
+			"function ✓ verified",         // symbol
+			"type (see the appendix) is described",
+			"enum = the enumeration concept",
+			"namespace / module boundaries",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q names nothing — admitting it lets prose license a source presence", body)
+		}
+	})
+
+	t.Run("a digit cannot start a declared name", func(t *testing.T) {
+		// The punctuator AFTER the digit is what makes these discriminating: with
+		// the leading-digit clause relaxed, `2` scans as the name and the `=` then
+		// satisfies the grammar. Prose whose digit is followed by a bare word is
+		// rejected either way and would prove nothing.
+		for _, body := range []string{
+			"type 2 = deprecated",
+			"enum 2 = the second kind",
+			"const 3 = three",
+			"interface 4 : the fourth",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q starts with a digit, so it declares no name", body)
+		}
+		// The other half of the same clause: a digit that is NOT first is a
+		// perfectly ordinary name rune, and rejecting it would lose real symbols.
+		for _, body := range []string{
+			"const a2 = 1",
+			"let x1",
+			"class Base64 {}",
+			"type UTF8 = string",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)),
+				"%q declares a name containing a digit", body)
+		}
+	})
+
+	// `namespace`, `module` and `global` were added to the binding list to
+	// recover `declare namespace N {}` and friends, which the recursion would
+	// otherwise have lost. Adding them also handed ordinary prose two ways
+	// through declaresName that the old flat list never had, because all three
+	// are common English nouns that a sentence follows with a colon or a quote:
+	//
+	//	export module 'quantumFlux' is discussed below
+	//	export global state: shared across MyWorker
+	//	export namespace collisions: see QuantumFlux
+	//
+	// This is the over-admission direction, which is the dangerous one. A prose
+	// token in presentInSource unlocks resolve's primaryMatched gate, and the
+	// secondary branch then localizes on a FIX anchor and returns tier4Resolved —
+	// so validate.go stamps a confident PathSuggestion pointing at a file that has
+	// nothing to do with the finding's (nonexistent) subject. Nothing downstream
+	// can undo it; see the docstrings on collectExportedIdentifiers and
+	// exportDeclaringExts, which say exactly this.
+	//
+	// Two rules close it, and each is pinned in both directions below:
+	//   - a colon after the name is a TYPE ANNOTATION, which none of the three
+	//     can carry, so it is prose punctuation for them and a declaration
+	//     punctuator for everything else
+	//   - a quoted name is an AMBIENT MODULE name, which only `module` takes —
+	//     and it still has to be followed by the grammar's own punctuation, since
+	//     `'react' {}` is a declaration and `'quantumFlux' is discussed` is not
+	t.Run("namespace module and global do not admit prose", func(t *testing.T) {
+		for _, body := range []string{
+			"module 'quantumFlux' is discussed below",
+			"module \"someName\" is described here",
+			"global state: shared across MyWorker",
+			"namespace collisions: see QuantumFlux",
+			"namespace 'quoted' is not a module",
+			"global 'state' is shared",
+			// An unterminated quote is not a declaration either.
+			"module 'unterminated {}",
+			// The adversarial sweep found the same colon hole at five keywords
+			// the finding did not name — a predicate fixed only where it was
+			// pointed. None of these can carry a `name:` type annotation either:
+			// a type alias is `type T = X`, and an interface, class, enum or
+			// function puts `{` or `(` where the colon is.
+			"type definitions: see the guide",
+			"interface changes: see below",
+			"enum members: Red, Green, Blue",
+			"class hierarchy: see the diagram",
+			"function signatures: documented below",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q is prose — admitting it lets a doc sentence license a confident PathSuggestion", body)
+		}
+	})
+
+	t.Run("the real namespace module and global forms still pass", func(t *testing.T) {
+		for _, body := range []string{
+			"namespace N {}",
+			"module M {}",
+			"global {}",
+			"declare namespace N {}",
+			"declare module 'x' {}",
+			"declare module \"y\" {}",
+			"declare global {}",
+			// The colon rule must stay OPEN for every keyword that really does
+			// take a type annotation, or tightening it costs real declarations.
+			"const x: number = 1",
+			"let y: string",
+			"var z: boolean",
+			"declare const w: T",
+			// The colon closes for every OTHER keyword, so these prove the
+			// tightening cost nothing: each puts `{`, `(` or `=` where the
+			// annotation would have been.
+			"function f(): void",
+			"function f<T>(x: T): T",
+			"class C { x: number }",
+			"type T = { a: string }",
+			"interface I { a: b }",
+			"enum E { A = 1 }",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
+		}
+	})
+
+	// The quoted-name arm belongs to `module` and to nothing else, and the gate
+	// that says so — `shape&declQuotedName == 0` in declaresName — was an added
+	// restriction that no test executed: deleting it left the whole package
+	// green while nine bodies flipped from rejected to accepted.
+	//
+	// The quoted fixtures in the subtest above cannot pin it. `namespace
+	// 'quoted' is not a module` and `global 'state' is shared` are rejected by
+	// followsDeclaredName's bare-word arm whether the gate is present or not,
+	// so they kill no mutant. Each body here puts a DECLARATION punctuator
+	// immediately after the closing quote, which leaves the gate as the only
+	// thing still saying no — and a quoted PHRASE is exactly the prose shape
+	// that would otherwise harvest its whole line into presentInSource.
+	t.Run("a quoted name belongs to module and to nothing else", func(t *testing.T) {
+		for _, body := range []string{
+			"namespace 'foo' {}",
+			"type 'Foo' = string",
+			"interface 'I' {}",
+			"class 'C' {}",
+			"global 'g' {}",
+			"enum 'E' {}",
+			"function 'f'()",
+			"let 'x' = 1",
+			"var 'y' = 2",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q quotes a name after a non-module keyword — only an ambient module names a string", body)
+		}
+		// The other direction, or the gate would be free to reject everything:
+		// the one keyword that DOES carry a quoted name must keep carrying it.
+		for _, body := range []string{
+			"module 'react' {}",
+			"module \"react\" {}",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is an ambient module declaration", body)
+		}
+	})
+
+	// `const enum` is ONE keyword pair, and the pair binds no variable, so it
+	// takes no type annotation — `const enum E: number` is not a TypeScript
+	// form. Passing declTypeAnnotation to its declaresName call instead of 0
+	// also left the package green, so the 0 was untested; with the annotation
+	// admitted, that sentence-shaped body reaches the `:` arm and licenses a
+	// source presence.
+	t.Run("const enum takes no type annotation", func(t *testing.T) {
+		assert.False(t, isESMExportBody([]byte("const enum E: number")),
+			"`const enum E: number` binds no variable, so the colon is prose punctuation")
+		assert.True(t, isESMExportBody([]byte("const enum Direction {}")),
+			"`const enum Direction {}` is the real form and must survive")
+	})
+}
+
+// TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
+// ONE presence map keyed by token with a per-token origin flag, not parallel
+// presentInSource/presentInDocs maps that each hold every identifier-shaped token
+// of their half of the tree (roughly doubling index memory for the doc-shield
+// explanation path). Behaviour — which verdict reads which origin — is pinned by
+// the verdict tests above; this guards the structure they read.
+func TestSymbolIndex_OnePresenceMap(t *testing.T) {
+	tp := reflect.TypeOf(symbolIndex{})
+	presenceMaps := 0
+	for i := 0; i < tp.NumField(); i++ {
+		f := tp.Field(i)
+		if f.Type.Kind() == reflect.Map && f.Name != "byName" {
+			presenceMaps++
+		}
+	}
+	assert.Equal(t, 1, presenceMaps,
+		"symbolIndex must carry exactly one presence map (origin-tagged), not one per source class")
+	assert.NotNil(t, tp, "symbolIndex must exist")
+}
+
+// TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted pins the quantifier the
+// doc-shield carve-out rests on: EVERY anchor must be accounted for in the tree
+// before the shield may explain the routing.
+//
+// The shield exempts a finding from the scorecard's FindingsRaised denominator
+// (scorecard.go, the UnresolvedReasonDocShield carve-out). Answering on the FIRST
+// doc-only anchor let a finding that also names genuinely invented constructs buy
+// its whole exemption with one token that happened to survive in a changelog —
+// the normal fate of a symbol a release removed. The record it produced was
+// NEUTRAL rather than rate-depressing, so it still counted as a run toward the
+// trust floor on a thinner base of real measurements.
+//
+// The doc token set is built with the LOOSE filter (isIdentifierShaped over raw
+// prose bytes) while anchors come from the STRICT one, so an ordinary English
+// word in any tracked .md can be that one token. Requiring every anchor closes
+// the gap without touching either filter.
+func TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "CHANGELOG.md"),
+		[]byte("## 2.0.0\n\n- Removed `quantumFlux`, the retry handle helper.\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal", "net"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "net", "pool.go"),
+		[]byte("package net\n\nfunc DialPeer() error { return nil }\n"), 0o644))
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"CHANGELOG.md", "internal/net/pool.go"})
+	lz.newParser = newStubFactory(fileTree{"pool.go": file(fn("DialPeer", 7))}, &calls)
+
+	_, outcome := lz.resolve(context.Background(), []string{"quantumFlux", "phantomWidget"}, nil)
+	require.Equal(t, tier4NoMatch, outcome, "neither anchor is declared in source")
+
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux"}),
+		"the single-anchor doc-only case is unchanged")
+	assert.False(t, lz.namedInDocs([]string{"quantumFlux", "phantomWidget"}),
+		"phantomWidget is in neither set — it was invented, so the doc mention of its "+
+			"co-anchor explains only part of the finding and must not shield the whole of it")
+	assert.False(t, lz.namedInDocs([]string{"phantomWidget", "quantumFlux"}),
+		"the verdict must not depend on which anchor is examined first")
+	assert.True(t, lz.namedInDocs([]string{"quantumFlux", "DialPeer"}),
+		"a co-anchor declared in SOURCE was not invented, so it does not defeat the shield")
 }

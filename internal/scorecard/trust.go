@@ -54,6 +54,18 @@ const DefaultTrustMinRuns = 20
 // while any reviewer is active, so a fallback keyed on emptiness would never
 // fire for a single dormant reviewer.
 //
+// The prefer-newest era pass (unresolvedEraRuns) drops a reviewer's whole
+// pre-upgrade window the moment its first record under a newer
+// raised_denominator lands, which would put the reviewer under
+// DefaultTrustMinRuns and silently disable trustExempt and demoteByTrust for it.
+// For the 2-to-3 bump that blackout bought nothing — the two eras partition the
+// same finding set, so the trust rate is identical either way — and
+// mergeRoutedEras now normalises era 3 to era 2 before the pass, removing it. A
+// FUTURE denominator bump that genuinely changes the measured set would
+// reintroduce the blackout for its own window, and the same question (are the
+// two eras arithmetically equivalent for THIS denominator?) has to be answered
+// again before extending mergeRoutedEras to it.
+//
 // Narrowing this value requires redoing the min-runs measurement above
 // (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
 // against its own literal, so it can only catch a deliberate narrowing — it
@@ -84,6 +96,11 @@ const defaultTrustWindow = 180 * 24 * time.Hour
 // "measured zero" (a reviewer that cleared the floor but has never raised a
 // finding still appears, at rate 0.0, via ratio()'s zero-denominator case).
 // minRuns <= 0 applies no floor.
+//
+// The rates returned are already era-resolved: trustPriorsSince runs the
+// prefer-newest raised_denominator pass (unresolvedEraRuns) before aggregating,
+// so a caller receives one definition's numbers per reviewer and never needs to
+// reason about the era split itself.
 //
 // A missing, unreadable, or partially readable store (a mid-enumeration IO
 // failure on one month file) yields an empty map and a nil error — this is a
@@ -127,7 +144,11 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 
 	type tally struct{ runs, corroborated, raised int }
 	byReviewer := map[string]*tally{}
-	for _, row := range Aggregate(unresolvedEraRuns(strictRuns(records))) {
+	// mergeRoutedEras runs BEFORE the prefer-newest pass so eras 2 and 3 arrive as
+	// one era and are never split against each other. It also folds the shielded
+	// count into FindingsRaised, which is what makes a plain t.raised the full
+	// trust denominator below.
+	for _, row := range Aggregate(unresolvedEraRuns(mergeRoutedEras(strictRuns(records)))) {
 		key := strings.ToLower(row.Reviewer)
 		t := byReviewer[key]
 		if t == nil {
@@ -147,6 +168,69 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 		rates[name] = ratio(t.corroborated, t.raised)
 	}
 	return rates, nil
+}
+
+// mergeRoutedEras rewrites each era-3 record into its exact era-2 equivalent, so
+// the prefer-newest pass sees ONE routed era instead of two and a reviewer keeps
+// its pre-upgrade window the day its first era-3 record lands.
+//
+// The rewrite is lossless for the trust rate because the two eras partition the
+// SAME finding set. scorecard.go splits in.UnresolvedFindings disjointly into
+// chargeable and doc-shielded, so an era-3 record's FindingsRaised +
+// FindingsDocShielded is exactly what era 2 reported as FindingsRaised, and
+// FindingsCorroborated is untouched by the carve-out. Folding the shielded count
+// back in also preserves the anti-gaming property the trust denominator has
+// always had: a reviewer cannot launder phantoms out of its prior by anchoring
+// them on doc-named tokens, because the shield never reaches this denominator.
+//
+// Era 1 is deliberately NOT merged. It EXCLUDES routed findings from
+// FindingsRaised rather than partitioning them, so its denominator covers a
+// smaller finding set and blending it in would compare two different quantities —
+// the split the prefer-newest pass exists to enforce.
+//
+// Records ABOVE the current definition are left alone: they are computed under a
+// rule this binary does not implement, and normalising one would smuggle it past
+// unresolvedEraRuns' exclusion. The test is on the RAW field for that reason —
+// raisedDenominatorOf would clamp an above-current value to the current one and
+// admit exactly the record that must not be admitted.
+//
+// The source era is raisedDenominatorRoutedExShield — era 3 BY NAME, never
+// RaisedDenominatorCurrent. The equivalence argued above is a proof about the
+// 2-to-3 pair; keyed on "whatever is current" it would silently re-point at a
+// future era 4 the moment the constant moved, asserting an equivalence nobody
+// established. A bump must come back here and prove the new pair.
+//
+// The rewritten record is left internally CONSISTENT, not merely era-relabelled:
+// FindingsSolo and CorroborationRate are recomputed against the merged
+// denominator. Nothing on this path reads either, but the value is a Record, and
+// the type's other consumers do.
+//
+// The input slice is never mutated: callers hand in records read from the store
+// and must not see them rewritten underneath.
+//
+// TestMergeRoutedEras_PinsEveryElementOfItsGuard kills a mutation of each element
+// below; TestTrustPriors_AboveCurrentRecordsNeverReachThePrior pins the
+// consequence of the era arm on the prior itself.
+func mergeRoutedEras(records []Record) []Record {
+	out := make([]Record, len(records))
+	copy(out, records)
+	for i := range out {
+		if out[i].RecordType != RecordTypeReviewer || out[i].RaisedDenominator != raisedDenominatorRoutedExShield {
+			continue
+		}
+		out[i].FindingsRaised += out[i].FindingsDocShielded
+		out[i].FindingsDocShielded = 0
+		out[i].RaisedDenominator = raisedDenominatorAllRouted
+		out[i].RaisedIncludesUnresolved = true
+		// The two fields DERIVED from FindingsRaised move with it, or the record
+		// contradicts itself. A doc-shielded finding was routed, so it is
+		// uncorroborated by construction and belongs in solo — which makes these
+		// exactly the values era 2 reported, the same disjoint partition the
+		// equivalence above rests on.
+		out[i].FindingsSolo = out[i].FindingsRaised - out[i].FindingsCorroborated
+		out[i].CorroborationRate = ratio(out[i].FindingsCorroborated, out[i].FindingsRaised)
+	}
+	return out
 }
 
 // strictRuns keeps only the records measured under the strict consensus level —
@@ -198,9 +282,15 @@ func strictRuns(records []Record) []Record {
 // so a blended window drifts as the old records age out, silently moving
 // trustExempt and demoteByTrust with nothing marking the boundary.
 //
-// The rule is PREFER-CURRENT, not require-current: when a reviewer holds any
-// record stamped with the current definition, only those count; when it holds
-// none, its pre-epic records are used as they always were. Both halves matter.
+// The rule is PREFER-NEWEST, not require-current: a reviewer's records are kept
+// at the newest definition that reviewer actually has, whatever that is. When it
+// holds any record under the current definition, only those count; when it holds
+// none, its older records are used as they always were. Both halves matter.
+//
+// Newest rather than "has the current flag" because FindingsRaised has now
+// changed meaning TWICE — Epic 35.16.6.8 took the doc-shielded routings back out
+// — so the question has three answers and a bool cannot say which two a window
+// is blending. See RaisedDenominator.
 // Requiring the flag would black out every existing reviewer history on upgrade —
 // the same stranding strictRuns' empty-means-strict rule exists to avoid — and a
 // pre-epic-only history is at least INTERNALLY consistent, which a blend never is.
@@ -248,25 +338,65 @@ func strictRuns(records []Record) []Record {
 //     already rejects non-printing runes in an identity — and matching the
 //     consumer this filter is defined for is worth more than matching the other.
 //
-// Non-empty in, non-empty out: a reviewer with no current-era record keeps all of
-// its records, and one with a current-era record keeps at least that record. That is
-// what lets ExportSelected raise ErrNoExportRecords from BEHIND this pass and still
-// report exactly what the caller's own filters selected — the property PublishedSet
-// relies on when it hands an already-era-resolved slice to the serializer.
+// Non-empty in, non-empty out — with ONE exception. A reviewer with no current-era
+// record keeps all of its records, and one with a current-era record keeps at least
+// that record, so no era this pass RECOGNISES can be emptied. Records ABOVE the
+// current definition are excluded outright by both loops, so an input made entirely
+// of those returns nothing.
+//
+// That exception is why the callers behind this pass cannot report an empty result
+// as a filter miss: PublishedSet and ExportSelected each detect it and raise
+// ErrNoCurrentEraRecords instead of ErrNoExportRecords, because "your store was
+// written by a newer atcr" and "your filters matched nothing" call for opposite
+// operator actions.
 func unresolvedEraRuns(records []Record) []Record {
-	hasCurrent := make(map[string]bool, len(records))
+	// The NEWEST definition each reviewer has any record under. Prefer-current
+	// generalizes to prefer-newest once there are more than two definitions: the
+	// rule was never "has the flag", it was "do not blend", and with three
+	// denominators a bool cannot express which two are being blended.
+	newest := make(map[string]int, len(records))
 	for _, r := range records {
-		if r.RaisedIncludesUnresolved {
-			hasCurrent[strings.ToLower(r.Reviewer)] = true
+		// Only reviewer records hold a per-reviewer era. An aggregate record is
+		// stamped RaisedDenominator = Current under the EMPTY reviewer name, so
+		// without this skip it defines the newest era for every empty-name
+		// reviewer record that shares the key — and whether those survive then
+		// depends on whether the caller dropped aggregates BEFORE this pass
+		// (PublishedSet's ApplyFilters does; trustPriorsSince does not).
+		if r.RecordType != RecordTypeReviewer {
+			continue
+		}
+		if r.RaisedDenominator > RaisedDenominatorCurrent {
+			// Above-current means this binary does not implement the definition
+			// the record was computed under — a legitimate record from a NEWER
+			// atcr, a benchmark-suite value, or a corrupt hand-edit are
+			// indistinguishable here, and all three are EXCLUDED from the era
+			// window rather than clamped into the current cohort and blended.
+			// Exclusion preserves the clamp's protective intent (a garbage line
+			// cannot delete the reviewer's real history) without re-labelling a
+			// future era as the current one.
+			continue
+		}
+		k := strings.ToLower(r.Reviewer)
+		if d := raisedDenominatorOf(r); d > newest[k] {
+			newest[k] = d
 		}
 	}
 	kept := make([]Record, 0, len(records))
 	for _, r := range records {
-		// Keep the record when its own reviewer has no current-era record at all
-		// (the untouched pre-epic history) or when this record IS a current-era
-		// one. What is dropped is only the older half of a reviewer that spans
-		// the change — the mix, which is the one combination measuring neither.
-		if !hasCurrent[strings.ToLower(r.Reviewer)] || r.RaisedIncludesUnresolved {
+		if r.RecordType != RecordTypeReviewer {
+			kept = append(kept, r) // aggregates pass through untouched
+			continue
+		}
+		if r.RaisedDenominator > RaisedDenominatorCurrent {
+			continue // above-current: excluded, per the first loop
+		}
+		// Keep the record when it is computed under the newest definition its own
+		// reviewer has. A reviewer with only pre-epic history keeps all of it
+		// (its newest IS pre-epic), which is what stops an upgrade from blacking
+		// out an existing store. What is dropped is only the older half of a
+		// reviewer that spans a change — the mix, which is the one combination
+		// measuring neither.
+		if raisedDenominatorOf(r) == newest[strings.ToLower(r.Reviewer)] {
 			kept = append(kept, r)
 		}
 	}

@@ -53,6 +53,22 @@ const (
 	CategoryOutOfScope = reclib.CategoryOutOfScope
 )
 
+// UnresolvedReasonDocShield is a LOCAL COPY of the published module's constant
+// of the same name, held only while the go.mod pin lags the in-tree declaration
+// at reconcile/reconcile.go. It is not an alias: the pinned reconcile version
+// does not export the name yet, so aliasing it breaks `GOWORK=off go build ./...`
+// — the build CI (ci.yml, GOWORK=off for the whole Go job) and
+// .githooks/pre-push both run, and which go.work masks locally.
+//
+// When the reconcile module is released and the go.mod pin bumped
+// (docs/release-process.md), delete this constant and let callers use
+// reclib.UnresolvedReasonDocShield directly.
+//
+// TestDocShieldLocalCopy_MatchesInTree pins the value against the in-tree
+// declaration so the copy cannot silently diverge from the wire value written
+// into reconciled/unresolved.json.
+const UnresolvedReasonDocShield = "doc_shield"
+
 // SeverityRank is the canonical severity rubric, re-exported from the library
 // (single source of truth — no second copy). It is copied defensively so an
 // ATCR-internal mutation cannot accidentally corrupt the shared library map.

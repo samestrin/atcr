@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1245,12 +1246,149 @@ func TestReconcileHandler_UnresolvedSidecarSurfaced(t *testing.T) {
 	assert.Equal(t, "internal/ghost/phantom.go", rec["file"])
 }
 
+// TestReconcileHandler_UnresolvedMatchesPersistedSidecar is the equality pin that
+// makes the switch below safe to make.
+//
+// `unresolved` used to be re-read from reconciled/unresolved.json; it is now
+// taken from res.Unresolved, the same records the run just routed. The two are
+// the same set on every ordinary run — the sidecar is written FROM res.Unresolved
+// moments earlier — and this asserts exactly that, so the switch is provably a
+// change of SOURCE and not of content. It must pass both before and after.
+func TestReconcileHandler_UnresolvedMatchesPersistedSidecar(t *testing.T) {
+	isolateUserConfig(t)
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_equality"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta\n"+
+			"LOW|internal/ghost/wraith.go:20|`spectralLock` never releases on timeout|defer the unlock in `spectralLock`|concurrency|5|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":2}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(2), out["unresolved_filtered"], "the fixture must actually route something")
+	reported, ok := out["unresolved"].([]any)
+	require.True(t, ok, "the routed record must be reported")
+	require.Len(t, reported, 2)
+
+	onDisk, err := reconcile.ReadUnresolvedFindings(dir)
+	require.NoError(t, err)
+	require.Len(t, onDisk, 2, "the sidecar must hold the same two records")
+
+	// Field-for-field equality, not a two-field sample: the switch from re-reading
+	// the sidecar to reporting res.Unresolved is provably content-preserving only
+	// if EVERY field survives — severity, reviewers, unresolved_reason included.
+	// Round-tripping the persisted record through JSON normalizes both sides to
+	// the wire shape the client actually sees.
+	for i := range onDisk {
+		wantJSON, err := json.Marshal(onDisk[i])
+		require.NoError(t, err)
+		var want map[string]any
+		require.NoError(t, json.Unmarshal(wantJSON, &want))
+		got, ok := reported[i].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, want, got, "reported record %d must equal the persisted one field-for-field", i)
+	}
+
+	// Self-proof that the comparison above discriminates: dropping one field from
+	// the persisted side must turn it red.
+	var tampered map[string]any
+	droppedJSON, err := json.Marshal(onDisk[0])
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(droppedJSON, &tampered))
+	delete(tampered, "severity")
+	assert.NotEqual(t, tampered, reported[0], "a dropped field must be detected — else the equality pin asserts nothing")
+
+	assert.Empty(t, out["unresolved_read_error"], "nothing failed to read on an ordinary run")
+}
+
+// TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite pins AC5.
+//
+// Nothing serializes two atcr_reconcile calls on the same review directory. A
+// second call atomically rewrites unresolved.json — to [] when it routes nothing
+// — and it can land between this call's reconcile and its result assembly. While
+// `unresolved` was re-read from disk, that produced a result reporting
+// unresolved_filtered > 0, no `unresolved`, and no unresolved_read_error: a third
+// producer of a combination the field's own contract tells clients it can
+// distinguish.
+//
+// The seam stands in for the racing writer, which is the only way to place the
+// rewrite inside the window deterministically. Reporting from res.Unresolved
+// closes the window: the records are already in hand and no longer depend on what
+// disk says a moment later.
+//
+// What this pins, precisely: the handler no longer DERIVES `unresolved` from the
+// sidecar. It is the regression guard for exactly that line — restoring the old
+// `unresolved, uerr := readUnresolvedSidecar(dir)` turns it red, because the seam
+// then supplies the records and returns none. It also asserts the seam is still
+// invoked, so the read-error channel stays reachable; without that, the test
+// could not tell "records no longer come from the sidecar" from "the sidecar is
+// no longer read at all", and those are different contracts.
+func TestReconcileHandler_UnresolvedSurvivesConcurrentSidecarRewrite(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	var sidecarReads atomic.Int32
+	// Exactly what a concurrent `atcr reconcile` that routes nothing leaves
+	// behind: a readable, valid, EMPTY sidecar. Not an error — an error would be
+	// reported, and it is the silent case that is the defect.
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		sidecarReads.Add(1)
+		return nil, nil
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_rewrite"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"],
+		"the count comes from this run's own summary and is unaffected by the rewrite")
+	reported, ok := out["unresolved"].([]any)
+	require.True(t, ok,
+		"a racing rewrite must not erase the records THIS run routed — they are already in hand")
+	assert.Len(t, reported, 1)
+	assert.Empty(t, out["unresolved_read_error"],
+		"nothing failed to read; reporting an error here would be a second wrong answer")
+	assert.NotEmpty(t, out["unresolved_stale"],
+		"but the divergence IS signalled on its own field: the persisted sidecar (0 records) no longer matches this run's routing (1)")
+	assert.Equal(t, int32(1), sidecarReads.Load(),
+		"the sidecar is still read once, for the read-error channel — the records just no longer come from it")
+}
+
 // TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced pins the read-error
-// branch of the sidecar read. Without a transmitted reason a failed read is
-// indistinguishable from an empty sidecar — `unresolved` is omitempty, so a nil
-// slice erases the key, and the Warn goes only to the server logger a stdio
-// client never sees. A client seeing unresolved_filtered > 0 and no `unresolved`
-// must be told the read failed.
+// branch of the sidecar read: a client must be told when the PERSISTED sidecar
+// could not be parsed, because the Warn goes only to the server logger a stdio
+// client never sees.
+//
+// INTENDED CHANGE (Epic 35.16.6.8 T4): this test used to also assert that a
+// failed read yields no `unresolved` key. That coupling is gone. `unresolved` is
+// now reported from res.Unresolved, so an unreadable sidecar no longer erases
+// the records this run routed — the client gets the records AND the reason the
+// on-disk copy is unreadable. Strictly more information, and the assertion is
+// inverted here on purpose rather than deleted.
 //
 // The reader is swapped rather than the file corrupted: the handler writes the
 // sidecar immediately before reading it, so any on-disk fixture that breaks the
@@ -1284,8 +1422,173 @@ func TestReconcileHandler_UnresolvedSidecarReadErrorSurfaced(t *testing.T) {
 
 	require.Equal(t, float64(1), out["unresolved_filtered"],
 		"the reconcile itself must still succeed — the sidecar read is best-effort")
-	_, present := out["unresolved"]
-	require.False(t, present, "a failed read yields no records, so the key is omitted")
+	reported, present := out["unresolved"].([]any)
+	require.True(t, present,
+		"an unreadable sidecar must no longer cost the client the records this run routed")
+	assert.Len(t, reported, 1)
 	assert.Contains(t, out["unresolved_read_error"], "unexpected end of JSON input",
 		"the reason must ride in the result, not only in the server log")
+}
+
+// TestReconcileHandler_UnresolvedStaleDetectsASameCountRewrite closes the gap
+// between what unresolved_stale PROMISES and what it detected.
+//
+// tools.go documents the field as reporting that the persisted sidecar "no longer
+// matches the records THIS run routed". A length comparison cannot support that
+// claim: a concurrent atcr_reconcile that routes the same NUMBER of DIFFERENT
+// findings leaves the field empty, so a client concluding "empty means the
+// on-disk artifact equals what I was handed" is wrong — which is the entire
+// question this field exists to answer.
+//
+// The seam stands in for the racing writer, as in the AC5 test above. Do not run
+// in parallel — it mutates a package-level seam.
+func TestReconcileHandler_UnresolvedStaleDetectsASameCountRewrite(t *testing.T) {
+	isolateUserConfig(t)
+	prev := readUnresolvedSidecar
+	// One record, exactly as many as this run routes, but a different finding —
+	// precisely what a concurrent run on a different diff leaves behind.
+	readUnresolvedSidecar = func(string) ([]reconcile.JSONFinding, error) {
+		return []reconcile.JSONFinding{{
+			Severity: "HIGH", File: "internal/other/elsewhere.go", Line: 42,
+			Problem: "a different finding entirely", Reviewers: []string{"greta"},
+		}}, nil
+	}
+	t.Cleanup(func() { readUnresolvedSidecar = prev })
+
+	root, _, _ := gitRepo(t)
+	id := "2026-09-02_unresolved_same_count"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "greta", "findings.txt"),
+		"HIGH|internal/ghost/phantom.go:9|`quantumFlux` leaks a handle on every retry|close it in `quantumFlux`|correctness|10|ev|greta")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":1}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[map[string]any](t, cs, ToolReconcile, map[string]any{
+		"consensus": "off",
+		"repo":      root,
+	})
+
+	require.Equal(t, float64(1), out["unresolved_filtered"])
+	assert.Empty(t, out["unresolved_read_error"], "nothing failed to read")
+	assert.NotEmpty(t, out["unresolved_stale"],
+		"the counts agree but the CONTENT does not: a length check reports nothing here, and the field's contract is about the records")
+}
+
+// TestUnresolvedDigest_SurvivesTheJSONRoundTrip is the false-positive guard on
+// the content comparison behind unresolved_stale.
+//
+// The persisted side of that comparison has been through json.Marshal and
+// json.Unmarshal; the reported side has not. If any digested field failed to
+// round-trip, EVERY reconcile would report a rewrite that never happened — a
+// louder and more misleading defect than the same-count rewrite the digest was
+// introduced to catch. An unchanged sidecar must digest equal to the records it
+// was written from.
+func TestUnresolvedDigest_SurvivesTheJSONRoundTrip(t *testing.T) {
+	inMemory := []reconcile.JSONFinding{
+		{
+			Severity: "HIGH", File: "internal/ghost/phantom.go", Line: 9,
+			Problem: "(quantumFlux) leaks a handle on every retry", Fix: "close it",
+			Category: "correctness", EstMinutes: 10, Evidence: "ev",
+			Reviewers: []string{"greta", "bruce"}, Confidence: "MEDIUM",
+			PathWarning: "no such file", UnresolvedReason: reconcile.UnresolvedReasonDocShield,
+		},
+		{
+			Severity: "LOW", File: "docs/guide.md", Line: 1,
+			Problem: "second record, so ordering is exercised too", Reviewers: []string{"greta"},
+		},
+	}
+
+	data, err := json.Marshal(inMemory)
+	require.NoError(t, err)
+	var persisted []reconcile.JSONFinding
+	require.NoError(t, json.Unmarshal(data, &persisted))
+
+	assert.Equal(t, unresolvedDigest(inMemory), unresolvedDigest(persisted),
+		"an unchanged sidecar must not read as rewritten")
+
+	t.Run("a reordering IS a rewrite", func(t *testing.T) {
+		swapped := []reconcile.JSONFinding{persisted[1], persisted[0]}
+		assert.NotEqual(t, unresolvedDigest(inMemory), unresolvedDigest(swapped))
+	})
+
+	t.Run("a same-count content change IS a rewrite", func(t *testing.T) {
+		changed := append([]reconcile.JSONFinding(nil), persisted...)
+		changed[0].Line = 10
+		assert.NotEqual(t, unresolvedDigest(inMemory), unresolvedDigest(changed))
+	})
+
+	t.Run("empty and nil digest alike", func(t *testing.T) {
+		assert.Equal(t, unresolvedDigest(nil), unresolvedDigest([]reconcile.JSONFinding{}),
+			"a sidecar written as [] and one read back as nil are the same routing")
+	})
+}
+
+// TestUnresolvedDigest_InvalidUTF8SurvivesTheRoundTrip closes the one field
+// transform the round-trip test above cannot see, because all its fixtures are
+// valid UTF-8.
+//
+// encoding/json replaces every INVALID UTF-8 BYTE with U+FFFD on the way out, and
+// nothing on the routing path sanitises beforehand (no utf8.Valid / ToValidUTF8
+// call exists in internal/stream, internal/reconcile, or reconcile). So a routed
+// record carrying an invalid byte in File, Severity or Problem digests one way in
+// memory and another on disk, and unresolved_stale fires as a FALSE POSITIVE on
+// every reconcile for that review dir — telling each client its artifact was
+// raced when nothing raced it. That is the LOUDER failure the digest was
+// introduced to avoid, not the quieter one it replaced.
+//
+// The two-consecutive-bytes case is the one that constrains the fix: json emits
+// ONE U+FFFD per invalid BYTE, so anything that collapses a RUN of them
+// (strings.ToValidUTF8 does exactly that) still disagrees with the artifact.
+func TestUnresolvedDigest_InvalidUTF8SurvivesTheRoundTrip(t *testing.T) {
+	for name, bad := range map[string]string{
+		"one invalid byte":        "internal/gh\xffost/a.go",
+		"two consecutive":         "internal/gh\xff\xfeost/a.go",
+		"invalid at end":          "internal/ghost/a.go\xff",
+		"truncated multi-byte":    "internal/gh\xe2\x82ost/a.go",
+		"lone surrogate encoding": "internal/gh\xed\xa0\x80ost/a.go",
+	} {
+		t.Run(name, func(t *testing.T) {
+			inMemory := []reconcile.JSONFinding{{
+				Severity: "HIGH", File: bad, Line: 9,
+				Problem: "`quantumFlux` " + bad, UnresolvedReason: bad,
+			}}
+
+			data, err := json.Marshal(inMemory)
+			require.NoError(t, err)
+			var persisted []reconcile.JSONFinding
+			require.NoError(t, json.Unmarshal(data, &persisted))
+			require.NotEqual(t, inMemory[0].File, persisted[0].File,
+				"the premise: json really does rewrite this field, so the digest has to account for it")
+
+			assert.Equal(t, unresolvedDigest(inMemory), unresolvedDigest(persisted),
+				"an unchanged sidecar must not read as rewritten just because a field held an invalid byte")
+		})
+	}
+}
+
+// TestJSONRoundTripString_MatchesEncodingJSON is the anti-drift pin on the
+// sanitiser. jsonRoundTripString reimplements encoding/json's replacement rule
+// rather than calling it, so this asserts the reimplementation against the real
+// thing for every shape that exercises the rule — including the valid strings it
+// must leave untouched.
+func TestJSONRoundTripString_MatchesEncodingJSON(t *testing.T) {
+	for _, s := range []string{
+		"", "plain ascii", "unicode é ✓ 世界",
+		"\xff", "a\xffb", "a\xff\xfeb", "\xff\xff\xff", "trailing\xff",
+		"\xe2\x82", "\xed\xa0\x80", "\xf0\x9f\x98", "\xc0\x80",
+		"mixed é\xffworld\xe2\x82ok",
+	} {
+		data, err := json.Marshal(s)
+		require.NoError(t, err)
+		var back string
+		require.NoError(t, json.Unmarshal(data, &back))
+
+		assert.Equal(t, back, jsonRoundTripString(s),
+			"jsonRoundTripString must reproduce encoding/json exactly for %q", s)
+	}
 }

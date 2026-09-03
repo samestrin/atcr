@@ -744,10 +744,15 @@ func TestExport_PreUnresolvedOnlyStoreStillExports(t *testing.T) {
 // The era partition was applied to the whole record slice at once, so ONE
 // reviewer carrying a current-era record truncated the public submission to that
 // reviewer alone. A store with eleven reviewers and a hundred runs each published
-// one reviewer at runs:1, and nothing in ExportEnvelope marks the truncation — no
-// record count, no era field, and submission_schema does not move — so a board
-// consumer reads the missing reviewers as never used, indistinguishable from a
-// submitter that genuinely never ran them.
+// one reviewer at runs:1, and nothing in ExportEnvelope marked the truncation — no
+// record count, and submission_schema does not move — so a board consumer read the
+// missing reviewers as never used, indistinguishable from a submitter that
+// genuinely never ran them.
+//
+// Epic 35.16.6.8 added raised_denominator to each public row, which is NOT a fix
+// for this: it says which definition produced a row's numbers, not that rows are
+// missing. The partition still has to be per-reviewer, and this test is still what
+// holds it that way.
 //
 // Export is a SEPARATE consumer from TrustPriors and needs its own guard: the two
 // share the helper today, and a future change that re-widens the partition for one
@@ -872,4 +877,273 @@ func TestExportSelected_OnlyNonReviewerRecordsIsNoRecords(t *testing.T) {
 	}
 	_, err := ExportSelected(recs, fixedExportNow)
 	require.ErrorIs(t, err, ErrNoExportRecords)
+}
+
+// TestExport_CarriesTheRaisedDenominator pins the cross-submitter half of the era
+// problem, which the per-store prefer-newest rule does not touch.
+//
+// unresolvedEraRuns guarantees a single submission is computed under ONE
+// definition. It says nothing about two submissions: submitter A on an old atcr
+// publishes bruce at 1.00, submitter B on a new one publishes bruce at 0.60, both
+// stamped submission_schema 2, and the board ranks them against each other. The
+// envelope has to say which rule produced the number.
+func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
+	t.Run("current-era records publish the current definition", func(t *testing.T) {
+		rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+		rec.RaisedDenominator = RaisedDenominatorCurrent
+		rec.RaisedIncludesUnresolved = true
+
+		out, err := Export([]Record{rec}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
+	})
+
+	t.Run("a pre-epic store still publishes, labelled as what it is", func(t *testing.T) {
+		// The key is NOT omitempty, so this row says "definition 1" out loud
+		// rather than staying silent — silence is the ambiguity being removed.
+		out, err := Export([]Record{exportRec("greta", "gpt-5", 1)},
+			FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].RaisedDenominator,
+			"an unmarked record is the pre-epic definition, and the envelope must say so")
+		assert.Contains(t, string(out), `"raised_denominator"`,
+			"the key is never omitted: a submission that will not say which rule it used is the defect")
+	})
+
+	t.Run("a corrupt version cannot delete a reviewer's real history", func(t *testing.T) {
+		// The store is a plain JSONL file a user can edit. An out-of-range version
+		// would otherwise win prefer-newest outright and become that reviewer's
+		// only cohort — one bad line silently discarding every genuine record.
+		// EXCLUSION keeps the intent without the clamp's defect: the garbage line
+		// is dropped from the era window entirely instead of being re-labelled
+		// current and blended — the same answer for a corrupt 999 and for a
+		// legitimate record written by a newer binary under a definition this one
+		// does not implement.
+		good := exportRec("bruce", "claude-sonnet-4-6", 1)
+		good.RaisedIncludesUnresolved = true
+		good.RaisedDenominator = RaisedDenominatorCurrent
+		corrupt := exportRec("bruce", "claude-sonnet-4-6", 1)
+		corrupt.RaisedIncludesUnresolved = true
+		corrupt.RaisedDenominator = 999
+
+		out, err := Export([]Record{good, corrupt}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"the corrupt record is excluded from the era window, so only the good record's run is counted")
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator,
+			"and the published era is the genuine current definition, never the corrupt value")
+	})
+
+	t.Run("the two 'included' eras are separable, which a bool could not do", func(t *testing.T) {
+		// Both of these stamp RaisedIncludesUnresolved=true. Before the
+		// denominator version existed they were indistinguishable, so a window
+		// holding both blended two definitions while reporting one.
+		older := exportRec("bruce", "claude-sonnet-4-6", 1)
+		older.RaisedIncludesUnresolved = true // era 2: every routed finding charged
+		newer := exportRec("bruce", "claude-sonnet-4-6", 1)
+		newer.RaisedIncludesUnresolved = true
+		newer.RaisedDenominator = RaisedDenominatorCurrent // era 3: doc-shielded carved out
+
+		out, err := Export([]Record{older, newer}, FilterOpts{Since: "all"}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"prefer-newest must drop the older definition's run rather than average across both")
+	})
+
+	t.Run("ExportSelected runs the era pass internally: mixed-era input is separated, not blended", func(t *testing.T) {
+		// ExportSelected is exported precisely so an embedder can aggregate a slice
+		// directly. The single-definition guarantee is therefore structural INSIDE
+		// it: mixed-era records for one reviewer are split prefer-newest before
+		// aggregation, exactly as PublishedSet does on the Export path.
+		era2 := exportRec("bruce", "claude-sonnet-4-6", 1)
+		era2.RaisedIncludesUnresolved = true // denominator 2 via the bool fallback
+		era2.FindingsRaised = 10
+		era2.FindingsCorroborated = 9
+		era3 := exportRec("bruce", "claude-sonnet-4-6", 1)
+		era3.RaisedIncludesUnresolved = true
+		era3.RaisedDenominator = RaisedDenominatorCurrent
+		era3.FindingsRaised = 4
+		era3.FindingsCorroborated = 1
+
+		out, err := ExportSelected([]Record{era2, era3}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"the era-2 record must be dropped prefer-newest, not blended into the published row")
+		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
+		assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 1e-9,
+			"the rate is computed from the era-3 record alone (1/4), not the blend (10/14)")
+	})
+
+	// The subtest above does NOT discriminate the era pass: reviewerAcc buckets
+	// by era inside finalize(), so era 2 and era 3 are already separated with or
+	// without `filtered = unresolvedEraRuns(filtered)`. Deleting that line leaves
+	// it green.
+	//
+	// What only the era pass does is EXCLUDE an above-current record. byEra keys
+	// on raisedDenominatorOf, which CLAMPS an above-current denominator to
+	// RaisedDenominatorCurrent — so without the pass the alien record lands in the
+	// current-era bucket and is blended into the published row, under the current
+	// label. That is the averaged-number-presented-as-pure defect raised_denominator
+	// exists to prevent, and this is the assertion that fails when the line goes.
+	t.Run("ExportSelected's era pass excludes an above-current record byEra would clamp into the current cohort", func(t *testing.T) {
+		current := exportRec("bruce", "claude-sonnet-4-6", 1)
+		current.RaisedIncludesUnresolved = true
+		current.RaisedDenominator = RaisedDenominatorCurrent
+		current.FindingsRaised = 4
+		current.FindingsCorroborated = 1
+
+		alien := exportRec("bruce", "claude-sonnet-4-6", 2)
+		alien.RaisedIncludesUnresolved = true
+		alien.RaisedDenominator = RaisedDenominatorCurrent + 1 // a NEWER atcr wrote this
+		alien.FindingsRaised = 10
+		alien.FindingsCorroborated = 9
+
+		out, err := ExportSelected([]Record{current, alien}, fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+		assert.Equal(t, 1, env.Reviewers[0].Runs,
+			"the above-current record must be excluded before aggregation, not clamped into the current cohort")
+		assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 1e-9,
+			"the rate is the current-era record alone (1/4), not the blend with the alien record (10/14)")
+		assert.InDelta(t, 4.0, env.Reviewers[0].FindingsRaisedAvg, 1e-9,
+			"the average is over the surviving run only")
+	})
+}
+
+// TestReviewerAcc_DropsOlderEraRecords pins the defensive layer beneath the era
+// pass: unresolvedEraRuns keys on strings.ToLower(Reviewer) while ExportSelected
+// groups on the SCRUBBED (persona, model) pair, so two identities differing only
+// by a non-printing rune form one accumulator but two era groups. When that
+// happens the accumulator must not blend: the older era's records are dropped,
+// in either arrival order, and the published row is computed from the newest
+// definition alone.
+func TestReviewerAcc_DropsOlderEraRecords(t *testing.T) {
+	mk := func(denom int, raised, corro int) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", 1)
+		r.FindingsRaised = raised
+		r.FindingsCorroborated = corro
+		if denom >= 2 {
+			r.RaisedIncludesUnresolved = true
+		}
+		if denom >= 3 {
+			r.RaisedDenominator = RaisedDenominatorCurrent
+		}
+		return r
+	}
+	era2 := mk(2, 10, 9)
+	era3 := mk(3, 4, 1)
+
+	for _, order := range [][]Record{{era2, era3}, {era3, era2}} {
+		a := &reviewerAcc{persona: "bruce", model: "claude-sonnet-4-6"}
+		for _, r := range order {
+			a.add(r)
+		}
+		pr := a.finalize()
+		assert.Equal(t, 1, pr.Runs, "the older era's record is dropped, not blended")
+		assert.Equal(t, RaisedDenominatorCurrent, pr.RaisedDenominator)
+		assert.InDelta(t, 4.0, pr.FindingsRaisedAvg, 1e-9, "raised total from the newest era only")
+		assert.InDelta(t, 0.25, pr.CorroborationRate, 1e-9, "rate from the newest era only (1/4), not the blend (10/14)")
+	}
+}
+
+// TestEraPass_EmptyingASelectionIsItsOwnError pins the diagnosis for the one way
+// the era pass CAN empty a non-empty selection: every selected reviewer record
+// was written under a definition this binary does not implement.
+//
+// Reported as ErrNoExportRecords ("no records match the export filters"), that
+// state tells an operator to widen --since — advice that cannot work, because the
+// records ARE in the window and the filters DID match them. The cause is the
+// store, not the query, so it needs its own error.
+func TestEraPass_EmptyingASelectionIsItsOwnError(t *testing.T) {
+	alien := func(runID string) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", 1)
+		r.RunID = runID
+		r.RaisedIncludesUnresolved = true
+		r.RaisedDenominator = RaisedDenominatorCurrent + 1
+		return r
+	}
+	records := []Record{alien("2026-09-02T00:00:00Z-a1"), alien("2026-09-01T00:00:00Z-a2")}
+
+	t.Run("PublishedSet", func(t *testing.T) {
+		got, err := PublishedSet(records, FilterOpts{Since: "all"}, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoCurrentEraRecords,
+			"a selection the FILTERS matched but the ERA PASS emptied must not read as a filter miss")
+		assert.Empty(t, got)
+		assert.NotErrorIs(t, err, ErrNoExportRecords,
+			"the two states call for opposite operator actions and must not be conflated")
+	})
+
+	t.Run("ExportSelected", func(t *testing.T) {
+		_, err := ExportSelected(records, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoCurrentEraRecords)
+		assert.NotErrorIs(t, err, ErrNoExportRecords)
+	})
+
+	t.Run("an empty input is still the ordinary no-records error", func(t *testing.T) {
+		_, err := ExportSelected(nil, fixedExportNow)
+		require.ErrorIs(t, err, ErrNoExportRecords,
+			"nothing selected at all is a filter outcome, not an era outcome")
+		assert.NotErrorIs(t, err, ErrNoCurrentEraRecords)
+	})
+
+	t.Run("a survivable selection is unaffected", func(t *testing.T) {
+		ok := exportRec("bruce", "claude-sonnet-4-6", 1)
+		ok.RaisedIncludesUnresolved = true
+		ok.RaisedDenominator = RaisedDenominatorCurrent
+		out, err := ExportSelected(append([]Record{ok}, records...), fixedExportNow)
+		require.NoError(t, err)
+		env := parseEnvelope(t, out)
+		require.Len(t, env.Reviewers, 1)
+	})
+}
+
+// TestReviewerAcc_FinalizeSurvivesAnEraMissFromByEra pins the defensive branch in
+// finalize() that no production path can reach.
+//
+// add() writes byEra[d] and raises raisedDenominator to that same d on every
+// record, so through add() the bucket is always present. The branch therefore
+// only fires for a reviewerAcc constructed some other way — a zero value, or a
+// future caller that sets raisedDenominator without a matching bucket — and
+// without it that construction dereferences a nil *eraAcc and panics.
+//
+// Testing it requires exactly the synthetic construction the branch exists for.
+// The alternative the TD row offered was deleting it and documenting the zero
+// value as a precondition; the branch is kept because finalize() is called from
+// an exported path (ExportSelected) and a panic there is a worse failure than a
+// zero row.
+func TestReviewerAcc_FinalizeSurvivesAnEraMissFromByEra(t *testing.T) {
+	t.Run("zero value", func(t *testing.T) {
+		var a reviewerAcc
+		var pr PublicRecord
+		require.NotPanics(t, func() { pr = a.finalize() })
+		assert.Equal(t, 0, pr.Runs, "no data means an empty row, not a panic")
+		assert.Nil(t, pr.CostPerCorroboratedFindingUSD, "an undefined metric stays absent")
+	})
+
+	t.Run("raisedDenominator names an era byEra does not hold", func(t *testing.T) {
+		a := reviewerAcc{
+			persona:           "bruce",
+			model:             "m",
+			raisedDenominator: RaisedDenominatorCurrent,
+			byEra:             map[int]*eraAcc{raisedDenominatorPreEpic: {runs: 3, raisedTotal: 9, corroborated: 3}},
+		}
+		var pr PublicRecord
+		require.NotPanics(t, func() { pr = a.finalize() })
+		assert.Equal(t, 0, pr.Runs,
+			"the row reports the named era, which holds nothing — it must not silently fall back to the other era's sums")
+		assert.Equal(t, RaisedDenominatorCurrent, pr.RaisedDenominator)
+		assert.Equal(t, "bruce", pr.Persona)
+	})
 }

@@ -17,6 +17,18 @@ import (
 // user-facing guidance (AC 04-04); callers write no output on this path.
 var ErrNoExportRecords = errors.New("no records match the export filters")
 
+// ErrNoCurrentEraRecords is returned when the caller's filters DID match records
+// but every one of them was written under a raised_denominator this binary does
+// not implement, so the era pass excluded them all.
+//
+// It is separate from ErrNoExportRecords because the two states call for opposite
+// operator actions. "No records match the export filters" tells the operator to
+// widen --since or drop --model/--persona; here that advice cannot work — the
+// records are inside the window and the filters selected them. The store was
+// written by a newer atcr, and the fix is to upgrade this binary (or export from
+// the one that wrote it), not to change the query.
+var ErrNoCurrentEraRecords = errors.New("no records remain after the raised_denominator era filter: every selected record carries a raised_denominator this atcr does not implement — upgrade atcr (or export with the version that wrote the store); a hand-edited or benchmark-stamped denominator reads the same way")
+
 // SubmissionSchema is the version of the PUBLIC leaderboard submission format
 // (Epic 10.0). It is intentionally decoupled from the on-disk store's
 // SchemaVersion: the local record format and the public submission format evolve
@@ -28,11 +40,15 @@ var ErrNoExportRecords = errors.New("no records match the export filters")
 // benchmark side, which gained suite_case_ids/reviewer_coverage in epic 35.16.6.2.
 //
 // The bump is ADDITIVE on both producers: no field of ExportEnvelope or
-// PublicRecord was renamed, retyped, or removed, and ExportEnvelope's key set is
-// byte-for-byte what version 1 emitted. A version-2 production submission
-// therefore differs from a version-1 one only in this integer. See the
-// "Schema versioning" section of docs/scorecard.md for the consumer-side
-// coordination note.
+// PublicRecord has ever been renamed, retyped, or removed.
+//
+// It is NOT true that a version-2 submission differs from a version-1 one only in
+// this integer — that held when the bump landed and stopped holding in epic
+// 35.16.6.8, which added raised_denominator to PublicRecord. The constant did not
+// move for it, deliberately: the addition is additive, and moving the version
+// would make every board pinned to 2 reject every new submission — an outage
+// where the defect is a legibility gap. See the "Schema versioning" section of
+// docs/scorecard.md for the consumer-side coordination note.
 const SubmissionSchema = 2
 
 // PublicRecord is one aggregated reviewer row of the public submission schema,
@@ -53,6 +69,28 @@ type PublicRecord struct {
 	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
 	CostPerCorroboratedFindingUSD *float64 `json:"cost_per_corroborated_finding_usd,omitempty"`
 	LatencyP50MS                  int64    `json:"latency_p50_ms"`
+	// RaisedDenominator says which definition of "findings raised" produced this
+	// row's FindingsRaisedAvg and CorroborationRate. See RaisedDenominatorCurrent
+	// for the values.
+	//
+	// WHY IT IS ON THE RECORD AND NOT THE ENVELOPE: this is the one type the two
+	// public producers actually share. ExportEnvelope and benchmark.Submission are
+	// separate structs that happen to stamp the same SubmissionSchema constant, so
+	// a field added to the envelope reaches one producer only; a field added here
+	// reaches both, which is the point — a benchmark submission and a production
+	// submission are ranked on the same board and must be comparable on the same
+	// terms. It is also where the field belongs semantically: the era describes
+	// how THESE numbers were computed.
+	//
+	// WHY NOT submission_schema: the rate's meaning changed while no field was
+	// renamed, retyped, or removed. Moving the schema version would make every
+	// board pinned to the current one reject every new submission — an outage
+	// where the actual defect is a legibility gap. Additive-only, per the rule the
+	// schema-2 bump established.
+	//
+	// Not omitempty: a submission that does not say which definition it used is
+	// exactly the ambiguity this exists to remove, so the key is always present.
+	RaisedDenominator int `json:"raised_denominator"`
 }
 
 // ExportEnvelope is the top-level public submission document (Epic 10.0 spec).
@@ -73,9 +111,27 @@ type ExportEnvelope struct {
 // PublicRecords without bias, so aggregation works from raw records and the
 // public row is computed once at the end. persona/model are scrubbed at ingestion
 // (the single anonymization point), so finalize() never re-scrubs.
+//
+// Records are bucketed by era (the byEra map), not summed flat: the era pass keys
+// on strings.ToLower(Reviewer) while this accumulator keys on the scrubbed
+// (persona, model) pair, so two identities differing only by a non-printing rune
+// form ONE group here but TWO era groups there. When such a group ends up
+// holding two definitions, finalize() computes from the newest era's bucket
+// alone — a blended sum stamped with one label is the defect raised_denominator
+// exists to prevent, and the era pass cannot catch it at this key.
 type reviewerAcc struct {
-	persona         string
-	model           string
+	persona string
+	model   string
+	// raisedDenominator is the newest FindingsRaised definition seen in this
+	// group; it rides onto the public row so a board can tell two submitters'
+	// numbers apart when they were computed under different rules, and it selects
+	// the bucket finalize() reads.
+	raisedDenominator int
+	byEra             map[int]*eraAcc
+}
+
+// eraAcc holds one definition's worth of raw sums inside a reviewerAcc group.
+type eraAcc struct {
 	runs            int
 	raisedTotal     int
 	corroborated    int
@@ -88,43 +144,60 @@ type reviewerAcc struct {
 }
 
 func (a *reviewerAcc) add(r Record) {
-	a.runs++
-	a.raisedTotal += clampNonNeg(r.FindingsRaised)
-	a.corroborated += clampNonNeg(r.FindingsCorroborated)
-	a.costTotal = clampNonNegF(a.costTotal + clampNonNegF(r.CostUSD))
-	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
+	d := raisedDenominatorOf(r)
+	if d > a.raisedDenominator {
+		a.raisedDenominator = d
+	}
+	if a.byEra == nil {
+		a.byEra = make(map[int]*eraAcc)
+	}
+	e := a.byEra[d]
+	if e == nil {
+		e = &eraAcc{}
+		a.byEra[d] = e
+	}
+	e.runs++
+	e.raisedTotal += clampNonNeg(r.FindingsRaised)
+	e.corroborated += clampNonNeg(r.FindingsCorroborated)
+	e.costTotal = clampNonNegF(e.costTotal + clampNonNegF(r.CostUSD))
+	e.latencies = append(e.latencies, clampNonNeg64(r.LatencyMS))
 	// Any verification pointer present marks the group as verified; the counts
 	// sum only over the runs that actually carried verification data.
 	if r.FindingsVerified != nil {
-		a.verified += clampNonNeg(*r.FindingsVerified)
-		a.hasVerification = true
+		e.verified += clampNonNeg(*r.FindingsVerified)
+		e.hasVerification = true
 	}
 	if r.FindingsRefuted != nil {
-		a.refuted += clampNonNeg(*r.FindingsRefuted)
-		a.hasVerification = true
+		e.refuted += clampNonNeg(*r.FindingsRefuted)
+		e.hasVerification = true
 	}
 	if r.SurvivedSkepticRate != nil {
-		a.storedRates = append(a.storedRates, clampRate(*r.SurvivedSkepticRate))
-		a.hasVerification = true
+		e.storedRates = append(e.storedRates, clampRate(*r.SurvivedSkepticRate))
+		e.hasVerification = true
 	}
 }
 
 func (a *reviewerAcc) finalize() PublicRecord {
+	e := a.byEra[a.raisedDenominator]
+	if e == nil {
+		e = &eraAcc{} // unreachable through add(); keeps a zero-value acc safe
+	}
 	pr := PublicRecord{
 		Model:             a.model,
 		Persona:           a.persona,
-		Runs:              a.runs,
-		FindingsRaisedAvg: avgPerRun(a.raisedTotal, a.runs),
-		CorroborationRate: clampRate(ratio(a.corroborated, a.raisedTotal)),
-		LatencyP50MS:      medianInt64(a.latencies),
+		Runs:              e.runs,
+		FindingsRaisedAvg: avgPerRun(e.raisedTotal, e.runs),
+		CorroborationRate: clampRate(ratio(e.corroborated, e.raisedTotal)),
+		LatencyP50MS:      medianInt64(e.latencies),
+		RaisedDenominator: a.raisedDenominator,
 	}
-	pr.CostPerCorroboratedFindingUSD = costPer(a.costTotal, a.corroborated)
+	pr.CostPerCorroboratedFindingUSD = costPer(e.costTotal, e.corroborated)
 	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
 	// records that some verification pointer was present; a degenerate record can
 	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
 	// in which case there is no rate to report and the key must stay absent — a 0.0
 	// here would be indistinguishable from a genuine all-refuted rate.
-	if a.hasVerification && (a.verified+a.refuted > 0 || len(a.storedRates) > 0) {
+	if e.hasVerification && (e.verified+e.refuted > 0 || len(e.storedRates) > 0) {
 		// Count-based aggregation (verified/(verified+refuted)) is authoritative
 		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
 		// average of per-run rates). Only when NO counts survive in the group (a
@@ -133,14 +206,14 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
 		// public value.
 		var rate float64
-		if a.verified+a.refuted > 0 {
-			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
+		if e.verified+e.refuted > 0 {
+			rate = clampRate(ratio(e.verified, e.verified+e.refuted))
 		} else {
 			sum := 0.0
-			for _, v := range a.storedRates {
+			for _, v := range e.storedRates {
 				sum += v
 			}
-			rate = clampRate(sum / float64(len(a.storedRates)))
+			rate = clampRate(sum / float64(len(e.storedRates)))
 		}
 		pr.SurvivedSkepticRate = &rate
 	}
@@ -249,18 +322,22 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 // published identities and serialize them from ONE selection instead of computing the
 // selection twice over a store the export path deliberately reads in full.
 //
-// The empty check moved behind the era pass with this split, which is
-// behaviour-preserving: unresolvedEraRuns falls back rather than excluding — a record
-// is kept when its reviewer has no current-era record at all, and when a reviewer does
-// have one, that record itself is kept — so within THIS function a non-empty selection
-// can never come out empty. ErrNoExportRecords therefore reports that nothing
-// publishable remained — which is no longer guaranteed to be exactly what the user's
-// own filters selected: a caller can shrink a non-empty selection to empty between
-// PublishedSet and this call. The leaderboard export does exactly that, skipping
-// records whose published identity is empty once scrubbed
-// (selectPublishableRecordIdentities, cli/leaderboard.go), so a user whose filters
-// matched every record can still see the sentinel; the per-record skip lines on
-// stderr precede it, so the outcome is discoverable.
+// The empty check moved behind the era pass with this split. unresolvedEraRuns
+// falls back rather than excluding for every era it KNOWS — a record is kept when
+// its reviewer has no current-era record at all, and when a reviewer does have
+// one, that record itself is kept — so a pre-epic or mixed-era selection can never
+// come out empty here. The one exception is a selection made ENTIRELY of records
+// ABOVE the current definition, which the pass excludes outright; that case raises
+// ErrNoCurrentEraRecords, not ErrNoExportRecords, because the operator action it
+// calls for (upgrade atcr) is the opposite of widening a filter.
+//
+// ErrNoExportRecords therefore reports that nothing publishable remained — which is
+// not guaranteed to be exactly what the user's own filters selected: a caller can
+// shrink a non-empty selection to empty between PublishedSet and this call. The
+// leaderboard export does exactly that, skipping records whose published identity is
+// empty once scrubbed (selectPublishableRecordIdentities, cli/leaderboard.go), so a
+// user whose filters matched every record can still see the sentinel; the per-record
+// skip lines on stderr precede it, so the outcome is discoverable.
 //
 // Only `record_type: "reviewer"` records are published. That is not a precondition on
 // the caller: this function enforces it, because it is exported and skips the
@@ -269,6 +346,23 @@ func ExportSelected(filtered []Record, exportedAt time.Time) ([]byte, error) {
 	if len(filtered) == 0 {
 		return nil, ErrNoExportRecords
 	}
+
+	// The era pass is structural HERE, not the caller's contract: an embedder
+	// calling this exported function with a mixed-era slice would otherwise
+	// publish blended counts stamped with the newest label — an averaged number
+	// presented as a pure one, the defect raised_denominator exists to prevent.
+	// Mirroring PublishedSet, the pass separates each reviewer's eras
+	// prefer-newest and excludes above-current records outright. It falls back
+	// rather than emptying a pre-epic store, so this cannot turn a publishable
+	// selection into no rows.
+	kept := unresolvedEraRuns(filtered)
+	if len(kept) == 0 {
+		// Non-empty in, empty out: every record was above the current definition.
+		// Reporting the filter error here would tell an embedder to widen a window
+		// this function does not even apply.
+		return nil, ErrNoCurrentEraRecords
+	}
+	filtered = kept
 
 	type key struct{ persona, model string }
 	groups := map[key]*reviewerAcc{}
@@ -478,7 +572,15 @@ func PublishedSet(records []Record, opts FilterOpts, exportedAt time.Time) ([]Re
 	// findings into the denominator, so corroboration_rate and findings_raised_avg
 	// computed across both eras measure neither. It runs AFTER ApplyFilters so Export's
 	// "no records" error still reports what the user's own filters selected rather than
-	// an era they never asked about; and because the rule falls back rather than
-	// excluding, it can never empty a submission built from a pre-epic store.
-	return unresolvedEraRuns(filtered), nil
+	// an era they never asked about.
+	//
+	// The pass falls back rather than excluding for every era it KNOWS, so a pre-epic
+	// store can never be emptied. It does exclude outright in one case — a record above
+	// the current definition — and a selection made entirely of those comes out empty.
+	// That is not a filter miss, so it is not reported as one.
+	kept := unresolvedEraRuns(filtered)
+	if len(kept) == 0 && len(filtered) > 0 {
+		return nil, ErrNoCurrentEraRecords
+	}
+	return kept, nil
 }
