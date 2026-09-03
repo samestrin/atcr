@@ -954,6 +954,15 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 // the non-ASCII range ends the name and hands the verdict to the punctuation
 // test, which is what the ASCII class always claimed to do.
 //
+// The leading-rune rule is a property of the NAME, not of the alphabet it is
+// written in, so the category arm honours `first` exactly as the ASCII arm does:
+// neither a digit nor a combining mark can legally BEGIN a JavaScript or
+// TypeScript identifier. Leaving `first` unread there let the two arms disagree
+// about one rule — `export module 34, see MyWidget` was rejected while
+// `export module ٣٤, see MyWidget` scanned the Arabic-Indic digits as a declared
+// name, reached followsDeclaredName's `,` arm, and harvested the fabricated
+// MyWidget into presentInSource.
+//
 // An invalid UTF-8 byte decodes to RuneError, which is in none of those
 // categories, so it ends the name — the conservative direction, and the same
 // answer the ASCII-only class gave.
@@ -969,7 +978,7 @@ func isDeclNameRune(r rune, first bool) bool {
 	case r < utf8.RuneSelf:
 		return false // every other ASCII byte is punctuation or space
 	}
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
+	return unicode.IsLetter(r) || (!first && (unicode.IsDigit(r) || unicode.IsMark(r)))
 }
 
 // eligiblePaths filters the tracked set to root-contained files, preserving a
