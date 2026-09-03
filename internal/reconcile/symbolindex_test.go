@@ -1780,6 +1780,12 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"enum members: Red, Green, Blue",
 			"class hierarchy: see the diagram",
 			"function signatures: documented below",
+			// `module` is the one keyword in this list with a NON-zero shape, so
+			// its argument is the one that can be pinned bit by bit. The quoted
+			// bodies above kill only the declQuotedName bit; without this line,
+			// adding declTypeAnnotation to the table entry leaves the package
+			// green even though an ambient module never carries an annotation.
+			"module boundaries: enforced by BuildTool",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q is prose — admitting it lets a doc sentence license a confident PathSuggestion", body)
@@ -1838,6 +1844,12 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"function 'f'()",
 			"let 'x' = 1",
 			"var 'y' = 2",
+			// `const` completes the variable-binding trio. Without it the
+			// declTypeAnnotation passed at the const call site is pinned one bit
+			// at a time, and setting declQuotedName on that argument leaves the
+			// package green — the same unpinned-sibling defect the const-enum
+			// subtest below closes.
+			"const 'x' = 1",
 		} {
 			assert.False(t, isESMExportBody([]byte(body)),
 				"%q quotes a name after a non-module keyword — only an ambient module names a string", body)
@@ -1853,18 +1865,14 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	})
 
 	// `const enum` is ONE keyword pair, and the pair binds no variable, so it
-	// takes no type annotation — `const enum E: number` is not a TypeScript
-	// form. Passing declTypeAnnotation to its declaresName call instead of 0
-	// also left the package green, so the 0 was untested; with the annotation
-	// admitted, that sentence-shaped body reaches the `:` arm and licenses a
-	// source presence.
-	// The shape argument is a VALUE, not a checklist, so it is pinned as one.
-	// Asserting only the colon left the sibling bit free: swapping the 0 for
-	// declQuotedName kept the package green, and with that bit set
+	// carries neither of the extra shapes: no type annotation (`const enum E:
+	// number` is not a TypeScript form) and no quoted name (only an ambient
+	// module names a string). Its argument is 0, and 0 is pinned as a VALUE, not
+	// as a checklist of mutants someone happened to enumerate — one body per
+	// extra shape. Pinning it bit by bit is what let the first fix here pass:
+	// asserting only the colon left declQuotedName free, and with that bit set
 	// `const enum 'PHRASE' {` reaches followsDeclaredName's `{` arm and harvests
-	// its whole line into presentInSource. One body per extra shape closes the
-	// argument to every non-zero value rather than to the mutants someone
-	// happened to enumerate.
+	// its whole line into presentInSource.
 	t.Run("const enum takes no type annotation and no quoted name", func(t *testing.T) {
 		for _, body := range []string{
 			"const enum E: number", // declTypeAnnotation — the pair binds no variable
@@ -1913,6 +1921,24 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 		// fail the build, but it is far above zero.
 		require.Greaterf(t, asserted, 1000,
 			"the sweep asserted on only %d rune(s) — the filter has gone vacuous", asserted)
+
+		// The sweep above draws its filter from the same predicate the
+		// implementation uses, so on its own it can only catch a NARROWING of
+		// the name class. These runes sit OUTSIDE both classes and must be
+		// rejected at either position; without them, widening `unicode.IsDigit`
+		// to `unicode.IsNumber` admits Nl and No inside a name — extending the
+		// prose residual — with the package still green.
+		for _, r := range []rune{
+			'Ⅷ', // U+2167 Nl — a letter-number, not category L
+			'½', // U+00BD No — an other-number
+			'—', // U+2014 Pd — a dash, the typographic-punctuation case
+			'“', // U+201C Pi — a curly quote
+		} {
+			require.Falsef(t, isDeclNameRune(r, true),
+				"U+%04X is in neither the letter nor the digit/mark class and must not begin a name", r)
+			require.Falsef(t, isDeclNameRune(r, false),
+				"U+%04X is in neither class and must not continue a name either", r)
+		}
 	})
 
 	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {

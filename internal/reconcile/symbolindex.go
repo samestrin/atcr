@@ -764,6 +764,12 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // their own docstrings. The keyword set must not be widened on the belief that an
 // over-admission is the safe direction. It is the dangerous one.
 //
+// Which punctuator each keyword admits is therefore part of the keyword table
+// (declShape) rather than one shared set: the colon belongs to a variable
+// binding and to nothing else, and the quoted name belongs to `module` and to
+// nothing else. `export type definitions: see the guide` and `export global
+// state: shared across MyWorker` are rejected for that reason.
+//
 // That residual is NOT limited to ASCII sentences. isDeclNameRune decides a name
 // rune by Unicode category, so the second word can be written in any script and
 // the same punctuation test admits it. Measured on this function:
@@ -786,12 +792,6 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // after), so the widening extended an accepted residual's reach; it did not
 // create a new defect class. Narrowing the residual is a design change to the
 // grammar rule, not a correction to the alphabet.
-//
-// Which punctuator each keyword admits is therefore part of the keyword table
-// (declShape) rather than one shared set: the colon belongs to a variable
-// binding and to nothing else, and the quoted name belongs to `module` and to
-// nothing else. `export type definitions: see the guide` and `export global
-// state: shared across MyWorker` are rejected for that reason.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -986,6 +986,14 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 // `export module ٣٤, see MyWidget` scanned the Arabic-Indic digits as a declared
 // name, reached followsDeclaredName's `,` arm, and harvested the fabricated
 // MyWidget into presentInSource.
+//
+// Recognising a name is not the same as harvesting it. isIdentifierShaped
+// (anchor.go) rejects any token containing a combining mark, so a mark-bearing
+// declaration is recognised HERE and its name is still dropped downstream —
+// `export const नाम = 1` and an NFD-spelled `export const café = 1` both harvest
+// map[const:1]. The precomposed spelling (`café` as one letter rune) does reach
+// presentInSource. So this class's Unicode reach is what the GRAMMAR test
+// accepts, not what the index ends up holding; the two disagree about marks.
 //
 // An invalid UTF-8 byte decodes to RuneError, which is in none of those
 // categories, so it ends the name — the conservative direction, and the same
