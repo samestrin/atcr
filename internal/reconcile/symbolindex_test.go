@@ -1557,6 +1557,71 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			assert.False(t, isESMExportBody([]byte(body)), "%q is prose, not an export declaration", body)
 		}
 	})
+
+	// The prefix rule above only protects prose whose FIRST word merely STARTS
+	// with a keyword (`types`, `declares`). It does nothing for prose whose first
+	// word IS the keyword, because the boundary test admits a keyword followed by
+	// a space — and every one of these words is an ordinary English word that is
+	// normally followed by a space. `export type definitions for MyWidget are
+	// generated at build time` is a sentence a real .mdx page can contain, and it
+	// put MyWidget into presentInSource, where a fabricated anchor on MyWidget
+	// reads as "named in the source" (symbolindex.go tier4Inconclusive) and
+	// licenses a confident PathSuggestion via primaryMatched.
+	//
+	// A declaration is not "keyword + words". It is keyword + a NAME, then the
+	// grammar's own punctuation: `= < ( { : ; ,`, end of line, or an
+	// `extends`/`implements` clause. Prose almost never reaches that shape.
+	t.Run("keyword followed by an English sentence is not a declaration", func(t *testing.T) {
+		for _, body := range []string{
+			"type definitions for MyWidget are generated at build time",
+			"interface changes affect PublicThing downstream",
+			"declare your intent before touching SecretHelper",
+			"abstract concepts like QuantumFlux are not real",
+			"const values are frozen once exported",
+			"class names should be PascalCase in MyModule",
+			"function calls are cheap in HotPath",
+			"enum members must be unique across ColorSet",
+			"let us assume RetryPolicy is configured",
+			"var names are legacy in OldModule",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q is an English sentence, not a declaration — admitting it lets doc prose license a source presence", body)
+		}
+	})
+
+	// The tightening must not cost a single real form. These are the shapes the
+	// keyword+NAME+punctuation rule has to keep admitting, including the ones
+	// whose name is NOT the next token (`declare`/`abstract` are modifiers) and
+	// the ones with no punctuation at all (`let a`).
+	t.Run("every real declaration shape survives the tightening", func(t *testing.T) {
+		for _, body := range []string{
+			"const a = 1",
+			"let a",
+			"var a;",
+			"function f()",
+			"function f<T>(x: T)",
+			"function* gen()",
+			"async function f()",
+			"class C {}",
+			"class C extends Base {}",
+			"class C implements Iface {}",
+			"type T = string",
+			"type T<A> = A[]",
+			"interface I {}",
+			"interface I extends J {}",
+			"enum Color {}",
+			"declare const x: number",
+			"declare function f(): void",
+			"abstract class Base {}",
+			"const { a, b } = obj",
+			"const [a, b] = arr",
+			"default fn",
+			"{Named} from './x'",
+			"* from './x'",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
+		}
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
