@@ -1732,6 +1732,68 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 				"%q declares a name containing a digit", body)
 		}
 	})
+
+	// `namespace`, `module` and `global` were added to the binding list to
+	// recover `declare namespace N {}` and friends, which the recursion would
+	// otherwise have lost. Adding them also handed ordinary prose two ways
+	// through declaresName that the old flat list never had, because all three
+	// are common English nouns that a sentence follows with a colon or a quote:
+	//
+	//	export module 'quantumFlux' is discussed below
+	//	export global state: shared across MyWorker
+	//	export namespace collisions: see QuantumFlux
+	//
+	// This is the over-admission direction, which is the dangerous one. A prose
+	// token in presentInSource unlocks resolve's primaryMatched gate, and the
+	// secondary branch then localizes on a FIX anchor and returns tier4Resolved —
+	// so validate.go stamps a confident PathSuggestion pointing at a file that has
+	// nothing to do with the finding's (nonexistent) subject. Nothing downstream
+	// can undo it; see the docstrings on collectExportedIdentifiers and
+	// exportDeclaringExts, which say exactly this.
+	//
+	// Two rules close it, and each is pinned in both directions below:
+	//   - a colon after the name is a TYPE ANNOTATION, which none of the three
+	//     can carry, so it is prose punctuation for them and a declaration
+	//     punctuator for everything else
+	//   - a quoted name is an AMBIENT MODULE name, which only `module` takes —
+	//     and it still has to be followed by the grammar's own punctuation, since
+	//     `'react' {}` is a declaration and `'quantumFlux' is discussed` is not
+	t.Run("namespace module and global do not admit prose", func(t *testing.T) {
+		for _, body := range []string{
+			"module 'quantumFlux' is discussed below",
+			"module \"someName\" is described here",
+			"global state: shared across MyWorker",
+			"namespace collisions: see QuantumFlux",
+			"namespace 'quoted' is not a module",
+			"global 'state' is shared",
+			// An unterminated quote is not a declaration either.
+			"module 'unterminated {}",
+		} {
+			assert.False(t, isESMExportBody([]byte(body)),
+				"%q is prose — admitting it lets a doc sentence license a confident PathSuggestion", body)
+		}
+	})
+
+	t.Run("the real namespace module and global forms still pass", func(t *testing.T) {
+		for _, body := range []string{
+			"namespace N {}",
+			"module M {}",
+			"global {}",
+			"declare namespace N {}",
+			"declare module 'x' {}",
+			"declare module \"y\" {}",
+			"declare global {}",
+			// The colon rule must stay OPEN for every keyword that really does
+			// take a type annotation, or tightening it costs real declarations.
+			"const x: number = 1",
+			"let y: string",
+			"var z: boolean",
+			"declare const w: T",
+			"function f(): void",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
+		}
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
