@@ -935,7 +935,8 @@ func parseOptionalSeverity(s string) (string, error) {
 func unresolvedDigest(findings []reconcile.JSONFinding) string {
 	h := sha256.New()
 	for _, f := range findings {
-		fmt.Fprintf(h, "%s\x00%d\x00%s\x00%s\x00%s\x00",
+		// hash.Hash.Write never returns an error.
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00%s\x00%s\x00",
 			f.File, f.Line, f.Severity, f.Problem, f.UnresolvedReason)
 	}
 	return hex.EncodeToString(h.Sum(nil))
