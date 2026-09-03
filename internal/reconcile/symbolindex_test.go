@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -1861,6 +1863,42 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"`const enum E: number` binds no variable, so the colon is prose punctuation")
 		assert.True(t, isESMExportBody([]byte("const enum Direction {}")),
 			"`const enum Direction {}` is the real form and must survive")
+	})
+
+	// The leading-digit rule is a property of the NAME, not of the alphabet the
+	// name is written in. The ASCII arm has always enforced it; the Unicode
+	// category arm did not, so `export module ٣٤, see MyWidget` scanned the
+	// Arabic-Indic digits as a declared name, reached followsDeclaredName's `,`
+	// arm, and put every token on the line — the fabricated MyWidget included —
+	// into presentInSource. `34` in the same sentence was rejected, so the two
+	// arms disagreed about one rule.
+	//
+	// Neither a digit nor a combining mark can legally START a JavaScript or
+	// TypeScript identifier, so tightening this drops no real declaration; the
+	// non-leading direction below is what proves the tightening did not simply
+	// evict Unicode names again.
+	t.Run("a declared name never starts with a digit or a combining mark", func(t *testing.T) {
+		for r := rune(utf8.RuneSelf); r <= unicode.MaxRune; r++ {
+			if !unicode.IsDigit(r) && !unicode.IsMark(r) {
+				continue
+			}
+			if unicode.IsLetter(r) {
+				continue // a rune that is also a letter is a legal name start
+			}
+			require.Falsef(t, isDeclNameRune(r, true),
+				"U+%04X is category Nd or M and cannot begin an identifier", r)
+			require.Truef(t, isDeclNameRune(r, false),
+				"U+%04X is category Nd or M and must still be admitted inside a name", r)
+		}
+	})
+
+	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {
+		assert.False(t, isESMExportBody([]byte("module ٣٤, see MyWidget")),
+			"Arabic-Indic digits cannot be a declared name, so the comma is prose punctuation")
+		assert.False(t, isESMExportBody([]byte("module 34, see MyWidget")),
+			"the ASCII arm already rejected this and must keep doing so")
+		assert.True(t, isESMExportBody([]byte("const a٣ = 1")),
+			"a non-ASCII digit INSIDE a name is legal and must stay admitted")
 	})
 }
 
