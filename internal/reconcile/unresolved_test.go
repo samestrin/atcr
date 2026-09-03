@@ -204,6 +204,38 @@ func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
 	})
 }
 
+// TestRenderMarkdown_DerivesTheShieldedCountFromTheRecords covers the ONE step
+// the test above cannot reach: countDocShielded itself.
+//
+// That test calls renderMarkdown directly and hands it the shielded count as an
+// int literal, so the derivation is never exercised — replacing the reason
+// comparison in countDocShielded with a predicate that matches every routed
+// record leaves the whole package green. This test goes in through the exported
+// RenderMarkdown, which derives the count from Result.Unresolved, so the wrong
+// records produce the wrong sentence and the assertion fails.
+//
+// The set is deliberately MIXED. An all-shielded or none-shielded fixture cannot
+// discriminate: both are reproduced by a filter that matches everything and by
+// one that matches nothing respectively.
+func TestRenderMarkdown_DerivesTheShieldedCountFromTheRecords(t *testing.T) {
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, Result{
+		Summary: Summary{UnresolvedFiltered: 3},
+		Unresolved: []JSONFinding{
+			// Named only in documentation — the carve-out's own shape.
+			{Severity: "HIGH", File: "docs/guide.md", Line: 1, Problem: "`DocOnlyThing` leaks",
+				UnresolvedReason: UnresolvedReasonDocShield},
+			// No symbol correspondence anywhere: no reason stamped.
+			{Severity: "HIGH", File: "internal/ghost/a.go", Line: 2, Problem: "`PhantomOne` leaks"},
+			{Severity: "LOW", File: "internal/ghost/b.go", Line: 3, Problem: "`PhantomTwo` leaks"},
+		},
+	}))
+
+	assert.Contains(t, b.String(),
+		"- Unresolved findings: 3 (2 with no symbol correspondence in the tracked tree, 1 named only in documentation; routed to unresolved.json)",
+		"the split must be derived from each record's UnresolvedReason, not from the total")
+}
+
 // TestRunReconcile_UnresolvedRecountsOutOfScope covers the post-routing
 // out-of-scope recount in gate.go and the countOutOfScope helper it calls.
 //
