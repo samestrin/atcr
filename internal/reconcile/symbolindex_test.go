@@ -1878,18 +1878,30 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	// non-leading direction below is what proves the tightening did not simply
 	// evict Unicode names again.
 	t.Run("a declared name never starts with a digit or a combining mark", func(t *testing.T) {
+		asserted := 0
 		for r := rune(utf8.RuneSelf); r <= unicode.MaxRune; r++ {
 			if !unicode.IsDigit(r) && !unicode.IsMark(r) {
 				continue
 			}
 			if unicode.IsLetter(r) {
-				continue // a rune that is also a letter is a legal name start
+				// The implementation returns on IsLetter FIRST, so a rune in
+				// both classes is a legal name start and is not this loop's to
+				// judge. No rune satisfies this today; the guard keeps a future
+				// Unicode table from turning a correct answer into a failure.
+				continue
 			}
+			asserted++
 			require.Falsef(t, isDeclNameRune(r, true),
 				"U+%04X is category Nd or M and cannot begin an identifier", r)
 			require.Truef(t, isDeclNameRune(r, false),
 				"U+%04X is category Nd or M and must still be admitted inside a name", r)
 		}
+		// Without this the loop is one filter change away from asserting nothing
+		// and still reporting green. 3120 runes qualify under Go's current
+		// tables; the floor is deliberately loose so a table update does not
+		// fail the build, but it is far above zero.
+		require.Greaterf(t, asserted, 1000,
+			"the sweep asserted on only %d rune(s) — the filter has gone vacuous", asserted)
 	})
 
 	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {
