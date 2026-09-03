@@ -1,3 +1,14 @@
+## [35.16.6.8.1] - 2026-09-03
+
+### Fixed
+- Fixed a Tier-4 index gap where a documentation sentence whose second word was written in a non-Latin numeral system (e.g. `export module ٣٤, see MyWidget`) was mistaken for a real declaration, letting every word on that line — including a fabricated symbol name — count as "named in the source" and license a confident path suggestion. The equivalent Latin-numeral sentence was already rejected; the two now agree.
+
+### Changed
+- Recorded, in the export-grammar contract itself, that the known prose gap it accepts is not limited to English sentences, and that the identifier alphabet was widened deliberately to recognize real non-Latin declarations. The disclosure quotes measured output so a future reader does not narrow the rule on a false premise.
+- Strengthened the export-grammar test suite so each keyword's permitted name forms are pinned as a whole value rather than one form at a time, closing three separate cases where an incorrect widening left the suite passing.
+
+*Shipped via /execute-epic (epic 35.16.6.8.1)*
+
 ## [35.16.6.8] - 2026-09-02
 
 ### Fixed
