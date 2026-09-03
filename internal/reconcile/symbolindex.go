@@ -850,13 +850,28 @@ func declaresName(rest []byte) bool {
 }
 
 // isDeclNameByte reports whether c can appear at index i of a declared name.
-// ASCII-only on purpose: a non-ASCII byte simply ends the name, and the
-// punctuation test that follows then decides — so a Unicode identifier is judged
-// by the same grammar rather than by this byte class.
+//
+// Every byte of a multi-byte rune counts, because JavaScript and TypeScript both
+// take the full Unicode identifier set and an .mdx page written for a
+// non-English audience uses it (`export const café`, `export let 日本語`). Ending
+// the name at the first non-ASCII byte does NOT hand the decision to the
+// punctuation test below — that test would then read the rune's own lead byte as
+// the character after the name, which is never a declaration punctuator, so
+// every such declaration is rejected outright. Admitting the byte here is what
+// lets the grammar rule actually run on a Unicode name.
+//
+// The class is deliberately whole-byte rather than rune-aware: any byte >= 0x80
+// belongs either to a multi-byte identifier rune or to a multi-byte PUNCTUATION
+// rune (an em-dash, a curly quote), and the two are separated by what FOLLOWS
+// the name, not by the byte class. `export type — see the guide` still scans the
+// em-dash as a name and is still rejected, because `see` is a bare word.
+// TestIsESMExportBody_RejectPaths pins both directions.
 func isDeclNameByte(c byte, i int) bool {
 	switch {
 	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_', c == '$':
 		return true
+	case c >= 0x80:
+		return true // any byte of a non-ASCII rune
 	case c >= '0' && c <= '9':
 		return i > 0 // a name never starts with a digit
 	}
