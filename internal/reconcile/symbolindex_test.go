@@ -1635,6 +1635,41 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			assert.True(t, isESMExportBody([]byte(body)), "%q is a real export declaration", body)
 		}
 	})
+
+	// A declared name is not required to be ASCII. JavaScript and TypeScript both
+	// take the full Unicode identifier set, and an .mdx page written for a
+	// non-English audience uses it — `export const café`, `export let 日本語`.
+	//
+	// These are the shapes the grammar rule silently dropped, and the drop runs in
+	// the DANGEROUS direction: a real declaration missing from presentInSource
+	// leaves a finding anchored on that name eligible for the doc_shield carve-out
+	// its own declaration disproves (namedInDocs, symbolindex.go), so the finding
+	// is routed out of findings.json, out of the gate exit code, and out of
+	// report.md — and trust.go still charges it to the reviewer.
+	//
+	// The name scan must therefore run PAST a non-ASCII byte and let the
+	// punctuation test decide, which is what isDeclNameByte's docstring always
+	// claimed and what this subtest pins.
+	t.Run("a non-ASCII declared name is still a declaration", func(t *testing.T) {
+		for _, body := range []string{
+			"const café = 1",
+			"let 日本語 = 1",
+			"var Ünicode;",
+			"function ünwrap()",
+			"class Ωmega {}",
+			"type Ünion = string",
+			"interface Ílink extends J {}",
+			"enum Café {}",
+			"const café",
+			// The name is only PARTLY non-ASCII — the scan must not stop at the
+			// first multi-byte rune and read the ASCII remainder as a second word.
+			"const caféMenu = () => 1",
+			"const 日本Language = 1",
+		} {
+			assert.True(t, isESMExportBody([]byte(body)),
+				"%q declares a name — dropping it hides a real symbol from presentInSource", body)
+		}
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
