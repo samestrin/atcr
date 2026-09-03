@@ -200,6 +200,11 @@ func trustPriorsSince(dir string, minRuns int, since time.Duration, now time.Tim
 // future era 4 the moment the constant moved, asserting an equivalence nobody
 // established. A bump must come back here and prove the new pair.
 //
+// The rewritten record is left internally CONSISTENT, not merely era-relabelled:
+// FindingsSolo and CorroborationRate are recomputed against the merged
+// denominator. Nothing on this path reads either, but the value is a Record, and
+// the type's other consumers do.
+//
 // The input slice is never mutated: callers hand in records read from the store
 // and must not see them rewritten underneath.
 //
@@ -217,6 +222,13 @@ func mergeRoutedEras(records []Record) []Record {
 		out[i].FindingsDocShielded = 0
 		out[i].RaisedDenominator = raisedDenominatorAllRouted
 		out[i].RaisedIncludesUnresolved = true
+		// The two fields DERIVED from FindingsRaised move with it, or the record
+		// contradicts itself. A doc-shielded finding was routed, so it is
+		// uncorroborated by construction and belongs in solo — which makes these
+		// exactly the values era 2 reported, the same disjoint partition the
+		// equivalence above rests on.
+		out[i].FindingsSolo = out[i].FindingsRaised - out[i].FindingsCorroborated
+		out[i].CorroborationRate = ratio(out[i].FindingsCorroborated, out[i].FindingsRaised)
 	}
 	return out
 }
