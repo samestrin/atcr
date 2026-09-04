@@ -291,3 +291,60 @@ func TestIsIdentifierShaped_CombiningMarks(t *testing.T) {
 	assert.False(t, isIdentifierShaped("a\u20ddbc"),
 		"U+20DD is category Me, outside ID_Continue — node rejects `const a⃝b = 1`")
 }
+
+// TestExtractAnchors_SpacelessScriptBoundary pins the CRITICAL regression the
+// rune-based backwards scan introduced: isQualifiedIdentRune admits every
+// unicode.IsLetter rune, and in a script that writes without inter-word spaces
+// (Han, Kana, Hangul, Thai) that class never terminates at the word boundary —
+// so the reviewer's own prose is glued onto the call name and BECOMES the
+// anchor. `在配置中调用ParseConfig()` then yields the pseudo-token
+// `在配置中调用ParseConfig`, which is identifier-shaped and carries a signal
+// (the interior e->C transition), is in neither present nor byName, and so
+// resolves to tier4NoMatch — deleting a real finding and durably charging the
+// reviewer a phantom. atcr's own registry runs CJK-emitting models, so this is
+// the ordinary path for them.
+//
+// The last case is the companion direction and is load-bearing: a script that
+// DOES separate words (Devanagari) must keep contributing to the name, or the
+// boundary rule over-truncates `नाम_load` to the fragment `_load` — the same
+// class of defect pointed the other way. Literals are escape-spelled so an
+// editor's Unicode normalisation cannot silently rewrite the fixture.
+func TestExtractAnchors_SpacelessScriptBoundary(t *testing.T) {
+	cases := []struct {
+		name    string
+		problem string
+		want    []string
+	}{
+		{
+			name:    "Han prose glued to a call name stops at the script boundary",
+			problem: "\u5728\u914d\u7f6e\u4e2d\u8c03\u7528ParseConfig() \u65f6\u8d85\u65f6\u672a\u5904\u7406",
+			want:    []string{"ParseConfig"},
+		},
+		{
+			name:    "Kana prose glued to a call name stops at the script boundary",
+			problem: "\u30ab\u30bf\u30ab\u30ca\u3067ParseConfig() \u3092\u547c\u3076",
+			want:    []string{"ParseConfig"},
+		},
+		{
+			name:    "Hangul prose glued to a call name stops at the script boundary",
+			problem: "\ucf54\ub4dc\uc5d0\uc11cParseConfig() \ud638\ucd9c",
+			want:    []string{"ParseConfig"},
+		},
+		{
+			name:    "Thai prose glued to a call name stops at the script boundary",
+			problem: "\u0e41\u0e25\u0e49\u0e27\u0e40\u0e23\u0e35\u0e22\u0e01ParseConfig() \u0e44\u0e21\u0e48\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23",
+			want:    []string{"ParseConfig"},
+		},
+		{
+			name:    "a space-separating script stays part of the call name",
+			problem: "\u0928\u093e\u092e_load() drops the error",
+			want:    []string{"\u0928\u093e\u092e_load"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, mergeAnchorsForTest(tc.problem, ""))
+		})
+	}
+}

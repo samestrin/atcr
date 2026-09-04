@@ -2275,3 +2275,46 @@ func TestSymbolIndex_NormalizationSplitKeyIsNotPrecise(t *testing.T) {
 	assert.Equal(t, tier4Inconclusive, outcome)
 	assert.Empty(t, gotFile)
 }
+
+// TestSymbolIndex_SpacelessScriptProseResolves is the end-to-end half of the
+// CRITICAL that TestExtractAnchors_SpacelessScriptBoundary pins at the unit
+// level: a reviewer writing in a script with no inter-word spaces names a
+// construct that IS declared in the tree, and the backwards call scan must hand
+// resolve the construct's name — not the name with the reviewer's prose glued
+// onto its front. A pseudo-token is in neither present nor byName, so the whole
+// path ends at tier4NoMatch: gate.go deletes the finding and scorecard.go
+// durably charges the reviewer a phantom for 180 days. Prose is escape-spelled
+// so an editor's Unicode normalisation cannot silently rewrite the fixture.
+func TestSymbolIndex_SpacelessScriptProseResolves(t *testing.T) {
+	const rel = "internal/config/parse.go"
+
+	cases := []struct {
+		label   string
+		inProse string
+	}{
+		{"Han", "\u5728\u914d\u7f6e\u4e2d\u8c03\u7528ParseConfig() \u65f6\u8d85\u65f6\u672a\u5904\u7406"},
+		{"Kana", "\u30ab\u30bf\u30ab\u30ca\u3067ParseConfig() \u3092\u547c\u3076"},
+		{"Hangul", "\ucf54\ub4dc\uc5d0\uc11cParseConfig() \ud638\ucd9c"},
+		{"Thai", "\u0e41\u0e25\u0e49\u0e27\u0e40\u0e23\u0e35\u0e22\u0e01ParseConfig() \u0e44\u0e21\u0e48\u0e08\u0e31\u0e14\u0e01\u0e32\u0e23"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeSource(t, root, rel, "package config\n\nfunc ParseConfig() {}\n")
+
+			lz := newLazySymbolIndex(root, []string{rel})
+			lz.newParser = constFactory(file(fn("ParseConfig", 3)))
+
+			anchors, _ := extractAnchorSet(tc.inProse)
+			require.Equal(t, []string{"ParseConfig"}, anchors,
+				"the call scan must stop at the script boundary, not glue the prose onto the name")
+
+			got, outcome := lz.resolve(context.Background(), anchors, nil)
+			require.NotEqual(t, tier4NoMatch, outcome,
+				"ParseConfig IS declared in the tree: no-match here deletes a real finding and charges a phantom")
+			assert.Equal(t, tier4Resolved, outcome)
+			assert.Equal(t, rel, got)
+		})
+	}
+}
