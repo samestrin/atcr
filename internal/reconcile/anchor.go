@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // maxAnchorsPerFinding bounds how many anchors one finding contributes to a
@@ -148,11 +150,37 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 
 // addAnchor normalizes one raw span and records it if it qualifies.
 func addAnchor(raw string, seen map[string]struct{}) {
-	tok := trailingSegment(strings.TrimSpace(raw))
+	tok := foldAnchorForm(trailingSegment(strings.TrimSpace(raw)))
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
 		return
 	}
 	seen[tok] = struct{}{}
+}
+
+// foldAnchorForm puts one token in NFC, the single normalization form every
+// anchor and every symbol-index key is stored under.
+//
+// It exists because a Tier 4 lookup is a byte-exact Go map lookup: `módulo` typed
+// as o+U+0301 and `módulo` typed as U+00F3 are the SAME identifier to a compiler
+// and to a human, and two different keys to a map. Source files carry whichever
+// form their author's editor produced; reviewer models emit NFC. Left unfolded,
+// an NFD-spelled name misses an NFC-built index, resolve returns tier4NoMatch for
+// a construct plainly in the tree, and a real finding is deleted and charged to
+// the reviewer as a phantom — an ordinary case in any Spanish, Portuguese,
+// French, or Vietnamese codebase.
+//
+// NFC (never NFD) because it is what Go source is conventionally written in and
+// what the models emit, so the common path is a no-op. Both sides must call this;
+// folding either alone leaves exactly the mismatch it is meant to close.
+//
+// It is deliberately NOT a case fold: the anchor alphabet is case-sensitive
+// (isIdentifierShaped and hasIdentifierSignal both read case), and folding case
+// here would collide distinct declarations.
+func foldAnchorForm(tok string) string {
+	if norm.NFC.IsNormalString(tok) {
+		return tok // overwhelmingly the common path: no allocation
+	}
+	return norm.NFC.String(tok)
 }
 
 // trailingSegment reduces a qualified reference to the declared name the symbol

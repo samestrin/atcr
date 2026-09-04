@@ -585,6 +585,11 @@ func (lz *lazySymbolIndex) build(ctx context.Context) {
 			continue // unparseable: no declarations, but its tokens still counted above
 		}
 		for _, name := range astgroup.NamedSymbols(tree) {
+			// One normalization form for every key: see foldAnchorForm. Without
+			// it a name declared NFC in one file and NFD in another produces TWO
+			// keys of one file each, and locate reports a confident single-file
+			// answer for a name that is declared in two places.
+			name = foldAnchorForm(name)
 			if sites[name] == nil {
 				sites[name] = make(map[string]struct{})
 			}
@@ -643,7 +648,7 @@ func collectSourceIdentifiers(src []byte, out map[string]uint8, flag uint8) {
 		case isWord && start < 0:
 			start = i
 		case !isWord && start >= 0:
-			if tok := string(src[start:i]); isIdentifierShaped(tok) {
+			if tok := foldAnchorForm(string(src[start:i])); isIdentifierShaped(tok) {
 				out[tok] |= flag
 			}
 			start = -1

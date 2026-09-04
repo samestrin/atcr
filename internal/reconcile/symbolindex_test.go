@@ -1528,9 +1528,14 @@ func TestCollectExportedIdentifiers_UnicodeNames(t *testing.T) {
 			},
 		},
 		{
-			name: "NFD-spelled café keeps its name",
+			// Both spellings of café converge on ONE key. The harvest folds to
+			// NFC (foldAnchorForm), so a name typed as o+U+0301 in one file and
+			// as the precomposed letter in another is the same map key rather
+			// than two keys the lookup can never reconcile. Before that fold
+			// this case measured the decomposed 6-byte key.
+			name: "NFD-spelled café folds to the precomposed key",
 			src:  "export const cafe\u0301 = 1\n",
-			want: map[string]uint8{"const": presenceSource, "cafe\u0301": presenceSource},
+			want: map[string]uint8{"const": presenceSource, "caf\u00e9": presenceSource},
 		},
 		{
 			name: "precomposed café keeps its name",

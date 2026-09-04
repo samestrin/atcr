@@ -1,6 +1,7 @@
 ## [35.16.6.8.1] - 2026-09-03
 
 ### Fixed
+- Fixed a Tier-4 lookup that treated two spellings of one identifier as two different symbols. Anchors and symbol-index keys are now folded to a single Unicode normalization form (NFC) on both sides, so a name written with a combining mark in the source (`cafe` + U+0301) and the precomposed spelling a reviewer emits (`café`) resolve to the same entry. Previously the byte-exact map lookup missed, and a real finding about a construct plainly in the tree was judged a no-match, deleted from the report, and durably charged to the reviewer as a phantom — an ordinary case in any Spanish, Portuguese, French, or Vietnamese codebase, and the case the alphabet widening below first made reachable. The same fold also stops one name declared in two files under two forms from splitting into two index keys of one file each, which had let a path suggestion be stamped as confident for a name that is actually declared in two places.
 - Fixed a Tier-4 index gap where a documentation sentence whose second word was written in a non-Latin numeral system (e.g. `export module ٣٤, see MyWidget`) was mistaken for a real declaration, letting every word on that line — including a fabricated symbol name — count as "named in the source" and license a confident path suggestion. The equivalent Latin-numeral sentence was already rejected; the two now agree.
 
 ### Changed
