@@ -496,3 +496,125 @@ func TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestExtractAnchorSet_ImpreciseSpanMarksTruncated pins the three release-blockers
+// that `--post` round 4 measured against the boundary-rule repair. All three have
+// ONE consequence and ONE mechanism.
+//
+// The consequence is always the same: extractAnchorSet returns an anchor set that
+// is not a faithful reading of what the text named, validate.go:143 sees
+// `!problemTruncated`, and a REAL finding is routed to the unresolved sidecar —
+// gate.go deletes it and scorecard.go durably charges the reviewer a phantom.
+//
+// The mechanism is the `truncated` contract at extractAnchorSet's doc: a caller
+// may never reach a no-match verdict on a set that is a PREFIX of what the text
+// named. Before this test the cap at anchor.go:84-87 was the ONLY thing that could
+// set that flag, and the call scan had acquired two more ways to lose fidelity:
+//
+//  1. GLUED (the anchor.go:158 blocker). Two adjacent spaceless scripts no longer
+//     break the run, so ordinary prose in such a script is re-glued onto a
+//     snake_case call name — `設定を解析_処理()` yields the glued
+//     `設定を解析_処理` where the tree declares `解析_処理`. Measured old-vs-new:
+//     resolve went tier4Resolved -> tier4NoMatch, i.e. the BEST outcome was
+//     replaced by the WORST one.
+//
+//  2. SILENCED (the anchor.go:169 and :171 blockers). The undecidable-underscore
+//     suppression contributes no anchor for that span. Its safety argument is
+//     per-FINDING ("no anchor keeps the finding") but the suppression is
+//     per-SPAN, so when a co-cited anchor exists and is absent from the tree,
+//     silencing the one span that WOULD have matched flips the whole finding to
+//     no-match. The same silence also shrinks the set below the cap, flipping
+//     `truncated` from true to false on an otherwise identical anchor list.
+//
+// Neither case may be answered by dropping the anchor: `データ_解析` and
+// `解析_処理` are indistinguishable by any rule the text supports, and suppressing
+// the glued form would take the round-3 counter-direction (`データ_解析()` yields
+// the WHOLE name) back out. The answer is to keep the anchor and mark the
+// EXTRACTION imprecise, which blocks the no-match verdict while leaving the
+// resolution direction intact.
+func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
+	han := string([]rune{0x89E3, 0x6790})               // 解析
+	proseHan := string([]rune{0x8A2D, 0x5B9A, 0x3092})  // 設定を
+	suffix := string([]rune{0x51E6, 0x7406})            // 処理
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF})      // データ
+	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F}) // 設定_
+
+	cases := []struct {
+		name          string
+		text          string
+		wantAnchors   []string
+		wantTruncated bool
+	}{
+		{
+			// GLUED: the anchor survives (the tree may well declare it), but the
+			// set is no longer a faithful reading, so it may not ground a no-match.
+			name:          "spaceless prose glued to a snake_case name marks the set imprecise",
+			text:          proseHan + han + "_" + suffix + "() drops the error",
+			wantAnchors:   []string{proseHan + han + "_" + suffix},
+			wantTruncated: true,
+		},
+		{
+			// Same shape, and the reason the glued case may NOT be suppressed:
+			// this one is a single real identifier and must keep yielding whole.
+			name:          "a genuine spaceless snake_case name is whole and also imprecise",
+			text:          kata + "_" + han + "() drops the error",
+			wantAnchors:   []string{kata + "_" + han},
+			wantTruncated: true,
+		},
+		{
+			// SILENCED: the undecidable underscore contributes no anchor, and that
+			// loss must be reported so a co-cited absent anchor cannot route the
+			// finding out on its own.
+			name:          "a silenced undecidable span marks the set imprecise",
+			text:          setteiUnd + "loadFile() ignores the deadline set by `retryOnce`",
+			wantAnchors:   []string{"retryOnce"},
+			wantTruncated: true,
+		},
+		{
+			// Counter-direction: an ordinary ASCII call scan loses nothing, so the
+			// flag must stay false or every finding becomes unroutable.
+			name:          "an ordinary call scan is not imprecise",
+			text:          "ParseConfig() drops the error",
+			wantAnchors:   []string{"ParseConfig"},
+			wantTruncated: false,
+		},
+		{
+			// Counter-direction: prose glued across a spaceless/spacing boundary
+			// still terminates cleanly and loses nothing.
+			name:          "a clean spaceless/spacing boundary is not imprecise",
+			text:          string([]rune{0x5728, 0x005F, 0x914D, 0x7F6E, 0x4E2D, 0x8C03, 0x7528}) + "ParseConfig() timed out",
+			wantAnchors:   []string{"ParseConfig"},
+			wantTruncated: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, truncated := extractAnchorSet(tc.text)
+			assert.Equal(t, tc.wantAnchors, got)
+			assert.Equal(t, tc.wantTruncated, truncated, "truncated flag")
+		})
+	}
+}
+
+// TestExtractAnchorSet_SilencedSpanKeepsTruncatedAtCap pins the anchor.go:171
+// blocker on its own axis: the silence must not be able to shrink a set THROUGH
+// the maxAnchorsPerFinding cap and clear the flag on the way down.
+//
+// Measured before the fix: nine named identifiers where the ninth is an ordinary
+// ASCII call gives 8 anchors with truncated=TRUE; the SAME nine where the ninth
+// is a silenced span gives the SAME 8 anchors with truncated=FALSE. Identical
+// anchor lists, opposite routing decisions.
+func TestExtractAnchorSet_SilencedSpanKeepsTruncatedAtCap(t *testing.T) {
+	base := "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` "
+	eight := []string{"aOne", "bTwo", "cThree", "dFour", "eFive", "fSix", "gSeven", "hEight"}
+	setteiUnd := string([]rune{0x8A2D, 0x5B9A, 0x005F}) // 設定_
+
+	ordinary, ordinaryTruncated := extractAnchorSet(base + "loadFile() also")
+	silenced, silencedTruncated := extractAnchorSet(base + setteiUnd + "loadFile() also")
+
+	assert.Equal(t, eight, ordinary)
+	assert.True(t, ordinaryTruncated, "cap alone must report truncation")
+	assert.Equal(t, eight, silenced)
+	assert.True(t, silencedTruncated, "a silenced ninth anchor is still a loss, not a smaller set")
+}
