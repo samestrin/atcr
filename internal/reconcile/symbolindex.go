@@ -1014,7 +1014,7 @@ func isDeclNameRune(r rune, first bool) bool {
 		return false // every other ASCII byte is punctuation or space
 	}
 	return unicode.IsLetter(r) || unicode.Is(unicode.Nl, r) || unicode.Is(unicode.Other_ID_Start, r) ||
-		(!first && (unicode.IsDigit(r) || unicode.In(r, unicode.Mn, unicode.Mc)))
+		(!first && (unicode.IsDigit(r) || unicode.In(r, unicode.Mn, unicode.Mc) || unicode.Is(unicode.Pc, r)))
 }
 
 // eligiblePaths filters the tracked set to root-contained files, preserving a
