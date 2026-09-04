@@ -1487,6 +1487,56 @@ func TestCollectExportedIdentifiers_ProseCannotLicenseTokens(t *testing.T) {
 	}
 }
 
+// TestCollectExportedIdentifiers_UnicodeNames pins the EXACT harvested maps for
+// the Unicode lines the isESMExportBody docstring measures, so a change to
+// isIdentifierShaped, minAnchorLen or collectSourceIdentifiers cannot silently
+// falsify them. नाम and the NFD café are the mark-bearing cases: the grammar
+// admits the declaration, and the harvest must not drop the name. Literals are
+// escape-spelled so an editor's Unicode normalisation cannot rewrite a fixture
+// (an NFC/NFD flip would silently turn the NFD case into a second NFC one).
+func TestCollectExportedIdentifiers_UnicodeNames(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want map[string]uint8
+	}{
+		{
+			// The documented prose residual: a non-ASCII sentence the grammar
+			// admits harvests EVERY identifier-shaped token on the line.
+			name: "non-ASCII prose sentence admitted by the grammar harvests every token",
+			src:  "export module \u30c7\u30fc\u30bf\u8a2d\u5b9a, see MyWidget for details\n",
+			want: map[string]uint8{
+				"module": presenceSource, "\u30c7\u30fc\u30bf\u8a2d\u5b9a": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// नाम carries the Mc vowel sign ा — the grammar admits the
+			// declaration, so the harvest must not drop the name.
+			name: "Devanagari declaration keeps its name",
+			src:  "export const \u0928\u093e\u092e = 1\n",
+			want: map[string]uint8{"const": presenceSource, "\u0928\u093e\u092e": presenceSource},
+		},
+		{
+			name: "NFD-spelled café keeps its name",
+			src:  "export const cafe\u0301 = 1\n",
+			want: map[string]uint8{"const": presenceSource, "cafe\u0301": presenceSource},
+		},
+		{
+			name: "precomposed café keeps its name",
+			src:  "export const caf\u00e9 = 1\n",
+			want: map[string]uint8{"const": presenceSource, "caf\u00e9": presenceSource},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := make(map[string]uint8)
+			collectExportedIdentifiers([]byte(c.src), out)
+			assert.Equal(t, c.want, out)
+		})
+	}
+}
+
 // TestIsESMExportBody_RejectPaths pins the two arms of isESMExportBody that
 // answer "no", tested directly because neither is observable through
 // collectExportedIdentifiers.

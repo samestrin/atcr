@@ -227,3 +227,24 @@ func mergeAnchorsForTest(problem, fix string) []string {
 	}
 	return out
 }
+
+// TestIsIdentifierShaped_CombiningMarks pins the mark rule on the harvest
+// filter: a combining mark (Mn or Mc) INSIDE a token leaves it
+// identifier-shaped — `export const नाम = 1` (नाम carries the Mc vowel sign
+// ा) and an NFD-spelled `café` (e + U+0301) are real declarations whose names
+// must reach presentInSource — while a LEADING mark or an enclosing mark (Me,
+// outside ID_Continue) still fails. This mirrors isDeclNameRune's class
+// (symbolindex.go): the two must agree, or a grammar-admitted declaration
+// harvests without its name and a finding anchored on it is routed out as
+// fabricated. Literals are escape-spelled so an editor's Unicode
+// normalisation cannot silently rewrite the fixture.
+func TestIsIdentifierShaped_CombiningMarks(t *testing.T) {
+	assert.True(t, isIdentifierShaped("\u0928\u093e\u092e"),
+		"Devanagari name with an Mc vowel sign is a real identifier")
+	assert.True(t, isIdentifierShaped("cafe\u0301"),
+		"NFD spelling (e + U+0301 combining acute) is the same declaration as precomposed café")
+	assert.False(t, isIdentifierShaped("\u0301abc"),
+		"a combining mark cannot BEGIN an identifier")
+	assert.False(t, isIdentifierShaped("a\u20ddbc"),
+		"U+20DD is category Me, outside ID_Continue — node rejects `const a⃝b = 1`")
+}
