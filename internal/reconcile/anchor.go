@@ -178,15 +178,24 @@ func isQualifiedIdentByte(b byte) bool {
 }
 
 // isIdentifierShaped reports whether tok is a bare identifier of usable length:
-// a letter or underscore followed by letters, digits, or underscores. A span
-// containing whitespace, punctuation, or any other character (a quoted English
-// phrase, a sentence fragment, a path) fails here.
+// a letter or underscore followed by letters, digits, underscores, or combining
+// marks. A span containing whitespace, punctuation, or any other character (a
+// quoted English phrase, a sentence fragment, a path) fails here.
 //
 // Letters are tested with unicode.IsLetter, not an ASCII range. Go, Python and
 // TypeScript all admit non-ASCII identifiers, and an ASCII-only test silently
 // dropped them — which is worse than it sounds here, because a finding whose
 // real subject was never extracted can still be judged "checked and found
 // nothing" on whatever co-cited ASCII anchor happened to miss.
+//
+// Combining marks (Mn and Mc) are admitted at non-initial positions for the
+// same reason: Devanagari names carry vowel signs (नाम is न + ा + म) and a
+// macOS- or git-normalised file spells café as e + U+0301, so a mark-rejecting
+// filter drops the name of a declaration the grammar (isDeclNameRune,
+// symbolindex.go) admits — the two must agree, or a grammar-admitted
+// declaration never reaches presentInSource. Me (enclosing marks) stays
+// rejected: it is outside ECMAScript ID_Continue, and a leading mark is never
+// legal, exactly as a leading digit is not.
 func isIdentifierShaped(tok string) bool {
 	if utf8.RuneCountInString(tok) < minAnchorLen {
 		return false
@@ -194,9 +203,9 @@ func isIdentifierShaped(tok string) bool {
 	for i, r := range tok {
 		switch {
 		case unicode.IsLetter(r), r == '_':
-		case unicode.IsDigit(r):
+		case unicode.IsDigit(r), unicode.In(r, unicode.Mn, unicode.Mc):
 			if i == 0 {
-				return false // an identifier never starts with a digit
+				return false // an identifier never starts with a digit or combining mark
 			}
 		default:
 			return false
