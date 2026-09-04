@@ -424,11 +424,13 @@ func TestHasIdentifierSignal_DigitCarry(t *testing.T) {
 // at the first multibyte byte and produced NO anchor, which is inconclusive and
 // safe.
 //
-// `データ_解析` needs no script change at all to trigger it — U+30FC, the
-// katakana-hiragana prolonged sound mark, is Script=Common, so spacelessScriptOf
-// classifies it as scriptSpacing. That mark appears in most everyday Japanese
-// loanword identifiers (データ, ユーザー, サーバー, ロード, パーサー), so the
-// case is ordinary rather than exotic.
+// `データ_解析` was broken by U+30FC, the katakana-hiragana prolonged sound
+// mark, which is Script=Common and which the original rule classified as
+// scriptSpacing — splitting the name at its own vowel mark, with no real script
+// change anywhere in it. That mark appears in most everyday Japanese loanword
+// identifiers (データ, ユーザー, サーバー, ロード, パーサー), so the case is
+// ordinary rather than exotic. spacelessScriptOf now returns scriptNeutral for
+// it.
 //
 // The last two rows are the load-bearing counter-direction: prose glued to a
 // call name must still terminate at the boundary. An underscore inside the

@@ -244,8 +244,21 @@ func spacelessScriptOf(r rune) int {
 //     `データ_解析`, `サバ_接続`, `解析_データ` — and breaking between them
 //     leaves a fragment that still carries a signal through its underscore.
 //     Ordinary Japanese PROSE glued to such a name (`設定を解析()`) is caught
-//     anyway: the glued run is caseless and underscore-free, so
-//     hasIdentifierSignal rejects it and no anchor is produced.
+//     anyway, but ONLY while the glued run stays caseless and underscore-free:
+//     hasIdentifierSignal then rejects it and no anchor is produced. Measured,
+//     not assumed — `設定を解析()` yields no anchor.
+//
+//     Where the name carries an underscore the exemption fails: `設定を解析_処理()`
+//     yields the glued `設定を解析_処理`, which resolves to tier4NoMatch. That
+//     is the same undecidability as below, one script-pair over — the run is
+//     either prose plus `解析_処理` or the single name `設定を解析_処理`, and no
+//     rule separates them. It is answered wrongly today and is NOT silenced,
+//     because the silencing test below (a leading '_') cannot fire when no
+//     break occurred. It is no worse than before this rule existed, where the
+//     same input produced the fragment `解析_処理` — a fragment can additionally
+//     be misattributed to another declaration, which the glued form cannot.
+//     Do not read the paragraph above as a guarantee; it was written as one
+//     once, and that is what this rule had to be repaired for.
 //
 // What remains undecidable is an underscore straddling the one boundary this
 // does fire on: `调用_ParseConfig()` is either prose glued onto `_ParseConfig`
