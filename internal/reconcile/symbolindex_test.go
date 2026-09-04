@@ -1949,6 +1949,23 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 		assert.True(t, isESMExportBody([]byte("const a٣ = 1")),
 			"a non-ASCII digit INSIDE a name is legal and must stay admitted")
 	})
+
+	// U+1885 and U+1886 (MONGOLIAN LETTER ALI GALI BALUDA / THREE BALUDA) are
+	// category Mn AND members of Other_ID_Start, so ECMAScript admits them as
+	// an IdentifierStart (V8 runs `var ᢅ = 5`). A blanket mark rejection at
+	// the first position drops them — a regression against main, where
+	// `export const ᢅx = 1` was admitted — and takes every co-declared
+	// identifier on the line out of presentInSource with it.
+	t.Run("an Other_ID_Start mark can begin a declared name", func(t *testing.T) {
+		for _, r := range []rune{'ᢅ', 'ᢆ'} {
+			require.Truef(t, isDeclNameRune(r, true),
+				"U+%04X is category Mn but also Other_ID_Start, which ECMAScript admits as an identifier start", r)
+			require.Truef(t, isDeclNameRune(r, false),
+				"U+%04X is a combining mark and stays admitted inside a name", r)
+		}
+		assert.True(t, isESMExportBody([]byte("const ᢅx = 1")),
+			"`export const ᢅx = 1` was admitted at main and must stay admitted")
+	})
 }
 
 // TestSymbolIndex_OnePresenceMap pins the memory-shape decision: the index carries
