@@ -129,14 +129,18 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // backwards from the paren, so a qualified call (x.Parse() ) still yields its
 // trailing segment via addAnchor.
 //
-// The run also terminates at a SPACELESS-SCRIPT boundary, because
+// The run also terminates at a spaceless/spacing WORD BOUNDARY, because
 // isQualifiedIdentRune alone does not terminate at a word boundary in a script
 // that writes without inter-word spaces. `在配置中调用ParseConfig()` would
 // otherwise yield the pseudo-token `在配置中调用ParseConfig` — identifier-shaped,
 // carrying a signal from the interior e->C transition, and declared nowhere —
 // which resolve reads as tier4NoMatch, deleting a real finding and durably
-// charging the reviewer a phantom. See spacelessScriptOf for why the rule is
-// keyed on those scripts specifically rather than on any script change.
+// charging the reviewer a phantom.
+//
+// The boundary is narrow on purpose: see isWordBoundary for why two different
+// spaceless scripts do NOT break the run (`データ_解析` is one name), and why an
+// underscore sitting on the boundary that does fire yields no anchor at all
+// rather than a fragment.
 func collectCallAnchors(text string, seen map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
@@ -144,15 +148,16 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 		}
 		start := i
 		runScript := scriptUnset
+		atBoundary := false
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(text[:start])
 			if !isQualifiedIdentRune(r) {
 				break
 			}
-			if unicode.IsLetter(r) {
-				s := spacelessScriptOf(r)
-				if runScript != scriptUnset && s != runScript {
-					break // word boundary: the run has left the call name
+			if s := spacelessScriptOf(r); s != scriptNeutral {
+				if isWordBoundary(runScript, s) {
+					atBoundary = true
+					break // the run has left the call name
 				}
 				runScript = s
 			}
@@ -161,14 +166,26 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 		if start == i {
 			continue // "(" with no identifier before it
 		}
+		if atBoundary && text[start] == '_' {
+			continue // undecidable: see isWordBoundary
+		}
 		addAnchor(text[start:i], seen)
 	}
 }
 
-// scriptUnset marks "no letter seen yet" in the backwards run, distinct from
-// scriptSpacing ("a letter, from a script that separates words with spaces").
+// The three sentinel values spacelessScriptOf and the backwards run use
+// alongside an index into spacelessScripts.
+//
+// scriptNeutral is the one that carries weight: a rune that says nothing about
+// which script the run is in. It covers every non-letter the identifier class
+// admits (digits, '_', '.', combining marks) AND letters whose script is
+// Common, which is where U+30FC KATAKANA-HIRAGANA PROLONGED SOUND MARK lives.
+// That mark is in most everyday Japanese loanword identifiers - データ,
+// ユーザー, サーバー, ロード, パーサー - and classifying it as a script of its
+// own would split `データ_解析` at its own vowel mark.
 const (
-	scriptUnset   = -2
+	scriptUnset   = -3
+	scriptNeutral = -2
 	scriptSpacing = -1
 )
 
@@ -188,37 +205,66 @@ var spacelessScripts = []*unicode.RangeTable{
 	unicode.Tibetan,
 }
 
-// spacelessScriptOf returns an index into spacelessScripts for r, or
-// scriptSpacing when r belongs to none of them.
+// spacelessScriptOf classifies r for the backwards run: an index into
+// spacelessScripts, scriptSpacing for a letter from a script that separates
+// words with spaces, or scriptNeutral for anything that carries no script
+// signal at all.
 //
-// The rule collectCallAnchors builds on this is deliberately NOT "stop at any
-// script change". A real identifier may legitimately mix a space-separating
-// script with Latin — `नाम_load()` is one name, and truncating it to the
-// fragment `_load` is the same defect pointed the other way, sending
-// validate.go's PathSuggestion at whatever else happens to declare the
-// fragment. Every script in the list above is one where the tokens on either
-// side of the boundary CANNOT be one word, because the writing system would
-// have no way to show that they were not.
-//
-// Two adjacent spaceless scripts (Han and Hiragana in Japanese) also break the
-// run. That can split a genuinely Japanese-named function mid-word, but such a
-// name is caseless and underscore-free, so hasIdentifierSignal rejects both the
-// whole run and the fragment — the outcome is "no anchor" either way, never a
-// wrong one.
-//
-// The one case the rule gets wrong is an identifier that itself MIXES a
-// spaceless script with Latin (`ตัวแปรParseConfig`), which truncates to its
-// Latin tail. Nothing in a spaceless script can distinguish that from prose, so
-// no boundary rule can separate the two; this is also exactly what the ASCII
-// byte scan did before the rune scan replaced it, so the case is no worse off
-// than it has ever been.
+// Neutral is not the same as "not a letter". Digits, '_', '.' and combining
+// marks are neutral because they occur inside names in every script — but so
+// is a Script=Common LETTER, and U+30FC (the katakana-hiragana prolonged sound
+// mark) is one. Treating it as its own script splits `データ_解析` at the mark
+// inside its own first word.
 func spacelessScriptOf(r rune) int {
+	if !unicode.IsLetter(r) || unicode.Is(unicode.Common, r) {
+		return scriptNeutral
+	}
 	for i, t := range spacelessScripts {
 		if unicode.Is(t, r) {
 			return i
 		}
 	}
 	return scriptSpacing
+}
+
+// isWordBoundary reports whether the run, currently in script `run`, has left
+// the call name on reaching a rune of script `next` (both already classified by
+// spacelessScriptOf, neither scriptNeutral).
+//
+// The rule is deliberately NOT "stop at any script change", and it is not "stop
+// at any spaceless-script change" either. It fires only where the two sides
+// CANNOT be one word: between a spaceless script and a space-separating one.
+//
+//   - A space-separating script beside Latin is one name. `नाम_load()` is a
+//     single identifier, and truncating it to `_load` sends validate.go's
+//     PathSuggestion at whatever else declares that fragment.
+//
+//   - Two DIFFERENT spaceless scripts are also one name, far more often than
+//     they are a boundary. Japanese identifiers mix Han and Kana routinely —
+//     `データ_解析`, `サバ_接続`, `解析_データ` — and breaking between them
+//     leaves a fragment that still carries a signal through its underscore.
+//     Ordinary Japanese PROSE glued to such a name (`設定を解析()`) is caught
+//     anyway: the glued run is caseless and underscore-free, so
+//     hasIdentifierSignal rejects it and no anchor is produced.
+//
+// What remains undecidable is an underscore straddling the one boundary this
+// does fire on: `调用_ParseConfig()` is either prose glued onto `_ParseConfig`
+// or the tail of the single name `调用_ParseConfig`, and `設定_loadFile()` is
+// either prose or one mixed Han-Latin name. Nothing in the text separates them.
+// collectCallAnchors answers those with SILENCE — it contributes no anchor when
+// the accepted span begins with '_' — because both available answers are wrong
+// in one reading, while no anchor degrades to Tier 1-3 and keeps the finding.
+//
+// The one case still answered wrongly is a mixed name with no underscore
+// (`ตัวแปรParseConfig`), which truncates to its Latin tail and can be
+// CONFIDENTLY misattributed to another declaration of that tail. That is
+// tracked as follow-on work; it is not new here — the ASCII byte scan this
+// replaced produced the same tail.
+func isWordBoundary(run, next int) bool {
+	if run == scriptUnset || run == next {
+		return false
+	}
+	return run == scriptSpacing || next == scriptSpacing
 }
 
 // addAnchor normalizes one raw span and records it if it qualifies.
