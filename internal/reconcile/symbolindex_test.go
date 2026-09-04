@@ -1972,6 +1972,19 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			"`export const Ⅷ = 1` is legal JavaScript and must stay admitted")
 	})
 
+	// Connector punctuation (Pc) is the non-ASCII analogue of `_`: ID_Continue
+	// includes it, so `const a‿b = 1` is legal JavaScript, but ID_Start does
+	// not, so a name never BEGINS with one. Both directions are pinned so a
+	// change either way fails loudly rather than drifting with a Unicode table.
+	t.Run("connector punctuation continues but never begins a declared name", func(t *testing.T) {
+		require.True(t, isDeclNameRune('‿', false),
+			"U+203F is category Pc, which ECMAScript ID_Continue includes")
+		require.False(t, isDeclNameRune('‿', true),
+			"U+203F is category Pc, which ECMAScript ID_Start excludes")
+		assert.True(t, isESMExportBody([]byte("const a‿b = 1")),
+			"`export const a‿b = 1` is legal JavaScript and must stay admitted")
+	})
+
 	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {
 		assert.False(t, isESMExportBody([]byte("module ٣٤, see MyWidget")),
 			"Arabic-Indic digits cannot be a declared name, so the comma is prose punctuation")
