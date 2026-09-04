@@ -770,28 +770,16 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // nothing else. `export type definitions: see the guide` and `export global
 // state: shared across MyWorker` are rejected for that reason.
 //
-// That residual is NOT limited to ASCII sentences. isDeclNameRune decides a name
-// rune by Unicode category, so the second word can be written in any script and
-// the same punctuation test admits it. Measured on this function:
-//
-//	export module データ設定, see MyWidget for details   →  admitted
-//	  collectExportedIdentifiers harvests
-//	  map[MyWidget:1 details:1 for:1 module:1 see:1 データ設定:1]
-//
-// Latin-script variants behave identically — `export namespace Größe (siehe
-// MyWidget)` harvests map[Größe:1 MyWidget:1 namespace:1 siehe:1]. In both, the
-// fabricated MyWidget lands in presentInSource on the strength of a sentence.
-//
-// The alphabet was widened KNOWINGLY, and the trade is worth stating so the next
-// reader does not narrow it back on a false premise. An ASCII-only name class
-// ended the name at a non-ASCII rune's lead byte, so every genuine Unicode
-// declaration — `export const café`, `export let 日本語` — was rejected outright.
-// Recovering those real declarations is what admits the non-ASCII prose sentence
-// alongside them. The ASCII form of this same residual already shipped before the
-// widening (`export interface changes (see below)` is admitted both before and
-// after), so the widening extended an accepted residual's reach; it did not
-// create a new defect class. Narrowing the residual is a design change to the
-// grammar rule, not a correction to the alphabet.
+// That residual is NOT limited to ASCII sentences. The name alphabet is
+// Unicode — see isDeclNameRune for the class's reach and the trade it makes —
+// so the second word can be written in any script and the same punctuation
+// test admits it: `export module データ設定, see MyWidget for details` puts the
+// fabricated MyWidget into presentInSource, and the Latin-script variant
+// (`export namespace Größe (siehe MyWidget)`) behaves identically.
+// TestCollectExportedIdentifiers_UnicodeNames pins the exact harvest maps for
+// both lines, so this paragraph cannot drift from the code it describes.
+// Narrowing the residual is a design change to the grammar rule, not a
+// correction to the alphabet.
 func isESMExportBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -965,18 +953,33 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 //     page written for a non-English audience uses it (`export const café`,
 //     `export let 日本語`). An ASCII-only class ends the name at the rune's lead
 //     byte, which the punctuation test below then reads as the character AFTER
-//     the name — never a declaration punctuator, so every such declaration was
-//     rejected outright.
+//     the name — never a declaration punctuator. That rejection only ever
+//     applied to the BARE-identifier arm: the destructuring, quoted-ambient-
+//     module, brace-re-export and export-default arms never consulted the name
+//     class. But the bare arm is the common case, so every Unicode declaration
+//     of the ordinary `export const café` shape was rejected outright. The
+//     alphabet was widened KNOWINGLY: recovering those real declarations is
+//     what admits the non-ASCII prose sentence alongside them, and the ASCII
+//     form of that residual shipped before the widening, so the widening
+//     extended an accepted residual's reach rather than creating a new defect
+//     class.
 //   - A byte >= 0x80 is just as likely to begin a PUNCTUATION rune: an em-dash,
 //     a curly quote, an ellipsis. Admitting those as name bytes would let
 //     `export type “Foo”: the widget` scan the quoted phrase as a name and reach
 //     the `:` arm — prose licensing a source presence, which is the whole failure
 //     this grammar rule exists to prevent.
 //
-// A letter is an identifier rune anywhere in the name, and a digit or combining
-// mark is one anywhere EXCEPT the first position; everything else in the
-// non-ASCII range ends the name and hands the verdict to the punctuation test,
-// which is what the ASCII class always claimed to do.
+// The class follows ECMAScript's identifier grammar: a letter or a
+// letter-number (Nl — a Roman numeral like Ⅷ can legally begin `const Ⅷ = 1`)
+// is an identifier rune anywhere in the name, as are the Other_ID_Start marks;
+// a digit, a combining mark (Mn or Mc), or a connector punctuation (Pc, the
+// non-ASCII analogue of `_`) is one anywhere EXCEPT the first position.
+// Everything else in the non-ASCII range ends the name and hands the verdict
+// to the punctuation test, which is what the ASCII class always claimed to do.
+// Two known false negatives remain, deliberately: ZWNJ/ZWJ (U+200C/U+200D) are
+// legal identifier PARTS but are format characters that appear inside ordinary
+// prose words in several scripts, and Me enclosing marks are outside
+// ID_Continue entirely (node rejects `const a⃝b = 1`).
 //
 // The leading-rune rule is a property of the NAME, not of the alphabet it is
 // written in, so the category arm honours `first` exactly as the ASCII arm does:
@@ -991,12 +994,15 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 // MyWidget into presentInSource.
 //
 // Recognising a name is not the same as harvesting it. isIdentifierShaped
-// (anchor.go) rejects any token containing a combining mark, so a mark-bearing
-// declaration is recognised HERE and its name is still dropped downstream —
-// `export const नाम = 1` and an NFD-spelled `export const café = 1` both harvest
-// map[const:1]. The precomposed spelling (`café` as one letter rune) does reach
-// presentInSource. So this class's Unicode reach is what the GRAMMAR test
-// accepts, not what the index ends up holding; the two disagree about marks.
+// (anchor.go) admits Mn and Mc marks at non-initial positions, so a
+// mark-bearing declaration — `export const नाम = 1`, an NFD-spelled
+// `export const café = 1` — reaches presentInSource with its name, pinned
+// end-to-end by TestCollectExportedIdentifiers_UnicodeNames. The remaining
+// grammar/harvest disagreements are narrower and enumerated: the harvest
+// rejects an Nl- or Pc-bearing name and a LEADING Other_ID_Start mark, its
+// word-byte class splits on `$` — `export const $foo = 1` is recognised as
+// declaring $foo but the index ends up holding `foo`, a name never declared —
+// and it drops any name shorter than minAnchorLen (anchor.go:23).
 //
 // An invalid UTF-8 byte decodes to RuneError, which is in none of those
 // categories, so it ends the name — the conservative direction, and the same
