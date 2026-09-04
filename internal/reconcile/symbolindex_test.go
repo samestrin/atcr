@@ -1518,6 +1518,16 @@ func TestCollectExportedIdentifiers_UnicodeNames(t *testing.T) {
 			want: map[string]uint8{"const": presenceSource, "\u0928\u093e\u092e": presenceSource},
 		},
 		{
+			// The Latin-script sibling the docstring measures alongside
+			// the Japanese sentence — same residual, precomposed letters only.
+			name: "Latin-script prose sentence harvests the documented map",
+			src:  "export namespace Gr\u00f6\u00dfe (siehe MyWidget)\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "Gr\u00f6\u00dfe": presenceSource,
+				"siehe": presenceSource, "MyWidget": presenceSource,
+			},
+		},
+		{
 			name: "NFD-spelled café keeps its name",
 			src:  "export const cafe\u0301 = 1\n",
 			want: map[string]uint8{"const": presenceSource, "cafe\u0301": presenceSource},
