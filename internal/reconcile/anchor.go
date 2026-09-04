@@ -38,10 +38,20 @@ const minAnchorLen = 3
 // set, as an earlier revision did, made the proposed remedy's own name the
 // evidence for discarding the finding that proposed it.
 //
-// truncated reports that more identifiers were named than maxAnchorsPerFinding
-// admits, so the returned set is a PREFIX of what the text actually named. A
+// truncated reports that the returned set is not a faithful reading of what the
+// text named — either more identifiers were named than maxAnchorsPerFinding
+// admits, or the call scan lost fidelity on a span (see collectCallAnchors). A
 // caller must never reach a no-match verdict on a truncated set: the one anchor
-// that would have matched may be among the dropped ones.
+// that would have matched may be among the ones it did not faithfully recover.
+//
+// The flag deliberately covers BOTH losses through one channel. The cap drops
+// whole anchors; the call scan can instead return a token the reviewer did not
+// write (spaceless prose glued to a call name) or return nothing for a span it
+// could not decide. All three make "searched everything the text named and found
+// none of it" a false statement, which is the only claim `truncated` exists to
+// block. Splitting them into separate flags would give validate.go three
+// conditions to get right instead of one, and the two newer losses reached
+// production precisely because they had no channel at all.
 //
 // It is a pure function of its inputs — no model call, no filesystem, no clock,
 // no map-iteration order — so the same finding text always yields the same
@@ -73,9 +83,9 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	for _, d := range anchorDelimiters {
 		collectDelimitedAnchors(text, byte(d), seen)
 	}
-	collectCallAnchors(text, seen)
+	imprecise := collectCallAnchors(text, seen)
 	if len(seen) == 0 {
-		return nil, false
+		return nil, imprecise
 	}
 	out := make([]string, 0, len(seen))
 	for tok := range seen {
@@ -85,7 +95,7 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	if len(out) > maxAnchorsPerFinding {
 		return out[:maxAnchorsPerFinding], true
 	}
-	return out, false
+	return out, imprecise
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
@@ -141,7 +151,34 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // spaceless scripts do NOT break the run (`データ_解析` is one name), and why an
 // underscore sitting on the boundary that does fire yields no anchor at all
 // rather than a fragment.
-func collectCallAnchors(text string, seen map[string]struct{}) {
+//
+// imprecise reports that at least one span was NOT faithfully recovered, which
+// extractAnchorSet folds into its `truncated` return so validate.go cannot reach
+// a no-match verdict on the set. Two spans set it, and both are the SAME
+// undecidability seen from different sides:
+//
+//   - SILENCED — the underscore-on-the-boundary case above, which contributes no
+//     anchor. The silence keeps a misattributable fragment out of locate, but it
+//     is per-SPAN while its safety argument ("no anchor keeps the finding") is
+//     per-FINDING. With a co-cited anchor that is absent from the tree, silencing
+//     the one span that would have matched flips the whole finding to no-match —
+//     measured: a PROBLEM naming both `設定_loadFile()` and a co-cited absent
+//     `retryOnce` went tier4Resolved -> tier4NoMatch.
+//
+//   - GLUED — a run that crossed between two spaceless scripts and ended up
+//     holding an underscore. Because such a crossing does not break the run, the
+//     accepted span is either one snake_case name (`データ_解析`) or prose welded
+//     to one (`設定を解析_処理`, where the tree declares `解析_処理`), and nothing
+//     in the text separates them. The anchor is still contributed — dropping it
+//     would take the `データ_解析` direction back out — but the set is marked
+//     imprecise, so the glued reading can no longer DELETE a finding while the
+//     genuine reading can still resolve one.
+//
+// The asymmetry is deliberate: silence is right where a fragment could be
+// confidently misattributed, and an imprecise anchor is right where the token may
+// well be the real name. What neither may do is stand as proof that the tree was
+// searched for what the reviewer actually wrote.
+func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -149,6 +186,7 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 		start := i
 		runScript := scriptUnset
 		atBoundary := false
+		crossedSpaceless := false
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(text[:start])
 			if !isQualifiedIdentRune(r) {
@@ -159,6 +197,9 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 					atBoundary = true
 					break // the run has left the call name
 				}
+				if runScript != scriptUnset && s != runScript {
+					crossedSpaceless = true
+				}
 				runScript = s
 			}
 			start -= size
@@ -167,10 +208,15 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 			continue // "(" with no identifier before it
 		}
 		if atBoundary && text[start] == '_' {
+			imprecise = true
 			continue // undecidable: see isWordBoundary
+		}
+		if crossedSpaceless && strings.Contains(text[start:i], "_") {
+			imprecise = true // glued or genuine, and nothing here can tell
 		}
 		addAnchor(text[start:i], seen)
 	}
+	return imprecise
 }
 
 // The three sentinel values spacelessScriptOf and the backwards run use
