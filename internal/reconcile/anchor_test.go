@@ -100,7 +100,7 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			want:    nil,
 		},
 		{
-			// The "." case of isQualifiedIdentByte, reachable ONLY through a CALL
+			// The "." case of isQualifiedIdentRune, reachable ONLY through a CALL
 			// shape: a backtick span never consults it, so `stream.ValidatePath`
 			// above leaves this branch untouched. Without it the backwards scan
 			// stops at the dot and records the receiver segment instead.
@@ -109,7 +109,7 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			want:    []string{"ValidatePath"},
 		},
 		{
-			// The "_" case of isQualifiedIdentByte, likewise call-shape only.
+			// The "_" case of isQualifiedIdentRune, likewise call-shape only.
 			name:    "snake_case call shape",
 			problem: "read_tree() is invoked once per finding",
 			want:    []string{"read_tree"},

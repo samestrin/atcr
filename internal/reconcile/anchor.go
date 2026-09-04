@@ -132,8 +132,12 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 			continue
 		}
 		start := i
-		for start > 0 && isQualifiedIdentByte(text[start-1]) {
-			start--
+		for start > 0 {
+			r, size := utf8.DecodeLastRuneInString(text[:start])
+			if !isQualifiedIdentRune(r) {
+				break
+			}
+			start -= size
 		}
 		if start == i {
 			continue // "(" with no identifier before it
@@ -164,14 +168,20 @@ func trailingSegment(s string) string {
 	return s
 }
 
-// isQualifiedIdentByte reports whether b may appear in a qualified identifier
-// run scanned backwards from a call paren. '.' is included so a package- or
-// receiver-qualified call is captured whole and reduced by trailingSegment.
-func isQualifiedIdentByte(b byte) bool {
+// isQualifiedIdentRune reports whether r may appear in a qualified identifier
+// run scanned backwards from a call paren. The class is rune-based — letters,
+// digits, combining marks (the same alphabet isIdentifierShaped admits) plus
+// '_' — so a non-ASCII call name is captured WHOLE rather than truncated at a
+// multibyte rune's continuation byte into a fragment that names something
+// else. '.' is included so a package- or receiver-qualified call is captured
+// whole and reduced by trailingSegment.
+func isQualifiedIdentRune(r rune) bool {
 	switch {
-	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+	case unicode.IsLetter(r), unicode.IsDigit(r):
 		return true
-	case b == '_', b == '.':
+	case unicode.In(r, unicode.Mn, unicode.Mc):
+		return true
+	case r == '_', r == '.':
 		return true
 	}
 	return false
