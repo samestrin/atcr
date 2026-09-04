@@ -128,16 +128,33 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // (BuildFileIndex() is called once per finding). The identifier run is read
 // backwards from the paren, so a qualified call (x.Parse() ) still yields its
 // trailing segment via addAnchor.
+//
+// The run also terminates at a SPACELESS-SCRIPT boundary, because
+// isQualifiedIdentRune alone does not terminate at a word boundary in a script
+// that writes without inter-word spaces. `在配置中调用ParseConfig()` would
+// otherwise yield the pseudo-token `在配置中调用ParseConfig` — identifier-shaped,
+// carrying a signal from the interior e->C transition, and declared nowhere —
+// which resolve reads as tier4NoMatch, deleting a real finding and durably
+// charging the reviewer a phantom. See spacelessScriptOf for why the rule is
+// keyed on those scripts specifically rather than on any script change.
 func collectCallAnchors(text string, seen map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
 		}
 		start := i
+		runScript := scriptUnset
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(text[:start])
 			if !isQualifiedIdentRune(r) {
 				break
+			}
+			if unicode.IsLetter(r) {
+				s := spacelessScriptOf(r)
+				if runScript != scriptUnset && s != runScript {
+					break // word boundary: the run has left the call name
+				}
+				runScript = s
 			}
 			start -= size
 		}
@@ -146,6 +163,55 @@ func collectCallAnchors(text string, seen map[string]struct{}) {
 		}
 		addAnchor(text[start:i], seen)
 	}
+}
+
+// scriptUnset marks "no letter seen yet" in the backwards run, distinct from
+// scriptSpacing ("a letter, from a script that separates words with spaces").
+const (
+	scriptUnset   = -2
+	scriptSpacing = -1
+)
+
+// spacelessScripts are the scripts that do not put spaces between words, so
+// ordinary prose in them runs straight into an embedded identifier with nothing
+// between the two. They are the only scripts the backwards call scan can use as
+// a boundary signal, and they are exactly the scripts that need one.
+var spacelessScripts = []*unicode.RangeTable{
+	unicode.Han,
+	unicode.Hiragana,
+	unicode.Katakana,
+	unicode.Hangul,
+	unicode.Thai,
+	unicode.Lao,
+	unicode.Khmer,
+	unicode.Myanmar,
+	unicode.Tibetan,
+}
+
+// spacelessScriptOf returns an index into spacelessScripts for r, or
+// scriptSpacing when r belongs to none of them.
+//
+// The rule collectCallAnchors builds on this is deliberately NOT "stop at any
+// script change". A real identifier may legitimately mix a space-separating
+// script with Latin — `नाम_load()` is one name, and truncating it to the
+// fragment `_load` is the same defect pointed the other way, sending
+// validate.go's PathSuggestion at whatever else happens to declare the
+// fragment. Every script in the list above is one where the tokens on either
+// side of the boundary CANNOT be one word, because the writing system would
+// have no way to show that they were not.
+//
+// Two adjacent spaceless scripts (Han and Hiragana in Japanese) also break the
+// run. That can split a genuinely Japanese-named function mid-word, but such a
+// name is caseless and underscore-free, so hasIdentifierSignal rejects both the
+// whole run and the fragment — the outcome is "no anchor" either way, never a
+// wrong one.
+func spacelessScriptOf(r rune) int {
+	for i, t := range spacelessScripts {
+		if unicode.Is(t, r) {
+			return i
+		}
+	}
+	return scriptSpacing
 }
 
 // addAnchor normalizes one raw span and records it if it qualifies.
