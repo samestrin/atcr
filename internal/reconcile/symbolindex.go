@@ -776,8 +776,26 @@ func collectExportedIdentifiers(src []byte, out map[string]uint8) {
 // test admits it: `export module データ設定, see MyWidget for details` puts the
 // fabricated MyWidget into presentInSource, and the Latin-script variant
 // (`export namespace Größe (siehe MyWidget)`) behaves identically.
+//
+// Nor is the residual limited to LETTER second words. The category arm of
+// isDeclNameRune also admits a letter-number (Nl) or an Other_ID_Start mark
+// at the initial position and a connector punctuation (Pc) inside the name,
+// so each of these prose lines passes the same grammar test and harvests its
+// whole line — the fabricated MyWidget included:
+//
+//	export module Ⅷ, see MyWidget for details     (U+2167 Nl)
+//	export namespace ℘, see MyWidget for details  (U+2118 Other_ID_Start)
+//	export namespace ゛, see MyWidget for details  (U+309B Other_ID_Start — an
+//	                                               ordinary Japanese prose
+//	                                               character, not an exotic)
+//	export type a﹍b, and MyWidget too             (U+FE4D Pc inside the name)
+//
+// In each harvested map the second word itself is absent — the single-rune
+// names fall below minAnchorLen, and the Pc-bearing token fails
+// isIdentifierShaped — but every OTHER word on the line lands in
+// presentInSource, MyWidget among them.
 // TestCollectExportedIdentifiers_UnicodeNames pins the exact harvest maps for
-// both lines, so this paragraph cannot drift from the code it describes.
+// all six lines, so this paragraph cannot drift from the code it describes.
 // Narrowing the residual is a design change to the grammar rule, not a
 // correction to the alphabet.
 func isESMExportBody(body []byte) bool {
