@@ -1537,6 +1537,49 @@ func TestCollectExportedIdentifiers_UnicodeNames(t *testing.T) {
 			src:  "export const caf\u00e9 = 1\n",
 			want: map[string]uint8{"const": presenceSource, "caf\u00e9": presenceSource},
 		},
+		{
+			// The Nl arm of the residual: a Roman numeral (U+2167, category Nl)
+			// can legally begin a name, so the grammar admits the sentence and
+			// the whole line harvests — MyWidget included. The numeral itself
+			// is one rune, below minAnchorLen, so it is absent from the map.
+			name: "letter-number second word harvests the documented map",
+			src:  "export module \u2167, see MyWidget for details\n",
+			want: map[string]uint8{
+				"module": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Other_ID_Start arm, script-symbol flavour (U+2118).
+			name: "Other_ID_Start symbol second word harvests the documented map",
+			src:  "export namespace \u2118, see MyWidget for details\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Other_ID_Start arm with an ordinary Japanese prose character
+			// (U+309B, the dakuten) — not an exotic codepoint.
+			name: "Other_ID_Start dakuten second word harvests the documented map",
+			src:  "export namespace \u309b, see MyWidget for details\n",
+			want: map[string]uint8{
+				"namespace": presenceSource, "see": presenceSource,
+				"MyWidget": presenceSource, "for": presenceSource, "details": presenceSource,
+			},
+		},
+		{
+			// The Pc arm: a connector punctuation (U+FE4D) inside the second
+			// word keeps the name run alive to the comma. The harvest then
+			// drops the Pc-bearing token itself (isIdentifierShaped admits no
+			// Pc) but still takes every other word on the line.
+			name: "Pc-bearing second word harvests the documented map",
+			src:  "export type a\ufe4db, and MyWidget too\n",
+			want: map[string]uint8{
+				"type": presenceSource, "and": presenceSource,
+				"MyWidget": presenceSource, "too": presenceSource,
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1995,17 +2038,17 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 		}
 	})
 
-	// Category Nl (letter-numbers — Roman numerals like Ⅷ and Ⅻ) IS in Unicode
-	// ID_Start, so `const Ⅷ = 1` is legal JavaScript (V8 runs it). Rejecting
+	// Category Nl (letter-numbers — Roman numerals like \u2167 and Ⅻ) IS in Unicode
+	// ID_Start, so `const \u2167 = 1` is legal JavaScript (V8 runs it). Rejecting
 	// Nl drops a real declaration out of presentInSource — the false-negative
 	// direction this class exists to prevent.
 	t.Run("a letter-number can begin and continue a declared name", func(t *testing.T) {
-		require.True(t, isDeclNameRune('Ⅷ', true),
+		require.True(t, isDeclNameRune('\u2167', true),
 			"U+2167 is category Nl, which ECMAScript ID_Start includes")
-		require.True(t, isDeclNameRune('Ⅷ', false),
+		require.True(t, isDeclNameRune('\u2167', false),
 			"U+2167 is category Nl, which ECMAScript ID_Continue includes")
-		assert.True(t, isESMExportBody([]byte("const Ⅷ = 1")),
-			"`export const Ⅷ = 1` is legal JavaScript and must stay admitted")
+		assert.True(t, isESMExportBody([]byte("const \u2167 = 1")),
+			"`export const \u2167 = 1` is legal JavaScript and must stay admitted")
 	})
 
 	// Connector punctuation (Pc) is the non-ASCII analogue of `_`: ID_Continue
