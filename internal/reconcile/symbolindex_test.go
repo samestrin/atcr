@@ -1893,7 +1893,10 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	// arms disagreed about one rule.
 	//
 	// Neither a digit nor a combining mark can legally START a JavaScript or
-	// TypeScript identifier, so tightening this drops no real declaration; the
+	// TypeScript identifier — with one exception: the Other_ID_Start marks
+	// U+1885/U+1886, which ECMAScript admits as an identifier start and which
+	// the sweep below therefore skips and the dedicated subtest pins
+	// positively. Tightening the rest drops no real declaration; the
 	// non-leading direction below is what proves the tightening did not simply
 	// evict Unicode names again.
 	t.Run("a declared name never starts with a digit or a combining mark", func(t *testing.T) {
@@ -1902,11 +1905,15 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			if !unicode.IsDigit(r) && !unicode.IsMark(r) {
 				continue
 			}
-			if unicode.IsLetter(r) {
+			if unicode.IsLetter(r) || unicode.Is(unicode.Other_ID_Start, r) {
 				// The implementation returns on IsLetter FIRST, so a rune in
 				// both classes is a legal name start and is not this loop's to
-				// judge. No rune satisfies this today; the guard keeps a future
-				// Unicode table from turning a correct answer into a failure.
+				// judge. Other_ID_Start (U+1885/U+1886) is the same shape:
+				// category Mn, yet a legal ECMAScript identifier start — the
+				// dedicated subtest pins it in the positive direction. No
+				// other rune satisfies either guard today; the guard keeps a
+				// future Unicode table from turning a correct answer into a
+				// failure.
 				continue
 			}
 			asserted++

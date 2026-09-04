@@ -980,8 +980,11 @@ func followsDeclaredName(after []byte, shape declShape) bool {
 //
 // The leading-rune rule is a property of the NAME, not of the alphabet it is
 // written in, so the category arm honours `first` exactly as the ASCII arm does:
-// neither a digit nor a combining mark can legally BEGIN a JavaScript or
-// TypeScript identifier. Leaving `first` unread there let the two arms disagree
+// a digit can never begin a JavaScript or TypeScript identifier, and a combining
+// mark cannot either — with one carve-out: U+1885 and U+1886 (the Mongolian
+// Ali Gali baludas) are category Mn AND members of Other_ID_Start, which
+// ECMAScript admits as an IdentifierStart, so they pass at either position.
+// Leaving `first` unread there let the two arms disagree
 // about one rule — `export module 34, see MyWidget` was rejected while
 // `export module ٣٤, see MyWidget` scanned the Arabic-Indic digits as a declared
 // name, reached followsDeclaredName's `,` arm, and harvested the fabricated
@@ -1010,7 +1013,8 @@ func isDeclNameRune(r rune, first bool) bool {
 	case r < utf8.RuneSelf:
 		return false // every other ASCII byte is punctuation or space
 	}
-	return unicode.IsLetter(r) || (!first && (unicode.IsDigit(r) || unicode.IsMark(r)))
+	return unicode.IsLetter(r) || unicode.Is(unicode.Other_ID_Start, r) ||
+		(!first && (unicode.IsDigit(r) || unicode.IsMark(r)))
 }
 
 // eligiblePaths filters the tracked set to root-contained files, preserving a
