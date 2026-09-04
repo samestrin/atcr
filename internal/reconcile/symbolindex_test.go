@@ -2193,8 +2193,12 @@ const (
 // construct that is plainly there — routing a real finding to tier4NoMatch, which
 // deletes it and durably charges the reviewer a phantom.
 //
-// Each case isolates ONE of the three folds the fix installs; drop any single one
-// and exactly one case goes red.
+// Each case is pinned to ONE of the three folds the fix installs, verified by
+// removing each fold in turn: dropping the addAnchor fold reddens only the
+// NFD-anchor case, dropping the collectSourceIdentifiers fold reddens only the
+// source-text-only case, and dropping the byName fold reddens the NFD-file case
+// (and TestSymbolIndex_NormalizationSplitKeyIsNotPrecise, which pins the same
+// insert from the locate side).
 func TestSymbolIndex_UnicodeNormalizationCrossForm(t *testing.T) {
 	const rel = "internal/pago/modulo.go"
 
