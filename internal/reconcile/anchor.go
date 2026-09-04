@@ -189,11 +189,14 @@ func isQualifiedIdentByte(b byte) bool {
 // nothing" on whatever co-cited ASCII anchor happened to miss.
 //
 // Combining marks (Mn and Mc) are admitted at non-initial positions for the
-// same reason: Devanagari names carry vowel signs (नाम is न + ा + म) and a
-// macOS- or git-normalised file spells café as e + U+0301, so a mark-rejecting
+// same reason: a macOS- or git-normalised file spells café as e + U+0301, and
+// Devanagari names carry vowel signs (नाम is न + ा + म), so a mark-rejecting
 // filter drops the name of a declaration the grammar (isDeclNameRune,
 // symbolindex.go) admits — the two must agree, or a grammar-admitted
-// declaration never reaches presentInSource. Me (enclosing marks) stays
+// declaration never reaches presentInSource. Admission here is only the SHAPE
+// half, though: a caseless-script name still carries no identifier signal
+// (hasIdentifierSignal), so it reaches present from the harvest but anchors a
+// finding only when it also carries an underscore. Me (enclosing marks) stays
 // rejected: it is outside ECMAScript ID_Continue, and a leading mark is never
 // legal, exactly as a leading digit is not.
 func isIdentifierShaped(tok string) bool {
@@ -240,7 +243,16 @@ func hasIdentifierSignal(tok string) bool {
 		if i > 0 && prevLower && unicode.IsUpper(r) {
 			return true
 		}
-		prevLower = unicode.IsLower(r)
+		// Only a cased rune moves the transition tracker: an uncased rune
+		// (a digit or a combining mark) carries prevLower across unchanged,
+		// so the NFD spelling of a camelCase name (cafe + U+0301 + Bar) keeps
+		// the signal its NFC spelling has.
+		switch {
+		case unicode.IsLower(r):
+			prevLower = true
+		case unicode.IsUpper(r):
+			prevLower = false
+		}
 	}
 	return false
 }
