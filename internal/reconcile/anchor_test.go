@@ -424,13 +424,31 @@ func TestHasIdentifierSignal_DigitCarry(t *testing.T) {
 // at the first multibyte byte and produced NO anchor, which is inconclusive and
 // safe.
 //
-// `データ_解析` was broken by U+30FC, the katakana-hiragana prolonged sound
-// mark, which is Script=Common and which the original rule classified as
-// scriptSpacing — splitting the name at its own vowel mark, with no real script
-// change anywhere in it. That mark appears in most everyday Japanese loanword
-// identifiers (データ, ユーザー, サーバー, ロード, パーサー), so the case is
-// ordinary rather than exotic. spacelessScriptOf now returns scriptNeutral for
-// it.
+// TWO different runes could fire the old break, and the repair needed both
+// halves. Replaying the pre-diff predicate rune by rune:
+//
+//   - `データ_解析` broke at タ. The backwards run reads 析(Han) 解(Han) then the
+//     underscore (skipped, not a letter) then タ(Katakana), and Katakana != Han
+//     ends it. U+30FC is two runes further back and is never reached. That is
+//     why the spaceless/spaceless exemption in isWordBoundary is load-bearing
+//     here, not the Script=Common change.
+//
+//   - `ユーザー_取得` broke at U+30FC, the katakana-hiragana prolonged sound
+//     mark: 得(Han) 取(Han) then the underscore then ー, which is Script=Common
+//     and which the original rule classified as scriptSpacing — splitting the
+//     name at its own vowel mark. Measured old anchor: `_取得`. That mark is in
+//     most everyday Japanese loanword identifiers (データ, ユーザー, サーバー,
+//     ロード, パーサー), so the case is ordinary rather than exotic.
+//     spacelessScriptOf now returns scriptNeutral for it.
+//
+// Both halves are still pinned by the `データ_解析` row: the exemption keeps the
+// run past タ, and only then does it reach ー, where the Script=Common rule
+// keeps it going. Deleting either one turns the row red (measured — the
+// Script=Common mutant yields the fragment `タ_解析`).
+//
+// An earlier revision of this paragraph attributed the `データ_解析` break to
+// U+30FC "with no real script change anywhere in it". That is false in both
+// halves and was never measured.
 //
 // The last two rows are the load-bearing counter-direction: prose glued to a
 // call name must still terminate at the boundary. An underscore inside the

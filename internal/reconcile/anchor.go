@@ -295,24 +295,37 @@ func spacelessScriptOf(r rune) int {
 //     not assumed — `設定を解析()` yields no anchor.
 //
 //     Where the name carries an underscore the exemption fails: `設定を解析_処理()`
-//     yields the glued `設定を解析_処理`, which resolves to tier4NoMatch. That
-//     is the same undecidability as below, one script-pair over — the run is
-//     either prose plus `解析_処理` or the single name `設定を解析_処理`, and no
-//     rule separates them. It is answered wrongly today and is NOT silenced,
-//     because the silencing test below (a leading '_') cannot fire when no
-//     break occurred. It is no worse than before this rule existed, where the
-//     same input produced the fragment `解析_処理` — a fragment can additionally
-//     be misattributed to another declaration, which the glued form cannot.
-//     Do not read the paragraph above as a guarantee; it was written as one
-//     once, and that is what this rule had to be repaired for.
+//     yields the glued `設定を解析_処理`. That is the same undecidability as
+//     below, one script-pair over — the run is either prose plus `解析_処理` or
+//     the single name `設定を解析_処理`, and no rule separates them.
+//
+//     It is NOT silenced, because the silencing test below (a leading '_')
+//     cannot fire when no break occurred. collectCallAnchors instead marks the
+//     EXTRACTION imprecise, which is what keeps the glued reading from deleting
+//     a finding while the genuine reading can still resolve one. Before that
+//     signal existed the glued token reached resolve as ordinary evidence and
+//     returned tier4NoMatch.
+//
+//     An earlier revision of this paragraph called that outcome "no worse than
+//     before this rule existed, where the same input produced the fragment
+//     `解析_処理` — a fragment can additionally be misattributed, which the
+//     glued form cannot." That comparison was measured and is FALSE. It reaches
+//     past the rule's own parent to the pre-rune ASCII scan. Against the parent,
+//     `解析_処理` was not a fragment at all: collectSourceIdentifiers treats '_'
+//     as a word byte, so `func 解析_処理(` harvests exactly that one token, and
+//     the parent resolved it to the correct file. The glued form replaced the
+//     BEST outcome with the worst one. Do not restate a comparison here without
+//     running it.
 //
 // What remains undecidable is an underscore straddling the one boundary this
 // does fire on: `调用_ParseConfig()` is either prose glued onto `_ParseConfig`
 // or the tail of the single name `调用_ParseConfig`, and `設定_loadFile()` is
 // either prose or one mixed Han-Latin name. Nothing in the text separates them.
 // collectCallAnchors answers those with SILENCE — it contributes no anchor when
-// the accepted span begins with '_' — because both available answers are wrong
-// in one reading, while no anchor degrades to Tier 1-3 and keeps the finding.
+// the accepted span begins with '_' — because a fragment could be CONFIDENTLY
+// misattributed, which is the one outcome nothing downstream can undo. The
+// silence is likewise reported as imprecise: it keeps the fragment out of
+// locate, but it is not evidence that the tree was searched.
 //
 // The one case still answered wrongly is a mixed name with no underscore
 // (`ตัวแปรParseConfig`), which truncates to its Latin tail and can be
