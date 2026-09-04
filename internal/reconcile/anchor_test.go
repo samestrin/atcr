@@ -373,3 +373,36 @@ func TestExtractAnchors_SpacelessScriptBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestHasIdentifierSignal_DigitCarry pins the OTHER uncased class the signal
+// predicate carries a lowercase run across: digits. Its combining-mark sibling
+// is pinned by TestHasIdentifierSignal_NormalizationAgreement, but the digit
+// half is the one that changes behaviour in a pure-ASCII tree — base64Encode,
+// sha256Sum, x509Cert and v2Config all move false->true, so every finding
+// citing such a name now contributes an anchor it did not before, feeding
+// locate, PathSuggestion, the anchor cap and namedInDocs. Without this table
+// the carry can be reverted (digits reset the tracker) or over-widened (any
+// uppercase counts, so a leading capital suffices) with the suite still green.
+//
+// The all-lowercase rows are the over-widening guard: a digit must CARRY a
+// lowercase run into a later uppercase, never manufacture a signal on its own.
+func TestHasIdentifierSignal_DigitCarry(t *testing.T) {
+	cases := []struct {
+		tok  string
+		want bool
+	}{
+		{"base64Encode", true},
+		{"sha256Sum", true},
+		{"utf8Reader", true},
+		{"x509Cert", true},
+		{"v2Config", true},
+		{"base64encode", false},
+		{"sha256sum", false},
+		{"Base64", false}, // leading capital is not an INTERNAL transition
+	}
+	for _, tc := range cases {
+		t.Run(tc.tok, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasIdentifierSignal(tc.tok))
+		})
+	}
+}
