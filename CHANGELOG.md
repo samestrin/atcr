@@ -5,6 +5,7 @@
 
 ### Changed
 - Recorded, in the export-grammar contract itself, that the known prose gap it accepts is not limited to English sentences, and that the identifier alphabet was widened deliberately to recognize real non-Latin declarations. The disclosure quotes measured output so a future reader does not narrow the rule on a false premise.
+- The Tier-4 identifier alphabet was also WIDENED in two predicates, not only narrowed: the anchor-shape predicate now admits combining marks (Mn/Mc), and the export-grammar name class now admits letter-numbers (Nl), Other_ID_Start marks, and connector punctuation (Pc). In a codebase with non-ASCII identifiers, findings may therefore resolve or route differently than in 35.16.6.8 — including the newly measured case where a real finding previously KEPT as inconclusive is now judged a no-match and routed out to the unresolved sidecar.
 - Strengthened the export-grammar test suite so each keyword's permitted name forms are pinned as a whole value rather than one form at a time, closing three separate cases where an incorrect widening left the suite passing.
 
 *Shipped via /execute-epic (epic 35.16.6.8.1)*
