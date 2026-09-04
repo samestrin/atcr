@@ -205,6 +205,13 @@ var spacelessScripts = []*unicode.RangeTable{
 // name is caseless and underscore-free, so hasIdentifierSignal rejects both the
 // whole run and the fragment — the outcome is "no anchor" either way, never a
 // wrong one.
+//
+// The one case the rule gets wrong is an identifier that itself MIXES a
+// spaceless script with Latin (`ตัวแปรParseConfig`), which truncates to its
+// Latin tail. Nothing in a spaceless script can distinguish that from prose, so
+// no boundary rule can separate the two; this is also exactly what the ASCII
+// byte scan did before the rune scan replaced it, so the case is no worse off
+// than it has ever been.
 func spacelessScriptOf(r rune) int {
 	for i, t := range spacelessScripts {
 		if unicode.Is(t, r) {
