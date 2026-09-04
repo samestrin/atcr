@@ -2152,3 +2152,117 @@ func TestSymbolIndex_NamedInDocsRequiresEveryAnchorAccounted(t *testing.T) {
 	assert.True(t, lz.namedInDocs([]string{"quantumFlux", "DialPeer"}),
 		"a co-anchor declared in SOURCE was not invented, so it does not defeat the shield")
 }
+
+// constParser answers every Parse with one tree. parseByPath keys its answer off
+// the source bytes, which only works for fixtures whose content IS the basename;
+// a fixture carrying real source text needs this instead.
+type constParser struct{ tree astgroup.Node }
+
+func (p constParser) Parse([]byte) (astgroup.Node, error) { return p.tree, nil }
+
+func constFactory(tree astgroup.Node) parserFactory {
+	return func(string) (astgroup.Parser, error) { return constParser{tree}, nil }
+}
+
+// writeSource writes rel under root with real source text (not the basename
+// parseByPath keys on), for fixtures whose file BYTES are the thing under test.
+func writeSource(t *testing.T, root, rel, src string) {
+	t.Helper()
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
+	require.NoError(t, os.WriteFile(abs, []byte(src), 0o644))
+}
+
+// Two spellings of ONE identifier, `módulo_principal`. Go source files are NFC
+// or NFD at the author's editor's discretion; reviewer models emit NFC. Nothing
+// in the pipeline made the two agree, so which spelling reached which map was
+// the difference between a finding kept and a finding destroyed.
+const (
+	nameNFC = "m\u00f3dulo_principal"  // precomposed ó (U+00F3)
+	nameNFD = "mo\u0301dulo_principal" // o + combining acute (U+0301)
+)
+
+// TestSymbolIndex_UnicodeNormalizationCrossForm pins the CRITICAL: an anchor and
+// the index it is looked up in may be spelled in different Unicode normalization
+// forms, and a byte-exact map lookup then reports "nowhere in the tree" for a
+// construct that is plainly there — routing a real finding to tier4NoMatch, which
+// deletes it and durably charges the reviewer a phantom.
+//
+// Each case isolates ONE of the three folds the fix installs; drop any single one
+// and exactly one case goes red.
+func TestSymbolIndex_UnicodeNormalizationCrossForm(t *testing.T) {
+	const rel = "internal/pago/modulo.go"
+
+	cases := []struct {
+		label   string
+		inFile  string // spelling the file bytes use
+		declare bool   // does the parser declare it (byName) or not (present only)?
+		inProse string // spelling the reviewer's PROBLEM prose uses
+		want    tier4Outcome
+		wantFil string
+	}{
+		// Folds the anchor (anchor.go addAnchor): index side is already NFC.
+		{"NFC file, NFD anchor", nameNFC, true, nameNFD, tier4Resolved, rel},
+		// Folds the byName insert (symbolindex.go): anchor side is already NFC.
+		{"NFD file, NFC anchor", nameNFD, true, nameNFC, tier4Resolved, rel},
+		// Folds collectSourceIdentifiers: undeclared, so only `present` can
+		// witness the construct — and witnessing it is what withholds no-match.
+		{"NFD source text only, NFC anchor", nameNFD, false, nameNFC, tier4Inconclusive, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			writeSource(t, root, rel, "package pago\n\nfunc "+tc.inFile+"() {}\n")
+
+			tree := file()
+			if tc.declare {
+				tree = file(fn(tc.inFile, 3))
+			}
+			lz := newLazySymbolIndex(root, []string{rel})
+			lz.newParser = constFactory(tree)
+
+			anchors, _ := extractAnchorSet("the `" + tc.inProse + "` helper drops its guard")
+			require.Len(t, anchors, 1, "the prose names exactly one identifier-shaped anchor")
+
+			got, outcome := lz.resolve(context.Background(), anchors, nil)
+			require.NotEqual(t, tier4NoMatch, outcome,
+				"the construct IS in the tree under the other normalization form: no-match here deletes a real finding")
+			assert.Equal(t, tc.want, outcome)
+			assert.Equal(t, tc.wantFil, got)
+		})
+	}
+}
+
+// TestSymbolIndex_NormalizationSplitKeyIsNotPrecise pins the MEDIUM at locate:
+// one identifier declared in two files under two normalization forms produces
+// TWO byName keys of one file each, so locate's `len(files) != 1` test sees a
+// single-file answer and validate.go stamps it as a confident PathSuggestion —
+// while the `precise anchors disagree` guard never fires, because the two
+// spellings are never compared.
+func TestSymbolIndex_NormalizationSplitKeyIsNotPrecise(t *testing.T) {
+	root := t.TempDir()
+	writeTracked(t, root, "internal/a/uno.go", "internal/b/dos.go")
+
+	var calls int32
+	lz := newLazySymbolIndex(root, []string{"internal/a/uno.go", "internal/b/dos.go"})
+	lz.newParser = newStubFactory(fileTree{
+		"uno.go": file(fn(nameNFC, 10)),
+		"dos.go": file(fn(nameNFD, 20)),
+	}, &calls)
+
+	// Force the build, then interrogate locate directly — it is the function the
+	// wrong answer comes out of.
+	_, _ = lz.resolve(context.Background(), []string{nameNFC}, nil)
+	require.NotNil(t, lz.idx)
+
+	got, ok := lz.idx.locate([]string{nameNFC})
+	assert.False(t, ok, "a name declared in two files is not localizable, whichever form each file spells it in")
+	assert.Empty(t, got)
+
+	// End-to-end: the ambiguity must not reappear as a confident suggestion via
+	// the secondary (FIX-derived) anchor path either.
+	gotFile, outcome := lz.resolve(context.Background(), []string{nameNFC}, []string{nameNFD})
+	assert.Equal(t, tier4Inconclusive, outcome)
+	assert.Empty(t, gotFile)
+}
