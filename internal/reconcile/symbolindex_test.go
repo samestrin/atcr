@@ -1931,21 +1931,35 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 
 		// The sweep above draws its filter from the same predicate the
 		// implementation uses, so on its own it can only catch a NARROWING of
-		// the name class. These runes sit OUTSIDE both classes and must be
-		// rejected at either position; without them, widening `unicode.IsDigit`
-		// to `unicode.IsNumber` admits Nl and No inside a name — extending the
-		// prose residual — with the package still green.
+		// the name class. These runes sit OUTSIDE the admitted classes and must
+		// be rejected at either position; without them, widening
+		// `unicode.IsDigit` to `unicode.IsNumber` admits No inside a name —
+		// extending the prose residual — with the package still green.
+		// (Nl is NOT in this list: letter-numbers are in ECMAScript ID_Start
+		// and are admitted deliberately — pinned positively below.)
 		for _, r := range []rune{
-			'Ⅷ', // U+2167 Nl — a letter-number, not category L
-			'½', // U+00BD No — an other-number
+			'½', // U+00BD No — an other-number, in neither ID_Start nor ID_Continue
 			'—', // U+2014 Pd — a dash, the typographic-punctuation case
 			'“', // U+201C Pi — a curly quote
 		} {
 			require.Falsef(t, isDeclNameRune(r, true),
-				"U+%04X is in neither the letter nor the digit/mark class and must not begin a name", r)
+				"U+%04X is outside the admitted classes and must not begin a name", r)
 			require.Falsef(t, isDeclNameRune(r, false),
-				"U+%04X is in neither class and must not continue a name either", r)
+				"U+%04X is outside the admitted classes and must not continue a name either", r)
 		}
+	})
+
+	// Category Nl (letter-numbers — Roman numerals like Ⅷ and Ⅻ) IS in Unicode
+	// ID_Start, so `const Ⅷ = 1` is legal JavaScript (V8 runs it). Rejecting
+	// Nl drops a real declaration out of presentInSource — the false-negative
+	// direction this class exists to prevent.
+	t.Run("a letter-number can begin and continue a declared name", func(t *testing.T) {
+		require.True(t, isDeclNameRune('Ⅷ', true),
+			"U+2167 is category Nl, which ECMAScript ID_Start includes")
+		require.True(t, isDeclNameRune('Ⅷ', false),
+			"U+2167 is category Nl, which ECMAScript ID_Continue includes")
+		assert.True(t, isESMExportBody([]byte("const Ⅷ = 1")),
+			"`export const Ⅷ = 1` is legal JavaScript and must stay admitted")
 	})
 
 	t.Run("prose whose second word is non-ASCII digits is not a declaration", func(t *testing.T) {
