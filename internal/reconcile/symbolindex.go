@@ -1013,7 +1013,7 @@ func isDeclNameRune(r rune, first bool) bool {
 	case r < utf8.RuneSelf:
 		return false // every other ASCII byte is punctuation or space
 	}
-	return unicode.IsLetter(r) || unicode.Is(unicode.Other_ID_Start, r) ||
+	return unicode.IsLetter(r) || unicode.Is(unicode.Nl, r) || unicode.Is(unicode.Other_ID_Start, r) ||
 		(!first && (unicode.IsDigit(r) || unicode.IsMark(r)))
 }
 
