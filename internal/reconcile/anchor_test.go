@@ -160,6 +160,31 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			problem: "na\u00efveParser() drops the error",
 			want:    []string{"na\u00efveParser"},
 		},
+		{
+			// The Mn/Mc arm of isQualifiedIdentRune, which the two cases
+			// above do NOT reach: their o-umlaut and i-diaeresis are
+			// precomposed LETTERS, so they exercise only the unicode.IsLetter
+			// arm. A COMBINING mark is what the arm exists for - an
+			// NFD-spelled name (cafe + U+0301) is what a macOS- or
+			// git-normalised tree carries. Delete the arm and the backwards
+			// scan stops at the mark, leaving the span "Bar", which carries no
+			// identifier signal and yields NO anchor at all.
+			name:    "NFD call shape yields the whole NFC-folded name",
+			problem: "cafe\u0301Bar() drops the error",
+			want:    []string{"caf\u00e9Bar"},
+		},
+		{
+			// The Mc half of the same arm, and the case where losing it is
+			// WORSE than losing the anchor: delete the arm and the scan stops
+			// at the U+093E vowel sign, yielding a two-rune fragment of the
+			// name - still identifier-shaped, still signal-carrying (it keeps
+			// the underscore), and a name that may be declared somewhere else
+			// entirely, which validate.go would then stamp as a confident
+			// PathSuggestion at the wrong file.
+			name:    "Devanagari call shape yields the whole name, never a fragment",
+			problem: "\u0928\u093e\u092e_load() drops the error",
+			want:    []string{"\u0928\u093e\u092e_load"},
+		},
 	}
 
 	for _, tc := range cases {
