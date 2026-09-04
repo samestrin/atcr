@@ -228,6 +228,33 @@ func mergeAnchorsForTest(problem, fix string) []string {
 	return out
 }
 
+// TestHasIdentifierSignal_NormalizationAgreement pins the signal predicate to
+// the same normalization-independence the shape predicate already has: a
+// combining mark is uncased, so it must not RESET the lower->upper transition
+// tracker — the NFD spelling of a camelCase name (cafe + U+0301 + Bar) carries
+// the same signal as its NFC spelling, and a caseless-script name keeps
+// carrying no signal under either spelling. Literals are escape-spelled so an
+// editor's Unicode normalisation cannot silently rewrite the fixture.
+func TestHasIdentifierSignal_NormalizationAgreement(t *testing.T) {
+	cases := []struct {
+		name string
+		nfc  string
+		nfd  string
+		want bool
+	}{
+		{"camelCase across a combining mark", "caf\u00e9Bar", "cafe\u0301Bar", true},
+		{"single-case word with a mark", "caf\u00e9", "cafe\u0301", false},
+		{"caseless script", "\u0928\u093e\u092e", "\u0928\u093e\u092e", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasIdentifierSignal(tc.nfc), "NFC spelling")
+			assert.Equal(t, tc.want, hasIdentifierSignal(tc.nfd),
+				"NFD spelling must agree with NFC")
+		})
+	}
+}
+
 // TestIsIdentifierShaped_CombiningMarks pins the mark rule on the harvest
 // filter: a combining mark (Mn or Mc) INSIDE a token leaves it
 // identifier-shaped — `export const नाम = 1` (नाम carries the Mc vowel sign
