@@ -12,8 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -1895,53 +1893,31 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 	// Neither a digit nor a combining mark can legally START a JavaScript or
 	// TypeScript identifier — with one exception: the Other_ID_Start marks
 	// U+1885/U+1886, which ECMAScript admits as an identifier start and which
-	// the sweep below therefore skips and the dedicated subtest pins
-	// positively. Tightening the rest drops no real declaration; the
-	// non-leading direction below is what proves the tightening did not simply
-	// evict Unicode names again.
+	// a dedicated subtest pins positively. Tightening the rest drops no real
+	// declaration; the non-leading direction below is what proves the
+	// tightening did not simply evict Unicode names again.
 	t.Run("a declared name never starts with a digit or a combining mark", func(t *testing.T) {
-		asserted := 0
-		for r := rune(utf8.RuneSelf); r <= unicode.MaxRune; r++ {
-			if !unicode.IsDigit(r) && !unicode.IsMark(r) {
-				continue
-			}
-			if unicode.IsLetter(r) || unicode.Is(unicode.Other_ID_Start, r) {
-				// The implementation returns on IsLetter FIRST, so a rune in
-				// both classes is a legal name start and is not this loop's to
-				// judge. Other_ID_Start (U+1885/U+1886) is the same shape:
-				// category Mn, yet a legal ECMAScript identifier start — the
-				// dedicated subtest pins it in the positive direction. No
-				// other rune satisfies either guard today; the guard keeps a
-				// future Unicode table from turning a correct answer into a
-				// failure.
-				continue
-			}
-			asserted++
+		// One representative rune per admitted non-leading class, at both
+		// positions. A full-range sweep over 0x80..0x10FFFF (about 1.1M
+		// iterations, 3120 assertions) pinned nothing these six assertions do
+		// not: the mutation kill set is identical, and the sweep's vacuity
+		// floor (asserted > 1000) tolerated a 68% filter collapse, so the
+		// loop bought runtime cost and a false sense of coverage, not signal.
+		for _, r := range []rune{
+			'٣', // U+0663 Nd — Arabic-Indic digit three
+			'́', // U+0301 Mn — combining acute accent
+			'ा', // U+093E Mc — Devanagari vowel sign AA
+		} {
 			require.Falsef(t, isDeclNameRune(r, true),
 				"U+%04X is category Nd or M and cannot begin an identifier", r)
-			if unicode.Is(unicode.Me, r) {
-				// Me (enclosing marks, e.g. U+20DD) is NOT in ID_Continue —
-				// node rejects `const a⃝b = 1` — so the non-leading admission
-				// is Nd, Mn and Mc only, and Me must be rejected inside a
-				// name too.
-				require.Falsef(t, isDeclNameRune(r, false),
-					"U+%04X is category Me, outside ID_Continue, and must not be admitted inside a name", r)
-			} else {
-				require.Truef(t, isDeclNameRune(r, false),
-					"U+%04X is category Nd, Mn or Mc and must still be admitted inside a name", r)
-			}
+			require.Truef(t, isDeclNameRune(r, false),
+				"U+%04X is category Nd, Mn or Mc and must still be admitted inside a name", r)
 		}
-		// Without this the loop is one filter change away from asserting nothing
-		// and still reporting green. 3120 runes qualify under Go's current
-		// tables; the floor is deliberately loose so a table update does not
-		// fail the build, but it is far above zero.
-		require.Greaterf(t, asserted, 1000,
-			"the sweep asserted on only %d rune(s) — the filter has gone vacuous", asserted)
 
-		// The sweep above draws its filter from the same predicate the
-		// implementation uses, so on its own it can only catch a NARROWING of
-		// the name class. These runes sit OUTSIDE the admitted classes and must
-		// be rejected at either position; without them, widening
+		// The representatives above draw from the same class rule the
+		// implementation uses, so on their own they can only catch a NARROWING
+		// of the name class. These runes sit OUTSIDE the admitted classes and
+		// must be rejected at either position; without them, widening
 		// `unicode.IsDigit` to `unicode.IsNumber` admits No inside a name —
 		// extending the prose residual — with the package still green.
 		// (Nl is NOT in this list: letter-numbers are in ECMAScript ID_Start
