@@ -144,6 +144,22 @@ func TestExtractAnchors_IdentifierShapes(t *testing.T) {
 			problem: "the `readTree2` helper duplicates `readTree`",
 			want:    []string{"readTree", "readTree2"},
 		},
+		{
+			// A non-ASCII call name must be captured WHOLE or not at all: the
+			// backwards scan decodes runes, so it never truncates at a
+			// multibyte rune's continuation byte. An ASCII byte class turned
+			// `parseGrößeValue()` into the fragment "eValue" — a different,
+			// potentially declared, name. Escape-spelled so an editor's
+			// normalisation cannot rewrite the fixture.
+			name:    "non-ASCII call shape yields the full name, never a fragment",
+			problem: "parseGr\u00f6\u00dfeValue() is called twice",
+			want:    []string{"parseGr\u00f6\u00dfeValue"},
+		},
+		{
+			name:    "diaeresis call shape yields the full name, never a fragment",
+			problem: "na\u00efveParser() drops the error",
+			want:    []string{"na\u00efveParser"},
+		},
 	}
 
 	for _, tc := range cases {
