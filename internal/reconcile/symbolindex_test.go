@@ -1941,6 +1941,7 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			'½', // U+00BD No — an other-number, in neither ID_Start nor ID_Continue
 			'—', // U+2014 Pd — a dash, the typographic-punctuation case
 			'“', // U+201C Pi — a curly quote
+			'⃝', // U+20DD Me — an enclosing mark; ID_Continue takes Mn and Mc only
 		} {
 			require.Falsef(t, isDeclNameRune(r, true),
 				"U+%04X is outside the admitted classes and must not begin a name", r)
