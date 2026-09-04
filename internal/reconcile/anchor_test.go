@@ -406,3 +406,91 @@ func TestHasIdentifierSignal_DigitCarry(t *testing.T) {
 		})
 	}
 }
+
+// TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary pins the CRITICAL
+// regression the spaceless-script boundary rule introduced in the OTHER
+// direction: the break fires INSIDE a single real identifier whenever a
+// snake_case name written in a spaceless script carries an internal script
+// transition, and the fragment it leaves is still signal-carrying because the
+// underscore is consumed BEFORE the break is detected on the next rune, so
+// hasIdentifierSignal's strings.Contains(tok, "_") short-circuit admits it.
+//
+// Measured old-vs-new: `データ_解析()` yielded the whole name before the rule
+// and yields `_解析` after it. The fragment is in neither present nor byName
+// (collectSourceIdentifiers treats '_' as a word byte, so the declaration is
+// ONE token), so resolve returns tier4NoMatch — gate.go deletes a real finding
+// and scorecard.go durably charges the reviewer a phantom for 180 days. That is
+// strictly worse than either predecessor: the pre-rune ASCII byte scan stopped
+// at the first multibyte byte and produced NO anchor, which is inconclusive and
+// safe.
+//
+// `データ_解析` needs no script change at all to trigger it — U+30FC, the
+// katakana-hiragana prolonged sound mark, is Script=Common, so spacelessScriptOf
+// classifies it as scriptSpacing. That mark appears in most everyday Japanese
+// loanword identifiers (データ, ユーザー, サーバー, ロード, パーサー), so the
+// case is ordinary rather than exotic.
+//
+// The last two rows are the load-bearing counter-direction: prose glued to a
+// call name must still terminate at the boundary. An underscore inside the
+// PROSE (rather than inside the name) must not license the glue, or this test
+// would pin the very defect the boundary rule exists to remove.
+func TestExtractAnchors_SnakeCaseSpacelessNameSurvivesBoundary(t *testing.T) {
+	cases := []struct {
+		name    string
+		problem string
+		want    []string
+	}{
+		{
+			// Katakana + U+30FC (Common) + Han: no script change at all, and
+			// still broken before the fix.
+			name:    "Katakana-with-prolonged-mark plus Han snake_case name stays whole",
+			problem: "データ_解析() drops the error",
+			want:    []string{"データ_解析"},
+		},
+		{
+			name:    "Katakana plus Han snake_case name stays whole",
+			problem: "サバ_接続() drops the error",
+			want:    []string{"サバ_接続"},
+		},
+		{
+			name:    "Han plus Katakana snake_case name stays whole",
+			problem: "解析_データ() drops the error",
+			want:    []string{"解析_データ"},
+		},
+		{
+			// Counter-direction: the prose carries the underscore, not the
+			// name. The boundary must still fire.
+			name:    "Han prose with an underscore still stops at the call name",
+			problem: "在_配置中调用ParseConfig() 时超时",
+			want:    []string{"ParseConfig"},
+		},
+		{
+			// The undecidable case, and the one the rule must REFUSE to
+			// answer: an underscore straddling a spaceless/spacing boundary
+			// is either prose glued onto `_ParseConfig` or the tail of one
+			// snake_case name `调用_ParseConfig`, and nothing in the text
+			// distinguishes them. Both available answers are wrong in one
+			// reading, so the run contributes NO anchor - resolve then reads
+			// the finding as tier4Inconclusive and KEEPS it, instead of
+			// deleting it or stamping a PathSuggestion at whatever declares
+			// the fragment.
+			name:    "an underscore straddling the boundary yields no anchor at all",
+			problem: "调用_ParseConfig() 失败",
+			want:    nil,
+		},
+		{
+			// Same shape with a genuinely mixed Han+Latin name. Also
+			// undecidable, also answered with silence rather than the
+			// fragment `_loadFile`.
+			name:    "a mixed Han-Latin snake_case name yields no anchor rather than a fragment",
+			problem: "設定_loadFile() drops the error",
+			want:    nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, mergeAnchorsForTest(tc.problem, ""))
+		})
+	}
+}
