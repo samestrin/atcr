@@ -597,6 +597,40 @@ func TestExtractAnchorSet_ImpreciseSpanMarksTruncated(t *testing.T) {
 			wantTruncated: false,
 		},
 		{
+			// Pins the CROSSING half of the glued predicate, and it is the
+			// load-bearing direction: snake_case is the most ordinary
+			// identifier style there is, so marking every underscore-bearing
+			// span imprecise would make no-match routing unreachable for most
+			// findings in most repositories. The underscore only means
+			// "undecidable" when a spaceless-script crossing put it there.
+			name:          "an ASCII snake_case call is not imprecise",
+			text:          "read_tree() is invoked once per finding",
+			wantAnchors:   []string{"read_tree"},
+			wantTruncated: false,
+		},
+		{
+			// Pins the UNDERSCORE half of the glued predicate. A spaceless
+			// crossing with no underscore cannot carry a signal through a
+			// caseless run, so hasIdentifierSignal rejects the whole span and
+			// nothing is contributed - no loss to report. Marking this
+			// imprecise would let a span that produced no evidence suppress a
+			// no-match verdict for the rest of the finding.
+			name:          "a spaceless crossing with no underscore is not imprecise",
+			text:          string([]rune{0x8A2D, 0x5B9A, 0x3092, 0x89E3, 0x6790, 0x51E6, 0x7406}) + "() drops the error",
+			wantAnchors:   nil,
+			wantTruncated: false,
+		},
+		{
+			// Pins the empty-set return: a finding whose ONLY span was silenced
+			// still lost that span, and must say so. The anchor list and the
+			// flag are independent - an empty list is not evidence of a
+			// complete search.
+			name:          "a silenced span is imprecise even when it was the only one",
+			text:          string([]rune{0x8C03, 0x7528, 0x005F}) + "ParseConfig() failed",
+			wantAnchors:   nil,
+			wantTruncated: true,
+		},
+		{
 			// Counter-direction: prose glued across a spaceless/spacing boundary
 			// still terminates cleanly and loses nothing.
 			name:          "a clean spaceless/spacing boundary is not imprecise",
