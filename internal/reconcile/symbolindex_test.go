@@ -1919,8 +1919,17 @@ func TestIsESMExportBody_RejectPaths(t *testing.T) {
 			asserted++
 			require.Falsef(t, isDeclNameRune(r, true),
 				"U+%04X is category Nd or M and cannot begin an identifier", r)
-			require.Truef(t, isDeclNameRune(r, false),
-				"U+%04X is category Nd or M and must still be admitted inside a name", r)
+			if unicode.Is(unicode.Me, r) {
+				// Me (enclosing marks, e.g. U+20DD) is NOT in ID_Continue —
+				// node rejects `const a⃝b = 1` — so the non-leading admission
+				// is Nd, Mn and Mc only, and Me must be rejected inside a
+				// name too.
+				require.Falsef(t, isDeclNameRune(r, false),
+					"U+%04X is category Me, outside ID_Continue, and must not be admitted inside a name", r)
+			} else {
+				require.Truef(t, isDeclNameRune(r, false),
+					"U+%04X is category Nd, Mn or Mc and must still be admitted inside a name", r)
+			}
 		}
 		// Without this the loop is one filter change away from asserting nothing
 		// and still reporting green. 3120 runes qualify under Go's current
