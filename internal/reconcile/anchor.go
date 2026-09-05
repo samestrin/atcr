@@ -118,9 +118,12 @@ type anchorScan struct {
 	unaccounted bool
 	// imprecise holds the tokens a glued span contributed. Every token in it may
 	// be an unfaithful reading of what the reviewer wrote; every member of
-	// anchors NOT in it is faithful. It is keyed on what the scan recorded, not
-	// on the post-cap slice, so it can name a token the cap later dropped —
-	// harmless, since it is only ever consulted as a set to exclude.
+	// anchors NOT in it is faithful WITH RESPECT TO THE LOSSES THIS SCAN DETECTS
+	// — the undetected mixed-no-underscore Latin-tail reading disclosed at
+	// extractAnchorSet's doc is not covered by that claim. It is keyed on what
+	// the scan recorded, not on the post-cap slice, so it can name a token the
+	// cap later dropped — harmless, since it is only ever consulted as a set to
+	// exclude.
 	imprecise map[string]struct{}
 }
 
