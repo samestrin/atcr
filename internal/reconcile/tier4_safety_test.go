@@ -519,3 +519,54 @@ func TestTier4Safety_SpacelessPrefixShortTailIsNeverNoMatch(t *testing.T) {
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"設定_a is declared in the tree: the finding is genuine and must not be routed out")
 }
+
+// TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion closes the
+// PROBLEM-side half of the completeness argument this package already makes for
+// the FIX side.
+//
+// locate() refuses when two precise anchors DISAGREE, so its verdict depends on
+// the set being COMPLETE as well as faithful. scanAnchors computes `unaccounted`
+// for the PROBLEM set too — a silenced span whose name is unknowable — but
+// extractAnchorSet flattens it into `truncated`, and validate.go consults that
+// only on the no-match arm. So a PROBLEM set that lost a DISAGREEING precise
+// anchor to the silence stamps a confident PathSuggestion where the complete set
+// would have refused.
+//
+// Measured: `parse._解析() and `readTree“ gave anchors=[_解析 readTree]
+// truncated=false before the widened silencing and anchors=[readTree]
+// truncated=true after. With _解析 declared only in pkg/a.go and readTree only in
+// pkg/b.go, locate() saw two precise anchors disagree and refused; now it
+// localizes on the survivor and points at pkg/b.go for a finding whose subject
+// is in pkg/a.go. Removing one side of a disagreement converts a refusal into a
+// confident wrong answer.
+func TestTier4Safety_UnaccountedProblemSetRefusesTheSuggestion(t *testing.T) {
+	han := string([]rune{0x89E3, 0x6790}) // 解析
+	silenced := "_" + han                 // _解析
+	problem := "parse." + silenced + "() and `readTree`"
+
+	anchors, truncated := extractAnchorSet(problem)
+	require.Equal(t, []string{"readTree"}, anchors, "the silenced span contributes no anchor")
+	require.True(t, truncated, "the silence is a loss with no member to point at")
+
+	root := gitRepoWithSources(t, map[string]string{
+		// The subject the silence destroyed, declared in exactly one file.
+		"pkg/a.go": "package a\n\nfunc " + silenced + "() error { return nil }\n",
+		// The survivor, declared in exactly one OTHER file.
+		"pkg/b.go": "package b\n\nfunc readTree() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|fix it|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"the PROBLEM set lost a member whose name is unknowable: a suggestion sourced from the "+
+			"survivor alone is the confident wrong answer the complete set refused")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"refusing a suggestion may never route a finding out")
+}
