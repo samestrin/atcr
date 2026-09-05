@@ -830,11 +830,18 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 		require.True(t, truncated, "and the SET is still imprecise - only the FIX consumer narrows")
 	})
 
-	t.Run("a silenced span drops nothing because it contributed nothing", func(t *testing.T) {
+	t.Run("a silenced span abandons the set, like the cap", func(t *testing.T) {
 		text := setteiUnd + "loadFile() - see `retryOnce` and `parseTree`"
-		got := extractFixAnchors(text)
-		assert.Equal(t, []string{"parseTree", "retryOnce"}, got,
-			"the silence lost a span, not a member: every anchor present is faithful")
+
+		all, truncated := extractAnchorSet(text)
+		require.Equal(t, []string{"parseTree", "retryOnce"}, all,
+			"the silenced span contributes no member, so every anchor present IS faithful")
+		require.True(t, truncated)
+
+		assert.Nil(t, extractFixAnchors(text),
+			"faithful is not the same as complete: locate refuses when two precise anchors "+
+				"disagree, so its verdict needs the whole set, and the silenced span is exactly "+
+				"the one whose answer is unknowable")
 	})
 
 	t.Run("an ordinary FIX keeps its whole set", func(t *testing.T) {
