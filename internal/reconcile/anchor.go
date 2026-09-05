@@ -302,10 +302,13 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // still has the flag.
 //
 // unaccounted reports that at least one loss left NO member behind — a silenced
-// span, or a glued span whose token failed the shape or signal test. The
-// distinction matters to extractFixAnchors and nowhere else: a loss with a
-// member can be repaired by dropping that member, and a loss without one cannot
-// be repaired at all, because what the span would have named is unknowable.
+// span whose fragment could have qualified (or carries a combining mark, proof
+// the break landed mid-word), or a glued span whose token failed the shape or
+// signal test. A silenced fragment that could NEVER have qualified set nothing
+// here: silencing it lost nothing. The distinction matters to extractFixAnchors
+// and nowhere else: a loss with a member can be repaired by dropping that
+// member, and a loss without one cannot be repaired at all, because what the
+// span would have named is unknowable.
 func collectCallAnchors(text string, seen, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
@@ -346,9 +349,20 @@ func collectCallAnchors(text string, seen, impreciseInto map[string]struct{}) (l
 		// only underscore lives in the stripped qualifier.
 		anchor := recordedAnchorForm(text[start:i])
 		if atBoundary && leadsWithUnderscore(anchor) {
-			lostSpan = true
-			unaccounted = true // silence: a loss with no member to point at
-			continue           // undecidable: see isWordBoundary
+			// Silence is a LOSS only when something could have been lost. A
+			// fragment that could never have qualified (`_解` is two runes, a
+			// digit leads) left nothing behind, so the set is still a faithful
+			// read of every name the text could have contributed. The one
+			// exception is a leading combining mark: a mark never starts a
+			// word, so sitting at the break it proves the run stopped mid-word
+			// — the full name may have qualified, and that IS a loss with no
+			// member to point at.
+			r, _ := utf8.DecodeRuneInString(anchor)
+			if (isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)) || unicode.In(r, unicode.Mn, unicode.Mc) {
+				lostSpan = true
+				unaccounted = true // silence: a loss with no member to point at
+			}
+			continue // undecidable: see isWordBoundary
 		}
 		glued := crossedSpaceless && strings.Contains(anchor, "_")
 		if glued {
