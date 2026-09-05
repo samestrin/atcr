@@ -860,7 +860,7 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 
 	t.Run("the cap abandons the set whole", func(t *testing.T) {
 		text := "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` `iNine`"
-		require.Len(t, mustAnchors(t, text), maxAnchorsPerFinding, "the fixture must actually cap")
+		require.Len(t, mustAnchorsOnly(t, text), maxAnchorsPerFinding, "the fixture must actually cap")
 		assert.Nil(t, extractFixAnchors(text),
 			"a prefix of what the FIX named cannot ground a suggestion: the dropped anchors are unknown")
 	})
@@ -870,7 +870,11 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 	})
 }
 
-func mustAnchors(t *testing.T, text string) []string {
+// mustAnchorsOnly is mustAnchors minus the flag: it returns the anchor set and
+// DELIBERATELY drops `truncated`. Callers that assert on the flag must call
+// extractAnchorSet themselves - the `Only` suffix exists so a future fixture
+// edit cannot silently degrade the cap this helper's require.Len guards.
+func mustAnchorsOnly(t *testing.T, text string) []string {
 	t.Helper()
 	a, _ := extractAnchorSet(text)
 	return a
