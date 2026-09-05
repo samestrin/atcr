@@ -100,8 +100,25 @@ const minAnchorLen = 3
 // The returned slice is deduped and lexically sorted; nil when nothing
 // qualifies.
 func extractAnchorSet(text string) (anchors []string, truncated bool) {
+	anchors, s := scanProblemAnchors(text)
+	return anchors, s.capped || s.lostSpan
+}
+
+// scanProblemAnchors is extractAnchorSet with the scan's fidelity-loss detail
+// preserved, the PROBLEM-side sibling of scanFixAnchors.
+//
+// The PROBLEM set is never narrowed — a glued member may still be the subject,
+// and dropping it would manufacture the no-match verdict this tier exists to
+// withhold — so the anchors it returns are exactly extractAnchorSet's. What the
+// scan carries that the flat flag cannot is `unaccounted`: a loss with NO member
+// to point at, whose name is unknowable. locate() refuses when two precise
+// anchors DISAGREE, so its verdict rests on the set being COMPLETE as well as
+// faithful, and a silenced span is exactly the member whose answer is unknown.
+// validate.go must therefore be able to tell that loss apart from the cap, which
+// `truncated` folds it in with.
+func scanProblemAnchors(text string) ([]string, anchorScan) {
 	s := scanAnchors(text)
-	return s.anchors, s.capped || s.lostSpan
+	return s.anchors, s
 }
 
 // anchorScan is one extraction's full result, kept unflattened for the one

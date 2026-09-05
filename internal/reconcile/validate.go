@@ -132,7 +132,8 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		if tier4 == nil {
 			tier4 = newTier4Index(root, idx.Paths())
 		}
-		problemAnchors, problemTruncated := extractAnchorSet(findings[i].Problem)
+		problemAnchors, problemScan := scanProblemAnchors(findings[i].Problem)
+		problemTruncated := problemScan.capped || problemScan.lostSpan
 		// The FIX narrows rather than nils: extractFixAnchors drops the anchors
 		// a call-scan fidelity loss actually touched, and abandons the set whole
 		// for the cap OR for a fidelity loss that left no member behind (its
@@ -157,6 +158,21 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// complete a set it left incomplete (symbolIndex.resolve).
 		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, fixAnchors, fixScan.droppedFixAnchors())
 		switch {
+		case outcome == tier4Resolved && problemScan.unaccounted:
+			// The PROBLEM set lost a member with no name to point at, and
+			// locate() refuses when two precise anchors DISAGREE — so its
+			// verdict rests on the set being COMPLETE, not merely faithful, and
+			// the silenced span is exactly the member whose answer is unknown.
+			// Resolving on the survivors alone converts that refusal into a
+			// confident wrong answer: measured, `parse._解析() and `readTree``
+			// points at readTree's file for a finding whose subject is declared
+			// in _解析's.
+			//
+			// This is the completeness argument extractFixAnchors already makes
+			// for the FIX side, applied to the other set feeding the same call.
+			// Downgrading to tier4Inconclusive costs a suggestion and can never
+			// route a finding out — no-match is a different arm — so it is the
+			// same safe direction the FIX side takes.
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
 		case outcome == tier4NoMatch && !problemTruncated:
