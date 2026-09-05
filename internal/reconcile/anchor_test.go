@@ -875,3 +875,25 @@ func mustAnchors(t *testing.T, text string) []string {
 	a, _ := extractAnchorSet(text)
 	return a
 }
+
+// TestLeadsWithUnderscore pins the predicate directly: the loop-exhaustion
+// `return false` is reachable in production (a qualified span whose trailing
+// segment is all script-neutral runes, e.g. a digit run) and was previously
+// unpinned - flipping it to `return true` left the suite green.
+func TestLeadsWithUnderscore(t *testing.T) {
+	cases := []struct {
+		tok  string
+		want bool
+	}{
+		{"", false},
+		{"9", false},     // all script-neutral, no underscore: loop exhausts
+		{"_", true},      //
+		{"ー_load", true}, // U+30FC is script-neutral: skipped, then '_'
+		{"́_x", true},    // a combining mark is neutral too
+		{"x_", false},    // a scripted rune first: a real name, not an orphan '_'
+		{"_x", true},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, leadsWithUnderscore(tc.tok), "%q", tc.tok)
+	}
+}
