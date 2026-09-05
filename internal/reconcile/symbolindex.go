@@ -55,7 +55,32 @@ const tier4FixSetUnaccountedMetric = "atcr_tier4_fix_set_unaccounted_total"
 // tier4FixAnchorDroppedMetric counts individual FIX anchors dropped as
 // imprecise (a glued span contributed them): the set is narrowed, not
 // abandoned, so a suggestion that never landed can be attributed to the drop.
+//
+// It counts a NARROWING, never an abandonment. When the narrowing removes the
+// LAST member the set is abandoned whole, and that run is counted by
+// tier4FixSetAllDroppedMetric instead — see its doc for why the two may not
+// share a counter.
 const tier4FixAnchorDroppedMetric = "atcr_tier4_fix_anchor_dropped_total"
+
+// tier4FixSetAllDroppedMetric counts findings whose FIX anchor set was
+// abandoned whole because the imprecise narrowing removed its LAST member.
+//
+// It is a fourth set-level counter rather than a reading of the three that
+// existed, because that arm is set-level and none of the three could say so.
+// scanFixAnchors returns nil there — identically to the capped and unaccounted
+// arms — but leaves capped=false and unaccounted=false, so the only counter
+// that could fire was the per-anchor one, whose documented meaning is "the set
+// is narrowed rather than abandoned". A run where no secondary anchor survived
+// at all was therefore reported as one narrowed anchor: exactly the telemetry
+// ambiguity tier4FixSetCappedMetric and tier4FixSetUnaccountedMetric were added
+// to remove, reintroduced one branch over.
+//
+// It is not folded into tier4FixSetUnaccountedMetric either, though both
+// abandon the set. Unaccounted means a loss that left NO member to repair;
+// this arm means the repair ran and consumed every member. The causes differ,
+// so the fixes differ, and a counter whose name does not match what it counts
+// is the defect this one exists to close.
+const tier4FixSetAllDroppedMetric = "atcr_tier4_fix_set_all_dropped_total"
 
 // tier4Outcome is the verdict of a Tier 4 symbol lookup (Epic 35.16.6.5 T3).
 // The three values are NOT interchangeable, and the distinction between the
