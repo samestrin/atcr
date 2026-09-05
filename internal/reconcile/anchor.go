@@ -244,11 +244,33 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 	return out, s
 }
 
-// droppedFixAnchors returns the members scanFixAnchors removed from the usable
-// set: the anchors every contribution of which came from a glued span. Sorted,
-// nil when none.
+// droppedFixAnchors returns the members scanFixAnchors narrowed out of the
+// usable set: the anchors every contribution of which came from a glued span.
+// Sorted (it walks the already-sorted anchors), nil when none.
+//
+// A dropped member may not SOURCE a suggestion — the glued reading may not be
+// what the reviewer wrote, which is why it leaves the usable set. It is still
+// part of what the FIX named, so it may still CONTRADICT one: see resolve's
+// droppedSecondary argument. Discarding it outright left the set incomplete in
+// exactly the way the `unaccounted` arm nils the whole set to avoid.
+//
+// It reports nil on the two arms scanFixAnchors abandons the set for (capped,
+// unaccounted), mirroring that early return: nothing was narrowed away there,
+// so there is no per-anchor drop, and there is no located file for a dropped
+// name to contradict. It also intersects with the POST-cap anchors, since
+// imprecise is keyed on what the scan recorded and can name a token the cap
+// removed.
 func (s anchorScan) droppedFixAnchors() []string {
-	return nil
+	if s.capped || s.unaccounted || len(s.imprecise) == 0 {
+		return nil
+	}
+	var out []string
+	for _, tok := range s.anchors {
+		if _, bad := s.imprecise[tok]; bad {
+			out = append(out, tok)
+		}
+	}
+	return out
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal

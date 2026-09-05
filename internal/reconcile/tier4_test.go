@@ -55,19 +55,31 @@ func (f *fakeTier4) namedInDocs(anchors []string) bool {
 	return true
 }
 
-func (f *fakeTier4) resolve(_ context.Context, primary, secondary []string) (string, tier4Outcome) {
+// resolveWithDropped satisfies tier4Resolver with a per-anchor script.
+//
+// It mirrors the dropped-anchor veto too: a scripted resolver that ignored
+// droppedSecondary would let a wiring regression (validate.go passing nil, or
+// not passing the narrowed-out members at all) pass against behaviour
+// production does not have.
+func (f *fakeTier4) resolveWithDropped(_ context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	f.calls++
-	anchors := append(append([]string{}, primary...), secondary...)
 	if len(primary) == 0 {
 		return "", tier4Inconclusive
 	}
-	for _, a := range anchors {
+	for _, a := range append(append([]string{}, primary...), secondary...) {
 		if f.inconc[a] {
 			return "", tier4Inconclusive
 		}
-		if file, ok := f.byAnchor[a]; ok {
-			return file, tier4Resolved
+		file, ok := f.byAnchor[a]
+		if !ok {
+			continue
 		}
+		for _, d := range droppedSecondary {
+			if other, ok := f.byAnchor[d]; ok && other != file {
+				return "", tier4Inconclusive // a dropped name disagrees
+			}
+		}
+		return file, tier4Resolved
 	}
 	return "", tier4NoMatch
 }

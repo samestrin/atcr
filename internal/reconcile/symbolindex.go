@@ -230,7 +230,14 @@ const (
 // Disagreement between two precise anchors is inconclusive, not a coin flip: a
 // wrong Tier 4 guess that suggests the wrong file is worse than no suggestion
 // (the suggest-never-auto-correct constraint inherited from 5.4).
-func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome) {
+// droppedSecondary holds the FIX anchors scanFixAnchors narrowed out of
+// secondary. They may not SOURCE a resolution — the glued reading of them may
+// not be what the reviewer wrote — but they are still part of what the FIX
+// named, so a dropped name declared in a file OTHER than the located one is the
+// disagreement locate() refuses on, and the secondary resolution is withheld.
+// Without that, narrowing the set produced a confident suggestion from half the
+// evidence: the very incompleteness the `unaccounted` arm abandons the set for.
+func (x *symbolIndex) resolve(primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if x == nil {
 		return "", tier4Inconclusive // index unavailable: could not check
 	}
@@ -254,7 +261,7 @@ func (x *symbolIndex) resolve(primary, secondary []string) (string, tier4Outcome
 		}
 	}
 	if primaryMatched {
-		if file, ok := x.locate(secondary); ok {
+		if file, ok := x.locate(secondary); ok && !x.contradicts(file, droppedSecondary) {
 			return file, tier4Resolved
 		}
 	}
@@ -300,6 +307,24 @@ func (x *symbolIndex) locate(anchors []string) (string, bool) {
 	return precise, precise != ""
 }
 
+// contradicts reports whether any dropped anchor is declared in exactly one file
+// OTHER than file — the disagreement locate() would have refused on had that
+// anchor still been in the set it was given.
+//
+// It is the veto half of the per-anchor drop, and only the veto half: a dropped
+// anchor never names the file. An anchor declared nowhere, or in many files, is
+// ignored here exactly as locate ignores it — "absent, or too common to
+// localize" is not disagreement.
+func (x *symbolIndex) contradicts(file string, dropped []string) bool {
+	for _, a := range dropped {
+		files := x.byName[a]
+		if len(files) == 1 && files[0] != file {
+			return true
+		}
+	}
+	return false
+}
+
 // parserFactory obtains a parser for a language id. It is the seam that lets
 // index-build behavior be tested without standing up the wazero runtime; the
 // production value is astgroup.SharedHost().Parser, so the index reuses the
@@ -335,18 +360,22 @@ func newLazySymbolIndex(root string, paths []string) *lazySymbolIndex {
 // every lookup — never tier4NoMatch — so nothing is routed to the sidecar on
 // the strength of an index that does not exist.
 func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome) {
+	return lz.resolveWithDropped(ctx, primary, secondary, nil)
+}
+
+// resolveWithDropped is resolve with the FIX anchors scanFixAnchors narrowed out
+// of secondary carried alongside, so a dropped member may still REFUSE a
+// secondary resolution it disagrees with. See symbolIndex.resolve.
+//
+// resolve is the nil-dropped case rather than the other way round: a caller that
+// has no narrowing to report (every test fixture, and any future non-FIX
+// consumer) must not have to say so.
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
 	if lz == nil {
 		return "", tier4Inconclusive
 	}
 	lz.once.Do(func() { lz.build(ctx) })
-	return lz.idx.resolve(primary, secondary)
-}
-
-// resolveWithDropped is resolve with the FIX anchors scanFixAnchors removed from
-// the usable set carried alongside, so a dropped member may still REFUSE a
-// secondary resolution it disagrees with.
-func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
-	return lz.resolve(ctx, primary, secondary)
+	return lz.idx.resolve(primary, secondary, droppedSecondary)
 }
 
 // state reports what the build actually achieved, for Summary.UnresolvedState.

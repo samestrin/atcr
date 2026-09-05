@@ -16,7 +16,12 @@ import (
 // construct it describes lives in exactly one tracked file, in several, or
 // nowhere at all. *lazySymbolIndex is the production implementation.
 type tier4Resolver interface {
-	resolve(ctx context.Context, primary, secondary []string) (string, tier4Outcome)
+	// droppedSecondary carries the FIX anchors scanFixAnchors narrowed out of
+	// secondary. They may not source a resolution — the glued reading of them
+	// may not be what the reviewer wrote — but a dropped name declared in a
+	// file other than the located one is the disagreement locate refuses on, so
+	// narrowing may not silently complete a set it left incomplete.
+	resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome)
 	// namedInDocs reports whether the doc-extension heuristic explains a no-match
 	// over these anchors: at least one was named in a documentation file and
 	// nowhere in source, and EVERY other anchor is accounted for somewhere in the
@@ -146,7 +151,11 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 				metrics.Counter(tier4FixAnchorDroppedMetric).Add(int64(dropped))
 			}
 		}
-		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
+		// The narrowed-out members ride along as VETO evidence: they may not
+		// source a suggestion, but a dropped name declared in another file is
+		// the disagreement locate refuses on, so narrowing must not silently
+		// complete a set it left incomplete (symbolIndex.resolve).
+		suggestion, outcome := tier4.resolveWithDropped(ctx, problemAnchors, fixAnchors, fixScan.droppedFixAnchors())
 		switch {
 		case outcome == tier4Resolved:
 			findings[i].PathSuggestion = suggestion
