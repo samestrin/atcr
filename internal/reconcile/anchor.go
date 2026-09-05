@@ -269,7 +269,7 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // underscore sitting on the boundary that does fire yields no anchor at all
 // rather than a fragment.
 //
-// imprecise reports that at least one span was NOT faithfully recovered, which
+// lostSpan reports that at least one span was NOT faithfully recovered, which
 // extractAnchorSet folds into its `truncated` return so validate.go cannot reach
 // a no-match verdict on the set. Two spans set it, and both are the SAME
 // undecidability seen from different sides:
@@ -296,8 +296,8 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // well be the real name. What neither may do is stand as proof that the tree was
 // searched for what the reviewer actually wrote.
 //
-// imprecise reports a per-SPAN loss and is what `truncated` is built from.
-// impreciseAnchors receives the subset of `seen` that a glued span contributed,
+// lostSpan reports a per-SPAN loss and is what `truncated` is built from.
+// impreciseInto receives the subset of `seen` that a glued span contributed,
 // so a consumer that can repair per-anchor has the names and one that cannot
 // still has the flag.
 //
@@ -306,7 +306,7 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // distinction matters to extractFixAnchors and nowhere else: a loss with a
 // member can be repaired by dropping that member, and a loss without one cannot
 // be repaired at all, because what the span would have named is unknowable.
-func collectCallAnchors(text string, seen, impreciseAnchors map[string]struct{}) (imprecise, unaccounted bool) {
+func collectCallAnchors(text string, seen, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -346,18 +346,18 @@ func collectCallAnchors(text string, seen, impreciseAnchors map[string]struct{})
 		// only underscore lives in the stripped qualifier.
 		anchor := recordedAnchorForm(text[start:i])
 		if atBoundary && leadsWithUnderscore(anchor) {
-			imprecise = true
+			lostSpan = true
 			unaccounted = true // silence: a loss with no member to point at
 			continue           // undecidable: see isWordBoundary
 		}
 		glued := crossedSpaceless && strings.Contains(anchor, "_")
 		if glued {
-			imprecise = true // glued or genuine, and nothing here can tell
+			lostSpan = true // glued or genuine, and nothing here can tell
 		}
-		contributed := recordAnchor(anchor, seen)
+		qualified := recordAnchor(anchor, seen)
 		if glued {
-			if contributed {
-				impreciseAnchors[anchor] = struct{}{}
+			if qualified {
+				impreciseInto[anchor] = struct{}{}
 			} else {
 				// The span lost fidelity and its token failed the shape or
 				// signal test, so there is no member a per-anchor repair could
@@ -366,7 +366,7 @@ func collectCallAnchors(text string, seen, impreciseAnchors map[string]struct{})
 			}
 		}
 	}
-	return imprecise, unaccounted
+	return lostSpan, unaccounted
 }
 
 // The three sentinel values spacelessScriptOf and the backwards run use
