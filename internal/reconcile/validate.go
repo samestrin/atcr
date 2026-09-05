@@ -147,6 +147,14 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 			metrics.Counter(tier4FixSetCappedMetric).Inc()
 		case fixScan.unaccounted:
 			metrics.Counter(tier4FixSetUnaccountedMetric).Inc()
+		case len(fixAnchors) == 0 && len(fixScan.anchors) > 0:
+			// The narrowing removed the LAST member, so scanFixAnchors returned
+			// nil — abandoning the set whole, identically to the two arms above,
+			// but with capped and unaccounted both false. Left to `default` this
+			// counted as one NARROWED anchor, which is the opposite of what
+			// happened and the telemetry ambiguity the set-level counters exist
+			// to remove.
+			metrics.Counter(tier4FixSetAllDroppedMetric).Inc()
 		default:
 			if dropped := len(fixScan.anchors) - len(fixAnchors); dropped > 0 {
 				metrics.Counter(tier4FixAnchorDroppedMetric).Add(int64(dropped))
