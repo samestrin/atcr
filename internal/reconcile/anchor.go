@@ -116,7 +116,8 @@ type anchorScan struct {
 	// it cannot be repaired by dropping one. What that span would have named is
 	// unknowable, exactly as the cap's dropped anchors are.
 	unaccounted bool
-	// imprecise holds the tokens a glued span contributed. Every token in it may
+	// imprecise holds the tokens a glued span contributed AND no clean span (a
+	// delimited citation or an unglued call) did. Every token in it may
 	// be an unfaithful reading of what the reviewer wrote; every member of
 	// anchors NOT in it is faithful WITH RESPECT TO THE LOSSES THIS SCAN DETECTS
 	// — the undetected mixed-no-underscore Latin-tail reading disclosed at
@@ -129,11 +130,19 @@ type anchorScan struct {
 
 func scanAnchors(text string) anchorScan {
 	seen := make(map[string]struct{})
+	clean := make(map[string]struct{})
 	for _, d := range anchorDelimiters {
-		collectDelimitedAnchors(text, byte(d), seen)
+		collectDelimitedAnchors(text, byte(d), seen, clean)
 	}
 	imprecise := make(map[string]struct{})
-	lostSpan, unaccounted := collectCallAnchors(text, seen, imprecise)
+	lostSpan, unaccounted := collectCallAnchors(text, seen, clean, imprecise)
+	// A token a clean span also contributed was read faithfully at least once,
+	// so the glued reading is not the only evidence for it: it is not
+	// imprecise. Only a token whose EVERY contribution came from a glued span
+	// stays in the set.
+	for tok := range clean {
+		delete(imprecise, tok)
+	}
 	scan := anchorScan{lostSpan: lostSpan, unaccounted: unaccounted, imprecise: imprecise}
 	if len(seen) == 0 {
 		return scan
@@ -191,10 +200,11 @@ func scanAnchors(text string) anchorScan {
 // under the flat test, losing a correct PathSuggestion to a loss that never
 // touched the anchor that produced it.
 //
-// An anchor contributed by BOTH a glued span and a clean one is dropped too, so
-// an explicitly backticked citation loses to an incidental glued call of the
-// same name. That is a known cost, not an oversight: the cost is a lost hint,
-// which this function's whole safety argument is that it can afford.
+// An anchor contributed by BOTH a glued span and a clean one (a backticked or
+// quoted citation, or an unglued call of the same name) is KEPT: the clean
+// contribution is proof the scan read the name faithfully at least once, so the
+// glued reading is not the only evidence for it. Only a token whose every
+// contribution came from a glued span is dropped.
 func extractFixAnchors(text string) []string {
 	anchors, _ := scanFixAnchors(text)
 	return anchors
@@ -245,7 +255,7 @@ const anchorDelimiters = "`\"'"
 // mid-sentence ends only the apostrophe pass; the backtick pass over the same
 // text is unaffected and still finds the identifiers after it. That containment
 // is the whole reason extractAnchorSet runs one pass per delimiter.
-func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
+func collectDelimitedAnchors(text string, d byte, seen, clean map[string]struct{}) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != d {
 			continue
@@ -254,7 +264,9 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 		if close < 0 {
 			return // no closer remains anywhere after i: nothing left to pair
 		}
-		addAnchor(text[i+1:i+1+close], seen)
+		if tok := recordedAnchorForm(text[i+1 : i+1+close]); recordAnchor(tok, seen) {
+			clean[tok] = struct{}{} // a delimited span is a faithful contribution
+		}
 		i += close + 1 // resume after the closer, never inside the span
 	}
 }
@@ -308,7 +320,9 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // lostSpan reports a per-SPAN loss and is what `truncated` is built from.
 // impreciseInto receives the subset of `seen` that a glued span contributed,
 // so a consumer that can repair per-anchor has the names and one that cannot
-// still has the flag.
+// still has the flag. clean receives every token a span contributed FAITHFULLY
+// (an unglued call; the delimited scan marks its own), so scanAnchors can keep
+// a name that was read cleanly at least once out of the imprecise set.
 //
 // unaccounted reports that at least one loss left NO member behind — a silenced
 // span whose fragment could have qualified (or carries a combining mark, proof
@@ -318,7 +332,7 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // and nowhere else: a loss with a member can be repaired by dropping that
 // member, and a loss without one cannot be repaired at all, because what the
 // span would have named is unknowable.
-func collectCallAnchors(text string, seen, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
+func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struct{}) (lostSpan, unaccounted bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -378,6 +392,9 @@ func collectCallAnchors(text string, seen, impreciseInto map[string]struct{}) (l
 			lostSpan = true // glued or genuine, and nothing here can tell
 		}
 		qualified := recordAnchor(anchor, seen)
+		if qualified && !glued {
+			clean[anchor] = struct{}{} // an unglued call is a faithful contribution
+		}
 		if glued {
 			if qualified {
 				impreciseInto[anchor] = struct{}{}
@@ -543,26 +560,22 @@ func leadsWithUnderscore(tok string) bool {
 	return false
 }
 
-// addAnchor normalizes one raw span and records it if it qualifies. The
-// delimited scan has no use for whether it did — only the call scan, which
-// reduces its own span and calls recordAnchor directly, needs that answer.
-func addAnchor(raw string, seen map[string]struct{}) {
-	recordAnchor(recordedAnchorForm(raw), seen)
-}
-
 // recordAnchor records an ALREADY-reduced token if it qualifies, reporting
 // whether it did.
 //
-// Two callers need the split. collectCallAnchors has already reduced the span
-// to ask its underscore questions of the recorded anchor, so handing the raw
-// span back to addAnchor would fold and re-scan it a second time — and worse,
-// would leave the guard's idea of the anchor and the recorded one as two
-// separately computed values that a later edit could let diverge. Passing the
-// token makes them the same value, not merely the same helper's output.
+// Both scans call it with a token they reduced through recordedAnchorForm
+// themselves: the call scan has already reduced the span to ask its underscore
+// questions of the recorded anchor, so handing the raw span back would fold
+// and re-scan it a second time — and worse, would leave the guard's idea of
+// the anchor and the recorded one as two separately computed values that a
+// later edit could let diverge. Passing the token makes them the same value,
+// not merely the same helper's output.
 //
 // The bool is what lets a per-span fidelity loss be attributed to a NAME: a
 // span can lose fidelity and still contribute nothing (its token fails the
-// shape or signal test), and such a span has no member to drop.
+// shape or signal test), and such a span has no member to drop. It also marks
+// the faithful contributions: a span that records outside the glued path is
+// evidence the name was read cleanly at least once.
 func recordAnchor(tok string, seen map[string]struct{}) bool {
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
 		return false
