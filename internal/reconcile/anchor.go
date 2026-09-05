@@ -244,6 +244,13 @@ func scanFixAnchors(text string) ([]string, anchorScan) {
 	return out, s
 }
 
+// droppedFixAnchors returns the members scanFixAnchors removed from the usable
+// set: the anchors every contribution of which came from a glued span. Sorted,
+// nil when none.
+func (s anchorScan) droppedFixAnchors() []string {
+	return nil
+}
+
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
 // identifier in prose. Each is its own closer, and each is scanned in its OWN
 // pass over the text (see extractAnchors) rather than in one interleaved pass.

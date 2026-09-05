@@ -429,3 +429,54 @@ func TestTier4Safety_ImpreciseFixAnchorDoesNotCostTheSuggestion(t *testing.T) {
 	assert.Zero(t, res.Summary.UnresolvedFiltered,
 		"the subject is declared in the tree: nothing may route")
 }
+
+// TestTier4Safety_DroppedFixAnchorDisagreementRefusesTheSuggestion is the same
+// fixture as the test above with ONE file added: the dropped member is now
+// genuinely declared, and it is declared somewhere ELSE.
+//
+// That is the case the per-anchor drop was silently getting wrong. Narrowing the
+// FIX set removed データ_解析 from what locate() sees, so locate agreed with
+// itself on `parseTree` alone and stamped pkg/tree.go — where the complete set
+// would have found two precise anchors DISAGREEING and refused. The finding then
+// carried a confident suggestion built from half the evidence, which is the
+// outcome the `unaccounted` arm nils the whole set to avoid, reached one branch
+// over.
+//
+// Dropping the member from the USABLE set stays right (it may be an unfaithful
+// reading, so it may not SOURCE a suggestion). Discarding it as evidence was the
+// error: a dropped name may still contradict.
+func TestTier4Safety_DroppedFixAnchorDisagreementRefusesTheSuggestion(t *testing.T) {
+	kata := string([]rune{0x30C7, 0x30FC, 0x30BF}) // データ
+	han := string([]rune{0x89E3, 0x6790})          // 解析
+	genuine := kata + "_" + han                    // データ_解析
+
+	problem := "the `sharedHelper` path drops the returned error"
+	fix := "call `parseTree` instead of " + genuine + "()"
+
+	require.Equal(t, []string{"parseTree"}, extractFixAnchors(fix),
+		"the usable set is unchanged: the imprecise member still may not source a suggestion")
+
+	root := gitRepoWithSources(t, map[string]string{
+		// Same primaryMatched-without-localizing subject as the sibling test.
+		"internal/a/one.go": "package a\n\nfunc sharedHelper() error { return nil }\n",
+		"internal/b/two.go": "package b\n\nfunc sharedHelper() error { return nil }\n",
+		"pkg/tree.go":       "package pkg\n\nfunc parseTree() error { return nil }\n",
+		// The only difference: the dropped member is declared, in ANOTHER file.
+		"pkg/data.go": "package pkg\n\nfunc " + genuine + "() error { return nil }\n",
+	})
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "greta/findings.txt",
+		"HIGH|internal/ghost/phantom.go:3|"+problem+"|"+fix+"|correctness|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Empty(t, res.JSONFindings()[0].PathSuggestion,
+		"the dropped member is declared in a DIFFERENT file: that is the disagreement locate refuses on, "+
+			"and a wrong guess at the wrong file is worse than no suggestion")
+	assert.Zero(t, res.Summary.UnresolvedFiltered,
+		"refusing a suggestion may never route a finding out: the subject is declared in the tree")
+}

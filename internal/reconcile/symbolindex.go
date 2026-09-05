@@ -342,6 +342,13 @@ func (lz *lazySymbolIndex) resolve(ctx context.Context, primary, secondary []str
 	return lz.idx.resolve(primary, secondary)
 }
 
+// resolveWithDropped is resolve with the FIX anchors scanFixAnchors removed from
+// the usable set carried alongside, so a dropped member may still REFUSE a
+// secondary resolution it disagrees with.
+func (lz *lazySymbolIndex) resolveWithDropped(ctx context.Context, primary, secondary, droppedSecondary []string) (string, tier4Outcome) {
+	return lz.resolve(ctx, primary, secondary)
+}
+
 // state reports what the build actually achieved, for Summary.UnresolvedState.
 //
 // It is meaningful only AFTER a resolve has forced the build — before that the

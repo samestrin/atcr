@@ -859,6 +859,28 @@ func TestExtractFixAnchors_DropsOnlyTheImpreciseMembers(t *testing.T) {
 			"the backticked citation is a clean contribution: an incidental glued call of the same name must not take it down")
 	})
 
+	t.Run("a dropped member is kept as evidence, not discarded", func(t *testing.T) {
+		usable, scan := scanFixAnchors("call `parseTree` instead of " + genuine + "()")
+		require.Equal(t, []string{"parseTree"}, usable)
+		assert.Equal(t, []string{genuine}, scan.droppedFixAnchors(),
+			"a member dropped from the usable set is still part of what the FIX named: "+
+				"locate refuses when two precise anchors disagree, so its verdict needs "+
+				"the dropped name too - the same completeness the unaccounted arm nils the set for")
+	})
+
+	t.Run("a member the cap dropped is not reported as a per-anchor drop", func(t *testing.T) {
+		// imprecise is keyed on what the scan recorded, so it can name a token
+		// the cap later removed from anchors. Such a token is not a per-anchor
+		// drop - the whole set was already abandoned - and reporting it would
+		// hand the disagreement check a name the usable set never excluded.
+		text := "`aOne` `bTwo` `cThree` `dFour` `eFive` `fSix` `gSeven` `hEight` " + genuine + "()"
+		usable, scan := scanFixAnchors(text)
+		require.Nil(t, usable, "the cap abandons the set whole")
+		require.True(t, scan.capped, "the fixture must actually cap")
+		assert.Nil(t, scan.droppedFixAnchors(),
+			"nothing was narrowed away: the set was abandoned, so there is no per-anchor drop to report")
+	})
+
 	t.Run("an ordinary FIX keeps its whole set", func(t *testing.T) {
 		assert.Equal(t, []string{"parseTree", "readTree"},
 			extractFixAnchors("call `readTree` then `parseTree`"))
