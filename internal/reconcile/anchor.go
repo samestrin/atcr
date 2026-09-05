@@ -395,6 +395,7 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 		start := i
 		runScript := scriptUnset
 		atBoundary := false
+		boundaryDroppedSpaceless := false
 		crossedSpaceless := false
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(text[:start])
@@ -404,6 +405,12 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			if s := spacelessScriptOf(r); s != scriptNeutral {
 				if isWordBoundary(runScript, s) {
 					atBoundary = true
+					// Which side the break DROPPED, which the silence guard
+					// below needs and the fragment cannot report. isWordBoundary
+					// fires only between a spaceless script and a spacing one,
+					// so one side is always each; s is the side being left
+					// behind, and a non-negative s indexes spacelessScripts.
+					boundaryDroppedSpaceless = s >= 0
 					break // the run has left the call name
 				}
 				if runScript != scriptUnset && s != runScript {
@@ -443,7 +450,28 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 			// — the full name may have qualified, and that IS a loss with no
 			// member to point at.
 			r, _ := utf8.DecodeRuneInString(anchor)
-			if (isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)) || unicode.In(r, unicode.Mn, unicode.Mc) {
+			lost := (isIdentifierShaped(anchor) && hasIdentifierSignal(anchor)) ||
+				unicode.In(r, unicode.Mn, unicode.Mc)
+			// The fragment is the right subject only when the fragment is what
+			// the break could have cost. When the break DROPPED a spaceless-
+			// script prefix, what was destroyed is the whole span name, and a
+			// prefix split off a 1-2 rune tail leaves a fragment that fails
+			// minAnchorLen while the full name is shaped, signalled and
+			// perfectly searchable — `設定_a` behind the fragment `_a`. Ask the
+			// question of the FULL run in that case, taken raw: no
+			// trailingSegment, no boundary reduction, because both reductions
+			// are exactly what threw the evidence away.
+			//
+			// Deliberately NOT applied when the break dropped a SPACING-script
+			// prefix (`parse_解`). There the boundary rule is reading its own
+			// design case — a spaced-out Latin word running into a name — and
+			// widening the guard to it would refuse a no-match verdict for a
+			// set whose every member is a faithful reading.
+			if !lost && boundaryDroppedSpaceless {
+				full := text[fullRunStart(text, start):i]
+				lost = isIdentifierShaped(full) && hasIdentifierSignal(full)
+			}
+			if lost {
 				lostSpan = true
 				unaccounted = true // silence: a loss with no member to point at
 			}
@@ -469,6 +497,21 @@ func collectCallAnchors(text string, seen, clean, impreciseInto map[string]struc
 		}
 	}
 	return lostSpan, unaccounted
+}
+
+// fullRunStart continues the backwards identifier run from the index a word
+// boundary stopped it at, ignoring boundaries, and returns where the whole run
+// begins. It is how collectCallAnchors recovers the span name a break destroyed:
+// the same walk the caller performs, minus the one rule under suspicion.
+func fullRunStart(text string, start int) int {
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if !isQualifiedIdentRune(r) {
+			break
+		}
+		start -= size
+	}
+	return start
 }
 
 // The three sentinel values spacelessScriptOf and the backwards run use
