@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
@@ -131,8 +132,20 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// a call-scan fidelity loss actually touched, and abandons the set whole
 		// for the cap OR for a fidelity loss that left no member behind (its
 		// `capped` and `unaccounted` disjuncts) — in both cases what was dropped
-		// is unknowable. See its doc for the full argument.
-		fixAnchors := extractFixAnchors(findings[i].Fix)
+		// is unknowable. See its doc for the full argument. Each loss increments
+		// its own counter below, so a suggestion that never landed is
+		// attributable after the fact (docs/metrics.md).
+		fixAnchors, fixScan := scanFixAnchors(findings[i].Fix)
+		switch {
+		case fixScan.capped:
+			metrics.Counter(tier4FixSetCappedMetric).Inc()
+		case fixScan.unaccounted:
+			metrics.Counter(tier4FixSetUnaccountedMetric).Inc()
+		default:
+			if dropped := len(fixScan.anchors) - len(fixAnchors); dropped > 0 {
+				metrics.Counter(tier4FixAnchorDroppedMetric).Add(int64(dropped))
+			}
+		}
 		suggestion, outcome := tier4.resolve(ctx, problemAnchors, fixAnchors)
 		switch {
 		case outcome == tier4Resolved:

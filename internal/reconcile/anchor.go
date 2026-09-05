@@ -196,12 +196,21 @@ func scanAnchors(text string) anchorScan {
 // same name. That is a known cost, not an oversight: the cost is a lost hint,
 // which this function's whole safety argument is that it can afford.
 func extractFixAnchors(text string) []string {
+	anchors, _ := scanFixAnchors(text)
+	return anchors
+}
+
+// scanFixAnchors is extractFixAnchors with the scan's fidelity-loss detail
+// preserved, for the one caller (validate.go) that must report WHICH loss
+// fired - cap, member-less, or per-anchor drop - rather than only narrow the
+// set.
+func scanFixAnchors(text string) ([]string, anchorScan) {
 	s := scanAnchors(text)
 	if s.capped || s.unaccounted {
-		return nil
+		return nil, s
 	}
 	if len(s.imprecise) == 0 {
-		return s.anchors
+		return s.anchors, s
 	}
 	out := make([]string, 0, len(s.anchors))
 	for _, tok := range s.anchors {
@@ -210,9 +219,9 @@ func extractFixAnchors(text string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, s
 	}
-	return out
+	return out, s
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
