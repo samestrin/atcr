@@ -79,13 +79,43 @@ const minAnchorLen = 3
 // The returned slice is deduped and lexically sorted; nil when nothing
 // qualifies.
 func extractAnchorSet(text string) (anchors []string, truncated bool) {
+	s := scanAnchors(text)
+	return s.anchors, s.capped || s.lostSpan
+}
+
+// anchorScan is one extraction's full result, kept unflattened for the one
+// consumer that must tell the two losses apart.
+//
+// `truncated` is deliberately ONE flag on the SET, and stays that way: the
+// no-match direction reads it and must get exactly one condition right (see
+// extractAnchorSet's doc). This struct does not add a second flag beside it —
+// it records WHICH anchors a fidelity loss touched, which is a different
+// question and the only one a per-anchor repair can be built on.
+type anchorScan struct {
+	// anchors is the deduped, sorted, capped set - what extractAnchorSet returns.
+	anchors []string
+	// capped reports that maxAnchorsPerFinding dropped whole anchors. The set is
+	// a PREFIX of what the text named and the dropped members are unknowable.
+	capped bool
+	// lostSpan reports that the call scan lost fidelity on at least one span,
+	// whether or not that span contributed an anchor (a silenced span
+	// contributes none).
+	lostSpan bool
+	// imprecise holds the members of anchors that a glued span contributed.
+	// These are the anchors that may not be a faithful reading of what the
+	// reviewer wrote; every other member is.
+	imprecise map[string]struct{}
+}
+
+func scanAnchors(text string) anchorScan {
 	seen := make(map[string]struct{})
 	for _, d := range anchorDelimiters {
 		collectDelimitedAnchors(text, byte(d), seen)
 	}
-	imprecise := collectCallAnchors(text, seen)
+	imprecise := make(map[string]struct{})
+	lostSpan := collectCallAnchors(text, seen, imprecise)
 	if len(seen) == 0 {
-		return nil, imprecise
+		return anchorScan{lostSpan: lostSpan, imprecise: imprecise}
 	}
 	out := make([]string, 0, len(seen))
 	for tok := range seen {
@@ -93,20 +123,58 @@ func extractAnchorSet(text string) (anchors []string, truncated bool) {
 	}
 	sort.Strings(out)
 	if len(out) > maxAnchorsPerFinding {
-		return out[:maxAnchorsPerFinding], true
+		return anchorScan{anchors: out[:maxAnchorsPerFinding], capped: true, lostSpan: lostSpan, imprecise: imprecise}
 	}
-	return out, imprecise
+	return anchorScan{anchors: out, lostSpan: lostSpan, imprecise: imprecise}
 }
 
 // extractFixAnchors returns the FIX anchors that may ground a PathSuggestion.
 //
-// STUB - returns the pre-fix behaviour so the RED test compiles. See T3.
+// The FIX set feeds resolve's SECONDARY anchors, which may only LOCALIZE a
+// finding whose subject already matched somewhere in the tree — never route one
+// out (symbolindex.go:230-236). So the two losses extractAnchorSet folds into
+// `truncated` cost different things here and may not be answered alike:
+//
+//   - The CAP is a PREFIX. Which anchors it dropped is unknowable, so no
+//     statement about the remainder is safe and the set is abandoned whole.
+//     This is the case the flat `if truncated` test was written for.
+//
+//   - A call-scan fidelity loss is per-SPAN. A glued span's anchor may not be
+//     what the reviewer wrote, but every other member still is — so exactly
+//     those members are dropped and the rest stand. A silenced span contributed
+//     no member at all, so it drops nothing: an empty-handed loss leaves a set
+//     in which every anchor present is faithful.
+//
+// Dropping is the safe direction and nilling never was. Losing a secondary
+// anchor can only cost a suggestion the finding would otherwise have carried;
+// it can never move an outcome toward tier4NoMatch, because the secondary
+// locate is unreachable unless a primary anchor already matched. Measured:
+// a FIX naming one genuine Japanese snake_case call alongside a precise ASCII
+// anchor went tier4Resolved -> tier4Inconclusive under the flat test, losing a
+// correct PathSuggestion to a loss that never touched the anchor that produced
+// it.
+//
+// An anchor contributed by BOTH a glued span and a clean one is dropped too.
+// That is deliberate and conservative: the cost is a lost hint, which this
+// function's whole safety argument is that it can afford.
 func extractFixAnchors(text string) []string {
-	anchors, truncated := extractAnchorSet(text)
-	if truncated {
+	s := scanAnchors(text)
+	if s.capped {
 		return nil
 	}
-	return anchors
+	if len(s.imprecise) == 0 {
+		return s.anchors
+	}
+	out := make([]string, 0, len(s.anchors))
+	for _, tok := range s.anchors {
+		if _, bad := s.imprecise[tok]; !bad {
+			out = append(out, tok)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // anchorDelimiters are the paired characters a reviewer uses to mark a literal
@@ -189,7 +257,10 @@ func collectDelimitedAnchors(text string, d byte, seen map[string]struct{}) {
 // confidently misattributed, and an imprecise anchor is right where the token may
 // well be the real name. What neither may do is stand as proof that the tree was
 // searched for what the reviewer actually wrote.
-func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) {
+// imprecise (the return) reports a per-SPAN loss; impreciseAnchors receives the
+// subset of `seen` that a glued span contributed, so a consumer that can repair
+// per-anchor has the names and one that cannot still has the flag.
+func collectCallAnchors(text string, seen, impreciseAnchors map[string]struct{}) (imprecise bool) {
 	for i := 0; i < len(text); i++ {
 		if text[i] != '(' {
 			continue
@@ -232,10 +303,13 @@ func collectCallAnchors(text string, seen map[string]struct{}) (imprecise bool) 
 			imprecise = true
 			continue // undecidable: see isWordBoundary
 		}
-		if crossedSpaceless && strings.Contains(anchor, "_") {
+		glued := crossedSpaceless && strings.Contains(anchor, "_")
+		if glued {
 			imprecise = true // glued or genuine, and nothing here can tell
 		}
-		addAnchor(text[start:i], seen)
+		if addAnchor(text[start:i], seen) && glued {
+			impreciseAnchors[anchor] = struct{}{}
+		}
 	}
 	return imprecise
 }
@@ -391,13 +465,17 @@ func leadsWithUnderscore(tok string) bool {
 	return false
 }
 
-// addAnchor normalizes one raw span and records it if it qualifies.
-func addAnchor(raw string, seen map[string]struct{}) {
+// addAnchor normalizes one raw span and records it if it qualifies, reporting
+// whether it did. The caller needs that answer to attribute a per-span fidelity
+// loss to a NAME: a span can lose fidelity and still contribute nothing (its
+// token fails the shape or signal test), and such a span has no member to drop.
+func addAnchor(raw string, seen map[string]struct{}) bool {
 	tok := recordedAnchorForm(raw)
 	if !isIdentifierShaped(tok) || !hasIdentifierSignal(tok) {
-		return
+		return false
 	}
 	seen[tok] = struct{}{}
+	return true
 }
 
 // foldAnchorForm puts one token in NFC, the single normalization form every
